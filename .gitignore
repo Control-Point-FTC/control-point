@@ -9,3 +9,4 @@ coverage/
 api.key
 models/*.gguf
 nexus.dbdashboard.db
+dashboard.db
