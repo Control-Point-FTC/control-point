@@ -391,6 +391,26 @@ if (!memberColumns.some((c: any) => c.name === 'primary_color')) {
 if (!memberColumns.some((c: any) => c.name === 'text_color')) {
   (await dbExec("ALTER TABLE members ADD COLUMN text_color TEXT"));
 }
+if (!memberColumns.some((c: any) => c.name === 'avatar_url')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN avatar_url TEXT"));
+}
+
+// Feedback table — users send feedback to the app owner
+(await dbExec(`
+  CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
+    user_id INTEGER,
+    user_name TEXT,
+    user_email TEXT,
+    category TEXT DEFAULT 'general',
+    message TEXT NOT NULL,
+    status TEXT DEFAULT 'new',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(team_id) REFERENCES teams(id),
+    FOREIGN KEY(user_id) REFERENCES members(id)
+  )
+`));
 
 // Messages table migrations
 const messageColumns = (await dbAll("PRAGMA table_info(messages)"));
@@ -566,6 +586,27 @@ async function requireAdmin(req: any, res: any) {
   return auth;
 }
 
+// App owner (Sushil) — sees feedback and usage across all workspaces.
+// Configure with the OWNER_EMAILS env var (comma-separated).
+function ownerEmails(): string[] {
+  return (process.env.OWNER_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+async function requireOwner(req: any, res: any) {
+  const auth = await requireAuth(req, res);
+  if (!auth) return null;
+  const member = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+  const email = (member?.email || "").toLowerCase();
+  if (!ownerEmails().includes(email)) {
+    res.status(403).json({ error: "Owner only" });
+    return null;
+  }
+  return auth;
+}
+
 
 
 
@@ -601,9 +642,19 @@ async function startServer() {
     }
   });
   
-  const upload = multer({ 
+  const upload = multer({
     storage,
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  });
+
+  // Avatars: images only, 2MB cap
+  const avatarUpload = multer({
+    storage,
+    limits: { fileSize: 2 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
+      else cb(new Error('Only image files are allowed'));
+    }
   });
   
   app.use('/uploads', express.static(uploadDir));
@@ -842,8 +893,9 @@ async function startServer() {
     if (!sessionId) return res.status(401).json({ error: "No session" });
     const { valid, memberId } = await validateSession(sessionId);
     if (!valid || !memberId) return res.status(401).json({ error: "Invalid session" });
-    const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
-    res.json({ user, sessionId });
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
+    const isOwner = ownerEmails().includes(((user?.email) || "").toLowerCase());
+    res.json({ user, sessionId, isOwner });
   });
 
   app.get("/api/auth/google", async (req, res) => {
@@ -851,7 +903,7 @@ async function startServer() {
       return res.status(400).json({ error: "Google sign-in is not configured" });
     }
     const rawIntent = (req.query.intent as string) || 'login';
-    const intent = ['login', 'admin_signup', 'student_signup'].includes(rawIntent) ? rawIntent : 'login';
+    const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     const state = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -905,7 +957,7 @@ async function startServer() {
         if (member) {
           (await dbRun("UPDATE members SET google_id = ? WHERE id = ?", profile.sub, member.id));
           member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
-        } else if (intent === 'admin_signup' || intent === 'student_signup') {
+        } else if (intent === 'admin_signup' || intent === 'student_signup' || intent === 'signup') {
           const tokenBytes = new Uint8Array(32);
           crypto.getRandomValues(tokenBytes);
           const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -933,7 +985,7 @@ async function startServer() {
   // provide the role-specific details (team name for admins, access code for students)
   app.post("/api/auth/google/complete", async (req, res) => {
     try {
-      const { token, teamName, teamNumber, accessCode } = req.body || {};
+      const { token, teamName, teamNumber, accessCode, role } = req.body || {};
       const pending = token ? pendingGoogleSignups.get(token) : undefined;
       if (pending) pendingGoogleSignups.delete(token); // single-use
       if (!pending || pending.expiry < Date.now()) {
@@ -945,7 +997,10 @@ async function startServer() {
       const existing = (await dbGet("SELECT id FROM members WHERE email = ?", cleanEmail));
       if (existing) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
 
-      if (pending.intent === 'admin_signup') {
+      const effectiveIntent = pending.intent === 'signup'
+        ? (role === 'admin' ? 'admin_signup' : 'student_signup')
+        : pending.intent;
+      if (effectiveIntent === 'admin_signup') {
         const cleanTeam = (teamName || '').trim();
         if (!cleanTeam) return res.status(400).json({ error: "Team name is required" });
         const code = await uniqueAccessCode();
@@ -960,7 +1015,7 @@ async function startServer() {
         return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
       }
 
-      if (pending.intent === 'student_signup') {
+      if (effectiveIntent === 'student_signup') {
         const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
         if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
         const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
@@ -1083,6 +1138,50 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Self-service profile: any signed-in member can update their own
+  // name, role description, theme colors, and avatar. Admin-only fields
+  // (email, is_board, scopes, account_type) stay on the admin endpoint.
+  app.patch("/api/profile", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const { name, role, accent_color, primary_color, text_color, avatar_url } = req.body || {};
+    const cleanName = (name || '').trim();
+    if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
+    const updates: any = { name: cleanName, role: (role || '').trim() };
+    if (accent_color !== undefined) updates.accent_color = accent_color || null;
+    if (primary_color !== undefined) updates.primary_color = primary_color || null;
+    if (text_color !== undefined) updates.text_color = text_color || null;
+    if (avatar_url !== undefined) updates.avatar_url = avatar_url || null;
+    const cols = Object.keys(updates);
+    (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
+    res.json({ user });
+  });
+
+  // Avatar upload for the signed-in member
+  app.post("/api/profile/avatar", (req, res, next) => {
+    avatarUpload.single('avatar')(req, res, (err: any) => {
+      if (err) return res.status(400).json({ error: err.message || "Invalid image" });
+      next();
+    });
+  }, async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const avatarUrl = `/uploads/${req.file.filename}`;
+    // Remove the previous avatar file so uploads don't pile up
+    try {
+      const prev = (await dbGet("SELECT avatar_url FROM members WHERE id = ?", auth.memberId)) as any;
+      if (prev?.avatar_url?.startsWith('/uploads/')) {
+        const prevPath = path.join(uploadDir, prev.avatar_url.slice('/uploads/'.length));
+        if (fs.existsSync(prevPath)) fs.unlinkSync(prevPath);
+      }
+    } catch { /* best effort */ }
+    (await dbRun("UPDATE members SET avatar_url = ? WHERE id = ?", avatarUrl, auth.memberId));
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
+    res.json({ avatar_url: avatarUrl, user });
+  });
+
   app.delete("/api/members/:id", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
@@ -1161,6 +1260,25 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Error in attendance batch:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Self check-in: any member marks THEMSELVES present for today.
+  app.post("/api/attendance/checkin", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const today = new Date().toISOString().slice(0, 10);
+      (await dbRun(
+        `INSERT INTO attendance (member_id, date, status, team_id)
+         VALUES (?, ?, 'P', ?)
+         ON CONFLICT(member_id, date) DO UPDATE SET status = 'P'`,
+        auth.memberId, today, auth.teamId
+      ));
+      res.json({ success: true, date: today });
+    } catch (error) {
+      console.error("Error in attendance checkin:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -1369,6 +1487,87 @@ async function startServer() {
     if (!Array.isArray(ids)) return res.status(400).json({ error: "Invalid" });
     await dbBatch(ids.map((id: any) => ({ sql: "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?", args: [id, auth.memberId] })));
     res.json({ success: true });
+  });
+
+  // --- Feedback: any user can send feedback to the app owner ---
+  app.post("/api/feedback", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const { category, message } = req.body || {};
+      const clean = (message || '').trim();
+      if (!clean) return res.status(400).json({ error: "Message can't be empty" });
+      const me = (await dbGet("SELECT name, email FROM members WHERE id = ?", auth.memberId)) as any;
+      const info = (await dbRun(
+        "INSERT INTO feedback (team_id, user_id, user_name, user_email, category, message) VALUES (?, ?, ?, ?, ?, ?)",
+        auth.teamId, auth.memberId, me?.name || '', me?.email || '', (category || 'general').toString().slice(0, 40), clean.slice(0, 5000)
+      ));
+      res.json({ id: info.lastInsertRowid });
+    } catch (error) {
+      console.error("Error saving feedback:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // --- Owner portal: cross-workspace visibility for the app owner ---
+  app.get("/api/owner/overview", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const teams = (await dbAll(`
+      SELECT t.id, t.name, t.number, t.access_code,
+        (SELECT COUNT(*) FROM members m WHERE m.team_id = t.id) as member_count,
+        (SELECT COUNT(*) FROM messages msg WHERE msg.team_id = t.id) as message_count,
+        (SELECT COUNT(*) FROM tasks tk WHERE tk.team_id = t.id) as task_count,
+        (SELECT COUNT(*) FROM feedback f WHERE f.team_id = t.id) as feedback_count
+      FROM teams t ORDER BY t.id DESC
+    `));
+    const totals = (await dbGet(`
+      SELECT (SELECT COUNT(*) FROM members) as users,
+             (SELECT COUNT(*) FROM teams) as teams,
+             (SELECT COUNT(*) FROM messages) as messages,
+             (SELECT COUNT(*) FROM feedback) as feedback,
+             (SELECT COUNT(*) FROM feedback WHERE status = 'new') as new_feedback
+    `));
+    res.json({ totals, teams });
+  });
+
+  app.get("/api/owner/users", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const users = (await dbAll(`
+      SELECT m.id, m.name, m.email, m.role, m.account_type, m.team_id, t.name as team_name
+      FROM members m LEFT JOIN teams t ON m.team_id = t.id
+      ORDER BY m.id DESC LIMIT 500
+    `));
+    res.json(users);
+  });
+
+  app.get("/api/owner/feedback", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const items = (await dbAll(`
+      SELECT f.*, t.name as team_name FROM feedback f
+      LEFT JOIN teams t ON f.team_id = t.id
+      ORDER BY f.created_at DESC LIMIT 500
+    `));
+    res.json(items);
+  });
+
+  app.patch("/api/owner/feedback/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const { status } = req.body || {};
+    const next = status === 'resolved' ? 'resolved' : 'new';
+    (await dbRun("UPDATE feedback SET status = ? WHERE id = ?", next, req.params.id));
+    res.json({ success: true });
+  });
+
+  // Am I the app owner? (drives the Owner tab in the UI)
+  app.get("/api/owner/me", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const member = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    res.json({ isOwner: ownerEmails().includes((member?.email || "").toLowerCase()) });
   });
 
   // Settings
@@ -1643,7 +1842,7 @@ async function startServer() {
 
   app.post("/api/outreach", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requireAuth(req, res);
       if (!auth) return;
       const { title, description, date, hours, location } = req.body;
       const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, team_id) VALUES (?, ?, ?, ?, ?, ?)", title, description, date, hours, location, auth.teamId));
@@ -1661,9 +1860,27 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/outreach/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const { title, description, date, hours, location } = req.body || {};
+      (await dbRun(
+        "UPDATE outreach SET title = ?, description = ?, date = ?, hours = ?, location = ? WHERE id = ?",
+        title || '', description || '', date || '', hours || 0, location || '', req.params.id
+      ));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating outreach event:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.delete("/api/outreach/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requireAuth(req, res);
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -1696,7 +1913,7 @@ async function startServer() {
 
   app.post("/api/inventory", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requireAuth(req, res);
       if (!auth) return;
       const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       if (!sku || !name) {
@@ -1721,7 +1938,7 @@ async function startServer() {
 
   app.patch("/api/inventory/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requireAuth(req, res);
       if (!auth) return;
       const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       const id = req.params.id;
@@ -1747,7 +1964,7 @@ async function startServer() {
 
   app.delete("/api/inventory/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requireAuth(req, res);
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM inventory WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });

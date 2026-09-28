@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
+  Crown,
+  MessageSquareHeart,
+  Pencil,
   CalendarCheck, 
   CheckSquare, 
   Wallet, 
@@ -151,6 +154,27 @@ const Select = ({ className, options, ...props }: any) => (
   </select>
 );
 
+// Avatar: profile picture when set, otherwise the user's initial
+const Avatar = ({ user, size = 'md', className }: any) => {
+  const sizes: any = {
+    xs: 'w-6 h-6 text-[10px]',
+    sm: 'w-8 h-8 text-xs',
+    md: 'w-9 h-9 text-sm',
+    lg: 'w-16 h-16 text-2xl',
+    xl: 'w-24 h-24 text-3xl',
+  };
+  const cls = cn(
+    'rounded-full flex items-center justify-center font-bold flex-shrink-0 overflow-hidden',
+    sizes[size] || sizes.md,
+    user?.avatar_url ? '' : 'bg-accent text-accent-ink',
+    className
+  );
+  if (user?.avatar_url) {
+    return <img src={user.avatar_url} alt={user?.name || 'avatar'} className={cn(cls, 'object-cover')} />;
+  }
+  return <div className={cls}>{(user?.name || '?').charAt(0).toUpperCase()}</div>;
+};
+
 // --- Role choice + signup screens ---
 
 const AuthShell = ({ children }: any) => (
@@ -226,17 +250,13 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled }: { onBack: () => void; o
         <>
           <div className="flex items-center gap-3 mt-5">
             <div className="flex-1 h-px bg-white/10" />
-            <span className="text-xs text-text-muted">or continue with</span>
+            <span className="text-xs text-text-muted">or</span>
             <div className="flex-1 h-px bg-white/10" />
           </div>
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <a href="/api/auth/google?intent=admin_signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-2.5 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
-              <GoogleIcon /> Admin
-            </a>
-            <a href="/api/auth/google?intent=student_signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-2.5 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
-              <GoogleIcon /> Student
-            </a>
-          </div>
+          <a href="/api/auth/google?intent=signup" className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+            <GoogleIcon /> Continue with Google
+          </a>
+          <p className="mt-2 text-center text-xs text-text-muted">You'll pick Admin or Student right after signing in.</p>
         </>
       )}
       <p className="mt-6 text-center text-xs text-text-muted">
@@ -348,10 +368,12 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
 
 // After Google OAuth: the identity is verified, now collect the role-specific details
 const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
-  token: string; intent: 'admin_signup' | 'student_signup';
+  token: string; intent: 'admin_signup' | 'student_signup' | 'signup';
   onBack: () => void; onDone: (data: any) => void;
 }) => {
-  const isAdmin = intent === 'admin_signup';
+  const needsRole = intent === 'signup';
+  const [pickedRole, setPickedRole] = useState<'admin' | 'student'>('student');
+  const isAdmin = intent === 'admin_signup' || (needsRole && pickedRole === 'admin');
   const [teamName, setTeamName] = useState('');
   const [teamNumber, setTeamNumber] = useState('');
   const [accessCode, setAccessCode] = useState('');
@@ -366,7 +388,7 @@ const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
       const res = await apiFetch('/api/auth/google/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, teamName, teamNumber, accessCode }),
+        body: JSON.stringify({ token, teamName, teamNumber, accessCode, role: needsRole ? pickedRole : undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Signup failed');
@@ -403,6 +425,34 @@ const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
           </p>
         </div>
         <form onSubmit={submit} className="space-y-4">
+          {needsRole && (
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setPickedRole('admin')}
+                className={cn(
+                  "rounded-xl border p-4 text-left transition-all",
+                  pickedRole === 'admin' ? "border-accent bg-accent/10" : "border-white/10 bg-elevated hover:border-white/25"
+                )}
+              >
+                <ShieldCheck className={cn("w-5 h-5 mb-2", pickedRole === 'admin' ? "text-accent" : "text-text-muted")} />
+                <p className="text-sm font-bold text-white">Team Admin</p>
+                <p className="text-xs text-text-muted mt-1">Create a workspace</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickedRole('student')}
+                className={cn(
+                  "rounded-xl border p-4 text-left transition-all",
+                  pickedRole === 'student' ? "border-accent bg-accent/10" : "border-white/10 bg-elevated hover:border-white/25"
+                )}
+              >
+                <GraduationCap className={cn("w-5 h-5 mb-2", pickedRole === 'student' ? "text-accent" : "text-text-muted")} />
+                <p className="text-sm font-bold text-white">Student</p>
+                <p className="text-xs text-text-muted mt-1">Join with a code</p>
+              </button>
+            </div>
+          )}
           {isAdmin ? (
             <>
               <div className="space-y-1.5">{label('Team name')}<Input required value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Circuit Breakers" /></div>
@@ -473,6 +523,8 @@ export default function App() {
   
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authScreen, setAuthScreen] = useState<'landing' | 'login' | 'role' | 'signup-admin' | 'signup-student' | 'code-reveal'>('landing');
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -590,7 +642,7 @@ export default function App() {
 
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
-  const [googleSignup, setGoogleSignup] = useState<{ token: string; intent: 'admin_signup' | 'student_signup' } | null>(null);
+  const [googleSignup, setGoogleSignup] = useState<{ token: string; intent: 'admin_signup' | 'student_signup' | 'signup' } | null>(null);
 
   // Handle Google OAuth callback (?google_session= / ?google_error= / ?google_signup=)
   useEffect(() => {
@@ -609,7 +661,7 @@ export default function App() {
         : 'Google sign-in failed. Please try again.');
       window.history.replaceState({}, '', window.location.pathname);
     }
-    if (gsu && (gi === 'admin_signup' || gi === 'student_signup')) {
+    if (gsu && (gi === 'admin_signup' || gi === 'student_signup' || gi === 'signup')) {
       setGoogleSignup({ token: gsu, intent: gi });
       window.history.replaceState({}, '', window.location.pathname);
     }
@@ -995,11 +1047,13 @@ export default function App() {
     { id: 'scout', label: 'AI Scout', icon: Newspaper },
     { id: 'profile', label: 'My Profile', icon: UserCircle },
     { id: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
+    { id: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
   ];
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'tasks', 'calendar', 'comm', 'chat', 'profile'];
+  const studentTabIds = ['dashboard', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'profile'];
   const visibleTabs = navItems.filter((t) => {
+    if ((t as any).ownerOnly) return isOwner;
     if (isAdmin) return !t.scope || hasScope(t.scope);
     return studentTabIds.includes(t.id);
   });
@@ -1010,6 +1064,15 @@ export default function App() {
       setActiveTab('dashboard');
     }
   }, [isLoggedIn, currentUser]);
+
+  // Owner status drives the Owner tab; only Sushil's email(s) qualify
+  useEffect(() => {
+    if (isLoggedIn) {
+      apiFetch('/api/owner/me').then(r => r.json()).then(d => setIsOwner(!!d.isOwner)).catch(() => setIsOwner(false));
+    } else {
+      setIsOwner(false);
+    }
+  }, [isLoggedIn]);
 
   const renderContent = () => {
     const viewProps = {
@@ -1040,18 +1103,16 @@ export default function App() {
       case 'scout': return <ScoutView {...viewProps} />;
       case 'profile': return <ProfileView {...viewProps} />;
       case 'settings': return <SettingsView {...viewProps} />;
+      case 'owner': return <OwnerView {...viewProps} />;
       default: return null;
     }
   };
 
   if (!isLoggedIn) {
-    if (authScreen === 'landing') {
-      return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
-    }
-    if (authScreen === 'role') {
-      return <RoleScreen googleEnabled={googleEnabled} onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
-    }
-    if (googleSignup && !isLoggedIn) {
+    // A brand-new Google user just finished OAuth — collect their last signup
+    // step first. This must come before the landing screen or the callback
+    // bounces them back to the homepage.
+    if (googleSignup) {
       return (
         <GoogleSignupScreen
           token={googleSignup.token}
@@ -1060,11 +1121,18 @@ export default function App() {
           onDone={(data) => {
             persistSession(data.sessionId, data.user);
             setGoogleSignup(null);
-            if (googleSignup.intent === 'admin_signup' && data?.team) setSignupTeam(data.team);
+            if (data?.team) setSignupTeam(data.team);
           }}
         />
       );
     }
+    if (authScreen === 'landing') {
+      return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
+    }
+    if (authScreen === 'role') {
+      return <RoleScreen googleEnabled={googleEnabled} onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
+    }
+
     if (authScreen === 'signup-admin' || authScreen === 'signup-student') {
       const mode = authScreen === 'signup-admin' ? 'admin' : 'student';
       return (
@@ -1226,10 +1294,10 @@ export default function App() {
           <div className={cn("flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06]", isSidebarOpen ? "p-2.5" : "p-2 justify-center")}>
             <button
               onClick={() => setActiveTab('profile')}
-              className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-accent-ink font-bold text-sm hover:ring-2 hover:ring-accent/50 transition-all flex-shrink-0"
+              className="hover:ring-2 hover:ring-accent/50 transition-all rounded-full flex-shrink-0"
               title="My profile"
             >
-              {currentUser?.name.charAt(0)}
+              <Avatar user={currentUser} size="md" />
             </button>
             {isSidebarOpen && (
               <div className="flex-1 min-w-0">
@@ -1269,6 +1337,13 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
+            <button
+              onClick={() => setShowFeedback(true)}
+              className="p-2 text-text-muted hover:text-white transition-colors"
+              title="Send feedback to Sushil"
+            >
+              <MessageSquareHeart className="w-5 h-5" />
+            </button>
             <div className="relative">
               <button 
                 onClick={() => {
@@ -1314,9 +1389,7 @@ export default function App() {
             </div>
             {currentUser && (
               <div className="flex items-center gap-3 px-4 py-2 bg-white/5 rounded-full border border-white/10">
-                <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-primary font-bold text-xs">
-                  {currentUser.name.charAt(0)}
-                </div>
+                <Avatar user={currentUser} size="sm" />
                 <div className="hidden sm:block">
                   <p className="text-xs font-bold text-white">{currentUser.name}</p>
                   <p className="text-[10px] text-text-muted">{currentUser.role}</p>
@@ -1349,6 +1422,97 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
+      <CookieConsent />
+    </div>
+  );
+}
+
+// Cookie / local-storage consent. Control Point only uses first-party storage:
+// a session token to keep you signed in, your theme colors, and this choice.
+// No trackers, no ads, no third-party cookies.
+function CookieConsent() {
+  const [visible, setVisible] = useState(false);
+  const [customizing, setCustomizing] = useState(false);
+  const [functional, setFunctional] = useState(true);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('cp-consent');
+      if (!saved) setVisible(true);
+      else {
+        const parsed = JSON.parse(saved);
+        setFunctional(parsed.functional !== false);
+      }
+    } catch {
+      setVisible(true);
+    }
+  }, []);
+
+  // Allow reopening from anywhere: window.dispatchEvent(new Event('cp:cookie-settings'))
+  useEffect(() => {
+    const open = () => { setCustomizing(true); setVisible(true); };
+    window.addEventListener('cp:cookie-settings', open);
+    return () => window.removeEventListener('cp:cookie-settings', open);
+  }, []);
+
+  const save = (choice: { necessary: true; functional: boolean }) => {
+    try { localStorage.setItem('cp-consent', JSON.stringify({ ...choice, savedAt: new Date().toISOString() })); } catch {}
+    setFunctional(choice.functional);
+    setVisible(false);
+    setCustomizing(false);
+  };
+
+  if (!visible) return null;
+
+  return (
+    <div className="fixed bottom-0 inset-x-0 z-50 p-4 sm:p-6">
+      <div className="glass rounded-2xl border border-white/10 max-w-2xl mx-auto p-5 sm:p-6 shadow-2xl">
+        {!customizing ? (
+          <>
+            <h3 className="text-base font-display font-bold text-white mb-2">How Control Point stores data</h3>
+            <p className="text-sm text-text-muted mb-4">
+              We use only first-party storage on your device: a session token to keep you signed in,
+              your theme colors, and this preference. No advertising trackers, no third-party cookies.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button onClick={() => save({ necessary: true, functional: true })} className="flex-1">Accept all</Button>
+              <Button variant="secondary" onClick={() => save({ necessary: true, functional: false })} className="flex-1">Essential only</Button>
+              <Button variant="ghost" onClick={() => setCustomizing(true)} className="flex-1">Customize</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h3 className="text-base font-display font-bold text-white mb-4">Storage preferences</h3>
+            <div className="space-y-3 mb-5">
+              <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 p-3">
+                <div>
+                  <p className="text-sm font-bold text-white">Essential</p>
+                  <p className="text-xs text-text-muted">Sign-in session and security. Always on.</p>
+                </div>
+                <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted">Always on</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 p-3">
+                <div>
+                  <p className="text-sm font-bold text-white">Preferences</p>
+                  <p className="text-xs text-text-muted">Theme colors and UI choices, saved on this device.</p>
+                </div>
+                <button
+                  onClick={() => setFunctional(!functional)}
+                  className={cn("w-11 h-6 rounded-full transition-colors relative flex-shrink-0", functional ? "bg-accent" : "bg-white/10")}
+                  aria-label="Toggle preference storage"
+                >
+                  <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all", functional ? "left-[22px]" : "left-0.5")} />
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button onClick={() => save({ necessary: true, functional })} className="flex-1">Save my choice</Button>
+              <Button variant="ghost" onClick={() => setCustomizing(false)} className="flex-1">Back</Button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1828,7 +1992,10 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   return (
     <div className="space-y-4 sm:space-y-8">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Teams</h3>
+        <div>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Teams</h3>
+          <p className="text-sm text-text-muted mt-1">Your workspaces — create teams, tweak their look, and share access codes so students can join.</p>
+        </div>
         <Button onClick={() => {
           setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
           setShowAddTeam(true);
@@ -1895,7 +2062,10 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between mt-12">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">All Members</h3>
+        <div>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">All Members</h3>
+          <p className="text-sm text-text-muted mt-1">Everyone on this team — manage the roster, roles, and permissions.</p>
+        </div>
         <Button onClick={() => setShowAddMember(true)}><Plus className="w-4 h-4" /> Add Member</Button>
       </div>
 
@@ -2079,7 +2249,89 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   );
 }
 
-function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator }: any) {
+function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
+  const [checkingIn, setCheckingIn] = useState(false);
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const myRecords = (attendance || [])
+    .filter((r: any) => r.member_id === currentUser?.id)
+    .sort((a: any, b: any) => (a.date < b.date ? 1 : -1));
+  const todayRecord = myRecords.find((r: any) => r.date === today);
+  const checkedIn = todayRecord && (todayRecord.status === 'P' || todayRecord.status === 'L');
+
+  const statusMeta: any = {
+    P: { label: 'Present', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+    L: { label: 'Late', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
+    E: { label: 'Excused', cls: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+    U: { label: 'Unexcused', cls: 'bg-rose-500/15 text-rose-400 border-rose-500/30' },
+    S: { label: 'Sick', cls: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
+  };
+
+  const handleCheckin = async () => {
+    setCheckingIn(true);
+    try {
+      const res = await apiFetch('/api/attendance/checkin', { method: 'POST' });
+      if (res.ok) {
+        await onRefresh();
+      } else {
+        alert('Could not check in \u2014 try again.');
+      }
+    } finally {
+      setCheckingIn(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 sm:space-y-6 max-w-2xl">
+      <div>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Attendance</h3>
+        <p className="text-sm text-text-muted mt-1">Check in when you arrive, and review your own attendance history.</p>
+      </div>
+      <Card className="text-center py-8">
+        <div className={cn(
+          "w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4",
+          checkedIn ? "bg-emerald-500/15" : "bg-accent/15"
+        )}>
+          <CalendarCheck className={cn("w-8 h-8", checkedIn ? "text-emerald-400" : "text-accent")} />
+        </div>
+        <p className="text-xs text-text-muted uppercase font-bold tracking-widest mb-1">
+          {format(new Date(), 'EEEE, MMMM d')}
+        </p>
+        {checkedIn ? (
+          <>
+            <h4 className="text-xl font-display font-bold text-white mb-2">You are checked in</h4>
+            <p className="text-sm text-text-muted">Status: {statusMeta[todayRecord.status]?.label || todayRecord.status}</p>
+          </>
+        ) : (
+          <>
+            <h4 className="text-xl font-display font-bold text-white mb-4">Not checked in yet</h4>
+            <Button onClick={handleCheckin} disabled={checkingIn} className="px-8 py-3 text-base">
+              <CalendarCheck className="w-5 h-5" /> {checkingIn ? 'Checking in...' : 'Check In'}
+            </Button>
+          </>
+        )}
+      </Card>
+      <div>
+        <h4 className="text-sm font-bold text-white uppercase tracking-widest mb-3">My history</h4>
+        {myRecords.length === 0 ? (
+          <Card><p className="text-sm text-text-muted text-center py-6">No attendance records yet.</p></Card>
+        ) : (
+          <div className="space-y-2">
+            {myRecords.slice(0, 30).map((r: any) => (
+              <div key={r.date} className="glass rounded-xl px-4 py-3 flex items-center justify-between">
+                <span className="text-sm text-white font-medium">{format(new Date(r.date + 'T12:00:00'), 'EEE, MMM d, yyyy')}</span>
+                <span className={cn("text-xs font-bold px-2.5 py-1 rounded-full border", statusMeta[r.status]?.cls || 'bg-white/5 text-text-muted border-white/10')}>
+                  {statusMeta[r.status]?.label || r.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'grid' | 'history' | 'summary'>('grid');
   const [sessions, setSessions] = useState<string[]>([]);
   const [summary, setSummary] = useState<any[]>([]);
@@ -2284,8 +2536,17 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+  // Students get a personal check-in view instead of the admin grid
+  if (!isAdmin) {
+    return <StudentCheckinView attendance={attendance} currentUser={currentUser} onRefresh={onRefresh} />;
+  }
+
   const renderGrid = () => (
     <div className="space-y-4">
+      <div>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Attendance</h3>
+        <p className="text-sm text-text-muted mt-1">Mark who's here each day — click a cell to cycle status. Students check themselves in from their own view.</p>
+      </div>
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div className="flex gaps-2 sm:gap-3 items-center">
           <button 
@@ -2928,6 +3189,10 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      <div>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Tasks</h3>
+        <p className="text-sm text-text-muted mt-1">Everything the team needs to get done — assign it, track it, finish it.</p>
+      </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 sm:items-center sm:justify-between">
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
           <Select 
@@ -3126,6 +3391,10 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      <div>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Budget</h3>
+        <p className="text-sm text-text-muted mt-1">Team money at a glance — income, expenses, and every transaction. Students can view; only admins can add or edit entries.</p>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         <Card className="bg-emerald-500/10 border-emerald-500/20">
           <p className="text-xs text-emerald-400 uppercase font-bold">Total Income</p>
@@ -3142,7 +3411,10 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Transaction History</h3>
+        <div>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Transaction History</h3>
+          <p className="text-sm text-text-muted mt-1">A line-by-line record of money in and out.</p>
+        </div>
         {isAdmin && <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
       </div>
 
@@ -3356,7 +3628,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
         </Card>
       </div>
 
-      <Card title="Parts Management">
+      <Card title="Parts Management" subtitle="Every part, tool, and material the team owns — search, add, and keep stock counts current">
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-3">
             <Input 
@@ -3527,6 +3799,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
 
 function OutreachView({ outreach, onRefresh }: any) {
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
   const [newEvent, setNewEvent] = useState({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '', location: '' });
 
   const handleAdd = async () => {
@@ -3545,11 +3818,35 @@ function OutreachView({ outreach, onRefresh }: any) {
     onRefresh();
   };
 
+  const openEdit = (event: any) => {
+    setEditing({ ...event, hours: String(event.hours ?? ''), date: (event.date || '').slice(0, 10) });
+    setShowAdd(true);
+  };
+
+  const handleSave = async () => {
+    const payload = { ...editing, hours: parseInt(editing.hours) || 0 };
+    const res = await apiFetch(`/api/outreach/${editing.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      setShowAdd(false);
+      setEditing(null);
+      onRefresh();
+    } else {
+      alert('Could not save changes.');
+    }
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Outreach Log</h3>
-        <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
+        <div>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Outreach Log</h3>
+          <p className="text-sm text-text-muted mt-1">Track community events and service hours — demos, workshops, volunteering.</p>
+        </div>
+        <Button onClick={() => { setEditing(null); setNewEvent({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '', location: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -3563,9 +3860,14 @@ function OutreachView({ outreach, onRefresh }: any) {
               <div className="text-right flex flex-col items-end gap-2">
                 <p className="text-2xl font-display font-bold text-accent">{event.hours}h</p>
                 <p className="text-[10px] text-text-muted uppercase font-bold">Logged</p>
-                <button onClick={() => handleDelete(event.id)} className="text-slate-600 hover:text-rose-400 transition-colors mt-2">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={() => openEdit(event)} className="text-slate-600 hover:text-accent transition-colors" title="Edit event">
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => handleDelete(event.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Delete event">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           </Card>
@@ -3574,21 +3876,21 @@ function OutreachView({ outreach, onRefresh }: any) {
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title="Log Outreach Event" className="w-full max-w-md">
+          <Card title={editing ? "Edit Outreach Event" : "Log Outreach Event"} className="w-full max-w-md">
             <div className="space-y-4">
-              <Input placeholder="Event Title" value={newEvent.title} onChange={(e: any) => setNewEvent({...newEvent, title: e.target.value})} />
-              <textarea 
+              <Input placeholder="Event Title" value={editing ? editing.title : newEvent.title} onChange={(e: any) => editing ? setEditing({...editing, title: e.target.value}) : setNewEvent({...newEvent, title: e.target.value})} />
+              <textarea
                 className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-24"
                 placeholder="Description"
-                value={newEvent.description}
-                onChange={(e: any) => setNewEvent({...newEvent, description: e.target.value})}
+                value={editing ? editing.description : newEvent.description}
+                onChange={(e: any) => editing ? setEditing({...editing, description: e.target.value}) : setNewEvent({...newEvent, description: e.target.value})}
               />
-              <Input placeholder="Location" value={newEvent.location} onChange={(e: any) => setNewEvent({...newEvent, location: e.target.value})} />
-              <Input placeholder="Hours" type="number" value={newEvent.hours} onChange={(e: any) => setNewEvent({...newEvent, hours: e.target.value})} />
-              <Input type="date" value={newEvent.date} onChange={(e: any) => setNewEvent({...newEvent, date: e.target.value})} />
+              <Input placeholder="Location" value={editing ? editing.location : newEvent.location} onChange={(e: any) => editing ? setEditing({...editing, location: e.target.value}) : setNewEvent({...newEvent, location: e.target.value})} />
+              <Input placeholder="Hours" type="number" value={editing ? editing.hours : newEvent.hours} onChange={(e: any) => editing ? setEditing({...editing, hours: e.target.value}) : setNewEvent({...newEvent, hours: e.target.value})} />
+              <Input type="date" value={editing ? editing.date : newEvent.date} onChange={(e: any) => editing ? setEditing({...editing, date: e.target.value}) : setNewEvent({...newEvent, date: e.target.value})} />
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
-                <Button onClick={handleAdd}>Log Event</Button>
+                <Button variant="secondary" onClick={() => { setShowAdd(false); setEditing(null); }}>Cancel</Button>
+                <Button onClick={editing ? handleSave : handleAdd}>{editing ? 'Save Changes' : 'Log Event'}</Button>
               </div>
             </div>
           </Card>
@@ -3602,7 +3904,10 @@ function ScoutView({ news, refreshNews, isAiLoading, ThinkingIndicator }: any) {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">AI Scout: FTC & REV News</h3>
+        <div>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">AI Scout: FTC &amp; REV News</h3>
+          <p className="text-sm text-text-muted mt-1">Fresh robotics headlines, collected automatically for your team.</p>
+        </div>
         <Button onClick={refreshNews} variant="outline" disabled={isAiLoading} className="w-full sm:w-auto"><Clock className="w-4 h-4 mr-1" /> Refresh News</Button>
       </div>
 
@@ -3649,7 +3954,10 @@ function CommunicationView({ communications, onRefresh }: any) {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Communication Log</h3>
+        <div>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Communication Log</h3>
+          <p className="text-sm text-text-muted mt-1">A shared record of emails and messages sent on the team's behalf.</p>
+        </div>
         <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log New Message</Button>
       </div>
 
@@ -3722,6 +4030,9 @@ function ChatView({ messages, members, currentUser, socket }: any) {
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -3729,21 +4040,43 @@ function ChatView({ messages, members, currentUser, socket }: any) {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  const handleSend = () => {
-    if (!content.trim() || !socket) return;
-    
-    // Convert mentions to searchable format
-    let finalContent = content;
-    const mentionRegex = /@(\w+)/g;
-    const matches = content.match(mentionRegex);
-    if (matches) {
-      matches.forEach(m => {
-        const name = m.slice(1);
-        const member = members.find((mem: any) => mem.name.toLowerCase() === name.toLowerCase());
-        if (member) {
-          finalContent = finalContent.replace(m, `@[${member.name}]`);
+  const convertMentions = (text: string) => {
+    // Match @Full Name for multi-word names — longest names first
+    let out = text;
+    const sorted = [...members].sort((a: any, b: any) => b.name.length - a.name.length);
+    for (const m of sorted) {
+      out = out.split(`@${m.name}`).join(`@[${m.name}]`);
+    }
+    return out;
+  };
+
+  const handleSend = async () => {
+    if ((!content.trim() && !pendingFile) || !socket || uploading) return;
+    const finalContent = convertMentions(content);
+
+    if (pendingFile) {
+      setUploading(true);
+      const formData = new FormData();
+      formData.append('file', pendingFile);
+      formData.append('sender_id', currentUser.id.toString());
+      formData.append('sender_name', currentUser.name);
+      formData.append('content', finalContent);
+      try {
+        const response = await apiFetch('/api/messages/upload', { method: 'POST', body: formData });
+        if (response.ok) {
+          setContent('');
+          clearPending();
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        } else {
+          alert('Could not send that file.');
         }
-      });
+      } catch (error) {
+        console.error('Upload error:', error);
+        alert('Could not send that file.');
+      } finally {
+        setUploading(false);
+      }
+      return;
     }
 
     socket.send(JSON.stringify({
@@ -3755,33 +4088,37 @@ function ChatView({ messages, members, currentUser, socket }: any) {
     setContent('');
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !socket) return;
+  const clearPending = () => {
+    if (pendingPreview) URL.revokeObjectURL(pendingPreview);
+    setPendingFile(null);
+    setPendingPreview(null);
+  };
 
-    setUploading(true);
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('sender_id', currentUser.id.toString());
-    formData.append('sender_name', currentUser.name);
-    formData.append('content', content);
+  const queueFile = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert('Files must be under 10 MB.'); return; }
+    clearPending();
+    setPendingFile(file);
+    if (file.type.startsWith('image/')) setPendingPreview(URL.createObjectURL(file));
+  };
 
-    try {
-      const response = await apiFetch('/api/messages/upload', {
-        method: 'POST',
-        body: formData
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setContent('');
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    } catch (error) {
-      console.error('Upload error:', error);
-    } finally {
-      setUploading(false);
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      e.preventDefault();
+      queueFile(files[0]);
     }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) queueFile(files[0]);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    queueFile(e.target.files?.[0] || undefined);
   };
 
   const handleDeleteMessage = async (msgId: number) => {
@@ -3846,11 +4183,26 @@ function ChatView({ messages, members, currentUser, socket }: any) {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-200px)] sm:h-[calc(100vh-180px)] glass rounded-2xl overflow-hidden">
+    <div
+      className="flex flex-col h-[calc(100vh-200px)] sm:h-[calc(100vh-180px)] glass rounded-2xl overflow-hidden relative"
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+    >
+      {dragging && (
+        <div className="absolute inset-0 z-20 bg-accent/10 border-2 border-dashed border-accent rounded-2xl flex items-center justify-center pointer-events-none">
+          <p className="text-accent font-bold">Drop to attach</p>
+        </div>
+      )}
+      <div className="px-4 sm:px-6 pt-4 sm:pt-5">
+        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Team Chat</h3>
+        <p className="text-sm text-text-muted mt-0.5">Real-time messaging for the whole team — @mention anyone to ping them.</p>
+      </div>
       <div ref={scrollRef} className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-3 sm:space-y-4 custom-scrollbar">
         {messages.map((msg: any) => (
           <div key={msg.id} className={cn("flex flex-col group", msg.sender_id === currentUser.id ? "items-end" : "items-start")}>
             <div className="flex items-center gap-2 mb-1">
+              <Avatar user={{ name: msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name, avatar_url: members.find((m: any) => m.id === msg.sender_id)?.avatar_url }} size="xs" />
               <span className="text-[10px] font-bold text-text-muted/70">{msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name}</span>
               <span className="text-[10px] text-slate-600">{format(new Date(msg.timestamp), 'HH:mm')}</span>
               {msg.sender_id === currentUser.id && !msg.deleted_at && (
@@ -3928,6 +4280,24 @@ function ChatView({ messages, members, currentUser, socket }: any) {
       </div>
       
       <div className="p-3 sm:p-4 border-t border-white/5 bg-secondary/30 relative">
+        {pendingFile && (
+          <div className="mb-2 flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
+            {pendingPreview ? (
+              <img src={pendingPreview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+            ) : (
+              <div className="w-14 h-14 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                <FileText className="w-6 h-6 text-accent" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-white truncate">{pendingFile.name}</p>
+              <p className="text-[11px] text-text-muted">{formatFileSize(pendingFile.size)} — will send with your message</p>
+            </div>
+            <button onClick={clearPending} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove attachment">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
         {showMentions && filteredMentions.length > 0 && (
           <div className="absolute bottom-full left-4 mb-2 glass rounded-xl border border-white/10 overflow-hidden w-48 shadow-2xl">
             {filteredMentions.slice(0, 5).map((m: any) => (
@@ -3962,17 +4332,237 @@ function ChatView({ messages, members, currentUser, socket }: any) {
           >
             <FileUp className="w-4 sm:w-5 h-4 sm:h-5" />
           </button>
-          <textarea 
+          <textarea
             className="flex-1 bg-primary border border-white/10 rounded-xl px-3 sm:px-4 py-2 text-sm text-white focus:outline-none focus:border-accent/50 transition-colors h-10 sm:h-12 resize-none"
-            placeholder="Type a message... use @ to mention"
+            placeholder="Type a message... use @ to mention, paste or drop images"
             value={content}
             onChange={onContentChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             disabled={uploading}
           />
           <Button onClick={handleSend} disabled={uploading} className="h-10 sm:h-12 w-10 sm:w-12 p-0 flex-shrink-0"><Send className="w-4 sm:w-5 h-4 sm:h-5" /></Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Feedback: any signed-in user can send a note straight to Sushil
+function FeedbackModal({ onClose }: any) {
+  const [category, setCategory] = useState('general');
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!message.trim()) return;
+    setSending(true);
+    try {
+      const res = await apiFetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, message: message.trim() })
+      });
+      if (res.ok) setSent(true);
+      else alert('Could not send feedback — try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="glass rounded-2xl border border-white/10 w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        {sent ? (
+          <div className="text-center py-6">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/15 flex items-center justify-center mb-4">
+              <Check className="w-7 h-7 text-emerald-400" />
+            </div>
+            <h3 className="text-lg font-display font-bold text-white mb-2">Feedback sent</h3>
+            <p className="text-sm text-text-muted mb-6">Thanks — Sushil reads every note personally.</p>
+            <Button onClick={onClose} className="w-full">Done</Button>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-display font-bold text-white">Send feedback</h3>
+              <button onClick={onClose} className="p-1.5 text-text-muted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+            </div>
+            <p className="text-sm text-text-muted mb-4">Found a bug, have an idea, or just want to say hi? This goes directly to Sushil.</p>
+            <form onSubmit={submit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-text-muted uppercase">Topic</label>
+                <Select
+                  value={category}
+                  onChange={(e: any) => setCategory(e.target.value)}
+                  options={[
+                    { value: 'general', label: 'General' },
+                    { value: 'bug', label: 'Bug report' },
+                    { value: 'feature', label: 'Feature idea' },
+                    { value: 'question', label: 'Question' },
+                  ]}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-text-muted uppercase">Message</label>
+                <textarea
+                  value={message}
+                  onChange={(e: any) => setMessage(e.target.value)}
+                  rows={5}
+                  placeholder="Tell Sushil what's on your mind…"
+                  className="w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-none"
+                />
+              </div>
+              <Button type="submit" disabled={sending || !message.trim()} className="w-full">
+                {sending ? 'Sending…' : 'Send to Sushil'}
+              </Button>
+            </form>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Owner portal: Sushil's cross-workspace view of usage + feedback
+function OwnerView(_props: any) {
+  const [tab, setTab] = useState<'overview' | 'feedback' | 'users'>('overview');
+  const [overview, setOverview] = useState<any>(null);
+  const [feedback, setFeedback] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [o, f, u] = await Promise.all([
+          apiFetch('/api/owner/overview').then(r => r.json()),
+          apiFetch('/api/owner/feedback').then(r => r.json()),
+          apiFetch('/api/owner/users').then(r => r.json()),
+        ]);
+        setOverview(o); setFeedback(Array.isArray(f) ? f : []); setUsers(Array.isArray(u) ? u : []);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const setFeedbackStatus = async (id: number, status: 'new' | 'resolved') => {
+    const res = await apiFetch(`/api/owner/feedback/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    if (res.ok) setFeedback(feedback.map(f => f.id === id ? { ...f, status } : f));
+  };
+
+  const totals = overview?.totals || {};
+  const statCards = [
+    { label: 'Workspaces', value: totals.teams || 0, icon: Users },
+    { label: 'Users', value: totals.users || 0, icon: UserCircle },
+    { label: 'Messages', value: totals.messages || 0, icon: MessageSquare },
+    { label: 'Feedback notes', value: totals.feedback || 0, icon: MessageSquareHeart },
+  ];
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <div>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-white flex items-center gap-2">
+          <Crown className="w-5 h-5 text-accent" /> Owner Portal
+        </h3>
+        <p className="text-sm text-text-muted mt-1">Your private view of how Control Point is being used — every workspace, user, and feedback note in one place.</p>
+      </div>
+
+      <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
+        {(['overview', 'feedback', 'users'] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn("px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap capitalize", tab === t ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
+          >
+            {t}{t === 'feedback' && (totals.new_feedback > 0) && ` (${totals.new_feedback})`}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <Card><p className="text-sm text-text-muted text-center py-8">Loading…</p></Card>
+      ) : tab === 'overview' ? (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            {statCards.map((c) => (
+              <Card key={c.label} className="!p-4 !gap-2">
+                <c.icon className="w-5 h-5 text-accent" />
+                <p className="text-2xl font-display font-bold text-white">{c.value}</p>
+                <p className="text-xs text-text-muted">{c.label}</p>
+              </Card>
+            ))}
+          </div>
+          <Card title="Workspaces" subtitle="Every team on Control Point and how active each one is">
+            <div className="space-y-2">
+              {(overview?.teams || []).map((t: any) => (
+                <div key={t.id} className="glass rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-1">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                    <p className="text-[11px] text-text-muted">Code {t.access_code}{t.number ? ` · #${t.number}` : ''}</p>
+                  </div>
+                  <div className="flex gap-4 text-xs text-text-muted ml-auto">
+                    <span><b className="text-white">{t.member_count}</b> members</span>
+                    <span><b className="text-white">{t.message_count}</b> messages</span>
+                    <span><b className="text-white">{t.task_count}</b> tasks</span>
+                    <span><b className="text-white">{t.feedback_count}</b> feedback</span>
+                  </div>
+                </div>
+              ))}
+              {(overview?.teams || []).length === 0 && (
+                <p className="text-sm text-text-muted text-center py-6">No workspaces yet.</p>
+              )}
+            </div>
+          </Card>
+        </>
+      ) : tab === 'feedback' ? (
+        <div className="space-y-3">
+          {feedback.length === 0 && <Card><p className="text-sm text-text-muted text-center py-8">No feedback yet.</p></Card>}
+          {feedback.map((f: any) => (
+            <Card key={f.id} className="!p-4 !gap-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-accent/15 text-accent">{f.category}</span>
+                    <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full", f.status === 'new' ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-text-muted")}>{f.status}</span>
+                  </div>
+                  <p className="text-sm text-white whitespace-pre-wrap">{f.message}</p>
+                  <p className="text-[11px] text-text-muted mt-2">{f.user_name} · {f.user_email}{f.team_name ? ` · ${f.team_name}` : ''} · {f.created_at ? format(new Date(f.created_at), 'MMM d, yyyy h:mm a') : ''}</p>
+                </div>
+                <Button
+                  variant="secondary"
+                  className="!px-3 !py-1.5 !text-xs flex-shrink-0"
+                  onClick={() => setFeedbackStatus(f.id, f.status === 'new' ? 'resolved' : 'new')}
+                >
+                  {f.status === 'new' ? 'Resolve' : 'Reopen'}
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card title="Users" subtitle="Everyone signed up, newest first">
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            {users.map((u: any) => (
+              <div key={u.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                <Avatar user={u} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-white truncate">{u.name}</p>
+                  <p className="text-[11px] text-text-muted truncate">{u.email}{u.team_name ? ` · ${u.team_name}` : ''}</p>
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted flex-shrink-0">{u.account_type}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -4005,39 +4595,66 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
     setColorVersion((v) => v + 1);
   }, [accentColor, primaryColor, textColor, setColorVersion]);
 
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  const handleAvatarFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
+    if (file.size > 2 * 1024 * 1024) { alert('Image must be under 2 MB.'); return; }
+    setAvatarUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('avatar', file);
+      const res = await fetch('/api/profile/avatar', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('sessionId')}` },
+        body: fd
+      });
+      if (res.ok) {
+        await onRefresh();
+      } else {
+        alert('Could not upload that picture.');
+      }
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
+  const removeAvatar = async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar_url: null })
+      });
+      if (res.ok) await onRefresh();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     setLoading(true);
     try {
-      // Ensure we send scopes as an array
-      let currentScopes = currentUser.scopes;
-      try {
-        while (typeof currentScopes === 'string') {
-          const parsed = JSON.parse(currentScopes);
-          if (typeof parsed === 'string') currentScopes = parsed;
-          else { currentScopes = parsed; break; }
-        }
-      } catch {
-        currentScopes = [];
-      }
-
-      const res = await apiFetch(`/api/members/${currentUser.id}`, {
+      // Self-service: anyone can update their own name, title, theme colors, and avatar
+      const res = await apiFetch('/api/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          team_id: currentUser.team_id,
-          name: name, 
-          role: role, 
-          email: currentUser.email,
-          is_board: currentUser.is_board,
-          scopes: currentScopes,
-          accent_color: accentColor || undefined,
-          primary_color: primaryColor || undefined,
-          text_color: textColor || undefined
+        body: JSON.stringify({
+          name: name.trim(),
+          role: role,
+          accent_color: accentColor || null,
+          primary_color: primaryColor || null,
+          text_color: textColor || null
         })
       });
       if (res.ok) {
         await onRefresh();
         alert('Profile updated successfully!');
+      } else {
+        alert('Could not save your profile.');
       }
     } finally {
       setLoading(false);
@@ -4054,9 +4671,33 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
 
   return (
     <div className="max-w-2xl space-y-6">
-      <h3 className="text-xl font-display font-bold text-white">My Profile</h3>
+      <div>
+        <h3 className="text-xl font-display font-bold text-white">My Profile</h3>
+        <p className="text-sm text-text-muted mt-1">Your name and picture show up everywhere — chat, tasks, the team roster. Changes are visible to your whole team instantly.</p>
+      </div>
       <Card title="Personal Information" icon={UserCircle}>
         <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <Avatar user={currentUser} size="xl" />
+            <div className="space-y-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e: any) => handleAvatarFile(e.target.files?.[0])}
+              />
+              <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={avatarUploading}>
+                {avatarUploading ? 'Uploading…' : currentUser?.avatar_url ? 'Change picture' : 'Add a picture'}
+              </Button>
+              {currentUser?.avatar_url && (
+                <button onClick={removeAvatar} className="block text-xs text-text-muted hover:text-rose-400 transition-colors">
+                  Remove picture
+                </button>
+              )}
+              <p className="text-[11px] text-text-muted/70">Images up to 2 MB.</p>
+            </div>
+          </div>
           <div className="space-y-1">
             <label className="text-xs font-bold text-text-muted uppercase">Full Name</label>
             <Input value={name} onChange={(e: any) => setName(e.target.value)} />
@@ -4089,6 +4730,19 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
               </div>
             </div>
           </div>
+          <button
+            onClick={() => {
+              setAccentColor(''); setPrimaryColor(''); setTextColor('');
+              const root = document.documentElement;
+              root.style.removeProperty('--color-accent');
+              root.style.removeProperty('--color-primary');
+              root.style.removeProperty('--color-text-base');
+              alert('Theme reset. Save to make it permanent.');
+            }}
+            className="text-xs text-text-muted hover:text-accent transition-colors self-start"
+          >
+            Reset to the default Volt &amp; Carbon theme
+          </button>
 
           <div className="pt-2 flex flex-wrap gap-3">
             <Button onClick={handleSave}>Save Changes</Button>
@@ -4097,6 +4751,15 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
         </div>
       </Card>
       
+      <Card title="Privacy" subtitle="Control what this app stores on your device">
+        <button
+          onClick={() => window.dispatchEvent(new Event('cp:cookie-settings'))}
+          className="text-sm text-accent hover:underline self-start"
+        >
+          Cookie &amp; storage settings
+        </button>
+      </Card>
+
       <Card title="Account Details" className="opacity-70">
         <div className="space-y-2">
           <p className="text-sm text-text-muted">Email: <span className="text-white">{currentUser?.email}</span></p>
