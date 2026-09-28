@@ -1941,7 +1941,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   const handleAddTeam = async () => {
     const url = editingTeam ? `/api/teams/${editingTeam.id}` : '/api/teams';
     const method = editingTeam ? 'PATCH' : 'POST';
-    await fetch(url, {
+    await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newTeam)
@@ -1978,7 +1978,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
       }
     }
 
-    await fetch(url, {
+    await apiFetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newMember, scopes })
@@ -4606,9 +4606,9 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
     try {
       const fd = new FormData();
       fd.append('avatar', file);
-      const res = await fetch('/api/profile/avatar', {
+      const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
+      const res = await fetch(`/api/profile/avatar${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('sessionId')}` },
         body: fd
       });
       if (res.ok) {
