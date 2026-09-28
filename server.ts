@@ -821,7 +821,9 @@ async function startServer() {
   // ---- Google OAuth ----
   const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
   const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-  const oauthStates = new Map<string, number>(); // state -> expiry timestamp
+  const oauthStates = new Map<string, { expiry: number; intent: string }>(); // state -> {expiry, intent}
+  // Pending Google signups: token -> {googleSub, email, name, intent, expiry}. Single-use, 10 min.
+  const pendingGoogleSignups = new Map<string, { googleSub: string; email: string; name: string; intent: string; expiry: number }>();
 
   function getOAuthRedirectUri(req: any): string {
     const base = (process.env.APP_URL || "").replace(/\/$/, "");
@@ -848,10 +850,12 @@ async function startServer() {
     if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
       return res.status(400).json({ error: "Google sign-in is not configured" });
     }
+    const rawIntent = (req.query.intent as string) || 'login';
+    const intent = ['login', 'admin_signup', 'student_signup'].includes(rawIntent) ? rawIntent : 'login';
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     const state = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
-    oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent });
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req),
@@ -866,11 +870,12 @@ async function startServer() {
   app.get("/api/auth/google/callback", async (req, res) => {
     try {
       const { code, state } = req.query as { code?: string; state?: string };
-      const expiry = state ? oauthStates.get(state) : undefined;
+      const pending = state ? oauthStates.get(state) : undefined;
       if (state) oauthStates.delete(state);
-      if (!code || !expiry || expiry < Date.now()) {
+      if (!code || !pending || pending.expiry < Date.now()) {
         return res.redirect("/?google_error=invalid_state");
       }
+      const intent = pending.intent || 'login';
       // Exchange the authorization code for tokens
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
         method: "POST",
@@ -893,21 +898,86 @@ async function startServer() {
       const profile = (await profileRes.json()) as any;
       if (!profile.email) throw new Error("No email in Google profile");
 
-      // Only members already on the roster can sign in - admins add people first
+      // Members sign in directly; new users complete signup when they arrived with a signup intent
       let member: any = (await dbGet("SELECT * FROM members WHERE google_id = ?", profile.sub));
       if (!member) {
         member = (await dbGet("SELECT * FROM members WHERE email = ?", profile.email));
-        if (!member) {
+        if (member) {
+          (await dbRun("UPDATE members SET google_id = ? WHERE id = ?", profile.sub, member.id));
+          member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
+        } else if (intent === 'admin_signup' || intent === 'student_signup') {
+          const tokenBytes = new Uint8Array(32);
+          crypto.getRandomValues(tokenBytes);
+          const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
+          pendingGoogleSignups.set(token, {
+            googleSub: profile.sub,
+            email: profile.email,
+            name: profile.name || '',
+            intent,
+            expiry: Date.now() + 10 * 60 * 1000,
+          });
+          return res.redirect(`/?google_signup=${token}&intent=${intent}`);
+        } else {
           return res.redirect("/?google_error=not_invited");
         }
-        (await dbRun("UPDATE members SET google_id = ? WHERE id = ?", profile.sub, member.id));
-        member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
       }
       const sessionId = await createSession(member.id);
       res.redirect(`/?google_session=${sessionId}`);
     } catch (error) {
       console.error("Google OAuth error:", error);
       res.redirect("/?google_error=oauth_failed");
+    }
+  });
+
+  // Finish a Google signup: the user verified their Google identity, now they
+  // provide the role-specific details (team name for admins, access code for students)
+  app.post("/api/auth/google/complete", async (req, res) => {
+    try {
+      const { token, teamName, teamNumber, accessCode } = req.body || {};
+      const pending = token ? pendingGoogleSignups.get(token) : undefined;
+      if (pending) pendingGoogleSignups.delete(token); // single-use
+      if (!pending || pending.expiry < Date.now()) {
+        return res.status(400).json({ error: "Google signup expired — please try again" });
+      }
+      const cleanEmail = (pending.email || '').trim();
+      const cleanName = (pending.name || '').trim() || cleanEmail.split('@')[0];
+      if (!cleanEmail) return res.status(400).json({ error: "Google signup expired — please try again" });
+      const existing = (await dbGet("SELECT id FROM members WHERE email = ?", cleanEmail));
+      if (existing) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
+
+      if (pending.intent === 'admin_signup') {
+        const cleanTeam = (teamName || '').trim();
+        if (!cleanTeam) return res.status(400).json({ error: "Team name is required" });
+        const code = await uniqueAccessCode();
+        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", cleanTeam, (teamNumber || '').trim(), code)) as any;
+        const teamId = tInfo.lastInsertRowid;
+        const mInfo = (await dbRun(
+          "INSERT INTO members (team_id, name, role, email, password, google_id, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?)",
+          teamId, cleanName, 'Admin', cleanEmail, pending.googleSub, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
+        )) as any;
+        const sessionId = await createSession(mInfo.lastInsertRowid);
+        const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
+      }
+
+      if (pending.intent === 'student_signup') {
+        const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
+        const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
+        if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
+        const mInfo = (await dbRun(
+          "INSERT INTO members (team_id, name, role, email, password, google_id, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?)",
+          team.id, cleanName, 'Member', cleanEmail, pending.googleSub, JSON.stringify([])
+        )) as any;
+        const sessionId = await createSession(mInfo.lastInsertRowid);
+        const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
+      }
+
+      return res.status(400).json({ error: "Google signup expired — please try again" });
+    } catch (e: any) {
+      console.error("Google signup completion error:", e);
+      return res.status(500).json({ error: "Signup failed — try again" });
     }
   });
 

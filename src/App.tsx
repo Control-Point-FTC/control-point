@@ -163,7 +163,16 @@ const AuthShell = ({ children }: any) => (
   </div>
 );
 
-const RoleScreen = ({ onBack, onSelect }: { onBack: () => void; onSelect: (mode: 'admin' | 'student') => void }) => (
+const GoogleIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24">
+    <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.3H12v4.3h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.2-2 3.7-5 3.7-8.7z"/>
+    <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.8-2.9c-1 .7-2.4 1.2-4.1 1.2-3.1 0-5.8-2.1-6.8-5l-3.9 3C3.5 21.3 7.5 24 12 24z"/>
+    <path fill="#FBBC05" d="M5.2 14.4c-.2-.7-.4-1.5-.4-2.4s.1-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l3.9-3z"/>
+    <path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.5 0 3.5 2.7 1.3 6.6l3.9 3.1c1-2.9 3.7-5 6.8-5z"/>
+  </svg>
+);
+
+const RoleScreen = ({ onBack, onSelect, googleEnabled }: { onBack: () => void; onSelect: (mode: 'admin' | 'student') => void; googleEnabled: boolean }) => (
   <AuthShell>
     <button
       onClick={onBack}
@@ -213,6 +222,23 @@ const RoleScreen = ({ onBack, onSelect }: { onBack: () => void; onSelect: (mode:
           </div>
         </button>
       </div>
+      {googleEnabled && (
+        <>
+          <div className="flex items-center gap-3 mt-5">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-xs text-text-muted">or continue with</span>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+          <div className="grid grid-cols-2 gap-3 mt-4">
+            <a href="/api/auth/google?intent=admin_signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-2.5 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+              <GoogleIcon /> Admin
+            </a>
+            <a href="/api/auth/google?intent=student_signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-2.5 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+              <GoogleIcon /> Student
+            </a>
+          </div>
+        </>
+      )}
       <p className="mt-6 text-center text-xs text-text-muted">
         Already have an account?{' '}
         <button onClick={onBack} className="text-accent font-semibold hover:underline">Back to home</button>
@@ -313,6 +339,88 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
           {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
           <Button type="submit" disabled={busy} className="w-full py-3 mt-2 text-[15px]">
             {busy ? 'Creating account…' : mode === 'admin' ? 'Create workspace' : 'Join team'}
+          </Button>
+        </form>
+      </Card>
+    </AuthShell>
+  );
+};
+
+// After Google OAuth: the identity is verified, now collect the role-specific details
+const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
+  token: string; intent: 'admin_signup' | 'student_signup';
+  onBack: () => void; onDone: (data: any) => void;
+}) => {
+  const isAdmin = intent === 'admin_signup';
+  const [teamName, setTeamName] = useState('');
+  const [teamNumber, setTeamNumber] = useState('');
+  const [accessCode, setAccessCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/auth/google/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, teamName, teamNumber, accessCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Signup failed');
+      onDone(data);
+    } catch (err: any) {
+      setError(err.message || 'Signup failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = (t: string) => (
+    <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">{t}</label>
+  );
+
+  return (
+    <AuthShell>
+      <button
+        onClick={onBack}
+        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+      >
+        <ChevronLeft className="w-4 h-4" /> Back to home
+      </button>
+      <Card className="p-8">
+        <div className="flex flex-col items-center gap-3 mb-6 text-center">
+          <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center", isAdmin ? "bg-accent gold-glow" : "bg-sky-400/20")}>
+            {isAdmin
+              ? <ShieldCheck className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
+              : <GraduationCap className="text-sky-400 w-8 h-8" strokeWidth={2.5} />}
+          </div>
+          <h1 className="text-2xl font-display font-bold text-white tracking-tight">Almost done</h1>
+          <p className="text-text-muted text-sm flex items-center gap-2">
+            <GoogleIcon /> Signed in with Google — one more step.
+          </p>
+        </div>
+        <form onSubmit={submit} className="space-y-4">
+          {isAdmin ? (
+            <>
+              <div className="space-y-1.5">{label('Team name')}<Input required value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Circuit Breakers" /></div>
+              <div className="space-y-1.5">{label('Team number (optional)')}<Input value={teamNumber} onChange={(e: any) => setTeamNumber(e.target.value)} placeholder="e.g. 12345" /></div>
+            </>
+          ) : (
+            <div className="space-y-1.5">
+              {label('Team access code')}
+              <div className="relative">
+                <KeyRound className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                <Input required value={accessCode} onChange={(e: any) => setAccessCode(e.target.value)} placeholder="CP-XXXX-XXXX" className="pl-10 uppercase font-mono tracking-wider" />
+              </div>
+              <p className="text-xs text-text-muted">Ask your team admin for this code.</p>
+            </div>
+          )}
+          {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
+          <Button type="submit" disabled={busy} className="w-full py-3 mt-2 text-[15px]">
+            {busy ? 'Creating account…' : isAdmin ? 'Create workspace' : 'Join team'}
           </Button>
         </form>
       </Card>
@@ -482,8 +590,9 @@ export default function App() {
 
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
+  const [googleSignup, setGoogleSignup] = useState<{ token: string; intent: 'admin_signup' | 'student_signup' } | null>(null);
 
-  // Handle Google OAuth callback (?google_session= / ?google_error=)
+  // Handle Google OAuth callback (?google_session= / ?google_error= / ?google_signup=)
   useEffect(() => {
     apiFetch('/api/auth/config')
       .then(r => r.json())
@@ -492,10 +601,16 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     const gs = params.get('google_session');
     const ge = params.get('google_error');
+    const gsu = params.get('google_signup');
+    const gi = params.get('intent');
     if (ge) {
       setGoogleError(ge === 'not_invited'
-        ? 'This Google account is not on the team roster yet. Ask an admin to add you first.'
+        ? 'This Google account is not registered yet — create an account to get started.'
         : 'Google sign-in failed. Please try again.');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (gsu && (gi === 'admin_signup' || gi === 'student_signup')) {
+      setGoogleSignup({ token: gsu, intent: gi });
       window.history.replaceState({}, '', window.location.pathname);
     }
     if (gs) {
@@ -934,7 +1049,21 @@ export default function App() {
       return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
     }
     if (authScreen === 'role') {
-      return <RoleScreen onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
+      return <RoleScreen googleEnabled={googleEnabled} onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
+    }
+    if (googleSignup && !isLoggedIn) {
+      return (
+        <GoogleSignupScreen
+          token={googleSignup.token}
+          intent={googleSignup.intent}
+          onBack={() => { setGoogleSignup(null); setAuthScreen('landing'); }}
+          onDone={(data) => {
+            persistSession(data.sessionId, data.user);
+            setGoogleSignup(null);
+            if (googleSignup.intent === 'admin_signup' && data?.team) setSignupTeam(data.team);
+          }}
+        />
+      );
     }
     if (authScreen === 'signup-admin' || authScreen === 'signup-student') {
       const mode = authScreen === 'signup-admin' ? 'admin' : 'student';
@@ -996,14 +1125,9 @@ export default function App() {
                   <span className="text-xs text-text-muted">or</span>
                   <div className="flex-1 h-px bg-white/10" />
                 </div>
-                <a href="/api/auth/google" className="block mt-6">
+                <a href="/api/auth/google?intent=login" className="block mt-6">
                   <Button variant="secondary" className="w-full py-3" type="button">
-                    <svg className="w-5 h-5" viewBox="0 0 24 24">
-                      <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.3H12v4.3h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.2-2 3.7-5 3.7-8.7z"/>
-                      <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.8-2.9c-1 .7-2.4 1.2-4.1 1.2-3.1 0-5.8-2.1-6.8-5l-3.9 3C3.5 21.3 7.5 24 12 24z"/>
-                      <path fill="#FBBC05" d="M5.2 14.4c-.2-.7-.4-1.5-.4-2.4s.1-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l3.9-3z"/>
-                      <path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.5 0 3.5 2.7 1.3 6.6l3.9 3.1c1-2.9 3.7-5 6.8-5z"/>
-                    </svg>
+                    <GoogleIcon />
                     Continue with Google
                   </Button>
                 </a>
