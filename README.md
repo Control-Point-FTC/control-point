@@ -1,132 +1,58 @@
-# FTC Dashboard
+# Control Point
 
-A comprehensive club management platform for FIRST Tech Challenge (FTC) teams, featuring real-time attendance tracking, task management, budget oversight, and AI-powered insights. Created by teams #10937 and #30548 Stuttgart High School.
+Team management platform for robotics clubs — roster & permissions, attendance tracking, Kanban tasks, budget, inventory, outreach, team messaging, and a shared team calendar. Built on the open-source FTC Dashboard project, rebranded and extended.
 
-## Installation
-
-You can install the FTC Dashboard globally via npm:
+## Quick start (local)
 
 ```bash
-npm install -g ftc-dashboard
+npm install
+npm run dev
 ```
 
-Or run it directly using npx:
-
-```bash
-npx ftc-dashboard
-```
+Open `http://localhost:3000`. On first run, create the admin account on the login screen.
 
 ## Features
 
-- **Dashboard**: Live club health metrics, attendance trends, and activity summaries
-- **Teams & Members**: Manage team rosters with role-based permissions and scopes
-- **Attendance**: Grid-based attendance tracking with AI-powered analysis
-- **Tasks**: Kanban board for task management with completion analytics
-- **Budget**: Income and expense tracking with financial summaries
-- **Outreach**: Log community service hours and events
-- **Communications**: Track emails and announcements
-- **Messaging**: In-app chat with mention notifications
-- **AI Scout**: Real-time FTC news and updates powered by local LLM
-- **WebSocket**: Live updates across all connected clients
+- **Dashboard** — team health metrics, attendance trends, activity summaries
+- **Teams & Members** — roster with role-based permissions and scopes
+- **Attendance** — grid-based session tracking
+- **Tasks** — Kanban board with assignments and due dates
+- **Calendar** — shared team calendar: meetings, competitions, deadlines, socials
+- **Budget** — income/expense tracking
+- **Inventory, Outreach, Communications, Messaging** — parts, service hours, announcements, in-app chat
+- **Sign-in** — email + password, or Google OAuth (when configured)
+- **AI features** — currently stubbed; endpoints return `501` until an AI backend is wired up
 
-## Tech Stack
-
-- **Frontend**: React + TypeScript, Tailwind CSS, Framer Motion
-- **Backend**: Express.js with SQLite database
-- **AI**: node-llama-cpp with local GGUF models (e.g., Phi-3.5)
-- **Real-time**: WebSocket for live notifications and chat
-
-## Prerequisites
-
-- Node.js 18+
-- SQLite3 (included with better-sqlite3)
-- A GGUF model file (Phi-3.5 recommended, ~3GB)
-
-## Quick Start
-
-### As a CLI tool
-
-Simply run the dashboard from your terminal:
+## Configuration (`.env`)
 
 ```bash
-npx ftc-dashboard
-```
-Or, for installation:
-```bash
-npm install ftc-dashboard
-```
+# Database: embedded SQLite file by default. For production, use Turso:
+# DATABASE_URL="libsql://your-db.turso.io"
+# DATABASE_AUTH_TOKEN="your-turso-auth-token"
 
-This will guide you through the setup on your first run.
+# Google OAuth (optional) — create credentials at
+# https://console.cloud.google.com/apis/credentials
+# Authorized redirect URI: <APP_URL>/api/auth/google/callback
+# GOOGLE_CLIENT_ID=""
+# GOOGLE_CLIENT_SECRET=""
 
-### Local Development
-
-1. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-2. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
-   The app will be available at `http://localhost:3000`
-
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file in the project root:
-
-```
-LLAMA_MODEL_PATH=./models/Phi-3.5-mini-instruct-Q5_K_M.gguf
-MAX_TOKENS_LIMIT=1024
-DISABLE_NEWS=0
-OLLAMA_URL=http://localhost:11434/api/generate
-OLLAMA_MODEL=phi3.5
-EXA_API_KEY=your_exa_api_key_here
+# Public URL of the app (used for OAuth callbacks)
+# APP_URL="https://your-app.onrender.com"
 ```
 
-- `MAX_TOKENS_LIMIT`: Maximum tokens for AI responses (default: 1024)
-- `DISABLE_NEWS`: Set to `1` to disable the news endpoint temporarily
-- `OLLAMA_*`: For Ollama backend integration (optional)
-- `EXA_API_KEY`: For web search integration (optional)
+Google sign-in only works for emails already on the team roster — an admin adds
+members first via **Teams & Members**, then those people can link their Google account.
 
-## API Endpoints
+## Deploy (free)
 
-### AI Endpoints
+1. Push this repo to GitHub.
+2. Create a free Turso database at https://turso.tech and grab its URL + auth token.
+3. (Optional) Create Google OAuth credentials for Google sign-in.
+4. On https://render.com, create a **Web Service** from the repo — `render.yaml`
+   is included as a blueprint. Set `DATABASE_URL`, `DATABASE_AUTH_TOKEN`,
+   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `APP_URL` in the environment.
 
-- `POST /api/ai/fetch-news` - Get FTC/robotics news (supports `?stream=true`)
-- `POST /api/ai/attendance` - Analyze attendance patterns
-- `POST /api/ai/check-excuse` - Evaluate absence reasons
-- `POST /api/ai/activity-summary` - Generate club activity summaries
+## Tech
 
-### Data Endpoints
-
-- `GET/POST /api/teams`, `/api/members`, `/api/attendance`, `/api/tasks`, `/api/budget`, `/api/outreach`, `/api/communications`
-- `POST /api/auth/login`, `/api/auth/setup`, `/api/auth/reset`
-
-## Model Performance
-
-The app uses CPU-only inference by default to avoid GPU allocation errors. For optimal performance:
-- Use quantized models (Q4_K_M, Q5_K_M) to reduce memory footprint
-- Phi-3.5 mini (~3-4GB) provides good balance of speed and quality
-- Response generation typically takes 30-60 seconds depending on model size and hardware
-
-## Database
-
-SQLite database (`nexus.db`) stores:
-- Teams and members with role-based permissions
-- Attendance records with excused/unexcused tracking
-- Tasks with status tracking and assignments
-- Budget transactions categorized by team
-- Outreach events and hours logged
-- Messages and notifications with real-time WebSocket sync
-
-## Development
-
-- **Build for production:** `npm run build`
-- **Preview production build:** `npm run preview`
-- Hot Module Replacement enabled for instant feedback
-
-## License
-GNU General Public License v3.0
+React 19 + TypeScript + Tailwind CSS 4 (Vite) frontend, Express + WebSocket backend,
+SQLite via `@libsql/client` (embedded file locally, Turso hosted in production).

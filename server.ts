@@ -21,7 +21,7 @@ import multer from "multer";
 import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import Database from "better-sqlite3";
+import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
 
 // configuration tweaks for temporary behavior
 // set this to true when you want to turn off the news endpoint
@@ -152,33 +152,8 @@ async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: str
   }
 }
 
-const DB_PATH = process.env.DATABASE_URL || path.join(process.cwd(), "dashboard.db");
-let db = new Database(DB_PATH);
-
-// Function to ensure database connection is valid and writable
-function ensureDbConnection() {
-  try {
-    // Test if database is writable
-    db.exec("PRAGMA query_only=false");
-    return true;
-  } catch (error: any) {
-    if (error.code === 'SQLITE_READONLY' || error.code === 'SQLITE_READONLY_DBMOVED') {
-      console.log("[Database] Attempting to reconnect to database...");
-      try {
-        db.close();
-      } catch (e) {
-        // Ignore close errors
-      }
-      // Reconnect
-      db = new Database(DB_PATH);
-      return true;
-    }
-    throw error;
-  }
-}
-
 // Initialize Database - Create all tables first
-db.exec(`
+(await dbExec(`
   CREATE TABLE IF NOT EXISTS teams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -307,6 +282,20 @@ db.exec(`
     type TEXT DEFAULT 'email' -- 'email', 'announcement'
   );
 
+  CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    date TEXT NOT NULL, -- YYYY-MM-DD
+    start_time TEXT DEFAULT '', -- HH:MM
+    end_time TEXT DEFAULT '', -- HH:MM
+    location TEXT DEFAULT '',
+    event_type TEXT DEFAULT 'meeting', -- 'meeting', 'competition', 'deadline', 'social', 'other'
+    team_id INTEGER,
+    created_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS code_files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id INTEGER,
@@ -357,167 +346,130 @@ db.exec(`
     expires_at TEXT NOT NULL,
     FOREIGN KEY(member_id) REFERENCES members(id)
   );
-`);
+`));
 
 
 // Migrations - Handle structural updates for existing databases
-const memberColumns = db.prepare("PRAGMA table_info(members)").all();
+const memberColumns = (await dbAll("PRAGMA table_info(members)"));
 if (!memberColumns.some((c: any) => c.name === 'password')) {
-  db.exec("ALTER TABLE members ADD COLUMN password TEXT");
+  (await dbExec("ALTER TABLE members ADD COLUMN password TEXT"));
 }
 if (!memberColumns.some((c: any) => c.name === 'is_setup')) {
-  db.exec("ALTER TABLE members ADD COLUMN is_setup INTEGER DEFAULT 0");
+  (await dbExec("ALTER TABLE members ADD COLUMN is_setup INTEGER DEFAULT 0"));
+}
+if (!memberColumns.some((c: any) => c.name === 'google_id')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN google_id TEXT"));
 }
 
-const taskColumns = db.prepare("PRAGMA table_info(tasks)").all();
+const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {
-  db.exec("ALTER TABLE tasks ADD COLUMN is_board INTEGER DEFAULT 0");
+  (await dbExec("ALTER TABLE tasks ADD COLUMN is_board INTEGER DEFAULT 0"));
 }
 
-const teamColumns = db.prepare("PRAGMA table_info(teams)").all();
+const teamColumns = (await dbAll("PRAGMA table_info(teams)"));
 if (!teamColumns.some((c: any) => c.name === 'accent_color')) {
-  db.exec("ALTER TABLE teams ADD COLUMN accent_color TEXT");
+  (await dbExec("ALTER TABLE teams ADD COLUMN accent_color TEXT"));
 }
 if (!teamColumns.some((c: any) => c.name === 'primary_color')) {
-  db.exec("ALTER TABLE teams ADD COLUMN primary_color TEXT");
+  (await dbExec("ALTER TABLE teams ADD COLUMN primary_color TEXT"));
 }
 if (!teamColumns.some((c: any) => c.name === 'text_color')) {
-  db.exec("ALTER TABLE teams ADD COLUMN text_color TEXT");
+  (await dbExec("ALTER TABLE teams ADD COLUMN text_color TEXT"));
 }
 
 if (!memberColumns.some((c: any) => c.name === 'accent_color')) {
-  db.exec("ALTER TABLE members ADD COLUMN accent_color TEXT");
+  (await dbExec("ALTER TABLE members ADD COLUMN accent_color TEXT"));
 }
 if (!memberColumns.some((c: any) => c.name === 'primary_color')) {
-  db.exec("ALTER TABLE members ADD COLUMN primary_color TEXT");
+  (await dbExec("ALTER TABLE members ADD COLUMN primary_color TEXT"));
 }
 if (!memberColumns.some((c: any) => c.name === 'text_color')) {
-  db.exec("ALTER TABLE members ADD COLUMN text_color TEXT");
+  (await dbExec("ALTER TABLE members ADD COLUMN text_color TEXT"));
 }
 
 // Messages table migrations
-const messageColumns = db.prepare("PRAGMA table_info(messages)").all();
+const messageColumns = (await dbAll("PRAGMA table_info(messages)"));
 if (!messageColumns.some((c: any) => c.name === 'deleted_at')) {
-  db.exec("ALTER TABLE messages ADD COLUMN deleted_at TEXT");
+  (await dbExec("ALTER TABLE messages ADD COLUMN deleted_at TEXT"));
 }
 if (!messageColumns.some((c: any) => c.name === 'file_path')) {
-  db.exec("ALTER TABLE messages ADD COLUMN file_path TEXT");
+  (await dbExec("ALTER TABLE messages ADD COLUMN file_path TEXT"));
 }
 if (!messageColumns.some((c: any) => c.name === 'file_name')) {
-  db.exec("ALTER TABLE messages ADD COLUMN file_name TEXT");
+  (await dbExec("ALTER TABLE messages ADD COLUMN file_name TEXT"));
 }
 if (!messageColumns.some((c: any) => c.name === 'file_size')) {
-  db.exec("ALTER TABLE messages ADD COLUMN file_size INTEGER");
+  (await dbExec("ALTER TABLE messages ADD COLUMN file_size INTEGER"));
 }
 if (!messageColumns.some((c: any) => c.name === 'file_updated')) {
-  db.exec("ALTER TABLE messages ADD COLUMN file_updated TEXT");
+  (await dbExec("ALTER TABLE messages ADD COLUMN file_updated TEXT"));
 }
 if (!messageColumns.some((c: any) => c.name === 'updated_at')) {
-  db.exec("ALTER TABLE messages ADD COLUMN updated_at TEXT");
+  (await dbExec("ALTER TABLE messages ADD COLUMN updated_at TEXT"));
 }
 
 // Verify columns exist
-const finalMemberColumns = db.prepare("PRAGMA table_info(members)").all();
+const finalMemberColumns = (await dbAll("PRAGMA table_info(members)"));
 console.log("[DB Migration] Members table columns:", finalMemberColumns.map((c: any) => c.name).join(", "));
 
-const codeFilesColumns = db.prepare("PRAGMA table_info(code_files)").all();
+const codeFilesColumns = (await dbAll("PRAGMA table_info(code_files)"));
 if (!codeFilesColumns.some((c: any) => c.name === 'file_size')) {
-  db.exec("ALTER TABLE code_files ADD COLUMN file_size INTEGER");
+  (await dbExec("ALTER TABLE code_files ADD COLUMN file_size INTEGER"));
 }
 
-db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_member_date ON attendance(member_id, date)");
+(await dbExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_member_date ON attendance(member_id, date)"));
 
 // Initial data
-db.exec(`
+(await dbExec(`
   INSERT OR IGNORE INTO settings (key, value) VALUES ('excuse_criteria', 'Excused if for school, family emergency, or illness. Unexcused for gaming, hanging out, or forgetting.');
-`);
+`));
 
-function getNumericSetting(key: string, defaultValue: number): number {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as any;
-  if (row && row.value) {
-    const val = parseInt(row.value, 10);
-    return isNaN(val) ? defaultValue : val;
-  }
-  return defaultValue;
-}
+
 
 // Session Management
 function generateSessionId(): string {
   return 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
 }
 
-function generateStreamId(): string {
-  return 'stream_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
-}
 
-function createSession(memberId: number): string {
+
+async function createSession(memberId: number): Promise<string> {
   const sessionId = generateSessionId();
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
-  db.prepare("INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)")
-    .run(sessionId, memberId, now, expiresAt, now);
+  (await dbRun("INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", sessionId, memberId, now, expiresAt, now));
   return sessionId;
 }
 
-function validateSession(sessionId: string): { valid: boolean; memberId?: number } {
+async function validateSession(sessionId: string): Promise<{ valid: boolean; memberId?: number }> {
   try {
-    const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
+    const session = (await dbGet("SELECT * FROM sessions WHERE id = ?", sessionId)) as any;
     if (!session) return { valid: false };
     
     const now = new Date().toISOString();
     if (now > session.expires_at) {
-      db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+      (await dbRun("DELETE FROM sessions WHERE id = ?", sessionId));
       return { valid: false };
     }
     
     // Update last activity
-    db.prepare("UPDATE sessions SET last_activity = ? WHERE id = ?").run(now, sessionId);
+    (await dbRun("UPDATE sessions SET last_activity = ? WHERE id = ?", now, sessionId));
     return { valid: true, memberId: session.member_id };
   } catch (e) {
     return { valid: false };
   }
 }
 
-function createStreamSession(memberId: number, endpoint: string): string {
-  const streamId = generateStreamId();
-  const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 1 * 60 * 60 * 1000).toISOString(); // 1 hour
-  db.prepare("INSERT INTO stream_sessions (id, member_id, endpoint, chunks, position, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(streamId, memberId, endpoint, JSON.stringify([]), 0, now, expiresAt);
-  return streamId;
-}
 
-function addStreamChunk(streamId: string, chunk: string): void {
-  const session = db.prepare("SELECT chunks FROM stream_sessions WHERE id = ?").get(streamId) as any;
-  if (!session) return;
-  
-  const chunks = JSON.parse(session.chunks || '[]');
-  chunks.push(chunk);
-  db.prepare("UPDATE stream_sessions SET chunks = ? WHERE id = ?").run(JSON.stringify(chunks), streamId);
-}
 
-function getStreamSessionData(streamId: string): { chunks: string[]; position: number } | null {
-  try {
-    const session = db.prepare("SELECT * FROM stream_sessions WHERE id = ?").get(streamId) as any;
-    if (!session) return null;
-    
-    const now = new Date().toISOString();
-    if (now > session.expires_at) {
-      db.prepare("DELETE FROM stream_sessions WHERE id = ?").run(streamId);
-      return null;
-    }
-    
-    return { chunks: JSON.parse(session.chunks || '[]'), position: session.position };
-  } catch (e) {
-    return null;
-  }
-}
+
+
 
 // Cleanup expired sessions periodically
-setInterval(() => {
+setInterval(async () => {
   const now = new Date().toISOString();
-  db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now);
-  db.prepare("DELETE FROM stream_sessions WHERE expires_at < ?").run(now);
+  (await dbRun("DELETE FROM sessions WHERE expires_at < ?", now));
+  (await dbRun("DELETE FROM stream_sessions WHERE expires_at < ?", now));
 }, 60 * 60 * 1000); // Every hour
 
 async function startServer() {
@@ -552,15 +504,14 @@ async function startServer() {
   
   // Migration to populate missing file metadata for existing messages
   try {
-    const messagesToFix = db.prepare("SELECT id, file_path FROM messages WHERE file_path IS NOT NULL AND file_name IS NULL").all();
+    const messagesToFix = (await dbAll("SELECT id, file_path FROM messages WHERE file_path IS NOT NULL AND file_name IS NULL"));
     for (const msg of messagesToFix as any) {
       try {
         const relativePath = msg.file_path.startsWith('/uploads/') ? msg.file_path.slice(9) : msg.file_path;
         const fullPath = path.join(uploadDir, relativePath);
         if (fs.existsSync(fullPath)) {
           const stats = fs.statSync(fullPath);
-          db.prepare("UPDATE messages SET file_name = ?, file_size = ?, file_updated = ? WHERE id = ?")
-            .run(path.basename(fullPath), stats.size, stats.mtime.toISOString(), msg.id);
+          (await dbRun("UPDATE messages SET file_name = ?, file_size = ?, file_updated = ? WHERE id = ?", path.basename(fullPath), stats.size, stats.mtime.toISOString(), msg.id));
         }
       } catch (err) {
         console.error(`Failed to migrate metadata for message ${msg.id}:`, err);
@@ -582,45 +533,47 @@ async function startServer() {
     });
   };
 
-  const createNotification = (userId: number, content: string, type: string) => {
-    const timestamp = new Date().toISOString();
-    const info = db.prepare("INSERT INTO notifications (user_id, content, type, timestamp) VALUES (?, ?, ?, ?)")
-      .run(userId, content, type, timestamp);
+  const createNotification = async (userId: number, content: string, type: string) => {
+    try {
+      const timestamp = new Date().toISOString();
+      const info = await dbRun("INSERT INTO notifications (user_id, content, type, timestamp) VALUES (?, ?, ?, ?)", userId, content, type, timestamp);
 
-    broadcast({
-      type: 'notification',
-      notification: {
-        id: info.lastInsertRowid,
-        user_id: userId,
-        content,
-        type,
-        timestamp,
-        is_read: 0
-      }
-    });
+      broadcast({
+        type: 'notification',
+        notification: {
+          id: info.lastInsertRowid,
+          user_id: userId,
+          content,
+          type,
+          timestamp,
+          is_read: 0
+        }
+      });
+    } catch (e) {
+      console.error("createNotification failed:", e);
+    }
   };
 
   wss.on("connection", (ws) => {
     clients.add(ws);
     ws.on("close", () => clients.delete(ws));
-    ws.on("message", (data) => {
+    ws.on("message", async (data) => {
       try {
         const message = JSON.parse(data.toString());
         if (message.type === "chat") {
-          const stmt = db.prepare("INSERT INTO messages (sender_id, content, timestamp) VALUES (?, ?, ?)");
           const timestamp = new Date().toISOString();
-          const info = stmt.run(message.sender_id, message.content, timestamp);
+          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp) VALUES (?, ?, ?)", message.sender_id, message.content, timestamp);
 
           // Handle mentions
           const mentions = message.content.match(/@\[([^\]]+)\]/g);
           if (mentions) {
-            mentions.forEach((m: string) => {
+            for (const m of mentions) {
               const name = m.slice(2, -1);
-              const user = db.prepare("SELECT id FROM members WHERE name = ?").get(name) as any;
+              const user = (await dbGet("SELECT id FROM members WHERE name = ?", name)) as any;
               if (user) {
                 createNotification(user.id, `You were mentioned by ${message.sender_name}: "${message.content}"`, 'mention');
               }
-            });
+            }
           }
 
           broadcast({
@@ -639,88 +592,179 @@ async function startServer() {
   });
 
   // --- Auth Routes ---
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const user = db.prepare("SELECT * FROM members WHERE email = ?").get(email) as any;
+    const user = (await dbGet("SELECT * FROM members WHERE email = ?", email)) as any;
 
     if (!user) return res.status(401).json({ error: "User not found" });
 
     if (!user.password) {
-      const sessionId = createSession(user.id);
+      const sessionId = await createSession(user.id);
       return res.json({ needsSetup: true, user, sessionId });
     }
 
     if (bcrypt.compareSync(password, user.password)) {
-      const sessionId = createSession(user.id);
+      const sessionId = await createSession(user.id);
       res.json({ user, sessionId });
     } else {
       res.status(401).json({ error: "Invalid password" });
     }
   });
 
-  app.post("/api/auth/setup", (req, res) => {
+  app.post("/api/auth/setup", async (req, res) => {
     const { email, password } = req.body;
     const hashedPassword = bcrypt.hashSync(password, 10);
-    db.prepare("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?").run(hashedPassword, email);
-    const user = db.prepare("SELECT * FROM members WHERE email = ?").get(email);
-    const sessionId = createSession(user.id);
+    (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email));
+    const user = (await dbGet("SELECT * FROM members WHERE email = ?", email));
+    const sessionId = await createSession(user.id);
     res.json({ user, sessionId });
   });
 
-  app.post("/api/auth/reset", (req, res) => {
+  app.post("/api/auth/reset", async (req, res) => {
     const { email } = req.body;
-    db.prepare("UPDATE members SET password = NULL, is_setup = 0 WHERE email = ?").run(email);
+    (await dbRun("UPDATE members SET password = NULL, is_setup = 0 WHERE email = ?", email));
     res.json({ success: true });
   });
+
+  // ---- Google OAuth ----
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+  const oauthStates = new Map<string, number>(); // state -> expiry timestamp
+
+  function getOAuthRedirectUri(req: any): string {
+    const base = (process.env.APP_URL || "").replace(/\/$/, "");
+    if (base) return `${base}/api/auth/google/callback`;
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+    return `${proto}://${req.get("host")}/api/auth/google/callback`;
+  }
+
+  app.get("/api/auth/config", async (req, res) => {
+    res.json({ googleEnabled: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) });
+  });
+
+  // Resolve the current user from a session id (used after Google sign-in)
+  app.get("/api/auth/me", async (req, res) => {
+    const sessionId = req.query.sessionId as string;
+    if (!sessionId) return res.status(401).json({ error: "No session" });
+    const { valid, memberId } = await validateSession(sessionId);
+    if (!valid || !memberId) return res.status(401).json({ error: "Invalid session" });
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
+    res.json({ user, sessionId });
+  });
+
+  app.get("/api/auth/google", async (req, res) => {
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+      return res.status(400).json({ error: "Google sign-in is not configured" });
+    }
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    const state = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    oauthStates.set(state, Date.now() + 10 * 60 * 1000);
+    const params = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: getOAuthRedirectUri(req),
+      response_type: "code",
+      scope: "openid email profile",
+      state,
+      prompt: "select_account",
+    });
+    res.redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString());
+  });
+
+  app.get("/api/auth/google/callback", async (req, res) => {
+    try {
+      const { code, state } = req.query as { code?: string; state?: string };
+      const expiry = state ? oauthStates.get(state) : undefined;
+      if (state) oauthStates.delete(state);
+      if (!code || !expiry || expiry < Date.now()) {
+        return res.redirect("/?google_error=invalid_state");
+      }
+      // Exchange the authorization code for tokens
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          redirect_uri: getOAuthRedirectUri(req),
+          grant_type: "authorization_code",
+        }),
+      });
+      if (!tokenRes.ok) throw new Error("Token exchange failed");
+      const { access_token } = (await tokenRes.json()) as any;
+      // Fetch the Google profile directly from Google (token came from Google over TLS)
+      const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+      if (!profileRes.ok) throw new Error("Failed to fetch Google profile");
+      const profile = (await profileRes.json()) as any;
+      if (!profile.email) throw new Error("No email in Google profile");
+
+      // Only members already on the roster can sign in - admins add people first
+      let member: any = (await dbGet("SELECT * FROM members WHERE google_id = ?", profile.sub));
+      if (!member) {
+        member = (await dbGet("SELECT * FROM members WHERE email = ?", profile.email));
+        if (!member) {
+          return res.redirect("/?google_error=not_invited");
+        }
+        (await dbRun("UPDATE members SET google_id = ? WHERE id = ?", profile.sub, member.id));
+        member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
+      }
+      const sessionId = await createSession(member.id);
+      res.redirect(`/?google_session=${sessionId}`);
+    } catch (error) {
+      console.error("Google OAuth error:", error);
+      res.redirect("/?google_error=oauth_failed");
+    }
+  });
+
 
   // --- API Routes ---
 
   // Teams
-  app.get("/api/teams", (req, res) => {
-    const teams = db.prepare("SELECT * FROM teams").all();
+  app.get("/api/teams", async (req, res) => {
+    const teams = (await dbAll("SELECT * FROM teams"));
     res.json(teams);
   });
 
-  app.post("/api/teams", (req, res) => {
+  app.post("/api/teams", async (req, res) => {
     const { name, number, accent_color, primary_color, text_color } = req.body;
-    const info = db.prepare("INSERT INTO teams (name, number, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?)")
-      .run(name, number, accent_color || null, primary_color || null, text_color || null);
+    const info = (await dbRun("INSERT INTO teams (name, number, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?)", name, number, accent_color || null, primary_color || null, text_color || null));
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.patch("/api/teams/:id", (req, res) => {
+  app.patch("/api/teams/:id", async (req, res) => {
     const { name, number, accent_color, primary_color, text_color } = req.body;
-    db.prepare("UPDATE teams SET name = ?, number = ?, accent_color = ?, primary_color = ?, text_color = ? WHERE id = ?")
-      .run(name, number, accent_color || null, primary_color || null, text_color || null, req.params.id);
+    (await dbRun("UPDATE teams SET name = ?, number = ?, accent_color = ?, primary_color = ?, text_color = ? WHERE id = ?", name, number, accent_color || null, primary_color || null, text_color || null, req.params.id));
     res.json({ success: true });
   });
 
-  app.delete("/api/teams/:id", (req, res) => {
-    db.prepare("DELETE FROM teams WHERE id = ?").run(req.params.id);
+  app.delete("/api/teams/:id", async (req, res) => {
+    (await dbRun("DELETE FROM teams WHERE id = ?", req.params.id));
     res.json({ success: true });
   });
 
   // Members
-  app.get("/api/members", (req, res) => {
-    const members = db.prepare(`
+  app.get("/api/members", async (req, res) => {
+    const members = (await dbAll(`
       SELECT m.*, t.name as team_name 
       FROM members m 
       LEFT JOIN teams t ON m.team_id = t.id
-    `).all();
+    `));
     console.log("[GET /api/members] Sample member data:", JSON.stringify(members[0] || {}, null, 2));
     res.json(members);
   });
 
-  app.post("/api/members", (req, res) => {
+  app.post("/api/members", async (req, res) => {
     const { team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color } = req.body;
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
     const targetTeamId = team_id || null;
-    const info = db.prepare("INSERT INTO members (team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(targetTeamId, name, role, email, is_board ? 1 : 0, finalScopes, accent_color || null, primary_color || null, text_color || null);
+    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", targetTeamId, name, role, email, is_board ? 1 : 0, finalScopes, accent_color || null, primary_color || null, text_color || null));
     res.json({ id: info.lastInsertRowid });
   });
 
-  app.patch("/api/members/:id", (req, res) => {
+  app.patch("/api/members/:id", async (req, res) => {
     const { team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color } = req.body;
     console.log(`[PATCH /api/members] ID: ${req.params.id}`);
     console.log(`[PATCH /api/members] Received colors:`, { accent_color, primary_color, text_color });
@@ -742,23 +786,22 @@ async function startServer() {
     const placeholders = columns.map(() => '?').join(', ');
     const setClause = columns.map(col => `${col} = ?`).join(', ');
 
-    db.prepare(`UPDATE members SET ${setClause} WHERE id = ?`)
-      .run(...Object.values(updates), parseInt(req.params.id, 10));
+    (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), parseInt(req.params.id, 10)));
 
     // Verify what was saved
-    const updated = db.prepare("SELECT accent_color, primary_color, text_color FROM members WHERE id = ?").get(parseInt(req.params.id, 10)) as any;
+    const updated = (await dbGet("SELECT accent_color, primary_color, text_color FROM members WHERE id = ?", parseInt(req.params.id, 10))) as any;
     console.log(`[PATCH /api/members] Verified saved colors:`, updated);
 
     res.json({ success: true });
   });
 
-  app.delete("/api/members/:id", (req, res) => {
-    db.prepare("DELETE FROM members WHERE id = ?").run(parseInt(req.params.id, 10));
+  app.delete("/api/members/:id", async (req, res) => {
+    (await dbRun("DELETE FROM members WHERE id = ?", parseInt(req.params.id, 10)));
     res.json({ success: true });
   });
 
   // Attendance
-  app.get("/api/attendance", (req, res) => {
+  app.get("/api/attendance", async (req, res) => {
     try {
       const { date } = req.query;
       let query = "SELECT * FROM attendance";
@@ -767,7 +810,7 @@ async function startServer() {
         query += " WHERE date = ?";
         params.push(date);
       }
-      const records = db.prepare(query).all(...params);
+      const records = (await dbAll(query, ...params));
       res.json(records);
     } catch (error) {
       console.error("Error fetching attendance:", error);
@@ -775,7 +818,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/attendance/batch", (req, res) => {
+  app.post("/api/attendance/batch", async (req, res) => {
     try {
       const { date, records } = req.body;
       if (!date || !Array.isArray(records)) {
@@ -784,29 +827,22 @@ async function startServer() {
 
       console.log(`[Attendance] Updating ${records.length} records for ${date}`);
       
-      // Ensure database connection is valid and writable
-      ensureDbConnection();
-
-      const insert = db.prepare(`
-        INSERT INTO attendance (member_id, date, status, reason) 
+      const upsertSql = `
+        INSERT INTO attendance (member_id, date, status, reason)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(member_id, date) DO UPDATE SET
           status = excluded.status,
           reason = COALESCE(excluded.reason, attendance.reason)
-      `);
-      const deleteStmt = db.prepare("DELETE FROM attendance WHERE member_id = ? AND date = ?");
-
-      const transaction = db.transaction((data) => {
-        for (const rec of data) {
-          if (rec.status === null || rec.status === '-') {
-            deleteStmt.run(rec.member_id, date);
-          } else {
-            insert.run(rec.member_id, date, rec.status, rec.reason || null);
-          }
+      `;
+      const stmts: { sql: string; args: any[] }[] = [];
+      for (const rec of records) {
+        if (rec.status === null || rec.status === '-') {
+          stmts.push({ sql: "DELETE FROM attendance WHERE member_id = ? AND date = ?", args: [rec.member_id, date] });
+        } else {
+          stmts.push({ sql: upsertSql, args: [rec.member_id, date, rec.status, rec.reason || null] });
         }
-      });
-
-      transaction(records);
+      }
+      await dbBatch(stmts);
       res.json({ success: true });
     } catch (error) {
       console.error("Error in attendance batch:", error);
@@ -814,9 +850,9 @@ async function startServer() {
     }
   });
 
-  app.get("/api/attendance/summary", (req, res) => {
+  app.get("/api/attendance/summary", async (req, res) => {
     try {
-      const summary = db.prepare(`
+      const summary = (await dbAll(`
         SELECT 
           m.id as member_id, 
           m.name,
@@ -828,7 +864,7 @@ async function startServer() {
         FROM members m
         LEFT JOIN attendance a ON m.id = a.member_id
         GROUP BY m.id
-      `).all();
+      `));
       res.json(summary);
     } catch (error) {
       console.error("Error fetching attendance summary:", error);
@@ -836,13 +872,13 @@ async function startServer() {
     }
   });
 
-  app.get("/api/attendance/sessions", (req, res) => {
+  app.get("/api/attendance/sessions", async (req, res) => {
     try {
-      const sessions = db.prepare(`
+      const sessions = (await dbAll(`
         SELECT DISTINCT date 
         FROM attendance 
         ORDER BY date DESC
-      `).all();
+      `));
       res.json(sessions.map((s: any) => s.date));
     } catch (error) {
       console.error("Error fetching attendance sessions:", error);
@@ -850,9 +886,9 @@ async function startServer() {
     }
   });
 
-  app.get("/api/hidden-dates", (req, res) => {
+  app.get("/api/hidden-dates", async (req, res) => {
     try {
-      const dates = db.prepare("SELECT date FROM hidden_dates").all();
+      const dates = (await dbAll("SELECT date FROM hidden_dates"));
       res.json(dates.map((d: any) => d.date));
     } catch (error) {
       console.error("Error fetching hidden dates:", error);
@@ -860,30 +896,30 @@ async function startServer() {
     }
   });
 
-  app.post("/api/hidden-dates", (req, res) => {
+  app.post("/api/hidden-dates", async (req, res) => {
     const { date } = req.body;
-    db.prepare("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)").run(date);
+    (await dbRun("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)", date));
     res.json({ success: true });
   });
 
-  app.delete("/api/hidden-dates/:date", (req, res) => {
-    db.prepare("DELETE FROM hidden_dates WHERE date = ?").run(req.params.date);
+  app.delete("/api/hidden-dates/:date", async (req, res) => {
+    (await dbRun("DELETE FROM hidden_dates WHERE date = ?", req.params.date));
     res.json({ success: true });
   });
 
   // Messages
-  app.get("/api/messages", (req, res) => {
-    const msgs = db.prepare(`
+  app.get("/api/messages", async (req, res) => {
+    const msgs = (await dbAll(`
       SELECT m.*, mem.name as sender_name 
       FROM messages m 
       JOIN members mem ON m.sender_id = mem.id 
       ORDER BY timestamp ASC LIMIT 100
-    `).all();
+    `));
     res.json(msgs);
   });
 
   // File upload for messages
-  app.post("/api/messages/upload", upload.single('file'), (req, res) => {
+  app.post("/api/messages/upload", upload.single('file'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
@@ -895,9 +931,9 @@ async function startServer() {
     const fileSize = req.file.size;
     const fileUpdated = new Date().toISOString();
     
-    const info = db.prepare(
+    const info = (await dbRun(
       "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated);
+    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated));
     
     broadcast({
       type: "chat",
@@ -926,14 +962,13 @@ async function startServer() {
   });
 
   // Delete message (hard delete - permanent removal)
-  app.delete("/api/messages/:id", (req, res) => {
+  app.delete("/api/messages/:id", async (req, res) => {
     const messageId = req.params.id;
     const silent = req.query.silent === 'true'; // Check for silent deletion
     
     try {
       // Hard delete - permanently remove the message from database
-      db.prepare("DELETE FROM messages WHERE id = ?")
-        .run(messageId);
+      (await dbRun("DELETE FROM messages WHERE id = ?", messageId));
       
       if (!silent) { // Only broadcast if not silent deletion
         broadcast({
@@ -951,7 +986,7 @@ async function startServer() {
   });
 
   // PATCH: Update message content (silent edit)
-  app.patch("/api/messages/:id", (req, res) => {
+  app.patch("/api/messages/:id", async (req, res) => {
     const messageId = req.params.id;
     const { content } = req.body;
 
@@ -959,34 +994,28 @@ async function startServer() {
       return res.status(400).json({ error: "Content is required for message update" });
     }
 
-    db.prepare("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?")
-      .run(content, new Date().toISOString(), messageId);
+    (await dbRun("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", content, new Date().toISOString(), messageId));
     
     // No broadcast for silent edit
     res.json({ success: true });
   });
 
   // Notifications
-  app.get("/api/notifications/:userId", (req, res) => {
-    const notes = db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 50")
-      .all(req.params.userId);
+  app.get("/api/notifications/:userId", async (req, res) => {
+    const notes = (await dbAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 50", req.params.userId));
     res.json(notes);
   });
 
-  app.post("/api/notifications/read", (req, res) => {
+  app.post("/api/notifications/read", async (req, res) => {
     const { ids } = req.body;
-    const stmt = db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?");
-    const transaction = db.transaction((data) => {
-      for (const id of data) stmt.run(id);
-    });
-    transaction(ids);
+    await dbBatch(ids.map((id: any) => ({ sql: "UPDATE notifications SET is_read = 1 WHERE id = ?", args: [id] })));
     res.json({ success: true });
   });
 
   // Settings
-  app.get("/api/settings", (req, res) => {
+  app.get("/api/settings", async (req, res) => {
     try {
-      const settings = db.prepare("SELECT * FROM settings").all();
+      const settings = (await dbAll("SELECT * FROM settings"));
       res.json(settings);
     } catch (error) {
       console.error("Error fetching settings:", error);
@@ -994,11 +1023,11 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/storage-usage", (req, res) => {
+  app.get("/api/admin/storage-usage", async (req, res) => {
     try {
-      const messageFilesSize = db.prepare("SELECT SUM(file_size) as total FROM messages WHERE file_size IS NOT NULL").get() as any;
+      const messageFilesSize = (await dbGet("SELECT SUM(file_size) as total FROM messages WHERE file_size IS NOT NULL")) as any;
       console.log("messageFilesSize raw:", messageFilesSize);
-      const codeFilesSize = db.prepare("SELECT SUM(file_size) as total FROM code_files WHERE file_size IS NOT NULL").get() as any;
+      const codeFilesSize = (await dbGet("SELECT SUM(file_size) as total FROM code_files WHERE file_size IS NOT NULL")) as any;
       console.log("codeFilesSize raw:", codeFilesSize);
       
       const totalSize = (messageFilesSize?.total || 0) + (codeFilesSize?.total || 0);
@@ -1010,10 +1039,10 @@ async function startServer() {
     }
   });
 
-  app.post("/api/settings", (req, res) => {
+  app.post("/api/settings", async (req, res) => {
     try {
       const { key, value } = req.body;
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+      (await dbRun("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, value));
       res.json({ success: true });
     } catch (error) {
       console.error("Error saving settings:", error);
@@ -1022,9 +1051,9 @@ async function startServer() {
   });
 
   // Tasks
-  app.get("/api/tasks", (req, res) => {
+  app.get("/api/tasks", async (req, res) => {
     try {
-      const tasks = db.prepare("SELECT * FROM tasks").all();
+      const tasks = (await dbAll("SELECT * FROM tasks"));
       res.json(tasks);
     } catch (error) {
       console.error("Error fetching tasks:", error);
@@ -1032,7 +1061,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/tasks", (req, res) => {
+  app.post("/api/tasks", async (req, res) => {
     try {
       const { team_id, title, description, status, assigned_to, due_date, is_board } = req.body;
       const createdAt = new Date().toISOString();
@@ -1040,8 +1069,7 @@ async function startServer() {
       const targetTeamId = team_id || null;
       const targetAssignedTo = assigned_to || null;
 
-      const info = db.prepare("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(targetTeamId, title, description, status || 'todo', targetAssignedTo, due_date, is_board || 0, createdAt);
+      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", targetTeamId, title, description, status || 'todo', targetAssignedTo, due_date, is_board || 0, createdAt));
 
       if (targetAssignedTo) {
         createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
@@ -1054,18 +1082,18 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/tasks/:id", (req, res) => {
+  app.patch("/api/tasks/:id", async (req, res) => {
     try {
       const { status } = req.body;
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
       if (status === 'done') {
-        db.prepare("UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?").run(status, completedAt, req.params.id);
+        (await dbRun("UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?", status, completedAt, req.params.id));
       } else {
-        db.prepare("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?").run(status, req.params.id);
+        (await dbRun("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?", status, req.params.id));
       }
 
-      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as any;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       if (task && task.assigned_to) {
         createNotification(task.assigned_to, `Task status updated to ${status}: ${task.title}`, 'task');
       }
@@ -1077,9 +1105,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/tasks/:id", (req, res) => {
+  app.delete("/api/tasks/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
+      (await dbRun("DELETE FROM tasks WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting task:", error);
@@ -1088,9 +1116,77 @@ async function startServer() {
   });
 
   // Budget
-  app.get("/api/budget", (req, res) => {
+  // ---- Team Calendar ----
+  app.get("/api/events", async (req, res) => {
     try {
-      const budget = db.prepare("SELECT * FROM budget").all();
+      const events = (await dbAll("SELECT * FROM events ORDER BY date ASC, start_time ASC"));
+      res.json(events);
+    } catch (error) {
+      console.error("Error fetching events:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/events", async (req, res) => {
+    try {
+      const { title, description, date, start_time, end_time, location, event_type, team_id, created_by } = req.body;
+      if (!title || !date) {
+        return res.status(400).json({ error: "Title and date are required" });
+      }
+      const info = (await dbRun(
+        "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      , title,
+        description || '',
+        date,
+        start_time || '',
+        end_time || '',
+        location || '',
+        event_type || 'meeting',
+        team_id || null,
+        created_by || null));
+      res.json({ id: info.lastInsertRowid });
+    } catch (error) {
+      console.error("Error creating event:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/events/:id", async (req, res) => {
+    try {
+      const { title, description, date, start_time, end_time, location, event_type, team_id } = req.body;
+      const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
+      if (!existing) return res.status(404).json({ error: "Event not found" });
+      (await dbRun(
+        "UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, team_id = ? WHERE id = ?"
+      , title ?? existing.title,
+        description ?? existing.description,
+        date ?? existing.date,
+        start_time ?? existing.start_time,
+        end_time ?? existing.end_time,
+        location ?? existing.location,
+        event_type ?? existing.event_type,
+        team_id ?? existing.team_id,
+        req.params.id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error updating event:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/events/:id", async (req, res) => {
+    try {
+      (await dbRun("DELETE FROM events WHERE id = ?", req.params.id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error deleting event:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/budget", async (req, res) => {
+    try {
+      const budget = (await dbAll("SELECT * FROM budget"));
       res.json(budget);
     } catch (error) {
       console.error("Error fetching budget:", error);
@@ -1098,15 +1194,14 @@ async function startServer() {
     }
   });
 
-  app.post("/api/budget", (req, res) => {
+  app.post("/api/budget", async (req, res) => {
     try {
       const { team_id, type, amount, category, description, date } = req.body;
       const targetTeamId = team_id || null;
-      const info = db.prepare("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(targetTeamId, type, amount, category, description, date);
+      const info = (await dbRun("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)", targetTeamId, type, amount, category, description, date));
 
       // Notify board members of budget changes
-      const boardMembers = db.prepare("SELECT id FROM members WHERE is_board = 1").all();
+      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1"));
       boardMembers.forEach((m: any) => {
         createNotification(m.id, `New budget ${type}: $$${amount} for ${category}`, 'system');
       });
@@ -1118,9 +1213,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/budget/:id", (req, res) => {
+  app.delete("/api/budget/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM budget WHERE id = ?").run(req.params.id);
+      (await dbRun("DELETE FROM budget WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting budget item:", error);
@@ -1129,9 +1224,9 @@ async function startServer() {
   });
 
   // Outreach
-  app.get("/api/outreach", (req, res) => {
+  app.get("/api/outreach", async (req, res) => {
     try {
-      const outreach = db.prepare("SELECT * FROM outreach").all();
+      const outreach = (await dbAll("SELECT * FROM outreach"));
       res.json(outreach);
     } catch (error) {
       console.error("Error fetching outreach:", error);
@@ -1139,14 +1234,13 @@ async function startServer() {
     }
   });
 
-  app.post("/api/outreach", (req, res) => {
+  app.post("/api/outreach", async (req, res) => {
     try {
       const { title, description, date, hours, location } = req.body;
-      const info = db.prepare("INSERT INTO outreach (title, description, date, hours, location) VALUES (?, ?, ?, ?, ?)")
-        .run(title, description, date, hours, location);
+      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location) VALUES (?, ?, ?, ?, ?)", title, description, date, hours, location));
 
       // Notify everyone of new outreach
-      const allMembers = db.prepare("SELECT id FROM members").all();
+      const allMembers = (await dbAll("SELECT id FROM members"));
       allMembers.forEach((m: any) => {
         createNotification(m.id, `New outreach event: ${title} at ${location}`, 'system');
       });
@@ -1158,9 +1252,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/outreach/:id", (req, res) => {
+  app.delete("/api/outreach/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM outreach WHERE id = ?").run(req.params.id);
+      (await dbRun("DELETE FROM outreach WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting outreach event:", error);
@@ -1169,14 +1263,14 @@ async function startServer() {
   });
 
   // Inventory
-  app.get("/api/inventory", (req, res) => {
+  app.get("/api/inventory", async (req, res) => {
     try {
-      const inventory = db.prepare(`
+      const inventory = (await dbAll(`
         SELECT i.*, m.name as assigned_member_name 
         FROM inventory i 
         LEFT JOIN members m ON i.assigned_to = m.id
         ORDER BY i.date_added DESC
-      `).all();
+      `));
       res.json(inventory);
     } catch (error) {
       console.error("Error fetching inventory:", error);
@@ -1184,17 +1278,17 @@ async function startServer() {
     }
   });
 
-  app.post("/api/inventory", (req, res) => {
+  app.post("/api/inventory", async (req, res) => {
     try {
       const { team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       if (!sku || !name) {
         return res.status(400).json({ error: "SKU and name are required" });
       }
       const date_added = new Date().toISOString();
-      const info = db.prepare(`
+      const info = (await dbRun(`
         INSERT INTO inventory (team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost, date_added) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(team_id || null, name, part_number || null, sku, quantity || 0, assigned_to || null, location || '', category || '', description || '', cost || 0, date_added);
+      `, team_id || null, name, part_number || null, sku, quantity || 0, assigned_to || null, location || '', category || '', description || '', cost || 0, date_added));
 
       res.json({ id: info.lastInsertRowid });
     } catch (error: any) {
@@ -1207,16 +1301,16 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/inventory/:id", (req, res) => {
+  app.patch("/api/inventory/:id", async (req, res) => {
     try {
       const { team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       const id = req.params.id;
       
-      db.prepare(`
+      (await dbRun(`
         UPDATE inventory 
         SET team_id = ?, name = ?, part_number = ?, sku = ?, quantity = ?, assigned_to = ?, location = ?, category = ?, description = ?, cost = ?
         WHERE id = ?
-      `).run(team_id || null, name, part_number, sku, quantity, assigned_to || null, location, category, description, cost, id);
+      `, team_id || null, name, part_number, sku, quantity, assigned_to || null, location, category, description, cost, id));
 
       res.json({ success: true });
     } catch (error: any) {
@@ -1229,9 +1323,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/inventory/:id", (req, res) => {
+  app.delete("/api/inventory/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM inventory WHERE id = ?").run(req.params.id);
+      (await dbRun("DELETE FROM inventory WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting inventory item:", error);
@@ -1305,29 +1399,28 @@ async function startServer() {
   });
 
   // Documentation
-  app.get("/api/documentation", (req, res) => {
+  app.get("/api/documentation", async (req, res) => {
     try {
-      const docs = db.prepare("SELECT * FROM documentation ORDER BY date DESC").all();
+      const docs = (await dbAll("SELECT * FROM documentation ORDER BY date DESC"));
       res.json(docs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  app.post("/api/documentation", (req, res) => {
+  app.post("/api/documentation", async (req, res) => {
     try {
       const { type, title, content, images, date } = req.body;
-      const info = db.prepare("INSERT INTO documentation (type, title, content, images, date, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(type, title, content, JSON.stringify(images || []), date, new Date().toISOString());
+      const info = (await dbRun("INSERT INTO documentation (type, title, content, images, date, created_at) VALUES (?, ?, ?, ?, ?, ?)", type, title, content, JSON.stringify(images || []), date, new Date().toISOString()));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
-  app.delete("/api/documentation/:id", (req, res) => {
+  app.delete("/api/documentation/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM documentation WHERE id = ?").run(req.params.id);
+      (await dbRun("DELETE FROM documentation WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -1337,235 +1430,27 @@ async function startServer() {
   // --- AI endpoints using the local llama model ---
 
   app.post("/api/ai/fetch-news", async (req, res) => {
-    try {
-      // temporarily disabled? respond with static message
-      if (NEWS_DISABLED) {
-        const msg = "News service is currently disabled.";
-        if (req.query.stream === 'true') {
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Transfer-Encoding', 'chunked');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-          res.flushHeaders();
-          res.write(msg);
-          res.end();
-          return;
-        } else {
-          return res.json({ result: msg });
-        }
-      }
-
-      const { stream } = req.query;
-
-      // 1. Search Exa for fresh info
-      const searchResults = await searchExa("latest FIRST Tech Challenge (FTC) robotics news and updates not including gameplay, unique ideas from team websites, portfolios, hardware news, etc");
-
-      let prompt = "Search for the latest FIRST Tech Challenge (FTC) news, REV Robotics updates, and interesting engineering tips for robotics teams. Summarize the top 5 most relevant items for a high school robotics club. Include *full* links including protocol (http/https).";
-
-      if (searchResults && searchResults.length > 0) {
-        const context = searchResults.map(r => `Title: ${r.title}\nURL: ${r.url}\nSummary: ${r.highlight}`).join("\n\n");
-        prompt = `Based on these recent search results, summarize the top 5 most relevant FTC/Robotics news items for a high school club. Include the links to the sources provided.\n\nSearch Results:\n${context}`;
-      }
-
-      if (stream === 'true') {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Transfer-Encoding', 'chunked');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.flushHeaders();
-
-        const numPredict = getNumericSetting('max_tokens_news', DEFAULT_MAX_TOKENS);
-        await callOllama(prompt, true, (chunk) => {
-          res.write(chunk);
-        }, numPredict);
-        res.end();
-      } else {
-        const numPredict = getNumericSetting('max_tokens_news', DEFAULT_MAX_TOKENS);
-        const response = await callOllama(prompt, false, undefined, numPredict);
-        res.json({ result: response });
-      }
-    } catch (error) {
-      console.error("Error AI fetching news:", error);
-      res.status(500).json({ error: "AI error" });
-    }
+    // AI features are stubbed for now - re-enable when the AI backend is ready.
+    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
   });
 
   app.post("/api/ai/attendance", async (req, res) => {
-    try {
-      const { records, members, sessionId } = req.body;
-      const streamId = req.query.streamId as string | undefined;
-      const resumeFrom = parseInt(req.query.resumeFrom as string || '0', 10);
-
-      // Validate session if provided
-      let memberId: number | undefined;
-      if (sessionId) {
-        const validation = validateSession(sessionId);
-        if (validation.valid) {
-          memberId = validation.memberId;
-        }
-      }
-
-      // Handle resume request
-      if (streamId && req.query.stream === 'true') {
-        const streamData = getStreamSessionData(streamId);
-        if (streamData) {
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Transfer-Encoding', 'chunked');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-          res.flushHeaders();
-
-          // Send remaining chunks from resumeFrom position
-          const remainingChunks = streamData.chunks.slice(resumeFrom);
-          for (const chunk of remainingChunks) {
-            res.write(chunk);
-          }
-          res.end();
-          return;
-        }
-      }
-
-      const data = JSON.stringify({ records, members });
-      const prompt =
-        `Analyze this attendance data for a robotics club and provide 3 key insights or suggestions for the leadership team. Keep it concise and suitable for the general population.\n\nData: ${data}`;
-
-      if (req.query.stream === 'true') {
-        // Create new stream session
-        const newStreamId = memberId ? createStreamSession(memberId, '/api/ai/attendance') : generateStreamId();
-
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Transfer-Encoding', 'chunked');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Stream-ID', newStreamId);
-        res.flushHeaders();
-
-        const numPredict = getNumericSetting('max_tokens_attendance', DEFAULT_MAX_TOKENS);
-        await callOllama(prompt, true, (chunk) => {
-          res.write(chunk);
-          if (memberId) {
-            addStreamChunk(newStreamId, chunk);
-          }
-        }, numPredict);
-        res.end();
-      } else {
-        const numPredict = getNumericSetting('max_tokens_attendance', DEFAULT_MAX_TOKENS);
-        const response = await callOllama(prompt, false, undefined, numPredict);
-        res.json({ result: response });
-      }
-    } catch (error) {
-      console.error("Error AI attendance insights:", error);
-      res.status(500).json({ error: "AI error" });
-    }
+    // AI features are stubbed for now - re-enable when the AI backend is ready.
+    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
   });
 
   app.post("/api/ai/check-excuse", async (req, res) => {
-    try {
-      const { reason, criteria } = req.body;
-      const prompt =
-        `Based on these criteria: "${criteria}", is my following reason for absence excused? ` +
-        `Respond with "EXCUSED" or "UNEXCUSED" and give me a very brief explanation. (One sentence)\n\nReason: "${reason}"`;
-
-      if (req.query.stream === 'true') {
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Transfer-Encoding', 'chunked');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.flushHeaders();
-        const numPredict = getNumericSetting('max_tokens_excuse', DEFAULT_MAX_TOKENS);
-        await callOllama(prompt, true, (chunk) => {
-          res.write(chunk);
-        }, numPredict);
-        res.end();
-      } else {
-        const numPredict = getNumericSetting('max_tokens_excuse', DEFAULT_MAX_TOKENS);
-        const response = await callOllama(prompt, false, undefined, numPredict);
-        res.json({ result: response });
-      }
-    } catch (error) {
-      console.error("Error AI excuse check:", error);
-      res.status(500).json({ error: "AI error" });
-    }
+    // AI features are stubbed for now - re-enable when the AI backend is ready.
+    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
   });
 
   app.post("/api/ai/activity-summary", async (req, res) => {
-    try {
-      const { tasks, messages, budget, inventory, userScope, sessionId } = req.body;
-      const streamId = req.query.streamId as string | undefined;
-      const resumeFrom = parseInt(req.query.resumeFrom as string || '0', 10);
-
-      // Validate session if provided
-      let memberId: number | undefined;
-      if (sessionId) {
-        const validation = validateSession(sessionId);
-        if (validation.valid) {
-          memberId = validation.memberId;
-        }
-      }
-
-      // Handle resume request
-      if (streamId && req.query.stream === 'true') {
-        const streamData = getStreamSessionData(streamId);
-        if (streamData) {
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Transfer-Encoding', 'chunked');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-          res.flushHeaders();
-
-          // Send remaining chunks from resumeFrom position
-          const remainingChunks = streamData.chunks.slice(resumeFrom);
-          for (const chunk of remainingChunks) {
-            res.write(chunk);
-          }
-          res.end();
-          return;
-        }
-      }
-
-      const payload = JSON.stringify({ tasks, messages, budget, inventory });
-      const prompt =
-        `Provide a concise summary of the recent club activity based on the following data. ` +
-        `I have the following role/scope: ${JSON.stringify(userScope)}. ` +
-        `Only include information that would be relevant or accessible to me. ` +
-        `Highlight progress on tasks, new messages, budget changes, and inventory updates. ` +
-        `Identify concerns and upcoming deadlines. Keep it short and scannable in bullet point format. ` +
-        `Do NOT include IDs or programmatic details. Do NOT reference any people or data that is not in the provided data. ` +
-        `Only summarize what is actually present in the following data and nothing else. ` +
-        `\n\nData to summarize: ${payload}`;
-
-      if (req.query.stream === 'true') {
-        // Create new stream session
-        const newStreamId = memberId ? createStreamSession(memberId, '/api/ai/activity-summary') : generateStreamId();
-
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Transfer-Encoding', 'chunked');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Stream-ID', newStreamId);
-        res.flushHeaders();
-
-        const numPredict = getNumericSetting('max_tokens_summary', DEFAULT_MAX_TOKENS);
-        await callOllama(prompt, true, (chunk) => {
-          res.write(chunk);
-          if (memberId) {
-            addStreamChunk(newStreamId, chunk);
-          }
-        }, numPredict);
-        res.end();
-      } else {
-        const numPredict = getNumericSetting('max_tokens_summary', DEFAULT_MAX_TOKENS);
-        const response = await callOllama(prompt, false, undefined, numPredict);
-        res.json({ result: response });
-      }
-    } catch (error) {
-      console.error("Error AI activity summary:", error);
-      res.status(500).json({ error: "AI error" });
-    }
+    // AI features are stubbed for now - re-enable when the AI backend is ready.
+    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
   });
-  app.get("/api/communications", (req, res) => {
+  app.get("/api/communications", async (req, res) => {
     try {
-      const comms = db.prepare("SELECT * FROM communications ORDER BY date DESC").all();
+      const comms = (await dbAll("SELECT * FROM communications ORDER BY date DESC"));
       res.json(comms);
     } catch (error) {
       console.error("Error fetching communications:", error);
@@ -1573,11 +1458,10 @@ async function startServer() {
     }
   });
 
-  app.post("/api/communications", (req, res) => {
+  app.post("/api/communications", async (req, res) => {
     try {
       const { recipient, subject, body, date, type } = req.body;
-      const info = db.prepare("INSERT INTO communications (recipient, subject, body, date, type) VALUES (?, ?, ?, ?, ?)")
-        .run(recipient, subject, body, date, type || 'email');
+      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type) VALUES (?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email'));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating communication:", error);
@@ -1585,9 +1469,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/communications/:id", (req, res) => {
+  app.delete("/api/communications/:id", async (req, res) => {
     try {
-      db.prepare("DELETE FROM communications WHERE id = ?").run(req.params.id);
+      (await dbRun("DELETE FROM communications WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting communication:", error);
@@ -1632,15 +1516,14 @@ async function startServer() {
   };
 
   // POST: Get all code files for a team
-  app.get("/api/code/files/:teamId", (req, res) => {
+  app.get("/api/code/files/:teamId", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId, 10);
       console.log("[Code Endpoint] GET /api/code/files/:teamId called with teamId:", teamId);
       if (isNaN(teamId)) {
         return res.status(400).json({ error: "Invalid team ID" });
       }
-      const files = db.prepare("SELECT * FROM code_files WHERE team_id = ? ORDER BY updated_at DESC")
-        .all(teamId);
+      const files = (await dbAll("SELECT * FROM code_files WHERE team_id = ? ORDER BY updated_at DESC", teamId));
       console.log("[Code Endpoint] Found", files.length, "files for team", teamId);
       res.json(files);
     } catch (error) {
@@ -1651,7 +1534,7 @@ async function startServer() {
   console.log("[Code Manager] GET /api/code/files/:teamId registered");
 
   // POST: Create/upload code file
-  app.post("/api/code/files", (req, res) => {
+  app.post("/api/code/files", async (req, res) => {
     try {
       const { team_id, file_name, file_path, language = 'java', content, author_id } = req.body;
       
@@ -1665,19 +1548,19 @@ async function startServer() {
       const now = new Date().toISOString();
       const fileSize = Buffer.byteLength(content || '', 'utf-8');
 
-      const fileInfo = db.prepare(`
+      const fileInfo = (await dbRun(`
         INSERT OR REPLACE INTO code_files (team_id, file_name, file_path, language, file_size, created_by, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(team_id, file_name, file_path, language, fileSize, author_id, now, now);
+      `, team_id, file_name, file_path, language, fileSize, author_id, now, now));
 
       const fileId = fileInfo.lastInsertRowid as number;
 
       // Create initial commit to drafts
       const hash = `draft_${Date.now()}`;
-      db.prepare(`
+      (await dbRun(`
         INSERT INTO code_commits (team_id, file_id, branch, author_id, message, content, hash, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(team_id, fileId, 'drafts', author_id, `Created ${file_name}`, content || '', hash, now);
+      `, team_id, fileId, 'drafts', author_id, `Created ${file_name}`, content || '', hash, now));
 
       console.log("[Code Endpoint] File created successfully. ID:", fileId);
       res.json({ id: fileId, file_name, file_path, language });
@@ -1689,39 +1572,39 @@ async function startServer() {
   console.log("[Code Manager] POST /api/code/files registered");
 
   // GET: Get code file content with history
-  app.get("/api/code/files/:fileId/content", (req, res) => {
+  app.get("/api/code/files/:fileId/content", async (req, res) => {
     try {
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
-      const file = db.prepare("SELECT * FROM code_files WHERE id = ?").get(fileId) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", fileId)) as any;
       
       if (!file) {
         return res.status(404).json({ error: "File not found" });
       }
 
-      const commits = db.prepare(`
+      const commits = (await dbAll(`
         SELECT cc.*, m.name as author_name 
         FROM code_commits cc
         LEFT JOIN members m ON cc.author_id = m.id
         WHERE cc.file_id = ?
         ORDER BY cc.created_at DESC
-      `).all(fileId);
+      `, fileId));
 
       // Get drafts content
-      const draftCommit = db.prepare(`
+      const draftCommit = (await dbGet(`
         SELECT content FROM code_commits 
         WHERE file_id = ? AND branch = 'drafts'
         ORDER BY created_at DESC LIMIT 1
-      `).get(fileId) as any;
+      `, fileId)) as any;
 
       // Get main content
-      const mainCommit = db.prepare(`
+      const mainCommit = (await dbGet(`
         SELECT content FROM code_commits 
         WHERE file_id = ? AND branch = 'main'
         ORDER BY created_at DESC LIMIT 1
-      `).get(fileId) as any;
+      `, fileId)) as any;
 
       res.json({
         file,
@@ -1738,7 +1621,7 @@ async function startServer() {
   });
 
   // POST: Save draft
-  app.post("/api/code/files/:fileId/draft", (req, res) => {
+  app.post("/api/code/files/:fileId/draft", async (req, res) => {
     try {
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
@@ -1749,16 +1632,16 @@ async function startServer() {
       const now = new Date().toISOString();
       const hash = `draft_${Date.now()}`;
 
-      const info = db.prepare(`
+      const info = (await dbRun(`
         INSERT INTO code_commits (team_id, file_id, branch, author_id, message, content, hash, created_at)
         VALUES (
           (SELECT team_id FROM code_files WHERE id = ?),
           ?, 'drafts', ?, 'Auto-save draft', ?, ?, ?
         )
-      `).run(fileId, fileId, author_id, content, hash, now);
+      `, fileId, fileId, author_id, content, hash, now));
 
       // Update file's updated_at
-      db.prepare("UPDATE code_files SET updated_at = ? WHERE id = ?").run(now, fileId);
+      (await dbRun("UPDATE code_files SET updated_at = ? WHERE id = ?", now, fileId));
 
       res.json({ success: true, id: info.lastInsertRowid });
     } catch (error) {
@@ -1776,28 +1659,28 @@ async function startServer() {
       }
       const { message, author_id } = req.body;
 
-      const file = db.prepare("SELECT * FROM code_files WHERE id = ?").get(fileId) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", fileId)) as any;
       if (!file) {
         return res.status(404).json({ error: "File not found" });
       }
 
       // Get latest draft content
-      const draft = db.prepare(`
+      const draft = (await dbGet(`
         SELECT content FROM code_commits 
         WHERE file_id = ? AND branch = 'drafts'
         ORDER BY created_at DESC LIMIT 1
-      `).get(fileId) as any;
+      `, fileId)) as any;
 
       const now = new Date().toISOString();
       const hash = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      const info = db.prepare(`
+      const info = (await dbRun(`
         INSERT INTO code_commits (team_id, file_id, branch, author_id, message, content, hash, created_at)
         VALUES (?, ?, 'main', ?, ?, ?, ?, ?)
-      `).run(file.team_id, fileId, author_id, message || 'Commit to main', draft?.content || '', hash, now);
+      `, file.team_id, fileId, author_id, message || 'Commit to main', draft?.content || '', hash, now));
 
       // Update file's updated_at
-      db.prepare("UPDATE code_files SET updated_at = ? WHERE id = ?").run(now, fileId);
+      (await dbRun("UPDATE code_files SET updated_at = ? WHERE id = ?", now, fileId));
 
       // Broadcast to WebSocket clients
       broadcast({
@@ -1817,7 +1700,7 @@ async function startServer() {
   });
 
   // GET: Get commit history
-  app.get("/api/code/files/:fileId/history", (req, res) => {
+  app.get("/api/code/files/:fileId/history", async (req, res) => {
     try {
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
@@ -1825,13 +1708,13 @@ async function startServer() {
       }
       const branch = (req.query.branch as string) || 'main';
 
-      const commits = db.prepare(`
+      const commits = (await dbAll(`
         SELECT cc.*, m.name as author_name 
         FROM code_commits cc
         LEFT JOIN members m ON cc.author_id = m.id
         WHERE cc.file_id = ? AND cc.branch = ?
         ORDER BY cc.created_at DESC
-      `).all(fileId, branch);
+      `, fileId, branch));
 
       res.json(commits);
     } catch (error) {
@@ -1841,15 +1724,15 @@ async function startServer() {
   });
 
   // GET: Get specific commit
-  app.get("/api/code/commits/:commitId", (req, res) => {
+  app.get("/api/code/commits/:commitId", async (req, res) => {
     try {
-      const commit = db.prepare(`
+      const commit = (await dbGet(`
         SELECT cc.*, m.name as author_name, cf.file_name
         FROM code_commits cc
         LEFT JOIN members m ON cc.author_id = m.id
         LEFT JOIN code_files cf ON cc.file_id = cf.id
         WHERE cc.id = ?
-      `).get(req.params.commitId) as any;
+      `, req.params.commitId)) as any;
 
       if (!commit) {
         return res.status(404).json({ error: "Commit not found" });
@@ -1863,28 +1746,28 @@ async function startServer() {
   });
 
   // POST: Revert a commit by creating a new commit on the chosen branch (main or drafts)
-  app.post("/api/code/commits/:commitId/revert", (req, res) => {
+  app.post("/api/code/commits/:commitId/revert", async (req, res) => {
     try {
       const commitId = parseInt(req.params.commitId, 10);
       if (isNaN(commitId)) return res.status(400).json({ error: "Invalid commit ID" });
 
       const { branch = 'main', author_id } = req.body as any;
 
-      const commit = db.prepare("SELECT * FROM code_commits WHERE id = ?").get(commitId) as any;
+      const commit = (await dbGet("SELECT * FROM code_commits WHERE id = ?", commitId)) as any;
       if (!commit) return res.status(404).json({ error: 'Commit not found' });
 
-      const file = db.prepare("SELECT * FROM code_files WHERE id = ?").get(commit.file_id) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", commit.file_id)) as any;
       if (!file) return res.status(404).json({ error: 'File not found for commit' });
 
       const now = new Date().toISOString();
       const hash = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-      db.prepare(`
+      (await dbRun(`
         INSERT INTO code_commits (team_id, file_id, branch, author_id, message, content, hash, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(file.team_id, file.id, branch, author_id || null, `Revert to commit ${commit.hash}`, commit.content, hash, now);
+      `, file.team_id, file.id, branch, author_id || null, `Revert to commit ${commit.hash}`, commit.content, hash, now));
 
-      db.prepare("UPDATE code_files SET updated_at = ? WHERE id = ?").run(now, file.id);
+      (await dbRun("UPDATE code_files SET updated_at = ? WHERE id = ?", now, file.id));
 
       broadcast({
         type: 'code_revert',
@@ -1903,7 +1786,7 @@ async function startServer() {
   });
 
   // POST: Download code file
-  app.post("/api/code/files/:fileId/download", (req, res) => {
+  app.post("/api/code/files/:fileId/download", async (req, res) => {
     try {
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
@@ -1911,16 +1794,16 @@ async function startServer() {
       }
       const { branch = 'main' } = req.body;
 
-      const file = db.prepare("SELECT * FROM code_files WHERE id = ?").get(fileId) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", fileId)) as any;
       if (!file) {
         return res.status(404).json({ error: "File not found" });
       }
 
-      const commit = db.prepare(`
+      const commit = (await dbGet(`
         SELECT content FROM code_commits 
         WHERE file_id = ? AND branch = ?
         ORDER BY created_at DESC LIMIT 1
-      `).get(fileId, branch) as any;
+      `, fileId, branch)) as any;
 
       if (!commit) {
         return res.status(404).json({ error: "No content found for this branch" });
@@ -1936,14 +1819,14 @@ async function startServer() {
   });
 
   // DELETE: Delete code file
-  app.delete("/api/code/files/:fileId", (req, res) => {
+  app.delete("/api/code/files/:fileId", async (req, res) => {
     try {
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
-      db.prepare("DELETE FROM code_commits WHERE file_id = ?").run(fileId);
-      db.prepare("DELETE FROM code_files WHERE id = ?").run(fileId);
+      (await dbRun("DELETE FROM code_commits WHERE file_id = ?", fileId));
+      (await dbRun("DELETE FROM code_files WHERE id = ?", fileId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting code file:", error);
@@ -1960,7 +1843,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
+    app.get("*", async (req, res) => {
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }

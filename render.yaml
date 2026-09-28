@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: control-point
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npx tsx server.ts
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Database: point at a hosted Turso database for production
+      # (create one free at https://turso.tech). Leave unset for local dev.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_AUTH_TOKEN
+        sync: false
+      # Google OAuth (optional): credentials from https://console.cloud.google.com/apis/credentials
+      # with authorized redirect URI <APP_URL>/api/auth/google/callback
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # Public URL of the deployed app (used for OAuth callbacks)
+      - key: APP_URL
+        sync: false

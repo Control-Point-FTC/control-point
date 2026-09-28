@@ -98,3 +98,16 @@ export interface CodeContent {
   };
   commits: CodeCommit[];
 }
+export interface CalendarEvent {
+  id: number;
+  title: string;
+  description: string;
+  date: string; // YYYY-MM-DD
+  start_time: string; // HH:MM
+  end_time: string; // HH:MM
+  location: string;
+  event_type: 'meeting' | 'competition' | 'deadline' | 'social' | 'other';
+  team_id: number | null;
+  created_by: number | null;
+  created_at: string;
+}

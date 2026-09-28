@@ -11,6 +11,7 @@ import {
   Settings,
   Menu,
   X,
+  ChevronLeft,
   ChevronRight,
   Plus,
   TrendingUp,
@@ -33,6 +34,7 @@ import {
   Trash2,
   FileUp,
   FileText,
+  MapPin,
   Download,
   Bolt,
   Code2,
@@ -48,7 +50,7 @@ import {
 import Markdown from 'react-markdown';
 import { format } from 'date-fns';
 
-import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication } from './types';
+import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { fetchFTCNews, streamFTCNews, getAttendanceInsights, streamAttendanceInsights, checkExcuse, streamCheckExcuse, getActivitySummary, streamActivitySummary } from './services/aiService';
 import { CodeView } from './components/CodeView';
 
@@ -86,7 +88,7 @@ const Button = ({ children, className, variant = 'primary', ...props }: any) => 
   const variants: any = {
     primary: {
       className: 'text-primary font-bold hover:brightness-90',
-      style: { backgroundColor: accentColor || '#fbbf24', color: primaryColor || '#0f172a' }
+      style: { backgroundColor: accentColor || '#F5B700', color: primaryColor || '#111111' }
     },
     secondary: 'bg-slate-800 text-white hover:bg-slate-700',
     outline: {
@@ -161,6 +163,7 @@ export default function App() {
   const [outreach, setOutreach] = useState<OutreachEvent[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [communications, setCommunications] = useState<Communication[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [documentation, setDocumentation] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -259,14 +262,50 @@ export default function App() {
   // WebSocket
   const [socket, setSocket] = useState<WebSocket | null>(null);
 
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+
+  // Handle Google OAuth callback (?google_session= / ?google_error=)
+  useEffect(() => {
+    fetch('/api/auth/config')
+      .then(r => r.json())
+      .then(d => setGoogleEnabled(!!d.googleEnabled))
+      .catch(() => {});
+    const params = new URLSearchParams(window.location.search);
+    const gs = params.get('google_session');
+    const ge = params.get('google_error');
+    if (ge) {
+      setGoogleError(ge === 'not_invited'
+        ? 'This Google account is not on the team roster yet. Ask an admin to add you first.'
+        : 'Google sign-in failed. Please try again.');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    if (gs) {
+      localStorage.setItem('sessionId', gs);
+      setSessionId(gs);
+      fetch(`/api/auth/me?sessionId=${encodeURIComponent(gs)}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.user) {
+            setCurrentUser(data.user);
+            setIsLoggedIn(true);
+          } else {
+            setGoogleError('Google sign-in failed. Please try again.');
+          }
+        })
+        .catch(() => setGoogleError('Google sign-in failed. Please try again.'))
+        .finally(() => window.history.replaceState({}, '', window.location.pathname));
+    }
+  }, []);
+
   // Apply custom colors
   useEffect(() => {
     if (isLoggedIn && currentUser) {
       const myTeam = teams.find(t => t.id === currentUser.team_id);
       
-      const accent = currentUser.accent_color || myTeam?.accent_color || '#fbbf24';
-      const primary = currentUser.primary_color || myTeam?.primary_color || '#0f172a';
-      const text = currentUser.text_color || myTeam?.text_color || '#f1f5f9'; // slate-100 default
+      const accent = currentUser.accent_color || myTeam?.accent_color || '#F5B700';
+      const primary = currentUser.primary_color || myTeam?.primary_color || '#111111';
+      const text = currentUser.text_color || myTeam?.text_color || '#F8FAFC'; // slate-100 default
 
       const root = document.documentElement;
       root.style.setProperty('--color-accent', accent);
@@ -275,14 +314,14 @@ export default function App() {
       
       // Secondary color is usually a slightly lighter version of primary
       // For simplicity, we can just use the same or a slightly transparent version
-      root.style.setProperty('--color-secondary', primary + 'CC'); // Adding transparency
+      root.style.setProperty('--color-secondary', '#1A1A1A');
     } else {
       // Reset to defaults
       const root = document.documentElement;
-      root.style.setProperty('--color-accent', '#fbbf24');
-      root.style.setProperty('--color-primary', '#0f172a');
-      root.style.setProperty('--color-text-base', '#f1f5f9');
-      root.style.setProperty('--color-secondary', '#1e293b');
+      root.style.setProperty('--color-accent', '#F5B700');
+      root.style.setProperty('--color-primary', '#111111');
+      root.style.setProperty('--color-text-base', '#F8FAFC');
+      root.style.setProperty('--color-secondary', '#1A1A1A');
     }
   }, [currentUser, teams, isLoggedIn]);
 
@@ -433,7 +472,7 @@ export default function App() {
         }
       };
 
-      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d] = await Promise.all([
+      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d, ev] = await Promise.all([
         fetchJson('/api/teams'),
         fetchJson('/api/members'),
         fetchJson('/api/attendance'),
@@ -446,6 +485,7 @@ export default function App() {
         fetchJson('/api/settings'),
         fetchJson('/api/hidden-dates'),
         fetchJson('/api/documentation'),
+        fetchJson('/api/events'),
       ]);
 
       if (Array.isArray(t)) setTeams(t);
@@ -467,6 +507,7 @@ export default function App() {
       if (Array.isArray(msgs)) setMessages(msgs);
       if (Array.isArray(h)) setHiddenDates(h);
       if (Array.isArray(d)) setDocumentation(d);
+      if (Array.isArray(ev)) setEvents(ev);
       if (s && Array.isArray(s)) {
         const settingsMap = s.reduce((acc: any, curr: any) => ({ ...acc, [curr.key]: curr.value }), {});
         setSettings(settingsMap);
@@ -585,6 +626,7 @@ export default function App() {
     { id: 'teams', label: 'Teams & Members', icon: Users },
     { id: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance' },
     { id: 'tasks', label: 'Tasks', icon: CheckSquare },
+    { id: 'calendar', label: 'Calendar', icon: Calendar },
     { id: 'budget', label: 'Budget', icon: Wallet, scope: 'budget' },
     { id: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory' },
     { id: 'outreach', label: 'Outreach', icon: Globe },
@@ -598,7 +640,7 @@ export default function App() {
 
   const renderContent = () => {
     const viewProps = {
-      teams, members, attendance, tasks, budget, outreach, inventory, communications, 
+      teams, members, attendance, tasks, budget, outreach, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
       insights, news, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
@@ -613,6 +655,7 @@ export default function App() {
       case 'teams': return <TeamsView {...viewProps} />;
       case 'attendance': return <AttendanceView {...viewProps} />;
       case 'tasks': return <TasksView {...viewProps} />;
+      case 'calendar': return <CalendarView {...viewProps} />;
       case 'budget': return <BudgetView {...viewProps} />;
       case 'inventory': return <InventoryView {...viewProps} />;
       case 'outreach': return <OutreachView {...viewProps} />;
@@ -635,7 +678,7 @@ export default function App() {
               <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center gold-glow">
                 <Bolt className="text-primary w-10 h-10" />
               </div>
-              <h1 className="text-3xl font-display font-bold text-white">FTC Dashboard</h1>
+              <h1 className="text-3xl font-display font-bold text-white">Control Point</h1>
               <p className="text-slate-400 text-center">
                 {needsSetup ? "Set your new password to continue" : "Sign in to access club data."}
               </p>
@@ -656,6 +699,29 @@ export default function App() {
                 {needsSetup ? "Complete Setup" : "Sign In"}
               </Button>
             </form>
+            {googleError && !needsSetup && (
+              <p className="text-sm text-rose-400 text-center mt-4">{googleError}</p>
+            )}
+            {googleEnabled && !needsSetup && (
+              <>
+                <div className="flex items-center gap-3 mt-5">
+                  <div className="flex-1 h-px bg-white/10" />
+                  <span className="text-xs text-slate-500">or</span>
+                  <div className="flex-1 h-px bg-white/10" />
+                </div>
+                <a href="/api/auth/google" className="block mt-5">
+                  <Button variant="secondary" className="w-full py-3" type="button">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.3H12v4.3h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.2-2 3.7-5 3.7-8.7z"/>
+                      <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.8-2.9c-1 .7-2.4 1.2-4.1 1.2-3.1 0-5.8-2.1-6.8-5l-3.9 3C3.5 21.3 7.5 24 12 24z"/>
+                      <path fill="#FBBC05" d="M5.2 14.4c-.2-.7-.4-1.5-.4-2.4s.1-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l3.9-3z"/>
+                      <path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.5 0 3.5 2.7 1.3 6.6l3.9 3.1c1-2.9 3.7-5 6.8-5z"/>
+                    </svg>
+                    Continue with Google
+                  </Button>
+                </a>
+              </>
+            )}
           </Card>
         </motion.div>
       </div>
@@ -704,7 +770,7 @@ export default function App() {
               transition={{ delay: 0.1 }}
               className="text-lg sm:text-xl font-display font-bold text-white whitespace-nowrap"
             >
-              FTC Dashboard
+              Control Point
             </motion.h1>
           )}
         </div>
@@ -925,8 +991,8 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
   }, [data.attendance, colorVersion]);
 
   // Get dynamic colors for charts
-  const accentColor = getCSSVariable('--color-accent') || '#fbbf24';
-  const secondaryColor = getCSSVariable('--color-secondary') || '#1e293b';
+  const accentColor = getCSSVariable('--color-accent') || '#F5B700';
+  const secondaryColor = getCSSVariable('--color-secondary') || '#1A1A1A';
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
@@ -1330,15 +1396,15 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                 <p className="text-xs font-bold text-slate-400 uppercase mb-3">Team Branding (Default for members)</p>
                 <div className="grid grid-cols-1 gap-4">
                   <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#fbbf24'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
+                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#F5B700'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
                     <Input placeholder="Accent Color (Yellow)" value={newTeam.accent_color} onChange={(e: any) => setNewTeam({...newTeam, accent_color: e.target.value})} />
                   </div>
                   <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.primary_color || '#0f172a'} onChange={(e) => setNewTeam({...newTeam, primary_color: e.target.value})} />
+                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.primary_color || '#111111'} onChange={(e) => setNewTeam({...newTeam, primary_color: e.target.value})} />
                     <Input placeholder="Interface Color (Navy)" value={newTeam.primary_color} onChange={(e: any) => setNewTeam({...newTeam, primary_color: e.target.value})} />
                   </div>
                   <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.text_color || '#f1f5f9'} onChange={(e) => setNewTeam({...newTeam, text_color: e.target.value})} />
+                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.text_color || '#F8FAFC'} onChange={(e) => setNewTeam({...newTeam, text_color: e.target.value})} />
                     <Input placeholder="Text Color" value={newTeam.text_color} onChange={(e: any) => setNewTeam({...newTeam, text_color: e.target.value})} />
                   </div>
                 </div>
@@ -1720,7 +1786,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           <table className="w-full text-left text-sm border-collapse">
             <thead>
               <tr className="bg-white/5 border-b border-white/10">
-                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase sticky left-0 bg-[#0f172a] z-10 min-w-[150px]">Member</th>
+                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase sticky left-0 bg-[#111111] z-10 min-w-[150px]">Member</th>
                 {visibleDates.map(date => (
                   <th key={date} className="px-2 py-3 text-[10px] font-bold text-slate-400 uppercase text-center min-w-[40px] group relative">
                     <div className="text-center">
@@ -1743,7 +1809,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
             <tbody className="divide-y divide-white/5">
               {members.map((m: any) => (
                 <tr key={m.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3 text-sm text-white font-medium sticky left-0 bg-[#0f172a]/90 backdrop-blur-md z-10 border-r border-white/5">
+                  <td className="px-4 py-3 text-sm text-white font-medium sticky left-0 bg-[#111111]/90 backdrop-blur-md z-10 border-r border-white/5">
                     {m.name}
                   </td>
                   {visibleDates.map(date => {
@@ -1925,6 +1991,250 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   );
 }
 
+function CalendarView({ events, teams, onRefresh, currentUser }: any) {
+  const [cursor, setCursor] = useState(() => new Date());
+  const [showModal, setShowModal] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState({ title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
+
+  const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const todayKey = toKey(new Date());
+
+  const byDate = useMemo(() => {
+    const map: Record<string, any[]> = {};
+    for (const e of events) {
+      (map[e.date] = map[e.date] || []).push(e);
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+    }
+    return map;
+  }, [events]);
+
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+  const startDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells: (number | null)[] = [...Array(startDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+  const typeStyle: Record<string, string> = {
+    meeting: 'bg-info/15 text-info border-info/30',
+    competition: 'bg-accent/15 text-accent border-accent/30',
+    deadline: 'bg-warning/15 text-warning border-warning/30',
+    social: 'bg-success/15 text-success border-success/30',
+    other: 'bg-white/10 text-slate-300 border-white/10',
+  };
+
+  const typeLabel: Record<string, string> = {
+    meeting: 'Meeting', competition: 'Competition', deadline: 'Deadline', social: 'Social', other: 'Other',
+  };
+
+  const openNew = (dateKey: string) => {
+    setEditingId(null);
+    setForm({ title: '', description: '', date: dateKey, start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
+    setShowModal(true);
+  };
+
+  const openEdit = (e: any) => {
+    setEditingId(e.id);
+    setForm({
+      title: e.title, description: e.description || '', date: e.date,
+      start_time: e.start_time || '', end_time: e.end_time || '',
+      location: e.location || '', event_type: e.event_type || 'meeting',
+      team_id: e.team_id ? String(e.team_id) : '',
+    });
+    setShowModal(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.title.trim() || !form.date) return;
+    const payload = { ...form, team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id };
+    if (editingId) {
+      await fetch(`/api/events/${editingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    } else {
+      await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    }
+    setShowModal(false);
+    onRefresh();
+  };
+
+  const handleDelete = async () => {
+    if (!editingId || !confirm('Delete this event?')) return;
+    await fetch(`/api/events/${editingId}`, { method: 'DELETE' });
+    setShowModal(false);
+    onRefresh();
+  };
+
+  const fmtTime = (t: string) => {
+    if (!t) return '';
+    const [h, m] = t.split(':').map(Number);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+  };
+
+  const fmtDate = (key: string) => {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+
+  const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const upcoming = [...events]
+    .filter((e: any) => e.date >= todayKey)
+    .sort((a: any, b: any) => (a.date + (a.start_time || '')).localeCompare(b.date + (b.start_time || '')))
+    .slice(0, 8);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-display font-bold text-white">Team Calendar</h2>
+          <p className="text-sm text-slate-400">Meetings, competitions, and deadlines</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="secondary" onClick={() => setCursor(new Date())}>Today</Button>
+          <Button variant="secondary" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
+          <span className="text-white font-semibold min-w-[150px] text-center">{monthLabel}</span>
+          <Button variant="secondary" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
+          <Button onClick={() => openNew(todayKey)}><Plus className="w-4 h-4" /> New Event</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <Card className="xl:col-span-2 !p-4">
+          <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-slate-400 mb-1">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="py-2">{d}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((day, i) => {
+              if (day === null) return <div key={'blank-' + i} />;
+              const key = toKey(new Date(year, month, day));
+              const dayEvents = byDate[key] || [];
+              const isToday = key === todayKey;
+              return (
+                <div
+                  key={key}
+                  onClick={() => openNew(key)}
+                  className={cn(
+                    'min-h-[92px] rounded-xl border p-1.5 cursor-pointer transition-colors',
+                    isToday ? 'border-accent/60 bg-accent/5' : 'border-white/5 bg-white/[0.02] hover:border-white/20'
+                  )}
+                >
+                  <div className={cn(
+                    'text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full',
+                    isToday ? 'bg-accent text-primary' : 'text-slate-300'
+                  )}>{day}</div>
+                  <div className="space-y-1">
+                    {dayEvents.slice(0, 3).map((e: any) => (
+                      <button
+                        key={e.id}
+                        onClick={(ev) => { ev.stopPropagation(); openEdit(e); }}
+                        className={cn('w-full text-left text-[11px] px-1.5 py-0.5 rounded-md border truncate', typeStyle[e.event_type] || typeStyle.other)}
+                      >
+                        {e.start_time && <span className="opacity-70">{fmtTime(e.start_time)} </span>}{e.title}
+                      </button>
+                    ))}
+                    {dayEvents.length > 3 && <div className="text-[11px] text-slate-500 px-1">+{dayEvents.length - 3} more</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        <Card title="Upcoming" icon={Clock}>
+          {upcoming.length === 0 ? (
+            <p className="text-sm text-slate-500">No upcoming events. Click a day to add one.</p>
+          ) : (
+            <div className="space-y-3">
+              {upcoming.map((e: any) => (
+                <button key={e.id} onClick={() => openEdit(e)} className="w-full text-left flex gap-3 p-3 rounded-xl border border-white/5 bg-white/[0.02] hover:border-white/20 transition-colors">
+                  <div className={cn('w-1.5 rounded-full', (typeStyle[e.event_type] || typeStyle.other).split(' ')[0].replace('bg-', 'bg-').replace('/15', ''))} style={{ backgroundColor: 'currentColor' }} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-white truncate">{e.title}</div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      {fmtDate(e.date)}{e.start_time && ` · ${fmtTime(e.start_time)}${e.end_time ? '–' + fmtTime(e.end_time) : ''}`}
+                    </div>
+                    {e.location && <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3" />{e.location}</div>}
+                  </div>
+                  <span className={cn('text-[10px] font-bold uppercase px-2 py-1 rounded-md border h-fit', typeStyle[e.event_type] || typeStyle.other)}>
+                    {typeLabel[e.event_type] || 'Other'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md">
+            <div className="space-y-4">
+              <Input placeholder="Event title" value={form.title} onChange={(e: any) => setForm({ ...form, title: e.target.value })} />
+              <textarea
+                className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-20"
+                placeholder="Description (optional)"
+                value={form.description}
+                onChange={(e: any) => setForm({ ...form, description: e.target.value })}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Date</label>
+                  <Input type="date" value={form.date} onChange={(e: any) => setForm({ ...form, date: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Location</label>
+                  <Input placeholder="Where?" value={form.location} onChange={(e: any) => setForm({ ...form, location: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">Start time</label>
+                  <Input type="time" value={form.start_time} onChange={(e: any) => setForm({ ...form, start_time: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 block mb-1">End time</label>
+                  <Input type="time" value={form.end_time} onChange={(e: any) => setForm({ ...form, end_time: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Select
+                  options={[
+                    { label: 'Meeting', value: 'meeting' },
+                    { label: 'Competition', value: 'competition' },
+                    { label: 'Deadline', value: 'deadline' },
+                    { label: 'Social', value: 'social' },
+                    { label: 'Other', value: 'other' },
+                  ]}
+                  value={form.event_type}
+                  onChange={(e: any) => setForm({ ...form, event_type: e.target.value })}
+                />
+                <Select
+                  options={[
+                    { label: 'All teams', value: '' },
+                    ...teams.map((t: any) => ({ label: `${t.name} #${t.number}`, value: String(t.id) })),
+                  ]}
+                  value={form.team_id}
+                  onChange={(e: any) => setForm({ ...form, team_id: e.target.value })}
+                />
+              </div>
+              <div className="flex gap-3 justify-between">
+                <div>
+                  {editingId && <Button variant="danger" onClick={handleDelete}><Trash2 className="w-4 h-4" /> Delete</Button>}
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+                  <Button onClick={handleSave}>{editingId ? 'Save' : 'Create Event'}</Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: any) {
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -2010,7 +2320,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
   ];
 
   // Get dynamic colors for charts
-  const secondaryColor = getCSSVariable('--color-secondary') || '#1e293b';
+  const secondaryColor = getCSSVariable('--color-secondary') || '#1A1A1A';
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -2043,7 +2353,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
                   <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
                   <YAxis stroke="#94a3b8" fontSize={12} />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
+                    contentStyle={{ backgroundColor: '#1A1A1A', border: 'none', borderRadius: '8px', color: '#fff' }}
                     itemStyle={{ color: '#10b981' }}
                   />
                   <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981' }} />
@@ -3156,22 +3466,22 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-400 uppercase">Accent (Yellow)</label>
               <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={accentColor || '#fbbf24'} onChange={(e) => setAccentColor(e.target.value)} />
-                <Input value={accentColor} onChange={(e: any) => setAccentColor(e.target.value)} placeholder="#fbbf24" />
+                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={accentColor || '#F5B700'} onChange={(e) => setAccentColor(e.target.value)} />
+                <Input value={accentColor} onChange={(e: any) => setAccentColor(e.target.value)} placeholder="#F5B700" />
               </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-400 uppercase">Interface (Navy)</label>
               <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={primaryColor || '#0f172a'} onChange={(e) => setPrimaryColor(e.target.value)} />
-                <Input value={primaryColor} onChange={(e: any) => setPrimaryColor(e.target.value)} placeholder="#0f172a" />
+                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={primaryColor || '#111111'} onChange={(e) => setPrimaryColor(e.target.value)} />
+                <Input value={primaryColor} onChange={(e: any) => setPrimaryColor(e.target.value)} placeholder="#111111" />
               </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-400 uppercase">Text Color</label>
               <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={textColor || '#f1f5f9'} onChange={(e) => setTextColor(e.target.value)} />
-                <Input value={textColor} onChange={(e: any) => setTextColor(e.target.value)} placeholder="#f1f5f9" />
+                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={textColor || '#F8FAFC'} onChange={(e) => setTextColor(e.target.value)} />
+                <Input value={textColor} onChange={(e: any) => setTextColor(e.target.value)} placeholder="#F8FAFC" />
               </div>
             </div>
           </div>

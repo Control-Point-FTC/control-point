@@ -5,12 +5,15 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  
-  --color-primary: #0f172a; /* Deep Navy Blue */
-  --color-secondary: #1e293b; /* Slightly lighter navy */
-  --color-accent: #fbbf24; /* Amber/Gold */
-  --color-accent-hover: #f59e0b;
-  --color-text-base: #f1f5f9;
+
+  --color-primary: #111111;      /* Jet Black - page background */
+  --color-secondary: #1A1A1A;    /* Charcoal - cards and surfaces */
+  --color-accent: #F5B700;       /* Golden Yellow - primary actions */
+  --color-accent-hover: #D9A400; /* Darker gold for hover states */
+  --color-info: #00B4FF;         /* Electric Blue */
+  --color-success: #22C55E;      /* Neon Green */
+  --color-warning: #F59E0B;      /* Amber */
+  --color-text-base: #F8FAFC;    /* Off White */
 }
 
 @layer base {
@@ -29,7 +32,7 @@
 }
 
 .gold-glow {
-  box-shadow: 0 0 15px rgba(251, 191, 36, 0.2);
+  box-shadow: 0 0 15px rgba(245, 183, 0, 0.25);
 }
 
 .custom-scrollbar::-webkit-scrollbar {

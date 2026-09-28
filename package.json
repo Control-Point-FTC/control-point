@@ -1,8 +1,8 @@
 {
-  "name": "ftc-dashboard",
+  "name": "control-point",
   "private": false,
   "version": "0.1.1",
-  "description": "A comprehensive club management platform for FIRST Tech Challenge (FTC) teams.",
+  "description": "Control Point - team management platform for robotics clubs.",
   "author": "mapezz",
   "license": "MIT",
   "keywords": [
@@ -14,7 +14,7 @@
   ],
   "type": "module",
   "bin": {
-    "ftc-dashboard": "bin/cli.js"
+    "control-point": "bin/cli.js"
   },
   "files": [
     "bin/",
@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.0.1",
+    "@libsql/client": "^0.18.0",
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/axios": "^0.9.36",
@@ -47,7 +48,6 @@
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.4.1",
     "cheerio": "^1.2.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

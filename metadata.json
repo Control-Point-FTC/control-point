@@ -1,6 +1,6 @@
 {
-  "name": "FTC Club Nexus",
-  "description": "A comprehensive management platform for FTC robotics clubs, featuring team coordination, attendance insights, task delegation, budgeting, and AI-powered news scouting.",
+  "name": "Control Point",
+  "description": "Control Point - team coordination, attendance tracking, task management, budgeting, and event calendaring for robotics clubs.",
   "requestFramePermissions": [
     "geolocation"
   ]
