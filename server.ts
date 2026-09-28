@@ -22,135 +22,20 @@ import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
-
-// configuration tweaks for temporary behavior
-// set this to true when you want to turn off the news endpoint
-const NEWS_DISABLED = false;
-
-const EXA_API_KEY = process.env.EXA_API_KEY;
-console.log("EXA_API_KEY present:", !!EXA_API_KEY);
-
-async function searchExa(query: string) {
-  if (!EXA_API_KEY) {
-    console.warn("EXA_API_KEY not found, falling back to basic prompt.");
-    return null;
-  }
-
-  try {
-    const response = await fetch('https://api.exa.ai/search', {
-      method: 'POST',
-      headers: {
-        'x-api-key': EXA_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        query: query,
-        category: "news",
-        type: "auto",
-        num_results: 5,
-        contents: {
-          highlights: {
-            max_characters: 1000
-          }
-        }
-      })
-    });
-    if (!response.ok) {
-      console.error("Exa API error:", response.status, response.statusText);
-      return null;
-    }
-
-    const data: any = await response.json();
-    console.log("Exa API response:", JSON.stringify(data, null, 2));
-    return data.results.map((r: any) => ({
-      title: r.title,
-      url: r.url,
-      highlight: r.highlights?.[0] || ""
-    }));
-  } catch (error) {
-    console.error("Error calling Exa:", error);
-    return null;
-  }
-}
-// default maximum tokens to generate for any request; can also be overridden via env
-const DEFAULT_MAX_TOKENS = parseInt(process.env.MAX_TOKENS_LIMIT || '1024', 10);
-
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434/api/generate';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'gemma:2b';
-
-async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: string) => void, num_predict?: number) {
-  const options: any = {};
-  if (num_predict && num_predict > 0) {
-    options.num_predict = num_predict;
-  } else {
-    options.num_predict = DEFAULT_MAX_TOKENS;
-  }
-
-  const response = await fetch(OLLAMA_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: OLLAMA_MODEL,
-      prompt: prompt,
-      stream: stream,
-      options,
-      keep_alive: -1
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Ollama error: ${response.statusText}`);
-  }
-
-  if (stream) {
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    if (!reader) return;
-
-    let buffer = '';
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const json = JSON.parse(line);
-              if (json.response) {
-                onChunk?.(json.response);
-              }
-              if (json.done) return;
-            } catch (e) {
-              console.error('Error parsing Ollama chunk:', e);
-            }
-          }
-        }
-
-        if (done) {
-          if (buffer.trim()) {
-            try {
-              const json = JSON.parse(buffer);
-              if (json.response) onChunk?.(json.response);
-            } catch (e) {
-              // ignore partial
-            }
-          }
-          break;
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  } else {
-    const json: any = await response.json();
-    return json.response;
-  }
-}
+import {
+  isAIConfigured,
+  getAISetting,
+  getMaxTokens,
+  aiGenerate,
+  aiStream,
+  scoutNews,
+  buildAttendancePrompt,
+  buildExcusePrompt,
+  buildCoachPrompt,
+  ATTENDANCE_SYSTEM,
+  EXCUSE_SYSTEM,
+  COACH_SYSTEM,
+} from "./ai.js";
 
 // Initialize Database - Create all tables first
 (await dbExec(`
@@ -2082,26 +1967,168 @@ async function startServer() {
     }
   });
 
-  // --- AI endpoints using the local llama model ---
+  // --- AI endpoints (Google Gemini, server-side; key stays in env) ---
 
   app.post("/api/ai/fetch-news", async (req, res) => {
-    // AI features are stubbed for now - re-enable when the AI backend is ready.
-    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!isAIConfigured()) {
+        return res.status(501).json({ error: "AI not configured", result: "AI features are not configured yet. The team owner needs to add a Gemini API key." });
+      }
+      const stream = req.query.stream === "true";
+      const maxTokens = await getMaxTokens("max_tokens_news", 1024);
+      if (stream) {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        try {
+          await scoutNews(maxTokens, (chunk) => res.write(chunk));
+          res.end();
+        } catch (err) {
+          console.error("AI news stream error:", err);
+          res.end("\n\n(Failed to finish the news roundup.)");
+        }
+        return;
+      }
+      const result = await scoutNews(maxTokens);
+      res.json({ result });
+    } catch (error) {
+      console.error("AI news error:", error);
+      res.status(502).json({ error: "AI request failed", result: "Failed to fetch latest news. Please check your connection." });
+    }
   });
 
   app.post("/api/ai/attendance", async (req, res) => {
-    // AI features are stubbed for now - re-enable when the AI backend is ready.
-    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!isAIConfigured()) {
+        return res.status(501).json({ error: "AI not configured", result: "Insights unavailable." });
+      }
+      // Prefer server-side data so clients can't spoof another team's records.
+      const members = (await dbAll("SELECT id, name FROM members WHERE team_id = ?", auth.teamId)) as any[];
+      const records = (await dbAll(
+        "SELECT member_id, status FROM attendance WHERE team_id = ? AND date >= date('now', '-30 days')",
+        auth.teamId
+      )) as any[];
+      const criteria = await getAISetting("excuse_criteria", "Excused for school, family emergency, or illness.");
+      const prompt = buildAttendancePrompt(records, members, criteria);
+      const maxTokens = await getMaxTokens("max_tokens_attendance", 1024);
+      const stream = req.query.stream === "true";
+      if (stream) {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        try {
+          await aiStream(ATTENDANCE_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          res.end();
+        } catch (err) {
+          console.error("AI attendance stream error:", err);
+          res.end("\n\n(Failed to finish insights.)");
+        }
+        return;
+      }
+      const result = await aiGenerate(ATTENDANCE_SYSTEM, prompt, maxTokens);
+      res.json({ result });
+    } catch (error) {
+      console.error("AI attendance error:", error);
+      res.status(502).json({ error: "AI request failed", result: "Insights unavailable." });
+    }
   });
 
   app.post("/api/ai/check-excuse", async (req, res) => {
-    // AI features are stubbed for now - re-enable when the AI backend is ready.
-    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!isAIConfigured()) {
+        return res.status(501).json({ error: "AI not configured", result: "UNEXCUSED - AI not configured." });
+      }
+      const reason = String(req.body?.reason || "").slice(0, 500);
+      if (!reason.trim()) {
+        return res.status(400).json({ error: "Reason required", result: "UNEXCUSED - no reason given." });
+      }
+      const criteria = await getAISetting("excuse_criteria", "Excused for school, family emergency, or illness.");
+      const prompt = buildExcusePrompt(criteria, reason);
+      const maxTokens = await getMaxTokens("max_tokens_excuse", 512);
+      const stream = req.query.stream === "true";
+      if (stream) {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        try {
+          await aiStream(EXCUSE_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          res.end();
+        } catch (err) {
+          console.error("AI excuse stream error:", err);
+          res.end("UNEXCUSED - AI error.");
+        }
+        return;
+      }
+      const result = await aiGenerate(EXCUSE_SYSTEM, prompt, maxTokens);
+      res.json({ result });
+    } catch (error) {
+      console.error("AI excuse error:", error);
+      res.status(502).json({ error: "AI request failed", result: "UNEXCUSED - AI error." });
+    }
   });
 
   app.post("/api/ai/activity-summary", async (req, res) => {
-    // AI features are stubbed for now - re-enable when the AI backend is ready.
-    return res.status(501).json({ error: "AI features coming soon", result: "AI features are coming soon to Control Point." });
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!isAIConfigured()) {
+        return res.status(501).json({ error: "AI not configured", result: "Failed to generate summary." });
+      }
+      const teamId = auth.teamId;
+      const openTasks = (await dbAll(
+        "SELECT title, status, due_date FROM tasks WHERE team_id = ? AND status != 'done' ORDER BY due_date LIMIT 25",
+        teamId
+      )) as any[];
+      const overdue = (await dbGet(
+        "SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done' AND due_date IS NOT NULL AND due_date < date('now')",
+        teamId
+      )) as any;
+      const recentMessages = (await dbGet(
+        "SELECT COUNT(*) AS c FROM messages WHERE team_id = ? AND created_at >= datetime('now', '-7 days')",
+        teamId
+      ).catch(() => ({ c: 0 }))) as any;
+      const budgetRows = (await dbAll("SELECT amount, type FROM budget WHERE team_id = ?", teamId).catch(() => [])) as any[];
+      const budgetNet = budgetRows.reduce(
+        (sum: number, b: any) => sum + (String(b.type).toLowerCase() === "expense" ? -Math.abs(Number(b.amount) || 0) : Math.abs(Number(b.amount) || 0)),
+        0
+      );
+      const lowStock = (await dbAll(
+        "SELECT name, quantity FROM inventory WHERE team_id = ? AND quantity <= 2 ORDER BY quantity LIMIT 10",
+        teamId
+      ).catch(() => [])) as any[];
+      const memberCount = ((await dbGet("SELECT COUNT(*) AS c FROM members WHERE team_id = ?", teamId)) as any)?.c || 0;
+      const today = new Date().toISOString().slice(0, 10);
+      const prompt = buildCoachPrompt({
+        openTasks: openTasks.map((t) => ({ title: t.title, status: t.status, due: t.due_date && t.due_date < today ? `${t.due_date} (overdue)` : t.due_date })),
+        overdueTasks: overdue?.c || 0,
+        recentMessages: recentMessages?.c || 0,
+        budgetNet,
+        lowStock,
+        memberCount,
+      });
+      const maxTokens = await getMaxTokens("max_tokens_summary", 1024);
+      const stream = req.query.stream === "true";
+      if (stream) {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        try {
+          await aiStream(COACH_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          res.end();
+        } catch (err) {
+          console.error("AI summary stream error:", err);
+          res.end("\n\n(Failed to finish the summary.)");
+        }
+        return;
+      }
+      const result = await aiGenerate(COACH_SYSTEM, prompt, maxTokens);
+      res.json({ result });
+    } catch (error) {
+      console.error("AI summary error:", error);
+      res.status(502).json({ error: "AI request failed", result: "Failed to generate summary." });
+    }
   });
   app.get("/api/communications", async (req, res) => {
     try {

@@ -1,12 +1,14 @@
-// Client-side wrapper that communicates with our server-side Llama-powered AI endpoints.
-// This replaces the previous Gemini-based implementation; it's still used in the React
-// app but now routes requests to the Express API, which in turn uses node-llama-cpp.
+// Client-side wrapper for Control Point's server-side AI endpoints.
+// The API key lives on the server (GEMINI_API_KEY env var) — these calls only
+// carry the user's session id, exactly like every other authenticated request.
+
+import { apiFetch } from './api';
 
 const CACHE_KEY = 'ftcNewsCache';
 const TS_KEY = 'ftcNewsTimestamp';
 
 async function postJSON(endpoint: string, body: any = {}) {
-  const res = await fetch(endpoint, {
+  const res = await apiFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
@@ -18,6 +20,32 @@ async function postJSON(endpoint: string, body: any = {}) {
   }
 
   return res.json();
+}
+
+async function postStream(
+  endpoint: string,
+  body: any,
+  onChunk: (chunk: string) => void
+) {
+  const res = await apiFetch(`${endpoint}?stream=true`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok || !res.body) {
+    const text = await res.text();
+    throw new Error(`AI request failed: ${res.status} ${text}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk(decoder.decode(value, { stream: true }));
+  }
+  onChunk(decoder.decode()); // flush
 }
 
 export async function fetchFTCNews(force: boolean = false) {
@@ -50,29 +78,11 @@ export async function fetchFTCNews(force: boolean = false) {
 }
 
 // streaming variant using fetch body's readable stream
-export async function streamFTCNews(
+export function streamFTCNews(
   force: boolean = false,
   onChunk: (chunk: string) => void
 ) {
-  const res = await fetch(`/api/ai/fetch-news?stream=true`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ force }),
-  });
-
-  if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(`AI request failed: ${res.status} ${text}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    onChunk(decoder.decode(value, { stream: true }));
-  }
-  onChunk(decoder.decode()); // flush
+  return postStream('/api/ai/fetch-news', { force }, onChunk);
 }
 
 export async function getAttendanceInsights(records: any[], members: any[]) {
@@ -85,30 +95,12 @@ export async function getAttendanceInsights(records: any[], members: any[]) {
   }
 }
 
-export async function streamAttendanceInsights(
+export function streamAttendanceInsights(
   records: any[],
   members: any[],
   onChunk: (chunk: string) => void
 ) {
-  const res = await fetch(`/api/ai/attendance?stream=true`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ records, members }),
-  });
-
-  if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(`AI request failed: ${res.status} ${text}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    onChunk(decoder.decode(value, { stream: true }));
-  }
-  onChunk(decoder.decode()); // flush
+  return postStream('/api/ai/attendance', { records, members }, onChunk);
 }
 
 export async function checkExcuse(reason: string, criteria: string) {
@@ -121,30 +113,12 @@ export async function checkExcuse(reason: string, criteria: string) {
   }
 }
 
-export async function streamCheckExcuse(
+export function streamCheckExcuse(
   reason: string,
   criteria: string,
   onChunk: (chunk: string) => void
 ) {
-  const res = await fetch(`/api/ai/check-excuse?stream=true`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason, criteria }),
-  });
-
-  if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(`AI request failed: ${res.status} ${text}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    onChunk(decoder.decode(value, { stream: true }));
-  }
-  onChunk(decoder.decode()); // flush
+  return postStream('/api/ai/check-excuse', { reason, criteria }, onChunk);
 }
 
 export async function getActivitySummary(data: any) {
@@ -157,27 +131,9 @@ export async function getActivitySummary(data: any) {
   }
 }
 
-export async function streamActivitySummary(
+export function streamActivitySummary(
   data: any,
   onChunk: (chunk: string) => void
 ) {
-  const res = await fetch(`/api/ai/activity-summary?stream=true`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-
-  if (!res.ok || !res.body) {
-    const text = await res.text();
-    throw new Error(`AI request failed: ${res.status} ${text}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    onChunk(decoder.decode(value, { stream: true }));
-  }
-  onChunk(decoder.decode()); // flush
+  return postStream('/api/ai/activity-summary', data, onChunk);
 }
