@@ -460,15 +460,15 @@ if (!(await hasColumn('members', 'account_type'))) {
   }
 }
 
-// team_id on content tables that lacked it
-for (const t of ['events', 'budget', 'outreach', 'inventory', 'communications', 'messages', 'documentation']) {
+// team_id on all content tables — older databases may lack it on some tables (e.g. attendance)
+const teamTables = ['events', 'budget', 'outreach', 'inventory', 'communications', 'messages', 'documentation', 'tasks', 'attendance'];
+for (const t of teamTables) {
   if (!(await hasColumn(t, 'team_id'))) {
     (await dbExec(`ALTER TABLE ${t} ADD COLUMN team_id INTEGER`));
   }
 }
 
 // Ensure a default team exists only when orphaned rows need a home, then backfill them
-const teamTables = ['events', 'budget', 'outreach', 'inventory', 'communications', 'messages', 'documentation', 'tasks', 'attendance'];
 const orphanCount = (await dbGet(
   `SELECT (SELECT COUNT(*) FROM members WHERE team_id IS NULL) + ${teamTables.map(t => `(SELECT COUNT(*) FROM ${t} WHERE team_id IS NULL)`).join(' + ')} AS n`
 )) as any;
