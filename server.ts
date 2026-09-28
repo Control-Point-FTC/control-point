@@ -190,6 +190,7 @@ async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: str
 
   CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
     member_id INTEGER,
     date TEXT NOT NULL,
     status TEXT NOT NULL, -- 'P', 'A', 'L', 'E', 'U', 'S'
@@ -215,6 +216,7 @@ async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: str
 
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
     sender_id INTEGER,
     content TEXT NOT NULL,
     timestamp TEXT NOT NULL,
@@ -228,6 +230,7 @@ async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: str
 
   CREATE TABLE IF NOT EXISTS documentation (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
     type TEXT NOT NULL, -- 'meeting', 'funding', 'milestone'
     title TEXT NOT NULL,
     content TEXT,
@@ -249,6 +252,7 @@ async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: str
 
   CREATE TABLE IF NOT EXISTS outreach (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
     title TEXT NOT NULL,
     description TEXT,
     date TEXT NOT NULL,
@@ -275,6 +279,7 @@ async function callOllama(prompt: string, stream: boolean, onChunk?: (chunk: str
 
   CREATE TABLE IF NOT EXISTS communications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
     recipient TEXT NOT NULL,
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
@@ -417,6 +422,75 @@ if (!codeFilesColumns.some((c: any) => c.name === 'file_size')) {
   (await dbExec("ALTER TABLE code_files ADD COLUMN file_size INTEGER"));
 }
 
+// ---- Role-based workspaces: access codes, account types, team scoping ----
+async function hasColumn(table: string, col: string): Promise<boolean> {
+  const cols = (await dbAll(`PRAGMA table_info(${table})`)) as any[];
+  return cols.some((c: any) => c.name === col);
+}
+
+function generateAccessCode(): string {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // unambiguous chars only
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  let s = '';
+  for (const b of bytes) s += alphabet[b % alphabet.length];
+  return `CP-${s.slice(0, 4)}-${s.slice(4)}`;
+}
+
+async function uniqueAccessCode(): Promise<string> {
+  let code = generateAccessCode();
+  while ((await dbGet("SELECT id FROM teams WHERE access_code = ?", code))) {
+    code = generateAccessCode();
+  }
+  return code;
+}
+
+if (!(await hasColumn('teams', 'access_code'))) {
+  (await dbExec("ALTER TABLE teams ADD COLUMN access_code TEXT"));
+}
+(await dbExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_access_code ON teams(access_code)"));
+
+if (!(await hasColumn('members', 'account_type'))) {
+  (await dbExec("ALTER TABLE members ADD COLUMN account_type TEXT DEFAULT 'student'"));
+  // Existing board members become admins
+  (await dbExec("UPDATE members SET account_type = 'admin' WHERE is_board = 1"));
+  // Guarantee at least one admin exists
+  const adminCount = (await dbGet("SELECT COUNT(*) as n FROM members WHERE account_type = 'admin'")) as any;
+  if (!adminCount || adminCount.n === 0) {
+    (await dbExec("UPDATE members SET account_type = 'admin' WHERE id = (SELECT MIN(id) FROM members)"));
+  }
+}
+
+// team_id on content tables that lacked it
+for (const t of ['events', 'budget', 'outreach', 'inventory', 'communications', 'messages', 'documentation']) {
+  if (!(await hasColumn(t, 'team_id'))) {
+    (await dbExec(`ALTER TABLE ${t} ADD COLUMN team_id INTEGER`));
+  }
+}
+
+// Ensure a default team exists only when orphaned rows need a home, then backfill them
+const teamTables = ['events', 'budget', 'outreach', 'inventory', 'communications', 'messages', 'documentation', 'tasks', 'attendance'];
+const orphanCount = (await dbGet(
+  `SELECT (SELECT COUNT(*) FROM members WHERE team_id IS NULL) + ${teamTables.map(t => `(SELECT COUNT(*) FROM ${t} WHERE team_id IS NULL)`).join(' + ')} AS n`
+)) as any;
+let defaultTeam = (await dbGet("SELECT id FROM teams ORDER BY id LIMIT 1")) as any;
+if (!defaultTeam && orphanCount && orphanCount.n > 0) {
+  const code = await uniqueAccessCode();
+  const info = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", "My Team", "", code)) as any;
+  defaultTeam = { id: info.lastInsertRowid };
+}
+if (defaultTeam) {
+  for (const t of teamTables) {
+    (await dbRun(`UPDATE ${t} SET team_id = ? WHERE team_id IS NULL`, defaultTeam.id));
+  }
+  (await dbRun("UPDATE members SET team_id = ? WHERE team_id IS NULL", defaultTeam.id));
+}
+
+// Backfill access codes for teams created before codes existed
+const codelessTeams = (await dbAll("SELECT id FROM teams WHERE access_code IS NULL")) as any[];
+for (const t of codelessTeams) {
+  (await dbRun("UPDATE teams SET access_code = ? WHERE id = ?", await uniqueAccessCode(), t.id));
+}
+
 (await dbExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_member_date ON attendance(member_id, date)"));
 
 // Initial data
@@ -458,6 +532,38 @@ async function validateSession(sessionId: string): Promise<{ valid: boolean; mem
   } catch (e) {
     return { valid: false };
   }
+}
+
+// Resolve the calling user + their workspace from a session id.
+// Looks in query (?sessionId=), JSON body, then the x-session-id header.
+async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string } | null> {
+  const sessionId = (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string);
+  if (!sessionId) return null;
+  const { valid, memberId } = await validateSession(sessionId);
+  if (!valid || !memberId) return null;
+  const member = (await dbGet("SELECT id, team_id, account_type FROM members WHERE id = ?", memberId)) as any;
+  if (!member) return null;
+  return { memberId: member.id, teamId: member.team_id ?? null, accountType: member.account_type || 'student' };
+}
+
+// Middleware-ish guard: 401 when no valid session. Returns auth or sends the error.
+async function requireAuth(req: any, res: any): Promise<{ memberId: number; teamId: number | null; accountType: string } | null> {
+  const auth = await getAuth(req);
+  if (!auth) {
+    res.status(401).json({ error: "Not signed in" });
+    return null;
+  }
+  return auth;
+}
+
+async function requireAdmin(req: any, res: any) {
+  const auth = await requireAuth(req, res);
+  if (!auth) return null;
+  if (auth.accountType !== 'admin') {
+    res.status(403).json({ error: "Admins only" });
+    return null;
+  }
+  return auth;
 }
 
 
@@ -526,10 +632,11 @@ async function startServer() {
   // --- WebSocket Logic ---
   const clients = new Set<WebSocket>();
 
-  const broadcast = (data: any) => {
+  const broadcastToTeam = (teamId: number | null | undefined, data: any) => {
+    if (teamId == null) return;
     const payload = JSON.stringify(data);
     clients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) client.send(payload);
+      if (client.readyState === WebSocket.OPEN && (client as any).teamId === teamId) client.send(payload);
     });
   };
 
@@ -537,8 +644,9 @@ async function startServer() {
     try {
       const timestamp = new Date().toISOString();
       const info = await dbRun("INSERT INTO notifications (user_id, content, type, timestamp) VALUES (?, ?, ?, ?)", userId, content, type, timestamp);
+      const target = (await dbGet("SELECT team_id FROM members WHERE id = ?", userId)) as any;
 
-      broadcast({
+      broadcastToTeam(target?.team_id, {
         type: 'notification',
         notification: {
           id: info.lastInsertRowid,
@@ -560,23 +668,40 @@ async function startServer() {
     ws.on("message", async (data) => {
       try {
         const message = JSON.parse(data.toString());
+        // Client identifies its workspace right after connecting: { type: 'hello', sessionId }
+        if (message.type === "hello" && message.sessionId) {
+          const { valid, memberId } = await validateSession(message.sessionId);
+          if (valid && memberId) {
+            const member = (await dbGet("SELECT id, team_id FROM members WHERE id = ?", memberId)) as any;
+            if (member) {
+              (ws as any).teamId = member.team_id;
+              (ws as any).memberId = member.id;
+            }
+          }
+          return;
+        }
         if (message.type === "chat") {
+          const teamId = (ws as any).teamId;
+          if (teamId == null) return; // ignore unidentified clients
+          // Verify the claimed sender belongs to this workspace
+          const sender = (await dbGet("SELECT id, team_id FROM members WHERE id = ?", message.sender_id)) as any;
+          if (!sender || sender.team_id !== teamId) return;
           const timestamp = new Date().toISOString();
-          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp) VALUES (?, ?, ?)", message.sender_id, message.content, timestamp);
+          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id) VALUES (?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId);
 
-          // Handle mentions
+          // Handle mentions (scoped to the sender's workspace)
           const mentions = message.content.match(/@\[([^\]]+)\]/g);
           if (mentions) {
             for (const m of mentions) {
               const name = m.slice(2, -1);
-              const user = (await dbGet("SELECT id FROM members WHERE name = ?", name)) as any;
+              const user = (await dbGet("SELECT id FROM members WHERE name = ? AND team_id = ?", name, teamId)) as any;
               if (user) {
                 createNotification(user.id, `You were mentioned by ${message.sender_name}: "${message.content}"`, 'mention');
               }
             }
           }
 
-          broadcast({
+          broadcastToTeam(teamId, {
             type: "chat",
             id: info.lastInsertRowid,
             sender_id: message.sender_id,
@@ -613,17 +738,84 @@ async function startServer() {
 
   app.post("/api/auth/setup", async (req, res) => {
     const { email, password } = req.body;
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+    // Setup is only for accounts that never had a password (e.g. added to the roster by an admin)
+    const existing = (await dbGet("SELECT id FROM members WHERE email = ? AND password IS NULL", email)) as any;
+    if (!existing) return res.status(400).json({ error: "This account already has a password — sign in instead" });
     const hashedPassword = bcrypt.hashSync(password, 10);
-    (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email));
-    const user = (await dbGet("SELECT * FROM members WHERE email = ?", email));
-    const sessionId = await createSession(user.id);
+    (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE id = ?", hashedPassword, existing.id));
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id));
+    const sessionId = await createSession(existing.id);
     res.json({ user, sessionId });
   });
 
+  // Admin-only: force a roster member in your workspace to set a new password on next login
   app.post("/api/auth/reset", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     const { email } = req.body;
-    (await dbRun("UPDATE members SET password = NULL, is_setup = 0 WHERE email = ?", email));
+    const target = (await dbGet("SELECT id, team_id FROM members WHERE email = ?", email)) as any;
+    if (!target || target.team_id !== auth.teamId) {
+      return res.status(404).json({ error: "Member not found in your workspace" });
+    }
+    if (target.id === auth.memberId) {
+      return res.status(400).json({ error: "You can't reset your own password this way" });
+    }
+    (await dbRun("UPDATE members SET password = NULL, is_setup = 0 WHERE id = ?", target.id));
     res.json({ success: true });
+  });
+
+  // ---- Public signup ----
+  // accountType 'admin': creates a new workspace (team) + access code, user becomes its admin.
+  // accountType 'student': joins an existing workspace via the admin's access code.
+  app.post("/api/auth/signup", async (req, res) => {
+    try {
+      const { accountType, name, email, password, teamName, teamNumber, accessCode } = req.body || {};
+      const cleanName = (name || '').trim();
+      const cleanEmail = (email || '').trim();
+      if (!cleanName || !cleanEmail || !password || password.length < 6) {
+        return res.status(400).json({ error: "Name, email, and a 6+ character password are required" });
+      }
+      const existing = (await dbGet("SELECT id FROM members WHERE email = ?", cleanEmail));
+      if (existing) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
+      const hashedPassword = bcrypt.hashSync(password, 10);
+
+      if (accountType === 'admin') {
+        const cleanTeam = (teamName || '').trim();
+        if (!cleanTeam) return res.status(400).json({ error: "Team name is required" });
+        const code = await uniqueAccessCode();
+        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", cleanTeam, (teamNumber || '').trim(), code)) as any;
+        const teamId = tInfo.lastInsertRowid;
+        const mInfo = (await dbRun(
+          "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 1, 'admin', ?)",
+          teamId, cleanName, 'Admin', cleanEmail, hashedPassword, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
+        )) as any;
+        const sessionId = await createSession(mInfo.lastInsertRowid);
+        const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
+      }
+
+      if (accountType === 'student') {
+        const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
+        const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
+        if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
+        const mInfo = (await dbRun(
+          "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 0, 'student', ?)",
+          team.id, cleanName, 'Member', cleanEmail, hashedPassword, JSON.stringify([])
+        )) as any;
+        const sessionId = await createSession(mInfo.lastInsertRowid);
+        const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
+      }
+
+      return res.status(400).json({ error: "Choose whether you're signing up as an admin or a student" });
+    } catch (e: any) {
+      console.error("Signup error:", e);
+      return res.status(500).json({ error: "Signup failed — try again" });
+    }
   });
 
   // ---- Google OAuth ----
@@ -722,60 +914,91 @@ async function startServer() {
 
   // --- API Routes ---
 
-  // Teams
+  // Teams — each signed-in user sees only their own workspace
   app.get("/api/teams", async (req, res) => {
-    const teams = (await dbAll("SELECT * FROM teams"));
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const teams = (await dbAll("SELECT * FROM teams WHERE id = ?", auth.teamId));
     res.json(teams);
   });
 
+  // Workspaces are created at signup — direct creation is disabled
   app.post("/api/teams", async (req, res) => {
-    const { name, number, accent_color, primary_color, text_color } = req.body;
-    const info = (await dbRun("INSERT INTO teams (name, number, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?)", name, number, accent_color || null, primary_color || null, text_color || null));
-    res.json({ id: info.lastInsertRowid });
+    res.status(403).json({ error: "Workspaces are created at signup" });
   });
 
   app.patch("/api/teams/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    if (parseInt(req.params.id, 10) !== auth.teamId) {
+      return res.status(403).json({ error: "Not your workspace" });
+    }
     const { name, number, accent_color, primary_color, text_color } = req.body;
     (await dbRun("UPDATE teams SET name = ?, number = ?, accent_color = ?, primary_color = ?, text_color = ? WHERE id = ?", name, number, accent_color || null, primary_color || null, text_color || null, req.params.id));
     res.json({ success: true });
   });
 
   app.delete("/api/teams/:id", async (req, res) => {
-    (await dbRun("DELETE FROM teams WHERE id = ?", req.params.id));
-    res.json({ success: true });
+    res.status(403).json({ error: "Workspaces can't be deleted from here" });
   });
 
-  // Members
+  // Regenerate the workspace's student access code (admin only)
+  app.post("/api/teams/regenerate-code", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const code = await uniqueAccessCode();
+    (await dbRun("UPDATE teams SET access_code = ? WHERE id = ?", code, auth.teamId));
+    res.json({ access_code: code });
+  });
+
+  // Members — scoped to the caller's workspace
   app.get("/api/members", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
     const members = (await dbAll(`
       SELECT m.*, t.name as team_name 
       FROM members m 
       LEFT JOIN teams t ON m.team_id = t.id
-    `));
-    console.log("[GET /api/members] Sample member data:", JSON.stringify(members[0] || {}, null, 2));
+      WHERE m.team_id = ?
+    `, auth.teamId));
     res.json(members);
   });
 
   app.post("/api/members", async (req, res) => {
-    const { team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color } = req.body;
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const existing = (await dbGet("SELECT id FROM members WHERE email = ?", email));
+    if (existing) return res.status(400).json({ error: "That email is already on the roster" });
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
-    const targetTeamId = team_id || null;
-    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", targetTeamId, name, role, email, is_board ? 1 : 0, finalScopes, accent_color || null, primary_color || null, text_color || null));
+    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', accent_color || null, primary_color || null, text_color || null));
     res.json({ id: info.lastInsertRowid });
   });
 
   app.patch("/api/members/:id", async (req, res) => {
-    const { team_id, name, role, email, is_board, scopes, accent_color, primary_color, text_color } = req.body;
-    console.log(`[PATCH /api/members] ID: ${req.params.id}`);
-    console.log(`[PATCH /api/members] Received colors:`, { accent_color, primary_color, text_color });
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const memberId = parseInt(req.params.id, 10);
+    const target = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
+    if (!target || target.team_id !== auth.teamId) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+    const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
+
+    // Guard: never leave the workspace without an admin
+    const nextType = account_type === 'admin' || account_type === 'student' ? account_type : target.account_type;
+    if (target.account_type === 'admin' && nextType !== 'admin') {
+      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin'", auth.teamId)) as any;
+      if (admins.n <= 1) return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
+    }
 
     // Only update color fields if they're explicitly provided (not undefined)
     const updates: any = {
-      team_id: team_id || null,
       name, role, email,
       is_board: is_board ? 1 : 0,
-      scopes: finalScopes
+      scopes: finalScopes,
+      account_type: nextType,
     };
 
     if (accent_color !== undefined) updates.accent_color = accent_color;
@@ -783,31 +1006,42 @@ async function startServer() {
     if (text_color !== undefined) updates.text_color = text_color;
 
     const columns = Object.keys(updates);
-    const placeholders = columns.map(() => '?').join(', ');
     const setClause = columns.map(col => `${col} = ?`).join(', ');
 
-    (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), parseInt(req.params.id, 10)));
-
-    // Verify what was saved
-    const updated = (await dbGet("SELECT accent_color, primary_color, text_color FROM members WHERE id = ?", parseInt(req.params.id, 10))) as any;
-    console.log(`[PATCH /api/members] Verified saved colors:`, updated);
+    (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), memberId));
 
     res.json({ success: true });
   });
 
   app.delete("/api/members/:id", async (req, res) => {
-    (await dbRun("DELETE FROM members WHERE id = ?", parseInt(req.params.id, 10)));
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const memberId = parseInt(req.params.id, 10);
+    const target = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
+    if (!target || target.team_id !== auth.teamId) {
+      return res.status(404).json({ error: "Member not found" });
+    }
+    if (target.id === auth.memberId) {
+      return res.status(400).json({ error: "You can't remove your own account" });
+    }
+    if (target.account_type === 'admin') {
+      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin'", auth.teamId)) as any;
+      if (admins.n <= 1) return res.status(400).json({ error: "You need at least one admin" });
+    }
+    (await dbRun("DELETE FROM members WHERE id = ?", memberId));
     res.json({ success: true });
   });
 
-  // Attendance
+  // Attendance — scoped to the caller's workspace
   app.get("/api/attendance", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const { date } = req.query;
-      let query = "SELECT * FROM attendance";
-      let params: any[] = [];
+      let query = "SELECT a.* FROM attendance a JOIN members m ON a.member_id = m.id WHERE m.team_id = ?";
+      let params: any[] = [auth.teamId];
       if (date) {
-        query += " WHERE date = ?";
+        query += " AND a.date = ?";
         params.push(date);
       }
       const records = (await dbAll(query, ...params));
@@ -820,9 +1054,20 @@ async function startServer() {
 
   app.post("/api/attendance/batch", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const { date, records } = req.body;
       if (!date || !Array.isArray(records)) {
         return res.status(400).json({ error: "Invalid request body" });
+      }
+
+      // Every touched member must belong to the caller's workspace
+      const memberIds = [...new Set(records.map((r: any) => r.member_id))];
+      for (const mid of memberIds) {
+        const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", mid)) as any;
+        if (!m || m.team_id !== auth.teamId) {
+          return res.status(403).json({ error: "Not your workspace" });
+        }
       }
 
       console.log(`[Attendance] Updating ${records.length} records for ${date}`);
@@ -852,6 +1097,8 @@ async function startServer() {
 
   app.get("/api/attendance/summary", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const summary = (await dbAll(`
         SELECT 
           m.id as member_id, 
@@ -863,8 +1110,9 @@ async function startServer() {
           COUNT(a.id) as total
         FROM members m
         LEFT JOIN attendance a ON m.id = a.member_id
+        WHERE m.team_id = ?
         GROUP BY m.id
-      `));
+      `, auth.teamId));
       res.json(summary);
     } catch (error) {
       console.error("Error fetching attendance summary:", error);
@@ -874,11 +1122,15 @@ async function startServer() {
 
   app.get("/api/attendance/sessions", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const sessions = (await dbAll(`
-        SELECT DISTINCT date 
-        FROM attendance 
-        ORDER BY date DESC
-      `));
+        SELECT DISTINCT a.date 
+        FROM attendance a
+        JOIN members m ON a.member_id = m.id
+        WHERE m.team_id = ?
+        ORDER BY a.date DESC
+      `, auth.teamId));
       res.json(sessions.map((s: any) => s.date));
     } catch (error) {
       console.error("Error fetching attendance sessions:", error);
@@ -888,6 +1140,8 @@ async function startServer() {
 
   app.get("/api/hidden-dates", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const dates = (await dbAll("SELECT date FROM hidden_dates"));
       res.json(dates.map((d: any) => d.date));
     } catch (error) {
@@ -897,34 +1151,47 @@ async function startServer() {
   });
 
   app.post("/api/hidden-dates", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     const { date } = req.body;
     (await dbRun("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)", date));
     res.json({ success: true });
   });
 
   app.delete("/api/hidden-dates/:date", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
     (await dbRun("DELETE FROM hidden_dates WHERE date = ?", req.params.date));
     res.json({ success: true });
   });
 
   // Messages
   app.get("/api/messages", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
     const msgs = (await dbAll(`
       SELECT m.*, mem.name as sender_name 
       FROM messages m 
       JOIN members mem ON m.sender_id = mem.id 
+      WHERE m.team_id = ?
       ORDER BY timestamp ASC LIMIT 100
-    `));
+    `, auth.teamId));
     res.json(msgs);
   });
 
   // File upload for messages
   app.post("/api/messages/upload", upload.single('file'), async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
     
     const { sender_id, sender_name, content } = req.body;
+    const sender = (await dbGet("SELECT team_id FROM members WHERE id = ?", sender_id)) as any;
+    if (!sender || sender.team_id !== auth.teamId) {
+      return res.status(403).json({ error: "Not your workspace" });
+    }
     const timestamp = new Date().toISOString();
     const filePath = `/uploads/${req.file.filename}`;
     const fileName = req.file.originalname;
@@ -932,10 +1199,10 @@ async function startServer() {
     const fileUpdated = new Date().toISOString();
     
     const info = (await dbRun(
-      "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated));
+      "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId));
     
-    broadcast({
+    broadcastToTeam(auth.teamId, {
       type: "chat",
       id: info.lastInsertRowid,
       sender_id: parseInt(sender_id),
@@ -963,15 +1230,21 @@ async function startServer() {
 
   // Delete message (hard delete - permanent removal)
   app.delete("/api/messages/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
     const messageId = req.params.id;
     const silent = req.query.silent === 'true'; // Check for silent deletion
     
     try {
+      const existing: any = (await dbGet("SELECT team_id FROM messages WHERE id = ?", messageId));
+      if (!existing || existing.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Message not found" });
+      }
       // Hard delete - permanently remove the message from database
       (await dbRun("DELETE FROM messages WHERE id = ?", messageId));
       
       if (!silent) { // Only broadcast if not silent deletion
-        broadcast({
+        broadcastToTeam(auth.teamId, {
           type: "message_deleted",
           id: parseInt(messageId),
           deleted_permanently: true
@@ -987,11 +1260,18 @@ async function startServer() {
 
   // PATCH: Update message content (silent edit)
   app.patch("/api/messages/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
     const messageId = req.params.id;
     const { content } = req.body;
 
     if (!content) {
       return res.status(400).json({ error: "Content is required for message update" });
+    }
+
+    const existing: any = (await dbGet("SELECT team_id FROM messages WHERE id = ?", messageId));
+    if (!existing || existing.team_id !== auth.teamId) {
+      return res.status(404).json({ error: "Message not found" });
     }
 
     (await dbRun("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", content, new Date().toISOString(), messageId));
@@ -1002,19 +1282,30 @@ async function startServer() {
 
   // Notifications
   app.get("/api/notifications/:userId", async (req, res) => {
-    const notes = (await dbAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 50", req.params.userId));
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const userId = parseInt(req.params.userId, 10);
+    if (userId !== auth.memberId && auth.accountType !== 'admin') {
+      return res.status(403).json({ error: "Not yours" });
+    }
+    const notes = (await dbAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 50", userId));
     res.json(notes);
   });
 
   app.post("/api/notifications/read", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
     const { ids } = req.body;
-    await dbBatch(ids.map((id: any) => ({ sql: "UPDATE notifications SET is_read = 1 WHERE id = ?", args: [id] })));
+    if (!Array.isArray(ids)) return res.status(400).json({ error: "Invalid" });
+    await dbBatch(ids.map((id: any) => ({ sql: "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?", args: [id, auth.memberId] })));
     res.json({ success: true });
   });
 
   // Settings
   app.get("/api/settings", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const settings = (await dbAll("SELECT * FROM settings"));
       res.json(settings);
     } catch (error) {
@@ -1025,9 +1316,11 @@ async function startServer() {
 
   app.get("/api/admin/storage-usage", async (req, res) => {
     try {
-      const messageFilesSize = (await dbGet("SELECT SUM(file_size) as total FROM messages WHERE file_size IS NOT NULL")) as any;
+      const _suAuth = await requireAdmin(req, res);
+      if (!_suAuth) return;
+      const messageFilesSize = (await dbGet("SELECT SUM(file_size) as total FROM messages WHERE file_size IS NOT NULL AND team_id = ?", _suAuth.teamId)) as any;
       console.log("messageFilesSize raw:", messageFilesSize);
-      const codeFilesSize = (await dbGet("SELECT SUM(file_size) as total FROM code_files WHERE file_size IS NOT NULL")) as any;
+      const codeFilesSize = (await dbGet("SELECT SUM(file_size) as total FROM code_files WHERE file_size IS NOT NULL AND team_id = ?", _suAuth.teamId)) as any;
       console.log("codeFilesSize raw:", codeFilesSize);
       
       const totalSize = (messageFilesSize?.total || 0) + (codeFilesSize?.total || 0);
@@ -1041,6 +1334,8 @@ async function startServer() {
 
   app.post("/api/settings", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const { key, value } = req.body;
       (await dbRun("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, value));
       res.json({ success: true });
@@ -1053,7 +1348,9 @@ async function startServer() {
   // Tasks
   app.get("/api/tasks", async (req, res) => {
     try {
-      const tasks = (await dbAll("SELECT * FROM tasks"));
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const tasks = (await dbAll("SELECT * FROM tasks WHERE team_id = ?", auth.teamId));
       res.json(tasks);
     } catch (error) {
       console.error("Error fetching tasks:", error);
@@ -1063,13 +1360,20 @@ async function startServer() {
 
   app.post("/api/tasks", async (req, res) => {
     try {
-      const { team_id, title, description, status, assigned_to, due_date, is_board } = req.body;
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { title, description, status, assigned_to, due_date, is_board } = req.body;
       const createdAt = new Date().toISOString();
-      
-      const targetTeamId = team_id || null;
-      const targetAssignedTo = assigned_to || null;
 
-      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", targetTeamId, title, description, status || 'todo', targetAssignedTo, due_date, is_board || 0, createdAt));
+      const targetAssignedTo = assigned_to || null;
+      if (targetAssignedTo) {
+        const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", targetAssignedTo)) as any;
+        if (!m || m.team_id !== auth.teamId) {
+          return res.status(403).json({ error: "Not your workspace" });
+        }
+      }
+
+      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', targetAssignedTo, due_date, is_board || 0, createdAt));
 
       if (targetAssignedTo) {
         createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
@@ -1084,6 +1388,16 @@ async function startServer() {
 
   app.patch("/api/tasks/:id", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      // Students may only move their own assigned tasks; admins may edit anything
+      if (auth.accountType !== 'admin' && task.assigned_to !== auth.memberId) {
+        return res.status(403).json({ error: "You can only update tasks assigned to you" });
+      }
       const { status } = req.body;
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
@@ -1093,8 +1407,7 @@ async function startServer() {
         (await dbRun("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?", status, req.params.id));
       }
 
-      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
-      if (task && task.assigned_to) {
+      if (task.assigned_to) {
         createNotification(task.assigned_to, `Task status updated to ${status}: ${task.title}`, 'task');
       }
 
@@ -1107,6 +1420,12 @@ async function startServer() {
 
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const task = (await dbGet("SELECT team_id FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
       (await dbRun("DELETE FROM tasks WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
@@ -1119,7 +1438,9 @@ async function startServer() {
   // ---- Team Calendar ----
   app.get("/api/events", async (req, res) => {
     try {
-      const events = (await dbAll("SELECT * FROM events ORDER BY date ASC, start_time ASC"));
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const events = (await dbAll("SELECT * FROM events WHERE team_id = ? ORDER BY date ASC, start_time ASC", auth.teamId));
       res.json(events);
     } catch (error) {
       console.error("Error fetching events:", error);
@@ -1129,7 +1450,9 @@ async function startServer() {
 
   app.post("/api/events", async (req, res) => {
     try {
-      const { title, description, date, start_time, end_time, location, event_type, team_id, created_by } = req.body;
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { title, description, date, start_time, end_time, location, event_type, created_by } = req.body;
       if (!title || !date) {
         return res.status(400).json({ error: "Title and date are required" });
       }
@@ -1142,8 +1465,8 @@ async function startServer() {
         end_time || '',
         location || '',
         event_type || 'meeting',
-        team_id || null,
-        created_by || null));
+        auth.teamId,
+        created_by || auth.memberId));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating event:", error);
@@ -1153,11 +1476,13 @@ async function startServer() {
 
   app.patch("/api/events/:id", async (req, res) => {
     try {
-      const { title, description, date, start_time, end_time, location, event_type, team_id } = req.body;
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { title, description, date, start_time, end_time, location, event_type } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
-      if (!existing) return res.status(404).json({ error: "Event not found" });
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
       (await dbRun(
-        "UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, team_id = ? WHERE id = ?"
+        "UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ? WHERE id = ?"
       , title ?? existing.title,
         description ?? existing.description,
         date ?? existing.date,
@@ -1165,7 +1490,6 @@ async function startServer() {
         end_time ?? existing.end_time,
         location ?? existing.location,
         event_type ?? existing.event_type,
-        team_id ?? existing.team_id,
         req.params.id));
       res.json({ ok: true });
     } catch (error) {
@@ -1176,6 +1500,10 @@ async function startServer() {
 
   app.delete("/api/events/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM events WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
       (await dbRun("DELETE FROM events WHERE id = ?", req.params.id));
       res.json({ ok: true });
     } catch (error) {
@@ -1186,7 +1514,9 @@ async function startServer() {
 
   app.get("/api/budget", async (req, res) => {
     try {
-      const budget = (await dbAll("SELECT * FROM budget"));
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const budget = (await dbAll("SELECT * FROM budget WHERE team_id = ?", auth.teamId));
       res.json(budget);
     } catch (error) {
       console.error("Error fetching budget:", error);
@@ -1196,12 +1526,13 @@ async function startServer() {
 
   app.post("/api/budget", async (req, res) => {
     try {
-      const { team_id, type, amount, category, description, date } = req.body;
-      const targetTeamId = team_id || null;
-      const info = (await dbRun("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)", targetTeamId, type, amount, category, description, date));
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { type, amount, category, description, date } = req.body;
+      const info = (await dbRun("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)", auth.teamId, type, amount, category, description, date));
 
       // Notify board members of budget changes
-      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1"));
+      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1 AND team_id = ?", auth.teamId));
       boardMembers.forEach((m: any) => {
         createNotification(m.id, `New budget ${type}: $$${amount} for ${category}`, 'system');
       });
@@ -1215,6 +1546,10 @@ async function startServer() {
 
   app.delete("/api/budget/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM budget WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       (await dbRun("DELETE FROM budget WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
@@ -1226,7 +1561,9 @@ async function startServer() {
   // Outreach
   app.get("/api/outreach", async (req, res) => {
     try {
-      const outreach = (await dbAll("SELECT * FROM outreach"));
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const outreach = (await dbAll("SELECT * FROM outreach WHERE team_id = ?", auth.teamId));
       res.json(outreach);
     } catch (error) {
       console.error("Error fetching outreach:", error);
@@ -1236,11 +1573,13 @@ async function startServer() {
 
   app.post("/api/outreach", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const { title, description, date, hours, location } = req.body;
-      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location) VALUES (?, ?, ?, ?, ?)", title, description, date, hours, location));
+      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, team_id) VALUES (?, ?, ?, ?, ?, ?)", title, description, date, hours, location, auth.teamId));
 
       // Notify everyone of new outreach
-      const allMembers = (await dbAll("SELECT id FROM members"));
+      const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ?", auth.teamId));
       allMembers.forEach((m: any) => {
         createNotification(m.id, `New outreach event: ${title} at ${location}`, 'system');
       });
@@ -1254,6 +1593,10 @@ async function startServer() {
 
   app.delete("/api/outreach/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       (await dbRun("DELETE FROM outreach WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
@@ -1265,12 +1608,15 @@ async function startServer() {
   // Inventory
   app.get("/api/inventory", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const inventory = (await dbAll(`
         SELECT i.*, m.name as assigned_member_name 
         FROM inventory i 
         LEFT JOIN members m ON i.assigned_to = m.id
+        WHERE i.team_id = ?
         ORDER BY i.date_added DESC
-      `));
+      `, auth.teamId));
       res.json(inventory);
     } catch (error) {
       console.error("Error fetching inventory:", error);
@@ -1280,7 +1626,9 @@ async function startServer() {
 
   app.post("/api/inventory", async (req, res) => {
     try {
-      const { team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       if (!sku || !name) {
         return res.status(400).json({ error: "SKU and name are required" });
       }
@@ -1288,7 +1636,7 @@ async function startServer() {
       const info = (await dbRun(`
         INSERT INTO inventory (team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost, date_added) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, team_id || null, name, part_number || null, sku, quantity || 0, assigned_to || null, location || '', category || '', description || '', cost || 0, date_added));
+      `, auth.teamId, name, part_number || null, sku, quantity || 0, assigned_to || null, location || '', category || '', description || '', cost || 0, date_added));
 
       res.json({ id: info.lastInsertRowid });
     } catch (error: any) {
@@ -1303,14 +1651,18 @@ async function startServer() {
 
   app.patch("/api/inventory/:id", async (req, res) => {
     try {
-      const { team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       const id = req.params.id;
+      const existing: any = (await dbGet("SELECT team_id FROM inventory WHERE id = ?", id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       
       (await dbRun(`
         UPDATE inventory 
-        SET team_id = ?, name = ?, part_number = ?, sku = ?, quantity = ?, assigned_to = ?, location = ?, category = ?, description = ?, cost = ?
+        SET name = ?, part_number = ?, sku = ?, quantity = ?, assigned_to = ?, location = ?, category = ?, description = ?, cost = ?
         WHERE id = ?
-      `, team_id || null, name, part_number, sku, quantity, assigned_to || null, location, category, description, cost, id));
+      `, name, part_number, sku, quantity, assigned_to || null, location, category, description, cost, id));
 
       res.json({ success: true });
     } catch (error: any) {
@@ -1325,6 +1677,10 @@ async function startServer() {
 
   app.delete("/api/inventory/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM inventory WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       (await dbRun("DELETE FROM inventory WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
@@ -1335,6 +1691,10 @@ async function startServer() {
 
   // Scrape REV Robotics product page
   app.post("/api/inventory/scrape-rev", async (req, res) => {
+    {
+      const _srAuth = await requireAdmin(req, res);
+      if (!_srAuth) return;
+    }
     try {
       const { url } = req.body;
       if (!url || !url.includes("revrobotics.com")) {
@@ -1347,7 +1707,7 @@ async function startServer() {
         }
       });
 
-      const $ = cheerio.load(response.data);
+      const $ = cheerio.load(String(response.data ?? ''));
       
       const data: any = {};
 
@@ -1401,7 +1761,9 @@ async function startServer() {
   // Documentation
   app.get("/api/documentation", async (req, res) => {
     try {
-      const docs = (await dbAll("SELECT * FROM documentation ORDER BY date DESC"));
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const docs = (await dbAll("SELECT * FROM documentation WHERE team_id = ? ORDER BY date DESC", auth.teamId));
       res.json(docs);
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -1410,8 +1772,10 @@ async function startServer() {
 
   app.post("/api/documentation", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const { type, title, content, images, date } = req.body;
-      const info = (await dbRun("INSERT INTO documentation (type, title, content, images, date, created_at) VALUES (?, ?, ?, ?, ?, ?)", type, title, content, JSON.stringify(images || []), date, new Date().toISOString()));
+      const info = (await dbRun("INSERT INTO documentation (type, title, content, images, date, created_at, team_id) VALUES (?, ?, ?, ?, ?, ?, ?)", type, title, content, JSON.stringify(images || []), date, new Date().toISOString(), auth.teamId));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       res.status(500).json({ error: "Internal server error" });
@@ -1420,6 +1784,10 @@ async function startServer() {
 
   app.delete("/api/documentation/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM documentation WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       (await dbRun("DELETE FROM documentation WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
@@ -1450,7 +1818,9 @@ async function startServer() {
   });
   app.get("/api/communications", async (req, res) => {
     try {
-      const comms = (await dbAll("SELECT * FROM communications ORDER BY date DESC"));
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const comms = (await dbAll("SELECT * FROM communications WHERE team_id = ? ORDER BY date DESC", auth.teamId));
       res.json(comms);
     } catch (error) {
       console.error("Error fetching communications:", error);
@@ -1460,8 +1830,10 @@ async function startServer() {
 
   app.post("/api/communications", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const { recipient, subject, body, date, type } = req.body;
-      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type) VALUES (?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email'));
+      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id) VALUES (?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating communication:", error);
@@ -1471,6 +1843,10 @@ async function startServer() {
 
   app.delete("/api/communications/:id", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       (await dbRun("DELETE FROM communications WHERE id = ?", req.params.id));
       res.json({ success: true });
     } catch (error) {
@@ -1518,7 +1894,10 @@ async function startServer() {
   // POST: Get all code files for a team
   app.get("/api/code/files/:teamId", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const teamId = parseInt(req.params.teamId, 10);
+      if (teamId !== auth.teamId) return res.status(403).json({ error: "Not your workspace" });
       console.log("[Code Endpoint] GET /api/code/files/:teamId called with teamId:", teamId);
       if (isNaN(teamId)) {
         return res.status(400).json({ error: "Invalid team ID" });
@@ -1536,7 +1915,11 @@ async function startServer() {
   // POST: Create/upload code file
   app.post("/api/code/files", async (req, res) => {
     try {
-      const { team_id, file_name, file_path, language = 'java', content, author_id } = req.body;
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const { file_name, file_path, language = 'java', content } = req.body;
+      const team_id = auth.teamId;
+      const author_id = auth.memberId;
       
       console.log("[Code Endpoint] POST /api/code/files called with:", { team_id, file_name, file_path, language, author_id });
       
@@ -1574,11 +1957,14 @@ async function startServer() {
   // GET: Get code file content with history
   app.get("/api/code/files/:fileId/content", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
-      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", fileId)) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
+      if (!file) return res.status(404).json({ error: "File not found" });
       
       if (!file) {
         return res.status(404).json({ error: "File not found" });
@@ -1623,11 +2009,16 @@ async function startServer() {
   // POST: Save draft
   app.post("/api/code/files/:fileId/draft", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
-      const { content, author_id } = req.body;
+      const file = (await dbGet("SELECT id FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
+      if (!file) return res.status(404).json({ error: "File not found" });
+      const { content } = req.body;
+      const author_id = auth.memberId;
       
       const now = new Date().toISOString();
       const hash = `draft_${Date.now()}`;
@@ -1653,13 +2044,16 @@ async function startServer() {
   // POST: Commit to main (publish)
   app.post("/api/code/files/:fileId/commit", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
-      const { message, author_id } = req.body;
+      const { message } = req.body;
+      const author_id = auth.memberId;
 
-      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", fileId)) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
       if (!file) {
         return res.status(404).json({ error: "File not found" });
       }
@@ -1683,7 +2077,7 @@ async function startServer() {
       (await dbRun("UPDATE code_files SET updated_at = ? WHERE id = ?", now, fileId));
 
       // Broadcast to WebSocket clients
-      broadcast({
+      broadcastToTeam(file.team_id, {
         type: 'code_commit',
         file_id: fileId,
         team_id: file.team_id,
@@ -1702,11 +2096,15 @@ async function startServer() {
   // GET: Get commit history
   app.get("/api/code/files/:fileId/history", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
       const branch = (req.query.branch as string) || 'main';
+      const fcheck = (await dbGet("SELECT id FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
+      if (!fcheck) return res.status(404).json({ error: "File not found" });
 
       const commits = (await dbAll(`
         SELECT cc.*, m.name as author_name 
@@ -1726,13 +2124,15 @@ async function startServer() {
   // GET: Get specific commit
   app.get("/api/code/commits/:commitId", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const commit = (await dbGet(`
         SELECT cc.*, m.name as author_name, cf.file_name
         FROM code_commits cc
         LEFT JOIN members m ON cc.author_id = m.id
         LEFT JOIN code_files cf ON cc.file_id = cf.id
-        WHERE cc.id = ?
-      `, req.params.commitId)) as any;
+        WHERE cc.id = ? AND cf.team_id = ?
+      `, req.params.commitId, auth.teamId)) as any;
 
       if (!commit) {
         return res.status(404).json({ error: "Commit not found" });
@@ -1748,15 +2148,18 @@ async function startServer() {
   // POST: Revert a commit by creating a new commit on the chosen branch (main or drafts)
   app.post("/api/code/commits/:commitId/revert", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const commitId = parseInt(req.params.commitId, 10);
       if (isNaN(commitId)) return res.status(400).json({ error: "Invalid commit ID" });
 
-      const { branch = 'main', author_id } = req.body as any;
+      const { branch = 'main' } = req.body as any;
+      const author_id = auth.memberId;
 
       const commit = (await dbGet("SELECT * FROM code_commits WHERE id = ?", commitId)) as any;
       if (!commit) return res.status(404).json({ error: 'Commit not found' });
 
-      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", commit.file_id)) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ? AND team_id = ?", commit.file_id, auth.teamId)) as any;
       if (!file) return res.status(404).json({ error: 'File not found for commit' });
 
       const now = new Date().toISOString();
@@ -1769,7 +2172,7 @@ async function startServer() {
 
       (await dbRun("UPDATE code_files SET updated_at = ? WHERE id = ?", now, file.id));
 
-      broadcast({
+      broadcastToTeam(file.team_id, {
         type: 'code_revert',
         file_id: file.id,
         team_id: file.team_id,
@@ -1788,13 +2191,15 @@ async function startServer() {
   // POST: Download code file
   app.post("/api/code/files/:fileId/download", async (req, res) => {
     try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
       const { branch = 'main' } = req.body;
 
-      const file = (await dbGet("SELECT * FROM code_files WHERE id = ?", fileId)) as any;
+      const file = (await dbGet("SELECT * FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
       if (!file) {
         return res.status(404).json({ error: "File not found" });
       }
@@ -1821,10 +2226,14 @@ async function startServer() {
   // DELETE: Delete code file
   app.delete("/api/code/files/:fileId", async (req, res) => {
     try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
         return res.status(400).json({ error: "Invalid file ID" });
       }
+      const file = (await dbGet("SELECT id FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
+      if (!file) return res.status(404).json({ error: "File not found" });
       (await dbRun("DELETE FROM code_commits WHERE file_id = ?", fileId));
       (await dbRun("DELETE FROM code_files WHERE id = ?", fileId));
       res.json({ success: true });

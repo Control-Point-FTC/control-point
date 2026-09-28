@@ -38,7 +38,12 @@ import {
   Download,
   Bolt,
   Code2,
-  Check
+  Check,
+  ShieldCheck,
+  GraduationCap,
+  KeyRound,
+  Copy,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -52,6 +57,7 @@ import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { fetchFTCNews, streamFTCNews, getAttendanceInsights, streamAttendanceInsights, checkExcuse, streamCheckExcuse, getActivitySummary, streamActivitySummary } from './services/aiService';
+import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
 import Landing from './Landing';
 
@@ -145,6 +151,211 @@ const Select = ({ className, options, ...props }: any) => (
   </select>
 );
 
+// --- Role choice + signup screens ---
+
+const AuthShell = ({ children }: any) => (
+  <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="hero-grid absolute inset-0" />
+    <div className="hero-glow absolute inset-0" />
+    <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
+      {children}
+    </motion.div>
+  </div>
+);
+
+const RoleScreen = ({ onBack, onSelect }: { onBack: () => void; onSelect: (mode: 'admin' | 'student') => void }) => (
+  <AuthShell>
+    <button
+      onClick={onBack}
+      className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+    >
+      <ChevronLeft className="w-4 h-4" /> Back to home
+    </button>
+    <Card className="p-8">
+      <div className="flex flex-col items-center gap-3 mb-6 text-center">
+        <div className="w-14 h-14 bg-accent rounded-2xl flex items-center justify-center gold-glow">
+          <Bolt className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
+        </div>
+        <h1 className="text-2xl font-display font-bold text-white tracking-tight">Create your account</h1>
+        <p className="text-text-muted text-sm">How will you use Control Point?</p>
+      </div>
+      <div className="grid gap-3">
+        <button
+          onClick={() => onSelect('admin')}
+          className="group text-left rounded-2xl border border-white/10 bg-elevated p-5 hover:border-accent/60 hover:bg-white/5 transition-all active:scale-[0.99]"
+        >
+          <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-accent/15 p-3 shrink-0">
+              <ShieldCheck className="w-6 h-6 text-accent" />
+            </div>
+            <div>
+              <p className="font-bold text-white text-[15px]">I'm a Team Admin</p>
+              <p className="text-sm text-text-muted mt-1 leading-relaxed">
+                Create a workspace for your robotics team. You'll get an access code to share with your students.
+              </p>
+            </div>
+          </div>
+        </button>
+        <button
+          onClick={() => onSelect('student')}
+          className="group text-left rounded-2xl border border-white/10 bg-elevated p-5 hover:border-accent/60 hover:bg-white/5 transition-all active:scale-[0.99]"
+        >
+          <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-sky-400/15 p-3 shrink-0">
+              <GraduationCap className="w-6 h-6 text-sky-400" />
+            </div>
+            <div>
+              <p className="font-bold text-white text-[15px]">I'm a Student</p>
+              <p className="text-sm text-text-muted mt-1 leading-relaxed">
+                Join your team's workspace with the access code from your admin.
+              </p>
+            </div>
+          </div>
+        </button>
+      </div>
+      <p className="mt-6 text-center text-xs text-text-muted">
+        Already have an account?{' '}
+        <button onClick={onBack} className="text-accent font-semibold hover:underline">Back to home</button>
+      </p>
+    </Card>
+  </AuthShell>
+);
+
+const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
+  mode: 'admin' | 'student';
+  onBack: () => void;
+  onDone: (data: any) => void;
+  onSignup: (payload: any) => Promise<any>;
+}) => {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [teamName, setTeamName] = useState('');
+  const [teamNumber, setTeamNumber] = useState('');
+  const [accessCode, setAccessCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      const data = await onSignup({
+        accountType: mode, name, email, password,
+        teamName, teamNumber, accessCode,
+      });
+      onDone(data);
+    } catch (err: any) {
+      setError(err.message || 'Signup failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = (t: string) => (
+    <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">{t}</label>
+  );
+
+  return (
+    <AuthShell>
+      <button
+        onClick={onBack}
+        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+      >
+        <ChevronLeft className="w-4 h-4" /> Choose a different role
+      </button>
+      <Card className="p-8">
+        <div className="flex flex-col items-center gap-3 mb-6 text-center">
+          <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center", mode === 'admin' ? "bg-accent gold-glow" : "bg-sky-400/20")}>
+            {mode === 'admin'
+              ? <ShieldCheck className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
+              : <GraduationCap className="text-sky-400 w-8 h-8" strokeWidth={2.5} />}
+          </div>
+          <h1 className="text-2xl font-display font-bold text-white tracking-tight">
+            {mode === 'admin' ? 'Create your workspace' : 'Join your team'}
+          </h1>
+          <p className="text-text-muted text-sm">
+            {mode === 'admin'
+              ? 'Set up your team and get an access code for your students.'
+              : 'Enter the access code from your team admin to join.'}
+          </p>
+        </div>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="space-y-1.5">{label('Full name')}<Input required value={name} onChange={(e: any) => setName(e.target.value)} placeholder="Ada Lovelace" /></div>
+          <div className="space-y-1.5">{label('Email')}<Input type="email" required value={email} onChange={(e: any) => setEmail(e.target.value)} placeholder="you@team.org" /></div>
+          <div className="space-y-1.5">
+            {label('Password')}
+            <div className="relative">
+              <Input type={showPw ? 'text' : 'password'} required minLength={6} value={password} onChange={(e: any) => setPassword(e.target.value)} placeholder="6+ characters" className="pr-11" />
+              <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-white">
+                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          {mode === 'admin' ? (
+            <>
+              <div className="space-y-1.5">{label('Team name')}<Input required value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Circuit Breakers" /></div>
+              <div className="space-y-1.5">{label('Team number (optional)')}<Input value={teamNumber} onChange={(e: any) => setTeamNumber(e.target.value)} placeholder="e.g. 12345" /></div>
+            </>
+          ) : (
+            <div className="space-y-1.5">
+              {label('Team access code')}
+              <div className="relative">
+                <KeyRound className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                <Input required value={accessCode} onChange={(e: any) => setAccessCode(e.target.value)} placeholder="CP-XXXX-XXXX" className="pl-10 uppercase font-mono tracking-wider" />
+              </div>
+              <p className="text-xs text-text-muted">Ask your team admin for this code.</p>
+            </div>
+          )}
+          {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
+          <Button type="submit" disabled={busy} className="w-full py-3 mt-2 text-[15px]">
+            {busy ? 'Creating account…' : mode === 'admin' ? 'Create workspace' : 'Join team'}
+          </Button>
+        </form>
+      </Card>
+    </AuthShell>
+  );
+};
+
+// Shown to a new admin right after signup so they can share their access code
+const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code: string }; onEnter: () => void }) => {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(team.access_code); } catch { /* clipboard unavailable */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-md">
+        <Card className="p-8 text-center">
+          <div className="mx-auto w-14 h-14 bg-accent rounded-2xl flex items-center justify-center gold-glow mb-5">
+            <Sparkles className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
+          </div>
+          <h1 className="text-2xl font-display font-bold text-white tracking-tight">Workspace ready</h1>
+          <p className="text-text-muted text-sm mt-2 leading-relaxed">
+            <span className="text-white font-semibold">{team.name}</span> is set up. Share this access code with your students — they'll enter it when they sign up to join automatically.
+          </p>
+          <button
+            onClick={copy}
+            className="mt-6 w-full rounded-2xl border-2 border-dashed border-accent/50 bg-accent/10 px-6 py-5 hover:bg-accent/15 transition-colors"
+          >
+            <p className="text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1">Team access code</p>
+            <p className="text-2xl sm:text-3xl font-mono font-bold text-accent tracking-[0.15em] break-all">{team.access_code}</p>
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+              {copied ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied!</> : <><Copy className="w-3.5 h-3.5" /> Tap to copy</>}
+            </p>
+          </button>
+          <Button onClick={onEnter} className="w-full py-3 mt-6 text-[15px]">Enter workspace</Button>
+        </Card>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -155,10 +366,11 @@ export default function App() {
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authScreen, setAuthScreen] = useState<'landing' | 'login'>('landing');
+  const [authScreen, setAuthScreen] = useState<'landing' | 'login' | 'role' | 'signup-admin' | 'signup-student' | 'code-reveal'>('landing');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [signupTeam, setSignupTeam] = useState<{ id: number; name: string; access_code: string } | null>(null);
 
   // Data State
   const [teams, setTeams] = useState<Team[]>([]);
@@ -273,7 +485,7 @@ export default function App() {
 
   // Handle Google OAuth callback (?google_session= / ?google_error=)
   useEffect(() => {
-    fetch('/api/auth/config')
+    apiFetch('/api/auth/config')
       .then(r => r.json())
       .then(d => setGoogleEnabled(!!d.googleEnabled))
       .catch(() => {});
@@ -301,6 +513,23 @@ export default function App() {
         })
         .catch(() => setGoogleError('Google sign-in failed. Please try again.'))
         .finally(() => window.history.replaceState({}, '', window.location.pathname));
+    } else {
+      // Restore a saved password-login session, if any
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
+      if (saved) {
+        fetch(`/api/auth/me?sessionId=${encodeURIComponent(saved)}`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.user) {
+              setSessionId(saved);
+              setCurrentUser(data.user);
+              setIsLoggedIn(true);
+            } else {
+              localStorage.removeItem('sessionId');
+            }
+          })
+          .catch(() => {});
+      }
     }
   }, []);
 
@@ -332,12 +561,12 @@ export default function App() {
   }, [currentUser, teams, isLoggedIn]);
 
   useEffect(() => {
-    fetch('/api/members').then(res => res.json()).then(setMembers);
     if (isLoggedIn) {
       fetchData();
       connectSocket();
     }
   }, [isLoggedIn]);
+
 
   const connectSocket = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -345,6 +574,8 @@ export default function App() {
     
     ws.onopen = () => {
       console.log("WebSocket connected");
+      const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
+      if (sid) ws.send(JSON.stringify({ type: 'hello', sessionId: sid }));
     };
 
     ws.onmessage = (event) => {
@@ -465,7 +696,7 @@ export default function App() {
     setLoading(true);
     try {
       const fetchJson = async (url: string) => {
-        const res = await fetch(url, { cache: 'no-store' });
+        const res = await apiFetch(url, { cache: 'no-store' });
         if (!res.ok) {
           console.warn(`Fetch failed for ${url}: ${res.status}`);
           return null;
@@ -537,29 +768,16 @@ export default function App() {
     }
   };
 
+  const persistSession = (sid: string, user: any) => {
+    if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', sid);
+    setSessionId(sid);
+    setCurrentUser(user);
+    setIsLoggedIn(true);
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (members.length === 0) {
-      // First user creation
-      const adminData = { 
-        name: 'Admin', 
-        email: loginEmail, 
-        role: 'President', 
-        is_board: 1, 
-        scopes: ['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin']
-      };
-      const res = await fetch('/api/members', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(adminData)
-      });
-      if (res.ok) {
-        setNeedsSetup(true);
-        setCurrentUser(adminData as any);
-        return;
-      }
-    }
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: loginEmail, password: loginPassword })
@@ -568,25 +786,40 @@ export default function App() {
     if (data.needsSetup) {
       setNeedsSetup(true);
       setCurrentUser(data.user);
+      if (data.sessionId) {
+        if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', data.sessionId);
+        setSessionId(data.sessionId);
+      }
     } else if (data.user) {
-      setCurrentUser(data.user);
-      setIsLoggedIn(true);
+      persistSession(data.sessionId, data.user);
+      setNeedsSetup(false);
     } else {
       alert(data.error || "Login failed");
     }
   };
 
+  const handleSignup = async (payload: any) => {
+    const res = await apiFetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Signup failed");
+    persistSession(data.sessionId, data.user);
+    return data;
+  };
+
   const handleSetup = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/auth/setup', {
+    const res = await apiFetch('/api/auth/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: currentUser?.email, password: loginPassword })
     });
     const data = await res.json();
     if (data.user) {
-      setCurrentUser(data.user);
-      setIsLoggedIn(true);
+      persistSession(data.sessionId, data.user);
       setNeedsSetup(false);
     }
   };
@@ -594,6 +827,8 @@ export default function App() {
   const handleLogout = () => {
     setIsLoggedIn(false);
     setCurrentUser(null);
+    setSessionId(null);
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
     setSocket(null);
   };
 
@@ -601,7 +836,7 @@ export default function App() {
     const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
     if (unreadIds.length === 0) return;
     
-    await fetch('/api/notifications/read', {
+    await apiFetch('/api/notifications/read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: unreadIds })
@@ -609,8 +844,11 @@ export default function App() {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
   };
 
+  const isAdmin = (currentUser as any)?.account_type === 'admin';
+
   const hasScope = (scope: string) => {
     if (!currentUser) return false;
+    if (isAdmin) return true;
     if (currentUser.role === 'President') return true;
     if (scope === 'admin' && currentUser.is_board) return true;
     try {
@@ -644,6 +882,20 @@ export default function App() {
     { id: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
   ];
 
+  // Students get a focused personal workspace; admins get everything
+  const studentTabIds = ['dashboard', 'tasks', 'calendar', 'comm', 'chat', 'profile'];
+  const visibleTabs = navItems.filter((t) => {
+    if (isAdmin) return !t.scope || hasScope(t.scope);
+    return studentTabIds.includes(t.id);
+  });
+
+  // Keep students (and scope-restricted users) on tabs they can actually see
+  useEffect(() => {
+    if (isLoggedIn && !visibleTabs.some((t) => t.id === activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [isLoggedIn, currentUser]);
+
   const renderContent = () => {
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, inventory, communications, events,
@@ -657,7 +909,9 @@ export default function App() {
       updateSummary: () => updateSummary(true)
     };
     switch (activeTab) {
-      case 'dashboard': return <DashboardView {...viewProps} data={{ attendance, tasks, budget, outreach, insights, news, summary, members }} />;
+      case 'dashboard': return isAdmin
+        ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, news, summary, members }} />
+        : <StudentDashboardView {...viewProps} />;
       case 'teams': return <TeamsView {...viewProps} />;
       case 'attendance': return <AttendanceView {...viewProps} />;
       case 'tasks': return <TasksView {...viewProps} />;
@@ -677,7 +931,23 @@ export default function App() {
 
   if (!isLoggedIn) {
     if (authScreen === 'landing') {
-      return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('login')} />;
+      return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
+    }
+    if (authScreen === 'role') {
+      return <RoleScreen onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
+    }
+    if (authScreen === 'signup-admin' || authScreen === 'signup-student') {
+      const mode = authScreen === 'signup-admin' ? 'admin' : 'student';
+      return (
+        <SignupScreen
+          mode={mode}
+          onBack={() => setAuthScreen('role')}
+          onSignup={handleSignup}
+          onDone={(data) => {
+            if (mode === 'admin' && data?.team) setSignupTeam(data.team);
+          }}
+        />
+      );
     }
     return (
       <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
@@ -743,6 +1013,12 @@ export default function App() {
           <p className="mt-6 text-center text-xs text-text-muted">
             Mission control for robotics teams.
           </p>
+          <p className="mt-3 text-center text-sm text-text-muted">
+            New to Control Point?{' '}
+            <button onClick={() => { setNeedsSetup(false); setAuthScreen('role'); }} className="text-accent font-semibold hover:underline">
+              Create an account
+            </button>
+          </p>
         </motion.div>
       </div>
     );
@@ -750,6 +1026,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-primary">
+      {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
       {/* Sidebar Overlay for Mobile */}
       <AnimatePresence>
         {isSidebarOpen && window.innerWidth <= 768 && (
@@ -800,25 +1077,22 @@ export default function App() {
           {isSidebarOpen && (
             <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">Workspace</p>
           )}
-          {navItems.map((item) => {
-            const isLocked = item.scope && !hasScope(item.scope);
+          {visibleTabs.map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
-                onClick={() => !isLocked && setActiveTab(item.id)}
+                onClick={() => setActiveTab(item.id)}
                 title={!isSidebarOpen ? item.label : undefined}
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
                   isActive
                     ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
-                    : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium",
-                  isLocked && "opacity-30 cursor-not-allowed"
+                    : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
                 )}
               >
                 <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
                 {isSidebarOpen && <span className="truncate">{item.label}</span>}
-                {isLocked && isSidebarOpen && <Lock className="ml-auto w-3.5 h-3.5 opacity-60" />}
               </button>
             );
           })}
@@ -957,9 +1231,10 @@ export default function App() {
 
 // --- View Components ---
 
-function DashboardView({ data, currentUser, onRefresh, settings, setLoading, insights, updateInsights, isAiLoading, setIsAiLoading, ThinkingIndicator, updateSummary, colorVersion }: any) {
+function DashboardView({ data, currentUser, onRefresh, settings, setLoading, insights, updateInsights, isAiLoading, setIsAiLoading, ThinkingIndicator, updateSummary, colorVersion, teams }: any) {
   const [showOut, setShowOut] = useState(false);
   const [outReason, setOutReason] = useState('');
+  const [copiedCode, setCopiedCode] = useState(false);
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const myStatus = data.attendance?.find((r: any) => r.member_id === currentUser?.id && r.date === today);
@@ -980,7 +1255,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
         finalStatus = isExcused ? 'E' : 'U';
       }
 
-      const res = await fetch('/api/attendance/batch', {
+      const res = await apiFetch('/api/attendance/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1026,8 +1301,41 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
   const accentColor = getCSSVariable('--color-accent') || '#F5B700';
   const secondaryColor = getCSSVariable('--color-secondary') || '#1A1A1A';
 
+  const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
+
+  const copyAccessCode = async () => {
+    if (!myTeam?.access_code) return;
+    try { await navigator.clipboard.writeText(myTeam.access_code); } catch { /* clipboard unavailable */ }
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const regenerateCode = async () => {
+    if (!confirm('Generate a new access code? The old code will stop working.')) return;
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/teams/regenerate-code', { method: 'POST' });
+      if (res.ok) onRefresh();
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
+      {myTeam && (
+        <Card className="lg:col-span-3" icon={KeyRound} title="Team Access Code" subtitle="Share this with students so they can join your workspace">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+            <p className="text-xl sm:text-2xl font-mono font-bold text-accent tracking-[0.15em] break-all">{myTeam.access_code}</p>
+            <div className="flex gap-2 ml-auto">
+              <Button variant="secondary" onClick={copyAccessCode} className="text-sm">
+                {copiedCode ? <><Check className="w-4 h-4 text-emerald-400" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
+              </Button>
+              <Button variant="ghost" onClick={regenerateCode} className="text-sm">Regenerate</Button>
+            </div>
+          </div>
+        </Card>
+      )}
       <Card title="Club Health" icon={TrendingUp} className="lg:col-span-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
@@ -1182,6 +1490,146 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
   );
 }
 
+// Personal dashboard for students: my tasks, my attendance, upcoming events
+function StudentDashboardView({ teams, members, attendance, tasks, events, currentUser, onRefresh, setLoading }: any) {
+  const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const myTasks = (tasks || []).filter((t: any) => t.assigned_to === currentUser?.id);
+  const openTasks = myTasks.filter((t: any) => t.status !== 'done');
+  const myAttendance = (attendance || []).filter((r: any) => r.member_id === currentUser?.id);
+  const attendanceRate = myAttendance.length > 0
+    ? Math.round(myAttendance.filter((r: any) => r.status === 'P' || r.status === 'L' || r.status === 'E').length / myAttendance.length * 100)
+    : null;
+  const upcomingEvents = (events || [])
+    .filter((e: any) => e.date >= today)
+    .sort((a: any, b: any) => a.date.localeCompare(b.date))
+    .slice(0, 5);
+
+  const toggleTask = async (task: any) => {
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: task.status === 'done' ? 'todo' : 'done' })
+      });
+      if (res.ok) onRefresh();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const statusChip: any = {
+    P: 'bg-emerald-400/15 text-emerald-400',
+    L: 'bg-amber-400/15 text-amber-400',
+    E: 'bg-sky-400/15 text-sky-400',
+    O: 'bg-slate-400/15 text-slate-400',
+    U: 'bg-rose-400/15 text-rose-400',
+  };
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
+      <Card className="lg:col-span-3" icon={GraduationCap}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-display font-bold text-white tracking-tight">
+              Welcome back, {currentUser?.name?.split(' ')[0]}
+            </h2>
+            <p className="text-sm text-text-muted mt-1">
+              {myTeam?.name ? `${myTeam.name} • ` : ''}{members?.length || 0} teammates
+            </p>
+          </div>
+          <div className="flex gap-4 sm:gap-6">
+            <div className="text-center">
+              <p className="text-2xl font-display font-bold text-accent">{openTasks.length}</p>
+              <p className="text-[11px] text-text-muted uppercase font-bold">Open tasks</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-display font-bold text-accent">{attendanceRate === null ? '—' : `${attendanceRate}%`}</p>
+              <p className="text-[11px] text-text-muted uppercase font-bold">My attendance</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-display font-bold text-accent">{upcomingEvents.length}</p>
+              <p className="text-[11px] text-text-muted uppercase font-bold">Upcoming events</p>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="My Tasks" icon={CheckSquare} className="lg:col-span-2">
+        {myTasks.length === 0 ? (
+          <p className="text-sm text-text-muted py-6 text-center">No tasks assigned to you yet. Nice work — you're all caught up.</p>
+        ) : (
+          <div className="space-y-2">
+            {myTasks.map((task: any) => (
+              <button
+                key={task.id}
+                onClick={() => toggleTask(task)}
+                className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/15 transition-all text-left"
+              >
+                <span className={cn(
+                  "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all",
+                  task.status === 'done' ? "bg-accent border-accent" : "border-white/25"
+                )}>
+                  {task.status === 'done' && <Check className="w-3.5 h-3.5 text-accent-ink" strokeWidth={3} />}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className={cn("block text-sm font-semibold truncate", task.status === 'done' ? "text-text-muted line-through" : "text-white")}>
+                    {task.title}
+                  </span>
+                  {task.due_date && <span className="text-[11px] text-text-muted">Due {task.due_date}</span>}
+                </span>
+                <span className={cn(
+                  "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md",
+                  task.status === 'done' ? "bg-emerald-400/15 text-emerald-400" : task.status === 'in-progress' ? "bg-blue-400/15 text-blue-400" : "bg-slate-400/15 text-slate-400"
+                )}>
+                  {task.status === 'done' ? 'Done' : task.status === 'in-progress' ? 'In progress' : 'To do'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card title="Upcoming Events" icon={Calendar}>
+        {upcomingEvents.length === 0 ? (
+          <p className="text-sm text-text-muted py-6 text-center">No upcoming events scheduled.</p>
+        ) : (
+          <div className="space-y-3">
+            {upcomingEvents.map((e: any) => (
+              <div key={e.id} className="flex gap-3">
+                <div className="w-11 shrink-0 rounded-xl bg-accent/10 border border-accent/20 flex flex-col items-center justify-center py-1.5">
+                  <span className="text-[10px] font-bold text-accent uppercase">{format(new Date(e.date + 'T12:00:00'), 'MMM')}</span>
+                  <span className="text-lg font-display font-bold text-white leading-none">{format(new Date(e.date + 'T12:00:00'), 'd')}</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{e.title}</p>
+                  <p className="text-xs text-text-muted truncate">{[e.time, e.location].filter(Boolean).join(' • ')}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card title="My Recent Attendance" icon={CalendarCheck} className="lg:col-span-3">
+        {myAttendance.length === 0 ? (
+          <p className="text-sm text-text-muted py-4 text-center">No attendance records yet.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {myAttendance.slice(0, 14).map((r: any) => (
+              <div key={r.id} className={cn("flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold", statusChip[r.status] || statusChip.O)}>
+                <span>{r.date}</span>
+                <span className="opacity-80">{r.status === 'P' ? 'Present' : r.status === 'L' ? 'Late' : r.status === 'E' ? 'Excused' : r.status === 'U' ? 'Unexcused' : 'Out'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   const [showAddTeam, setShowAddTeam] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
@@ -1194,7 +1642,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
 
   const handleResetPassword = async (email: string) => {
     if (!confirm(`Reset password for ${email}? They will need to set it up again on next login.`)) return;
-    await fetch('/api/auth/reset', {
+    await apiFetch('/api/auth/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
@@ -1218,13 +1666,13 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
 
   const handleDeleteTeam = async (id: number) => {
     if (!confirm("Are you sure? This will delete the team.")) return;
-    await fetch(`/api/teams/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/teams/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
   const handleDeleteMember = async (id: number) => {
     if (!confirm("Are you sure? This will delete the member.")) return;
-    await fetch(`/api/members/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/members/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
@@ -1522,9 +1970,9 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   useEffect(() => {
     const fetchExtraData = async () => {
       const [sess, summ, hidden] = await Promise.all([
-        fetch('/api/attendance/sessions').then(r => r.json()),
-        fetch('/api/attendance/summary').then(r => r.json()),
-        fetch('/api/hidden-dates').then(r => r.json())
+        apiFetch('/api/attendance/sessions').then(r => r.json()),
+        apiFetch('/api/attendance/summary').then(r => r.json()),
+        apiFetch('/api/hidden-dates').then(r => r.json())
       ]);
       if (Array.isArray(sess)) setSessions(sess);
       if (Array.isArray(summ)) setSummary(summ);
@@ -1581,7 +2029,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     setSavingStatus('saving');
 
     try {
-      const res = await fetch('/api/attendance/batch', {
+      const res = await apiFetch('/api/attendance/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -1607,7 +2055,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   const hideDate = async (dateStr: string) => {
     setHiddenDates([...hiddenDates, dateStr]);
     try {
-      await fetch('/api/hidden-dates', {
+      await apiFetch('/api/hidden-dates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date: dateStr })
@@ -1621,7 +2069,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   const unhideDate = async (dateStr: string) => {
     setHiddenDates(hiddenDates.filter(d => d !== dateStr));
     try {
-      await fetch(`/api/hidden-dates/${dateStr}`, { method: 'DELETE' });
+      await apiFetch(`/api/hidden-dates/${dateStr}`, { method: 'DELETE' });
     } catch (error) {
       console.error('Error unhiding date:', error);
       setHiddenDates([...hiddenDates, dateStr]);
@@ -1648,7 +2096,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     // Save all hidden dates
     for (const date of newHidden) {
       if (!hiddenDates.includes(date)) {
-        await fetch('/api/hidden-dates', {
+        await apiFetch('/api/hidden-dates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ date })
@@ -1666,7 +2114,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     // Delete all removed dates
     for (const date of hiddenDates) {
       if (!newHidden.includes(date)) {
-        await fetch(`/api/hidden-dates/${date}`, { method: 'DELETE' }).catch(console.error);
+        await apiFetch(`/api/hidden-dates/${date}`, { method: 'DELETE' }).catch(console.error);
       }
     }
   };
@@ -1685,7 +2133,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     setHiddenDates(newHidden);
     for (const date of newHidden) {
       if (!hiddenDates.includes(date)) {
-        await fetch('/api/hidden-dates', {
+        await apiFetch('/api/hidden-dates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ date })
@@ -1697,7 +2145,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   const unhideAll = async () => {
     setHiddenDates([]);
     for (const date of hiddenDates) {
-      await fetch(`/api/hidden-dates/${date}`, { method: 'DELETE' }).catch(console.error);
+      await apiFetch(`/api/hidden-dates/${date}`, { method: 'DELETE' }).catch(console.error);
     }
   };
 
@@ -2082,9 +2530,9 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
     if (!form.title.trim() || !form.date) return;
     const payload = { ...form, team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id };
     if (editingId) {
-      await fetch(`/api/events/${editingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      await apiFetch(`/api/events/${editingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     } else {
-      await fetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     }
     setShowModal(false);
     onRefresh();
@@ -2092,7 +2540,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
 
   const handleDelete = async () => {
     if (!editingId || !confirm('Delete this event?')) return;
-    await fetch(`/api/events/${editingId}`, { method: 'DELETE' });
+    await apiFetch(`/api/events/${editingId}`, { method: 'DELETE' });
     setShowModal(false);
     onRefresh();
   };
@@ -2277,7 +2725,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
   const isAdmin = hasScope('admin');
 
   const handleAddTask = async () => {
-    await fetch('/api/tasks', {
+    await apiFetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 })
@@ -2293,7 +2741,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
   });
 
   const updateStatus = async (id: number, status: string) => {
-    await fetch(`/api/tasks/${id}`, {
+    await apiFetch(`/api/tasks/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
@@ -2303,7 +2751,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
 
   const handleDeleteTask = async (id: number) => {
     if (!confirm("Delete this task?")) return;
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
@@ -2532,7 +2980,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
   const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
 
   const handleAdd = async () => {
-    await fetch('/api/budget', {
+    await apiFetch('/api/budget', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({...newItem, amount: parseFloat(newItem.amount)})
@@ -2543,7 +2991,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this transaction?")) return;
-    await fetch(`/api/budget/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
@@ -2668,7 +3116,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
       return;
     }
     try {
-      const res = await fetch('/api/inventory', {
+      const res = await apiFetch('/api/inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2695,7 +3143,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
   const handleUpdate = async () => {
     if (!showEdit) return;
     try {
-      const res = await fetch(`/api/inventory/${showEdit.id}`, {
+      const res = await apiFetch(`/api/inventory/${showEdit.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2719,7 +3167,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
 
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this part?')) return;
-    await fetch(`/api/inventory/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
@@ -2731,7 +3179,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
     
     setIsLoadingRev(true);
     try {
-      const res = await fetch('/api/inventory/scrape-rev', {
+      const res = await apiFetch('/api/inventory/scrape-rev', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: revLink })
@@ -2958,7 +3406,7 @@ function OutreachView({ outreach, onRefresh }: any) {
   const [newEvent, setNewEvent] = useState({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '', location: '' });
 
   const handleAdd = async () => {
-    await fetch('/api/outreach', {
+    await apiFetch('/api/outreach', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({...newEvent, hours: parseInt(newEvent.hours)})
@@ -2969,7 +3417,7 @@ function OutreachView({ outreach, onRefresh }: any) {
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this event?")) return;
-    await fetch(`/api/outreach/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
@@ -3059,7 +3507,7 @@ function CommunicationView({ communications, onRefresh }: any) {
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
 
   const handleAdd = async () => {
-    await fetch('/api/communications', {
+    await apiFetch('/api/communications', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newComm)
@@ -3070,7 +3518,7 @@ function CommunicationView({ communications, onRefresh }: any) {
 
   const handleDelete = async (id: number) => {
     if (!confirm("Delete this log?")) return;
-    await fetch(`/api/communications/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/communications/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
@@ -3195,7 +3643,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
     formData.append('content', content);
 
     try {
-      const response = await fetch('/api/messages/upload', {
+      const response = await apiFetch('/api/messages/upload', {
         method: 'POST',
         body: formData
       });
@@ -3214,7 +3662,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
 
   const handleDeleteMessage = async (msgId: number) => {
     try {
-      const res = await fetch(`/api/messages/${msgId}`, {
+      const res = await apiFetch(`/api/messages/${msgId}`, {
         method: 'DELETE'
       });
       if (!res.ok) {
@@ -3448,7 +3896,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
         currentScopes = [];
       }
 
-      const res = await fetch(`/api/members/${currentUser.id}`, {
+      const res = await apiFetch(`/api/members/${currentUser.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -3569,7 +4017,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   const fetchStorageUsage = async () => {
     setLoadingStorage(true);
     try {
-      const res = await fetch('/api/admin/storage-usage');
+      const res = await apiFetch('/api/admin/storage-usage');
       const data = await res.json();
       setStorageUsage(data.totalSize);
     } catch (error) {
@@ -3582,7 +4030,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   const fetchAllMessages = async () => {
     setLoadingMessages(true);
     try {
-      const res = await fetch('/api/messages');
+      const res = await apiFetch('/api/messages');
       const data = await res.json();
       setAllMessages(data);
     } catch (error) {
@@ -3595,7 +4043,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   const handleSilentDelete = async (messageId: number) => {
     if (confirm('Are you sure you want to permanently delete this message? This cannot be undone.')) {
       try {
-        const res = await fetch(`/api/messages/${messageId}?silent=true`, { method: 'DELETE' });
+        const res = await apiFetch(`/api/messages/${messageId}?silent=true`, { method: 'DELETE' });
         if (res.ok) {
           await fetchAllMessages();
           alert('Message permanently deleted.');
@@ -3612,7 +4060,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   const handleUpdateMessage = async () => {
     if (!editingMessage) return;
     try {
-      const res = await fetch(`/api/messages/${editingMessage.id}`, {
+      const res = await apiFetch(`/api/messages/${editingMessage.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editingMessage.content })
@@ -3654,7 +4102,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
     ];
 
     for (const payload of payloads) {
-      await fetch('/api/settings', {
+      await apiFetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -3665,7 +4113,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   };
 
   const updateMember = async (id: number, data: any) => {
-    await fetch(`/api/members/${id}`, {
+    await apiFetch(`/api/members/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)

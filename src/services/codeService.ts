@@ -1,7 +1,8 @@
+import { apiFetch } from './api';
 import { CodeFile, CodeCommit, CodeContent } from '../types';
 
 export const getCodeFiles = async (teamId: number): Promise<CodeFile[]> => {
-  const response = await fetch(`/api/code/files/${teamId}`);
+  const response = await apiFetch(`/api/code/files/${teamId}`);
   if (!response.ok) throw new Error('Failed to fetch code files');
   return response.json();
 };
@@ -14,7 +15,7 @@ export const createCodeFile = async (
   content: string,
   authorId: number
 ): Promise<CodeFile> => {
-  const response = await fetch('/api/code/files', {
+  const response = await apiFetch('/api/code/files', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ team_id: teamId, file_name: fileName, file_path: filePath, language, content, author_id: authorId })
@@ -24,7 +25,7 @@ export const createCodeFile = async (
 };
 
 export const getCodeFileContent = async (fileId: number): Promise<CodeContent> => {
-  const response = await fetch(`/api/code/files/${fileId}/content`);
+  const response = await apiFetch(`/api/code/files/${fileId}/content`);
   if (!response.ok) throw new Error('Failed to fetch code content');
   return response.json();
 };
@@ -34,7 +35,7 @@ export const saveDraft = async (
   content: string,
   authorId: number
 ): Promise<{ success: boolean; id: number }> => {
-  const response = await fetch(`/api/code/files/${fileId}/draft`, {
+  const response = await apiFetch(`/api/code/files/${fileId}/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, author_id: authorId })
@@ -48,7 +49,7 @@ export const commitToMain = async (
   message: string,
   authorId: number
 ): Promise<{ success: boolean; hash: string }> => {
-  const response = await fetch(`/api/code/files/${fileId}/commit`, {
+  const response = await apiFetch(`/api/code/files/${fileId}/commit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, author_id: authorId })
@@ -58,19 +59,19 @@ export const commitToMain = async (
 };
 
 export const getCommitHistory = async (fileId: number, branch: 'main' | 'drafts' = 'main'): Promise<CodeCommit[]> => {
-  const response = await fetch(`/api/code/files/${fileId}/history?branch=${branch}`);
+  const response = await apiFetch(`/api/code/files/${fileId}/history?branch=${branch}`);
   if (!response.ok) throw new Error('Failed to fetch commit history');
   return response.json();
 };
 
 export const getCommit = async (commitId: number): Promise<CodeCommit> => {
-  const response = await fetch(`/api/code/commits/${commitId}`);
+  const response = await apiFetch(`/api/code/commits/${commitId}`);
   if (!response.ok) throw new Error('Failed to fetch commit');
   return response.json();
 };
 
 export const downloadCodeFile = async (fileId: number, branch: 'main' | 'drafts' = 'main'): Promise<void> => {
-  const response = await fetch(`/api/code/files/${fileId}/download`, {
+  const response = await apiFetch(`/api/code/files/${fileId}/download`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ branch })
@@ -94,7 +95,7 @@ export const downloadCodeFile = async (fileId: number, branch: 'main' | 'drafts'
 };
 
 export const deleteCodeFile = async (fileId: number): Promise<{ success: boolean }> => {
-  const response = await fetch(`/api/code/files/${fileId}`, {
+  const response = await apiFetch(`/api/code/files/${fileId}`, {
     method: 'DELETE'
   });
   if (!response.ok) throw new Error('Failed to delete code file');
@@ -102,7 +103,7 @@ export const deleteCodeFile = async (fileId: number): Promise<{ success: boolean
 };
 
 export const revertCommit = async (commitId: number, branch: 'main' | 'drafts', authorId?: number) => {
-  const response = await fetch(`/api/code/commits/${commitId}/revert`, {
+  const response = await apiFetch(`/api/code/commits/${commitId}/revert`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ branch, author_id: authorId })
