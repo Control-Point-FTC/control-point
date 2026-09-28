@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -6,75 +6,148 @@
   --font-display: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 
-  --color-primary: #111111;      /* Jet Black - page background */
-  --color-secondary: #1A1A1A;    /* Charcoal - cards and surfaces */
-  --color-accent: #F5B700;       /* Golden Yellow - primary actions */
-  --color-accent-hover: #D9A400; /* Darker gold for hover states */
-  --color-info: #00B4FF;         /* Electric Blue */
-  --color-success: #22C55E;      /* Neon Green */
-  --color-warning: #F59E0B;      /* Amber */
-  --color-text-base: #F8FAFC;    /* Off White */
+  /* Volt & Carbon — Control Point theme */
+  --color-primary: #09090b;      /* carbon black — page background */
+  --color-secondary: #121215;    /* raised surface */
+  --color-elevated: #1a1a1f;     /* cards, popovers */
+  --color-accent: #ffc700;       /* volt yellow — primary actions */
+  --color-accent-hover: #ffd633; /* volt hover */
+  --color-accent-ink: #231a00;   /* text on volt */
+  --color-accent-soft: #ffc7001f;/* volt tint fills */
+  --color-line: #ffffff14;       /* hairline borders */
+  --color-info: #38bdf8;
+  --color-success: #34d399;
+  --color-warning: #fb923c;
+  --color-text-base: #fafaf8;
+  --color-text-muted: #a1a1aa;
 }
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
   body {
     @apply bg-primary font-sans antialiased;
-    color: var(--color-text-base, #f1f5f9);
+    color: var(--color-text-base);
+    text-rendering: optimizeLegibility;
   }
-  
+
   h1, h2, h3, h4 {
     @apply font-display font-bold tracking-tight;
   }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
 }
 
+/* ---------- surfaces ---------- */
 .glass {
-  @apply bg-secondary/50 backdrop-blur-md border border-white/10;
+  background: color-mix(in srgb, var(--color-secondary) 72%, transparent);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--color-line);
+}
+
+.card-surface {
+  background: linear-gradient(180deg, var(--color-elevated), var(--color-secondary));
+  border: 1px solid var(--color-line);
+  border-radius: 1.25rem;
 }
 
 .gold-glow {
-  box-shadow: 0 0 15px rgba(245, 183, 0, 0.25);
+  box-shadow: 0 0 24px rgba(255, 199, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+.volt-text-glow {
+  text-shadow: 0 0 32px rgba(255, 199, 0, 0.45);
+}
+
+/* ---------- landing helpers ---------- */
+.hero-grid {
+  background-image:
+    linear-gradient(var(--color-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, black 30%, transparent 75%);
+}
+
+.hero-glow {
+  background: radial-gradient(ellipse 60% 45% at 50% 0%, rgba(255, 199, 0, 0.16), transparent 70%);
+}
+
+.eyebrow {
+  @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted;
+}
+
+.feature-card {
+  @apply relative overflow-hidden rounded-3xl border border-white/10 bg-secondary/60 p-7 transition-all duration-300;
+}
+.feature-card:hover {
+  border-color: rgba(255, 199, 0, 0.35);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 199, 0, 0.12);
+}
+
+/* ---------- scrollbars ---------- */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 .custom-scrollbar::-webkit-scrollbar-track {
-  @apply bg-primary;
+  background: transparent;
 }
-
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  @apply bg-slate-700 rounded-full hover:bg-slate-600;
+  @apply rounded-full;
+  background: #2e2e35;
 }
-
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  @apply bg-slate-600;
+  background: #3f3f47;
 }
 
-/* Dynamic button hover states */
+/* ---------- buttons ---------- */
 .btn-accent-primary {
   background-color: var(--color-accent);
-  color: var(--color-primary);
+  color: var(--color-accent-ink);
 }
-
 .btn-accent-primary:hover {
-  filter: brightness(0.9);
+  background-color: var(--color-accent-hover);
 }
 
 .btn-accent-outline {
-  border-color: var(--color-accent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
   color: var(--color-accent);
 }
-
 .btn-accent-outline:hover {
-  background-color: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  background-color: color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
 .btn-accent-ghost {
   color: var(--color-accent);
 }
-
 .btn-accent-ghost:hover {
-  background-color: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+/* ---------- motion ---------- */
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+.animate-float-slow {
+  animation: float-slow 7s ease-in-out infinite;
+}
+
+@keyframes pulse-volt {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.animate-pulse-volt {
+  animation: pulse-volt 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-slow, .animate-pulse-volt {
+    animation: none;
+  }
 }

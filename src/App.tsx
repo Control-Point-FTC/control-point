@@ -53,6 +53,7 @@ import { format } from 'date-fns';
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { fetchFTCNews, streamFTCNews, getAttendanceInsights, streamAttendanceInsights, checkExcuse, streamCheckExcuse, getActivitySummary, streamActivitySummary } from './services/aiService';
 import { CodeView } from './components/CodeView';
+import Landing from './Landing';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -67,14 +68,18 @@ function getCSSVariable(name: string): string {
 // --- Components ---
 
 const Card = ({ children, className, title, subtitle, icon: Icon }: any) => (
-  <div className={cn("glass rounded-2xl p-6 flex flex-col gap-4", className)}>
+  <div className={cn("card-surface p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgba(0,0,0,0.35)]", className)}>
     {(title || Icon) && (
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-1">
         <div>
-          {title && <h3 className="text-lg font-display font-bold text-white">{title}</h3>}
-          {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
+          {title && <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>}
+          {subtitle && <p className="text-xs text-text-muted mt-0.5">{subtitle}</p>}
         </div>
-        {Icon && <Icon className="w-5 h-5 text-accent" />}
+        {Icon && (
+          <div className="rounded-xl bg-accent/12 p-2.5">
+            <Icon className="w-5 h-5 text-accent" />
+          </div>
+        )}
       </div>
     )}
     {children}
@@ -87,15 +92,15 @@ const Button = ({ children, className, variant = 'primary', ...props }: any) => 
   
   const variants: any = {
     primary: {
-      className: 'text-primary font-bold hover:brightness-90',
-      style: { backgroundColor: accentColor || '#F5B700', color: primaryColor || '#111111' }
+      className: 'font-bold hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)]',
+      style: { backgroundColor: accentColor || '#FFC700', color: '#231A00' }
     },
-    secondary: 'bg-slate-800 text-white hover:bg-slate-700',
+    secondary: 'bg-elevated text-white hover:bg-white/10 border border-white/10 font-semibold',
     outline: {
       className: 'text-accent hover:opacity-80 border border-current font-bold',
     },
-    ghost: 'text-slate-400 hover:text-white hover:bg-white/5',
-    danger: 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30'
+    ghost: 'text-text-muted hover:text-white hover:bg-white/5 font-semibold',
+    danger: 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30 font-semibold'
   };
   
   const variantConfig = variants[variant as keyof typeof variants];
@@ -119,7 +124,7 @@ const Button = ({ children, className, variant = 'primary', ...props }: any) => 
 const Input = ({ className, ...props }: any) => (
   <input 
     className={cn(
-      "w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors",
+      "w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
       className
     )}
     {...props}
@@ -129,7 +134,7 @@ const Input = ({ className, ...props }: any) => (
 const Select = ({ className, options, ...props }: any) => (
   <select 
     className={cn(
-      "w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors",
+      "w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
       className
     )}
     {...props}
@@ -150,6 +155,7 @@ export default function App() {
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authScreen, setAuthScreen] = useState<'landing' | 'login'>('landing');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -670,32 +676,43 @@ export default function App() {
   };
 
   if (!isLoggedIn) {
+    if (authScreen === 'landing') {
+      return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('login')} />;
+    }
     return (
-      <div className="min-h-screen bg-primary flex items-center justify-center p-4">
-        <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}>
-          <Card className="w-full max-w-md p-8">
+      <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
+        <div className="hero-grid absolute inset-0" />
+        <div className="hero-glow absolute inset-0" />
+        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
+          <button
+            onClick={() => setAuthScreen('landing')}
+            className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" /> Back to home
+          </button>
+          <Card className="p-8">
             <div className="flex flex-col items-center gap-4 mb-8">
               <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center gold-glow">
-                <Bolt className="text-primary w-10 h-10" />
+                <Bolt className="text-accent-ink w-9 h-9" strokeWidth={2.5} />
               </div>
-              <h1 className="text-3xl font-display font-bold text-white">Control Point</h1>
-              <p className="text-slate-400 text-center">
-                {needsSetup ? "Set your new password to continue" : "Sign in to access club data."}
+              <h1 className="text-3xl font-display font-bold text-white tracking-tight">Control Point</h1>
+              <p className="text-text-muted text-center text-sm">
+                {needsSetup ? "Set your new password to continue" : "Welcome back. Sign in to your workspace."}
               </p>
             </div>
 
             <form onSubmit={needsSetup ? handleSetup : handleLogin} className="space-y-4">
               {!needsSetup && (
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-400 uppercase">Email</label>
-                  <Input type="email" required value={loginEmail} onChange={(e: any) => setLoginEmail(e.target.value)} />
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Email</label>
+                  <Input type="email" required value={loginEmail} onChange={(e: any) => setLoginEmail(e.target.value)} placeholder="you@team.org" />
                 </div>
               )}
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase">Password</label>
-                <Input type="password" required value={loginPassword} onChange={(e: any) => setLoginPassword(e.target.value)} />
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Password</label>
+                <Input type="password" required value={loginPassword} onChange={(e: any) => setLoginPassword(e.target.value)} placeholder="••••••••" />
               </div>
-              <Button type="submit" className="w-full py-3 mt-4">
+              <Button type="submit" className="w-full py-3 mt-2 text-[15px]">
                 {needsSetup ? "Complete Setup" : "Sign In"}
               </Button>
             </form>
@@ -704,12 +721,12 @@ export default function App() {
             )}
             {googleEnabled && !needsSetup && (
               <>
-                <div className="flex items-center gap-3 mt-5">
+                <div className="flex items-center gap-3 mt-6">
                   <div className="flex-1 h-px bg-white/10" />
-                  <span className="text-xs text-slate-500">or</span>
+                  <span className="text-xs text-text-muted">or</span>
                   <div className="flex-1 h-px bg-white/10" />
                 </div>
-                <a href="/api/auth/google" className="block mt-5">
+                <a href="/api/auth/google" className="block mt-6">
                   <Button variant="secondary" className="w-full py-3" type="button">
                     <svg className="w-5 h-5" viewBox="0 0 24 24">
                       <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.3H12v4.3h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.2-2 3.7-5 3.7-8.7z"/>
@@ -723,6 +740,9 @@ export default function App() {
               </>
             )}
           </Card>
+          <p className="mt-6 text-center text-xs text-text-muted">
+            Mission control for robotics teams.
+          </p>
         </motion.div>
       </div>
     );
@@ -759,67 +779,79 @@ export default function App() {
           transition: 'transform 0.3s ease-in-out'
         }}
       >
-        <div className="p-4 sm:p-6 flex items-center gap-3 flex-shrink-0">
-          <div className="w-10 h-10 bg-accent rounded-xl flex items-center justify-center gold-glow flex-shrink-0">
-            <Bolt className="text-primary w-6 h-6" />
+        <div className="px-4 sm:px-5 pt-5 pb-4 flex items-center gap-3 flex-shrink-0">
+          <div className="w-10 h-10 bg-accent rounded-2xl flex items-center justify-center gold-glow flex-shrink-0">
+            <Bolt className="text-accent-ink w-6 h-6" strokeWidth={2.5} />
           </div>
           {isSidebarOpen && (
-            <motion.h1 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.1 }}
-              className="text-lg sm:text-xl font-display font-bold text-white whitespace-nowrap"
+            <motion.div
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.08 }}
+              className="whitespace-nowrap"
             >
-              Control Point
-            </motion.h1>
+              <h1 className="text-[17px] font-display font-bold text-white leading-none tracking-tight">Control Point</h1>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted mt-1">Team workspace</p>
+            </motion.div>
           )}
         </div>
 
-        <nav className="flex-1 px-3 sm:px-4 space-y-1 sm:space-y-2 mt-4 overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 px-3 sm:px-4 space-y-1 mt-2 overflow-y-auto custom-scrollbar pb-4">
+          {isSidebarOpen && (
+            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">Workspace</p>
+          )}
           {navItems.map((item) => {
             const isLocked = item.scope && !hasScope(item.scope);
+            const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => !isLocked && setActiveTab(item.id)}
+                title={!isSidebarOpen ? item.label : undefined}
                 className={cn(
-                  "w-full flex items-center gap-3 p-3 rounded-xl transition-all group relative",
-                  activeTab === item.id ? "bg-accent text-primary font-bold" : "text-slate-400 hover:bg-white/5 hover:text-white",
+                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
+                  isActive
+                    ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
+                    : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium",
                   isLocked && "opacity-30 cursor-not-allowed"
                 )}
               >
-                <item.icon className={cn("w-5 h-5", activeTab === item.id ? "text-primary" : "text-accent")} />
-                {isSidebarOpen && <span>{item.label}</span>}
-                {isLocked && isSidebarOpen && <span className="ml-auto text-[10px] uppercase font-bold opacity-50">Locked</span>}
+                <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
+                {isSidebarOpen && <span className="truncate">{item.label}</span>}
+                {isLocked && isSidebarOpen && <Lock className="ml-auto w-3.5 h-3.5 opacity-60" />}
               </button>
             );
           })}
         </nav>
 
-        <div className="p-3 sm:p-4 border-t border-white/5 flex-shrink-0 space-y-2">
-          <div className="flex items-center gap-3 p-2 sm:p-3">
-            <button 
+        <div className="p-3 sm:p-4 border-t border-white/[0.06] flex-shrink-0 space-y-1.5">
+          <div className={cn("flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06]", isSidebarOpen ? "p-2.5" : "p-2 justify-center")}>
+            <button
               onClick={() => setActiveTab('profile')}
-              className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-primary font-bold text-xs hover:ring-2 hover:ring-accent-hover transition-all flex-shrink-0"
+              className="w-9 h-9 rounded-full bg-accent flex items-center justify-center text-accent-ink font-bold text-sm hover:ring-2 hover:ring-accent/50 transition-all flex-shrink-0"
+              title="My profile"
             >
               {currentUser?.name.charAt(0)}
             </button>
             {isSidebarOpen && (
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-white truncate">{currentUser?.name}</p>
-                <button onClick={handleLogout} className="flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-300 transition-colors">
-                  <LogOut className="w-3 h-3" /> Sign Out
-                </button>
+                <p className="text-[13px] font-bold text-white truncate leading-tight">{currentUser?.name}</p>
+                <p className="text-[11px] text-text-muted truncate">{currentUser?.role}</p>
               </div>
             )}
+            {isSidebarOpen && (
+              <button onClick={handleLogout} className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
-          <button 
+          <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="w-full flex items-center gap-3 p-2 sm:p-3 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
+            className="w-full hidden md:flex items-center gap-3 px-3 py-2 text-text-muted hover:text-white rounded-xl hover:bg-white/[0.06] transition-colors text-sm font-medium"
             title={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           >
-            {isSidebarOpen ? <X className="w-5 h-5 flex-shrink-0" /> : <Menu className="w-5 h-5 flex-shrink-0" />}
-            {isSidebarOpen && <span className="text-sm">Collapse</span>}
+            {isSidebarOpen ? <ChevronLeft className="w-[18px] h-[18px] flex-shrink-0" /> : <ChevronRight className="w-[18px] h-[18px] flex-shrink-0" />}
+            {isSidebarOpen && <span>Collapse</span>}
           </button>
         </div>
       </motion.aside>
@@ -830,7 +862,7 @@ export default function App() {
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 text-slate-400 hover:text-white md:hidden flex-shrink-0"
+              className="p-2 text-text-muted hover:text-white md:hidden flex-shrink-0"
               title="Toggle sidebar"
             >
               <Menu className="w-6 h-6" />
@@ -845,7 +877,7 @@ export default function App() {
                   setShowNotifications(!showNotifications);
                   if (!showNotifications) markNotificationsRead();
                 }}
-                className="relative p-2 text-slate-400 hover:text-white transition-colors"
+                className="relative p-2 text-text-muted hover:text-white transition-colors"
               >
                 <Bell className="w-5 h-5" />
                 {notifications.some(n => !n.is_read) && (
@@ -869,12 +901,12 @@ export default function App() {
                         notifications.map(n => (
                           <div key={n.id} className={cn("p-4 border-b border-white/5 hover:bg-white/5 transition-colors", !n.is_read && "bg-accent/5")}>
                             <p className="text-xs text-white leading-relaxed">{n.content}</p>
-                            <p className="text-[10px] text-slate-500 mt-1">{format(new Date(n.timestamp), 'MMM d, h:mm a')}</p>
+                            <p className="text-[10px] text-text-muted/70 mt-1">{format(new Date(n.timestamp), 'MMM d, h:mm a')}</p>
                           </div>
                         ))
                       ) : (
                         <div className="p-8 text-center">
-                          <p className="text-xs text-slate-500">No notifications yet</p>
+                          <p className="text-xs text-text-muted/70">No notifications yet</p>
                         </div>
                       )}
                     </div>
@@ -889,9 +921,9 @@ export default function App() {
                 </div>
                 <div className="hidden sm:block">
                   <p className="text-xs font-bold text-white">{currentUser.name}</p>
-                  <p className="text-[10px] text-slate-400">{currentUser.role}</p>
+                  <p className="text-[10px] text-text-muted">{currentUser.role}</p>
                 </div>
-                <button onClick={handleLogout} className="ml-2 p-1 text-slate-500 hover:text-rose-400 transition-colors">
+                <button onClick={handleLogout} className="ml-2 p-1 text-text-muted/70 hover:text-rose-400 transition-colors">
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
@@ -912,7 +944,7 @@ export default function App() {
               {loading ? (
                 <div className="flex flex-col items-center justify-center h-64 gap-4">
                   <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-                  <p className="text-slate-400 animate-pulse">Synchronizing club data...</p>
+                  <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
                 </div>
               ) : renderContent()}
             </motion.div>
@@ -999,15 +1031,15 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
       <Card title="Club Health" icon={TrendingUp} className="lg:col-span-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <p className="text-xs text-slate-400 uppercase font-bold mb-1">Attendance {todayAttendance.length > 0 ? '(Today)' : '(Avg)'}</p>
+            <p className="text-xs text-text-muted uppercase font-bold mb-1">Attendance {todayAttendance.length > 0 ? '(Today)' : '(Avg)'}</p>
             <p className="text-2xl sm:text-3xl font-display font-bold text-accent">{attendanceRate}%</p>
           </div>
           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <p className="text-xs text-slate-400 uppercase font-bold mb-1">Budget</p>
+            <p className="text-xs text-text-muted uppercase font-bold mb-1">Budget</p>
             <p className="text-2xl sm:text-3xl font-display font-bold text-emerald-400 truncate">${totalBudget.toLocaleString()}</p>
           </div>
           <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <p className="text-xs text-slate-400 uppercase font-bold mb-1">Active Tasks</p>
+            <p className="text-xs text-text-muted uppercase font-bold mb-1">Active Tasks</p>
             <p className="text-2xl sm:text-3xl font-display font-bold text-blue-400">{activeTasks}</p>
           </div>
         </div>
@@ -1037,13 +1069,13 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
               <Zap className="w-3 h-3 mr-1" /> {insights ? "Refresh Insights" : "Generate Insights"}
             </Button>
           </div>
-          <div className="text-sm text-slate-300 leading-relaxed prose prose-invert max-w-none">
+          <div className="text-sm text-white/80 leading-relaxed prose prose-invert max-w-none">
             {isAiLoading && !insights ? (
               <ThinkingIndicator />
             ) : insights ? (
               <Markdown>{insights}</Markdown>
             ) : (
-              <p className="text-xs text-slate-500 italic">Click generate to analyze attendance patterns and club health.</p>
+              <p className="text-xs text-text-muted/70 italic">Click generate to analyze attendance patterns and club health.</p>
             )}
           </div>
         </div>
@@ -1075,7 +1107,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
             </div>
           ) : (
             <div className="space-y-3">
-              <p className="text-xs text-slate-400">Mark your status for today's session:</p>
+              <p className="text-xs text-text-muted">Mark your status for today's session:</p>
               <div className="grid grid-cols-2 gap-2">
                 <Button onClick={() => handleSelfReport('P')} variant="outline" className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10" disabled={isAiLoading}>
                   <CheckSquare className="w-4 h-4" /> I'm Here
@@ -1098,7 +1130,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
             <div key={task.id} className="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
               <div>
                 <p className="text-sm font-bold text-white">{task.title}</p>
-                <p className="text-[10px] text-slate-400">Due: {task.due_date}</p>
+                <p className="text-[10px] text-text-muted">Due: {task.due_date}</p>
               </div>
               <div className={cn(
                 "w-2 h-2 rounded-full",
@@ -1111,12 +1143,12 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
 
       <Card title="AI Activity Summary" icon={Zap} className="md:col-span-2">
         <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-2">
-          <p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Recent Activity</p>
+          <p className="text-[10px] text-text-muted/70 uppercase font-bold tracking-widest">Recent Activity</p>
           <Button variant="ghost" size="sm" className="h-6 text-[10px] text-accent px-2" onClick={updateSummary} disabled={isAiLoading}>
             <Clock className="w-3 h-3 mr-1" /> Refresh
           </Button>
         </div>
-        <div className="text-sm text-slate-300 leading-relaxed prose prose-invert max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+        <div className="text-sm text-white/80 leading-relaxed prose prose-invert max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
           {isAiLoading && !data.summary ? (
             <ThinkingIndicator />
           ) : (
@@ -1129,7 +1161,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card title="Log Absence" className="w-full max-w-md">
             <div className="space-y-4">
-              <p className="text-sm text-slate-400">Let the team know why you'll be missing today's session.</p>
+              <p className="text-sm text-text-muted">Let the team know why you'll be missing today's session.</p>
               <textarea 
                 className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-24 disabled:opacity-50"
                 placeholder="Reason for absence..."
@@ -1236,7 +1268,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
           <Card key={team.id} title={`${team.name} #${team.number}`} icon={Award}>
             <div className="flex flex-col h-full">
               <div className="flex-1 space-y-2 mb-4">
-                <p className="text-xs text-slate-400 uppercase font-bold">Members</p>
+                <p className="text-xs text-text-muted uppercase font-bold">Members</p>
                 <div className="flex flex-wrap gap-2">
                   {members.filter((m: any) => m.team_id === team.id).map((m: any) => (
                     <div key={m.id} className="px-3 py-1 bg-white/5 rounded-full border border-white/10 text-xs text-white">
@@ -1246,7 +1278,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                 </div>
                 {(team.accent_color || team.primary_color) && (
                   <div className="pt-2">
-                    <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Team Branding</p>
+                    <p className="text-[10px] text-text-muted/70 uppercase font-bold mb-1">Team Branding</p>
                     <div className="flex gap-2">
                       {team.accent_color && <div className="w-4 h-4 rounded-full border border-white/10" style={{ backgroundColor: team.accent_color }} title="Accent" />}
                       {team.primary_color && <div className="w-4 h-4 rounded-full border border-white/10" style={{ backgroundColor: team.primary_color }} title="Primary" />}
@@ -1299,28 +1331,28 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
         <table className="w-full text-left text-sm">
           <thead className="bg-white/5 border-b border-white/10">
             <tr>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Name</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Team</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Role</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Board</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Scopes</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Actions</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Name</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Team</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Role</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Board</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Scopes</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {members.map((m: any) => (
               <tr key={m.id} className="hover:bg-white/5 transition-colors">
                 <td className="px-6 py-4 text-sm text-white font-medium">{m.name}</td>
-                <td className="px-6 py-4 text-sm text-slate-400">{m.team_name || 'N/A'}</td>
-                <td className="px-6 py-4 text-sm text-slate-400">{m.role}</td>
+                <td className="px-6 py-4 text-sm text-text-muted">{m.team_name || 'N/A'}</td>
+                <td className="px-6 py-4 text-sm text-text-muted">{m.role}</td>
                 <td className="px-6 py-4">
                   {m.is_board ? (
                     <span className="px-2 py-1 bg-accent/20 text-accent text-[10px] font-bold rounded-md uppercase">Yes</span>
                   ) : (
-                    <span className="px-2 py-1 bg-slate-800 text-slate-500 text-[10px] font-bold rounded-md uppercase">No</span>
+                    <span className="px-2 py-1 bg-slate-800 text-text-muted/70 text-[10px] font-bold rounded-md uppercase">No</span>
                   )}
                 </td>
-                <td className="px-6 py-4 text-xs text-slate-500">
+                <td className="px-6 py-4 text-xs text-text-muted/70">
                   {(() => {
                     try {
                       const scopes = typeof m.scopes === 'string' ? JSON.parse(m.scopes) : m.scopes;
@@ -1352,7 +1384,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                           });
                           setShowAddMember(true);
                         }}
-                        className="p-2 text-slate-500 hover:text-accent transition-colors"
+                        className="p-2 text-text-muted/70 hover:text-accent transition-colors"
                         title="Edit Member"
                       >
                         <Edit2 className="w-4 h-4" />
@@ -1361,7 +1393,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                     {isAdmin && (
                       <button 
                         onClick={() => handleResetPassword(m.email)}
-                        className="p-2 text-slate-500 hover:text-accent transition-colors"
+                        className="p-2 text-text-muted/70 hover:text-accent transition-colors"
                         title="Reset Password"
                       >
                         <Lock className="w-4 h-4" />
@@ -1370,7 +1402,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                     {isAdmin && (
                       <button 
                         onClick={() => handleDeleteMember(m.id)}
-                        className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
+                        className="p-2 text-text-muted/70 hover:text-rose-400 transition-colors"
                         title="Delete Member"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1393,7 +1425,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
               <Input placeholder="Team Number (e.g. 12345)" value={newTeam.number} onChange={(e: any) => setNewTeam({...newTeam, number: e.target.value})} />
               
               <div className="pt-2">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-3">Team Branding (Default for members)</p>
+                <p className="text-xs font-bold text-text-muted uppercase mb-3">Team Branding (Default for members)</p>
                 <div className="grid grid-cols-1 gap-4">
                   <div className="flex items-center gap-3">
                     <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#F5B700'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
@@ -1434,13 +1466,13 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
               <Input placeholder="Full Name" value={newMember.name} onChange={(e: any) => setNewMember({...newMember, name: e.target.value})} />
               <Input placeholder="Role (e.g. Lead Programmer)" value={newMember.role} onChange={(e: any) => setNewMember({...newMember, role: e.target.value})} />
               <Input placeholder="Email" value={newMember.email} onChange={(e: any) => setNewMember({...newMember, email: e.target.value})} />
-              <label className="flex items-center gap-2 text-sm text-slate-300">
+              <label className="flex items-center gap-2 text-sm text-white/80">
                 <input type="checkbox" checked={newMember.is_board} onChange={(e) => setNewMember({...newMember, is_board: e.target.checked})} />
                 Board Member (Admin)
               </label>
               {newMember.is_board && (
                 <div className="space-y-2">
-                  <p className="text-xs text-slate-400 font-bold uppercase">Scopes</p>
+                  <p className="text-xs text-text-muted font-bold uppercase">Scopes</p>
                   <div className="flex flex-wrap gap-2">
                     {['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'].map(s => (
                       <button 
@@ -1454,7 +1486,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                         }}
                         className={cn(
                           "px-3 py-1 rounded-full text-[10px] font-bold uppercase border transition-all",
-                          newMember.scopes.includes(s as never) ? "bg-accent border-accent text-primary" : "border-white/10 text-slate-400"
+                          newMember.scopes.includes(s as never) ? "bg-accent border-accent text-primary" : "border-white/10 text-text-muted"
                         )}
                       >
                         {s}
@@ -1675,7 +1707,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     'E': 'bg-blue-500 text-blue-950',
     'U': 'bg-rose-500 text-rose-950',
     'S': 'bg-purple-500 text-purple-950',
-    '-': 'bg-white/5 text-slate-500'
+    '-': 'bg-white/5 text-text-muted/70'
   };
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1686,18 +1718,18 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
         <div className="flex gaps-2 sm:gap-3 items-center">
           <button 
             onClick={() => setCalendarStart(Math.max(0, calendarStart - 1))}
-            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-slate-300"
+            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-white/80"
             disabled={calendarStart === 0}
           >
             ← Previous
           </button>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-text-muted">
             {format(new Date(new Date().getTime() + calendarStart * 14 * 24 * 60 * 60 * 1000), 'MMM dd')} - {format(new Date(new Date().getTime() + (calendarStart * 14 + 13) * 24 * 60 * 60 * 1000), 'MMM dd')}
           </span>
           {hasMoreDates && (
             <button 
               onClick={() => setCalendarStart(calendarStart + 1)}
-              className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-slate-300"
+              className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-white/80"
             >
               Next →
             </button>
@@ -1709,12 +1741,12 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
             <div className="flex items-center gap-1 text-xs px-3 py-1 rounded-lg bg-white/5">
               {savingStatus === 'saving' && <Clock className="w-3 h-3 text-amber-400 animate-spin" />}
               {savingStatus === 'saved' && <Check className="w-3 h-3 text-emerald-400" />}
-              <span className="text-slate-300">{savingStatus === 'saving' ? 'Saving...' : 'Saved'}</span>
+              <span className="text-white/80">{savingStatus === 'saving' ? 'Saving...' : 'Saved'}</span>
             </div>
           )}
           <button 
             onClick={() => setShowHideMenu(!showHideMenu)}
-            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-slate-300 flex items-center gap-2"
+            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-white/80 flex items-center gap-2"
             title="Show/hide dates"
           >
             {showHideMenu ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1729,7 +1761,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           
           <div className="space-y-3">
             <div>
-              <p className="text-xs text-slate-400 font-bold mb-2">By Day of Week</p>
+              <p className="text-xs text-text-muted font-bold mb-2">By Day of Week</p>
               <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
                 {dayNames.map((name, idx) => (
                   <button
@@ -1774,7 +1806,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
               </Button>
             </div>
 
-            <div className="text-[10px] text-slate-500">
+            <div className="text-[10px] text-text-muted/70">
               {hiddenDates.length} dates hidden • Showing {visibleDates.length} dates
             </div>
           </div>
@@ -1786,9 +1818,9 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           <table className="w-full text-left text-sm border-collapse">
             <thead>
               <tr className="bg-white/5 border-b border-white/10">
-                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase sticky left-0 bg-[#111111] z-10 min-w-[150px]">Member</th>
+                <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase sticky left-0 bg-[#111111] z-10 min-w-[150px]">Member</th>
                 {visibleDates.map(date => (
-                  <th key={date} className="px-2 py-3 text-[10px] font-bold text-slate-400 uppercase text-center min-w-[40px] group relative">
+                  <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative">
                     <div className="text-center">
                       {format(new Date(date), 'MMM dd')}
                       <div className="text-[8px] text-slate-600">{format(new Date(date), 'EEE')}</div>
@@ -1851,19 +1883,19 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
       <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
           onClick={() => setActiveSubTab('grid')}
-          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'grid' ? "bg-accent text-primary shadow-lg" : "text-slate-400 hover:text-white")}
+          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'grid' ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
         >
           Attendance Grid
         </button>
         <button 
           onClick={() => setActiveSubTab('history')}
-          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'history' ? "bg-accent text-primary shadow-lg" : "text-slate-400 hover:text-white")}
+          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'history' ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
         >
           History
         </button>
         <button 
           onClick={() => setActiveSubTab('summary')}
-          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'summary' ? "bg-accent text-primary shadow-lg" : "text-slate-400 hover:text-white")}
+          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'summary' ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
         >
           Insights
         </button>
@@ -1876,7 +1908,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           {sessions.length === 0 ? (
             <div className="col-span-full py-20 text-center glass rounded-2xl border border-white/5">
               <Calendar className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-              <p className="text-slate-400">No attendance history found yet.</p>
+              <p className="text-text-muted">No attendance history found yet.</p>
             </div>
           ) : (
             sessions.map(date => {
@@ -1894,10 +1926,10 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                     <div className="p-2 bg-white/5 rounded-lg text-accent group-hover:bg-accent group-hover:text-primary transition-colors">
                       <Calendar className="w-4 h-4" />
                     </div>
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">{format(new Date(date), 'EEE')}</span>
+                    <span className="text-[10px] font-bold text-text-muted/70 uppercase">{format(new Date(date), 'EEE')}</span>
                   </div>
                   <p className="font-bold text-white mb-1">{format(new Date(date), 'MMM dd, yyyy')}</p>
-                  <p className="text-xs text-slate-400">{presentCount} members present</p>
+                  <p className="text-xs text-text-muted">{presentCount} members present</p>
                 </button>
               );
             })
@@ -1909,7 +1941,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
         <div className="space-y-6">
           <Card title="Attendance Analysis" icon={Zap}>
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm text-slate-400">Leverage AI to identify trends, missing members, and engagement levels.</p>
+              <p className="text-sm text-text-muted">Leverage AI to identify trends, missing members, and engagement levels.</p>
               <Button onClick={() => updateInsights()} disabled={isAiLoading}>
                 <Zap className="w-4 h-4" /> {insights ? "Refresh Analysis" : "Generate Analysis"}
               </Button>
@@ -1926,10 +1958,10 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="bg-white/5 border-b border-white/10">
-                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Member</th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Rate</th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">P / A / L / E</th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">History (Last 5)</th>
+                  <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Member</th>
+                  <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Rate</th>
+                  <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">P / A / L / E</th>
+                  <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">History (Last 5)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -1945,7 +1977,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                     <tr key={m.member_id} className="hover:bg-white/[0.02] transition-colors">
                       <td className="px-6 py-4">
                         <p className="font-bold text-white">{m.name}</p>
-                        <p className="text-[10px] text-slate-500 uppercase">{members.find((mem: any) => mem.id === m.member_id)?.role}</p>
+                        <p className="text-[10px] text-text-muted/70 uppercase">{members.find((mem: any) => mem.id === m.member_id)?.role}</p>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -2022,7 +2054,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
     competition: 'bg-accent/15 text-accent border-accent/30',
     deadline: 'bg-warning/15 text-warning border-warning/30',
     social: 'bg-success/15 text-success border-success/30',
-    other: 'bg-white/10 text-slate-300 border-white/10',
+    other: 'bg-white/10 text-white/80 border-white/10',
   };
 
   const typeLabel: Record<string, string> = {
@@ -2088,7 +2120,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-display font-bold text-white">Team Calendar</h2>
-          <p className="text-sm text-slate-400">Meetings, competitions, and deadlines</p>
+          <p className="text-sm text-text-muted">Meetings, competitions, and deadlines</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="secondary" onClick={() => setCursor(new Date())}>Today</Button>
@@ -2101,7 +2133,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <Card className="xl:col-span-2 !p-4">
-          <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-slate-400 mb-1">
+          <div className="grid grid-cols-7 gap-1 text-center text-xs font-semibold text-text-muted mb-1">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="py-2">{d}</div>)}
           </div>
           <div className="grid grid-cols-7 gap-1">
@@ -2121,7 +2153,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
                 >
                   <div className={cn(
                     'text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full',
-                    isToday ? 'bg-accent text-primary' : 'text-slate-300'
+                    isToday ? 'bg-accent text-primary' : 'text-white/80'
                   )}>{day}</div>
                   <div className="space-y-1">
                     {dayEvents.slice(0, 3).map((e: any) => (
@@ -2133,7 +2165,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
                         {e.start_time && <span className="opacity-70">{fmtTime(e.start_time)} </span>}{e.title}
                       </button>
                     ))}
-                    {dayEvents.length > 3 && <div className="text-[11px] text-slate-500 px-1">+{dayEvents.length - 3} more</div>}
+                    {dayEvents.length > 3 && <div className="text-[11px] text-text-muted/70 px-1">+{dayEvents.length - 3} more</div>}
                   </div>
                 </div>
               );
@@ -2143,7 +2175,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
 
         <Card title="Upcoming" icon={Clock}>
           {upcoming.length === 0 ? (
-            <p className="text-sm text-slate-500">No upcoming events. Click a day to add one.</p>
+            <p className="text-sm text-text-muted/70">No upcoming events. Click a day to add one.</p>
           ) : (
             <div className="space-y-3">
               {upcoming.map((e: any) => (
@@ -2151,10 +2183,10 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
                   <div className={cn('w-1.5 rounded-full', (typeStyle[e.event_type] || typeStyle.other).split(' ')[0].replace('bg-', 'bg-').replace('/15', ''))} style={{ backgroundColor: 'currentColor' }} />
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-semibold text-white truncate">{e.title}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">
+                    <div className="text-xs text-text-muted mt-0.5">
                       {fmtDate(e.date)}{e.start_time && ` · ${fmtTime(e.start_time)}${e.end_time ? '–' + fmtTime(e.end_time) : ''}`}
                     </div>
-                    {e.location && <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3" />{e.location}</div>}
+                    {e.location && <div className="text-xs text-text-muted/70 mt-0.5 flex items-center gap-1"><MapPin className="w-3 h-3" />{e.location}</div>}
                   </div>
                   <span className={cn('text-[10px] font-bold uppercase px-2 py-1 rounded-md border h-fit', typeStyle[e.event_type] || typeStyle.other)}>
                     {typeLabel[e.event_type] || 'Other'}
@@ -2179,21 +2211,21 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
               />
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Date</label>
+                  <label className="text-xs text-text-muted block mb-1">Date</label>
                   <Input type="date" value={form.date} onChange={(e: any) => setForm({ ...form, date: e.target.value })} />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Location</label>
+                  <label className="text-xs text-text-muted block mb-1">Location</label>
                   <Input placeholder="Where?" value={form.location} onChange={(e: any) => setForm({ ...form, location: e.target.value })} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">Start time</label>
+                  <label className="text-xs text-text-muted block mb-1">Start time</label>
                   <Input type="time" value={form.start_time} onChange={(e: any) => setForm({ ...form, start_time: e.target.value })} />
                 </div>
                 <div>
-                  <label className="text-xs text-slate-400 block mb-1">End time</label>
+                  <label className="text-xs text-text-muted block mb-1">End time</label>
                   <Input type="time" value={form.end_time} onChange={(e: any) => setForm({ ...form, end_time: e.target.value })} />
                 </div>
               </div>
@@ -2383,15 +2415,15 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
           <Card className="lg:col-span-2">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
               <div>
-                <p className="text-xs text-slate-400 uppercase font-bold mb-1">Avg. Completion Time</p>
-                <p className="text-4xl font-display font-bold text-white">{avgCompletionTime} <span className="text-sm font-normal text-slate-500">days</span></p>
+                <p className="text-xs text-text-muted uppercase font-bold mb-1">Avg. Completion Time</p>
+                <p className="text-4xl font-display font-bold text-white">{avgCompletionTime} <span className="text-sm font-normal text-text-muted/70">days</span></p>
               </div>
               <div>
-                <p className="text-xs text-slate-400 uppercase font-bold mb-1">Active Tasks</p>
+                <p className="text-xs text-text-muted uppercase font-bold mb-1">Active Tasks</p>
                 <p className="text-4xl font-display font-bold text-blue-400">{tasks.filter(t => t.status !== 'done').length}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-400 uppercase font-bold mb-1">Success Rate</p>
+                <p className="text-xs text-text-muted uppercase font-bold mb-1">Success Rate</p>
                 <p className="text-4xl font-display font-bold text-emerald-400">
                   {tasks.length > 0 ? Math.round((tasks.filter(t => t.status === 'done').length / tasks.length) * 100) : 0}%
                 </p>
@@ -2406,7 +2438,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
             <div className="flex items-center gap-2 mb-2">
               <div className={cn("w-2 h-2 rounded-full", col.color)} />
               <h4 className="text-sm font-bold text-white uppercase tracking-wider">{col.label}</h4>
-              <span className="ml-auto text-xs text-slate-500">{tasks.filter((t: any) => t.status === col.id).length}</span>
+              <span className="ml-auto text-xs text-text-muted/70">{tasks.filter((t: any) => t.status === col.id).length}</span>
             </div>
             
             <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2">
@@ -2426,13 +2458,13 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
                       )}
                     </div>
                   </div>
-                  <p className="text-xs text-slate-400 line-clamp-2 mb-3">{task.description}</p>
+                  <p className="text-xs text-text-muted line-clamp-2 mb-3">{task.description}</p>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-primary">
                         {members.find((m: any) => m.id === task.assigned_to)?.name.charAt(0) || '?'}
                       </div>
-                      <span className="text-[10px] text-slate-500">{task.due_date}</span>
+                      <span className="text-[10px] text-text-muted/70">{task.due_date}</span>
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       {col.id !== 'todo' && <button onClick={() => updateStatus(task.id, 'todo')} className="p-1 hover:text-accent"><ChevronRight className="w-4 h-4 rotate-180" /></button>}
@@ -2477,7 +2509,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
               <Input type="date" value={newTask.due_date} onChange={(e: any) => setNewTask({...newTask, due_date: e.target.value})} />
               
               {isAdmin && (
-                <label className="flex items-center gap-2 text-sm text-slate-300">
+                <label className="flex items-center gap-2 text-sm text-white/80">
                   <input type="checkbox" checked={isBoardTask} onChange={(e) => setIsBoardTask(e.target.checked)} />
                   Private Board Task
                 </label>
@@ -2546,19 +2578,19 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
         <table className="w-full text-left text-sm">
           <thead className="bg-white/5 border-b border-white/10">
             <tr>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Date</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Description</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Category</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Amount</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Actions</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Date</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Description</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Category</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Amount</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {budget.map((item: any) => (
               <tr key={item.id} className="hover:bg-white/5 transition-colors">
-                <td className="px-6 py-4 text-sm text-slate-400">{item.date}</td>
+                <td className="px-6 py-4 text-sm text-text-muted">{item.date}</td>
                 <td className="px-6 py-4 text-sm text-white font-medium">{item.description}</td>
-                <td className="px-6 py-4 text-sm text-slate-400">{item.category}</td>
+                <td className="px-6 py-4 text-sm text-text-muted">{item.category}</td>
                 <td className={cn(
                   "px-6 py-4 text-sm font-bold",
                   item.type === 'income' ? 'text-emerald-400' : 'text-rose-400'
@@ -2777,32 +2809,32 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
             <table className="w-full text-left text-sm">
               <thead className="bg-white/5 border-b border-white/10 sticky top-0">
                 <tr>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Name</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">SKU</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Part #</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Qty</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Category</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Team</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Assigned To</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Cost</th>
-                  <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase text-right">Actions</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Name</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">SKU</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Part #</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Qty</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Category</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Team</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Assigned To</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Cost</th>
+                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredParts.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-slate-500">No parts found</td>
+                    <td colSpan={9} className="px-4 py-8 text-center text-text-muted/70">No parts found</td>
                   </tr>
                 ) : (
                   filteredParts.map((part: any) => (
                     <tr key={part.id} className="hover:bg-white/5 transition-colors">
                       <td className="px-4 py-3 text-sm text-white font-medium">{part.name}</td>
                       <td className="px-4 py-3 text-sm text-accent font-mono">{part.sku}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400">{part.part_number || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-text-muted">{part.part_number || '—'}</td>
                       <td className="px-4 py-3 text-sm text-white"><span className="bg-white/10 px-2 py-1 rounded">{part.quantity}</span></td>
-                      <td className="px-4 py-3 text-sm text-slate-400">{part.category || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400">{teams.find((t: any) => t.id === part.team_id)?.name || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-slate-400">{part.assigned_member_name || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-text-muted">{part.category || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-text-muted">{teams.find((t: any) => t.id === part.team_id)?.name || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-text-muted">{part.assigned_member_name || '—'}</td>
                       <td className="px-4 py-3 text-sm text-blue-400">${(part.cost * part.quantity).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
                       <td className="px-4 py-3 text-right flex gap-2 justify-end">
                         <button onClick={() => setShowEdit(part)} className="text-slate-600 hover:text-accent transition-colors">
@@ -2826,7 +2858,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
           <Card title="Add New Part" className="w-full max-w-2xl my-8">
             <div className="space-y-4">
               <div className="space-y-2 pb-4 border-b border-white/10">
-                <p className="text-xs font-bold text-slate-400 uppercase">Import from REV Robotics</p>
+                <p className="text-xs font-bold text-text-muted uppercase">Import from REV Robotics</p>
                 <div className="flex gap-2">
                   <Input 
                     placeholder="Paste REV Robotics product link (e.g., https://www.revrobotics.com/rev-31-1596/)" 
@@ -2953,12 +2985,12 @@ function OutreachView({ outreach, onRefresh }: any) {
           <Card key={event.id} title={event.title} icon={Globe}>
             <div className="flex justify-between items-start">
               <div>
-                <p className="text-xs text-slate-400">{event.location} • {event.date}</p>
-                <p className="text-sm text-slate-300 mt-2">{event.description}</p>
+                <p className="text-xs text-text-muted">{event.location} • {event.date}</p>
+                <p className="text-sm text-white/80 mt-2">{event.description}</p>
               </div>
               <div className="text-right flex flex-col items-end gap-2">
                 <p className="text-2xl font-display font-bold text-accent">{event.hours}h</p>
-                <p className="text-[10px] text-slate-400 uppercase font-bold">Logged</p>
+                <p className="text-[10px] text-text-muted uppercase font-bold">Logged</p>
                 <button onClick={() => handleDelete(event.id)} className="text-slate-600 hover:text-rose-400 transition-colors mt-2">
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -3007,13 +3039,13 @@ function ScoutView({ news, refreshNews, isAiLoading, ThinkingIndicator }: any) {
           {isAiLoading && !news ? (
             <div className="flex flex-col items-center justify-center h-64 gap-4">
               <ThinkingIndicator />
-              <p className="text-slate-400">Scouring the web for FTC updates...</p>
+              <p className="text-text-muted">Scouring the web for FTC updates...</p>
             </div>
           ) : news ? (
             <Markdown>{news}</Markdown>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 gap-4">
-              <p className="text-slate-400">No news available. Click refresh to scout for updates.</p>
+              <p className="text-text-muted">No news available. Click refresh to scout for updates.</p>
             </div>
           )}
         </div>
@@ -3063,11 +3095,11 @@ function CommunicationView({ communications, onRefresh }: any) {
                     "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
                     comm.type === 'email' ? 'bg-blue-500/20 text-blue-400' : 'bg-accent/20 text-accent'
                   )}>{comm.type}</span>
-                  <p className="text-xs text-slate-400">{comm.date}</p>
+                  <p className="text-xs text-text-muted">{comm.date}</p>
                 </div>
                 <h4 className="text-white font-bold text-lg">{comm.subject}</h4>
-                <p className="text-sm text-slate-400 mb-3">To: {comm.recipient}</p>
-                <p className="text-sm text-slate-300 whitespace-pre-wrap">{comm.body}</p>
+                <p className="text-sm text-text-muted mb-3">To: {comm.recipient}</p>
+                <p className="text-sm text-white/80 whitespace-pre-wrap">{comm.body}</p>
               </div>
               <button onClick={() => handleDelete(comm.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
                 <Trash2 className="w-4 h-4" />
@@ -3247,12 +3279,12 @@ function ChatView({ messages, members, currentUser, socket }: any) {
         {messages.map((msg: any) => (
           <div key={msg.id} className={cn("flex flex-col group", msg.sender_id === currentUser.id ? "items-end" : "items-start")}>
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-bold text-slate-500">{msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name}</span>
+              <span className="text-[10px] font-bold text-text-muted/70">{msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name}</span>
               <span className="text-[10px] text-slate-600">{format(new Date(msg.timestamp), 'HH:mm')}</span>
               {msg.sender_id === currentUser.id && !msg.deleted_at && (
                 <button
                   onClick={() => handleDeleteMessage(msg.id)}
-                  className="text-[10px] text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="text-[10px] text-text-muted/70 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
                   title="Delete message"
                 >
                   <Trash2 className="w-3 h-3" />
@@ -3262,7 +3294,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
             {msg.deleted_at ? (
               <div className={cn(
                 "px-4 py-2 rounded-2xl max-w-[80%] text-sm italic",
-                "bg-white/5 text-slate-400 border border-white/5"
+                "bg-white/5 text-text-muted border border-white/5"
               )}>
                 {msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name} unsent a message
               </div>
@@ -3286,7 +3318,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
                         <span className="truncate">{msg.file_name || msg.file_path.split('/').pop()}</span>
                       </div>
                       {(msg.file_size || msg.file_updated) && (
-                        <div className="flex items-center gap-3 text-[10px] text-slate-400">
+                        <div className="flex items-center gap-3 text-[10px] text-text-muted">
                           {msg.file_size && <span>{formatFileSize(msg.file_size)}</span>}
                           {msg.file_updated && <span>{formatFileDate(msg.file_updated)}</span>}
                         </div>
@@ -3335,7 +3367,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
                   setContent([...parts, `@${m.name} `].join(' '));
                   setShowMentions(false);
                 }}
-                className="w-full text-left px-4 py-2 text-xs text-slate-300 hover:bg-accent hover:text-primary transition-colors"
+                className="w-full text-left px-4 py-2 text-xs text-white/80 hover:bg-accent hover:text-primary transition-colors"
               >
                 {m.name}
               </button>
@@ -3454,31 +3486,31 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
       <Card title="Personal Information" icon={UserCircle}>
         <div className="space-y-4">
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Full Name</label>
+            <label className="text-xs font-bold text-text-muted uppercase">Full Name</label>
             <Input value={name} onChange={(e: any) => setName(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Role / Description</label>
+            <label className="text-xs font-bold text-text-muted uppercase">Role / Description</label>
             <Input value={role} onChange={(e: any) => setRole(e.target.value)} />
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase">Accent (Yellow)</label>
+              <label className="text-xs font-bold text-text-muted uppercase">Accent (Yellow)</label>
               <div className="flex gap-2">
                 <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={accentColor || '#F5B700'} onChange={(e) => setAccentColor(e.target.value)} />
                 <Input value={accentColor} onChange={(e: any) => setAccentColor(e.target.value)} placeholder="#F5B700" />
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase">Interface (Navy)</label>
+              <label className="text-xs font-bold text-text-muted uppercase">Interface (Navy)</label>
               <div className="flex gap-2">
                 <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={primaryColor || '#111111'} onChange={(e) => setPrimaryColor(e.target.value)} />
                 <Input value={primaryColor} onChange={(e: any) => setPrimaryColor(e.target.value)} placeholder="#111111" />
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-400 uppercase">Text Color</label>
+              <label className="text-xs font-bold text-text-muted uppercase">Text Color</label>
               <div className="flex gap-2">
                 <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={textColor || '#F8FAFC'} onChange={(e) => setTextColor(e.target.value)} />
                 <Input value={textColor} onChange={(e: any) => setTextColor(e.target.value)} placeholder="#F8FAFC" />
@@ -3495,9 +3527,9 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
       
       <Card title="Account Details" className="opacity-70">
         <div className="space-y-2">
-          <p className="text-sm text-slate-400">Email: <span className="text-white">{currentUser?.email}</span></p>
-          <p className="text-sm text-slate-400">Account Type: <span className="text-accent">{currentUser?.is_board ? 'Board Member' : 'Team Member'}</span></p>
-          <p className="text-sm text-slate-400">Administrative Scopes: <span className="text-white">
+          <p className="text-sm text-text-muted">Email: <span className="text-white">{currentUser?.email}</span></p>
+          <p className="text-sm text-text-muted">Account Type: <span className="text-accent">{currentUser?.is_board ? 'Board Member' : 'Team Member'}</span></p>
+          <p className="text-sm text-text-muted">Administrative Scopes: <span className="text-white">
             {(() => {
               try {
                 let scopes = currentUser?.scopes;
@@ -3646,11 +3678,11 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
     <div className="max-w-4xl space-y-8">
       <Card title="Storage Usage" icon={Wallet}>
         <div className="space-y-4">
-          <p className="text-sm text-slate-400">Total size of all file uploads (messages, code files, etc.).</p>
+          <p className="text-sm text-text-muted">Total size of all file uploads (messages, code files, etc.).</p>
           {storageUsage !== null ? (
             <p className="text-2xl font-bold text-accent">{formatBytes(storageUsage)}</p>
           ) : (
-            <p className="text-slate-500">Click to calculate.</p>
+            <p className="text-text-muted/70">Click to calculate.</p>
           )}
           <Button onClick={fetchStorageUsage} disabled={loadingStorage}>
             {loadingStorage ? 'Calculating...' : 'Recalculate'}
@@ -3660,12 +3692,12 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
       
       <Card title="Message Management" icon={Mail}>
         <div className="space-y-4">
-          <p className="text-sm text-slate-400">Silently edit or delete messages.</p>
+          <p className="text-sm text-text-muted">Silently edit or delete messages.</p>
           <div className="max-h-96 overflow-y-auto glass p-2 rounded-xl">
             {loadingMessages ? <p>Loading messages...</p> : (
               allMessages.map((msg: any) => (
                 <div key={msg.id} className="p-2 border-b border-white/10">
-                  <p className="text-xs text-slate-400">{new Date(msg.timestamp).toLocaleString()} - {msg.sender_name}</p>
+                  <p className="text-xs text-text-muted">{new Date(msg.timestamp).toLocaleString()} - {msg.sender_name}</p>
                   {editingMessage?.id === msg.id ? (
                     <textarea 
                       value={editingMessage.content} 
@@ -3693,7 +3725,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
 
       <Card title="AI Absence Evaluation" icon={Settings}>
         <div className="space-y-4">
-          <p className="text-sm text-slate-400">Define the criteria the AI should use to determine if an absence is excused.</p>
+          <p className="text-sm text-text-muted">Define the criteria the AI should use to determine if an absence is excused.</p>
           <textarea 
             className="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-accent/50 transition-colors h-48 text-sm"
             placeholder="e.g. Excused if: sick with doctor note, family emergency, school event. Unexcused if: forgot, overslept, gaming..."
@@ -3707,19 +3739,19 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
       <Card title="AI Configuration (Max Tokens)" icon={Bolt}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">News Scout</label>
+            <label className="text-xs font-bold text-text-muted uppercase">News Scout</label>
             <Input type="number" value={maxTokensNews} onChange={(e: any) => setMaxTokensNews(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Attendance Analysis</label>
+            <label className="text-xs font-bold text-text-muted uppercase">Attendance Analysis</label>
             <Input type="number" value={maxTokensAttendance} onChange={(e: any) => setMaxTokensAttendance(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Excuse Checker</label>
+            <label className="text-xs font-bold text-text-muted uppercase">Excuse Checker</label>
             <Input type="number" value={maxTokensExcuse} onChange={(e: any) => setMaxTokensExcuse(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-400 uppercase">Activity Summary</label>
+            <label className="text-xs font-bold text-text-muted uppercase">Activity Summary</label>
             <Input type="number" value={maxTokensSummary} onChange={(e: any) => setMaxTokensSummary(e.target.value)} />
           </div>
         </div>
@@ -3731,15 +3763,15 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
       {isPresident && (
         <Card title="Admin Delegation" icon={Users}>
           <div className="space-y-4">
-            <p className="text-sm text-slate-400">Grant administrative scopes to board members.</p>
+            <p className="text-sm text-text-muted">Grant administrative scopes to board members.</p>
             <div className="glass rounded-xl overflow-hidden">
               <table className="w-full text-left text-sm">
                 <thead className="bg-white/5 border-b border-white/10">
                   <tr>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Name</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Board</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Scopes</th>
-                    <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase text-right">Action</th>
+                    <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Name</th>
+                    <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Board</th>
+                    <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Scopes</th>
+                    <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
@@ -3751,13 +3783,13 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
                           onClick={() => updateMember(m.id, { ...m, is_board: m.is_board ? 0 : 1 })}
                           className={cn(
                             "px-2 py-1 rounded text-[10px] font-bold uppercase",
-                            m.is_board ? "bg-accent/20 text-accent" : "bg-slate-800 text-slate-500"
+                            m.is_board ? "bg-accent/20 text-accent" : "bg-slate-800 text-text-muted/70"
                           )}
                         >
                           {m.is_board ? 'Yes' : 'No'}
                         </button>
                       </td>
-                      <td className="px-4 py-3 text-xs text-slate-500">
+                      <td className="px-4 py-3 text-xs text-text-muted/70">
                         {(() => {
                           try {
                             const scopes = typeof m.scopes === 'string' ? JSON.parse(m.scopes) : m.scopes;
@@ -3803,7 +3835,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
                       }}
                       className={cn(
                         "px-3 py-1 rounded-full text-[10px] font-bold uppercase border transition-all",
-                        active ? "bg-accent border-accent text-primary" : "border-white/10 text-slate-400"
+                        active ? "bg-accent border-accent text-primary" : "border-white/10 text-text-muted"
                       )}
                     >
                       {s}
