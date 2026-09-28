@@ -1,7 +1,9 @@
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import { motion, useInView, animate } from "framer-motion";
 import {
   Bolt, Users, CalendarCheck, CheckSquare, CalendarDays, Wallet,
   MessageSquare, ArrowRight, Zap, ShieldCheck, Smartphone, Cloud,
+  Menu, X,
 } from "lucide-react";
 
 const fadeUp = {
@@ -43,6 +45,38 @@ const features = [
     body: "Team chat with @mentions and announcements — no more lost updates in group texts.",
   },
 ];
+
+const stats = [
+  { value: 14, label: "views in one workspace" },
+  { value: 6, label: "core tools included" },
+  { value: 1, label: "shared source of truth" },
+  { value: 0, label: "spreadsheets to juggle" },
+];
+
+function Stat({ value, label }: { value: number; label: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const inView = useInView(ref, { once: true, margin: "-60px" });
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    if (!inView) return;
+    const controls = animate(0, value, {
+      duration: 1.6,
+      ease: [0.16, 1, 0.3, 1],
+      onUpdate: (v) => setDisplay(Math.round(v)),
+    });
+    return () => controls.stop();
+  }, [inView, value]);
+
+  return (
+    <div ref={ref} className="text-center">
+      <div className="font-display text-4xl sm:text-5xl font-bold text-accent volt-text-glow tabular-nums">
+        {display}
+      </div>
+      <div className="mt-2 text-[13px] font-medium text-text-muted">{label}</div>
+    </div>
+  );
+}
 
 const steps = [
   {
@@ -135,6 +169,7 @@ function HeroMock() {
 }
 
 export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => void; onGetStarted: () => void }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
     <div className="min-h-screen bg-primary text-text-base overflow-x-clip">
       {/* nav */}
@@ -148,7 +183,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
             <a href="#features" className="hover:text-white transition-colors">Features</a>
             <a href="#how" className="hover:text-white transition-colors">How it works</a>
           </nav>
-          <div className="flex items-center gap-2.5">
+          <div className="hidden md:flex items-center gap-2.5">
             <button onClick={onSignIn} className="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:text-white hover:bg-white/5 transition-all">
               Sign in
             </button>
@@ -159,7 +194,35 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
               Get started
             </button>
           </div>
+          <button
+            className="md:hidden rounded-xl p-2 text-text-muted hover:text-white hover:bg-white/5 transition-all"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-label="Toggle menu"
+          >
+            {menuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
         </div>
+        {menuOpen && (
+          <div className="md:hidden border-t border-white/[0.06] bg-primary/95 backdrop-blur-xl px-4 py-4 space-y-1">
+            <a href="#features" onClick={() => setMenuOpen(false)} className="block rounded-xl px-4 py-3 text-sm font-medium text-text-muted hover:text-white hover:bg-white/5 transition-all">
+              Features
+            </a>
+            <a href="#how" onClick={() => setMenuOpen(false)} className="block rounded-xl px-4 py-3 text-sm font-medium text-text-muted hover:text-white hover:bg-white/5 transition-all">
+              How it works
+            </a>
+            <div className="flex gap-2.5 pt-2">
+              <button onClick={onSignIn} className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-text-muted hover:text-white hover:bg-white/5 transition-all border border-white/10">
+                Sign in
+              </button>
+              <button
+                onClick={onGetStarted}
+                className="btn-accent-primary flex-1 rounded-xl px-4 py-3 text-sm font-bold transition-all active:scale-95"
+              >
+                Get started
+              </button>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* hero */}
@@ -177,7 +240,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
             initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.65, delay: 0.08 }}
             className="mx-auto mt-6 max-w-3xl font-display text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.02] tracking-tight"
           >
-            Mission control for your <span className="text-accent volt-text-glow">robotics team</span>
+            Mission control for your <span className="font-serif italic font-normal text-accent volt-text-glow">robotics team</span>
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.65, delay: 0.16 }}
@@ -219,6 +282,17 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
           <span className="flex items-center gap-2"><Zap className="w-4 h-4 text-accent" /> Real-time updates</span>
           <span className="flex items-center gap-2"><Cloud className="w-4 h-4 text-accent" /> Cloud-hosted</span>
           <span className="flex items-center gap-2"><Smartphone className="w-4 h-4 text-accent" /> Works on any device</span>
+        </div>
+      </section>
+
+      {/* stat band */}
+      <section className="relative py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <motion.div {...fadeUp} className="grid grid-cols-2 gap-x-6 gap-y-10 lg:grid-cols-4">
+            {stats.map((s) => (
+              <Stat key={s.label} value={s.value} label={s.label} />
+            ))}
+          </motion.div>
         </div>
       </section>
 
