@@ -59,7 +59,7 @@ import Markdown from 'react-markdown';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
-import { fetchFTCNews, streamFTCNews, getAttendanceInsights, streamAttendanceInsights, checkExcuse, streamCheckExcuse, getActivitySummary, streamActivitySummary } from './services/aiService';
+import { fetchFTCNews, streamFTCNews, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary } from './services/aiService';
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
 import Landing from './Landing';
@@ -1531,16 +1531,12 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
     setLoading(true);
     try {
       let finalStatus = status;
-      let aiNote = '';
-      
+
+      // AI excuse checker is skipped for now: a self-reported absence is
+      // logged as unexcused with the reason saved, and an admin can flip it
+      // to excused from the Attendance view.
       if (status === 'O' && reason) {
-        setIsAiLoading(true);
-        await streamCheckExcuse(reason, settings.excuse_criteria, (chunk) => {
-          aiNote += chunk;
-        });
-        setIsAiLoading(false);
-        const isExcused = aiNote.toUpperCase().includes("EXCUSED") && !aiNote.toUpperCase().includes("UNEXCUSED");
-        finalStatus = isExcused ? 'E' : 'U';
+        finalStatus = 'U';
       }
 
       const res = await apiFetch('/api/attendance/batch', {
@@ -1554,7 +1550,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
       if (res.ok) {
         setShowOut(false);
         onRefresh();
-        if (aiNote) alert(`Absence logged. AI Note: ${aiNote}`);
+        if (reason) alert('Absence logged. An admin can mark it excused from the Attendance view.');
       }
     } finally {
       setLoading(false);

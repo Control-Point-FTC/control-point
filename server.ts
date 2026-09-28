@@ -30,10 +30,8 @@ import {
   aiStream,
   scoutNews,
   buildAttendancePrompt,
-  buildExcusePrompt,
   buildCoachPrompt,
   ATTENDANCE_SYSTEM,
-  EXCUSE_SYSTEM,
   COACH_SYSTEM,
 } from "./ai.js";
 
@@ -2035,39 +2033,13 @@ async function startServer() {
     }
   });
 
+  // AI excuse checker is skipped for now (per Sushil 2026-09-28).
+  // To re-enable: restore the Gemini implementation from git history
+  // (commit fb29db6) — buildExcusePrompt/EXCUSE_SYSTEM still live in ai.ts.
   app.post("/api/ai/check-excuse", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      if (!isAIConfigured()) {
-        return res.status(501).json({ error: "AI not configured", result: "UNEXCUSED - AI not configured." });
-      }
-      const reason = String(req.body?.reason || "").slice(0, 500);
-      if (!reason.trim()) {
-        return res.status(400).json({ error: "Reason required", result: "UNEXCUSED - no reason given." });
-      }
-      const criteria = await getAISetting("excuse_criteria", "Excused for school, family emergency, or illness.");
-      const prompt = buildExcusePrompt(criteria, reason);
-      const maxTokens = await getMaxTokens("max_tokens_excuse", 512);
-      const stream = req.query.stream === "true";
-      if (stream) {
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
-        res.setHeader("Cache-Control", "no-cache");
-        try {
-          await aiStream(EXCUSE_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
-          res.end();
-        } catch (err) {
-          console.error("AI excuse stream error:", err);
-          res.end("UNEXCUSED - AI error.");
-        }
-        return;
-      }
-      const result = await aiGenerate(EXCUSE_SYSTEM, prompt, maxTokens);
-      res.json({ result });
-    } catch (error) {
-      console.error("AI excuse error:", error);
-      res.status(502).json({ error: "AI request failed", result: "UNEXCUSED - AI error." });
-    }
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    return res.status(501).json({ error: "Excuse checker disabled", result: "UNEXCUSED - AI excuse checker is currently disabled." });
   });
 
   app.post("/api/ai/activity-summary", async (req, res) => {
