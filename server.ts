@@ -467,24 +467,95 @@ async function hasColumn(table: string, col: string): Promise<boolean> {
 // Relax the legacy global UNIQUE(email) to UNIQUE(team_id, email) via a table
 // rebuild. Existing databases keep every column and row; fresh databases get
 // the new schema directly from MEMBERS_DDL above.
-const membersTableSql = ((await dbGet("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'members'")) as any)?.sql || "";
-if (membersTableSql && !/UNIQUE\s*\(\s*team_id\s*,\s*email\s*\)/i.test(membersTableSql)) {
+//
+// NOTE (2026-09-29): the first version of this migration renamed `members`
+// itself, which made SQLite rewrite every `FOREIGN KEY ... REFERENCES members`
+// clause to point at `members_old`; the subsequent DROP then failed under
+// foreign-key enforcement and crashed the boot (killing the deploy). The two
+// helpers below are idempotent and cover both orders of events:
+//   * repairCrashedMembersMigration: cleans up a leftover `members_old` table
+//     and re-points rewritten FOREIGN KEY clauses back at `members`.
+//   * rebuildMembersTable: performs the rebuild without ever renaming
+//     `members` (stages under `members_new`), with FK enforcement off for the
+//     whole batch so intermediate states can't fail.
+const KNOWN_MEMBER_COLS = ["id", "team_id", "name", "role", "email", "password", "is_setup", "is_board", "scopes", "is_active", "account_type", "google_id", "discord_id", "github_id", "accent_color", "primary_color", "text_color", "avatar_url"];
+
+async function rebuildMembersTable(): Promise<void> {
   const oldCols = (await dbAll("PRAGMA table_info(members)")) as any[];
-  const knownCols = ["id", "team_id", "name", "role", "email", "password", "is_setup", "is_board", "scopes", "is_active", "account_type", "google_id", "discord_id", "github_id", "accent_color", "primary_color", "text_color", "avatar_url"];
-  (await dbExec("ALTER TABLE members RENAME TO members_old"));
-  (await dbExec(MEMBERS_DDL));
-  // Preserve any columns the old table has that the new DDL doesn't know about.
-  for (const c of oldCols) {
-    if (!knownCols.includes(c.name)) {
-      (await dbExec(`ALTER TABLE members ADD COLUMN "${c.name}" ${c.type || "TEXT"}`));
-      knownCols.push(c.name);
-    }
+  const knownCols = [...KNOWN_MEMBER_COLS];
+  const extraCols = oldCols.filter((c: any) => !knownCols.includes(c.name));
+  const seqRow = (await dbGet("SELECT seq FROM sqlite_sequence WHERE name='members'")) as any;
+  const stmts: string[] = ["PRAGMA foreign_keys=OFF;"];
+  // Stage the new schema under a temporary name so `members` itself is never
+  // renamed (renaming it would rewrite other tables' FOREIGN KEY clauses).
+  stmts.push(MEMBERS_DDL.replace("CREATE TABLE IF NOT EXISTS members (", "CREATE TABLE members_new (") + ";");
+  for (const c of extraCols) {
+    stmts.push(`ALTER TABLE members_new ADD COLUMN "${c.name}" ${c.type || "TEXT"};`);
+    knownCols.push(c.name);
   }
   const common = oldCols.map((c: any) => c.name).filter((n: string) => knownCols.includes(n));
   const list = common.map((n: string) => `"${n}"`).join(", ");
-  (await dbExec(`INSERT INTO members (${list}) SELECT ${list} FROM members_old`));
-  (await dbExec("DROP TABLE members_old"));
+  stmts.push(`INSERT INTO members_new (${list}) SELECT ${list} FROM members;`);
+  stmts.push("DROP TABLE members;");
+  stmts.push("ALTER TABLE members_new RENAME TO members;");
+  if (seqRow && typeof seqRow.seq === "number") {
+    const s = Number(seqRow.seq);
+    stmts.push(`UPDATE sqlite_sequence SET seq = ${s} WHERE name='members' AND seq < ${s};`);
+  }
+  stmts.push("PRAGMA foreign_keys=ON;");
+  await dbExec(stmts.join("\n"));
   console.log("[DB Migration] members rebuilt with UNIQUE(team_id, email) for multi-team accounts");
+}
+
+async function repairCrashedMembersMigration(): Promise<void> {
+  // A leftover members_old means the original migration crashed midway (after
+  // copying rows, before dropping members_old). The rename rewrote other
+  // tables' FOREIGN KEY clauses to REFERENCES members_old; rebuild those
+  // tables with the clause pointed back at `members`.
+  const affected = (await dbAll(
+    "SELECT name, sql FROM sqlite_master WHERE type='table' AND sql LIKE '%members_old%'"
+  )) as any[];
+  const batch: string[] = ["PRAGMA foreign_keys=OFF;"];
+  const indexDdls: string[] = [];
+  for (const t of affected) {
+    if (t.name === "members_old" || t.name === "members") continue;
+    const cols = (await dbAll(`PRAGMA table_info("${t.name}")`)) as any[];
+    const colList = cols.map((c: any) => `"${c.name}"`).join(", ");
+    const fixedSql: string = (t.sql as string).replace(/members_old/g, "members");
+    const tmp = `${t.name}__repair`;
+    const idxs = (await dbAll(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+      t.name
+    )) as any[];
+    for (const ix of idxs) indexDdls.push(ix.sql);
+    batch.push(`ALTER TABLE "${t.name}" RENAME TO "${tmp}";`);
+    batch.push(`${fixedSql};`);
+    batch.push(`INSERT INTO "${t.name}" (${colList}) SELECT ${colList} FROM "${tmp}";`);
+    batch.push(`DROP TABLE "${tmp}";`);
+  }
+  // Belt and suspenders: copy any rows still only present in members_old.
+  const oldCols = (await dbAll("PRAGMA table_info(members_old)")) as any[];
+  const newCols = (await dbAll("PRAGMA table_info(members)")) as any[];
+  const newNames = new Set(newCols.map((c: any) => c.name));
+  const commonOld = oldCols.map((c: any) => c.name).filter((n: string) => newNames.has(n));
+  if (commonOld.length) {
+    const list = commonOld.map((n: string) => `"${n}"`).join(", ");
+    batch.push(`INSERT OR IGNORE INTO members (${list}) SELECT ${list} FROM members_old;`);
+  }
+  batch.push("DROP TABLE IF EXISTS members_old;");
+  batch.push("PRAGMA foreign_keys=ON;");
+  await dbExec(batch.join("\n"));
+  for (const ix of indexDdls) await dbExec(`${ix};`);
+  console.log(`[DB Migration] repaired crashed members migration (${affected.length} table(s) re-pointed, members_old removed)`);
+}
+
+const membersOldExists = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name='members_old'");
+if (membersOldExists) {
+  await repairCrashedMembersMigration();
+}
+const membersTableSql = ((await dbGet("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'members'")) as any)?.sql || "";
+if (membersTableSql && !/UNIQUE\s*\(\s*team_id\s*,\s*email\s*\)/i.test(membersTableSql)) {
+  await rebuildMembersTable();
 }
 
 function generateAccessCode(): string {
