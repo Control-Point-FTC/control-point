@@ -1376,11 +1376,14 @@ export default function App() {
   };
 
   const currentTeamId = currentUser?.team_id;
-  const activeTeamName = ((currentUser as any)?.teams || []).find((t: any) => t.id === currentTeamId)?.name
-    || teams[0]?.name || 'My team';
+  // Resolve the active team from the freshly-fetched teams list — never from
+  // currentUser.teams, which is absent after a team switch (the switch endpoint
+  // returns a bare member row). The old fallback to teams[0] made the NavGPT
+  // qualification stick to the first team after switching workspaces.
+  const activeTeam = teams.find((t: any) => t.id === currentTeamId);
+  const activeTeamName = (activeTeam as any)?.name || teams[0]?.name || 'My team';
   // Secret persona: NavGPT ❤️ — only exists for 4215 Hypnotic Robotics (default ON).
   // For every other team the chatbot is always Bruno.
-  const activeTeam = teams.find((t: any) => t.id === currentTeamId);
   const navGptQualified = /hypnotic/i.test(activeTeamName || '') || /4215/.test(activeTeamName || '');
   const navGptActive = navGptQualified && (activeTeam?.navgpt_enabled ?? 1) === 1;
   const botName = navGptActive ? 'NavGPT ❤️' : 'Bruno';
