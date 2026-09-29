@@ -54,6 +54,7 @@ import {
     is_setup INTEGER DEFAULT 0,
     is_board INTEGER DEFAULT 0,
     scopes TEXT, -- JSON array
+    is_active INTEGER DEFAULT 1, -- 0 = removed from team; history (messages, tasks, attendance) is kept
     FOREIGN KEY(team_id) REFERENCES teams(id)
   );
 
@@ -375,6 +376,11 @@ for (const t of teamTables) {
   }
 }
 
+// Soft-delete flag for members — removed members keep their history but lose access
+if (!(await hasColumn('members', 'is_active'))) {
+  (await dbExec("ALTER TABLE members ADD COLUMN is_active INTEGER DEFAULT 1"));
+}
+
 // Ensure a default team exists only when orphaned rows need a home, then backfill them
 const orphanCount = (await dbGet(
   `SELECT (SELECT COUNT(*) FROM members WHERE team_id IS NULL) + ${teamTables.map(t => `(SELECT COUNT(*) FROM ${t} WHERE team_id IS NULL)`).join(' + ')} AS n`
@@ -448,7 +454,7 @@ async function getAuth(req: any): Promise<{ memberId: number; teamId: number | n
   if (!sessionId) return null;
   const { valid, memberId } = await validateSession(sessionId);
   if (!valid || !memberId) return null;
-  const member = (await dbGet("SELECT id, team_id, account_type FROM members WHERE id = ?", memberId)) as any;
+  const member = (await dbGet("SELECT id, team_id, account_type FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", memberId)) as any;
   if (!member) return null;
   return { memberId: member.id, teamId: member.team_id ?? null, accountType: member.account_type || 'student' };
 }
@@ -667,6 +673,7 @@ async function startServer() {
     const user = (await dbGet("SELECT * FROM members WHERE email = ?", email)) as any;
 
     if (!user) return res.status(401).json({ error: "User not found" });
+    if (user.is_active === 0) return res.status(403).json({ error: "This account has been removed from the team" });
 
     if (!user.password) {
       const sessionId = await createSession(user.id);
@@ -868,6 +875,7 @@ async function startServer() {
         }
       }
       const sessionId = await createSession(member.id);
+      if (member.is_active === 0) return res.redirect("/?google_error=account_removed");
       res.redirect(`/?google_session=${sessionId}`);
     } catch (error) {
       console.error("Google OAuth error:", error);
@@ -1206,7 +1214,7 @@ async function startServer() {
       SELECT m.*, t.name as team_name 
       FROM members m 
       LEFT JOIN teams t ON m.team_id = t.id
-      WHERE m.team_id = ?
+      WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1
     `, auth.teamId));
     res.json(members);
   });
@@ -1215,9 +1223,18 @@ async function startServer() {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
     const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
-    const existing = (await dbGet("SELECT id FROM members WHERE email = ?", email));
-    if (existing) return res.status(400).json({ error: "That email is already on the roster" });
+    const existing = (await dbGet("SELECT id, is_active, team_id FROM members WHERE email = ?", email)) as any;
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
+    if (existing && existing.is_active === 0 && existing.team_id === auth.teamId) {
+      // Re-adding a previously removed member: restore their account and history
+      (await dbRun(
+        "UPDATE members SET is_active = 1, name = ?, role = ?, is_board = ?, scopes = ?, account_type = ?, accent_color = ?, primary_color = ?, text_color = ? WHERE id = ?",
+        name, role, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student',
+        cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color), existing.id
+      ));
+      return res.json({ id: existing.id, restored: true });
+    }
+    if (existing) return res.status(400).json({ error: "That email is already on the roster" });
     const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)));
     res.json({ id: info.lastInsertRowid });
   });
@@ -1236,7 +1253,7 @@ async function startServer() {
     // Guard: never leave the workspace without an admin
     const nextType = account_type === 'admin' || account_type === 'student' ? account_type : target.account_type;
     if (target.account_type === 'admin' && nextType !== 'admin') {
-      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin'", auth.teamId)) as any;
+      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin' AND COALESCE(is_active, 1) = 1", auth.teamId)) as any;
       if (admins.n <= 1) return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
     }
 
@@ -1316,10 +1333,12 @@ async function startServer() {
       return res.status(400).json({ error: "You can't remove your own account" });
     }
     if (target.account_type === 'admin') {
-      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin'", auth.teamId)) as any;
+      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin' AND COALESCE(is_active, 1) = 1", auth.teamId)) as any;
       if (admins.n <= 1) return res.status(400).json({ error: "You need at least one admin" });
     }
-    (await dbRun("DELETE FROM members WHERE id = ?", memberId));
+    // Soft remove: the member loses access immediately, but their messages,
+    // tasks, attendance, and other history stay intact.
+    (await dbRun("UPDATE members SET is_active = 0 WHERE id = ?", memberId));
     res.json({ success: true });
   });
 
@@ -2164,6 +2183,158 @@ async function startServer() {
     } catch (error: any) {
       console.error("Error scraping REV page:", error.message);
       res.status(500).json({ error: "Failed to scrape page: " + error.message });
+    }
+  });
+
+  // goBILDA order PDF → inventory import (parse in memory, then user-confirmed upsert)
+  const pdfUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (_req, file, cb) => {
+      const ok = file.mimetype === "application/pdf" || file.originalname.toLowerCase().endsWith(".pdf");
+      if (ok) cb(null, true);
+      else cb(new Error("Only PDF files are allowed"));
+    },
+  });
+
+  /** Heuristic line-item parser for goBILDA order/invoice PDFs.
+   *  goBILDA SKUs look like 5203-2402-0019 or 5027103001. Each line holding a
+   *  SKU is treated as one line item: name = nearby text, qty = nearby integer,
+   *  unit price = first $ amount on the line. Callers review before importing. */
+  function parseGobildaOrder(text: string) {
+    const SKU_RE = /\b(\d{4}-\d{4}-\d{4}|\d{10})\b/;
+    const items = new Map<string, { sku: string; name: string; quantity: number; unitPrice: number }>();
+    for (const raw of String(text || "").split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const m = line.match(SKU_RE);
+      if (!m || m.index == null) continue;
+      const sku = m[1];
+
+      const amounts = [...line.matchAll(/\$ ?([\d,]+\.\d{2})/g)].map((x) => parseFloat(x[1].replace(/,/g, "")));
+
+      let qty: number | null = null;
+      const qm =
+        line.match(/(?:qty|quantity)[\s:]*(\d{1,4})/i) ||
+        line.match(/\b(\d{1,4})\s*x\b/i) ||
+        line.match(/\bx\s*(\d{1,4})/i);
+      if (qm) qty = parseInt(qm[1], 10);
+      if (qty == null) {
+        const stripped = line.replace(SKU_RE, " ").replace(/\$ ?[\d,]+\.\d{2}/g, " ");
+        const ints = [...stripped.matchAll(/\b(\d{1,4})\b/g)]
+          .map((x) => parseInt(x[1], 10))
+          .filter((n) => n > 0 && n <= 500);
+        if (ints.length === 1) qty = ints[0];
+      }
+      if (qty == null || qty <= 0) qty = 1;
+
+      let name = line
+        .slice(0, m.index)
+        .replace(/\$ ?[\d,]+\.\d{2}/g, " ")
+        .replace(/(?:qty|quantity)[\s:]*\d{1,4}/gi, " ")
+        .replace(/\b\d{1,4}\s*x\b/gi, " ")
+        .trim();
+      if (!name) {
+        name = line
+          .slice(m.index + sku.length)
+          .replace(/\$ ?[\d,]+\.\d{2}/g, " ")
+          .replace(/\b\d{1,4}\b/g, " ")
+          .replace(/\bx\b/gi, " ")
+          .trim();
+      }
+      name = name.replace(/\s{2,}/g, " ").replace(/^[-–—:;,.]+|[-–—:;,.]+$/g, "").trim();
+      if (!name) name = sku;
+
+      const unitPrice = amounts.length ? amounts[0] : 0;
+      const prev = items.get(sku);
+      if (prev) {
+        prev.quantity += qty;
+        if (!prev.unitPrice && unitPrice) prev.unitPrice = unitPrice;
+      } else {
+        items.set(sku, { sku, name: name.slice(0, 120), quantity: qty, unitPrice });
+      }
+    }
+    return [...items.values()];
+  }
+
+  app.post("/api/inventory/import-gobilda/parse", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    pdfUpload.single("pdf")(req, res, async (err: any) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+      try {
+        const file = (req as any).file;
+        if (!file?.buffer?.length) return res.status(400).json({ error: "No PDF file received" });
+        const { PDFParse } = await import("pdf-parse");
+        const parser = new PDFParse({ data: file.buffer });
+        let text = "";
+        try {
+          const result = await parser.getText();
+          text = result?.text || "";
+        } finally {
+          await parser.destroy().catch(() => {});
+        }
+        const items = parseGobildaOrder(text);
+        if (!items.length) {
+          return res.status(422).json({
+            error: "No order line items found in this PDF. It may not be a goBILDA order/invoice, or the layout isn't recognized yet — send it to Sushil so the parser can be tuned.",
+          });
+        }
+        res.json({ items, count: items.length });
+      } catch (e: any) {
+        console.error("goBILDA PDF parse error:", e?.message);
+        res.status(500).json({ error: "Could not read that PDF. Make sure it's a valid goBILDA order PDF." });
+      }
+    });
+  });
+
+  app.post("/api/inventory/import-gobilda/confirm", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    try {
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      if (!items.length) return res.status(400).json({ error: "No items to import" });
+      let added = 0;
+      let merged = 0;
+      const skipped: string[] = [];
+      const date_added = new Date().toISOString();
+      for (const it of items.slice(0, 500)) {
+        const sku = String(it.sku || "").trim();
+        const name = String(it.name || "").trim().slice(0, 120) || sku;
+        const quantity = Math.max(0, parseInt(it.quantity, 10) || 0);
+        const cost = Math.max(0, parseFloat(it.cost) || 0);
+        if (!sku) {
+          skipped.push(name || "(unnamed)");
+          continue;
+        }
+        try {
+          const existing: any = await dbGet("SELECT id, quantity FROM inventory WHERE team_id = ? AND sku = ?", auth.teamId, sku);
+          if (existing) {
+            await dbRun("UPDATE inventory SET quantity = quantity + ?, cost = ? WHERE id = ?", quantity, cost, existing.id);
+            merged++;
+          } else {
+            await dbRun(
+              "INSERT INTO inventory (team_id, name, part_number, sku, quantity, location, category, description, cost, date_added) VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?)",
+              auth.teamId,
+              name,
+              sku,
+              sku,
+              quantity,
+              "Imported from goBILDA order",
+              cost,
+              date_added
+            );
+            added++;
+          }
+        } catch (e: any) {
+          // e.g. SKU already claimed by another workspace (SKU uniqueness is global)
+          skipped.push(sku);
+        }
+      }
+      res.json({ added, merged, skipped });
+    } catch (e) {
+      console.error("goBILDA import confirm error:", e);
+      res.status(500).json({ error: "Import failed" });
     }
   });
 

@@ -2137,6 +2137,9 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   const [editingMember, setEditingMember] = useState<any>(null);
   const [newTeam, setNewTeam] = useState<any>({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
   const [newMember, setNewMember] = useState({ team_id: '', name: '', role: '', email: '', is_board: false, scopes: [] });
+  const [memberToRemove, setMemberToRemove] = useState<any>(null);
+  const [removeError, setRemoveError] = useState('');
+  const [removingMember, setRemovingMember] = useState(false);
 
   const isAdmin = hasScope('admin');
 
@@ -2170,10 +2173,24 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
     onRefresh();
   };
 
-  const handleDeleteMember = async (id: number) => {
-    if (!confirm("Are you sure? This will delete the member.")) return;
-    await apiFetch(`/api/members/${id}`, { method: 'DELETE' });
-    onRefresh();
+  const handleDeleteMember = async () => {
+    if (!memberToRemove) return;
+    setRemovingMember(true);
+    setRemoveError('');
+    try {
+      const res = await apiFetch(`/api/members/${memberToRemove.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setRemoveError(err.error || 'Could not remove member');
+        return;
+      }
+      setMemberToRemove(null);
+      onRefresh();
+    } catch (error) {
+      setRemoveError('Could not remove member: ' + error);
+    } finally {
+      setRemovingMember(false);
+    }
   };
 
   const handleAddMember = async () => {
@@ -2355,9 +2372,9 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                     )}
                     {isAdmin && (
                       <button 
-                        onClick={() => handleDeleteMember(m.id)}
+                        onClick={() => { setMemberToRemove(m); setRemoveError(''); }}
                         className="p-2 text-text-muted/70 hover:text-rose-400 transition-colors"
-                        title="Delete Member"
+                        title="Remove Member"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2371,6 +2388,34 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
       </div>
 
       {/* Modals (Simplified) */}
+      {memberToRemove && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title="Remove member" className="w-full max-w-md">
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Avatar user={memberToRemove} size="md" />
+                <div className="min-w-0">
+                  <p className="text-white font-bold truncate">{memberToRemove.name}</p>
+                  <p className="text-xs text-text-muted truncate">
+                    {[memberToRemove.email, teams.find((t: any) => t.id === memberToRemove.team_id)?.name].filter(Boolean).join(' • ')}
+                  </p>
+                </div>
+              </div>
+              <p className="text-sm text-text-muted leading-relaxed">
+                Remove <span className="text-white font-semibold">{memberToRemove.name}</span> from the team?
+                They'll lose access immediately, but their messages, tasks, attendance history, and other work will be kept.
+              </p>
+              {removeError && <p className="text-sm text-rose-400">{removeError}</p>}
+              <div className="flex gap-3 justify-end">
+                <Button variant="secondary" onClick={() => setMemberToRemove(null)}>Cancel</Button>
+                <Button variant="danger" onClick={handleDeleteMember} disabled={removingMember}>
+                  {removingMember ? 'Removing...' : 'Remove from team'}
+                </Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
       {showAddTeam && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card title={editingTeam ? "Edit Team" : "Add New Team"} className="w-full max-w-md">
@@ -3713,6 +3758,10 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
   const [filterCategory, setFilterCategory] = useState('');
   const [revLink, setRevLink] = useState('');
   const [isLoadingRev, setIsLoadingRev] = useState(false);
+  const [gobildaParsing, setGobildaParsing] = useState(false);
+  const [gobildaItems, setGobildaItems] = useState<any[]>([]);
+  const [showGobildaPreview, setShowGobildaPreview] = useState(false);
+  const gobildaFileRef = React.useRef<HTMLInputElement>(null);
   const [newPart, setNewPart] = useState({ 
     team_id: '', name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', 
     location: '', category: '', description: '', cost: '' 
@@ -3816,6 +3865,68 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
     }
   };
 
+  const handleGobildaFile = async (e: any) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setGobildaParsing(true);
+    try {
+      const form = new FormData();
+      form.append('pdf', file);
+      const res = await apiFetch('/api/inventory/import-gobilda/parse', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert('Error: ' + (data.error || 'Could not read that PDF'));
+        return;
+      }
+      setGobildaItems((data.items || []).map((it: any) => ({ ...it, selected: true })));
+      setShowGobildaPreview(true);
+    } catch (error) {
+      alert('Error reading PDF: ' + error);
+    } finally {
+      setGobildaParsing(false);
+    }
+  };
+
+  const updateGobildaItem = (index: number, patch: any) => {
+    setGobildaItems(items => items.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  };
+
+  const handleGobildaConfirm = async () => {
+    const selected = gobildaItems.filter((it: any) => it.selected);
+    if (!selected.length) {
+      alert('Select at least one item to import');
+      return;
+    }
+    try {
+      const res = await apiFetch('/api/inventory/import-gobilda/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: selected.map((it: any) => ({
+            sku: it.sku,
+            name: it.name,
+            quantity: parseInt(it.quantity, 10) || 0,
+            cost: parseFloat(it.unitPrice) || 0
+          }))
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert('Error: ' + (data.error || 'Import failed'));
+        return;
+      }
+      setShowGobildaPreview(false);
+      setGobildaItems([]);
+      onRefresh();
+      const parts = [`${data.added} added`, `${data.merged} restocked`];
+      if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
+      alert('Import complete: ' + parts.join(', '));
+    } catch (error) {
+      alert('Error importing: ' + error);
+    }
+  };
+
   const categories = [...new Set(inventory.map((p: any) => p.category).filter((c: any) => c))];
   const filteredParts = inventory.filter((p: any) => {
     const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -3859,6 +3970,10 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
               className="sm:w-48"
             />
             <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
+            <Button onClick={() => gobildaFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={gobildaParsing}>
+              <FileUp className="w-4 h-4" /> {gobildaParsing ? 'Reading PDF...' : 'Import goBILDA PDF'}
+            </Button>
+            <input ref={gobildaFileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={handleGobildaFile} />
           </div>
 
           <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
@@ -3961,6 +4076,62 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
                 <Button onClick={handleAdd}>Add Part</Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {showGobildaPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+          <Card title="Import goBILDA order" className="w-full max-w-3xl my-8">
+            <div className="space-y-4">
+              <p className="text-sm text-text-muted leading-relaxed">
+                Review the items read from your goBILDA order PDF. Uncheck anything you don't want,
+                fix names, quantities, or prices if needed, then import — items already in inventory get restocked.
+              </p>
+              <div className="glass rounded-2xl overflow-x-auto custom-scrollbar max-h-96">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-white/5 border-b border-white/10 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-3 w-10"></th>
+                      <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase">Item</th>
+                      <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase">SKU</th>
+                      <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase w-24">Qty</th>
+                      <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase w-28">Unit $</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {gobildaItems.map((it: any, i: number) => (
+                      <tr key={i} className={it.selected ? '' : 'opacity-40'}>
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            checked={!!it.selected}
+                            onChange={(e: any) => updateGobildaItem(i, { selected: e.target.checked })}
+                            className="w-4 h-4 accent-[#FFC700]"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <Input value={it.name} onChange={(e: any) => updateGobildaItem(i, { name: e.target.value })} className="!py-1.5 text-sm" />
+                        </td>
+                        <td className="px-3 py-2 text-xs text-accent font-mono whitespace-nowrap">{it.sku}</td>
+                        <td className="px-3 py-2">
+                          <Input type="number" min="0" value={it.quantity} onChange={(e: any) => updateGobildaItem(i, { quantity: e.target.value })} className="!py-1.5 text-sm" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <Input type="number" min="0" step="0.01" value={it.unitPrice} onChange={(e: any) => updateGobildaItem(i, { unitPrice: e.target.value })} className="!py-1.5 text-sm" />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <Button variant="secondary" onClick={() => setShowGobildaPreview(false)}>Cancel</Button>
+                <Button onClick={handleGobildaConfirm}>
+                  Import {gobildaItems.filter((it: any) => it.selected).length} items
+                </Button>
               </div>
             </div>
           </Card>
