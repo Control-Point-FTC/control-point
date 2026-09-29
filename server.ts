@@ -265,6 +265,9 @@ if (!teamColumns.some((c: any) => c.name === 'primary_color')) {
 if (!teamColumns.some((c: any) => c.name === 'text_color')) {
   (await dbExec("ALTER TABLE teams ADD COLUMN text_color TEXT"));
 }
+if (!teamColumns.some((c: any) => c.name === 'ftc_team_number')) {
+  (await dbExec("ALTER TABLE teams ADD COLUMN ftc_team_number INTEGER"));
+}
 
 if (!memberColumns.some((c: any) => c.name === 'accent_color')) {
   (await dbExec("ALTER TABLE members ADD COLUMN accent_color TEXT"));
@@ -1039,8 +1042,28 @@ async function startServer() {
     if (parseInt(req.params.id, 10) !== auth.teamId) {
       return res.status(403).json({ error: "Not your workspace" });
     }
-    const { name, number, accent_color, primary_color, text_color } = req.body;
-    (await dbRun("UPDATE teams SET name = ?, number = ?, accent_color = ?, primary_color = ?, text_color = ? WHERE id = ?", name, number, accent_color || null, primary_color || null, text_color || null, req.params.id));
+    const { name, number, accent_color, primary_color, text_color, ftc_team_number } = req.body;
+    // Partial update: only touch columns the caller actually sent, so saving the
+    // FTC team number alone can't wipe the workspace name or colors.
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (name !== undefined) { sets.push("name = ?"); vals.push(name); }
+    if (number !== undefined) { sets.push("number = ?"); vals.push(number); }
+    if (accent_color !== undefined) { sets.push("accent_color = ?"); vals.push(accent_color || null); }
+    if (primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(primary_color || null); }
+    if (text_color !== undefined) { sets.push("text_color = ?"); vals.push(text_color || null); }
+    if (ftc_team_number !== undefined) {
+      const ftcNum = ftc_team_number === null || ftc_team_number === ''
+        ? null
+        : parseInt(String(ftc_team_number), 10);
+      if (ftcNum !== null && (!Number.isInteger(ftcNum) || ftcNum <= 0)) {
+        return res.status(400).json({ error: "FTC team number must be a positive integer" });
+      }
+      sets.push("ftc_team_number = ?"); vals.push(ftcNum);
+    }
+    if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
+    vals.push(req.params.id);
+    (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
     res.json({ success: true });
   });
 
@@ -1055,6 +1078,117 @@ async function startServer() {
     const code = await uniqueAccessCode();
     (await dbRun("UPDATE teams SET access_code = ? WHERE id = ?", code, auth.teamId));
     res.json({ access_code: code });
+  });
+
+  // --- FTC integration (ftc-scout.org, community mirror of official FIRST data) ---
+  const FTC_SCOUT_URL = "https://api.ftcscout.org/graphql";
+  const ftcCache = new Map<string, { at: number; data: any }>();
+  const FTC_CACHE_TTL = 10 * 60 * 1000;
+
+  async function ftcQuery(query: string, variables: any): Promise<any> {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const res = await fetch(FTC_SCOUT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, variables }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) throw new Error(`FTC Scout responded with HTTP ${res.status}`);
+      return await res.json();
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  // Look up any FTC team number (admin) — used to verify before saving
+  app.get("/api/ftc/lookup", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const number = parseInt(String(req.query.number || ""), 10);
+    if (!number || number <= 0) return res.status(400).json({ error: "Enter a valid team number" });
+    try {
+      const data = await ftcQuery(
+        `query Lookup($number: Int!) { teamByNumber(number: $number) { number name schoolName rookieYear location { city state country } } }`,
+        { number }
+      );
+      const team = data?.data?.teamByNumber;
+      if (!team) return res.status(404).json({ error: "No FTC team found with that number" });
+      res.json(team);
+    } catch (e: any) {
+      res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+    }
+  });
+
+  // Connected team's season data: profile, OPR stats with ranks, event history
+  async function getFtcTeamPayload(number: number, season: number): Promise<any> {
+    const data = await ftcQuery(
+      `query TeamData($number: Int!, $season: Int!) {
+        teamByNumber(number: $number) {
+          number name schoolName rookieYear activeSeasons
+          location { city state country }
+          quickStats(season: $season) {
+            season
+            tot { value rank } auto { value rank } dc { value rank } eg { value rank }
+          }
+          events(season: $season) {
+            event { code name start timezone type }
+            stats { __typename ... on TeamEventStats${season} { rank wins losses ties } }
+            awards { type }
+          }
+        }
+      }`,
+      { number, season }
+    );
+    const t = data?.data?.teamByNumber;
+    if (!t) return null;
+    const qs = t.quickStats || {};
+    const norm = (s: any) => (s ? { value: Math.round((s.value || 0) * 10) / 10, rank: s.rank ?? null } : null);
+    return {
+      number: t.number,
+      name: t.name,
+      school: t.schoolName,
+      city: t.location?.city, state: t.location?.state, country: t.location?.country,
+      rookieYear: t.rookieYear,
+      seasons: [...new Set((t.activeSeasons || []).filter((s: number) => s >= 2022 && s <= 2025))].sort((a: number, b: number) => b - a),
+      season,
+      opr: { tot: norm(qs.tot), auto: norm(qs.auto), dc: norm(qs.dc), eg: norm(qs.eg) },
+      events: (t.events || []).map((e: any) => ({
+        code: e.event?.code,
+        name: e.event?.name,
+        date: e.event?.start ? String(e.event.start).slice(0, 10) : null,
+        type: e.event?.type || null,
+        rank: e.stats?.rank ?? null,
+        wins: e.stats?.wins ?? null, losses: e.stats?.losses ?? null, ties: e.stats?.ties ?? null,
+        awards: (e.awards || []).map((a: any) => a.type).filter(Boolean),
+      })).sort((a: any, b: any) => (a.date || "").localeCompare(b.date || "")),
+    };
+  }
+
+  app.get("/api/ftc/team", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseInt(String(req.query.season || "2025"), 10);
+    if (![2022, 2023, 2024, 2025].includes(season)) {
+      return res.status(400).json({ error: "Season data is available for 2022–2025" });
+    }
+    const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+    const number = team?.ftc_team_number;
+    if (!number) return res.status(404).json({ error: "No FTC team connected — set your team number in Settings" });
+
+    const cacheKey = `ftc:${number}:${season}`;
+    const cached = ftcCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < FTC_CACHE_TTL) return res.json(cached.data);
+
+    try {
+      const payload = await getFtcTeamPayload(number, season);
+      if (!payload) return res.status(404).json({ error: "FTC Scout has no record of that team number" });
+      ftcCache.set(cacheKey, { at: Date.now(), data: payload });
+      res.json(payload);
+    } catch (e: any) {
+      res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+    }
   });
 
   // Members — scoped to the caller's workspace
@@ -2074,11 +2208,30 @@ async function startServer() {
       }
       const stream = req.query.stream === "true";
       const maxTokens = await getMaxTokens("max_tokens_news", 1024);
+      // Team-aware news: pull the connected FTC team's latest stats for the "Your Team" section
+      let teamCtx: any = null;
+      try {
+        const t = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+        if (t?.ftc_team_number) {
+          const payload = await getFtcTeamPayload(t.ftc_team_number, 2025);
+          if (payload) {
+            const ranked = (payload.events || []).filter((e: any) => e.rank != null);
+            const best = ranked.length ? ranked.reduce((a: any, b: any) => (a.rank <= b.rank ? a : b)) : null;
+            const latest = (payload.events || []).length ? payload.events[payload.events.length - 1] : null;
+            teamCtx = {
+              number: payload.number, name: payload.name, city: payload.city, state: payload.state,
+              season: 2025, gameName: "DECODE", opr: payload.opr,
+              bestFinish: best ? { rank: best.rank, event: best.name, date: best.date } : null,
+              latestEvent: latest ? { name: latest.name, date: latest.date, rank: latest.rank } : null,
+            };
+          }
+        }
+      } catch { /* news works fine without team context */ }
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          await scoutNews(maxTokens, (chunk) => res.write(chunk));
+          await scoutNews(teamCtx, maxTokens, (chunk) => res.write(chunk));
           res.end();
         } catch (err) {
           console.error("AI news stream error:", err);
@@ -2086,7 +2239,7 @@ async function startServer() {
         }
         return;
       }
-      const result = await scoutNews(maxTokens);
+      const result = await scoutNews(teamCtx, maxTokens);
       res.json({ result });
     } catch (error) {
       console.error("AI news error:", error);

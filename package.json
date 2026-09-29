@@ -59,6 +59,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.18.4",
     "recharts": "^3.7.0",
     "simple-git": "^3.32.2",
     "tailwind-merge": "^3.5.0",

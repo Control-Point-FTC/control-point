@@ -156,11 +156,62 @@ export async function aiStream(
 
 // --- Feature prompts -------------------------------------------------------
 
-export const SCOUT_SYSTEM = `You are Control Point's AI Scout, a news assistant for FIRST Tech Challenge (FTC) robotics teams. You write concise, well-organized news roundups. Use short sections with bold headlines and 1-2 sentence items. Never invent specific dates, scores, or announcements you are not confident about; when unsure, say so.`;
+export const SCOUT_SYSTEM = `You are Control Point's AI Scout, a news assistant for FIRST Tech Challenge (FTC) robotics teams competing in the 2026-2027 BIOBUZZ season. You write tight, scannable news roundups in clean Markdown.
 
-export async function scoutNews(maxTokens: number, onChunk?: (t: string) => void): Promise<string> {
+Rules:
+- Cover competitive FTC only: the BIOBUZZ game, Game Manual updates, the FTC Q&A, REV Robotics and FTC-legal parts, and the FTC community/competition scene.
+- Do NOT include recreational leagues, VEX, FRC, or generic STEM-education content.
+- Use "##" section headers and short bullet points (1-2 sentences each). No walls of text, no filler intros.
+- Never invent specific dates, scores, or announcements you are not confident about; when unsure, say so.`;
+
+// Optional context about the reader's own team, injected when the workspace
+// has an FTC team number connected. Values come from ftc-scout.org.
+export interface ScoutTeamContext {
+  number: number;
+  name: string;
+  city?: string;
+  state?: string;
+  season: number;
+  gameName: string;
+  opr: { tot?: { value: number; rank: number | null } | null; auto?: { value: number; rank: number | null } | null; dc?: { value: number; rank: number | null } | null; eg?: { value: number; rank: number | null } | null };
+  bestFinish?: { rank: number; event: string; date?: string | null } | null;
+  latestEvent?: { name: string; date?: string | null; rank: number | null } | null;
+}
+
+export function formatScoutTeamContext(t: ScoutTeamContext): string {
+  const opr = t.opr;
+  const line = (label: string, s?: { value: number; rank: number | null } | null) =>
+    s ? `${label} ${s.value}${s.rank != null ? ` (rank ${s.rank})` : ""}` : null;
+  const parts = [
+    `Team ${t.number} "${t.name}"${t.city ? ` (${t.city}, ${t.state || ""})`.replace(", )", ")") : ""}.`,
+    `${t.season} season (${t.gameName}): ` +
+      [line("total OPR", opr.tot), line("auto", opr.auto), line("driver-controlled", opr.dc), line("endgame", opr.eg)]
+        .filter(Boolean).join(", ") + ".",
+  ];
+  if (t.bestFinish) parts.push(`Best event finish: rank ${t.bestFinish.rank} at ${t.bestFinish.event}${t.bestFinish.date ? ` (${t.bestFinish.date})` : ""}.`);
+  if (t.latestEvent) parts.push(`Latest event: ${t.latestEvent.name}${t.latestEvent.date ? ` (${t.latestEvent.date})` : ""}${t.latestEvent.rank != null ? `, finished rank ${t.latestEvent.rank}` : ""}.`);
+  return parts.join(" ");
+}
+
+export async function scoutNews(team: ScoutTeamContext | null, maxTokens: number, onChunk?: (t: string) => void): Promise<string> {
   const today = new Date().toISOString().slice(0, 10);
-  const user = `Today is ${today}. Give a roundup of the latest FIRST Tech Challenge and REV Robotics news that a student robotics team should know: current or upcoming season game updates, rule changes, new REV/FTC products, major community announcements, and notable competitions. Keep it scannable — sections with bold headlines, brief items. If using search results, prefer official sources (firstinspires.org, revrobotics.com). End with one line noting the roundup reflects the latest available information as of ${today}.`;
+  const teamSection = team
+    ? `Start with a "## Your Team" section (3-4 bullets): where team ${team.number} "${team.name}" stands right now — overall OPR rank, strongest/weakest phase, best and latest event finishes. Base this ONLY on the team data below; do not invent matches or awards not listed.`
+    : `There is no team connected to this workspace, so skip any "your team" section.`;
+  const teamData = team ? `Team data (from ftc-scout.org): ${formatScoutTeamContext(team)}` : "";
+  const user = `Today is ${today}. Write a news roundup for an FTC team competing in the 2026-2027 BIOBUZZ season.
+
+${teamSection}
+
+Then these sections, in order, each with 2-4 short bullets:
+## Game Updates & Rules — BIOBUZZ manual updates, Q&A rulings, kickoff-season clarifications
+## Parts & REV — new REV/FTC-legal products, restocks, parts teams are talking about
+## Community — notable FTC community announcements, workshops, open scrimmages
+## Competitions — notable upcoming or recent FTC events and results
+
+Keep every bullet to 1-2 sentences. Prefer official sources (firstinspires.org, revrobotics.com, ftc-scout.org). End with one italic line noting the roundup reflects the latest available information as of ${today}.
+
+${teamData}`.trim();
   if (onChunk) {
     return callGemini({ system: SCOUT_SYSTEM, user, maxTokens, stream: true, useSearchGrounding: true, onChunk });
   }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
   Users, 
@@ -46,7 +47,11 @@ import {
   GraduationCap,
   KeyRound,
   Copy,
-  Sparkles
+  Sparkles,
+  Trophy,
+  Flag,
+  Cog,
+  Medal
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -57,6 +62,7 @@ import {
 } from 'recharts';
 import Markdown from 'react-markdown';
 import BuildHelperChat from './components/BuildHelperChat';
+import { FtcTeamCard, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
@@ -517,9 +523,40 @@ const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code
 
 // --- Main App ---
 
+// Static nav model: lives at module scope so it can be referenced anywhere in
+// the component (including above its old declaration site) without TDZ issues.
+const navItems = [
+  { id: 'dashboard', path: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'stats', path: 'stats', label: 'Team Stats', icon: Trophy },
+  { id: 'teams', path: 'teams', label: 'Teams & Members', icon: Users },
+  { id: 'attendance', path: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance' },
+  { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare },
+  { id: 'calendar', path: 'calendar', label: 'Calendar', icon: Calendar },
+  { id: 'budget', path: 'budget', label: 'Budget', icon: Wallet, scope: 'budget' },
+  { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory' },
+  { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe },
+  { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code' },
+  { id: 'comm', path: 'comm', label: 'Communication', icon: Mail },
+  { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare },
+  { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper },
+  { id: 'profile', path: 'profile', label: 'My Profile', icon: UserCircle },
+  { id: 'settings', path: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
+  { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
+];
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Real URL routing — every section is its own route, so refresh keeps you where you are
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeTab = location.pathname.split('/')[1] || 'dashboard';
+  const setActiveTab = (id: string) => navigate(`/${id}`);
+  const activeNav = navItems.find((t) => t.id === activeTab);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
+
+  // Close the mobile sidebar whenever the route changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth <= 768) setIsSidebarOpen(false);
+  }, [location.pathname]);
   const [showNotifications, setShowNotifications] = useState(false);
   
   // Auth State
@@ -1034,26 +1071,8 @@ export default function App() {
     }
   };
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'teams', label: 'Teams & Members', icon: Users },
-    { id: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance' },
-    { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-    { id: 'calendar', label: 'Calendar', icon: Calendar },
-    { id: 'budget', label: 'Budget', icon: Wallet, scope: 'budget' },
-    { id: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory' },
-    { id: 'outreach', label: 'Outreach', icon: Globe },
-    { id: 'code', label: 'Code', icon: Code2, scope: 'code' },
-    { id: 'comm', label: 'Communication', icon: Mail },
-    { id: 'chat', label: 'Messaging', icon: MessageSquare },
-    { id: 'scout', label: 'AI Scout', icon: Newspaper },
-    { id: 'profile', label: 'My Profile', icon: UserCircle },
-    { id: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
-    { id: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
-  ];
-
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'profile'];
+  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'profile'];
   const visibleTabs = navItems.filter((t) => {
     if ((t as any).ownerOnly) return isOwner;
     if (isAdmin) return !t.scope || hasScope(t.scope);
@@ -1063,9 +1082,9 @@ export default function App() {
   // Keep students (and scope-restricted users) on tabs they can actually see
   useEffect(() => {
     if (isLoggedIn && !visibleTabs.some((t) => t.id === activeTab)) {
-      setActiveTab('dashboard');
+      navigate('/dashboard', { replace: true });
     }
-  }, [isLoggedIn, currentUser]);
+  }, [isLoggedIn, currentUser, activeTab]);
 
   // Owner status drives the Owner tab; only Sushil's email(s) qualify
   useEffect(() => {
@@ -1088,26 +1107,31 @@ export default function App() {
       updateInsights,
       updateSummary: () => updateSummary(true)
     };
-    switch (activeTab) {
-      case 'dashboard': return isAdmin
-        ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, news, summary, members }} />
-        : <StudentDashboardView {...viewProps} />;
-      case 'teams': return <TeamsView {...viewProps} />;
-      case 'attendance': return <AttendanceView {...viewProps} />;
-      case 'tasks': return <TasksView {...viewProps} />;
-      case 'calendar': return <CalendarView {...viewProps} />;
-      case 'budget': return <BudgetView {...viewProps} />;
-      case 'inventory': return <InventoryView {...viewProps} />;
-      case 'outreach': return <OutreachView {...viewProps} />;
-      case 'code': return <CodeView {...viewProps} />;
-      case 'comm': return <CommunicationView {...viewProps} />;
-      case 'chat': return <ChatView {...viewProps} />;
-      case 'scout': return <ScoutView {...viewProps} />;
-      case 'profile': return <ProfileView {...viewProps} />;
-      case 'settings': return <SettingsView {...viewProps} />;
-      case 'owner': return <OwnerView {...viewProps} />;
-      default: return null;
-    }
+    const dashboardEl = isAdmin
+      ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, news, summary, members, events }} />
+      : <StudentDashboardView {...viewProps} />;
+    return (
+      <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={dashboardEl} />
+        <Route path="/stats" element={<TeamStatsView />} />
+        <Route path="/teams" element={<TeamsView {...viewProps} />} />
+        <Route path="/attendance" element={<AttendanceView {...viewProps} />} />
+        <Route path="/tasks" element={<TasksView {...viewProps} />} />
+        <Route path="/calendar" element={<CalendarView {...viewProps} />} />
+        <Route path="/budget" element={<BudgetView {...viewProps} />} />
+        <Route path="/inventory" element={<InventoryView {...viewProps} />} />
+        <Route path="/outreach" element={<OutreachView {...viewProps} />} />
+        <Route path="/code" element={<CodeView {...viewProps} />} />
+        <Route path="/comm" element={<CommunicationView {...viewProps} />} />
+        <Route path="/chat" element={<ChatView {...viewProps} />} />
+        <Route path="/scout" element={<ScoutView {...viewProps} />} />
+        <Route path="/profile" element={<ProfileView {...viewProps} />} />
+        <Route path="/settings" element={<SettingsView {...viewProps} />} />
+        <Route path="/owner" element={<OwnerView {...viewProps} />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    );
   };
 
   if (!isLoggedIn) {
@@ -1276,7 +1300,7 @@ export default function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => navigate(`/${item.path}`)}
                 title={!isSidebarOpen ? item.label : undefined}
                 className={cn(
                   "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
@@ -1335,7 +1359,7 @@ export default function App() {
             >
               <Menu className="w-6 h-6" />
             </button>
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab.replace('-', ' ')}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeNav?.label || 'Dashboard'}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
@@ -1407,7 +1431,7 @@ export default function App() {
         <div className="p-4 sm:p-6 lg:p-8 flex flex-col flex-1 min-h-0 overflow-y-auto custom-scrollbar">
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeTab}
+              key={location.pathname}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -1423,11 +1447,49 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
+        <AppFooter
+          links={visibleTabs.filter((t) => ['dashboard', 'stats', 'scout', 'calendar', 'chat', 'tasks'].includes(t.id))}
+          teamName={teams[0]?.name}
+        />
       </main>
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <CookieConsent />
       <BuildHelperChat />
     </div>
+  );
+}
+
+// Site footer for the app shell: quick navigation, data credit, copyright.
+function AppFooter({ links, teamName }: { links: { id: string; path: string; label: string }[]; teamName?: string }) {
+  const navigate = useNavigate();
+  return (
+    <footer className="flex-shrink-0 border-t border-white/[0.06] bg-secondary/60">
+      <div className="px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-6 h-6 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
+            <Bolt className="text-accent-ink w-3.5 h-3.5" strokeWidth={2.5} />
+          </div>
+          <p className="text-xs text-text-muted truncate">
+            <span className="font-bold text-white">Control Point</span>
+            {teamName ? <span> · {teamName}</span> : null}
+          </p>
+        </div>
+        <nav className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 flex-1">
+          {links.map((l) => (
+            <button
+              key={l.id}
+              onClick={() => navigate(`/${l.path}`)}
+              className="text-xs text-text-muted hover:text-accent transition-colors font-medium"
+            >
+              {l.label}
+            </button>
+          ))}
+        </nav>
+        <p className="text-[10px] text-text-muted/70 text-center sm:text-right leading-relaxed">
+          Match data: ftc-scout.org<br className="sm:hidden" /> · © 2026 Control Point
+        </p>
+      </div>
+    </footer>
   );
 }
 
@@ -1610,6 +1672,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
+      <FtcTeamCard />
       {myTeam && (
         <Card className="lg:col-span-3" icon={KeyRound} title="Team Access Code" subtitle="Share this with students so they can join your workspace">
           <div className="flex flex-wrap items-center gap-3 sm:gap-4">
@@ -1733,6 +1796,28 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
               )} />
             </div>
           ))}
+        </div>
+      </Card>
+
+      <Card title="Upcoming Events" icon={Calendar} className="md:col-span-1">
+        <div className="space-y-3">
+          {(() => {
+            const upcoming = (data.events || [])
+              .filter((e: any) => e.date >= today)
+              .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))
+              .slice(0, 5);
+            if (upcoming.length === 0) {
+              return <p className="text-xs text-text-muted/70 italic">No upcoming events scheduled.</p>;
+            }
+            return upcoming.map((e: any) => (
+              <div key={e.id} className="p-3 bg-white/5 rounded-xl border border-white/5">
+                <p className="text-sm font-bold text-white truncate">{e.title}</p>
+                <p className="text-[10px] text-text-muted mt-0.5">
+                  {e.date}{e.start_time ? ` · ${e.start_time}` : ''}{e.location ? ` · ${e.location}` : ''}
+                </p>
+              </div>
+            ));
+          })()}
         </div>
       </Card>
 
@@ -3900,32 +3985,74 @@ function OutreachView({ outreach, onRefresh }: any) {
 }
 
 function ScoutView({ news, refreshNews, isAiLoading, ThinkingIndicator }: any) {
+  // Split the AI scout report into its ## sections so each renders as a card
+  const sections = useMemo(() => {
+    if (!news) return [];
+    const parts = String(news).split(/^##\s+/m).filter((s) => s.trim());
+    return parts.map((p) => {
+      const nl = p.indexOf('\n');
+      return {
+        title: (nl >= 0 ? p.slice(0, nl) : p).trim(),
+        body: (nl >= 0 ? p.slice(nl + 1) : '').trim(),
+      };
+    }).filter((s) => s.title);
+  }, [news]);
+
+  const sectionIcon = (title: string) => {
+    const t = title.toLowerCase();
+    if (t.includes('your team')) return Trophy;
+    if (t.includes('rule') || t.includes('game update')) return Flag;
+    if (t.includes('part') || t.includes('rev')) return Cog;
+    if (t.includes('communit')) return Users;
+    if (t.includes('competition')) return Medal;
+    return Newspaper;
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">AI Scout: FTC &amp; REV News</h3>
-          <p className="text-sm text-text-muted mt-1">Fresh robotics headlines, collected automatically for your team.</p>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-white">AI Scout: FTC BIOBUZZ</h3>
+          <p className="text-sm text-text-muted mt-1">Competitive FTC news, rules, parts, and events — scoped to the 2026–27 BIOBUZZ season.</p>
         </div>
         <Button onClick={refreshNews} variant="outline" disabled={isAiLoading} className="w-full sm:w-auto"><Clock className="w-4 h-4 mr-1" /> Refresh News</Button>
       </div>
 
-      <Card className="min-h-[500px]">
-        <div className="prose prose-invert max-w-none">
-          {isAiLoading && !news ? (
-            <div className="flex flex-col items-center justify-center h-64 gap-4">
-              <ThinkingIndicator />
-              <p className="text-text-muted">Scouring the web for FTC updates...</p>
-            </div>
-          ) : news ? (
-            <Markdown>{news}</Markdown>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-64 gap-4">
-              <p className="text-text-muted">No news available. Click refresh to scout for updates.</p>
-            </div>
-          )}
+      {isAiLoading && !news ? (
+        <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4">
+          <ThinkingIndicator />
+          <p className="text-text-muted">Scouring the web for FTC updates...</p>
+        </Card>
+      ) : sections.length > 0 ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+          {sections.map((s, i) => {
+            const Icon = sectionIcon(s.title);
+            const isTeam = s.title.toLowerCase().includes('your team');
+            return (
+              <Card
+                key={i}
+                title={s.title.replace(/^#+\s*/, '')}
+                icon={Icon}
+                className={isTeam ? 'lg:col-span-2 border-accent/30' : undefined}
+              >
+                <div className="prose prose-invert max-w-none text-sm">
+                  <Markdown>{s.body}</Markdown>
+                </div>
+              </Card>
+            );
+          })}
         </div>
-      </Card>
+      ) : news ? (
+        <Card className="min-h-[300px]">
+          <div className="prose prose-invert max-w-none">
+            <Markdown>{news}</Markdown>
+          </div>
+        </Card>
+      ) : (
+        <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4">
+          <p className="text-text-muted">No news available. Click refresh to scout for updates.</p>
+        </Card>
+      )}
     </div>
   );
 }
@@ -4957,7 +5084,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   );
 }
 
-function SettingsView({ settings, members, onRefresh, currentUser }: any) {
+function SettingsView({ settings, members, teams, onRefresh, currentUser }: any) {
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
   const [maxTokensNews, setMaxTokensNews] = useState(settings.max_tokens_news || '1024');
   const [maxTokensAttendance, setMaxTokensAttendance] = useState(settings.max_tokens_attendance || '1024');
@@ -4973,6 +5100,54 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   const [editingMessage, setEditingMessage] = useState<any>(null);
 
   const isPresident = currentUser?.role === 'President';
+
+  // --- FTC team connection ---
+  const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
+  const [ftcNumber, setFtcNumber] = useState('');
+  const [ftcVerifying, setFtcVerifying] = useState(false);
+  const [ftcVerified, setFtcVerified] = useState<any>(null);
+  const [ftcError, setFtcError] = useState('');
+  const [ftcSaving, setFtcSaving] = useState(false);
+
+  useEffect(() => {
+    if (myTeam?.ftc_team_number) setFtcNumber(String(myTeam.ftc_team_number));
+  }, [myTeam?.ftc_team_number]);
+
+  const verifyFtcNumber = async () => {
+    const num = parseInt(ftcNumber, 10);
+    if (!num || num <= 0) { setFtcError('Enter a valid team number'); return; }
+    setFtcVerifying(true);
+    setFtcError('');
+    setFtcVerified(null);
+    try {
+      const res = await apiFetch(`/api/ftc/lookup?number=${num}`);
+      const body = await res.json();
+      if (!res.ok) { setFtcError(body?.error || 'Lookup failed'); return; }
+      setFtcVerified(body);
+    } catch {
+      setFtcError('Could not reach FTC Scout — try again in a moment');
+    } finally {
+      setFtcVerifying(false);
+    }
+  };
+
+  const saveFtcNumber = async (num: number | null) => {
+    if (!myTeam?.id) return;
+    setFtcSaving(true);
+    try {
+      const res = await apiFetch(`/api/teams/${myTeam.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ftc_team_number: num }),
+      });
+      if (!res.ok) { alert('Failed to save team number'); return; }
+      setFtcVerified(null);
+      if (num === null) setFtcNumber('');
+      onRefresh();
+    } finally {
+      setFtcSaving(false);
+    }
+  };
 
   const fetchStorageUsage = async () => {
     setLoadingStorage(true);
@@ -5085,6 +5260,47 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
 
   return (
     <div className="max-w-4xl space-y-8">
+      <Card title="FTC Team Connection" icon={Trophy} subtitle="Link your FTC team number to pull live stats, OPR rankings, and event history">
+        <div className="space-y-4">
+          {myTeam?.ftc_team_number ? (
+            <div className="flex flex-wrap items-center gap-3 p-4 bg-accent/10 border border-accent/30 rounded-2xl">
+              <span className="bg-accent text-accent-ink font-display font-bold px-3 py-1 rounded-xl">#{myTeam.ftc_team_number}</span>
+              <p className="text-sm text-white/80 flex-1">Connected — stats appear on the dashboard and Team Stats page.</p>
+              <Button variant="danger" size="sm" onClick={() => { if (confirm('Disconnect the FTC team? Stats will be hidden.')) saveFtcNumber(null); }} disabled={ftcSaving}>
+                Disconnect
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-text-muted">No FTC team connected yet.</p>
+          )}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              type="number"
+              placeholder="FTC team number (e.g. 4215)"
+              value={ftcNumber}
+              onChange={(e: any) => { setFtcNumber(e.target.value); setFtcVerified(null); setFtcError(''); }}
+              className="sm:max-w-xs"
+            />
+            <Button variant="secondary" onClick={verifyFtcNumber} disabled={ftcVerifying || !ftcNumber}>
+              {ftcVerifying ? 'Verifying…' : 'Verify'}
+            </Button>
+          </div>
+          {ftcError && <p className="text-sm text-rose-400">{ftcError}</p>}
+          {ftcVerified && (
+            <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
+              <p className="text-white font-bold">Team {ftcVerified.number} — {ftcVerified.name}</p>
+              <p className="text-xs text-text-muted">
+                {[ftcVerified.schoolName, [ftcVerified.location?.city, ftcVerified.location?.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
+                {ftcVerified.rookieYear ? ` · Rookie ${ftcVerified.rookieYear}` : ''}
+              </p>
+              <Button onClick={() => saveFtcNumber(parseInt(ftcNumber, 10))} disabled={ftcSaving}>
+                {ftcSaving ? 'Saving…' : `Connect team ${ftcVerified.number}`}
+              </Button>
+            </div>
+          )}
+        </div>
+      </Card>
+
       <Card title="Storage Usage" icon={Wallet}>
         <div className="space-y-4">
           <p className="text-sm text-text-muted">Total size of all file uploads (messages, code files, etc.).</p>
