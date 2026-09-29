@@ -8,6 +8,7 @@ export interface Team {
   access_code?: string;
   member_count?: number;
   navgpt_enabled?: number;
+  ftc_team_number?: number | null;
 }
 
 export interface Member {

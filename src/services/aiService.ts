@@ -179,7 +179,24 @@ export interface BuildHelperMessage {
 
 /** Remove ```event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
 export function stripEventBlocks(text: string): string {
-  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").trim();
+  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").trim();
+}
+
+/**
+ * NavGPT coding handoff: detect a fenced ```switch block the model emitted.
+ * Returns the display text (block stripped) plus the handoff target, if any.
+ * Works mid-stream too — a partial block is treated as "no switch yet".
+ */
+export function stripSwitchBlock(text: string): { text: string; switchTo: string | null } {
+  const src = String(text || "");
+  const m = src.match(/```switch\s*\r?\n([\s\S]*?)\r?\n```/);
+  if (!m) return { text: src, switchTo: null };
+  let switchTo: string | null = null;
+  try {
+    const p = JSON.parse(m[1]);
+    if (p && p.to === "bruno") switchTo = "bruno";
+  } catch { /* malformed — ignore */ }
+  return { text: src.replace(/```switch[\s\S]*?(```|$)/g, "").trim(), switchTo };
 }
 
 /**
@@ -219,7 +236,10 @@ export async function getBuildHelper(messages: BuildHelperMessage[], chatId?: nu
 export function streamBuildHelper(
   messages: BuildHelperMessage[],
   onChunk: (chunk: string) => void,
-  chatId?: number
+  chatId?: number,
+  opts?: { persona?: string }
 ) {
-  return postStream('/api/ai/build-helper', chatId ? { messages, chatId } : { messages }, onChunk);
+  const body: any = chatId ? { messages, chatId } : { messages };
+  if (opts?.persona) body.persona = opts.persona;
+  return postStream('/api/ai/build-helper', body, onChunk);
 }

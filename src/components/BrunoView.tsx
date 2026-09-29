@@ -4,7 +4,7 @@ import {
   Bot, Plus, Trash2, Send, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
-import { streamBuildHelper, stripEventBlocks, detectBrunoDataActions, notifyBrunoDataChanged, type BuildHelperMessage } from '../services/aiService';
+import { streamBuildHelper, stripEventBlocks, stripSwitchBlock, detectBrunoDataActions, notifyBrunoDataChanged, type BuildHelperMessage } from '../services/aiService';
 import { confirmDialog } from './dialog';
 
 const STARTERS = [
@@ -40,6 +40,11 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const [titleDraft, setTitleDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
+  // NavGPT -> Bruno coding handoff: once the user accepts the switch, this chat
+  // stays on the plain Bruno persona (per chat id). Dismissed handoff offers are
+  // tracked by message index so "Nah" sticks.
+  const [personaByChat, setPersonaByChat] = useState<Record<number, string>>({});
+  const [dismissedSwitch, setDismissedSwitch] = useState<number[]>([]);
 
   const isAdmin = hasScope ? hasScope('admin') : false;
   const activeChat = chats.find((c) => c.id === activeId) || null;
@@ -72,6 +77,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       if (activeId === null) setMessages([]);
       return;
     }
+    setDismissedSwitch([]);
     (async () => {
       try {
         const res = await apiFetch(`/api/bruno/chats/${activeId}`);
@@ -113,10 +119,11 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       busyRef.current = true;
       let agg = '';
       setMessages([...next, { role: 'model', text: '' }]);
+      const persona = chatId ? personaByChat[chatId] : undefined;
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
         setMessages([...next, { role: 'model', text: agg }]);
-      }, chatId || undefined);
+      }, chatId || undefined, persona ? { persona } : undefined);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
       } else {
@@ -133,6 +140,40 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       setBusy(false);
       busyRef.current = false;
     }
+  };
+
+  // NavGPT coding handoff: the user accepted the switch. Drop NavGPT's offer
+  // message, pin this chat to the plain Bruno persona, and have Bruno answer
+  // the pending coding question directly — one fluid switch, no re-asking.
+  const switchToBruno = async () => {
+    const cid = activeId;
+    if (!cid || busyRef.current) return;
+    const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user');
+    if (lastUserIdx < 0) return;
+    const base = messages.slice(0, lastUserIdx + 1); // ends with the coding question
+    setMessages(base);
+    setPersonaByChat((m) => ({ ...m, [cid]: 'bruno' }));
+    setBusy(true);
+    busyRef.current = true;
+    let agg = '';
+    setMessages([...base, { role: 'model', text: '' }]);
+    try {
+      await streamBuildHelper(base, (chunk) => {
+        agg += chunk;
+        setMessages([...base, { role: 'model', text: agg }]);
+      }, cid, { persona: 'bruno' });
+      if (!agg.trim()) {
+        setMessages([...base, { role: 'model', text: `Bruno hit a snag — please try again in a moment.` }]);
+      } else {
+        notifyBrunoDataChanged(detectBrunoDataActions(agg));
+      }
+    } catch {
+      setMessages([...base, { role: 'model', text: `Bruno isn't reachable right now. Check your connection and try again.` }]);
+    } finally {
+      setBusy(false);
+      busyRef.current = false;
+    }
+    fetchChats(cid);
   };
 
   const saveTitle = async () => {
@@ -180,6 +221,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
 
   const myChats = chats.filter((c) => currentUser && c.member_id === currentUser.id);
   const teamChats = chats.filter((c) => !(currentUser && c.member_id === currentUser.id));
+  const lastModelIdx = messages.map((m) => m.role).lastIndexOf('model');
 
   const renderRow = (chat: any) => {
     const mine = currentUser && chat.member_id === currentUser.id;
@@ -361,6 +403,22 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                         <span key={d} className="w-1.5 h-1.5 rounded-full bg-accent/70 animate-bounce" style={{ animationDelay: `${d * 0.15}s` }} />
                       ))}
                     </span>
+                  )}
+                  {i === lastModelIdx && stripSwitchBlock(m.text).switchTo === 'bruno' && !dismissedSwitch.includes(i) && !busy && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={switchToBruno}
+                        className="rounded-xl bg-accent text-primary text-[13px] font-bold px-4 py-2 hover:brightness-110 active:scale-[0.98] transition"
+                      >
+                        Yes, switch to Bruno
+                      </button>
+                      <button
+                        onClick={() => setDismissedSwitch((d) => [...d, i])}
+                        className="rounded-xl border border-white/15 text-text-muted hover:text-white text-[13px] font-semibold px-4 py-2 transition-colors"
+                      >
+                        Nah, stay here
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

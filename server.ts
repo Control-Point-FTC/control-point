@@ -1369,10 +1369,13 @@ async function startServer() {
       }
 
       if (accountType === 'admin') {
-        const cleanTeam = (teamName || '').trim();
-        if (!cleanTeam) return res.status(400).json({ error: "Team name is required" });
+        // Team identity: an FTC team number is verified against the official
+        // FTC record (name auto-filled from the number); otherwise the admin
+        // types the team name manually.
+        const identity: any = await resolveTeamIdentity(teamNumber, teamName);
+        if (identity.error) return res.status(400).json({ error: identity.error });
         const code = await uniqueAccessCode();
-        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", cleanTeam, (teamNumber || '').trim(), code)) as any;
+        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number) VALUES (?, ?, ?, ?)", identity.name, identity.number, code, identity.ftcNumber)) as any;
         const teamId = tInfo.lastInsertRowid;
         const mInfo = (await dbRun(
           "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 1, 'admin', ?)",
@@ -1381,7 +1384,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
-        return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
       if (accountType === 'student') {
@@ -1579,10 +1582,10 @@ async function startServer() {
         ? (role === 'admin' ? 'admin_signup' : 'student_signup')
         : pending.intent;
       if (effectiveIntent === 'admin_signup') {
-        const cleanTeam = (teamName || '').trim();
-        if (!cleanTeam) return res.status(400).json({ error: "Team name is required" });
+        const identity: any = await resolveTeamIdentity(teamNumber, teamName);
+        if (identity.error) return res.status(400).json({ error: identity.error });
         const code = await uniqueAccessCode();
-        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", cleanTeam, (teamNumber || '').trim(), code)) as any;
+        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number) VALUES (?, ?, ?, ?)", identity.name, identity.number, code, identity.ftcNumber)) as any;
         const teamId = tInfo.lastInsertRowid;
         const mInfo = (await dbRun(
           `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes, avatar_url) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?, ?)`,
@@ -1591,7 +1594,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
-        return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
       if (effectiveIntent === 'student_signup') {
@@ -2204,23 +2207,73 @@ async function startServer() {
   }
 
   // Look up any FTC team number (admin) — used to verify before saving
+  // Shared FTC team-number lookup with a 24h cache (used by the admin settings
+  // lookup and the public signup lookup below).
+  const ftcLookupCache = new Map<string, { at: number; data: any }>();
+  async function lookupFtcTeam(number: number): Promise<any | null> {
+    const key = `lookup:${number}`;
+    const cached = ftcLookupCache.get(key);
+    if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.data;
+    const data = await ftcQuery(
+      `query Lookup($number: Int!) { teamByNumber(number: $number) { number name schoolName rookieYear location { city state country } } }`,
+      { number }
+    );
+    const team = data?.data?.teamByNumber || null;
+    if (team) ftcLookupCache.set(key, { at: Date.now(), data: team });
+    return team;
+  }
   app.get("/api/ftc/lookup", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
     const number = parseInt(String(req.query.number || ""), 10);
     if (!number || number <= 0) return res.status(400).json({ error: "Enter a valid team number" });
     try {
-      const data = await ftcQuery(
-        `query Lookup($number: Int!) { teamByNumber(number: $number) { number name schoolName rookieYear location { city state country } } }`,
-        { number }
-      );
-      const team = data?.data?.teamByNumber;
+      const team = await lookupFtcTeam(number);
       if (!team) return res.status(404).json({ error: "No FTC team found with that number" });
       res.json(team);
     } catch (e: any) {
       res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
     }
   });
+
+  // Public variant for signup: no auth (the caller has no account yet).
+  // Returns only the identity fields needed to verify a team.
+  app.get("/api/ftc/lookup-public", async (req, res) => {
+    const number = parseInt(String(req.query.number || ""), 10);
+    if (!number || number <= 0) return res.status(400).json({ error: "Enter a valid team number" });
+    try {
+      const team = await lookupFtcTeam(number);
+      if (!team) return res.status(404).json({ error: "No FTC team found with that number" });
+      res.json({ number: team.number, name: team.name, schoolName: team.schoolName || null });
+    } catch (e: any) {
+      res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+    }
+  });
+
+  // Resolve the team's identity at signup: an FTC team number is verified
+  // against the official FTC record (name auto-filled from the number);
+  // otherwise a manual team name is required.
+  async function resolveTeamIdentity(teamNumber: any, teamName: any): Promise<
+    { name: string; number: string; ftcNumber: number | null } | { error: string }
+  > {
+    const numStr = String(teamNumber || "").trim();
+    const nameStr = String(teamName || "").trim();
+    const num = parseInt(numStr, 10);
+    if (numStr && num > 0) {
+      try {
+        const t = await lookupFtcTeam(num);
+        if (t && t.name) {
+          return { name: nameStr || t.name, number: numStr, ftcNumber: t.number };
+        }
+      } catch { /* FTC Scout unreachable — fall through to manual */ }
+      if (!nameStr) {
+        return { error: "No FTC team found with that number — enter your team name manually instead" };
+      }
+      return { name: nameStr, number: numStr, ftcNumber: null };
+    }
+    if (!nameStr) return { error: "Enter your FTC team number or your team name" };
+    return { name: nameStr, number: "", ftcNumber: null };
+  }
 
   // Connected team's season data: profile, OPR stats with ranks, event history
   async function getFtcTeamPayload(number: number, season: number): Promise<any> {
@@ -4265,6 +4318,22 @@ async function startServer() {
     return { text: src.replace(OUTREACH_BLOCK_RE, "").trim(), entries };
   }
 
+  // NavGPT coding handoff: the model ends its reply with a fenced ```switch block
+  // when the user's request is a coding task. Parse, validate, strip — the client
+  // renders a "Yes, switch to Bruno" button from the stripped signal.
+  const SWITCH_BLOCK_RE = /```switch\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractSwitchBlock(fullText: string): { text: string; switchTo: string | null } {
+    const src = String(fullText || "");
+    const m = src.match(SWITCH_BLOCK_RE);
+    if (!m) return { text: src, switchTo: null };
+    let switchTo: string | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      if (p && p.to === "bruno") switchTo = "bruno";
+    } catch { /* malformed JSON — treat as no switch */ }
+    return { text: src.replace(SWITCH_BLOCK_RE, "").trim(), switchTo };
+  }
+
   app.post("/api/ai/build-helper", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -4286,8 +4355,10 @@ async function startServer() {
       const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
       const fullContext = [teamContext, todayLine].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
-      // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on.
-      const navGptOn = await navGptActiveForTeam(auth.teamId);
+      // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
+      // unless the client explicitly asked for Bruno (the coding-handoff switch).
+      const personaOverride = req.body?.persona === "bruno" ? "bruno" : null;
+      const navGptOn = !personaOverride && (await navGptActiveForTeam(auth.teamId));
       const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", fullContext].filter(Boolean).join("\n\n");
       // After generation, handle a ```event block: create the calendar event,
       // strip the raw block, and append a confirmation line.
@@ -4335,7 +4406,13 @@ async function startServer() {
         }
         const userText = messages[messages.length - 1].text;
         const msgCount = (await dbGet("SELECT COUNT(*) AS n FROM bruno_messages WHERE chat_id = ?", chat.id)) as any;
-        (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'user', ?)", chat.id, String(userText).slice(0, 20000)));
+        // The NavGPT -> Bruno handoff re-sends the same coding question under the
+        // Bruno persona — don't persist a duplicate user message for it.
+        const lastStored = (await dbGet("SELECT role, text FROM bruno_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1", chat.id)) as any;
+        const dupUser = lastStored?.role === "user" && String(lastStored.text).slice(0, 20000) === String(userText).slice(0, 20000);
+        if (!dupUser) {
+          (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'user', ?)", chat.id, String(userText).slice(0, 20000)));
+        }
         if (!chat.title && (msgCount?.n || 0) === 0) {
           const autoTitle = String(userText).slice(0, 45).trim();
           (await dbRun("UPDATE bruno_chats SET title = ? WHERE id = ?", (autoTitle || "New chat") + (String(userText).length > 45 ? "…" : ""), chat.id));
@@ -4347,7 +4424,9 @@ async function startServer() {
         res.setHeader("Cache-Control", "no-cache");
         try {
           const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra);
-          const finalText = await applyOutreachBlock(await applyEventBlock(fullText));
+          // Strip the NavGPT ```switch handoff block before persisting (the live
+          // client strips it for display itself and renders the switch button).
+          const finalText = await applyOutreachBlock(await applyEventBlock(extractSwitchBlock(fullText).text));
           if (chat && String(finalText || "").trim()) {
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
@@ -4359,7 +4438,7 @@ async function startServer() {
         return;
       }
       const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra);
-      const finalResult = await applyOutreachBlock(await applyEventBlock(String(result || "")));
+      const finalResult = await applyOutreachBlock(await applyEventBlock(extractSwitchBlock(String(result || "")).text));
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {

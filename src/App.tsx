@@ -68,7 +68,9 @@ import {
   Timer,
   Keyboard,
   Camera,
-  LayoutGrid
+  LayoutGrid,
+  BadgeCheck,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -327,6 +329,115 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEna
   </AuthShell>
 );
 
+ // Admin signup: FTC team number is verified against the official FTC record and
+// the team name is auto-filled from it — no manual team name needed. Falls back
+// to a manual name field when the number isn't an FTC team.
+const AdminTeamFields = ({ teamNumber, setTeamNumber, teamName, setTeamName, label }: {
+  teamNumber: string; setTeamNumber: (v: string) => void;
+  teamName: string; setTeamName: (v: string) => void;
+  label: (t: string) => React.ReactNode;
+}) => {
+  const [lookup, setLookup] = useState<'idle' | 'loading' | 'found' | 'notfound' | 'error'>('idle');
+  const [foundName, setFoundName] = useState('');
+  const [foundSchool, setFoundSchool] = useState<string | null>(null);
+  const [manual, setManual] = useState(false);
+  const timer = useRef<any>(null);
+
+  const doLookup = async (num: string) => {
+    const n = num.trim();
+    if (!/^\d+$/.test(n)) {
+      setLookup('idle'); setFoundName(''); setFoundSchool(null);
+      return;
+    }
+    setLookup('loading');
+    try {
+      const res = await fetch(`/api/ftc/lookup-public?number=${encodeURIComponent(n)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFoundName(data.name || '');
+        setFoundSchool(data.schoolName || null);
+        setLookup('found');
+        setManual(false);
+        setTeamName(data.name || '');
+      } else {
+        setLookup('notfound');
+        setFoundName('');
+        setTeamName('');
+      }
+    } catch {
+      setLookup('error');
+      setTeamName('');
+    }
+  };
+
+  const onNumChange = (v: string) => {
+    setTeamNumber(v);
+    if (timer.current) clearTimeout(timer.current);
+    if (!v.trim()) {
+      setLookup('idle'); setFoundName(''); setFoundSchool(null); setTeamName('');
+      return;
+    }
+    timer.current = setTimeout(() => doLookup(v), 600);
+  };
+
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  return (
+    <>
+      <div className="space-y-1.5">
+        {label('FTC team number')}
+        <Input
+          required
+          inputMode="numeric"
+          value={teamNumber}
+          onChange={(e: any) => onNumChange(e.target.value)}
+          placeholder="e.g. 4215"
+        />
+        {lookup === 'loading' && (
+          <p className="text-xs text-text-muted flex items-center gap-1.5">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Looking up your team…
+          </p>
+        )}
+        {lookup === 'found' && (
+          <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5">
+            <BadgeCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white truncate">{foundName}</p>
+              {foundSchool && <p className="text-xs text-text-muted truncate">{foundSchool}</p>}
+              <p className="text-[11px] text-emerald-400 font-semibold mt-0.5">Verified FTC team — you're all set</p>
+            </div>
+          </div>
+        )}
+        {(lookup === 'notfound' || lookup === 'error') && !manual && (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+            <p className="text-xs text-text-muted">
+              {lookup === 'notfound'
+                ? "Couldn't find that number in the FTC database."
+                : "Couldn't reach the team lookup right now."}{" "}
+              <button type="button" onClick={() => setManual(true)} className="text-accent font-semibold hover:underline">
+                Enter your team name manually
+              </button>
+            </p>
+          </div>
+        )}
+      </div>
+      {manual && (
+        <div className="space-y-1.5">
+          {label('Team name')}
+          <Input required value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Circuit Breakers" />
+        </div>
+      )}
+      {manual && lookup !== 'idle' && (
+        <p className="text-xs text-text-muted -mt-2">
+          <button type="button" onClick={() => { setManual(false); setTeamName(''); doLookup(teamNumber); }} className="text-accent font-semibold hover:underline">
+            Try the team number lookup again
+          </button>
+        </p>
+      )}
+    </>
+  );
+};
+
 const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
   mode: 'admin' | 'student';
   onBack: () => void;
@@ -402,10 +513,7 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
             </div>
           </div>
           {mode === 'admin' ? (
-            <>
-              <div className="space-y-1.5">{label('Team name')}<Input required value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Circuit Breakers" /></div>
-              <div className="space-y-1.5">{label('Team number (optional)')}<Input value={teamNumber} onChange={(e: any) => setTeamNumber(e.target.value)} placeholder="e.g. 12345" /></div>
-            </>
+            <AdminTeamFields teamNumber={teamNumber} setTeamNumber={setTeamNumber} teamName={teamName} setTeamName={setTeamName} label={label} />
           ) : (
             <div className="space-y-1.5">
               {label('Team access code')}
@@ -515,10 +623,7 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
             </div>
           )}
           {isAdmin ? (
-            <>
-              <div className="space-y-1.5">{label('Team name')}<Input required value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Circuit Breakers" /></div>
-              <div className="space-y-1.5">{label('Team number (optional)')}<Input value={teamNumber} onChange={(e: any) => setTeamNumber(e.target.value)} placeholder="e.g. 12345" /></div>
-            </>
+            <AdminTeamFields teamNumber={teamNumber} setTeamNumber={setTeamNumber} teamName={teamName} setTeamName={setTeamName} label={label} />
           ) : (
             <div className="space-y-1.5">
               {label('Team access code')}
@@ -540,7 +645,7 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
 };
 
 // Shown to a new admin right after signup so they can share their access code
-const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code: string }; onEnter: () => void }) => {
+const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code: string; verified?: boolean }; onEnter: () => void }) => {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try { await navigator.clipboard.writeText(team.access_code); } catch { /* clipboard unavailable */ }
@@ -556,7 +661,13 @@ const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code
           </div>
           <h1 className="text-2xl font-display font-bold text-white tracking-tight">Workspace ready</h1>
           <p className="text-text-muted text-sm mt-2 leading-relaxed">
-            <span className="text-white font-semibold">{team.name}</span> is set up. Share this access code with your students — they'll enter it when they sign up to join automatically.
+            <span className="text-white font-semibold">{team.name}</span> is set up.
+            {team.verified && (
+              <span className="inline-flex items-center gap-1 ml-1.5 text-emerald-400 font-semibold text-sm align-middle">
+                <BadgeCheck className="w-4 h-4" /> Verified FTC team
+              </span>
+            )}{" "}
+            Share this access code with your students — they'll enter it when they sign up to join automatically.
           </p>
           <button
             onClick={copy}
@@ -1885,7 +1996,12 @@ export default function App() {
                               <Layers className="w-4 h-4 text-accent" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                              <p className="text-sm font-bold text-white truncate flex items-center gap-1.5">
+                                <span className="truncate">{t.name}</span>
+                                {t.ftc_team_number ? (
+                                  <BadgeCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                ) : null}
+                              </p>
                               <p className="text-[11px] text-text-muted font-mono">Code: {t.access_code}</p>
                             </div>
                             {t.id === currentTeamId && <Check className="w-4 h-4 text-accent flex-shrink-0" />}
