@@ -62,7 +62,7 @@ import {
 } from 'recharts';
 import Markdown from 'react-markdown';
 import BuildHelperChat from './components/BuildHelperChat';
-import { FtcTeamCard, TeamStatsView } from './components/FtcStats';
+import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
@@ -564,6 +564,10 @@ export default function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // True once the initial session check has finished. Until then we show a
+  // minimal splash — never the landing page — so a refresh never flashes the
+  // marketing homepage before the app shell appears.
+  const [authReady, setAuthReady] = useState(false);
   const [authScreen, setAuthScreen] = useState<'landing' | 'login' | 'role' | 'signup-admin' | 'signup-student' | 'code-reveal'>('landing');
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
@@ -717,7 +721,10 @@ export default function App() {
           }
         })
         .catch(() => setGoogleError('Google sign-in failed. Please try again.'))
-        .finally(() => window.history.replaceState({}, '', window.location.pathname));
+        .finally(() => {
+          window.history.replaceState({}, '', window.location.pathname);
+          setAuthReady(true);
+        });
     } else {
       // Restore a saved password-login session, if any
       const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
@@ -733,7 +740,10 @@ export default function App() {
               localStorage.removeItem('sessionId');
             }
           })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => setAuthReady(true));
+      } else {
+        setAuthReady(true);
       }
     }
   }, []);
@@ -1134,6 +1144,16 @@ export default function App() {
     );
   };
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-primary flex items-center justify-center">
+        <div className="w-14 h-14 bg-accent rounded-2xl flex items-center justify-center animate-pulse">
+          <Bolt className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
+        </div>
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     // A brand-new Google user just finished OAuth — collect their last signup
     // step first. This must come before the landing screen or the callback
@@ -1332,7 +1352,7 @@ export default function App() {
               </div>
             )}
             {isSidebarOpen && (
-              <button onClick={handleLogout} className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
+              <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
                 <LogOut className="w-4 h-4" />
               </button>
             )}
@@ -1349,8 +1369,8 @@ export default function App() {
       </motion.aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto bg-primary custom-scrollbar relative h-screen">
-        <header className="sticky top-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between">
+      <main className="flex-1 flex flex-col min-h-0 bg-primary relative h-screen">
+        <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <button 
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -1432,10 +1452,10 @@ export default function App() {
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.2 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.12, ease: 'easeOut' }}
               className="flex flex-col flex-1 min-h-0"
             >
               {loading ? (
@@ -1585,6 +1605,9 @@ function CookieConsent() {
 // --- View Components ---
 
 function DashboardView({ data, currentUser, onRefresh, settings, setLoading, insights, updateInsights, isAiLoading, setIsAiLoading, ThinkingIndicator, updateSummary, colorVersion, teams }: any) {
+  const [aiTab, setAiTab] = useState<'summary' | 'insights'>('summary');
+  const navigate = useNavigate();
+  const ftc = useFtcTeam();
   const [showOut, setShowOut] = useState(false);
   const [outReason, setOutReason] = useState('');
   const [copiedCode, setCopiedCode] = useState(false);
@@ -1671,171 +1694,216 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
-      <FtcTeamCard />
-      {myTeam && (
-        <Card className="lg:col-span-3" icon={KeyRound} title="Team Access Code" subtitle="Share this with students so they can join your workspace">
-          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-            <p className="text-xl sm:text-2xl font-mono font-bold text-accent tracking-[0.15em] break-all">{myTeam.access_code}</p>
-            <div className="flex gap-2 ml-auto">
-              <Button variant="secondary" onClick={copyAccessCode} className="text-sm">
-                {copiedCode ? <><Check className="w-4 h-4 text-emerald-400" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
-              </Button>
-              <Button variant="ghost" onClick={regenerateCode} className="text-sm">Regenerate</Button>
+    <>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3">
+      {/* ── KPI row ─────────────────────────────────────────── */}
+      <Card className="xl:col-span-3 p-3 gap-3" icon={Trophy} title="FTC Standing" subtitle={ftc.data ? `Team ${ftc.data.number} · ${seasonLabel(ftc.season)}` : 'Connect your team in Settings'}>
+        {ftc.loading ? (
+          <div className="h-14 flex items-center"><div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" /></div>
+        ) : ftc.data?.opr?.tot ? (
+          <div className="flex items-end justify-between gap-2">
+            <div>
+              <p className="text-2xl font-display font-bold text-accent leading-none">#{ftc.data.opr.tot.rank?.toLocaleString() ?? '–'}</p>
+              <p className="text-[11px] text-text-muted mt-1.5">OPR {ftc.data.opr.tot.value} · world rank</p>
             </div>
+            <button onClick={() => navigate('/stats')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">Full stats →</button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-text-muted">No team connected</p>
+            <button onClick={() => navigate('/settings')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">Connect →</button>
+          </div>
+        )}
+      </Card>
+
+      <Card className="xl:col-span-3 p-3 gap-3" icon={CalendarCheck} title="Attendance" subtitle={todayAttendance.length > 0 ? "Today's session" : 'All-time average'}>
+        <div className="flex items-end justify-between gap-2">
+          <p className="text-2xl font-display font-bold text-white leading-none">{attendanceRate}<span className="text-lg text-text-muted">%</span></p>
+          <button onClick={() => navigate('/attendance')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">Details →</button>
+        </div>
+      </Card>
+
+      <Card className="xl:col-span-3 p-3 gap-3" icon={CheckSquare} title="Open Tasks" subtitle={`${data.tasks?.length || 0} total tasks`}>
+        <div className="flex items-end justify-between gap-2">
+          <p className="text-2xl font-display font-bold text-blue-400 leading-none">{activeTasks}</p>
+          <button onClick={() => navigate('/tasks')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">View all →</button>
+        </div>
+      </Card>
+
+      <Card className="xl:col-span-3 p-3 gap-3" icon={Wallet} title="Budget" subtitle="Net balance">
+        <div className="flex items-end justify-between gap-2">
+          <p className="text-2xl font-display font-bold text-emerald-400 leading-none truncate">${totalBudget.toLocaleString()}</p>
+          <button onClick={() => navigate('/budget')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">View →</button>
+        </div>
+      </Card>
+
+      {/* ── FTC team detail + access code ───────────────────── */}
+      <Card className="md:col-span-2 xl:col-span-8 p-3 gap-3" icon={Trophy} title="Team Performance" subtitle={ftc.data ? `${ftc.data.name} · ftc-scout.org` : 'FTC Scout integration'}>
+        {ftc.loading ? (
+          <div className="flex items-center gap-3 py-6"><div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" /><p className="text-sm text-text-muted animate-pulse">Loading stats…</p></div>
+        ) : ftc.notConnected ? (
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 py-2">
+            <p className="text-sm text-text-muted flex-1">Connect your FTC team number to see live OPR, rankings, and event history here.</p>
+            <Button onClick={() => navigate('/settings')} className="text-sm w-fit">Connect team</Button>
+          </div>
+        ) : ftc.data ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="bg-accent text-accent-ink font-display font-bold px-2.5 py-0.5 rounded-lg text-sm shrink-0">#{ftc.data.number}</span>
+                <div className="min-w-0">
+                  <p className="text-white font-bold leading-tight text-sm truncate">{ftc.data.name}</p>
+                  <p className="text-[10px] text-text-muted truncate">{[ftc.data.school, ftc.data.city, ftc.data.state].filter(Boolean).join(' · ')}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap gap-1">
+                  {ftc.data.seasons.map((s: number) => (
+                    <button key={s} onClick={() => ftc.setSeason(s)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${s === ftc.season ? 'bg-accent text-accent-ink' : 'bg-white/5 text-text-muted hover:text-white border border-white/10'}`}>
+                      {s}–{String(s + 1).slice(2)}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => navigate('/stats')} className="text-[11px] font-bold text-accent hover:opacity-80 whitespace-nowrap">Full stats →</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {[['Total OPR', ftc.data.opr.tot], ['Auto', ftc.data.opr.auto], ['TeleOp', ftc.data.opr.dc], ['Endgame', ftc.data.opr.eg]].map(([label, stat]: any) => (
+                <div key={label as string} className="px-2 py-1.5 bg-white/5 rounded-lg border border-white/5 min-w-0">
+                  <p className="text-[9px] text-text-muted uppercase font-bold tracking-wider truncate">{label}</p>
+                  <p className="text-base font-display font-bold text-white leading-tight truncate">{stat?.value ?? '—'} <span className="text-[10px] text-accent font-bold">{stat?.rank != null ? `#${stat.rank.toLocaleString()}` : ''}</span></p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 py-4">
+            <p className="text-sm text-text-muted flex-1">{ftc.error || 'Stats unavailable.'}</p>
+            <Button variant="secondary" onClick={ftc.refresh} className="text-sm">Retry</Button>
+          </div>
+        )}
+      </Card>
+
+      {myTeam && (
+        <Card className="xl:col-span-4 p-3 gap-3" icon={KeyRound} title="Team Access Code" subtitle="Students join with this code">
+          <p className="text-xl font-mono font-bold text-accent tracking-[0.12em] break-all">{myTeam.access_code}</p>
+          <div className="flex gap-2 mt-1">
+            <Button variant="secondary" onClick={copyAccessCode} className="text-xs flex-1">
+              {copiedCode ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+            </Button>
+            <Button variant="ghost" onClick={regenerateCode} className="text-xs">Regenerate</Button>
           </div>
         </Card>
       )}
-      <Card title="Club Health" icon={TrendingUp} className="lg:col-span-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-          <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <p className="text-xs text-text-muted uppercase font-bold mb-1">Attendance {todayAttendance.length > 0 ? '(Today)' : '(Avg)'}</p>
-            <p className="text-2xl sm:text-3xl font-display font-bold text-accent">{attendanceRate}%</p>
-          </div>
-          <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <p className="text-xs text-text-muted uppercase font-bold mb-1">Budget</p>
-            <p className="text-2xl sm:text-3xl font-display font-bold text-emerald-400 truncate">${totalBudget.toLocaleString()}</p>
-          </div>
-          <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
-            <p className="text-xs text-text-muted uppercase font-bold mb-1">Active Tasks</p>
-            <p className="text-2xl sm:text-3xl font-display font-bold text-blue-400">{activeTasks}</p>
-          </div>
-        </div>
-        
-        <div className="mt-6 h-64 min-h-[250px] w-full">
+
+      {/* ── Attendance trend + up next ──────────────────────── */}
+      <Card className="md:col-span-2 xl:col-span-7 p-3 gap-3" icon={TrendingUp} title="Attendance Trend" subtitle="Present check-ins · last 14 days">
+        <div className="h-10 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-              <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} />
-              <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} />
-              <Tooltip 
+              <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} interval={2} />
+              <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
+              <Tooltip
                 contentStyle={{ backgroundColor: secondaryColor, border: '1px solid #ffffff20', borderRadius: '12px' }}
                 itemStyle={{ color: accentColor }}
               />
-              <Line type="monotone" dataKey="count" stroke={accentColor} strokeWidth={3} dot={{ fill: accentColor, strokeWidth: 2, r: 4 }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="count" stroke={accentColor} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
-
-        <div className="mt-8 pt-8 border-t border-white/5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Zap className="w-5 h-5 text-accent" />
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider">Attendance Insights</h4>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => updateInsights()} disabled={isAiLoading}>
-              <Zap className="w-3 h-3 mr-1" /> {insights ? "Refresh Insights" : "Generate Insights"}
-            </Button>
-          </div>
-          <div className="text-sm text-white/80 leading-relaxed prose prose-invert max-w-none">
-            {isAiLoading && !insights ? (
-              <ThinkingIndicator />
-            ) : insights ? (
-              <Markdown>{insights}</Markdown>
-            ) : (
-              <p className="text-xs text-text-muted/70 italic">Click generate to analyze attendance patterns and club health.</p>
-            )}
-          </div>
-        </div>
       </Card>
 
-      <Card title="Personal Status" icon={User} className="md:col-span-1">
-        <div className="space-y-4">
-          {myStatus ? (
-            <div className={cn(
-              "p-4 rounded-xl border flex flex-col gap-2 transition-all",
-              myStatus.status === 'P' ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" :
-              myStatus.status === 'A' ? "bg-rose-500/10 border-rose-500/30 text-rose-400" :
-              myStatus.status === 'L' ? "bg-amber-500/10 border-amber-500/30 text-amber-400" :
-              "bg-blue-500/10 border-blue-500/30 text-blue-400"
-            )}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <CalendarCheck className="w-4 h-4" />
-                  <span className="text-sm font-bold">Today: {
-                    myStatus.status === 'P' ? 'Present' : 
-                    myStatus.status === 'A' ? 'Absent' : 
-                    myStatus.status === 'E' ? 'Excused' : 
-                    myStatus.status === 'L' ? 'Late' : 'Other'
-                  }</span>
-                </div>
-                <Button variant="ghost" size="sm" onClick={() => handleSelfReport('-')} className="p-1 h-auto text-[10px] opacity-50 hover:opacity-100">Reset</Button>
+      <Card className="xl:col-span-5 p-3 gap-3" icon={Calendar} title="Up Next" subtitle="Events & open tasks">
+        <div className="space-y-2 max-h-20 overflow-y-auto custom-scrollbar pr-1">
+          {(data.events || []).filter((e: any) => e.date >= today).sort((a: any, b: any) => String(a.date).localeCompare(String(b.date))).slice(0, 3).map((e: any) => (
+            <div key={`e-${e.id}`} className="flex items-center gap-3 p-2 bg-white/5 rounded-xl border border-white/5">
+              <div className="w-9 h-9 rounded-lg bg-accent/15 flex flex-col items-center justify-center shrink-0">
+                <span className="text-[9px] font-bold text-accent uppercase leading-none">{format(new Date(e.date + 'T12:00:00'), 'MMM')}</span>
+                <span className="text-sm font-display font-bold text-white leading-none">{format(new Date(e.date + 'T12:00:00'), 'd')}</span>
               </div>
-              {myStatus.reason && <p className="text-xs italic opacity-80">"{myStatus.reason}"</p>}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-xs text-text-muted">Mark your status for today's session:</p>
-              <div className="grid grid-cols-2 gap-2">
-                <Button onClick={() => handleSelfReport('P')} variant="outline" className="border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10" disabled={isAiLoading}>
-                  <CheckSquare className="w-4 h-4" /> I'm Here
-                </Button>
-                <Button onClick={() => handleSelfReport('L')} variant="outline" className="border-amber-500/50 text-amber-400 hover:bg-amber-500/10" disabled={isAiLoading}>
-                  <Clock className="w-4 h-4" /> I'm Late
-                </Button>
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-white truncate">{e.title}</p>
+                <p className="text-[10px] text-text-muted">{e.start_time || ''}{e.location ? ` · ${e.location}` : ''}</p>
               </div>
-              <Button onClick={() => setShowOut(true)} variant="secondary" className="w-full" disabled={isAiLoading}>
-                <LogOut className="w-4 h-4" /> Log Absence
-              </Button>
-            </div>
-          )}
-        </div>
-      </Card>
-
-      <Card title="Upcoming Tasks" className="md:col-span-1">
-        <div className="space-y-3">
-          {data.tasks.filter((t: any) => t.status !== 'done').slice(0, 5).map((task: any) => (
-            <div key={task.id} className="p-3 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-bold text-white">{task.title}</p>
-                <p className="text-[10px] text-text-muted">Due: {task.due_date}</p>
-              </div>
-              <div className={cn(
-                "w-2 h-2 rounded-full",
-                task.status === 'todo' ? 'bg-slate-500' : 'bg-blue-400'
-              )} />
             </div>
           ))}
-        </div>
-      </Card>
-
-      <Card title="Upcoming Events" icon={Calendar} className="md:col-span-1">
-        <div className="space-y-3">
-          {(() => {
-            const upcoming = (data.events || [])
-              .filter((e: any) => e.date >= today)
-              .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)))
-              .slice(0, 5);
-            if (upcoming.length === 0) {
-              return <p className="text-xs text-text-muted/70 italic">No upcoming events scheduled.</p>;
-            }
-            return upcoming.map((e: any) => (
-              <div key={e.id} className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <p className="text-sm font-bold text-white truncate">{e.title}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">
-                  {e.date}{e.start_time ? ` · ${e.start_time}` : ''}{e.location ? ` · ${e.location}` : ''}
-                </p>
+          {(data.tasks || []).filter((t: any) => t.status !== 'done').slice(0, 3).map((t: any) => (
+            <div key={`t-${t.id}`} className="flex items-center gap-3 p-2 bg-white/5 rounded-xl border border-white/5">
+              <div className={cn('w-2 h-2 rounded-full shrink-0 ml-3.5', t.status === 'todo' ? 'bg-slate-500' : 'bg-blue-400')} />
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-white truncate">{t.title}</p>
+                <p className="text-[10px] text-text-muted">Task{t.due_date ? ` · due ${t.due_date}` : ''}</p>
               </div>
-            ));
-          })()}
-        </div>
-      </Card>
-
-      <Card title="AI Activity Summary" icon={Zap} className="md:col-span-2">
-        <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-2">
-          <p className="text-[10px] text-text-muted/70 uppercase font-bold tracking-widest">Recent Activity</p>
-          <Button variant="ghost" size="sm" className="h-6 text-[10px] text-accent px-2" onClick={updateSummary} disabled={isAiLoading}>
-            <Clock className="w-3 h-3 mr-1" /> Refresh
-          </Button>
-        </div>
-        <div className="text-sm text-white/80 leading-relaxed prose prose-invert max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
-          {isAiLoading && !data.summary ? (
-            <ThinkingIndicator />
-          ) : (
-            <Markdown>{data.summary || "No summary available."}</Markdown>
+            </div>
+          ))}
+          {(data.events || []).filter((e: any) => e.date >= today).length === 0 && (data.tasks || []).filter((t: any) => t.status !== 'done').length === 0 && (
+            <p className="text-xs text-text-muted/70 italic py-2">Nothing scheduled — enjoy the calm.</p>
           )}
         </div>
       </Card>
+
+      {/* ── AI activity + my status ─────────────────────────── */}
+      <Card className="md:col-span-2 xl:col-span-7 p-3 gap-3" icon={Zap} title="AI Activity" subtitle="Summaries & attendance insights">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
+            {(['summary', 'insights'] as const).map(t => (
+              <button key={t} onClick={() => setAiTab(t)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${aiTab === t ? 'bg-accent text-accent-ink' : 'text-text-muted hover:text-white'}`}>
+                {t === 'summary' ? 'Summary' : 'Insights'}
+              </button>
+            ))}
+          </div>
+          {aiTab === 'summary' ? (
+            <Button variant="ghost" size="sm" className="h-7 text-[11px] text-accent" onClick={() => updateSummary(true)} disabled={isAiLoading}>
+              <Clock className="w-3 h-3 mr-1" /> Refresh
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={() => updateInsights()} disabled={isAiLoading} className="text-[11px] h-7">
+              {insights ? 'Refresh' : 'Generate'}
+            </Button>
+          )}
+        </div>
+        <div className="text-[13px] text-white/80 leading-relaxed prose prose-invert max-w-none max-h-16 min-h-[48px] overflow-y-auto custom-scrollbar pr-1">
+          {aiTab === 'summary' ? (
+            isAiLoading && !data.summary ? <ThinkingIndicator /> : <Markdown>{data.summary || 'No summary available yet.'}</Markdown>
+          ) : (
+            isAiLoading && !insights ? <ThinkingIndicator /> : insights ? <Markdown>{insights}</Markdown> : <p className="text-xs text-text-muted/70 italic">Generate AI insights from your attendance data.</p>
+          )}
+        </div>
+      </Card>
+
+      <Card className="xl:col-span-5 p-3 gap-3" icon={User} title="My Status" subtitle="Today's check-in">
+        {myStatus ? (
+          <div className={cn(
+            'p-3 rounded-xl border flex items-center justify-between gap-2',
+            myStatus.status === 'P' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+            myStatus.status === 'A' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
+            myStatus.status === 'L' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
+            'bg-blue-500/10 border-blue-500/30 text-blue-400'
+          )}>
+            <span className="text-sm font-bold flex items-center gap-2">
+              <CalendarCheck className="w-4 h-4" />
+              {myStatus.status === 'P' ? 'Present' : myStatus.status === 'A' ? 'Absent' : myStatus.status === 'E' ? 'Excused' : myStatus.status === 'L' ? 'Late' : 'Other'}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => handleSelfReport('-')} className="h-7 text-[11px] opacity-60 hover:opacity-100">Reset</Button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <Button onClick={() => handleSelfReport('P')} variant="outline" className="flex-1 text-xs border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10" disabled={isAiLoading}>
+              <CheckSquare className="w-3.5 h-3.5" /> I'm Here
+            </Button>
+            <Button onClick={() => handleSelfReport('L')} variant="outline" className="flex-1 text-xs border-amber-500/50 text-amber-400 hover:bg-amber-500/10" disabled={isAiLoading}>
+              <Clock className="w-3.5 h-3.5" /> Late
+            </Button>
+            <Button onClick={() => setShowOut(true)} variant="secondary" className="text-xs" disabled={isAiLoading}>
+              <LogOut className="w-3.5 h-3.5" /> Out
+            </Button>
+          </div>
+        )}
+      </Card>
+    </div>
 
       {showOut && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -1858,7 +1926,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
           </Card>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
