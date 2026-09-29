@@ -93,6 +93,7 @@ import { CodeView } from './components/CodeView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
 import Landing from './Landing';
+import LegalPage from './Legal';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -1611,6 +1612,12 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  // Public legal pages — reachable without login so OAuth app reviewers
+  // (TikTok, Google) can verify them. Rendered outside the auth flow.
+  if (location.pathname === '/privacy' || location.pathname === '/terms') {
+    return <LegalPage page={location.pathname === '/privacy' ? 'privacy' : 'terms'} />;
   }
 
   if (!isLoggedIn) {

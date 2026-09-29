@@ -380,6 +380,10 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
             <span className="font-display font-bold">Control Point</span>
           </div>
           <p className="text-xs text-text-muted">Mission control for robotics teams.</p>
+          <div className="flex items-center gap-5 text-xs text-text-muted">
+            <a href="/privacy" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="/terms" className="hover:text-white transition-colors">Terms of Service</a>
+          </div>
         </div>
       </footer>
     </div>
