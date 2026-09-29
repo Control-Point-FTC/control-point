@@ -3,6 +3,7 @@ import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Send, ExternalLink, Sparkles } from 'lucide-react';
 import { streamBuildHelper, type BuildHelperMessage } from '../services/aiService';
+import { apiFetch } from '../services/api';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
@@ -18,11 +19,13 @@ const STARTERS = [
   'How do I tune PID for our lift?',
 ];
 
-export default function BuildHelperChat() {
+export default function BuildHelperChat({ currentUser }: any) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [chatId, setChatId] = useState<number | null>(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,10 +33,52 @@ export default function BuildHelperChat() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, open]);
 
+  // Resume the user's most recent chat when the widget first opens — no silent ephemeral chats
+  useEffect(() => {
+    if (!open || historyLoaded) return;
+    setHistoryLoaded(true);
+    (async () => {
+      try {
+        const res = await apiFetch('/api/bruno/chats');
+        if (!res.ok) return;
+        const list = await res.json();
+        const mine = currentUser ? list.filter((c: any) => c.member_id === currentUser.id) : list;
+        const recent = mine[0];
+        if (!recent) return;
+        setChatId(recent.id);
+        const r2 = await apiFetch(`/api/bruno/chats/${recent.id}`);
+        if (r2.ok) {
+          const data = await r2.json();
+          setMessages((data.messages || []).map((m: any) => ({ role: m.role, text: m.text })));
+        }
+      } catch {
+        /* fall back to ephemeral */
+      }
+    })();
+  }, [open, historyLoaded, currentUser]);
+
+  const ensureChat = async (): Promise<number | null> => {
+    if (chatId) return chatId;
+    try {
+      const res = await apiFetch('/api/bruno/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) return null;
+      const created = await res.json();
+      setChatId(created.id);
+      return created.id;
+    } catch {
+      return null;
+    }
+  };
+
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
     if (!content || busy) return;
     setInput('');
+    const id = await ensureChat();
     const next: BuildHelperMessage[] = [...messages, { role: 'user', text: content }];
     setMessages(next);
     setBusy(true);
@@ -43,7 +88,7 @@ export default function BuildHelperChat() {
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
         setMessages([...next, { role: 'model', text: agg }]);
-      });
+      }, id || undefined);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: "Bruno hit a snag — please try again in a moment." }]);
       }

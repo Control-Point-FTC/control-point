@@ -143,9 +143,9 @@ export interface BuildHelperMessage {
   text: string;
 }
 
-export async function getBuildHelper(messages: BuildHelperMessage[]) {
+export async function getBuildHelper(messages: BuildHelperMessage[], chatId?: number) {
   try {
-    const { result } = await postJSON('/api/ai/build-helper', { messages });
+    const { result } = await postJSON('/api/ai/build-helper', chatId ? { messages, chatId } : { messages });
     return result || "Bruno hit a snag — please try again in a moment.";
   } catch (error) {
     console.error('Error calling build helper:', error);
@@ -155,7 +155,8 @@ export async function getBuildHelper(messages: BuildHelperMessage[]) {
 
 export function streamBuildHelper(
   messages: BuildHelperMessage[],
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  chatId?: number
 ) {
-  return postStream('/api/ai/build-helper', { messages }, onChunk);
+  return postStream('/api/ai/build-helper', chatId ? { messages, chatId } : { messages }, onChunk);
 }

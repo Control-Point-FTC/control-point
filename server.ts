@@ -230,6 +230,27 @@ import {
     UNIQUE(team_id)
   );
 
+  CREATE TABLE IF NOT EXISTS bruno_chats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    member_id INTEGER NOT NULL, -- owner
+    title TEXT,
+    is_public INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(team_id) REFERENCES teams(id),
+    FOREIGN KEY(member_id) REFERENCES members(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS bruno_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    role TEXT NOT NULL, -- 'user' | 'model'
+    text TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(chat_id) REFERENCES bruno_chats(id)
+  );
+
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     member_id INTEGER NOT NULL,
@@ -2523,11 +2544,31 @@ async function startServer() {
       const maxTokens = await getMaxTokens("max_tokens_chat", 1024);
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
+      // Optional chat persistence: validate access, store the user message now
+      const chatId = parseInt(req.body?.chatId, 10) || 0;
+      let chat: any = null;
+      if (chatId) {
+        chat = await getBrunoChat(chatId, auth.teamId);
+        if (!chat || !canViewBrunoChat(chat, auth.memberId)) {
+          return res.status(403).json({ error: "Chat not found" });
+        }
+        const userText = messages[messages.length - 1].text;
+        const msgCount = (await dbGet("SELECT COUNT(*) AS n FROM bruno_messages WHERE chat_id = ?", chat.id)) as any;
+        (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'user', ?)", chat.id, String(userText).slice(0, 20000)));
+        if (!chat.title && (msgCount?.n || 0) === 0) {
+          const autoTitle = String(userText).slice(0, 45).trim();
+          (await dbRun("UPDATE bruno_chats SET title = ? WHERE id = ?", (autoTitle || "New chat") + (String(userText).length > 45 ? "…" : ""), chat.id));
+        }
+        (await dbRun("UPDATE bruno_chats SET updated_at = datetime('now') WHERE id = ?", chat.id));
+      }
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), teamContext);
+          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), teamContext);
+          if (chat && String(fullText || "").trim()) {
+            (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(fullText).slice(0, 20000)));
+          }
           res.end();
         } catch (err) {
           console.error("AI build-helper stream error:", err);
@@ -2536,11 +2577,111 @@ async function startServer() {
         return;
       }
       const result = await buildHelperChat(messages, maxTokens, undefined, teamContext);
-      res.json({ result });
+      if (chat) {
+        const modelText = String(result || "");
+        if (modelText.trim()) {
+          (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, modelText.slice(0, 20000)));
+        }
+      }
+      res.json({ result, chatId: chat ? chat.id : undefined });
     } catch (error) {
       console.error("AI build-helper error:", error);
       res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
     }
+  });
+
+  // --- Bruno chat history (persistent chats + public team chats) ---
+  async function getBrunoChat(chatId: number, teamId: number | null) {
+    if (!chatId || !teamId) return null;
+    return (await dbGet("SELECT * FROM bruno_chats WHERE id = ? AND team_id = ?", chatId, teamId)) as any;
+  }
+  function canViewBrunoChat(chat: any, memberId: number) {
+    return !!chat && (chat.member_id === memberId || chat.is_public === 1);
+  }
+
+  // List: my chats + team's public chats
+  app.get("/api/bruno/chats", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!auth.teamId) return res.json([]);
+    const chats = (await dbAll(`
+      SELECT c.*, m.name AS owner_name,
+        (SELECT COUNT(*) FROM bruno_messages WHERE chat_id = c.id) AS message_count
+      FROM bruno_chats c
+      LEFT JOIN members m ON c.member_id = m.id
+      WHERE c.team_id = ? AND (c.member_id = ? OR c.is_public = 1)
+      ORDER BY c.updated_at DESC
+    `, auth.teamId, auth.memberId)) as any[];
+    res.json(chats);
+  });
+
+  // Create a chat owned by the caller
+  app.post("/api/bruno/chats", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!auth.teamId) return res.status(400).json({ error: "No workspace" });
+    const title = typeof req.body?.title === "string" ? req.body.title.slice(0, 120) : null;
+    const info = (await dbRun(
+      "INSERT INTO bruno_chats (team_id, member_id, title) VALUES (?, ?, ?)",
+      auth.teamId, auth.memberId, title
+    )) as any;
+    const chat = (await dbGet("SELECT * FROM bruno_chats WHERE id = ?", info.lastInsertRowid));
+    res.json(chat);
+  });
+
+  // Get a chat + its messages (owner or public)
+  app.get("/api/bruno/chats/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const chat = await getBrunoChat(parseInt(req.params.id, 10), auth.teamId);
+    if (!chat || !canViewBrunoChat(chat, auth.memberId)) {
+      return res.status(403).json({ error: "Chat not found" });
+    }
+    const messages = (await dbAll(
+      "SELECT id, role, text, created_at FROM bruno_messages WHERE chat_id = ? ORDER BY id ASC",
+      chat.id
+    )) as any[];
+    res.json({ ...chat, messages });
+  });
+
+  // Rename / share — owner only (any member, including students, can share)
+  app.patch("/api/bruno/chats/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const chat = await getBrunoChat(parseInt(req.params.id, 10), auth.teamId);
+    if (!chat || chat.member_id !== auth.memberId) {
+      return res.status(403).json({ error: "Only the chat owner can change this" });
+    }
+    const updates: string[] = [];
+    const params: any[] = [];
+    if (typeof req.body?.title === "string") {
+      updates.push("title = ?");
+      params.push(req.body.title.slice(0, 120));
+    }
+    if (req.body?.is_public !== undefined) {
+      updates.push("is_public = ?");
+      params.push(req.body.is_public ? 1 : 0);
+    }
+    if (!updates.length) return res.status(400).json({ error: "Nothing to update" });
+    updates.push("updated_at = datetime('now')");
+    (await dbRun(`UPDATE bruno_chats SET ${updates.join(", ")} WHERE id = ?`, ...params, chat.id));
+    const updated = (await dbGet("SELECT * FROM bruno_chats WHERE id = ?", chat.id));
+    res.json(updated);
+  });
+
+  // Delete — owner or admin (messages go with it)
+  app.delete("/api/bruno/chats/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const chat = await getBrunoChat(parseInt(req.params.id, 10), auth.teamId);
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+    const isAdmin = auth.accountType === "admin";
+    if (chat.member_id !== auth.memberId && !isAdmin) {
+      return res.status(403).json({ error: "Only the chat owner or an admin can delete this" });
+    }
+    (await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", chat.id));
+    (await dbRun("DELETE FROM bruno_chats WHERE id = ?", chat.id));
+    res.json({ success: true });
   });
 
   app.post("/api/ai/activity-summary", async (req, res) => {

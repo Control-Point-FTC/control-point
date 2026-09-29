@@ -42,6 +42,7 @@ import {
   Download,
   Bolt,
   Code2,
+  Bot,
   Check,
   ShieldCheck,
   GraduationCap,
@@ -62,6 +63,7 @@ import {
 } from 'recharts';
 import Markdown from 'react-markdown';
 import BuildHelperChat from './components/BuildHelperChat';
+import BrunoView from './components/BrunoView';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
@@ -546,6 +548,7 @@ const navItems = [
   { id: 'comm', path: 'comm', label: 'Communication', icon: Mail },
   { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare },
   { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper },
+  { id: 'bruno', path: 'bruno', label: 'Bruno', icon: Bot },
   { id: 'profile', path: 'profile', label: 'My Profile', icon: UserCircle },
   { id: 'settings', path: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
   { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
@@ -1090,7 +1093,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'profile'];
+  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'bruno', 'profile'];
   const visibleTabs = navItems.filter((t) => {
     if ((t as any).ownerOnly) return isOwner;
     if (isAdmin) return !t.scope || hasScope(t.scope);
@@ -1144,6 +1147,7 @@ export default function App() {
         <Route path="/comm" element={<CommunicationView {...viewProps} />} />
         <Route path="/chat" element={<ChatView {...viewProps} />} />
         <Route path="/scout" element={<ScoutView {...viewProps} />} />
+        <Route path="/bruno" element={<BrunoView {...viewProps} />} />
         <Route path="/profile" element={<ProfileView {...viewProps} />} />
         <Route path="/settings" element={<SettingsView {...viewProps} />} />
         <Route path="/owner" element={<OwnerView {...viewProps} />} />
@@ -1534,7 +1538,7 @@ export default function App() {
       </main>
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <CookieConsent />
-      <BuildHelperChat />
+      <BuildHelperChat currentUser={currentUser} />
     </div>
   );
 }
