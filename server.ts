@@ -39,6 +39,16 @@ import {
   COACH_SYSTEM,
 } from "./ai.js";
 
+// Last-resort safety net: a single malformed request must never take the
+// whole server down for every team. Log it and keep serving; Render's
+// health checks stay green and no other team's session is affected.
+process.on("unhandledRejection", (reason) => {
+  console.error("[SafetyNet] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[SafetyNet] uncaughtException:", err);
+});
+
 // SECURITY: never expose password hashes to clients. Any member row that
 // leaves the server goes through sanitizeMember first; clients get a
 // `hasPassword` boolean instead of the hash.
@@ -890,6 +900,17 @@ async function wouldBeAdmin(memberId: number, teamId: number, excludedRoleId: nu
   for (const r of rows) {
     const p = parsePerms(r.permissions);
     if (p.includes("*") || p.includes("manage_members")) return true;
+  }
+  if (!rows.length && excludedRoleId) {
+    // The member holds role assignments, but none with admin perms would
+    // survive the exclusion — they would NOT still be an admin. Do not
+    // fall through to the legacy account_type flag here, or revoking the
+    // last Admin role strands the team with zero admins.
+    const anyRole = (await dbGet(
+      "SELECT 1 FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.member_id = ? AND r.team_id = ? LIMIT 1",
+      memberId, teamId
+    )) as any;
+    if (anyRole) return false;
   }
   if (!rows.length) {
     const m = (await dbGet("SELECT account_type FROM members WHERE id = ?", memberId)) as any;
@@ -2427,6 +2448,9 @@ async function startServer() {
     await ensureRolesSeeded(auth.teamId!);
     const memberId = parseInt(req.params.id, 10);
     const roleId = parseInt(req.body?.role_id, 10);
+    if (!Number.isFinite(memberId) || !Number.isFinite(roleId)) {
+      return res.status(400).json({ error: "Invalid member or role id" });
+    }
     const target = (await dbGet(
       "SELECT id FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", memberId, auth.teamId
     )) as any;
@@ -2445,6 +2469,9 @@ async function startServer() {
     await ensureRolesSeeded(auth.teamId!);
     const memberId = parseInt(req.params.id, 10);
     const roleId = parseInt(req.params.roleId, 10);
+    if (!Number.isFinite(memberId) || !Number.isFinite(roleId)) {
+      return res.status(400).json({ error: "Invalid member or role id" });
+    }
     const target = (await dbGet(
       "SELECT id, account_type FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", memberId, auth.teamId
     )) as any;

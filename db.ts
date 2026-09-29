@@ -15,7 +15,11 @@ export const dbClient = createClient({
 });
 
 type Args = any[];
-const norm = (args: Args): Args => args.map((a) => (a === undefined ? null : a));
+// `undefined` args are normalized to NULL. NaN is also normalized to NULL:
+// a non-numeric id must never reach the driver (libsql throws a RangeError
+// that would otherwise escape the request handler and kill the process).
+const norm = (args: Args): Args =>
+  args.map((a) => (a === undefined || (typeof a === "number" && Number.isNaN(a)) ? null : a));
 
 export async function dbGet<T = any>(sql: string, ...args: Args): Promise<T | undefined> {
   const r = await dbClient.execute({ sql, args: norm(args) });
