@@ -4990,7 +4990,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
             <Input type="number" value={maxTokensSummary} onChange={(e: any) => setMaxTokensSummary(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-text-muted uppercase">Volt Chat</label>
+            <label className="text-xs font-bold text-text-muted uppercase">Bruno Chat</label>
             <Input type="number" value={maxTokensChat} onChange={(e: any) => setMaxTokensChat(e.target.value)} />
           </div>
         </div>

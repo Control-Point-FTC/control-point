@@ -2043,13 +2043,13 @@ async function startServer() {
     return res.status(501).json({ error: "Excuse checker disabled", result: "UNEXCUSED - AI excuse checker is currently disabled." });
   });
 
-  // --- Volt: FTC build-mentor chatbot (floating widget) ---
+  // --- Bruno: FTC build-mentor chatbot (floating widget) ---
   app.post("/api/ai/build-helper", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isAIConfigured()) {
-        return res.status(501).json({ error: "AI not configured", result: "Volt isn't set up yet — the team owner needs to add a Gemini API key." });
+        return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Gemini API key." });
       }
       const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
       const messages = raw
@@ -2077,7 +2077,7 @@ async function startServer() {
       res.json({ result });
     } catch (error) {
       console.error("AI build-helper error:", error);
-      res.status(502).json({ error: "AI request failed", result: "Volt hit a snag — please try again in a moment." });
+      res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
     }
   });
 

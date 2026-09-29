@@ -146,10 +146,10 @@ export interface BuildHelperMessage {
 export async function getBuildHelper(messages: BuildHelperMessage[]) {
   try {
     const { result } = await postJSON('/api/ai/build-helper', { messages });
-    return result || "Volt hit a snag — please try again in a moment.";
+    return result || "Bruno hit a snag — please try again in a moment.";
   } catch (error) {
     console.error('Error calling build helper:', error);
-    return "Volt isn't reachable right now. Check your connection and try again.";
+    return "Bruno isn't reachable right now. Check your connection and try again.";
   }
 }
 

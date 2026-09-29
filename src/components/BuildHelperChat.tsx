@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bot, X, Send, ExternalLink, Sparkles } from 'lucide-react';
+import { X, Send, ExternalLink, Sparkles } from 'lucide-react';
 import { streamBuildHelper, type BuildHelperMessage } from '../services/aiService';
 
 const RESOURCES = [
@@ -45,10 +45,10 @@ export default function BuildHelperChat() {
         setMessages([...next, { role: 'model', text: agg }]);
       });
       if (!agg.trim()) {
-        setMessages([...next, { role: 'model', text: "Volt hit a snag — please try again in a moment." }]);
+        setMessages([...next, { role: 'model', text: "Bruno hit a snag — please try again in a moment." }]);
       }
     } catch {
-      setMessages([...next, { role: 'model', text: "Volt isn't reachable right now. Check your connection and try again." }]);
+      setMessages([...next, { role: 'model', text: "Bruno isn't reachable right now. Check your connection and try again." }]);
     } finally {
       setBusy(false);
     }
@@ -59,10 +59,10 @@ export default function BuildHelperChat() {
       {/* Floating launcher */}
       <button
         onClick={() => setOpen((o) => !o)}
-        aria-label={open ? 'Close Volt build helper' : 'Open Volt build helper'}
+        aria-label={open ? 'Close Bruno build helper' : 'Open Bruno build helper'}
         className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full bg-accent text-primary shadow-[0_8px_30px_rgba(255,199,0,0.35)] flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
       >
-        {open ? <X className="w-6 h-6" /> : <Bot className="w-6 h-6" />}
+        {open ? <X className="w-6 h-6" /> : <span className="text-[28px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>}
       </button>
 
       <AnimatePresence>
@@ -77,11 +77,11 @@ export default function BuildHelperChat() {
             {/* Header */}
             <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03]">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center">
-                  <Bot className="w-5 h-5 text-accent" />
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shadow-[0_2px_10px_rgba(255,199,0,0.25)]">
+                  <span className="text-[22px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold text-sm leading-tight">Volt</p>
+                  <p className="text-white font-bold text-sm leading-tight">Bruno</p>
                   <p className="text-text-muted text-[11px] leading-tight">FTC build mentor · BIOBUZZ season</p>
                 </div>
                 <button onClick={() => setOpen(false)} aria-label="Close" className="text-text-muted hover:text-white transition-colors">
@@ -112,7 +112,7 @@ export default function BuildHelperChat() {
                     <p className="text-[13px] text-white/85 leading-relaxed flex gap-2">
                       <Sparkles className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                       <span>
-                        Hey, I'm <span className="font-bold text-accent">Volt</span> — ask me anything about building
+                        Hey, I'm <span className="font-bold text-accent">Bruno</span> — ask me anything about building
                         your FTC robot: mechanisms, code, strategy, or troubleshooting.
                       </span>
                     </p>
