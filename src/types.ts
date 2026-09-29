@@ -60,6 +60,8 @@ export interface OutreachEvent {
   date: string;
   hours: number;
   location: string;
+  attendees?: number;
+  funds_raised?: number;
 }
 
 export interface Communication {

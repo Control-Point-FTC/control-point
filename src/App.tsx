@@ -57,7 +57,10 @@ import {
   Medal,
   Layers,
   ChevronDown,
-  Bot
+  Bot,
+  Instagram,
+  Youtube,
+  Music2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -645,6 +648,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [budget, setBudget] = useState<BudgetItem[]>([]);
   const [outreach, setOutreach] = useState<OutreachEvent[]>([]);
+  const [socialProfiles, setSocialProfiles] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [communications, setCommunications] = useState<Communication[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -1004,7 +1008,7 @@ export default function App() {
         }
       };
 
-      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d, ev] = await Promise.all([
+      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d, ev, soc] = await Promise.all([
         fetchJson('/api/teams'),
         fetchJson('/api/members'),
         fetchJson('/api/attendance'),
@@ -1018,6 +1022,7 @@ export default function App() {
         fetchJson('/api/hidden-dates'),
         fetchJson('/api/documentation'),
         fetchJson('/api/events'),
+        fetchJson('/api/outreach/social'),
       ]);
 
       if (Array.isArray(t)) setTeams(t);
@@ -1034,6 +1039,7 @@ export default function App() {
       if (Array.isArray(tk)) setTasks(tk);
       if (Array.isArray(b)) setBudget(b);
       if (Array.isArray(o)) setOutreach(o);
+      if (Array.isArray(soc)) setSocialProfiles(soc);
       if (Array.isArray(inv)) setInventory(inv);
       if (Array.isArray(c)) setCommunications(c);
       if (Array.isArray(msgs)) setMessages(msgs);
@@ -1368,7 +1374,7 @@ export default function App() {
 
   const renderContent = () => {
     const viewProps = {
-      teams, members, attendance, tasks, budget, outreach, inventory, communications, events,
+      teams, members, attendance, tasks, budget, outreach, socialProfiles, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
       insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
@@ -4631,67 +4637,334 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
   );
 }
 
-function OutreachView({ outreach, onRefresh }: any) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [editing, setEditing] = useState<any>(null);
-  const [newEvent, setNewEvent] = useState({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '', location: '' });
+const OUTREACH_PRESETS = ['Demo', 'Workshop', 'Volunteering', 'Fundraiser', 'Presentation', 'Competition'];
 
-  const handleAdd = async () => {
-    await apiFetch('/api/outreach', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({...newEvent, hours: parseInt(newEvent.hours)})
+const PLATFORM_META: Record<string, { label: string; Icon: any; color: string; metric: string }> = {
+  instagram: { label: 'Instagram', Icon: Instagram, color: '#E1306C', metric: 'Followers' },
+  tiktok: { label: 'TikTok', Icon: Music2, color: '#22d3ee', metric: 'Followers' },
+  youtube: { label: 'YouTube', Icon: Youtube, color: '#f87171', metric: 'Subscribers' },
+};
+
+function fmtCompact(n: any) {
+  const v = Number(n);
+  if (!isFinite(v)) return '—';
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (v >= 1_000) return (v / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(Math.round(v * 100) / 100);
+}
+
+function Sparkline({ points }: any) {
+  const vals = (points || []).filter((v: any) => typeof v === 'number' && isFinite(v));
+  if (vals.length < 2) return <p className="text-[11px] text-text-muted">Log snapshots to see growth</p>;
+  const w = 120, h = 36, pad = 4;
+  const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1;
+  const pts = vals.map((v: number, i: number) => {
+    const x = pad + (i * (w - 2 * pad)) / (vals.length - 1);
+    const y = h - pad - ((v - min) / span) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const up = vals[vals.length - 1] >= vals[0];
+  return (
+    <svg width={w} height={h} className="overflow-visible" aria-hidden>
+      <polyline points={pts} fill="none" stroke={up ? '#4ade80' : '#fb7185'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function OutreachField({ label, children }: any) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] font-bold uppercase tracking-wider text-text-muted mb-1.5">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
+  const emptyForm = () => ({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '2', location: '', attendees: '', funds_raised: '' });
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState(emptyForm());
+  const [saving, setSaving] = useState(false);
+  const [showAddProfile, setShowAddProfile] = useState(false);
+  const [newProfile, setNewProfile] = useState({ platform: 'instagram', handle: '', url: '' });
+  const [snapshotFor, setSnapshotFor] = useState<number | null>(null);
+  const [snapshot, setSnapshot] = useState({ followers: '', likes: '', posts: '', views: '' });
+
+  const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
+
+  const totals = useMemo(() => {
+    const list = outreach || [];
+    return {
+      events: list.length,
+      hours: list.reduce((s: number, e: any) => s + (Number(e.hours) || 0), 0),
+      attendees: list.reduce((s: number, e: any) => s + (Number(e.attendees) || 0), 0),
+      funds: list.reduce((s: number, e: any) => s + (Number(e.funds_raised) || 0), 0),
+    };
+  }, [outreach]);
+
+  const totalFollowers = useMemo(
+    () => (socialProfiles || []).reduce((s: number, p: any) => s + (Number(p.latest?.followers) || 0), 0),
+    [socialProfiles]
+  );
+
+  const openAdd = () => { setEditingId(null); setForm(emptyForm()); setShowForm(true); };
+  const openEdit = (event: any) => {
+    setEditingId(event.id);
+    setForm({
+      title: event.title || '',
+      description: event.description || '',
+      date: (event.date || '').slice(0, 10) || format(new Date(), 'yyyy-MM-dd'),
+      hours: event.hours != null && event.hours !== '' ? String(event.hours) : '',
+      location: event.location || '',
+      attendees: event.attendees ? String(event.attendees) : '',
+      funds_raised: event.funds_raised ? String(event.funds_raised) : '',
     });
-    setShowAdd(false);
-    onRefresh();
+    setShowForm(true);
+  };
+
+  const handleSubmit = async () => {
+    if (!form.title.trim()) { notify('Give the event a title.', 'error'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date)) { notify('Pick a valid date.', 'error'); return; }
+    setSaving(true);
+    try {
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        date: form.date,
+        hours: Math.max(0, parseInt(form.hours) || 0),
+        location: form.location.trim(),
+        attendees: Math.max(0, parseInt(form.attendees) || 0),
+        funds_raised: Math.max(0, Math.round((parseFloat(form.funds_raised) || 0) * 100) / 100),
+      };
+      const res = editingId
+        ? await apiFetch(`/api/outreach/${editingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        : await apiFetch('/api/outreach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error('save failed');
+      setShowForm(false);
+      setEditingId(null);
+      onRefresh();
+      notify(editingId ? 'Event updated.' : 'Event logged.');
+    } catch {
+      notify('Could not save the event.', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDelete = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return;
+    if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this outreach event?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
-  const openEdit = (event: any) => {
-    setEditing({ ...event, hours: String(event.hours ?? ''), date: (event.date || '').slice(0, 10) });
-    setShowAdd(true);
+  const handleAddProfile = async () => {
+    if (!newProfile.handle.trim()) { notify('Enter a handle or channel name.', 'error'); return; }
+    const res = await apiFetch('/api/outreach/social', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform: newProfile.platform, handle: newProfile.handle.trim(), url: newProfile.url.trim() }),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      notify(d.error || 'Could not link the profile.', 'error');
+      return;
+    }
+    setNewProfile({ platform: 'instagram', handle: '', url: '' });
+    setShowAddProfile(false);
+    onRefresh();
+    notify('Profile linked. Log a snapshot to start tracking growth.');
   };
 
-  const handleSave = async () => {
-    const payload = { ...editing, hours: parseInt(editing.hours) || 0 };
-    const res = await apiFetch(`/api/outreach/${editing.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (res.ok) {
-      setShowAdd(false);
-      setEditing(null);
-      onRefresh();
-    } else {
-      notify('Could not save changes.', 'error');
-    }
+  const handleDeleteProfile = async (id: number) => {
+    if (!(await confirmDialog({ title: 'Unlink profile', message: 'Unlink this profile and delete its tracked stats?', confirmLabel: 'Unlink', danger: true }))) return;
+    await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
+    onRefresh();
   };
+
+  const handleLogSnapshot = async (id: number) => {
+    const res = await apiFetch(`/api/outreach/social/${id}/stats`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        followers: snapshot.followers === '' ? null : parseInt(snapshot.followers),
+        likes: snapshot.likes === '' ? null : parseInt(snapshot.likes),
+        posts: snapshot.posts === '' ? null : parseInt(snapshot.posts),
+        views: snapshot.views === '' ? null : parseInt(snapshot.views),
+      }),
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      notify(d.error || 'Could not log the snapshot.', 'error');
+      return;
+    }
+    setSnapshot({ followers: '', likes: '', posts: '', views: '' });
+    setSnapshotFor(null);
+    onRefresh();
+    notify('Snapshot logged.');
+  };
+
+  const handleRefreshProfile = async (id: number) => {
+    const res = await apiFetch(`/api/outreach/social/${id}/refresh`, { method: 'POST' });
+    const d = await res.json().catch(() => ({}));
+    notify(d.message || 'Refresh done.');
+    onRefresh();
+  };
+
+  const profiles = socialProfiles || [];
 
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Outreach Log</h3>
-          <p className="text-sm text-text-muted mt-1">Track community events and service hours — demos, workshops, volunteering.</p>
+          <p className="text-sm text-text-muted mt-1">Track community events, service hours, and social growth.</p>
         </div>
-        <Button onClick={() => { setEditing(null); setNewEvent({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '', location: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
+        <Button onClick={openAdd} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
       </div>
 
+      {/* Totals */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+        {[
+          { label: 'Events', value: String(totals.events), Icon: Flag },
+          { label: 'Hours', value: `${totals.hours}h`, Icon: Clock },
+          { label: 'Attendees', value: fmtCompact(totals.attendees), Icon: User },
+          { label: 'Funds raised', value: `$${fmtCompact(totals.funds)}`, Icon: Wallet },
+          { label: 'Social followers', value: fmtCompact(totalFollowers), Icon: TrendingUp },
+        ].map(({ label, value, Icon }: any) => (
+          <div key={label} className="card-surface rounded-2xl p-4 flex items-center gap-3">
+            <div className="rounded-xl bg-accent/12 p-2">
+              <Icon className="w-4 h-4 text-accent" />
+            </div>
+            <div>
+              <p className="text-xl font-display font-bold text-white leading-none">{value}</p>
+              <p className="text-[10px] text-text-muted uppercase font-bold mt-1">{label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Social media tracking */}
+      <Card title="Social Media" subtitle="Link profiles and log snapshots to track growth over time" icon={TrendingUp}>
+        <p className="text-xs text-text-muted -mt-2">Auto-sync isn't available without platform API keys — log a snapshot whenever you check your numbers and we'll chart the growth.</p>
+        {profiles.length === 0 && !showAddProfile ? (
+          <div className="text-center py-6">
+            <p className="text-sm text-text-muted mb-3">No social profiles linked yet.</p>
+            <Button variant="secondary" onClick={() => setShowAddProfile(true)}><Plus className="w-4 h-4" /> Link a profile</Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {profiles.map((p: any) => {
+              const meta = PLATFORM_META[p.platform] || PLATFORM_META.instagram;
+              const PIcon = meta.Icon;
+              const g = p.growth;
+              return (
+                <div key={p.id} className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="rounded-lg p-2" style={{ backgroundColor: meta.color + '22' }}>
+                        <PIcon className="w-4 h-4" style={{ color: meta.color }} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-white">@{p.handle}</p>
+                        <p className="text-[11px] text-text-muted">{meta.label}{p.display_name ? ` • ${p.display_name}` : ''}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => handleDeleteProfile(p.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Unlink profile">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex items-end justify-between gap-2">
+                    <div>
+                      <p className="text-2xl font-display font-bold text-white">{fmtCompact(p.latest?.followers)}</p>
+                      <p className="text-[10px] text-text-muted uppercase font-bold">{meta.metric}</p>
+                      {g && (
+                        <p className={`text-xs font-semibold mt-1 ${g.followers >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {g.followers >= 0 ? '+' : ''}{fmtCompact(g.followers)} ({g.followers >= 0 ? '+' : ''}{g.pct}%)
+                        </p>
+                      )}
+                    </div>
+                    <Sparkline points={p.history} />
+                  </div>
+                  {(p.latest?.likes != null || p.latest?.posts != null || p.latest?.views != null) && (
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
+                      {p.latest?.likes != null && <span><b className="text-white/80">{fmtCompact(p.latest.likes)}</b> likes</span>}
+                      {p.latest?.posts != null && <span><b className="text-white/80">{fmtCompact(p.latest.posts)}</b> {p.platform === 'youtube' ? 'videos' : 'posts'}</span>}
+                      {p.latest?.views != null && <span><b className="text-white/80">{fmtCompact(p.latest.views)}</b> views</span>}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Button variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={() => { setSnapshotFor(snapshotFor === p.id ? null : p.id); setSnapshot({ followers: '', likes: '', posts: '', views: '' }); }}>
+                      Log snapshot
+                    </Button>
+                    <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => handleRefreshProfile(p.id)}>
+                      Verify profile
+                    </Button>
+                  </div>
+                  {snapshotFor === p.id && (
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <Input placeholder={meta.metric} type="number" value={snapshot.followers} onChange={(e: any) => setSnapshot({ ...snapshot, followers: e.target.value })} />
+                      <Input placeholder="Likes" type="number" value={snapshot.likes} onChange={(e: any) => setSnapshot({ ...snapshot, likes: e.target.value })} />
+                      <Input placeholder={p.platform === 'youtube' ? 'Videos' : 'Posts'} type="number" value={snapshot.posts} onChange={(e: any) => setSnapshot({ ...snapshot, posts: e.target.value })} />
+                      <Input placeholder="Views" type="number" value={snapshot.views} onChange={(e: any) => setSnapshot({ ...snapshot, views: e.target.value })} />
+                      <div className="col-span-2 flex gap-2 justify-end">
+                        <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => setSnapshotFor(null)}>Cancel</Button>
+                        <Button className="!px-3 !py-1.5 !text-xs" onClick={() => handleLogSnapshot(p.id)}>Save snapshot</Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {showAddProfile ? (
+          <div className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <OutreachField label="Platform">
+                <Select
+                  options={[
+                    { label: 'Instagram', value: 'instagram' },
+                    { label: 'TikTok', value: 'tiktok' },
+                    { label: 'YouTube', value: 'youtube' },
+                  ]}
+                  value={newProfile.platform}
+                  onChange={(e: any) => setNewProfile({ ...newProfile, platform: e.target.value })}
+                />
+              </OutreachField>
+              <OutreachField label="Handle / channel">
+                <Input placeholder="@yourteam" value={newProfile.handle} onChange={(e: any) => setNewProfile({ ...newProfile, handle: e.target.value })} />
+              </OutreachField>
+              <OutreachField label="Profile URL (optional)">
+                <Input placeholder="https://…" value={newProfile.url} onChange={(e: any) => setNewProfile({ ...newProfile, url: e.target.value })} />
+              </OutreachField>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setShowAddProfile(false)}>Cancel</Button>
+              <Button onClick={handleAddProfile}>Link profile</Button>
+            </div>
+          </div>
+        ) : (
+          profiles.length > 0 && (
+            <Button variant="secondary" onClick={() => setShowAddProfile(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Link another profile</Button>
+          )
+        )}
+      </Card>
+
+      {/* Event cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         {(outreach || []).map((event: any) => (
           <Card key={event.id} title={event.title} icon={Globe}>
-            <div className="flex justify-between items-start">
-              <div>
+            <div className="flex justify-between items-start gap-3">
+              <div className="min-w-0">
                 <p className="text-xs text-text-muted">{event.location} • {event.date}</p>
                 <p className="text-sm text-white/80 mt-2">{event.description}</p>
+                {(event.attendees > 0 || event.funds_raised > 0) && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-text-muted">
+                    {event.attendees > 0 && <span><b className="text-white/80">{event.attendees}</b> attendees</span>}
+                    {event.funds_raised > 0 && <span><b className="text-white/80">${fmtCompact(event.funds_raised)}</b> raised</span>}
+                  </div>
+                )}
               </div>
-              <div className="text-right flex flex-col items-end gap-2">
+              <div className="text-right flex flex-col items-end gap-2 shrink-0">
                 <p className="text-2xl font-display font-bold text-accent">{event.hours}h</p>
                 <p className="text-[10px] text-text-muted uppercase font-bold">Logged</p>
                 <div className="flex gap-2 mt-2">
@@ -4707,24 +4980,72 @@ function OutreachView({ outreach, onRefresh }: any) {
           </Card>
         ))}
       </div>
+      {(outreach || []).length === 0 && (
+        <Card>
+          <p className="text-sm text-text-muted text-center py-4">No outreach events yet — log your first one above, or ask Bruno to add them from chat.</p>
+        </Card>
+      )}
 
-      {showAdd && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title={editing ? "Edit Outreach Event" : "Log Outreach Event"} className="w-full max-w-md">
-            <div className="space-y-4">
-              <Input placeholder="Event Title" value={editing ? editing.title : newEvent.title} onChange={(e: any) => editing ? setEditing({...editing, title: e.target.value}) : setNewEvent({...newEvent, title: e.target.value})} />
-              <textarea
-                className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-24"
-                placeholder="Description"
-                value={editing ? editing.description : newEvent.description}
-                onChange={(e: any) => editing ? setEditing({...editing, description: e.target.value}) : setNewEvent({...newEvent, description: e.target.value})}
-              />
-              <Input placeholder="Location" value={editing ? editing.location : newEvent.location} onChange={(e: any) => editing ? setEditing({...editing, location: e.target.value}) : setNewEvent({...newEvent, location: e.target.value})} />
-              <Input placeholder="Hours" type="number" value={editing ? editing.hours : newEvent.hours} onChange={(e: any) => editing ? setEditing({...editing, hours: e.target.value}) : setNewEvent({...newEvent, hours: e.target.value})} />
-              <Input type="date" value={editing ? editing.date : newEvent.date} onChange={(e: any) => editing ? setEditing({...editing, date: e.target.value}) : setNewEvent({...newEvent, date: e.target.value})} />
+      {/* Improved add/edit modal */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
+          <Card title={editingId ? 'Edit Outreach Event' : 'Log Outreach Event'} subtitle={editingId ? 'Update the details below' : 'Pick a quick type or fill in the details'} className="w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div onClick={(e: any) => e.stopPropagation()} className="space-y-4">
+              {!editingId && (
+                <div>
+                  <span className="block text-[11px] font-bold uppercase tracking-wider text-text-muted mb-1.5">Quick type</span>
+                  <div className="flex flex-wrap gap-2">
+                    {OUTREACH_PRESETS.map((preset: string) => (
+                      <button
+                        key={preset}
+                        onClick={() => setForm({ ...form, title: preset })}
+                        className={cn(
+                          'px-3 py-1.5 rounded-full text-xs font-semibold border transition-all',
+                          form.title === preset
+                            ? 'border-accent text-accent bg-accent/10'
+                            : 'border-white/10 text-text-muted hover:text-white hover:border-white/25'
+                        )}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <OutreachField label="Event title *">
+                <Input placeholder="e.g. Library STEM Demo" value={form.title} onChange={set('title')} autoFocus />
+              </OutreachField>
+              <OutreachField label="Description">
+                <textarea
+                  className="w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all h-20"
+                  placeholder="What did the team do?"
+                  value={form.description}
+                  onChange={set('description')}
+                />
+              </OutreachField>
+              <div className="grid grid-cols-2 gap-3">
+                <OutreachField label="Date *">
+                  <Input type="date" value={form.date} onChange={set('date')} />
+                </OutreachField>
+                <OutreachField label="Location">
+                  <Input placeholder="Where?" value={form.location} onChange={set('location')} />
+                </OutreachField>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <OutreachField label="Hours">
+                  <Input type="number" min="0" placeholder="2" value={form.hours} onChange={set('hours')} />
+                </OutreachField>
+                <OutreachField label="Attendees">
+                  <Input type="number" min="0" placeholder="0" value={form.attendees} onChange={set('attendees')} />
+                </OutreachField>
+                <OutreachField label="Funds raised ($)">
+                  <Input type="number" min="0" step="0.01" placeholder="0" value={form.funds_raised} onChange={set('funds_raised')} />
+                </OutreachField>
+              </div>
+              <p className="text-[11px] text-text-muted">Tip: you can also ask Bruno in chat to log one or many events — e.g. "log our last three demos".</p>
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => { setShowAdd(false); setEditing(null); }}>Cancel</Button>
-                <Button onClick={editing ? handleSave : handleAdd}>{editing ? 'Save Changes' : 'Log Event'}</Button>
+                <Button variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</Button>
+                <Button onClick={handleSubmit} disabled={saving}>{saving ? 'Saving…' : (editingId ? 'Save Changes' : 'Log Event')}</Button>
               </div>
             </div>
           </Card>
@@ -4733,6 +5054,7 @@ function OutreachView({ outreach, onRefresh }: any) {
     </div>
   );
 }
+
 
 const SCOUT_FILTERS = ['All', 'Game Updates', 'Parts & Suppliers', 'Community', 'Competitions', 'Videos'];
 

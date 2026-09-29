@@ -397,7 +397,18 @@ TEAM CALENDAR SKILL:
 {"title":"...","date":"YYYY-MM-DD","time":"HH:MM","notes":"..."}
 \`\`\`
 - "time" is 24-hour clock and optional; "notes" is optional. Keep the visible reply to one short line confirming what you're adding, then the block.
-- Today's date is provided in your context — use it to resolve relative dates like "tomorrow" or "this Friday".`;
+- Today's date is provided in your context — use it to resolve relative dates like "tomorrow" or "this Friday".
+
+OUTREACH LOG SKILL:
+- You can log outreach events (demos, workshops, volunteering, fundraisers, presentations) to the team's outreach log when the user asks you to log, add, or record one.
+- You can log MULTIPLE events in a single message — e.g. "add these three demos..." — one entry per event.
+- ONLY log when the user has explicitly confirmed they want the entries added AND you have a title and date for each one. If a date is missing or ambiguous, ask one clarifying question first — never guess a date.
+- When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
+\\\`\\\`\\\`outreach
+[{"title":"...","description":"...","date":"YYYY-MM-DD","hours":2,"location":"...","attendees":50,"funds_raised":0}]
+\\\`\\\`\\\`
+- "description", "hours", "location", "attendees", "funds_raised" are optional (default to "" or 0). Keep the visible reply to one short line per event confirming what you're adding, then the block.
+- Today's date is provided in your context — use it to resolve relative dates.`;
 
 export interface ChatMessage {
   role: "user" | "model";

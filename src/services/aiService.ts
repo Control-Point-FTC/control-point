@@ -177,9 +177,9 @@ export interface BuildHelperMessage {
   text: string;
 }
 
-/** Remove ```event blocks (complete or still streaming) from displayed Bruno text. */
+/** Remove ```event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
 export function stripEventBlocks(text: string): string {
-  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").trim();
+  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").trim();
 }
 
 export async function getBuildHelper(messages: BuildHelperMessage[], chatId?: number) {

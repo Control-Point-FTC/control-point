@@ -162,6 +162,28 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     location TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS social_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
+    platform TEXT NOT NULL,
+    handle TEXT NOT NULL,
+    url TEXT,
+    display_name TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS social_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    team_id INTEGER,
+    followers INTEGER,
+    likes INTEGER,
+    posts INTEGER,
+    views INTEGER,
+    recorded_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(profile_id) REFERENCES social_profiles(id)
+  );
+
   CREATE TABLE IF NOT EXISTS inventory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id INTEGER,
@@ -336,6 +358,15 @@ if (!taskColumns.some((c: any) => c.name === 'is_board')) {
 const teamColumns = (await dbAll("PRAGMA table_info(teams)"));
 if (!teamColumns.some((c: any) => c.name === 'accent_color')) {
   (await dbExec("ALTER TABLE teams ADD COLUMN accent_color TEXT"));
+}
+
+// Outreach: numeric fields for event totals (attendees, funds raised)
+const outreachColumns = (await dbAll("PRAGMA table_info(outreach)"));
+if (!outreachColumns.some((c: any) => c.name === 'attendees')) {
+  (await dbExec("ALTER TABLE outreach ADD COLUMN attendees INTEGER DEFAULT 0"));
+}
+if (!outreachColumns.some((c: any) => c.name === 'funds_raised')) {
+  (await dbExec("ALTER TABLE outreach ADD COLUMN funds_raised REAL DEFAULT 0"));
 }
 if (!teamColumns.some((c: any) => c.name === 'primary_color')) {
   (await dbExec("ALTER TABLE teams ADD COLUMN primary_color TEXT"));
@@ -1848,6 +1879,8 @@ async function startServer() {
       { sql: "DELETE FROM events WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM budget WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM outreach WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM social_stats WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM social_profiles WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
@@ -2999,8 +3032,8 @@ async function startServer() {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const { title, description, date, hours, location } = req.body;
-      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, team_id) VALUES (?, ?, ?, ?, ?, ?)", title, description, date, hours, location, auth.teamId));
+      const { title, description, date, hours, location, attendees, funds_raised } = req.body;
+      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", title, description, date, hours, location, Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), auth.teamId));
 
       // Notify everyone of new outreach
       const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ?", auth.teamId));
@@ -3021,10 +3054,10 @@ async function startServer() {
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      const { title, description, date, hours, location } = req.body || {};
+      const { title, description, date, hours, location, attendees, funds_raised } = req.body || {};
       (await dbRun(
-        "UPDATE outreach SET title = ?, description = ?, date = ?, hours = ?, location = ? WHERE id = ?",
-        title || '', description || '', date || '', hours || 0, location || '', req.params.id
+        "UPDATE outreach SET title = ?, description = ?, date = ?, hours = ?, location = ?, attendees = ?, funds_raised = ? WHERE id = ?",
+        title || '', description || '', date || '', hours || 0, location || '', Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), req.params.id
       ));
       res.json({ success: true });
     } catch (error) {
@@ -3043,6 +3076,153 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting outreach event:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Outreach: social media tracking (Instagram, TikTok, YouTube).
+  // Honest by design: follower/like counts are logged as manual snapshots because
+  // the platforms offer no keyless public API for them. The refresh endpoint only
+  // validates that the profile URL resolves (YouTube oEmbed) — it never invents numbers.
+  const SOCIAL_PLATFORMS = ["instagram", "tiktok", "youtube"];
+
+  function socialGrowth(snapshots: any[]) {
+    if (!snapshots || snapshots.length < 2) return null;
+    const first = snapshots[0];
+    const last = snapshots[snapshots.length - 1];
+    const dFollowers = (last.followers || 0) - (first.followers || 0);
+    const dLikes = (last.likes || 0) - (first.likes || 0);
+    const pct = first.followers ? (dFollowers / first.followers) * 100 : 0;
+    return { followers: dFollowers, likes: dLikes, pct: Math.round(pct * 10) / 10 };
+  }
+
+  app.get("/api/outreach/social", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const profiles = (await dbAll("SELECT * FROM social_profiles WHERE team_id = ? ORDER BY created_at", auth.teamId)) as any[];
+      const out = [];
+      for (const p of profiles) {
+        const snaps = (await dbAll(
+          "SELECT followers, likes, posts, views, recorded_at FROM social_stats WHERE profile_id = ? AND team_id = ? ORDER BY recorded_at ASC LIMIT 60",
+          p.id, auth.teamId
+        )) as any[];
+        out.push({
+          id: p.id, platform: p.platform, handle: p.handle, url: p.url,
+          display_name: p.display_name, created_at: p.created_at,
+          latest: snaps.length ? snaps[snaps.length - 1] : null,
+          growth: socialGrowth(snaps),
+          snapshot_count: snaps.length,
+          history: snaps.slice(-12).map((s: any) => s.followers),
+        });
+      }
+      res.json(out);
+    } catch (error) {
+      console.error("Error fetching social profiles:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/outreach/social", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const platform = String(req.body?.platform || "").toLowerCase().trim();
+      let handle = String(req.body?.handle || "").trim().replace(/^@/, "");
+      const url = String(req.body?.url || "").trim();
+      if (!SOCIAL_PLATFORMS.includes(platform)) {
+        return res.status(400).json({ error: "Platform must be instagram, tiktok, or youtube" });
+      }
+      if (!handle) return res.status(400).json({ error: "A handle or channel name is required" });
+      if (url && !/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: "URL must start with http:// or https://" });
+      }
+      const dup = (await dbGet("SELECT id FROM social_profiles WHERE team_id = ? AND platform = ? AND LOWER(handle) = LOWER(?)", auth.teamId, platform, handle)) as any;
+      if (dup) return res.status(409).json({ error: "This profile is already linked" });
+      const info = (await dbRun(
+        "INSERT INTO social_profiles (team_id, platform, handle, url) VALUES (?, ?, ?, ?)",
+        auth.teamId, platform, handle.slice(0, 80), url.slice(0, 300) || null
+      )) as any;
+      res.json({ id: info.lastInsertRowid });
+    } catch (error) {
+      console.error("Error adding social profile:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/outreach/social/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      (await dbRun("DELETE FROM social_stats WHERE profile_id = ?", req.params.id));
+      (await dbRun("DELETE FROM social_profiles WHERE id = ?", req.params.id));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting social profile:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/outreach/social/:id/stats", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const num = (v: any) => { const n = parseInt(v); return isNaN(n) || n < 0 ? null : n; };
+      const followers = num(req.body?.followers), likes = num(req.body?.likes),
+            posts = num(req.body?.posts), views = num(req.body?.views);
+      if (followers === null && likes === null && posts === null && views === null) {
+        return res.status(400).json({ error: "Enter at least one number" });
+      }
+      (await dbRun(
+        "INSERT INTO social_stats (profile_id, team_id, followers, likes, posts, views) VALUES (?, ?, ?, ?, ?, ?)",
+        req.params.id, auth.teamId, followers, likes, posts, views
+      ));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error logging social stats:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Best-effort public validation of a linked profile. YouTube oEmbed confirms the
+  // URL resolves to a real channel/video and returns its display name — no counts
+  // are available without API keys, so this never writes stats.
+  app.post("/api/outreach/social/:id/refresh", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const profile: any = (await dbGet("SELECT * FROM social_profiles WHERE id = ?", req.params.id));
+      if (!profile || profile.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      let displayName: string | null = null;
+      if (profile.platform === "youtube" && profile.url) {
+        try {
+          const ctl = new AbortController();
+          const t = setTimeout(() => ctl.abort(), 8000);
+          const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(profile.url)}&format=json`, { signal: ctl.signal });
+          clearTimeout(t);
+          if (r.ok) {
+            const meta: any = await r.json().catch(() => null);
+            displayName = meta?.author_name || meta?.title || null;
+          }
+        } catch { /* network failure — report honestly below */ }
+      }
+      if (displayName) {
+        (await dbRun("UPDATE social_profiles SET display_name = ? WHERE id = ?", displayName.slice(0, 120), profile.id));
+      }
+      res.json({
+        ok: true,
+        auto: false,
+        displayName,
+        message: displayName
+          ? `Profile verified as "${displayName}". Follower counts can't auto-sync without platform API keys — log a snapshot to track growth.`
+          : "Couldn't auto-verify this profile. Follower counts can't auto-sync without platform API keys — log a snapshot manually to track growth.",
+      });
+    } catch (error) {
+      console.error("Error refreshing social profile:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -3575,6 +3755,39 @@ async function startServer() {
     return { text: src.replace(EVENT_BLOCK_RE, "").trim(), event };
   }
 
+  // Bruno outreach skill: the model ends its reply with a fenced ```outreach block
+  // (a JSON array) when the user confirms outreach entries. Parse, validate, strip.
+  const OUTREACH_BLOCK_RE = /```outreach\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractOutreachBlock(fullText: string): { text: string; entries: any[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(OUTREACH_BLOCK_RE);
+    if (!m) return { text: src, entries: null };
+    let entries: any[] | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
+        const valid = p.map((e: any) => {
+          if (!e || typeof e.title !== "string" || !e.title.trim()) return null;
+          const okDate = typeof e.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && !isNaN(new Date(e.date + "T00:00:00").getTime());
+          if (!okDate) return null;
+          const int0 = (v: any) => { const n = parseInt(v); return isNaN(n) || n < 0 ? 0 : n; };
+          const funds = parseFloat(e.funds_raised);
+          return {
+            title: e.title.trim().slice(0, 120),
+            description: typeof e.description === "string" ? e.description.trim().slice(0, 500) : "",
+            date: e.date,
+            hours: int0(e.hours),
+            location: typeof e.location === "string" ? e.location.trim().slice(0, 120) : "",
+            attendees: int0(e.attendees),
+            funds_raised: isNaN(funds) || funds < 0 ? 0 : Math.round(funds * 100) / 100,
+          };
+        }).filter(Boolean);
+        if (valid.length) entries = valid;
+      }
+    } catch { /* malformed JSON — treat as no entries */ }
+    return { text: src.replace(OUTREACH_BLOCK_RE, "").trim(), entries };
+  }
+
   app.post("/api/ai/build-helper", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -3613,6 +3826,28 @@ async function startServer() {
           return (text ? text + "\n\n" : "") + "⚠️ I couldn't save that to the team calendar — please try again.";
         }
       };
+      // Same pattern for a ```outreach block: log one or many outreach entries,
+      // strip the raw block, and append a confirmation line.
+      const applyOutreachBlock = async (rawText: string): Promise<string> => {
+        const { text, entries } = extractOutreachBlock(rawText);
+        if (!entries) return text;
+        try {
+          for (const e of entries) {
+            (await dbRun(
+              "INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              e.title, e.description, e.date, e.hours, e.location, e.attendees, e.funds_raised, auth.teamId
+            ));
+          }
+          const names = entries.map((e: any) => `**${e.title}**`).join(", ");
+          const line = entries.length === 1
+            ? `📣 Logged outreach event: ${names}.`
+            : `📣 Logged ${entries.length} outreach events: ${names}.`;
+          return (text ? text + "\n\n" : "") + line;
+        } catch (e) {
+          console.error("Bruno outreach insert failed:", e);
+          return (text ? text + "\n\n" : "") + "⚠️ I couldn't save those to the outreach log — please try again.";
+        }
+      };
       // Optional chat persistence: validate access, store the user message now
       const chatId = parseInt(req.body?.chatId, 10) || 0;
       let chat: any = null;
@@ -3635,7 +3870,7 @@ async function startServer() {
         res.setHeader("Cache-Control", "no-cache");
         try {
           const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra);
-          const finalText = await applyEventBlock(fullText);
+          const finalText = await applyOutreachBlock(await applyEventBlock(fullText));
           if (chat && String(finalText || "").trim()) {
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
@@ -3647,7 +3882,7 @@ async function startServer() {
         return;
       }
       const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra);
-      const finalResult = await applyEventBlock(String(result || ""));
+      const finalResult = await applyOutreachBlock(await applyEventBlock(String(result || "")));
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
