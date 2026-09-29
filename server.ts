@@ -39,6 +39,21 @@ import {
   COACH_SYSTEM,
 } from "./ai.js";
 
+// SECURITY: never expose password hashes to clients. Any member row that
+// leaves the server goes through sanitizeMember first; clients get a
+// `hasPassword` boolean instead of the hash.
+function sanitizeMember<T>(row: T): T {
+  if (!row || typeof row !== "object") return row;
+  const r: any = { ...(row as any) };
+  const has = !!r.password;
+  delete r.password;
+  r.hasPassword = has;
+  return r;
+}
+function sanitizeMembers<T>(rows: T[]): T[] {
+  return (rows || []).map(sanitizeMember);
+}
+
 // Members DDL (single source of truth — also reused by the multi-team migration below).
 // One email (account) may hold one membership row PER TEAM, hence
 // UNIQUE(team_id, email) instead of a global UNIQUE(email).
@@ -1151,12 +1166,12 @@ async function startServer() {
     if (!verified) {
       if (rows.some((r) => !r.password)) {
         const sessionId = await createSession(picked.id);
-        return res.json({ needsSetup: true, user: picked, sessionId });
+        return res.json({ needsSetup: true, user: sanitizeMember(picked), sessionId });
       }
       return res.status(401).json({ error: "Invalid password" });
     }
     const sessionId = await createSession(picked.id);
-    res.json({ user: picked, sessionId });
+    res.json({ user: sanitizeMember(picked), sessionId });
   });
 
   app.post("/api/auth/setup", async (req, res) => {
@@ -1172,7 +1187,7 @@ async function startServer() {
     (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id));
     const sessionId = await createSession(existing.id);
-    res.json({ user, sessionId });
+    res.json({ user: sanitizeMember(user), sessionId });
   });
 
   // Admin-only: force a roster member in your workspace to set a new password on next login
@@ -1233,7 +1248,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
-        return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
       }
 
       if (accountType === 'student') {
@@ -1260,7 +1275,7 @@ async function startServer() {
         const sessionId = await createSession(memberId);
         await assignSystemRole(team.id, memberId, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
-        return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
       return res.status(400).json({ error: "Choose whether you're signing up as an admin or a student" });
@@ -1329,7 +1344,6 @@ async function startServer() {
       });
     }
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
-    delete (user as any).password; // never expose password hashes
     const isOwner = ownerEmails().includes(((user?.email) || "").toLowerCase());
     if (user?.team_id) {
       await ensureRolesSeeded(user.team_id);
@@ -1341,7 +1355,7 @@ async function startServer() {
     }
     // Every workspace this account belongs to (for the team switcher)
     (user as any).teams = user?.email ? await userTeams(user.email) : [];
-    res.json({ user, sessionId, isOwner });
+    res.json({ user: sanitizeMember(user), sessionId, isOwner });
   });
 
   app.get("/api/auth/google", async (req, res) => {
@@ -1422,7 +1436,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
-        return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
       }
 
       if (effectiveIntent === 'student_signup') {
@@ -1439,7 +1453,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
-        return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
       return res.status(400).json({ error: "Signup expired — please try again" });
@@ -1761,9 +1775,8 @@ async function startServer() {
     await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
     const sessionId = await createSession(mInfo.lastInsertRowid);
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
-    delete (user as any).password;
     (user as any).teams = me?.email ? await userTeams(me.email) : [];
-    res.json({ team: { id: teamId, name: cleanName, number: (number || "").trim(), access_code: code }, user, sessionId });
+    res.json({ team: { id: teamId, name: cleanName, number: (number || "").trim(), access_code: code }, user: sanitizeMember(user), sessionId });
   });
 
   // Switch the active workspace: the session moves to this account's
@@ -1799,7 +1812,7 @@ async function startServer() {
     if (!row) return res.status(403).json({ error: "You're not a member of that team" });
     const sessionId = await createSession(row.id);
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
-    res.json({ user: row, sessionId, team });
+    res.json({ user: sanitizeMember(row), sessionId, team });
   });
 
   // Join a team with its access code. Works for teamless accounts and for
@@ -1836,8 +1849,7 @@ async function startServer() {
       await assignSystemRole(team.id, row.id, "Member");
     }
     const sessionId = await createSession(row.id);
-    const user = { ...(row as any), teams: await userTeams(email) };
-    delete (user as any).password;
+    const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
     res.json({ user, sessionId, team, joined: !existing || (existing.is_active ?? 1) !== 1 });
   });
 
@@ -1874,8 +1886,7 @@ async function startServer() {
       )) as any;
       if (other) {
         const sessionId = await createSession(other.id);
-        switched = { sessionId, user: { ...(other as any), teams: await userTeams(email) }, team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any };
-        delete (switched.user as any).password;
+        switched = { sessionId, user: sanitizeMember({ ...(other as any), teams: await userTeams(email) }), team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any };
       } else {
         teamless = true;
       }
@@ -2137,7 +2148,7 @@ async function startServer() {
       m.roles = await memberRoleList(m.id, auth.teamId!);
       m.permissions = [...(await getMemberPerms(m.id, auth.teamId!))];
     }
-    res.json(members);
+    res.json(sanitizeMembers(members));
   });
 
   app.post("/api/members", async (req, res) => {
@@ -2238,7 +2249,7 @@ async function startServer() {
     const cols = Object.keys(updates);
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
-    res.json({ user });
+    res.json({ user: sanitizeMember(user) });
   });
 
   // Reset theme colors to the default Volt & Carbon palette: clears the
@@ -2251,7 +2262,7 @@ async function startServer() {
       (await dbRun("UPDATE teams SET accent_color = NULL, primary_color = NULL, text_color = NULL WHERE id = ?", auth.teamId));
     }
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
-    res.json({ ok: true, user });
+    res.json({ ok: true, user: sanitizeMember(user) });
   });
 
   // Avatar upload for the signed-in member
@@ -2275,7 +2286,7 @@ async function startServer() {
     } catch { /* best effort */ }
     (await dbRun("UPDATE members SET avatar_url = ? WHERE id = ?", avatarUrl, auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
-    res.json({ avatar_url: avatarUrl, user });
+    res.json({ avatar_url: avatarUrl, user: sanitizeMember(user) });
   });
 
   app.delete("/api/members/:id", async (req, res) => {

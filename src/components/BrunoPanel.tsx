@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Send, ExternalLink, Sparkles, Maximize2 } from 'lucide-react';
-import { streamBuildHelper, stripEventBlocks, type BuildHelperMessage } from '../services/aiService';
+import { streamBuildHelper, stripEventBlocks, detectBrunoDataActions, notifyBrunoDataChanged, type BuildHelperMessage } from '../services/aiService';
 import { apiFetch } from '../services/api';
 
 const RESOURCES = [
@@ -105,6 +105,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       }, id || undefined);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
+      } else {
+        // Bruno may have inserted calendar/outreach data — refresh those views without a reload.
+        notifyBrunoDataChanged(detectBrunoDataActions(agg));
       }
     } catch {
       setMessages([...next, { role: 'model', text: `${name} isn't reachable right now. Check your connection and try again.` }]);

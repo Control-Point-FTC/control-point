@@ -4,7 +4,7 @@ import {
   Bot, Plus, Trash2, Send, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
-import { streamBuildHelper, stripEventBlocks, type BuildHelperMessage } from '../services/aiService';
+import { streamBuildHelper, stripEventBlocks, detectBrunoDataActions, notifyBrunoDataChanged, type BuildHelperMessage } from '../services/aiService';
 import { confirmDialog } from './dialog';
 
 const STARTERS = [
@@ -119,6 +119,9 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       }, chatId || undefined);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
+      } else {
+        // Bruno may have inserted calendar/outreach data — refresh those views without a reload.
+        notifyBrunoDataChanged(detectBrunoDataActions(agg));
       }
       fetchChats(chatId);
     } catch {

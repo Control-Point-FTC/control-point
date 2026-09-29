@@ -22,6 +22,7 @@ export interface Member {
   accent_color?: string;
   primary_color?: string;
   text_color?: string;
+  hasPassword?: boolean;
   roles?: Array<{ id: number; name: string; color: string }>;
   permissions?: string[];
 }

@@ -182,6 +182,30 @@ export function stripEventBlocks(text: string): string {
   return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").trim();
 }
 
+/**
+ * Detect which team-data actions Bruno performed from its reply text.
+ * Works on both raw streamed text (contains the fenced ```event / ```outreach
+ * blocks the server is inserting) and final non-streamed text (contains the
+ * server's 📅 / 📣 confirmation lines).
+ */
+export function detectBrunoDataActions(text: string): string[] {
+  const t = String(text || "");
+  const types: string[] = [];
+  if (/```event[\s\S]*?```/.test(t) || t.includes("📅 Added to the team calendar:")) types.push("calendar");
+  if (/```outreach[\s\S]*?```/.test(t) || /📣 Logged (\d+ )?outreach events?:/.test(t)) types.push("outreach");
+  return types;
+}
+
+/**
+ * Event-driven invalidation: tell subscribed views (calendar, outreach,
+ * dashboard) that Bruno changed team data so they refetch without a reload.
+ * No polling — a single CustomEvent the app shell listens for.
+ */
+export function notifyBrunoDataChanged(types: string[]) {
+  if (!types.length || typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("bruno-data-changed", { detail: { types } }));
+}
+
 export async function getBuildHelper(messages: BuildHelperMessage[], chatId?: number) {
   try {
     const { result } = await postJSON('/api/ai/build-helper', chatId ? { messages, chatId } : { messages });
