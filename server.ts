@@ -547,16 +547,27 @@ async function repairCrashedMembersMigration(): Promise<void> {
     const cols = (await dbAll(`PRAGMA table_info("${t.name}")`)) as any[];
     const colList = cols.map((c: any) => `"${c.name}"`).join(", ");
     const fixedSql: string = (t.sql as string).replace(/members_old/g, "members");
-    const tmp = `${t.name}__repair`;
+    // Stage the rebuild as <table>__new and rename the STAGE when done. Never
+    // rename a table that other tables reference (even to a staging name):
+    // SQLite rewrites their FOREIGN KEY clauses to the staging name, and
+    // PRAGMA foreign_keys=OFF in the same executeMultiple batch does not
+    // reliably prevent that (production was left with a ghost
+    // "bruno_chats__repair" reference this way).
+    const stage = `${t.name}__new`;
+    const stageRe = new RegExp(`(CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?)"?${t.name}"?(\\s*\\()`, "i");
+    const stageSql = fixedSql.replace(stageRe, `$1"${stage}"$2`);
+    if (stageSql === fixedSql) {
+      throw new Error(`[DB Migration] cannot derive stage DDL for table ${t.name}`);
+    }
     const idxs = (await dbAll(
       "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
       t.name
     )) as any[];
     for (const ix of idxs) indexDdls.push(ix.sql);
-    batch.push(`ALTER TABLE "${t.name}" RENAME TO "${tmp}";`);
-    batch.push(`${fixedSql};`);
-    batch.push(`INSERT INTO "${t.name}" (${colList}) SELECT ${colList} FROM "${tmp}";`);
-    batch.push(`DROP TABLE "${tmp}";`);
+    batch.push(`${stageSql};`);
+    batch.push(`INSERT INTO "${stage}" (${colList}) SELECT ${colList} FROM "${t.name}";`);
+    batch.push(`DROP TABLE "${t.name}";`);
+    batch.push(`ALTER TABLE "${stage}" RENAME TO "${t.name}";`);
   }
   // Belt and suspenders: copy any rows still only present in members_old.
   const oldCols = (await dbAll("PRAGMA table_info(members_old)")) as any[];
@@ -582,6 +593,92 @@ const membersTableSql = ((await dbGet("SELECT sql FROM sqlite_master WHERE type 
 if (membersTableSql && !/UNIQUE\s*\(\s*team_id\s*,\s*email\s*\)/i.test(membersTableSql)) {
   await rebuildMembersTable();
 }
+
+async function repairGhostRepairReferences(): Promise<void> {
+  // The old repairCrashedMembersMigration() staged rebuilds by renaming
+  // tables to "<name>__repair". On production that rename ran with FOREIGN
+  // KEY rewriting active, so child tables that were NOT themselves rebuilt
+  // kept SQL referencing the staging name (e.g. bruno_messages ended up with
+  // REFERENCES "bruno_chats__repair"(id)). The staging table was dropped, so
+  // every INSERT into such a child now fails with
+  // "no such table: main.<name>__repair" — this is what took down Bruno and
+  // NavGPT chat persistence. Re-point those references at the real table and
+  // rebuild the child safely (stage as <table>__fixstage; never rename a
+  // referenced table).
+  const tables = (await dbAll(
+    "SELECT name, sql FROM sqlite_master WHERE type='table' AND sql LIKE '%__repair%'"
+  )) as any[];
+  // Flag (don't touch) any non-table objects mentioning __repair.
+  const others = (await dbAll(
+    "SELECT type, name FROM sqlite_master WHERE type != 'table' AND sql LIKE '%__repair%'"
+  )) as any[];
+  for (const o of others) {
+    console.log(`[DB Migration] WARNING: ${o.type} "${o.name}" mentions __repair; manual review needed`);
+  }
+  for (const t of tables) {
+    const sql: string = t.sql || "";
+    const ghosts = new Set<string>();
+    const re = /REFERENCES\s+"?([A-Za-z0-9_]*__repair)"?\s*\(/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(sql))) ghosts.add(m[1]);
+    if (!ghosts.size) continue;
+    let fixed = sql;
+    let changed = false;
+    for (const ghost of ghosts) {
+      const real = ghost.slice(0, -"__repair".length);
+      const realExists = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name=?", real);
+      const ghostExists = await dbGet("SELECT name FROM sqlite_master WHERE type='table' AND name=?", ghost);
+      if (realExists && !ghostExists) {
+        fixed = fixed
+          .replace(new RegExp(`(REFERENCES\\s+")${ghost}(")`, "g"), `$1${real}$2`)
+          .replace(new RegExp(`(REFERENCES\\s+)${ghost}(\\s*\\()`, "g"), `$1"${real}"$2`);
+        changed = true;
+        console.log(`[DB Migration] re-pointing ${t.name}: REFERENCES ${ghost} -> ${real}`);
+      } else {
+        console.log(`[DB Migration] WARNING: ${t.name} references ${ghost} (real exists: ${!!realExists}, staging exists: ${!!ghostExists}); leaving untouched`);
+      }
+    }
+    if (!changed) continue;
+    // Never silently rebuild a table other tables depend on; flag it instead.
+    const dependents = (await dbAll(
+      "SELECT name FROM sqlite_master WHERE type='table' AND sql LIKE ? AND name != ?",
+      `%REFERENCES%${t.name}%`, t.name
+    )) as any[];
+    if (dependents.length) {
+      console.log(`[DB Migration] WARNING: ${t.name} is referenced by ${dependents.map((d: any) => d.name).join(", ")}; skipping automatic rebuild, manual review needed`);
+      continue;
+    }
+    const cols = (await dbAll(`PRAGMA table_info("${t.name}")`)) as any[];
+    const colList = cols.map((c: any) => `"${c.name}"`).join(", ");
+    const idxs = (await dbAll(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+      t.name
+    )) as any[];
+    const seqRow = (await dbGet("SELECT seq FROM sqlite_sequence WHERE name=?", t.name)) as any;
+    const stage = `${t.name}__fixstage`;
+    const createRe = new RegExp(`(CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?)"?${t.name}"?(\\s*\\()`, "i");
+    const stageSql = fixed.replace(createRe, `$1"${stage}"$2`);
+    if (stageSql === fixed) {
+      console.log(`[DB Migration] WARNING: could not derive stage DDL for ${t.name}; leaving untouched`);
+      continue;
+    }
+    await dbExec([
+      "PRAGMA foreign_keys=OFF;",
+      `${stageSql};`,
+      `INSERT INTO "${stage}" (${colList}) SELECT ${colList} FROM "${t.name}";`,
+      `DROP TABLE "${t.name}";`,
+      `ALTER TABLE "${stage}" RENAME TO "${t.name}";`,
+      "PRAGMA foreign_keys=ON;",
+    ].join("\n"));
+    for (const ix of idxs) await dbExec(`${ix.sql};`);
+    if (seqRow && typeof seqRow.seq === "number") {
+      const s = Number(seqRow.seq);
+      await dbExec(`UPDATE sqlite_sequence SET seq = ${s} WHERE name='${t.name}' AND seq < ${s};`);
+    }
+    console.log(`[DB Migration] rebuilt ${t.name} with repaired REFERENCES clause`);
+  }
+}
+await repairGhostRepairReferences();
 
 function generateAccessCode(): string {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // unambiguous chars only
