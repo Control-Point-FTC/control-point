@@ -137,3 +137,25 @@ export function streamActivitySummary(
 ) {
   return postStream('/api/ai/activity-summary', data, onChunk);
 }
+
+export interface BuildHelperMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
+export async function getBuildHelper(messages: BuildHelperMessage[]) {
+  try {
+    const { result } = await postJSON('/api/ai/build-helper', { messages });
+    return result || "Volt hit a snag — please try again in a moment.";
+  } catch (error) {
+    console.error('Error calling build helper:', error);
+    return "Volt isn't reachable right now. Check your connection and try again.";
+  }
+}
+
+export function streamBuildHelper(
+  messages: BuildHelperMessage[],
+  onChunk: (chunk: string) => void
+) {
+  return postStream('/api/ai/build-helper', { messages }, onChunk);
+}

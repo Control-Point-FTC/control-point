@@ -31,6 +31,7 @@ import {
   scoutNews,
   buildAttendancePrompt,
   buildCoachPrompt,
+  buildHelperChat,
   ATTENDANCE_SYSTEM,
   COACH_SYSTEM,
 } from "./ai.js";
@@ -2040,6 +2041,44 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     return res.status(501).json({ error: "Excuse checker disabled", result: "UNEXCUSED - AI excuse checker is currently disabled." });
+  });
+
+  // --- Volt: FTC build-mentor chatbot (floating widget) ---
+  app.post("/api/ai/build-helper", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!isAIConfigured()) {
+        return res.status(501).json({ error: "AI not configured", result: "Volt isn't set up yet — the team owner needs to add a Gemini API key." });
+      }
+      const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
+      const messages = raw
+        .filter((m: any) => m && (m.role === "user" || m.role === "model") && typeof m.text === "string")
+        .slice(-12)
+        .map((m: any) => ({ role: m.role, text: m.text.slice(0, 2000) }));
+      if (!messages.length || messages[messages.length - 1].role !== "user") {
+        return res.status(400).json({ error: "A user message is required" });
+      }
+      const maxTokens = await getMaxTokens("max_tokens_chat", 1024);
+      const stream = req.query.stream === "true";
+      if (stream) {
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache");
+        try {
+          await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk));
+          res.end();
+        } catch (err) {
+          console.error("AI build-helper stream error:", err);
+          res.end("\n\n(Something glitched — try asking again.)");
+        }
+        return;
+      }
+      const result = await buildHelperChat(messages, maxTokens);
+      res.json({ result });
+    } catch (error) {
+      console.error("AI build-helper error:", error);
+      res.status(502).json({ error: "AI request failed", result: "Volt hit a snag — please try again in a moment." });
+    }
   });
 
   app.post("/api/ai/activity-summary", async (req, res) => {

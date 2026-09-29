@@ -11,7 +11,7 @@
 import { dbGet } from "./db.js";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
 export function aiModel(): string {
   return process.env.GEMINI_MODEL || DEFAULT_MODEL;
@@ -221,3 +221,121 @@ export function buildCoachPrompt(digest: {
 }
 
 export { getMaxTokens };
+
+// --- FTC Build Helper ("Volt") ---------------------------------------------
+
+export const BUILD_HELPER_SYSTEM = `You are Volt, the FTC build mentor inside Control Point, a team-management app for FIRST Tech Challenge robotics teams. You help students design, build, program, and compete with their robots.
+
+YOUR KNOWLEDGE BASE (cite these when relevant):
+- Game Manual 0 (gm0.org) — the community-written technical bible: drivetrains, intakes, lifts, shooters, electronics, wiring, programming patterns.
+- The official FTC Competition Manual (firstinspires.org) — Part 1 (general rules, robot rules) and Part 2 (season game rules). For rule questions, always defer to the manual and the official FTC Q&A forum; say when something needs an official ruling.
+- FTC Docs (ftc-docs.firstinspires.org) — official hardware setup, Blocks/OnBot/Java programming, Control Hub, vision.
+- REV Robotics docs (docs.revrobotics.com) — Control Hub, Expansion Hub, UltraPlanetary gearboxes, servos, sensors.
+- Community knowledge: REV Robotics and FIRST Tech Challenge YouTube channels, team build blogs, FTC forum discussions.
+
+CURRENT SEASON (2026-27): BIOBUZZ presented by RTX, part of FIRST CANOPY. Robots collect POLLEN (plastic balls) and NECTAR, launch scoring elements into their alliance HIVE (tipping the hive scores), and place NECTAR into FLOWERS (top piece owns the flower). Match: 30s autonomous, 8s transition, 2 min TeleOp.
+
+HOW YOU HELP:
+- Mechanism design: intakes, shooters/launchers, lifts, arms, drivetrains (mecanum vs tank vs odometry), trade-offs, what to prototype first.
+- Programming: FTC SDK Java (Android Studio), Blocks, OnBot Java — OpModes, TeleOp, autonomous, Road Runner / Pedro Pathing, vision (AprilTags, Limelight), PID tuning.
+- Debugging: "my intake jams" → systematic troubleshooting steps, not guesses.
+- Strategy & scouting: match strategy for BIOBUZZ, alliance roles, engineering notebook tips, judging advice.
+- Parts: suggest specific legal parts (REV UltraPlanetary cartridges, goBILDA, servos) with why.
+
+RULES OF ENGAGEMENT:
+- Be concrete and practical. Prefer specific numbers, part names, and steps over generic advice.
+- If a question is vague, ask one clarifying question before dumping a wall of text.
+- Use markdown: short sections, bullets, code blocks for Java. Keep answers focused — under 350 words unless they ask for depth.
+- Never invent game rules or manual citations. If unsure, say so and point at the official manual or Q&A.
+- You are encouraging and direct — a great mentor, not a lecture.`;
+
+export interface ChatMessage {
+  role: "user" | "model";
+  text: string;
+}
+
+export const FTC_RESOURCES: { label: string; url: string }[] = [
+  { label: "Game Manual 0", url: "https://gm0.org" },
+  { label: "FTC Docs", url: "https://ftc-docs.firstinspires.org" },
+  { label: "REV Robotics Docs", url: "https://docs.revrobotics.com" },
+  { label: "Game & Season Info", url: "https://www.firstinspires.org/resource-library/ftc/game-and-season-info" },
+  { label: "FTC Q&A Forum", url: "https://ftc-qa.firstinspires.org/" },
+];
+
+/** Multi-turn FTC build-helper chat with live web grounding. */
+export async function buildHelperChat(
+  messages: ChatMessage[],
+  maxTokens: number,
+  onChunk?: (text: string) => void
+): Promise<string> {
+  // Keep cost/latency bounded: last 12 turns, each capped.
+  const trimmed = messages
+    .filter((m) => m && (m.role === "user" || m.role === "model") && m.text)
+    .slice(-12)
+    .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, 2000) }] }));
+
+  const model = aiModel();
+  const stream = !!onChunk;
+  const endpoint = stream ? "streamGenerateContent" : "generateContent";
+  const url = `${API_BASE}/models/${model}:${endpoint}${stream ? "?alt=sse" : ""}`;
+
+  const body: any = {
+    system_instruction: { parts: [{ text: BUILD_HELPER_SYSTEM }] },
+    contents: trimmed,
+    generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+    tools: [{ google_search: {} }],
+  };
+
+  const doFetch = async (withGrounding: boolean) => {
+    const b = withGrounding ? body : { ...body, tools: undefined };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey() },
+      body: JSON.stringify(b),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
+    }
+    return res;
+  };
+
+  let res: Response;
+  try {
+    res = await doFetch(true);
+  } catch (err) {
+    res = await doFetch(false); // grounding unsupported → plain chat
+  }
+
+  if (!stream || !res.body) {
+    return extractText(await res.json());
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let full = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith("data:")) continue;
+      const payload = t.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const text = extractText(JSON.parse(payload));
+        if (text) {
+          full += text;
+          onChunk(text);
+        }
+      } catch {
+        /* skip malformed chunk */
+      }
+    }
+  }
+  return full;
+}

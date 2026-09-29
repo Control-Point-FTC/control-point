@@ -56,6 +56,7 @@ import {
   BarChart, Bar, Cell, PieChart, Pie
 } from 'recharts';
 import Markdown from 'react-markdown';
+import BuildHelperChat from './components/BuildHelperChat';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
@@ -1424,6 +1425,7 @@ export default function App() {
       </main>
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <CookieConsent />
+      <BuildHelperChat />
     </div>
   );
 }
@@ -4787,6 +4789,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
   const [maxTokensAttendance, setMaxTokensAttendance] = useState(settings.max_tokens_attendance || '1024');
   const [maxTokensExcuse, setMaxTokensExcuse] = useState(settings.max_tokens_excuse || '512');
   const [maxTokensSummary, setMaxTokensSummary] = useState(settings.max_tokens_summary || '1024');
+  const [maxTokensChat, setMaxTokensChat] = useState(settings.max_tokens_chat || '1024');
   const [showMemberEdit, setShowMemberEdit] = useState<any>(null);
 
   const [storageUsage, setStorageUsage] = useState<number | null>(null);
@@ -4882,6 +4885,7 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
       { key: 'max_tokens_attendance', value: maxTokensAttendance },
       { key: 'max_tokens_excuse', value: maxTokensExcuse },
       { key: 'max_tokens_summary', value: maxTokensSummary },
+      { key: 'max_tokens_chat', value: maxTokensChat },
     ];
 
     for (const payload of payloads) {
@@ -4984,6 +4988,10 @@ function SettingsView({ settings, members, onRefresh, currentUser }: any) {
           <div className="space-y-1">
             <label className="text-xs font-bold text-text-muted uppercase">Activity Summary</label>
             <Input type="number" value={maxTokensSummary} onChange={(e: any) => setMaxTokensSummary(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-text-muted uppercase">Volt Chat</label>
+            <Input type="number" value={maxTokensChat} onChange={(e: any) => setMaxTokensChat(e.target.value)} />
           </div>
         </div>
         <div className="mt-4">
