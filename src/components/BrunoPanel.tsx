@@ -19,12 +19,14 @@ const STARTERS = [
   'How do I tune PID for our lift?',
 ];
 
-export default function BrunoPanel({ open, onClose, onExpand, currentUser }: {
+export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName }: {
   open: boolean;
   onClose: () => void;
   onExpand: () => void;
   currentUser: any;
+  botName?: string;
 }) {
+  const name = botName || 'Bruno';
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -102,10 +104,10 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser }: {
         setMessages([...next, { role: 'model', text: agg }]);
       }, id || undefined);
       if (!agg.trim()) {
-        setMessages([...next, { role: 'model', text: "Bruno hit a snag — please try again in a moment." }]);
+        setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
       }
     } catch {
-      setMessages([...next, { role: 'model', text: "Bruno isn't reachable right now. Check your connection and try again." }]);
+      setMessages([...next, { role: 'model', text: `${name} isn't reachable right now. Check your connection and try again.` }]);
     } finally {
       setBusy(false);
     }
@@ -124,21 +126,21 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser }: {
             transition={{ type: 'spring', stiffness: 380, damping: 40 }}
             className="fixed right-0 top-0 z-50 h-full w-[400px] max-w-[94vw] flex flex-col bg-[#101014]/98 backdrop-blur-xl border-l border-white/10 shadow-2xl"
             role="complementary"
-            aria-label="Bruno quick chat"
+            aria-label={`${name} quick chat`}
           >
             {/* Header */}
             <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03] flex-shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shadow-[0_2px_10px_rgba(255,199,0,0.25)]">
-                  <span className="text-[22px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>
+                  <span className="text-[22px] leading-none" role="img" aria-label={`${name} the robot`}>🤖</span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold text-sm leading-tight">Bruno</p>
+                  <p className="text-white font-bold text-sm leading-tight">{name}</p>
                   <p className="text-text-muted text-[11px] leading-tight">FTC build mentor · BIOBUZZ season</p>
                 </div>
                 <button
                   onClick={onExpand}
-                  aria-label="Open full Bruno view"
+                  aria-label={`Open full ${name} view`}
                   title="Open full view"
                   className="p-1.5 text-text-muted hover:text-accent transition-colors"
                 >
@@ -172,7 +174,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser }: {
                     <p className="text-[13px] text-white/85 leading-relaxed flex gap-2">
                       <Sparkles className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                       <span>
-                        Hey, I'm <span className="font-bold text-accent">Bruno</span> — ask me anything about building
+                        Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
                         your FTC robot: mechanisms, code, strategy, or scheduling.
                       </span>
                     </p>

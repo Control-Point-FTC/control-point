@@ -28,7 +28,8 @@ function timeAgo(iso?: string) {
   return new Date(iso).toLocaleDateString();
 }
 
-export default function BrunoView({ currentUser, hasScope }: any) {
+export default function BrunoView({ currentUser, hasScope, botName }: any) {
+  const name = botName || 'Bruno';
   const [chats, setChats] = useState<any[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
@@ -117,13 +118,13 @@ export default function BrunoView({ currentUser, hasScope }: any) {
         setMessages([...next, { role: 'model', text: agg }]);
       }, chatId || undefined);
       if (!agg.trim()) {
-        setMessages([...next, { role: 'model', text: 'Bruno hit a snag — please try again in a moment.' }]);
+        setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
       }
       fetchChats(chatId);
     } catch {
       setMessages((prev) => {
         const base = prev.filter((m) => !(m.role === 'model' && !m.text));
-        return [...base, { role: 'model', text: "Bruno isn't reachable right now. Check your connection and try again." }];
+        return [...base, { role: 'model', text: `${name} isn't reachable right now. Check your connection and try again.` }];
       });
     } finally {
       setBusy(false);
@@ -319,7 +320,7 @@ export default function BrunoView({ currentUser, hasScope }: any) {
                   <Bot className="w-6 h-6 text-primary" />
                 </div>
                 <p className="text-sm text-white/85 leading-relaxed">
-                  Hey, I'm <span className="font-bold text-accent">Bruno</span> — ask me anything about building
+                  Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
                   your FTC robot: mechanisms, code, strategy, or troubleshooting.
                 </p>
               </div>

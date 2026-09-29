@@ -5,6 +5,9 @@ export interface Team {
   accent_color?: string;
   primary_color?: string;
   text_color?: string;
+  access_code?: string;
+  member_count?: number;
+  navgpt_enabled?: number;
 }
 
 export interface Member {

@@ -2,12 +2,23 @@
 // A module-level singleton: call confirmDialog()/notify() from anywhere,
 // render <DialogHost /> once near the app root.
 
-import React, { useEffect, useReducer } from 'react';
+import React, { useEffect, useReducer, useState } from 'react';
 import { X, CheckCircle2, Info, AlertCircle } from 'lucide-react';
 
 export interface ConfirmOptions {
   title?: string;
   message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+}
+
+export interface PromptOptions {
+  title?: string;
+  message: string;
+  /** The exact text the user must type to confirm (compared verbatim). */
+  expected: string;
+  placeholder?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
@@ -21,6 +32,12 @@ interface PendingConfirm {
   resolve: (value: boolean) => void;
 }
 
+interface PendingPrompt {
+  seq: number;
+  opts: Required<Pick<PromptOptions, 'message' | 'expected'>> & PromptOptions;
+  resolve: (value: boolean) => void;
+}
+
 interface Toast {
   id: number;
   message: string;
@@ -28,6 +45,7 @@ interface Toast {
 }
 
 let confirmQueue: PendingConfirm[] = [];
+let promptQueue: PendingPrompt[] = [];
 let toasts: Toast[] = [];
 let nextToastId = 1;
 let nextConfirmSeq = 1;
@@ -57,6 +75,17 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
   });
 }
 
+/**
+ * Show a modal typed-confirmation dialog. Resolves `true` only when the user
+ * types exactly `opts.expected`; `false` on cancel (button, backdrop, Escape).
+ */
+export function promptDialog(opts: PromptOptions): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    promptQueue.push({ seq: nextConfirmSeq++, opts, resolve });
+    emit();
+  });
+}
+
 /** Fire-and-forget toast notification. Auto-dismisses after ~4s. */
 export function notify(message: string, kind: ToastKind = 'info'): void {
   const id = nextToastId++;
@@ -75,6 +104,12 @@ function dismissToast(id: number) {
 
 function settleConfirm(value: boolean) {
   const head = confirmQueue.shift();
+  emit();
+  head?.resolve(value);
+}
+
+function settlePrompt(value: boolean) {
+  const head = promptQueue.shift();
   emit();
   head?.resolve(value);
 }
@@ -133,8 +168,71 @@ function ConfirmModal({ pending }: { pending: PendingConfirm }) {
   );
 }
 
-const toastStyles: Record<ToastKind, { wrap: string; icon: typeof Info; iconClass: string }> = {
-  info: {
+function PromptModal({ pending }: { pending: PendingPrompt }) {
+  const { opts } = pending;
+  const title = opts.title;
+  const confirmLabel = opts.confirmLabel || 'Confirm';
+  const cancelLabel = opts.cancelLabel || 'Cancel';
+  const [value, setValue] = useState('');
+  const matches = value === opts.expected;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') settlePrompt(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={() => settlePrompt(false)}
+    >
+      <div
+        className="card-surface p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgba(0,0,0,0.35)] w-full max-w-md"
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={title || 'Confirm'}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {title && (
+          <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>
+        )}
+        <p className="text-sm text-text-muted leading-relaxed">{opts.message}</p>
+        <div>
+          <input
+            type="text"
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={opts.placeholder || `Type "${opts.expected}" to confirm`}
+            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+            onKeyDown={(e) => { if (e.key === 'Enter' && matches) settlePrompt(true); }}
+          />
+          <p className="text-[11px] text-text-muted/70 mt-1.5">
+            Type <span className="font-mono font-bold text-white/90">{opts.expected}</span> exactly to confirm.
+          </p>
+        </div>
+        <div className="flex gap-3 justify-end">
+          <button type="button" className={`${btnBase} ${btnSecondary}`} onClick={() => settlePrompt(false)}>
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            disabled={!matches}
+            className={`${btnBase} ${opts.danger ? btnDanger : btnPrimary} disabled:opacity-40 disabled:cursor-not-allowed`}
+            onClick={() => settlePrompt(true)}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const toastStyles: Record<ToastKind, { wrap: string; icon: typeof Info; iconClass: string }> = {  info: {
     wrap: 'border-white/10',
     icon: Info,
     iconClass: 'text-accent',
@@ -188,7 +286,10 @@ export function DialogHost(): React.JSX.Element {
 
   return (
     <>
-      {confirmQueue[0] && <ConfirmModal key={confirmQueue[0].seq} pending={confirmQueue[0]} />}
+      {confirmQueue[0] && <ConfirmModal key={`c${confirmQueue[0].seq}`} pending={confirmQueue[0]} />}
+      {!confirmQueue[0] && promptQueue[0] && (
+        <PromptModal key={`p${promptQueue[0].seq}`} pending={promptQueue[0]} />
+      )}
       <ToastStack items={toasts} />
     </>
   );

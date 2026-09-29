@@ -34,9 +34,36 @@ import {
   buildAttendancePrompt,
   buildCoachPrompt,
   buildHelperChat,
+  NAVGPT_SYSTEM,
   ATTENDANCE_SYSTEM,
   COACH_SYSTEM,
 } from "./ai.js";
+
+// Members DDL (single source of truth — also reused by the multi-team migration below).
+// One email (account) may hold one membership row PER TEAM, hence
+// UNIQUE(team_id, email) instead of a global UNIQUE(email).
+const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    email TEXT NOT NULL,
+    password TEXT,
+    is_setup INTEGER DEFAULT 0,
+    is_board INTEGER DEFAULT 0,
+    scopes TEXT, -- JSON array
+    is_active INTEGER DEFAULT 1, -- 0 = removed from team; history (messages, tasks, attendance) is kept
+    account_type TEXT DEFAULT 'student',
+    google_id TEXT,
+    discord_id TEXT,
+    github_id TEXT,
+    accent_color TEXT,
+    primary_color TEXT,
+    text_color TEXT,
+    avatar_url TEXT,
+    UNIQUE(team_id, email),
+    FOREIGN KEY(team_id) REFERENCES teams(id)
+  )`;
 
 // Initialize Database - Create all tables first
 (await dbExec(`
@@ -46,19 +73,7 @@ import {
     number TEXT NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    team_id INTEGER,
-    name TEXT NOT NULL,
-    role TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    password TEXT,
-    is_setup INTEGER DEFAULT 0,
-    is_board INTEGER DEFAULT 0,
-    scopes TEXT, -- JSON array
-    is_active INTEGER DEFAULT 1, -- 0 = removed from team; history (messages, tasks, attendance) is kept
-    FOREIGN KEY(team_id) REFERENCES teams(id)
-  );
+  ${MEMBERS_DDL};
 
   CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -417,6 +432,30 @@ async function hasColumn(table: string, col: string): Promise<boolean> {
   return cols.some((c: any) => c.name === col);
 }
 
+// ---- Multi-team accounts: one email may hold a membership row per team ----
+// Relax the legacy global UNIQUE(email) to UNIQUE(team_id, email) via a table
+// rebuild. Existing databases keep every column and row; fresh databases get
+// the new schema directly from MEMBERS_DDL above.
+const membersTableSql = ((await dbGet("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'members'")) as any)?.sql || "";
+if (membersTableSql && !/UNIQUE\s*\(\s*team_id\s*,\s*email\s*\)/i.test(membersTableSql)) {
+  const oldCols = (await dbAll("PRAGMA table_info(members)")) as any[];
+  const knownCols = ["id", "team_id", "name", "role", "email", "password", "is_setup", "is_board", "scopes", "is_active", "account_type", "google_id", "discord_id", "github_id", "accent_color", "primary_color", "text_color", "avatar_url"];
+  (await dbExec("ALTER TABLE members RENAME TO members_old"));
+  (await dbExec(MEMBERS_DDL));
+  // Preserve any columns the old table has that the new DDL doesn't know about.
+  for (const c of oldCols) {
+    if (!knownCols.includes(c.name)) {
+      (await dbExec(`ALTER TABLE members ADD COLUMN "${c.name}" ${c.type || "TEXT"}`));
+      knownCols.push(c.name);
+    }
+  }
+  const common = oldCols.map((c: any) => c.name).filter((n: string) => knownCols.includes(n));
+  const list = common.map((n: string) => `"${n}"`).join(", ");
+  (await dbExec(`INSERT INTO members (${list}) SELECT ${list} FROM members_old`));
+  (await dbExec("DROP TABLE members_old"));
+  console.log("[DB Migration] members rebuilt with UNIQUE(team_id, email) for multi-team accounts");
+}
+
 function generateAccessCode(): string {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // unambiguous chars only
   const bytes = crypto.getRandomValues(new Uint8Array(8));
@@ -437,6 +476,30 @@ if (!(await hasColumn('teams', 'access_code'))) {
   (await dbExec("ALTER TABLE teams ADD COLUMN access_code TEXT"));
 }
 (await dbExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_access_code ON teams(access_code)"));
+
+// Secret chatbot persona (NavGPT ❤️): per-team toggle, default ON. Only has any
+// effect for the qualifying team (name contains "hypnotic" or "4215").
+if (!(await hasColumn('teams', 'navgpt_enabled'))) {
+  (await dbExec("ALTER TABLE teams ADD COLUMN navgpt_enabled INTEGER NOT NULL DEFAULT 1"));
+}
+
+// Feedback screenshots: optional image attached to a feedback entry.
+if (!(await hasColumn('feedback', 'screenshot_url'))) {
+  (await dbExec("ALTER TABLE feedback ADD COLUMN screenshot_url TEXT"));
+}
+
+// Does this team name qualify for the NavGPT ❤️ secret persona?
+function navGptQualifies(teamName: any): boolean {
+  const n = String(teamName || "");
+  return /hypnotic/i.test(n) || /4215/.test(n);
+}
+
+// Effective persona: qualifying team AND the toggle switched on.
+async function navGptActiveForTeam(teamId: number | null | undefined): Promise<boolean> {
+  if (!teamId) return false;
+  const t = (await dbGet("SELECT name, navgpt_enabled FROM teams WHERE id = ?", teamId)) as any;
+  return !!t && navGptQualifies(t.name) && (t.navgpt_enabled ?? 1) === 1;
+}
 
 if (!(await hasColumn('members', 'account_type'))) {
   (await dbExec("ALTER TABLE members ADD COLUMN account_type TEXT DEFAULT 'student'"));
@@ -530,18 +593,77 @@ async function validateSession(sessionId: string): Promise<{ valid: boolean; mem
 
 // Resolve the calling user + their workspace from a session id.
 // Looks in query (?sessionId=), JSON body, then the x-session-id header.
-async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string } | null> {
-  const sessionId = (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string);
+function getSessionId(req: any): string | null {
+  return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string) || null;
+}
+async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string; email?: string; teamless?: boolean } | null> {
+  const sessionId = getSessionId(req);
   if (!sessionId) return null;
   const { valid, memberId } = await validateSession(sessionId);
   if (!valid || !memberId) return null;
   const member = (await dbGet("SELECT id, team_id, account_type FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", memberId)) as any;
-  if (!member) return null;
-  return { memberId: member.id, teamId: member.team_id ?? null, accountType: member.account_type || 'student' };
+  if (member) return { memberId: member.id, teamId: member.team_id ?? null, accountType: member.account_type || 'student' };
+  // Teamless: the session outlived its membership row (last team deleted, or
+  // left every team). The ghost row anchors the account's email; if it still
+  // has zero active memberships the session stays valid with no workspace.
+  const ghost = (await dbGet("SELECT email FROM members WHERE id = ?", memberId)) as any;
+  if (ghost?.email) {
+    const c = (await dbGet("SELECT COUNT(*) AS n FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", ghost.email)) as any;
+    if ((c?.n || 0) === 0) {
+      return { memberId: 0, teamId: null, accountType: 'student', email: ghost.email, teamless: true };
+    }
+  }
+  return null;
+}
+
+// ---- Multi-team accounts ----
+// An account is an email; a membership is one members row per (email, team).
+// Sessions point at a membership row, so the active team is the row's team.
+async function allMemberRows(email: string): Promise<any[]> {
+  return (await dbAll("SELECT * FROM members WHERE email = ? ORDER BY id DESC", email)) as any[];
+}
+async function activeMemberRows(email: string): Promise<any[]> {
+  return (await dbAll("SELECT * FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1 ORDER BY id DESC", email)) as any[];
+}
+// Which membership to sign in as when an account has several: the one with
+// the most recently used session wins, falling back to the newest row.
+async function pickMemberRow(rows: any[]): Promise<any | null> {
+  if (!rows.length) return null;
+  if (rows.length === 1) return rows[0];
+  const ids = rows.map((r) => r.id);
+  const hit = (await dbGet(
+    `SELECT member_id FROM sessions WHERE member_id IN (${ids.map(() => "?").join(",")}) ORDER BY last_activity DESC LIMIT 1`,
+    ...ids
+  )) as any;
+  return (hit && rows.find((r) => r.id === hit.member_id)) || rows[0];
+}
+// Every workspace (team) this account actively belongs to, with member counts
+// and whether this account can manage each one.
+async function userTeams(email: string): Promise<any[]> {
+  const teams = (await dbAll(`
+    SELECT t.*, (SELECT COUNT(*) FROM members m WHERE m.team_id = t.id AND COALESCE(m.is_active, 1) = 1) AS member_count
+    FROM teams t
+    JOIN members m ON m.team_id = t.id
+    WHERE m.email = ? AND COALESCE(m.is_active, 1) = 1
+    ORDER BY t.id
+  `, email)) as any[];
+  for (const t of teams) {
+    const row = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, t.id)) as any;
+    const perms = row ? await getMemberPerms(row.id, t.id) : new Set<string>();
+    (t as any).can_manage = perms.has("*") || perms.has("manage_members");
+  }
+  return teams;
+}
+// Does this account hold an active membership in teamId with `perm`?
+async function hasPermInTeam(email: string, teamId: number, perm: string): Promise<boolean> {
+  const row = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, teamId)) as any;
+  if (!row) return false;
+  const perms = await getMemberPerms(row.id, teamId);
+  return perms.has("*") || perms.has(perm);
 }
 
 // Middleware-ish guard: 401 when no valid session. Returns auth or sends the error.
-async function requireAuth(req: any, res: any): Promise<{ memberId: number; teamId: number | null; accountType: string } | null> {
+async function requireAuth(req: any, res: any): Promise<{ memberId: number; teamId: number | null; accountType: string; email?: string; teamless?: boolean } | null> {
   const auth = await getAuth(req);
   if (!auth) {
     res.status(401).json({ error: "Not signed in" });
@@ -785,6 +907,16 @@ async function startServer() {
       else cb(new Error('Only image files are allowed'));
     }
   });
+
+  // Feedback screenshots: images only, 5MB cap
+  const screenshotUpload = multer({
+    storage,
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
+      else cb(new Error('Only image files are allowed'));
+    }
+  });
   
   app.use('/uploads', express.static(uploadDir));
   
@@ -899,22 +1031,30 @@ async function startServer() {
   // --- Auth Routes ---
   app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const user = (await dbGet("SELECT * FROM members WHERE email = ?", email)) as any;
-
-    if (!user) return res.status(401).json({ error: "User not found" });
-    if (user.is_active === 0) return res.status(403).json({ error: "This account has been removed from the team" });
-
-    if (!user.password) {
-      const sessionId = await createSession(user.id);
-      return res.json({ needsSetup: true, user, sessionId });
+    const rows = await activeMemberRows(email);
+    if (!rows.length) {
+      // Distinguish "no such account" from "removed everywhere"
+      const anyRow = (await dbGet("SELECT id FROM members WHERE email = ?", email)) as any;
+      if (anyRow) return res.status(403).json({ error: "This account has been removed from the team" });
+      return res.status(401).json({ error: "User not found" });
     }
 
-    if (bcrypt.compareSync(password, user.password)) {
-      const sessionId = await createSession(user.id);
-      res.json({ user, sessionId });
-    } else {
-      res.status(401).json({ error: "Invalid password" });
+    // The password is account-wide: accept it if it verifies against any of
+    // this account's membership rows.
+    let verified = false;
+    for (const r of rows) {
+      if (r.password && bcrypt.compareSync(password, r.password)) { verified = true; break; }
     }
+    const picked = (await pickMemberRow(rows)) as any;
+    if (!verified) {
+      if (rows.some((r) => !r.password)) {
+        const sessionId = await createSession(picked.id);
+        return res.json({ needsSetup: true, user: picked, sessionId });
+      }
+      return res.status(401).json({ error: "Invalid password" });
+    }
+    const sessionId = await createSession(picked.id);
+    res.json({ user: picked, sessionId });
   });
 
   app.post("/api/auth/setup", async (req, res) => {
@@ -923,10 +1063,11 @@ async function startServer() {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
     // Setup is only for accounts that never had a password (e.g. added to the roster by an admin)
-    const existing = (await dbGet("SELECT id FROM members WHERE email = ? AND password IS NULL", email)) as any;
+    const existing = (await dbGet("SELECT id FROM members WHERE email = ? AND password IS NULL ORDER BY id DESC", email)) as any;
     if (!existing) return res.status(400).json({ error: "This account already has a password — sign in instead" });
     const hashedPassword = bcrypt.hashSync(password, 10);
-    (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE id = ?", hashedPassword, existing.id));
+    // The password is account-wide: set it on every membership row for this email.
+    (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id));
     const sessionId = await createSession(existing.id);
     res.json({ user, sessionId });
@@ -937,14 +1078,15 @@ async function startServer() {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
     const { email } = req.body;
-    const target = (await dbGet("SELECT id, team_id FROM members WHERE email = ?", email)) as any;
-    if (!target || target.team_id !== auth.teamId) {
+    const target = (await dbGet("SELECT id, team_id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, auth.teamId)) as any;
+    if (!target) {
       return res.status(404).json({ error: "Member not found in your workspace" });
     }
     if (target.id === auth.memberId) {
       return res.status(400).json({ error: "You can't reset your own password this way" });
     }
-    (await dbRun("UPDATE members SET password = NULL, is_setup = 0 WHERE id = ?", target.id));
+    // The password is account-wide: clear it on every membership row for this email.
+    (await dbRun("UPDATE members SET password = NULL, is_setup = 0 WHERE email = ?", email));
     res.json({ success: true });
   });
 
@@ -959,9 +1101,22 @@ async function startServer() {
       if (!cleanName || !cleanEmail || !password || password.length < 6) {
         return res.status(400).json({ error: "Name, email, and a 6+ character password are required" });
       }
-      const existing = (await dbGet("SELECT id FROM members WHERE email = ?", cleanEmail));
-      if (existing) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
-      const hashedPassword = bcrypt.hashSync(password, 10);
+      // Multi-team accounts: an existing email may sign up again to create or join
+      // another team. When the account already has a password, it must match.
+      const priorRows = await allMemberRows(cleanEmail);
+      const pwRows = priorRows.filter((r) => r.password);
+      let hashedPassword: string;
+      if (pwRows.length) {
+        const matched = pwRows.find((r) => bcrypt.compareSync(password, r.password));
+        if (!matched) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
+        hashedPassword = matched.password;
+      } else {
+        hashedPassword = bcrypt.hashSync(password, 10);
+        if (priorRows.length) {
+          // Adopt the new password account-wide for password-less rows.
+          (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ? AND password IS NULL", hashedPassword, cleanEmail));
+        }
+      }
 
       if (accountType === 'admin') {
         const cleanTeam = (teamName || '').trim();
@@ -984,13 +1139,25 @@ async function startServer() {
         if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
         const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
         if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
-        const mInfo = (await dbRun(
-          "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 0, 'student', ?)",
-          team.id, cleanName, 'Member', cleanEmail, hashedPassword, JSON.stringify([])
-        )) as any;
-        const sessionId = await createSession(mInfo.lastInsertRowid);
-        await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
-        const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        const dupe = (await dbGet("SELECT id, is_active FROM members WHERE email = ? AND team_id = ?", cleanEmail, team.id)) as any;
+        if (dupe && dupe.is_active !== 0) {
+          return res.status(400).json({ error: "You're already a member of this team — sign in instead" });
+        }
+        let memberId: number;
+        if (dupe) {
+          // Rejoining a team they were removed from: restore the membership.
+          (await dbRun("UPDATE members SET is_active = 1, name = ?, password = ?, is_setup = 1 WHERE id = ?", cleanName, hashedPassword, dupe.id));
+          memberId = dupe.id;
+        } else {
+          const mInfo = (await dbRun(
+            "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 0, 'student', ?)",
+            team.id, cleanName, 'Member', cleanEmail, hashedPassword, JSON.stringify([])
+          )) as any;
+          memberId = mInfo.lastInsertRowid;
+        }
+        const sessionId = await createSession(memberId);
+        await assignSystemRole(team.id, memberId, "Member");
+        const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
         return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -1042,11 +1209,25 @@ async function startServer() {
 
   // Resolve the current user from a session id (used after Google sign-in)
   app.get("/api/auth/me", async (req, res) => {
-    const sessionId = req.query.sessionId as string;
-    if (!sessionId) return res.status(401).json({ error: "No session" });
-    const { valid, memberId } = await validateSession(sessionId);
-    if (!valid || !memberId) return res.status(401).json({ error: "Invalid session" });
-    const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
+    const auth = await getAuth(req);
+    if (!auth) return res.status(401).json({ error: "Invalid session" });
+    const sessionId = getSessionId(req);
+    // Teamless account (deleted/left their last team): no workspace, but the
+    // session stays valid so they can create or join a team, or delete the account.
+    if (auth.teamless) {
+      const ghost = (await dbGet("SELECT name, email FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", auth.email || "")) as any;
+      const isOwner = ownerEmails().includes(((auth.email) || "").toLowerCase());
+      return res.json({
+        user: {
+          id: 0, name: ghost?.name || auth.email || "", email: auth.email || "",
+          team_id: null, account_type: "student", roles: [], permissions: [],
+          teams: [], teamless: true,
+        },
+        sessionId, isOwner,
+      });
+    }
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
+    delete (user as any).password; // never expose password hashes
     const isOwner = ownerEmails().includes(((user?.email) || "").toLowerCase());
     if (user?.team_id) {
       await ensureRolesSeeded(user.team_id);
@@ -1056,6 +1237,8 @@ async function startServer() {
       (user as any).roles = [];
       (user as any).permissions = [];
     }
+    // Every workspace this account belongs to (for the team switcher)
+    (user as any).teams = user?.email ? await userTeams(user.email) : [];
     res.json({ user, sessionId, isOwner });
   });
 
@@ -1082,12 +1265,14 @@ async function startServer() {
   // either start a session (existing member) or stash a single-use signup token.
   async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, intent: string, res: any) {
     const idColumn = OAUTH_PROVIDERS[provider].idColumn;
-    let member: any = (await dbGet(`SELECT * FROM members WHERE ${idColumn} = ?`, providerSub));
-    if (!member) {
-      member = (await dbGet("SELECT * FROM members WHERE email = ?", email));
-      if (member) {
-        (await dbRun(`UPDATE members SET ${idColumn} = ? WHERE id = ?`, providerSub, member.id));
-        member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
+    let rows: any[] = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
+    if (!rows.length) {
+      rows = (await dbAll("SELECT * FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email)) as any[];
+      if (rows.length) {
+        // Link this provider identity to every membership row for the account,
+        // so future logins can land in the most recently used team.
+        (await dbRun(`UPDATE members SET ${idColumn} = ? WHERE email = ? AND COALESCE(is_active, 1) = 1`, providerSub, email));
+        rows = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
       } else if (intent === 'admin_signup' || intent === 'student_signup' || intent === 'signup') {
         const token = randomHex(32);
         pendingOAuthSignups.set(token, { provider, providerSub, email, name, intent, expiry: Date.now() + 10 * 60 * 1000 });
@@ -1096,8 +1281,8 @@ async function startServer() {
         return res.redirect("/?oauth_error=not_invited");
       }
     }
+    const member = await pickMemberRow(rows);
     const sessionId = await createSession(member.id);
-    if (member.is_active === 0) return res.redirect("/?oauth_error=account_removed");
     res.redirect(`/?oauth_session=${sessionId}`);
   }
 
@@ -1115,8 +1300,9 @@ async function startServer() {
       const cleanEmail = (pending.email || '').trim();
       const cleanName = (pending.name || '').trim() || cleanEmail.split('@')[0];
       if (!cleanEmail) return res.status(400).json({ error: "Signup expired — please try again" });
-      const existing = (await dbGet("SELECT id FROM members WHERE email = ?", cleanEmail));
-      if (existing) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
+      // Multi-team accounts: a provider-verified email may already exist — it
+      // simply gains a membership row in the new/joined team. (Duplicate
+      // membership in the SAME team is still rejected below.)
 
       const effectiveIntent = pending.intent === 'signup'
         ? (role === 'admin' ? 'admin_signup' : 'student_signup')
@@ -1142,6 +1328,8 @@ async function startServer() {
         if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
         const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
         if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
+        const dupe = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", cleanEmail, team.id)) as any;
+        if (dupe) return res.status(400).json({ error: "This account is already on that team — sign in instead" });
         const mInfo = (await dbRun(
           `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?)`,
           team.id, cleanName, 'Member', cleanEmail, pending.providerSub, JSON.stringify([])
@@ -1350,7 +1538,7 @@ async function startServer() {
     if (!newPassword || String(newPassword).length < 6) {
       return res.status(400).json({ error: "New password must be at least 6 characters" });
     }
-    const member = (await dbGet("SELECT password FROM members WHERE id = ?", auth.memberId)) as any;
+    const member = (await dbGet("SELECT id, email, password FROM members WHERE id = ?", auth.memberId)) as any;
     if (!member) return res.status(404).json({ error: "Account not found" });
     if (!member.password) {
       return res.status(400).json({ error: "This account signs in with Google — there is no password to change" });
@@ -1358,11 +1546,17 @@ async function startServer() {
     if (!bcrypt.compareSync(String(currentPassword || ""), member.password)) {
       return res.status(401).json({ error: "Current password is incorrect" });
     }
-    await dbRun("UPDATE members SET password = ? WHERE id = ?", bcrypt.hashSync(String(newPassword), 10), auth.memberId);
-    // Keep this session alive, kill every other one
+    const newHash = bcrypt.hashSync(String(newPassword), 10);
+    // The password is account-wide: update every membership row for this email,
+    // and kill every other session on all of them.
+    (await dbRun("UPDATE members SET password = ? WHERE email = ?", newHash, member.email));
+    const siblingIds = ((await dbAll("SELECT id FROM members WHERE email = ?", member.email)) as any[]).map((r) => r.id);
     const sid = currentSessionId(req);
-    if (sid) await dbRun("DELETE FROM sessions WHERE member_id = ? AND id != ?", auth.memberId, sid);
-    else await dbRun("DELETE FROM sessions WHERE member_id = ?", auth.memberId);
+    if (siblingIds.length) {
+      const placeholders = siblingIds.map(() => "?").join(",");
+      if (sid) await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders}) AND id != ?`, ...siblingIds, sid);
+      else await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders})`, ...siblingIds);
+    }
     res.json({ ok: true });
   });
 
@@ -1378,65 +1572,213 @@ async function startServer() {
     res.json({ exported_at: new Date().toISOString(), member, attendance, feedback, messages, notifications });
   });
 
-  // Delete my account — with password confirmation and last-admin guard
+  // Delete my account — only when the account has zero team memberships.
+  // Typed email confirmation happens client-side. Deletes the user record,
+  // their sessions, and their orphaned personal data (notifications, avatars);
+  // team history (messages, attendance, feedback) stays with the teams.
   app.delete("/api/auth/account", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const member = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
-    if (!member) return res.status(404).json({ error: "Account not found" });
-
-    if (member.password) {
-      if (!bcrypt.compareSync(String(req.body?.password || ""), member.password)) {
-        return res.status(401).json({ error: "Password is incorrect — account not deleted" });
-      }
+    const email = auth.teamless
+      ? (auth.email || "")
+      : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
+    if (!email) return res.status(401).json({ error: "Not signed in" });
+    const active = (await dbGet(
+      "SELECT COUNT(*) AS n FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email
+    )) as any;
+    if ((active?.n || 0) > 0) {
+      return res.status(400).json({ error: "Delete or leave all of your teams first — account deletion is only available with no team memberships." });
     }
-
-    // Don't orphan a team: the last admin can't delete their account
-    if ((member.account_type || 'student') === 'admin' && member.team_id) {
-      const row = (await dbGet(
-        "SELECT COUNT(*) AS c FROM members WHERE team_id = ? AND (account_type = 'admin' OR is_board = 1)",
-        member.team_id
-      )) as any;
-      if ((row?.c || 0) <= 1) {
-        return res.status(409).json({
-          error: "You're the only admin of this team. Promote another member to admin (or Board) before deleting your account, so the team isn't left without an owner."
-        });
-      }
+    const rows = (await dbAll("SELECT id, avatar_url FROM members WHERE email = ?", email)) as any[];
+    const ids = rows.map((r) => r.id);
+    // Remove avatar files (best effort)
+    for (const r of rows) {
+      try {
+        if (r.avatar_url?.startsWith('/uploads/')) {
+          const p = path.join(uploadDir, r.avatar_url.slice('/uploads/'.length));
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        }
+      } catch { /* best effort */ }
     }
-
-    // Remove avatar file
-    try {
-      if (member.avatar_url?.startsWith('/uploads/')) {
-        const p = path.join(uploadDir, member.avatar_url.slice('/uploads/'.length));
-        if (fs.existsSync(p)) fs.unlinkSync(p);
-      }
-    } catch { /* best effort */ }
-
-    // Cascade-delete personal data
-    await dbRun("DELETE FROM sessions WHERE member_id = ?", auth.memberId);
-    await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", auth.memberId);
-    await dbRun("DELETE FROM attendance WHERE member_id = ?", auth.memberId);
-    await dbRun("DELETE FROM feedback WHERE user_id = ?", auth.memberId);
-    await dbRun("DELETE FROM notifications WHERE user_id = ?", auth.memberId);
-    await dbRun("DELETE FROM messages WHERE sender_id = ?", auth.memberId);
-    await dbRun("DELETE FROM members WHERE id = ?", auth.memberId);
+    if (ids.length) {
+      const ph = ids.map(() => "?").join(",");
+      await dbRun(`DELETE FROM sessions WHERE member_id IN (${ph})`, ...ids);
+      await dbRun(`DELETE FROM stream_sessions WHERE member_id IN (${ph})`, ...ids);
+      await dbRun(`DELETE FROM notifications WHERE user_id IN (${ph})`, ...ids);
+      await dbRun(`DELETE FROM member_roles WHERE member_id IN (${ph})`, ...ids);
+    }
+    await dbRun("DELETE FROM members WHERE email = ?", email);
     res.json({ ok: true });
   });
 
 
   // --- API Routes ---
 
-  // Teams — each signed-in user sees only their own workspace
+  // Teams — the signed-in account sees every workspace it belongs to
   app.get("/api/teams", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const teams = (await dbAll("SELECT * FROM teams WHERE id = ?", auth.teamId));
-    res.json(teams);
+    const email = auth.teamless
+      ? (auth.email || "")
+      : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
+    const list = await userTeams(email);
+    for (const t of list as any[]) {
+      const c = (await dbGet("SELECT COUNT(*) AS n FROM members WHERE team_id = ? AND is_active = 1", t.id)) as any;
+      t.member_count = c?.n || 0;
+    }
+    res.json(list);
   });
 
-  // Workspaces are created at signup — direct creation is disabled
+  // Create an additional workspace for this admin account (or a first
+  // workspace for a teamless account)
   app.post("/api/teams", async (req, res) => {
-    res.status(403).json({ error: "Workspaces are created at signup" });
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    // Teamless accounts may always create a team; otherwise you need the
+    // manage_members permission in your active team.
+    if (!auth.teamless && !(await hasPerm(auth as any, "manage_members"))) {
+      return res.status(403).json({ error: "You don't have permission for that" });
+    }
+    const { name, number, accent_color, primary_color, text_color } = req.body || {};
+    const cleanName = (name || "").trim();
+    if (!cleanName) return res.status(400).json({ error: "Team name is required" });
+    const code = await uniqueAccessCode();
+    const tInfo = (await dbRun(
+      "INSERT INTO teams (name, number, access_code, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?)",
+      cleanName, (number || "").trim(), code, cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)
+    )) as any;
+    const teamId = tInfo.lastInsertRowid;
+    const me = auth.teamless
+      ? (await dbGet("SELECT * FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", auth.email || "")) as any
+      : (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
+    const mInfo = (await dbRun(
+      "INSERT INTO members (team_id, name, role, email, password, avatar_url, is_setup, is_board, account_type, scopes, google_id, discord_id, github_id) VALUES (?, ?, ?, ?, ?, ?, 1, 1, 'admin', ?, ?, ?, ?)",
+      teamId, me?.name || me?.email || "Admin", "Admin", me?.email || auth.email || "", me?.password || null, me?.avatar_url || null, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin']), me?.google_id || null, me?.discord_id || null, me?.github_id || null
+    )) as any;
+    await ensureRolesSeeded(teamId);
+    await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
+    const sessionId = await createSession(mInfo.lastInsertRowid);
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+    delete (user as any).password;
+    (user as any).teams = me?.email ? await userTeams(me.email) : [];
+    res.json({ team: { id: teamId, name: cleanName, number: (number || "").trim(), access_code: code }, user, sessionId });
+  });
+
+  // Switch the active workspace: the session moves to this account's
+  // membership row in the target team.
+  // Secret chatbot persona (NavGPT ❤️): per-team toggle for the qualifying team.
+  // Admin-gated, active-team scoped. For every other team this returns 404 — no trace.
+  app.post("/api/team/chat-persona", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    if (!(await hasPermInTeam(me?.email || "", auth.teamId, "manage_members"))) {
+      return res.status(403).json({ error: "Admins only" });
+    }
+    const team = (await dbGet("SELECT id, name FROM teams WHERE id = ?", auth.teamId)) as any;
+    if (!team || !navGptQualifies(team.name)) {
+      return res.status(404).json({ error: "Not available for this team" });
+    }
+    const enabled = req.body?.enabled !== false;
+    (await dbRun("UPDATE teams SET navgpt_enabled = ? WHERE id = ?", enabled ? 1 : 0, team.id));
+    res.json({ ok: true, navgpt_enabled: enabled ? 1 : 0 });
+  });
+
+  app.post("/api/teams/switch", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const teamId = parseInt(req.body?.team_id, 10);
+    if (!teamId) return res.status(400).json({ error: "Choose a team" });
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    const row = (await dbGet(
+      "SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1",
+      me?.email || "", teamId
+    )) as any;
+    if (!row) return res.status(403).json({ error: "You're not a member of that team" });
+    const sessionId = await createSession(row.id);
+    const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
+    res.json({ user: row, sessionId, team });
+  });
+
+  // Join a team with its access code. Works for teamless accounts and for
+  // accounts adding another team; reactivates a previously left membership.
+  app.post("/api/teams/join", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const email = auth.teamless
+      ? (auth.email || "")
+      : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
+    if (!email) return res.status(401).json({ error: "Not signed in" });
+    const code = String(req.body?.access_code || "").trim().toUpperCase();
+    if (!code) return res.status(400).json({ error: "Enter an access code" });
+    const team = (await dbGet("SELECT * FROM teams WHERE access_code = ?", code)) as any;
+    if (!team) return res.status(404).json({ error: "No team found with that access code" });
+    const existing = (await dbGet("SELECT * FROM members WHERE email = ? AND team_id = ?", email, team.id)) as any;
+    let row = existing;
+    if (existing && (existing.is_active ?? 1) === 1) {
+      // Already a member — just switch to it.
+    } else if (existing) {
+      await dbRun("UPDATE members SET is_active = 1 WHERE id = ?", existing.id);
+      row = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id)) as any;
+    } else {
+      // New membership: carry the account's identity (name, password hash,
+      // linked providers) so sign-in keeps working everywhere.
+      const src = (await dbGet("SELECT * FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any;
+      const info = (await dbRun(
+        "INSERT INTO members (team_id, name, role, email, password, avatar_url, is_setup, account_type, scopes, google_id, discord_id, github_id) VALUES (?, ?, ?, ?, ?, ?, 1, 'student', ?, ?, ?, ?)",
+        team.id, src?.name || email.split("@")[0], "Member", email, src?.password || null, src?.avatar_url || null,
+        JSON.stringify(['attendance']), src?.google_id || null, src?.discord_id || null, src?.github_id || null
+      )) as any;
+      row = (await dbGet("SELECT * FROM members WHERE id = ?", info.lastInsertRowid)) as any;
+      await ensureRolesSeeded(team.id);
+      await assignSystemRole(team.id, row.id, "Member");
+    }
+    const sessionId = await createSession(row.id);
+    const user = { ...(row as any), teams: await userTeams(email) };
+    delete (user as any).password;
+    res.json({ user, sessionId, team, joined: !existing || (existing.is_active ?? 1) !== 1 });
+  });
+
+  // Leave a team (non-admin path). History is preserved via soft-remove; the
+  // last admin of a team can't leave until someone else is promoted.
+  app.post("/api/teams/leave", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth || auth.teamless) return res.status(400).json({ error: "You're not in a team" });
+    const teamId = parseInt(req.body?.team_id, 10) || auth.teamId;
+    if (!teamId) return res.status(400).json({ error: "Invalid team" });
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    const email = me?.email || "";
+    const row = (await dbGet(
+      "SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, teamId
+    )) as any;
+    if (!row) return res.status(403).json({ error: "You're not a member of that team" });
+    // Don't strand a team with no admins.
+    if (await hasPermInTeam(email, teamId, "manage_members")) {
+      if ((await countAdmins(teamId)) <= 1) {
+        return res.status(409).json({
+          error: "You're the last admin of this team. Promote another member to admin before leaving, or delete the team instead."
+        });
+      }
+    }
+    await dbRun("UPDATE members SET is_active = 0 WHERE id = ?", row.id);
+    await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", row.id);
+    // Hand back a session on another team when leaving the active one; the
+    // current session simply becomes teamless when nothing remains.
+    let switched: any = null;
+    let teamless = false;
+    if (auth.teamId === teamId) {
+      const other = (await dbGet(
+        "SELECT * FROM members WHERE email = ? AND team_id != ? AND COALESCE(is_active, 1) = 1 ORDER BY id DESC LIMIT 1", email, teamId
+      )) as any;
+      if (other) {
+        const sessionId = await createSession(other.id);
+        switched = { sessionId, user: { ...(other as any), teams: await userTeams(email) }, team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any };
+        delete (switched.user as any).password;
+      } else {
+        teamless = true;
+      }
+    }
+    res.json({ ok: true, switched, teamless });
   });
 
   app.patch("/api/teams/:id", async (req, res) => {
@@ -1470,8 +1812,90 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Delete a workspace. The account's FINAL team cannot be deleted — an account
+  // must always belong to at least one team.
   app.delete("/api/teams/:id", async (req, res) => {
-    res.status(403).json({ error: "Workspaces can't be deleted from here" });
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const teamId = parseInt(req.params.id, 10);
+    if (!teamId) return res.status(400).json({ error: "Invalid team" });
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    const email = me?.email || "";
+    // Must be a manager of the team being deleted
+    if (!(await hasPermInTeam(email, teamId, "manage_members"))) {
+      return res.status(403).json({ error: "Not your workspace" });
+    }
+    // Final-team guard removed: an admin may delete any of their teams,
+    // including the last one — the session is kept alive and becomes teamless.
+    const memberships = (await dbAll(
+      "SELECT team_id FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email
+    )) as any[];
+    const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
+    const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
+    const currentSessionId = getSessionId(req);
+    // The caller's membership row in the team being deleted becomes an
+    // inactive ghost anchor (team_id nulled so the team delete passes FKs) —
+    // rows in their other teams are untouched.
+    const myRowInTeam = (await dbGet(
+      "SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, teamId
+    )) as any;
+    const stmts: { sql: string; args?: any[] }[] = [
+      { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
+      { sql: "DELETE FROM bruno_chats WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM code_files WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM code_commits WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM code_repos WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM events WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM budget WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM outreach WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM documentation WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
+      { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
+      // Keep the caller's session alive so they stay signed in (teamless when
+      // this was their last team); every other session on the team is dropped.
+      { sql: `DELETE FROM sessions WHERE member_id ${inMembers} AND id != ?`, args: [...memberIds, currentSessionId] },
+      { sql: `DELETE FROM stream_sessions WHERE member_id ${inMembers}`, args: memberIds },
+      { sql: `DELETE FROM member_roles WHERE member_id ${inMembers}`, args: memberIds },
+      { sql: "DELETE FROM roles WHERE team_id = ?", args: [teamId] },
+      // Hard-delete every membership in the team except the caller's own row,
+      // which stays as an inactive anchor (team_id nulled so the team delete
+      // passes FKs) so their session/email survive teamless.
+      { sql: "DELETE FROM members WHERE team_id = ? AND id != ?", args: [teamId, myRowInTeam?.id ?? -1] },
+      { sql: "UPDATE members SET is_active = 0, team_id = NULL WHERE id = ?", args: [myRowInTeam?.id ?? -1] },
+      { sql: "DELETE FROM teams WHERE id = ?", args: [teamId] },
+    ];
+    await dbBatch(stmts);
+    // If the deleted team was the active one, hand the client a session for
+    // another of the account's teams so they stay signed in; with no teams
+    // left the kept-alive session simply becomes teamless.
+    let switched: any = null;
+    let teamless = false;
+    if (auth.teamId === teamId) {
+      const other = memberships.find((m) => m.team_id !== teamId);
+      if (other) {
+        const otherRow = (await dbGet(
+          "SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, other.team_id
+        )) as any;
+        if (otherRow) {
+          const sessionId = await createSession(otherRow.id);
+          switched = {
+            sessionId,
+            user: otherRow,
+            team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any,
+          };
+        } else {
+          teamless = true;
+        }
+      } else {
+        teamless = true;
+      }
+    }
+    res.json({ ok: true, switched, teamless });
   });
 
   // Regenerate the workspace's student access code (admin only)
@@ -1616,21 +2040,31 @@ async function startServer() {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
     const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
-    const existing = (await dbGet("SELECT id, is_active, team_id FROM members WHERE email = ?", email)) as any;
+    // An admin may add a member to any of their own teams (defaults to the active one)
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    let targetTeamId = auth.teamId!;
+    const requestedTeam = parseInt(req.body?.team_id, 10);
+    if (requestedTeam && requestedTeam !== auth.teamId) {
+      if (!(await hasPermInTeam(me?.email || "", requestedTeam, "manage_members"))) {
+        return res.status(403).json({ error: "You can't manage that team" });
+      }
+      targetTeamId = requestedTeam;
+    }
+    const existing = (await dbGet("SELECT id, is_active, team_id FROM members WHERE email = ? AND team_id = ?", email, targetTeamId)) as any;
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
-    if (existing && existing.is_active === 0 && existing.team_id === auth.teamId) {
+    if (existing && existing.is_active === 0) {
       // Re-adding a previously removed member: restore their account and history
       (await dbRun(
         "UPDATE members SET is_active = 1, name = ?, role = ?, is_board = ?, scopes = ?, account_type = ?, accent_color = ?, primary_color = ?, text_color = ? WHERE id = ?",
         name, role, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student',
         cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color), existing.id
       ));
-      await setAdminRole(existing.id, auth.teamId, account_type === 'admin');
+      await setAdminRole(existing.id, targetTeamId, account_type === 'admin');
       return res.json({ id: existing.id, restored: true });
     }
     if (existing) return res.status(400).json({ error: "That email is already on the roster" });
-    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)));
-    await assignSystemRole(auth.teamId, (info as any).lastInsertRowid, account_type === 'admin' ? "Admin" : "Member");
+    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", targetTeamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)));
+    await assignSystemRole(targetTeamId, (info as any).lastInsertRowid, account_type === 'admin' ? "Admin" : "Member");
     res.json({ id: (info as any).lastInsertRowid });
   });
 
@@ -1644,6 +2078,12 @@ async function startServer() {
     }
     const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
+
+    // Email must stay unique within the team
+    if (email && email !== target.email) {
+      const clash = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND id != ?", email, auth.teamId, memberId)) as any;
+      if (clash) return res.status(400).json({ error: "That email is already on the roster" });
+    }
 
     // Guard: never leave the workspace without an admin
     const nextType = account_type === 'admin' || account_type === 'student' ? account_type : target.account_type;
@@ -1695,6 +2135,19 @@ async function startServer() {
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
     res.json({ user });
+  });
+
+  // Reset theme colors to the default Volt & Carbon palette: clears the
+  // member's personal overrides, and the team's (for workspace managers).
+  app.post("/api/theme/reset", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    (await dbRun("UPDATE members SET accent_color = NULL, primary_color = NULL, text_color = NULL WHERE id = ?", auth.memberId));
+    if (await hasPerm(auth, "manage_members")) {
+      (await dbRun("UPDATE teams SET accent_color = NULL, primary_color = NULL, text_color = NULL WHERE id = ?", auth.teamId));
+    }
+    const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
+    res.json({ ok: true, user });
   });
 
   // Avatar upload for the signed-in member
@@ -2180,17 +2633,25 @@ async function startServer() {
   });
 
   // --- Feedback: any user can send feedback to the app owner ---
-  app.post("/api/feedback", async (req, res) => {
+  app.post("/api/feedback", (req, res, next) => {
+    screenshotUpload.single('screenshot')(req, res, (err: any) => {
+      if (err) return res.status(400).json({ error: err.message || "Invalid image" });
+      next();
+    });
+  }, async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const { category, message } = req.body || {};
       const clean = (message || '').trim();
       if (!clean) return res.status(400).json({ error: "Message can't be empty" });
-      const me = (await dbGet("SELECT name, email FROM members WHERE id = ?", auth.memberId)) as any;
+      const me = auth.teamless
+        ? { name: '', email: auth.email || '' }
+        : (await dbGet("SELECT name, email FROM members WHERE id = ?", auth.memberId)) as any;
+      const screenshotUrl = (req as any).file ? `/uploads/${(req as any).file.filename}` : null;
       const info = (await dbRun(
-        "INSERT INTO feedback (team_id, user_id, user_name, user_email, category, message) VALUES (?, ?, ?, ?, ?, ?)",
-        auth.teamId, auth.memberId, me?.name || '', me?.email || '', (category || 'general').toString().slice(0, 40), clean.slice(0, 5000)
+        "INSERT INTO feedback (team_id, user_id, user_name, user_email, category, message, screenshot_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        auth.teamId, auth.teamless ? null : auth.memberId, me?.name || '', me?.email || '', (category || 'general').toString().slice(0, 40), clean.slice(0, 5000), screenshotUrl
       ));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
@@ -3134,6 +3595,10 @@ async function startServer() {
       const teamContext = await buildChatContext(auth.teamId);
       const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
       const fullContext = [teamContext, todayLine].filter(Boolean).join("\n\n");
+      // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
+      // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on.
+      const navGptOn = await navGptActiveForTeam(auth.teamId);
+      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", fullContext].filter(Boolean).join("\n\n");
       // After generation, handle a ```event block: create the calendar event,
       // strip the raw block, and append a confirmation line.
       const applyEventBlock = async (rawText: string): Promise<string> => {
@@ -3169,7 +3634,7 @@ async function startServer() {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), fullContext);
+          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra);
           const finalText = await applyEventBlock(fullText);
           if (chat && String(finalText || "").trim()) {
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
@@ -3181,7 +3646,7 @@ async function startServer() {
         }
         return;
       }
-      const result = await buildHelperChat(messages, maxTokens, undefined, fullContext);
+      const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra);
       const finalResult = await applyEventBlock(String(result || ""));
       if (chat) {
         const modelText = String(finalResult || "");

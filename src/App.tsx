@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
+  ImagePlus,
   TrendingUp,
   Clock,
   Award,
@@ -53,7 +54,10 @@ import {
   Trophy,
   Flag,
   Cog,
-  Medal
+  Medal,
+  Layers,
+  ChevronDown,
+  Bot
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -72,7 +76,7 @@ import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Commun
 import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary } from './services/aiService';
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
-import { DialogHost, confirmDialog, notify } from './components/dialog';
+import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
 import Landing from './Landing';
 
@@ -599,6 +603,7 @@ export default function App() {
   }, [location.pathname]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showTeamMenu, setShowTeamMenu] = useState(false);
   const [brunoPanelOpen, setBrunoPanelOpen] = useState(false);
   const brunoClickTimer = useRef<number | null>(null);
 
@@ -634,6 +639,7 @@ export default function App() {
 
   // Data State
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -827,8 +833,8 @@ export default function App() {
     if (isLoggedIn && currentUser) {
       const myTeam = teams.find(t => t.id === currentUser.team_id);
       
-      const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim() || '#F5B700';
-      const primary = [currentUser.primary_color, myTeam?.primary_color].find(validHex)?.trim() || '#111111';
+      const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim() || '#FFC700';
+      const primary = [currentUser.primary_color, myTeam?.primary_color].find(validHex)?.trim() || '#09090B';
       const text = [currentUser.text_color, myTeam?.text_color].find(validHex)?.trim() || '#F8FAFC'; // slate-100 default
 
       const root = document.documentElement;
@@ -842,8 +848,8 @@ export default function App() {
     } else {
       // Reset to defaults
       const root = document.documentElement;
-      root.style.setProperty('--color-accent', '#F5B700');
-      root.style.setProperty('--color-primary', '#111111');
+      root.style.setProperty('--color-accent', '#FFC700');
+      root.style.setProperty('--color-primary', '#09090B');
       root.style.setProperty('--color-text-base', '#F8FAFC');
       root.style.setProperty('--color-secondary', '#1A1A1A');
     }
@@ -1054,6 +1060,7 @@ export default function App() {
       console.error("Error in fetchData:", err);
     } finally {
       setLoading(false);
+      setTeamsLoaded(true);
     }
   };
 
@@ -1063,6 +1070,157 @@ export default function App() {
     setCurrentUser(user);
     setIsLoggedIn(true);
   };
+
+  // Re-read the signed-in user (used after teamless transitions).
+  const refreshMe = async () => {
+    try {
+      const res = await apiFetch('/api/auth/me');
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.user) setCurrentUser(data.user);
+    } catch { /* best effort */ }
+  };
+
+  // ——— Multi-team management ———
+  // Team-scoped client caches (AI scout feed + summary) live in localStorage under
+  // fixed keys; drop them so the newly active team's data is fetched fresh.
+  const clearTeamCaches = () => {
+    if (typeof localStorage === 'undefined') return;
+    [
+      'ftcScoutFeedCache', 'ftcScoutFeedTimestamp',
+      'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',
+    ].forEach((k) => localStorage.removeItem(k));
+  };
+
+  const handleSwitchTeam = async (teamId: number) => {
+    if (teamId === currentUser?.team_id) return;
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/teams/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team_id: teamId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not switch teams');
+      clearTeamCaches();
+      persistSession(data.sessionId, data.user);
+      await fetchData();
+      notify(`Switched to ${data.team?.name || 'team'}`, 'success');
+    } catch (e: any) {
+      notify(e.message || 'Could not switch teams', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Create a brand-new team for this account; the server switches the session to it.
+  const handleAddTeam = async (name: string) => {
+    const res = await apiFetch('/api/teams', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not create team');
+    clearTeamCaches();
+    persistSession(data.sessionId, data.user);
+    setTeams((data.user as any)?.teams || []);
+    await fetchData();
+    return data;
+  };
+
+  // Delete a team after typed confirmation. Any admin can delete any of their
+  // teams, including the last one — the server keeps the session alive and it
+  // becomes teamless. If the active team was deleted the server hands back a
+  // replacement session on another of the account's teams.
+  const handleDeleteTeam = async (team: any) => {
+    const isLast = teams.length <= 1;
+    const ok = await promptDialog({
+      title: 'Delete team?',
+      message: isLast
+        ? `This permanently deletes "${team.name}" — members, tasks, attendance, chat, budget, inventory, and everything else in this workspace. This is your only team, so you will be left with no teams. This cannot be undone.`
+        : `This permanently deletes "${team.name}" — members, tasks, attendance, chat, budget, inventory, and everything else in this workspace. This cannot be undone.`,
+      expected: team.name,
+      confirmLabel: 'Delete team',
+      cancelLabel: 'Keep team',
+      danger: true
+    });
+    if (!ok) return;
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/teams/${team.id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not delete team');
+      clearTeamCaches();
+      if (data.switched) {
+        // The deleted team was the active one — adopt the replacement session.
+        persistSession(data.switched.sessionId, data.switched.user);
+        notify(`"${team.name}" deleted — switched to another team`, 'success');
+      } else if (data.teamless) {
+        setTeams([]);
+        await refreshMe();
+        notify(`"${team.name}" deleted — you now have no teams`, 'info');
+      } else {
+        notify(`"${team.name}" deleted`, 'success');
+      }
+      setTeams((data.user as any)?.teams || (data.teamless ? [] : teams.filter((t: any) => t.id !== team.id)));
+      await fetchData();
+    } catch (e: any) {
+      notify(e.message || 'Could not delete team', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Leave a team (non-admin path). The server blocks leaving as the last admin.
+  const handleLeaveTeam = async (team: any) => {
+    const isLast = teams.length <= 1;
+    const ok = await confirmDialog({
+      title: 'Leave team?',
+      message: isLast
+        ? `Leave "${team.name}"? You will be left with no teams. Your past messages and work stay with the team.`
+        : `Leave "${team.name}"? Your past messages and work stay with the team.`,
+      confirmLabel: 'Leave team',
+      danger: true
+    });
+    if (!ok) return;
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/teams/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team_id: team.id })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not leave team');
+      clearTeamCaches();
+      if (data.switched) {
+        persistSession(data.switched.sessionId, data.switched.user);
+        notify(`Left "${team.name}" — switched to another team`, 'success');
+      } else if (data.teamless) {
+        setTeams([]);
+        await refreshMe();
+        notify(`Left "${team.name}" — you now have no teams`, 'info');
+      } else {
+        notify(`Left "${team.name}"`, 'success');
+      }
+      await fetchData();
+    } catch (e: any) {
+      notify(e.message || 'Could not leave team', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const currentTeamId = currentUser?.team_id;
+  const activeTeamName = ((currentUser as any)?.teams || []).find((t: any) => t.id === currentTeamId)?.name
+    || teams[0]?.name || 'My team';
+  // Secret persona: NavGPT ❤️ — only exists for 4215 Hypnotic Robotics (default ON).
+  // For every other team the chatbot is always Bruno.
+  const activeTeam = teams.find((t: any) => t.id === currentTeamId);
+  const navGptQualified = /hypnotic/i.test(activeTeamName || '') || /4215/.test(activeTeamName || '');
+  const navGptActive = navGptQualified && (activeTeam?.navgpt_enabled ?? 1) === 1;
+  const botName = navGptActive ? 'NavGPT ❤️' : 'Bruno';
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1118,6 +1276,8 @@ export default function App() {
     setIsLoggedIn(false);
     setCurrentUser(null);
     setSessionId(null);
+    setTeams([]);
+    setTeamsLoaded(false);
     if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
     setSocket(null);
   };
@@ -1213,6 +1373,9 @@ export default function App() {
       insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
       colorVersion, setColorVersion,
+      // multi-team: switcher, add/delete/leave, active team name
+      onSwitchTeam: handleSwitchTeam, onAddTeam: handleAddTeam, onDeleteTeam: handleDeleteTeam, onLeaveTeam: handleLeaveTeam,
+      activeTeamName, botName, navGptQualified, navGptActive,
       // give child views a way to explicitly refresh the AI news cache
       refreshNews: () => updateNews(true),
       updateInsights,
@@ -1386,6 +1549,41 @@ export default function App() {
     );
   }
 
+  // Zero-team empty state: create, join, or delete account.
+  if (isLoggedIn && teamsLoaded && teams.length === 0) {
+    return (
+      <TeamlessScreen
+        user={currentUser}
+        onCreateTeam={async (name: string) => {
+          const data = await handleAddTeam(name);
+          notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
+        }}
+        onJoinTeam={async (accessCode: string) => {
+          const res = await apiFetch('/api/teams/join', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ access_code: accessCode })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Could not join team');
+          clearTeamCaches();
+          persistSession(data.sessionId, data.user);
+          setTeams((data.user as any)?.teams || []);
+          await fetchData();
+          notify(`Joined "${data.team?.name || 'team'}"`, 'success');
+        }}
+        onDeleteAccount={async () => {
+          const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || 'Could not delete your account.');
+          if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+          window.location.reload();
+        }}
+        onSignOut={handleLogout}
+      />
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-primary">
       <DialogHost />
@@ -1504,7 +1702,7 @@ export default function App() {
             >
               <Menu className="w-6 h-6" />
             </button>
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab === 'bruno' ? 'Bruno' : activeNav?.label || 'Dashboard'}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
@@ -1558,10 +1756,65 @@ export default function App() {
                 )}
               </AnimatePresence>
             </div>
+            {teams.length > 1 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowTeamMenu(!showTeamMenu)}
+                  className="flex items-center gap-1.5 px-2.5 py-2 bg-white/5 rounded-full border border-white/10 hover:border-accent/40 hover:bg-white/[0.08] transition-all cursor-pointer max-w-[140px] sm:max-w-[200px]"
+                  aria-label="Switch team"
+                  title="Switch team"
+                >
+                  <Layers className="w-4 h-4 text-accent flex-shrink-0" />
+                  <span className="hidden sm:block text-xs font-bold text-white truncate">{activeTeamName}</span>
+                  <ChevronDown className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+                </button>
+                {showTeamMenu && (
+                  <>
+                    <button
+                      className="fixed inset-0 z-40 cursor-default"
+                      onClick={() => setShowTeamMenu(false)}
+                      aria-label="Close team menu"
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.15, ease: 'easeOut' }}
+                      className="absolute right-0 mt-2 w-56 glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
+                    >
+                      <div className="p-3 border-b border-white/10 bg-white/5">
+                        <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider">My teams</p>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto custom-scrollbar">
+                        {teams.map((t: any) => (
+                          <button
+                            key={t.id}
+                            onClick={() => { setShowTeamMenu(false); handleSwitchTeam(t.id); }}
+                            className={cn(
+                              "w-full flex items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-white/5",
+                              t.id === currentTeamId ? "bg-accent/10" : ""
+                            )}
+                          >
+                            <div className="w-8 h-8 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center flex-shrink-0">
+                              <Layers className="w-4 h-4 text-accent" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                              <p className="text-[11px] text-text-muted font-mono">Code: {t.access_code}</p>
+                            </div>
+                            {t.id === currentTeamId && <Check className="w-4 h-4 text-accent flex-shrink-0" />}
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </div>
+            )}
             <button
               onClick={handleBrunoButton}
-              title="Bruno — click for quick chat, double-click for full view"
-              aria-label="Open Bruno"
+              title={`${botName} — click for quick chat, double-click for full view`}
+              aria-label={`Open ${botName}`}
               className="w-10 h-10 rounded-full bg-accent/15 border border-accent/40 hover:bg-accent/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
             >
               <span className="text-[20px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>
@@ -1654,7 +1907,7 @@ export default function App() {
         </div>
         <AppFooter
           links={visibleTabs.filter((t) => ['dashboard', 'stats', 'scout', 'calendar', 'chat', 'tasks'].includes(t.id))}
-          teamName={teams[0]?.name}
+          teamName={activeTeamName}
         />
       </main>
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
@@ -1664,6 +1917,7 @@ export default function App() {
         onClose={() => setBrunoPanelOpen(false)}
         onExpand={() => { setBrunoPanelOpen(false); navigate('/bruno'); }}
         currentUser={currentUser}
+        botName={botName}
       />
     </div>
   );
@@ -1860,7 +2114,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
   }, [data.attendance, colorVersion]);
 
   // Get dynamic colors for charts
-  const accentColor = getCSSVariable('--color-accent') || '#F5B700';
+  const accentColor = getCSSVariable('--color-accent') || '#FFC700';
   const secondaryColor = getCSSVariable('--color-secondary') || '#1A1A1A';
 
   const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
@@ -2260,7 +2514,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, events, curre
   );
 }
 
-function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
+function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam }: any) {
   const [showAddTeam, setShowAddTeam] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
   const [editingTeam, setEditingTeam] = useState<any>(null);
@@ -2270,8 +2524,10 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   const [memberToRemove, setMemberToRemove] = useState<any>(null);
   const [removeError, setRemoveError] = useState('');
   const [removingMember, setRemovingMember] = useState(false);
+  const [savingTeam, setSavingTeam] = useState(false);
 
   const isAdmin = hasScope('admin');
+  const activeTeamId = currentUser?.team_id;
 
   const handleResetPassword = async (email: string) => {
     if (!(await confirmDialog({ title: 'Reset password', message: `Reset password for ${email}? They will need to set it up again on next login.`, confirmLabel: 'Reset', danger: true }))) return;
@@ -2284,23 +2540,34 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   };
 
   const handleAddTeam = async () => {
-    const url = editingTeam ? `/api/teams/${editingTeam.id}` : '/api/teams';
-    const method = editingTeam ? 'PATCH' : 'POST';
-    await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newTeam)
-    });
-    setShowAddTeam(false);
-    setEditingTeam(null);
-    setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
-    onRefresh();
-  };
-
-  const handleDeleteTeam = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete team', message: 'Are you sure? This will delete the team.', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/teams/${id}`, { method: 'DELETE' });
-    onRefresh();
+    if (savingTeam) return;
+    setSavingTeam(true);
+    try {
+      if (editingTeam) {
+        const res = await apiFetch(`/api/teams/${editingTeam.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newTeam)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not save team');
+        notify('Team updated', 'success');
+        setShowAddTeam(false);
+        setEditingTeam(null);
+        setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
+        onRefresh();
+      } else {
+        // Creating a new workspace switches the session to it
+        const data = await onAddTeam(newTeam.name);
+        notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
+        setShowAddTeam(false);
+        setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
+      }
+    } catch (e: any) {
+      notify(e.message || 'Could not save team', 'error');
+    } finally {
+      setSavingTeam(false);
+    }
   };
 
   const handleDeleteMember = async () => {
@@ -2355,10 +2622,12 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Teams</h3>
           <p className="text-sm text-text-muted mt-1">Your workspaces — create teams, tweak their look, and share access codes so students can join.</p>
         </div>
-        <Button onClick={() => {
-          setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
-          setShowAddTeam(true);
-        }}><Plus className="w-4 h-4" /> Add Team</Button>
+        {isAdmin && (
+          <Button onClick={() => {
+            setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
+            setShowAddTeam(true);
+          }}><Plus className="w-4 h-4" /> Add Team</Button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
@@ -2366,14 +2635,24 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
           <Card key={team.id} title={`${team.name} #${team.number}`} icon={Award}>
             <div className="flex flex-col h-full">
               <div className="flex-1 space-y-2 mb-4">
-                <p className="text-xs text-text-muted uppercase font-bold">Members</p>
-                <div className="flex flex-wrap gap-2">
-                  {members.filter((m: any) => m.team_id === team.id).map((m: any) => (
-                    <div key={m.id} className="px-3 py-1 bg-white/5 rounded-full border border-white/10 text-xs text-white">
-                      {m.name}
-                    </div>
-                  ))}
+                <div className="flex items-center gap-2">
+                  {team.id === activeTeamId && (
+                    <span className="px-2 py-0.5 bg-accent/15 text-accent text-[10px] font-bold rounded-md uppercase tracking-wider border border-accent/30">Active</span>
+                  )}
+                  <span className="text-[11px] text-text-muted font-mono">Code: <span className="font-bold text-white">{team.access_code}</span></span>
                 </div>
+                <p className="text-xs text-text-muted uppercase font-bold">Members ({team.member_count ?? 0})</p>
+                {team.id === activeTeamId ? (
+                  <div className="flex flex-wrap gap-2">
+                    {members.filter((m: any) => m.team_id === team.id).map((m: any) => (
+                      <div key={m.id} className="px-3 py-1 bg-white/5 rounded-full border border-white/10 text-xs text-white">
+                        {m.name}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-text-muted/70">Switch to this team to manage its members.</p>
+                )}
                 {(team.accent_color || team.primary_color) && (
                   <div className="pt-2">
                     <p className="text-[10px] text-text-muted/70 uppercase font-bold mb-1">Team Branding</p>
@@ -2385,16 +2664,16 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                   </div>
                 )}
               </div>
-              {isAdmin && (
+              {isAdmin ? (
                 <div className="flex gap-2 pt-4 border-t border-white/5">
-                  <Button 
-                    variant="secondary" 
-                    size="sm" 
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     className="flex-1 h-8 text-[10px]"
                     onClick={() => {
                       setEditingTeam(team);
-                      setNewTeam({ 
-                        name: team.name, 
+                      setNewTeam({
+                        name: team.name,
                         number: team.number,
                         accent_color: team.accent_color || '',
                         primary_color: team.primary_color || '',
@@ -2405,13 +2684,45 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                   >
                     <Edit2 className="w-3 h-3 mr-1" /> Edit
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="flex-1 h-8 text-[10px]"
+                    onClick={() => onSwitchTeam(team.id)}
+                    disabled={team.id === activeTeamId}
+                  >
+                    Switch
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     className="h-8 w-8 p-0 border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
-                    onClick={() => handleDeleteTeam(team.id)}
+                    onClick={() => onDeleteTeam(team)}
+                    title="Delete team"
                   >
                     <Trash2 className="w-3 h-3" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2 pt-4 border-t border-white/5">
+                  {team.id !== activeTeamId && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="flex-1 h-8 text-[10px]"
+                      onClick={() => onSwitchTeam(team.id)}
+                    >
+                      Switch
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 h-8 text-[10px] border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                    onClick={() => onLeaveTeam(team)}
+                    title="Leave team"
+                  >
+                    <LogOut className="w-3 h-3 mr-1" /> Leave
                   </Button>
                 </div>
               )}
@@ -2566,11 +2877,11 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
                 <p className="text-xs font-bold text-text-muted uppercase mb-3">Team Branding (Default for members)</p>
                 <div className="grid grid-cols-1 gap-4">
                   <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#F5B700'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
+                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#FFC700'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
                     <Input placeholder="Accent Color (Yellow)" value={newTeam.accent_color} onChange={(e: any) => setNewTeam({...newTeam, accent_color: e.target.value})} />
                   </div>
                   <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.primary_color || '#111111'} onChange={(e) => setNewTeam({...newTeam, primary_color: e.target.value})} />
+                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.primary_color || '#09090B'} onChange={(e) => setNewTeam({...newTeam, primary_color: e.target.value})} />
                     <Input placeholder="Interface Color (Navy)" value={newTeam.primary_color} onChange={(e: any) => setNewTeam({...newTeam, primary_color: e.target.value})} />
                   </div>
                   <div className="flex items-center gap-3">
@@ -4978,24 +5289,192 @@ function ChatView({ messages, members, currentUser, socket }: any) {
 }
 
 // Feedback: any signed-in user can send a note straight to Sushil
+// Empty state for accounts with zero team memberships: create a team, join
+// one with an access code, or delete the account.
+function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSignOut }: any) {
+  const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'delete'>('menu');
+  const [teamName, setTeamName] = useState('');
+  const [code, setCode] = useState('');
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const doCreate = async () => {
+    if (!teamName.trim() || busy) return;
+    setBusy(true);
+    try {
+      await onCreateTeam(teamName.trim());
+    } catch (e: any) {
+      notify(e.message || 'Could not create team', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doJoin = async () => {
+    if (!code.trim() || busy) return;
+    setBusy(true);
+    try {
+      await onJoinTeam(code.trim());
+    } catch (e: any) {
+      notify(e.message || 'Could not join team', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doDelete = async () => {
+    if (confirmEmail.trim().toLowerCase() !== (user?.email || '').toLowerCase()) {
+      notify('Type your email address exactly to confirm.', 'info');
+      return;
+    }
+    if (!(await confirmDialog({ title: 'Delete account', message: 'This is permanent. Delete your account and all of your personal data?', confirmLabel: 'Delete my account', danger: true }))) return;
+    setBusy(true);
+    try {
+      await onDeleteAccount();
+    } catch (e: any) {
+      notify(e.message || 'Could not delete your account.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
+      <DialogHost />
+      <div className="hero-grid absolute inset-0" />
+      <div className="hero-glow absolute inset-0" />
+      <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
+        <div className="flex flex-col items-center gap-3 mb-8">
+          <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center gold-glow">
+            <Bolt className="text-accent-ink w-9 h-9" strokeWidth={2.5} />
+          </div>
+          <h1 className="text-2xl font-display font-bold text-white tracking-tight text-center">You're not on any teams</h1>
+          <p className="text-text-muted text-center text-sm">
+            {user?.email ? `Signed in as ${user.email}. ` : ''}Create a new workspace, join one with an access code, or delete your account.
+          </p>
+        </div>
+
+        <Card className="p-6">
+          {mode === 'menu' && (
+            <div className="space-y-3">
+              <Button className="w-full py-3" onClick={() => setMode('create')}>
+                <Plus className="w-4 h-4 mr-2" /> Create a team
+              </Button>
+              <Button variant="secondary" className="w-full py-3" onClick={() => setMode('join')}>
+                <KeyRound className="w-4 h-4 mr-2" /> Join with an access code
+              </Button>
+              <button onClick={() => setMode('delete')} className="w-full text-center text-xs text-text-muted hover:text-rose-400 transition-colors pt-2">
+                Delete my account
+              </button>
+              <button onClick={onSignOut} className="w-full text-center text-xs text-text-muted hover:text-white transition-colors">
+                Sign out
+              </button>
+            </div>
+          )}
+
+          {mode === 'create' && (
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-text-muted uppercase">Team name</label>
+                <Input value={teamName} onChange={(e: any) => setTeamName(e.target.value)} placeholder="e.g. Hypnotic Robotics" autoFocus />
+              </div>
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => setMode('menu')} className="flex-1">Back</Button>
+                <Button onClick={doCreate} disabled={busy || !teamName.trim()} className="flex-1">
+                  {busy ? 'Creating…' : 'Create team'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {mode === 'join' && (
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-text-muted uppercase">Access code</label>
+                <Input value={code} onChange={(e: any) => setCode(e.target.value)} placeholder="Ask your admin for the code" autoFocus className="uppercase" />
+              </div>
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => setMode('menu')} className="flex-1">Back</Button>
+                <Button onClick={doJoin} disabled={busy || !code.trim()} className="flex-1">
+                  {busy ? 'Joining…' : 'Join team'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {mode === 'delete' && (
+            <div className="space-y-4">
+              <p className="text-sm text-rose-300 font-semibold">
+                This cannot be undone. Type your email (<span className="text-white">{user?.email}</span>) to confirm.
+              </p>
+              <Input value={confirmEmail} onChange={(e: any) => setConfirmEmail(e.target.value)} placeholder="your@email.com" />
+              <div className="flex gap-3">
+                <Button variant="secondary" onClick={() => { setMode('menu'); setConfirmEmail(''); }} className="flex-1">Back</Button>
+                <Button
+                  onClick={doDelete}
+                  disabled={busy || confirmEmail.trim().toLowerCase() !== (user?.email || '').toLowerCase()}
+                  className="flex-1 bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
+                >
+                  {busy ? 'Deleting…' : 'Yes, delete everything'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
+      </motion.div>
+    </div>
+  );
+}
+
 function FeedbackModal({ onClose }: any) {
   const [category, setCategory] = useState('general');
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const pickScreenshot = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) {
+      notify('Please choose an image file.', 'error');
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      notify('Screenshots must be under 5MB.', 'error');
+      return;
+    }
+    if (preview) URL.revokeObjectURL(preview);
+    setScreenshot(f);
+    setPreview(URL.createObjectURL(f));
+  };
+
+  const clearScreenshot = () => {
+    if (preview) URL.revokeObjectURL(preview);
+    setScreenshot(null);
+    setPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
     setSending(true);
     try {
-      const res = await apiFetch('/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category, message: message.trim() })
-      });
-      if (res.ok) setSent(true);
-      else notify('Could not send feedback — try again.', 'error');
+      const form = new FormData();
+      form.append('category', category);
+      form.append('message', message.trim());
+      if (screenshot) form.append('screenshot', screenshot);
+      const res = await apiFetch('/api/feedback', { method: 'POST', body: form });
+      if (res.ok) {
+        clearScreenshot();
+        setSent(true);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        notify(data.error || 'Could not send feedback — try again.', 'error');
+      }
     } finally {
       setSending(false);
     }
@@ -5043,6 +5522,32 @@ function FeedbackModal({ onClose }: any) {
                   placeholder="Tell Sushil what's on your mind…"
                   className="w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-none"
                 />
+              </div>
+              <div className="space-y-2">
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={pickScreenshot} className="hidden" />
+                {preview ? (
+                  <div className="flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
+                    <img src={preview} alt="screenshot preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{screenshot?.name}</p>
+                      <p className="text-[11px] text-text-muted">Will send with your feedback</p>
+                    </div>
+                    <button type="button" onClick={clearScreenshot} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove screenshot">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/5 px-4 py-3 text-sm text-text-muted hover:text-white hover:border-accent/40 transition-colors"
+                  >
+                    <ImagePlus className="w-4 h-4" /> Attach a screenshot
+                  </button>
+                )}
+                <p className="text-[11px] text-text-muted/80">
+                  Reporting a bug or something looks off? Attaching a screenshot is recommended — it shows Sushil exactly what you saw. (Images only, up to 5MB.)
+                </p>
               </div>
               <Button type="submit" disabled={sending || !message.trim()} className="w-full">
                 {sending ? 'Sending…' : 'Send to Sushil'}
@@ -5163,6 +5668,11 @@ function OwnerView(_props: any) {
                     <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full", f.status === 'new' ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-text-muted")}>{f.status}</span>
                   </div>
                   <p className="text-sm text-white whitespace-pre-wrap">{f.message}</p>
+                  {f.screenshot_url && (
+                    <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="block mt-2">
+                      <img src={f.screenshot_url} alt="feedback screenshot" className="max-h-40 rounded-lg border border-white/10 object-contain hover:border-accent/40 transition-colors" />
+                    </a>
+                  )}
                   <p className="text-[11px] text-text-muted mt-2">{f.user_name} · {f.user_email}{f.team_name ? ` · ${f.team_name}` : ''} · {f.created_at ? format(new Date(f.created_at), 'MMM d, yyyy h:mm a') : ''}</p>
                 </div>
                 <Button
@@ -5204,11 +5714,6 @@ function AccountManager({ currentUser }: any) {
   const [nw2, setNw2] = useState('');
   const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pwBusy, setPwBusy] = useState(false);
-
-  const [showDelete, setShowDelete] = useState(false);
-  const [confirmEmail, setConfirmEmail] = useState('');
-  const [delPassword, setDelPassword] = useState('');
-  const [delBusy, setDelBusy] = useState(false);
 
   const [exporting, setExporting] = useState(false);
 
@@ -5254,31 +5759,6 @@ function AccountManager({ currentUser }: any) {
     }
   };
 
-  const deleteAccount = async () => {
-    if (confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase()) {
-      notify('Type your email address exactly to confirm.', 'info');
-      return;
-    }
-    if (!(await confirmDialog({ title: 'Delete account', message: 'This is permanent. Delete your account and all of your personal data?', confirmLabel: 'Delete my account', danger: true }))) return;
-    setDelBusy(true);
-    try {
-      const res = await apiFetch('/api/auth/account', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(hasPassword ? { password: delPassword } : {})
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
-        window.location.reload();
-      } else {
-        notify(data.error || 'Could not delete your account.', 'error');
-      }
-    } finally {
-      setDelBusy(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       <Card title="Security" icon={KeyRound} subtitle="Keep your sign-in safe">
@@ -5319,50 +5799,6 @@ function AccountManager({ currentUser }: any) {
         </Button>
       </Card>
 
-      <Card title="Danger Zone" icon={ShieldCheck} subtitle="Irreversible actions" className="border-rose-500/25">
-        {!showDelete ? (
-          <div>
-            <p className="text-sm text-text-muted mb-3">
-              Permanently delete your account and all of your personal data (profile, attendance, messages, feedback, notifications, avatar). Team-level data like tasks and budgets stays with the team.
-            </p>
-            <Button
-              onClick={() => setShowDelete(true)}
-              className="bg-rose-500/15 text-rose-300 border border-rose-500/40 hover:bg-rose-500/25"
-            >
-              <Trash2 className="w-4 h-4 mr-2" /> Delete my account
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-3 max-w-sm">
-            <p className="text-sm text-rose-300 font-semibold">
-              This cannot be undone. Type your email (<span className="text-white">{currentUser?.email}</span>) to confirm.
-            </p>
-            <Input
-              value={confirmEmail}
-              onChange={(e: any) => setConfirmEmail(e.target.value)}
-              placeholder="your@email.com"
-            />
-            {hasPassword && (
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-text-muted uppercase">Your password</label>
-                <Input type="password" value={delPassword} onChange={(e: any) => setDelPassword(e.target.value)} autoComplete="current-password" />
-              </div>
-            )}
-            <div className="flex gap-3">
-              <Button variant="secondary" onClick={() => { setShowDelete(false); setConfirmEmail(''); setDelPassword(''); }}>
-                Cancel
-              </Button>
-              <Button
-                onClick={deleteAccount}
-                disabled={delBusy || confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase() || (hasPassword && !delPassword)}
-                className="bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
-              >
-                {delBusy ? 'Deleting…' : 'Yes, delete everything'}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Card>
     </div>
   );
 }
@@ -5514,15 +5950,15 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
             <div className="space-y-1">
               <label className="text-xs font-bold text-text-muted uppercase">Accent (Yellow)</label>
               <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={accentColor || '#F5B700'} onChange={(e) => setAccentColor(e.target.value)} />
-                <Input value={accentColor} onChange={(e: any) => setAccentColor(e.target.value)} placeholder="#F5B700" />
+                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={accentColor || '#FFC700'} onChange={(e) => setAccentColor(e.target.value)} />
+                <Input value={accentColor} onChange={(e: any) => setAccentColor(e.target.value)} placeholder="#FFC700" />
               </div>
             </div>
             <div className="space-y-1">
               <label className="text-xs font-bold text-text-muted uppercase">Interface (Navy)</label>
               <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={primaryColor || '#111111'} onChange={(e) => setPrimaryColor(e.target.value)} />
-                <Input value={primaryColor} onChange={(e: any) => setPrimaryColor(e.target.value)} placeholder="#111111" />
+                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={primaryColor || '#09090B'} onChange={(e) => setPrimaryColor(e.target.value)} />
+                <Input value={primaryColor} onChange={(e: any) => setPrimaryColor(e.target.value)} placeholder="#09090B" />
               </div>
             </div>
             <div className="space-y-1">
@@ -5534,13 +5970,22 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
             </div>
           </div>
           <button
-            onClick={() => {
-              setAccentColor(''); setPrimaryColor(''); setTextColor('');
-              const root = document.documentElement;
-              root.style.removeProperty('--color-accent');
-              root.style.removeProperty('--color-primary');
-              root.style.removeProperty('--color-text-base');
-              notify('Theme reset. Save to make it permanent.', 'info');
+            onClick={async () => {
+              try {
+                const res = await apiFetch('/api/theme/reset', { method: 'POST' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Could not reset theme');
+                setAccentColor(''); setPrimaryColor(''); setTextColor('');
+                const root = document.documentElement;
+                root.style.removeProperty('--color-accent');
+                root.style.removeProperty('--color-primary');
+                root.style.removeProperty('--color-text-base');
+                setColorVersion((v: number) => v + 1);
+                onRefresh();
+                notify('Theme reset to the default Volt & Carbon colors.', 'success');
+              } catch (e: any) {
+                notify(e.message || 'Could not reset theme', 'error');
+              }
             }}
             className="text-xs text-text-muted hover:text-accent transition-colors self-start"
           >
@@ -5590,7 +6035,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   );
 }
 
-function SettingsView({ settings, members, teams, onRefresh, currentUser }: any) {
+function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive }: any) {
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
   const [maxTokensNews, setMaxTokensNews] = useState(settings.max_tokens_news || '1024');
   const [maxTokensAttendance, setMaxTokensAttendance] = useState(settings.max_tokens_attendance || '1024');
@@ -5604,6 +6049,33 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
   const [allMessages, setAllMessages] = useState([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [editingMessage, setEditingMessage] = useState<any>(null);
+  const [savingPersona, setSavingPersona] = useState(false);
+
+  // Delete account — only enabled with zero team memberships
+  const [showDelete, setShowDelete] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+
+  const deleteAccount = async () => {
+    if (confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase()) {
+      notify('Type your email address exactly to confirm.', 'info');
+      return;
+    }
+    if (!(await confirmDialog({ title: 'Delete account', message: 'This is permanent. Delete your account and all of your personal data?', confirmLabel: 'Delete my account', danger: true }))) return;
+    setDelBusy(true);
+    try {
+      const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+        window.location.reload();
+      } else {
+        notify(data.error || 'Could not delete your account.', 'error');
+      }
+    } finally {
+      setDelBusy(false);
+    }
+  };
 
   const isPresident = currentUser?.role === 'President';
 
@@ -5807,6 +6279,68 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
         </div>
       </Card>
 
+      {navGptQualified && (
+        <Card title="Chatbot Persona" icon={Bot} subtitle="Who answers in the team chatbot">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!!navGptActive}
+              aria-label="NavGPT ❤️"
+              disabled={savingPersona}
+              onClick={async () => {
+                if (savingPersona) return;
+                if (navGptActive) {
+                  const ok = await confirmDialog({
+                    title: 'Turn off NavGPT ❤️?',
+                    message: 'The team chatbot will go back to being Bruno — the normal persona. You can switch back to NavGPT ❤️ anytime.',
+                    confirmLabel: 'Turn off',
+                    cancelLabel: 'Keep NavGPT ❤️',
+                    danger: true
+                  });
+                  if (!ok) return;
+                }
+                setSavingPersona(true);
+                try {
+                  const res = await apiFetch('/api/team/chat-persona', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: !navGptActive })
+                  });
+                  const data = await res.json();
+                  if (!res.ok) throw new Error(data.error || 'Could not update persona');
+                  notify(navGptActive ? 'NavGPT ❤️ is off — the chatbot is Bruno again.' : 'NavGPT ❤️ is on.', 'success');
+                  onRefresh();
+                } catch (e: any) {
+                  notify(e.message || 'Could not update persona', 'error');
+                } finally {
+                  setSavingPersona(false);
+                }
+              }}
+              className={cn(
+                'relative w-12 h-7 rounded-full transition-colors flex-shrink-0',
+                navGptActive ? 'bg-accent' : 'bg-white/15 hover:bg-white/20'
+              )}
+            >
+              <span
+                className={cn(
+                  'absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all',
+                  navGptActive ? 'left-6' : 'left-1'
+                )}
+              />
+            </button>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-white">NavGPT ❤️</p>
+              <p className="text-xs text-text-muted leading-relaxed">
+                {navGptActive
+                  ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
+                  : 'Off — the chatbot is the normal Bruno. Flip the switch to bring back NavGPT ❤️.'}
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card title="Storage Usage" icon={Wallet}>
         <div className="space-y-4">
           <p className="text-sm text-text-muted">Total size of all file uploads (messages, code files, etc.).</p>
@@ -5986,6 +6520,58 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
           </Card>
         </div>
       )}
+
+      <Card title="Danger Zone" icon={ShieldCheck} subtitle="Irreversible actions" className="border-rose-500/25">
+        {(teams || []).length > 0 ? (
+          <div>
+            <p className="text-sm text-text-muted mb-3">
+              Account deletion is available once you have no team memberships. Delete your teams or leave them from the Teams page first — then come back here.
+            </p>
+            <Button
+              disabled
+              className="bg-rose-500/10 text-rose-300/50 border border-rose-500/20 cursor-not-allowed"
+              title="Leave or delete all your teams first"
+            >
+              <Trash2 className="w-4 h-4 mr-2" /> Delete my account
+            </Button>
+          </div>
+        ) : !showDelete ? (
+          <div>
+            <p className="text-sm text-text-muted mb-3">
+              Permanently delete your account and all of your personal data (profile, notifications, avatar). You have no team memberships, so there's nothing left to leave behind.
+            </p>
+            <Button
+              onClick={() => setShowDelete(true)}
+              className="bg-rose-500/15 text-rose-300 border border-rose-500/40 hover:bg-rose-500/25"
+            >
+              <Trash2 className="w-4 h-4 mr-2" /> Delete my account
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3 max-w-sm">
+            <p className="text-sm text-rose-300 font-semibold">
+              This cannot be undone. Type your email (<span className="text-white">{currentUser?.email}</span>) to confirm.
+            </p>
+            <Input
+              value={confirmEmail}
+              onChange={(e: any) => setConfirmEmail(e.target.value)}
+              placeholder="your@email.com"
+            />
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => { setShowDelete(false); setConfirmEmail(''); }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={deleteAccount}
+                disabled={delBusy || confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase()}
+                className="bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
+              >
+                {delBusy ? 'Deleting…' : 'Yes, delete everything'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
