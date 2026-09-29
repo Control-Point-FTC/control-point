@@ -315,6 +315,7 @@ HOW YOU HELP:
 - Parts: suggest specific legal parts from the cheat sheet above with why — ecosystem fit (goBILDA M4/8mm REX vs REV M3/hex), and use web search to verify current availability, price, and exact SKUs.
 
 RULES OF ENGAGEMENT:
+- When the team has linked their GitHub repo, its file tree is provided in context — reference real file paths when answering code questions, and ask the user to paste specific file contents if you need to see code beyond the tree.
 - Be concrete and practical. Prefer specific numbers, part names, and steps over generic advice.
 - Never invent SKUs or McMaster-Carr part numbers from memory. If you can't verify one via search, describe the part by spec and tell them to search the supplier catalog.
 - If a question is vague, ask one clarifying question before dumping a wall of text.
@@ -343,7 +344,8 @@ export const FTC_RESOURCES: { label: string; url: string }[] = [
 export async function buildHelperChat(
   messages: ChatMessage[],
   maxTokens: number,
-  onChunk?: (text: string) => void
+  onChunk?: (text: string) => void,
+  extraSystem?: string
 ): Promise<string> {
   // Keep cost/latency bounded: last 12 turns, each capped.
   const trimmed = messages
@@ -357,7 +359,7 @@ export async function buildHelperChat(
   const url = `${API_BASE}/models/${model}:${endpoint}${stream ? "?alt=sse" : ""}`;
 
   const body: any = {
-    system_instruction: { parts: [{ text: BUILD_HELPER_SYSTEM }] },
+    system_instruction: { parts: [{ text: extraSystem ? BUILD_HELPER_SYSTEM + "\n\n" + extraSystem : BUILD_HELPER_SYSTEM }] },
     contents: trimmed,
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
     tools: [{ google_search: {} }],

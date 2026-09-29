@@ -216,6 +216,20 @@ import {
     FOREIGN KEY(author_id) REFERENCES members(id)
   );
 
+  CREATE TABLE IF NOT EXISTS code_repos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    repo_url TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    branch TEXT NOT NULL DEFAULT 'main',
+    file_tree TEXT, -- JSON array of {path, type: 'blob'|'tree', size}
+    file_count INTEGER DEFAULT 0,
+    synced_at TEXT,
+    FOREIGN KEY(team_id) REFERENCES teams(id),
+    UNIQUE(team_id)
+  );
+
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     member_id INTEGER NOT NULL,
@@ -328,6 +342,25 @@ console.log("[DB Migration] Members table columns:", finalMemberColumns.map((c: 
 const codeFilesColumns = (await dbAll("PRAGMA table_info(code_files)"));
 if (!codeFilesColumns.some((c: any) => c.name === 'file_size')) {
   (await dbExec("ALTER TABLE code_files ADD COLUMN file_size INTEGER"));
+}
+
+// code_repos is created via CREATE TABLE IF NOT EXISTS at startup; guard here for
+// databases where schema setup ran partially
+const codeReposTable = (await dbGet("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'code_repos'")) as any;
+if (!codeReposTable) {
+  (await dbExec(`CREATE TABLE code_repos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    repo_url TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    branch TEXT NOT NULL DEFAULT 'main',
+    file_tree TEXT,
+    file_count INTEGER DEFAULT 0,
+    synced_at TEXT,
+    FOREIGN KEY(team_id) REFERENCES teams(id),
+    UNIQUE(team_id)
+  )`));
 }
 
 // ---- Role-based workspaces: access codes, account types, team scoping ----
@@ -2489,11 +2522,12 @@ async function startServer() {
       }
       const maxTokens = await getMaxTokens("max_tokens_chat", 1024);
       const stream = req.query.stream === "true";
+      const teamContext = await buildChatContext(auth.teamId);
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk));
+          await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), teamContext);
           res.end();
         } catch (err) {
           console.error("AI build-helper stream error:", err);
@@ -2501,7 +2535,7 @@ async function startServer() {
         }
         return;
       }
-      const result = await buildHelperChat(messages, maxTokens);
+      const result = await buildHelperChat(messages, maxTokens, undefined, teamContext);
       res.json({ result });
     } catch (error) {
       console.error("AI build-helper error:", error);
@@ -2938,6 +2972,209 @@ async function startServer() {
     } catch (error) {
       console.error('Error reverting commit:', error);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ---- GitHub repo linking for the Code page ----
+  const GITHUB_UA = "Control-Point";
+  const GITHUB_TREE_CAP = 5000;
+  const GITHUB_FILE_BYTES_CAP = 100 * 1024;
+
+  async function githubFetch(url: string): Promise<Response> {
+    const res = await fetch(url, {
+      headers: { "User-Agent": GITHUB_UA, "Accept": "application/vnd.github+json" },
+    });
+    if (res.status === 403 || res.status === 429) {
+      const e: any = new Error("GitHub rate limit hit, try again shortly");
+      e.rateLimited = true;
+      throw e;
+    }
+    return res;
+  }
+
+  function parseGitHubRepoUrl(input: string): { owner: string; repo: string } | null {
+    const s = String(input || "").trim().replace(/\.git\/?$/i, "").replace(/\/+$/, "");
+    const m = s.match(/^https?:\/\/(?:www\.)?github\.com\/([^\/\s?#]+)\/([^\/\s?#]+)/i);
+    if (!m) return null;
+    const owner = m[1], repo = m[2];
+    if (!/^[\w.\-]+$/.test(owner) || !/^[\w.\-]+$/.test(repo)) return null;
+    return { owner, repo };
+  }
+
+  async function fetchRepoTreeFromGitHub(owner: string, repo: string) {
+    const repoRes = await githubFetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
+    );
+    if (repoRes.status === 404) {
+      const e: any = new Error("Repo not found or private — only public repos can be linked");
+      e.status = 400;
+      throw e;
+    }
+    if (!repoRes.ok) {
+      const e: any = new Error(`GitHub error ${repoRes.status}`);
+      e.status = 502;
+      throw e;
+    }
+    const meta = await repoRes.json();
+    if (meta.private) {
+      const e: any = new Error("Private repos can't be linked — make the repo public first");
+      e.status = 400;
+      throw e;
+    }
+    const branch = meta.default_branch || "main";
+    const treeRes = await githubFetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`
+    );
+    if (!treeRes.ok) {
+      const e: any = new Error(`GitHub error ${treeRes.status} while reading the file tree`);
+      e.status = 502;
+      throw e;
+    }
+    const treeData = await treeRes.json();
+    const entries = ((treeData.tree || []) as any[])
+      .filter((e) => e && (e.type === "blob" || e.type === "tree") && typeof e.path === "string")
+      .slice(0, GITHUB_TREE_CAP)
+      .map((e) => ({ path: e.path, type: e.type, size: e.size || 0 }));
+    return { owner, repo: meta.name as string, branch, entries };
+  }
+
+  async function saveRepoForTeam(teamId: number, repoUrl: string, data: { owner: string; repo: string; branch: string; entries: any[] }) {
+    const now = new Date().toISOString();
+    const fileCount = data.entries.filter((e) => e.type === "blob").length;
+    (await dbRun(
+      `INSERT INTO code_repos (team_id, repo_url, owner, repo, branch, file_tree, file_count, synced_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id) DO UPDATE SET
+         repo_url = excluded.repo_url, owner = excluded.owner, repo = excluded.repo,
+         branch = excluded.branch, file_tree = excluded.file_tree,
+         file_count = excluded.file_count, synced_at = excluded.synced_at`,
+      teamId, repoUrl, data.owner, data.repo, data.branch, JSON.stringify(data.entries), fileCount, now
+    ));
+    return { owner: data.owner, repo: data.repo, branch: data.branch, fileCount, syncedAt: now };
+  }
+
+  function repoStatusPayload(row: any) {
+    if (!row) return null;
+    let fileTree: any[] = [];
+    try { fileTree = JSON.parse(row.file_tree || "[]"); } catch { /* keep empty */ }
+    return {
+      owner: row.owner,
+      repo: row.repo,
+      repoUrl: row.repo_url,
+      branch: row.branch,
+      fileCount: row.file_count,
+      syncedAt: row.synced_at,
+      fileTree,
+    };
+  }
+
+  function handleRepoError(res: any, error: any) {
+    if (error?.rateLimited) return res.status(429).json({ error: "GitHub rate limit hit, try again shortly" });
+    if (error?.status) return res.status(error.status).json({ error: error.message });
+    console.error("GitHub repo error:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+
+  // Team chat context: linked GitHub repo's file tree, so Bruno can reference real paths
+  async function buildChatContext(teamId: number | null): Promise<string> {
+    if (!teamId) return "";
+    const row = (await dbGet("SELECT owner, repo, branch, file_count, file_tree, synced_at FROM code_repos WHERE team_id = ?", teamId)) as any;
+    if (!row) return "";
+    let tree: any[] = [];
+    try { tree = JSON.parse(row.file_tree || "[]"); } catch { /* keep empty */ }
+    const blobs = tree.filter((e) => e && e.type === "blob").map((e) => e.path as string);
+    const srcExts = [".java", ".kt", ".py", ".js", ".ts", ".c", ".cpp", ".h", ".hpp", ".xml", ".gradle", ".md"];
+    const preferred = blobs.filter((p) => srcExts.some((x) => p.toLowerCase().endsWith(x)));
+    const rest = blobs.filter((p) => !srcExts.some((x) => p.toLowerCase().endsWith(x)));
+    let listing = [...preferred, ...rest].join("\n");
+    if (listing.length > 4000) listing = listing.slice(0, 4000) + "\n…(truncated)";
+    return `TEAM CODE REPO\nLinked GitHub repo: ${row.owner}/${row.repo} (branch: ${row.branch}, ${row.file_count} files, synced ${row.synced_at})\nFile tree (paths only):\n${listing}`;
+  }
+
+  // Link a GitHub repo (admin only)
+  app.post("/api/code/repo", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const parsed = parseGitHubRepoUrl(req.body?.repoUrl);
+      if (!parsed) return res.status(400).json({ error: "That doesn't look like a GitHub repo link — paste a github.com/owner/repo URL" });
+      const data = await fetchRepoTreeFromGitHub(parsed.owner, parsed.repo);
+      const repoUrl = `https://github.com/${data.owner}/${data.repo}`;
+      const result = await saveRepoForTeam(auth.teamId!, repoUrl, data);
+      res.json(result);
+    } catch (error) {
+      handleRepoError(res, error);
+    }
+  });
+
+  // Linked repo status
+  app.get("/api/code/repo", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const row = (await dbGet("SELECT * FROM code_repos WHERE team_id = ?", auth.teamId)) as any;
+      res.json(repoStatusPayload(row));
+    } catch (error) {
+      console.error("GitHub repo status error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Re-sync the tree (admin only)
+  app.post("/api/code/repo/sync", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const row = (await dbGet("SELECT * FROM code_repos WHERE team_id = ?", auth.teamId)) as any;
+      if (!row) return res.status(404).json({ error: "No repo linked yet" });
+      const data = await fetchRepoTreeFromGitHub(row.owner, row.repo);
+      const result = await saveRepoForTeam(auth.teamId!, row.repo_url, data);
+      res.json(result);
+    } catch (error) {
+      handleRepoError(res, error);
+    }
+  });
+
+  // Unlink (admin only)
+  app.delete("/api/code/repo", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      (await dbRun("DELETE FROM code_repos WHERE team_id = ?", auth.teamId));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("GitHub repo unlink error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Fetch one file's raw content
+  app.get("/api/code/repo/file", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const row = (await dbGet("SELECT * FROM code_repos WHERE team_id = ?", auth.teamId)) as any;
+      if (!row) return res.status(404).json({ error: "No repo linked yet" });
+      const path = String(req.query.path || "").replace(/^\/+/, "");
+      if (!path || path.includes("..")) return res.status(400).json({ error: "Invalid file path" });
+      let tree: any[] = [];
+      try { tree = JSON.parse(row.file_tree || "[]"); } catch { /* keep empty */ }
+      const entry = tree.find((e) => e.type === "blob" && e.path === path);
+      if (!entry) return res.status(404).json({ error: "File not in the linked repo's tree" });
+      if (entry.size > GITHUB_FILE_BYTES_CAP) {
+        return res.status(400).json({ error: "That file is over 100KB — open it on GitHub instead" });
+      }
+      const rawRes = await githubFetch(
+        `https://raw.githubusercontent.com/${encodeURIComponent(row.owner)}/${encodeURIComponent(row.repo)}/${encodeURIComponent(row.branch)}/${path.split("/").map(encodeURIComponent).join("/")}`
+      );
+      if (rawRes.status === 403 || rawRes.status === 429) {
+        return res.status(429).json({ error: "GitHub rate limit hit, try again shortly" });
+      }
+      if (!rawRes.ok) return res.status(502).json({ error: `GitHub returned ${rawRes.status}` });
+      const text = await rawRes.text();
+      res.json({ path, content: text.slice(0, GITHUB_FILE_BYTES_CAP) });
+    } catch (error) {
+      handleRepoError(res, error);
     }
   });
 

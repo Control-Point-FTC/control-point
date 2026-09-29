@@ -21,6 +21,7 @@ import Editor, { DiffEditor } from '@monaco-editor/react';
 import { useRef } from 'react';
 import { format } from 'date-fns';
 import { CodeFile, CodeCommit, Member, Team, CodeContent } from '../types';
+import { GitHubRepoSection } from './GitHubRepoSection';
 import {
   getCodeFiles,
   createCodeFile,
@@ -39,9 +40,10 @@ interface CodeViewProps {
   currentUser?: Member;
   onRefresh: () => void;
   setLoading: (loading: boolean) => void;
+  hasScope?: (scope: string) => boolean;
 }
 
-export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading }) => {
+export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading, hasScope }) => {
   const [files, setFiles] = useState<CodeFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<CodeFile | null>(null);
   const [currentBranch, setCurrentBranch] = useState<'main' | 'drafts'>('drafts');
@@ -330,9 +332,11 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
         </button>
       </div>
 
+      {/* GitHub repo linking */}
+      <GitHubRepoSection teamId={selectedTeamId} isAdmin={hasScope ? hasScope('admin') : false} />
+
       {/* Error Alert */}
-      {error && (
-        <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-4 flex items-start gap-3 flex-shrink-0">
+      {error && (        <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-4 flex items-start gap-3 flex-shrink-0">
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
           <p className="text-red-200 text-sm">{error}</p>
           <button
