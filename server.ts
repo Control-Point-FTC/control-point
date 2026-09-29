@@ -3707,15 +3707,18 @@ async function startServer() {
       const data = await youtubeApi("channels", { part: "snippet,statistics", id });
       const ch = data.items?.[0];
       if (!ch) throw new Error("Channel not found on YouTube");
-      return { channelId: ch.id, ...pickYouTubeChannel(ch) };
+      return { channelId: ch.id, handle: null as string | null, ...pickYouTubeChannel(ch) };
     }
-    // @handle lookup
-    const handle = clean.replace(/^@/, "").split(/[/?#]/)[0];
+    // @handle lookup — also accepts full URLs like https://www.youtube.com/@SomeHandle
+    let handle = clean;
+    const urlHandle = clean.match(/youtube\.com\/@([^/?#\s]+)/i);
+    if (urlHandle) handle = urlHandle[1];
+    else handle = clean.replace(/^@/, "").split(/[/?#]/)[0];
     if (!handle) throw new Error("Enter a channel handle or URL");
     const data = await youtubeApi("channels", { part: "snippet,statistics", forHandle: handle });
     const ch = data.items?.[0];
     if (!ch) throw new Error(`No YouTube channel found for @${handle}`);
-    return { channelId: ch.id, ...pickYouTubeChannel(ch) };
+    return { channelId: ch.id, handle: "@" + handle, ...pickYouTubeChannel(ch) };
   }
   async function fetchYouTubeStats(channelId: string) {
     const data = await youtubeApi("channels", { part: "snippet,statistics", id: channelId });
@@ -3958,7 +3961,7 @@ async function startServer() {
       const dup: any = await dbGet("SELECT id FROM social_profiles WHERE team_id = ? AND platform = 'youtube' AND external_id = ?", auth.teamId, ch.channelId);
       if (dup) return res.status(400).json({ error: "That channel is already linked" });
       const maxOrder: any = await dbGet("SELECT COALESCE(MAX(sort_order), -1) AS m FROM social_profiles WHERE team_id = ?", auth.teamId);
-      const handle = "@" + input.replace(/^@/, "").split(/[/?#]/)[0];
+      const handle = (ch as any).handle || "@" + input.replace(/^@/, "").split(/[/?#]/)[0];
       const info: any = await dbRun(
         "INSERT INTO social_profiles (team_id, platform, handle, external_id, url, display_name, avatar_url, sort_order, last_synced_at) VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?)",
         auth.teamId, handle, ch.channelId, input.startsWith("http") ? input : null, ch.displayName, ch.avatarUrl, (maxOrder.m + 1), Date.now()
