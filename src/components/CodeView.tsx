@@ -20,6 +20,7 @@ import {
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import { useRef } from 'react';
 import { format } from 'date-fns';
+import { confirmDialog } from './dialog';
 import { CodeFile, CodeCommit, Member, Team, CodeContent } from '../types';
 import { GitHubRepoSection } from './GitHubRepoSection';
 import {
@@ -271,7 +272,8 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
   };
 
   const handleDeleteFile = async () => {
-    if (!selectedFile || !confirm('Are you sure you want to delete this file?')) {
+    if (!selectedFile) return;
+    if (!(await confirmDialog({ title: 'Delete file', message: 'Are you sure you want to delete this file?', confirmLabel: 'Delete', danger: true }))) {
       return;
     }
     try {

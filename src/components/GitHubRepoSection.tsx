@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { apiFetch } from '../services/api';
+import { confirmDialog } from './dialog';
 
 interface RepoEntry {
   path: string;
@@ -197,7 +198,7 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
   };
 
   const handleUnlink = async () => {
-    if (!confirm(`Unlink ${repo?.owner}/${repo?.repo}? The file tree will no longer feed Bruno's code answers.`)) return;
+    if (!(await confirmDialog({ title: 'Unlink repository', message: `Unlink ${repo?.owner}/${repo?.repo}? The file tree will no longer feed Bruno's code answers.`, confirmLabel: 'Unlink', danger: true }))) return;
     setError(null);
     try {
       const res = await apiFetch('/api/code/repo', { method: 'DELETE' });

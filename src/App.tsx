@@ -73,6 +73,7 @@ import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Commun
 import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary } from './services/aiService';
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
+import { DialogHost, confirmDialog, notify } from './components/dialog';
 import Landing from './Landing';
 
 function cn(...inputs: ClassValue[]) {
@@ -1025,7 +1026,7 @@ export default function App() {
       persistSession(data.sessionId, data.user);
       setNeedsSetup(false);
     } else {
-      alert(data.error || "Login failed");
+      notify(data.error || "Login failed", 'error');
     }
   };
 
@@ -1281,6 +1282,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-primary">
+      <DialogHost />
       {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
       {/* Sidebar Overlay for Mobile */}
       <AnimatePresence>
@@ -1707,7 +1709,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
       if (res.ok) {
         setShowOut(false);
         onRefresh();
-        if (reason) alert('Absence logged. An admin can mark it excused from the Attendance view.');
+        if (reason) notify('Absence logged. An admin can mark it excused from the Attendance view.', 'success');
       }
     } finally {
       setLoading(false);
@@ -1752,7 +1754,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
   };
 
   const regenerateCode = async () => {
-    if (!confirm('Generate a new access code? The old code will stop working.')) return;
+    if (!(await confirmDialog({ title: 'Regenerate access code', message: 'Generate a new access code? The old code will stop working.', confirmLabel: 'Regenerate', danger: true }))) return;
     setLoading(true);
     try {
       const res = await apiFetch('/api/teams/regenerate-code', { method: 'POST' });
@@ -2153,13 +2155,13 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   const isAdmin = hasScope('admin');
 
   const handleResetPassword = async (email: string) => {
-    if (!confirm(`Reset password for ${email}? They will need to set it up again on next login.`)) return;
+    if (!(await confirmDialog({ title: 'Reset password', message: `Reset password for ${email}? They will need to set it up again on next login.`, confirmLabel: 'Reset', danger: true }))) return;
     await apiFetch('/api/auth/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
     });
-    alert('Password reset successfully.');
+    notify('Password reset successfully.', 'success');
   };
 
   const handleAddTeam = async () => {
@@ -2177,7 +2179,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
   };
 
   const handleDeleteTeam = async (id: number) => {
-    if (!confirm("Are you sure? This will delete the team.")) return;
+    if (!(await confirmDialog({ title: 'Delete team', message: 'Are you sure? This will delete the team.', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/teams/${id}`, { method: 'DELETE' });
     onRefresh();
   };
@@ -2539,7 +2541,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
       if (res.ok) {
         await onRefresh();
       } else {
-        alert('Could not check in \u2014 try again.');
+        notify('Could not check in — try again.', 'error');
       }
     } finally {
       setCheckingIn(false);
@@ -2686,11 +2688,11 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
         onRefresh();
       } else {
         setSavingStatus('idle');
-        alert('Failed to save attendance');
+        notify('Failed to save attendance', 'error');
       }
     } catch (error) {
       setSavingStatus('idle');
-      alert('Error saving attendance');
+      notify('Error saving attendance', 'error');
     }
   };
 
@@ -3190,7 +3192,8 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
   };
 
   const handleDelete = async () => {
-    if (!editingId || !confirm('Delete this event?')) return;
+    if (!editingId) return;
+    if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/events/${editingId}`, { method: 'DELETE' });
     setShowModal(false);
     onRefresh();
@@ -3401,7 +3404,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
   };
 
   const handleDeleteTask = async (id: number) => {
-    if (!confirm("Delete this task?")) return;
+    if (!(await confirmDialog({ title: 'Delete task', message: 'Delete this task?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' });
     onRefresh();
   };
@@ -3645,7 +3648,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Delete this transaction?")) return;
+    if (!(await confirmDialog({ title: 'Delete transaction', message: 'Delete this transaction?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
     onRefresh();
   };
@@ -3778,7 +3781,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
 
   const handleAdd = async () => {
     if (!newPart.name || !newPart.sku) {
-      alert('Name and SKU are required');
+      notify('Name and SKU are required', 'error');
       return;
     }
     try {
@@ -3799,10 +3802,10 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
         onRefresh();
       } else {
         const err = await res.json();
-        alert('Error: ' + err.error);
+        notify('Error: ' + err.error, 'error');
       }
     } catch (error) {
-      alert('Error adding part: ' + error);
+      notify('Error adding part: ' + error, 'error');
     }
   };
 
@@ -3824,22 +3827,22 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
         onRefresh();
       } else {
         const err = await res.json();
-        alert('Error: ' + err.error);
+        notify('Error: ' + err.error, 'error');
       }
     } catch (error) {
-      alert('Error updating part: ' + error);
+      notify('Error updating part: ' + error, 'error');
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('Delete this part?')) return;
+    if (!(await confirmDialog({ title: 'Delete part', message: 'Delete this part?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
     onRefresh();
   };
 
   const handleImportRev = async () => {
     if (!revLink.trim()) {
-      alert('Please enter a REV Robotics link');
+      notify('Please enter a REV Robotics link', 'info');
       return;
     }
     
@@ -3862,13 +3865,13 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
           category: data.category || newPart.category
         });
         setRevLink('');
-        alert('Product imported! Review and save when ready.');
+        notify('Product imported! Review and save when ready.', 'success');
       } else {
         const err = await res.json();
-        alert('Error: ' + err.error);
+        notify('Error: ' + err.error, 'error');
       }
     } catch (error) {
-      alert('Error importing from REV: ' + error);
+      notify('Error importing from REV: ' + error, 'error');
     } finally {
       setIsLoadingRev(false);
     }
@@ -3885,13 +3888,13 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
       const res = await apiFetch('/api/inventory/import-gobilda/parse', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert('Error: ' + (data.error || 'Could not read that PDF'));
+        notify('Error: ' + (data.error || 'Could not read that PDF'), 'error');
         return;
       }
       setGobildaItems((data.items || []).map((it: any) => ({ ...it, selected: true })));
       setShowGobildaPreview(true);
     } catch (error) {
-      alert('Error reading PDF: ' + error);
+      notify('Error reading PDF: ' + error, 'error');
     } finally {
       setGobildaParsing(false);
     }
@@ -3904,7 +3907,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
   const handleGobildaConfirm = async () => {
     const selected = gobildaItems.filter((it: any) => it.selected);
     if (!selected.length) {
-      alert('Select at least one item to import');
+      notify('Select at least one item to import', 'info');
       return;
     }
     try {
@@ -3922,7 +3925,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert('Error: ' + (data.error || 'Import failed'));
+        notify('Error: ' + (data.error || 'Import failed'), 'error');
         return;
       }
       setShowGobildaPreview(false);
@@ -3930,9 +3933,9 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
       onRefresh();
       const parts = [`${data.added} added`, `${data.merged} restocked`];
       if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
-      alert('Import complete: ' + parts.join(', '));
+      notify('Import complete: ' + parts.join(', '), 'success');
     } catch (error) {
-      alert('Error importing: ' + error);
+      notify('Error importing: ' + error, 'error');
     }
   };
 
@@ -4205,7 +4208,7 @@ function OutreachView({ outreach, onRefresh }: any) {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Delete this event?")) return;
+    if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
     onRefresh();
   };
@@ -4227,7 +4230,7 @@ function OutreachView({ outreach, onRefresh }: any) {
       setEditing(null);
       onRefresh();
     } else {
-      alert('Could not save changes.');
+      notify('Could not save changes.', 'error');
     }
   };
 
@@ -4444,7 +4447,7 @@ function CommunicationView({ communications, onRefresh }: any) {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Delete this log?")) return;
+    if (!(await confirmDialog({ title: 'Delete log', message: 'Delete this log?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/communications/${id}`, { method: 'DELETE' });
     onRefresh();
   };
@@ -4566,11 +4569,11 @@ function ChatView({ messages, members, currentUser, socket }: any) {
           clearPending();
           if (fileInputRef.current) fileInputRef.current.value = '';
         } else {
-          alert('Could not send that file.');
+          notify('Could not send that file.', 'error');
         }
       } catch (error) {
         console.error('Upload error:', error);
-        alert('Could not send that file.');
+        notify('Could not send that file.', 'error');
       } finally {
         setUploading(false);
       }
@@ -4594,7 +4597,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
 
   const queueFile = (file: File | undefined) => {
     if (!file) return;
-    if (file.size > 10 * 1024 * 1024) { alert('Files must be under 10 MB.'); return; }
+    if (file.size > 10 * 1024 * 1024) { notify('Files must be under 10 MB.', 'error'); return; }
     clearPending();
     setPendingFile(file);
     if (file.type.startsWith('image/')) setPendingPreview(URL.createObjectURL(file));
@@ -4864,7 +4867,7 @@ function FeedbackModal({ onClose }: any) {
         body: JSON.stringify({ category, message: message.trim() })
       });
       if (res.ok) setSent(true);
-      else alert('Could not send feedback — try again.');
+      else notify('Could not send feedback — try again.', 'error');
     } finally {
       setSending(false);
     }
@@ -5108,7 +5111,7 @@ function AccountManager({ currentUser }: any) {
     setExporting(true);
     try {
       const res = await apiFetch('/api/auth/export');
-      if (!res.ok) { alert('Could not export your data.'); return; }
+      if (!res.ok) { notify('Could not export your data.', 'error'); return; }
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -5125,10 +5128,10 @@ function AccountManager({ currentUser }: any) {
 
   const deleteAccount = async () => {
     if (confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase()) {
-      alert('Type your email address exactly to confirm.');
+      notify('Type your email address exactly to confirm.', 'info');
       return;
     }
-    if (!window.confirm('This is permanent. Delete your account and all of your personal data?')) return;
+    if (!(await confirmDialog({ title: 'Delete account', message: 'This is permanent. Delete your account and all of your personal data?', confirmLabel: 'Delete my account', danger: true }))) return;
     setDelBusy(true);
     try {
       const res = await apiFetch('/api/auth/account', {
@@ -5141,7 +5144,7 @@ function AccountManager({ currentUser }: any) {
         if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
         window.location.reload();
       } else {
-        alert(data.error || 'Could not delete your account.');
+        notify(data.error || 'Could not delete your account.', 'error');
       }
     } finally {
       setDelBusy(false);
@@ -5272,8 +5275,8 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
 
   const handleAvatarFile = async (file: File | undefined) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) { alert('Please choose an image file.'); return; }
-    if (file.size > 2 * 1024 * 1024) { alert('Image must be under 2 MB.'); return; }
+    if (!file.type.startsWith('image/')) { notify('Please choose an image file.', 'error'); return; }
+    if (file.size > 2 * 1024 * 1024) { notify('Image must be under 2 MB.', 'error'); return; }
     setAvatarUploading(true);
     try {
       const fd = new FormData();
@@ -5286,7 +5289,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
       if (res.ok) {
         await onRefresh();
       } else {
-        alert('Could not upload that picture.');
+        notify('Could not upload that picture.', 'error');
       }
     } finally {
       setAvatarUploading(false);
@@ -5324,9 +5327,9 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
       });
       if (res.ok) {
         await onRefresh();
-        alert('Profile updated successfully!');
+        notify('Profile updated successfully!', 'success');
       } else {
-        alert('Could not save your profile.');
+        notify('Could not save your profile.', 'error');
       }
     } finally {
       setLoading(false);
@@ -5409,7 +5412,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
               root.style.removeProperty('--color-accent');
               root.style.removeProperty('--color-primary');
               root.style.removeProperty('--color-text-base');
-              alert('Theme reset. Save to make it permanent.');
+              notify('Theme reset. Save to make it permanent.', 'info');
             }}
             className="text-xs text-text-muted hover:text-accent transition-colors self-start"
           >
@@ -5515,7 +5518,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ftc_team_number: num }),
       });
-      if (!res.ok) { alert('Failed to save team number'); return; }
+      if (!res.ok) { notify('Failed to save team number', 'error'); return; }
       setFtcVerified(null);
       if (num === null) setFtcNumber('');
       onRefresh();
@@ -5551,18 +5554,18 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
   };
 
   const handleSilentDelete = async (messageId: number) => {
-    if (confirm('Are you sure you want to permanently delete this message? This cannot be undone.')) {
+    if (await confirmDialog({ title: 'Delete message', message: 'Are you sure you want to permanently delete this message? This cannot be undone.', confirmLabel: 'Delete', danger: true })) {
       try {
         const res = await apiFetch(`/api/messages/${messageId}?silent=true`, { method: 'DELETE' });
         if (res.ok) {
           await fetchAllMessages();
-          alert('Message permanently deleted.');
+          notify('Message permanently deleted.', 'success');
         } else {
-          alert('Failed to delete message.');
+          notify('Failed to delete message.', 'error');
         }
       } catch (error) {
         console.error('Delete error:', error);
-        alert('Error deleting message: ' + error);
+        notify('Error deleting message: ' + error, 'error');
       }
     }
   };
@@ -5578,13 +5581,13 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
       if (res.ok) {
         setEditingMessage(null);
         await fetchAllMessages();
-        alert('Message updated.');
+        notify('Message updated.', 'success');
       } else {
-        alert('Failed to update message.');
+        notify('Failed to update message.', 'error');
       }
     } catch (error) {
       console.error('Update error:', error);
-      alert('Error updating message: ' + error);
+      notify('Error updating message: ' + error, 'error');
     }
   };
 
@@ -5620,7 +5623,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
       });
     }
     onRefresh();
-    alert('Settings saved');
+    notify('Settings saved', 'success');
   };
 
   const updateMember = async (id: number, data: any) => {
@@ -5641,7 +5644,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser }: any)
             <div className="flex flex-wrap items-center gap-3 p-4 bg-accent/10 border border-accent/30 rounded-2xl">
               <span className="bg-accent text-accent-ink font-display font-bold px-3 py-1 rounded-xl">#{myTeam.ftc_team_number}</span>
               <p className="text-sm text-white/80 flex-1">Connected — stats appear on the dashboard and Team Stats page.</p>
-              <Button variant="danger" size="sm" onClick={() => { if (confirm('Disconnect the FTC team? Stats will be hidden.')) saveFtcNumber(null); }} disabled={ftcSaving}>
+              <Button variant="danger" size="sm" onClick={async () => { if (await confirmDialog({ title: 'Disconnect FTC team', message: 'Disconnect the FTC team? Stats will be hidden.', confirmLabel: 'Disconnect', danger: true })) saveFtcNumber(null); }} disabled={ftcSaving}>
                 Disconnect
               </Button>
             </div>

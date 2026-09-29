@@ -4,7 +4,8 @@ import {
   Bot, Plus, Trash2, Send, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
-import { streamBuildHelper, type BuildHelperMessage } from '../services/aiService';
+import { streamBuildHelper, stripEventBlocks, type BuildHelperMessage } from '../services/aiService';
+import { confirmDialog } from './dialog';
 
 const STARTERS = [
   'How should we design an intake for BIOBUZZ pollen?',
@@ -159,7 +160,7 @@ export default function BrunoView({ currentUser, hasScope }: any) {
 
   const removeChat = async (chat: any) => {
     if (!chat) return;
-    if (!window.confirm(`Delete "${chat.title || 'Untitled chat'}"? This can't be undone.`)) return;
+    if (!(await confirmDialog({ title: 'Delete chat', message: `Delete "${chat.title || 'Untitled chat'}"? This can't be undone.`, confirmLabel: 'Delete', danger: true }))) return;
     try {
       const res = await apiFetch(`/api/bruno/chats/${chat.id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -349,7 +350,7 @@ export default function BrunoView({ currentUser, hasScope }: any) {
               <div key={i} className="flex justify-start">
                 <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.05] border border-white/[0.07] px-4 py-2.5 text-sm text-white/85 leading-relaxed">
                   {m.text ? (
-                    <Markdown>{m.text}</Markdown>
+                    <Markdown>{stripEventBlocks(m.text)}</Markdown>
                   ) : (
                     <span className="flex gap-1 items-center text-text-muted py-1">
                       {[0, 1, 2].map((d) => (
