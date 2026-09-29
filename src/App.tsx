@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
+import { Html5Qrcode } from 'html5-qrcode';
 import { 
   LayoutDashboard, 
   Users, 
@@ -15,7 +17,6 @@ import {
   ExternalLink,
   Mail,
   Settings,
-  Menu,
   X,
   ChevronLeft,
   ChevronRight,
@@ -60,7 +61,14 @@ import {
   Bot,
   Instagram,
   Youtube,
-  Music2
+  Music2,
+  QrCode,
+  ScanLine,
+  Maximize2,
+  Timer,
+  Keyboard,
+  Camera,
+  LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -591,6 +599,22 @@ const navItems = [
   { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
 ];
 
+// Reactive mobile breakpoint (md breakpoint, 768px). Replaces direct
+// window.innerWidth reads so the layout responds to rotation/resize.
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    setIsMobile(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return isMobile;
+}
+
 export default function App() {
   // Real URL routing — every section is its own route, so refresh keeps you where you are
   const location = useLocation();
@@ -599,11 +623,18 @@ export default function App() {
   const setActiveTab = (id: string) => navigate(`/${id}`);
   const activeNav = navItems.find((t) => t.id === activeTab);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
+  const isMobile = useIsMobile();
 
-  // Close the mobile sidebar whenever the route changes
+  // Keep the sidebar/drawer state in sync when crossing the mobile breakpoint
+  // (drawer on phones, docked sidebar on larger screens).
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth <= 768) setIsSidebarOpen(false);
-  }, [location.pathname]);
+    setIsSidebarOpen(!isMobile);
+  }, [isMobile]);
+
+  // Close the mobile drawer whenever the route changes
+  useEffect(() => {
+    if (isMobile) setIsSidebarOpen(false);
+  }, [location.pathname, isMobile]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTeamMenu, setShowTeamMenu] = useState(false);
@@ -1364,6 +1395,20 @@ export default function App() {
     return studentTabIds.includes(t.id);
   });
 
+  // Bottom tab bar on phones: the student-critical destinations first, plus a
+  // "More" button that opens the full sidebar as a drawer. Admins keep every
+  // section reachable through the drawer.
+  const mobileTabIds = ['dashboard', 'attendance', 'chat', 'tasks'];
+  const mobileTabShortLabels: Record<string, string> = {
+    dashboard: 'Home',
+    attendance: 'Check in',
+    chat: 'Chat',
+    tasks: 'Tasks',
+  };
+  const mobileTabs = mobileTabIds
+    .map((id) => visibleTabs.find((t) => t.id === id))
+    .filter((t): t is (typeof visibleTabs)[number] => Boolean(t));
+
   // Keep students (and scope-restricted users) on tabs they can actually see
   // (Bruno is intentionally not a nav tab — reachable via the header button)
   useEffect(() => {
@@ -1378,6 +1423,18 @@ export default function App() {
       apiFetch('/api/owner/me').then(r => r.json()).then(d => setIsOwner(!!d.isOwner)).catch(() => setIsOwner(false));
     } else {
       setIsOwner(false);
+    }
+  }, [isLoggedIn]);
+
+  // A scanned QR deep link opened while logged out: after login, bounce back
+  // to the check-in page to finish checking in.
+  useEffect(() => {
+    if (isLoggedIn && typeof sessionStorage !== 'undefined') {
+      const t = sessionStorage.getItem('pendingCheckinToken');
+      if (t) {
+        sessionStorage.removeItem('pendingCheckinToken');
+        navigate(`/checkin/${t}`);
+      }
     }
   }, [isLoggedIn]);
 
@@ -1424,6 +1481,7 @@ export default function App() {
         <Route path="/profile" element={<ProfileView {...viewProps} />} />
         <Route path="/settings" element={<SettingsView {...viewProps} />} />
         <Route path="/owner" element={<OwnerView {...viewProps} />} />
+        <Route path="/checkin/:token" element={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     );
@@ -1440,6 +1498,12 @@ export default function App() {
   }
 
   if (!isLoggedIn) {
+    // A scanned QR deep link (/checkin/:token) opened while logged out: stash
+    // the token so the post-login effect can bounce back to finish check-in.
+    const deepLink = location.pathname.match(/^\/checkin\/([A-Za-z0-9]+)/);
+    if (deepLink && typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem('pendingCheckinToken', deepLink[1]);
+    }
     // A brand-new OAuth user just finished sign-in — collect their last signup
     // step first. This must come before the landing screen or the callback
     // bounces them back to the homepage.
@@ -1479,7 +1543,7 @@ export default function App() {
       );
     }
     return (
-      <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
+      <div className="min-h-dvh bg-primary flex items-center justify-center p-4 relative overflow-hidden">
         <div className="hero-grid absolute inset-0" />
         <div className="hero-glow absolute inset-0" />
         <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
@@ -1604,12 +1668,12 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-primary">
+    <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
       {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
       {/* Sidebar Overlay for Mobile */}
       <AnimatePresence>
-        {isSidebarOpen && window.innerWidth <= 768 && (
+        {isSidebarOpen && isMobile && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1624,15 +1688,15 @@ export default function App() {
       <motion.aside 
         initial={false}
         animate={{ 
-          width: isSidebarOpen ? 280 : 80
+          width: !isMobile && !isSidebarOpen ? 80 : 280
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className={cn(
           "bg-secondary border-r border-white/5 flex flex-col z-40",
-          window.innerWidth <= 768 ? "fixed inset-y-0 left-0 shadow-xl" : "relative"
+          isMobile ? "fixed inset-y-0 left-0 shadow-xl" : "relative"
         )}
         style={{
-          transform: window.innerWidth <= 768 && !isSidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
+          transform: isMobile && !isSidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
           transition: 'transform 0.3s ease-in-out'
         }}
       >
@@ -1711,16 +1775,9 @@ export default function App() {
       </motion.aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0 bg-primary relative h-screen">
-        <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex items-center justify-between">
+      <main className="flex-1 flex flex-col min-h-0 bg-primary relative h-dvh">
+        <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 text-text-muted hover:text-white md:hidden flex-shrink-0"
-              title="Toggle sidebar"
-            >
-              <Menu className="w-6 h-6" />
-            </button>
             <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
           </div>
           
@@ -1752,7 +1809,12 @@ export default function App() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
-                    className="absolute right-0 mt-2 w-80 glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
+                    className={cn(
+                      "glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50",
+                      isMobile
+                        ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
+                        : "absolute right-0 mt-2 w-80"
+                    )}
                   >
                     <div className="p-4 border-b border-white/10 bg-white/5">
                       <h4 className="text-sm font-bold text-white">Notifications</h4>
@@ -1799,7 +1861,12 @@ export default function App() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute right-0 mt-2 w-56 glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
+                      className={cn(
+                        "glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50",
+                        isMobile
+                          ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
+                          : "absolute right-0 mt-2 w-56"
+                      )}
                     >
                       <div className="p-3 border-b border-white/10 bg-white/5">
                         <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider">My teams</p>
@@ -1842,7 +1909,7 @@ export default function App() {
               <div className="relative">
                 <button
                   onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-3 px-4 py-2 bg-white/5 rounded-full border border-white/10 hover:border-accent/40 hover:bg-white/[0.08] transition-all cursor-pointer"
+                  className="flex items-center gap-3 p-1.5 sm:px-4 sm:py-2 bg-white/5 rounded-full border border-white/10 hover:border-accent/40 hover:bg-white/[0.08] transition-all cursor-pointer"
                   aria-label="Account menu"
                 >
                   <Avatar user={currentUser} size="sm" />
@@ -1865,7 +1932,12 @@ export default function App() {
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
-                      className="absolute right-0 mt-2 w-52 glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
+                      className={cn(
+                        "glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50",
+                        isMobile
+                          ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
+                          : "absolute right-0 mt-2 w-52"
+                      )}
                     >
                       <div className="p-3 border-b border-white/10 bg-white/5">
                         <p className="text-sm font-bold text-white truncate">{currentUser.name}</p>
@@ -1905,7 +1977,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="p-4 sm:p-6 lg:p-8 flex flex-col flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <div className="px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 flex flex-col flex-1 min-h-0 overflow-y-auto custom-scrollbar">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -1929,6 +2001,45 @@ export default function App() {
           teamName={activeTeamName}
         />
       </main>
+
+      {/* Mobile bottom tab bar — the student-first navigation on phones */}
+      {isMobile && (
+        <nav
+          aria-label="Primary"
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-secondary/95 backdrop-blur-lg"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          <div className="flex">
+            {mobileTabs.map((t) => {
+              const isActive = activeTab === t.id;
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => navigate(`/${t.path}`)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className="relative flex-1 flex flex-col items-center justify-center gap-1 py-2.5 min-h-[62px] active:scale-95 transition-transform"
+                >
+                  <Icon className={cn('w-6 h-6', isActive ? 'text-accent' : 'text-text-muted')} strokeWidth={isActive ? 2.5 : 2} />
+                  <span className={cn('text-[10px] font-bold leading-none', isActive ? 'text-accent' : 'text-text-muted')}>
+                    {mobileTabShortLabels[t.id] || t.label}
+                  </span>
+                  {isActive && <span className="absolute bottom-1 w-1 h-1 rounded-full bg-accent" />}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              aria-label="More sections"
+              className="relative flex-1 flex flex-col items-center justify-center gap-1 py-2.5 min-h-[62px] active:scale-95 transition-transform"
+            >
+              <LayoutGrid className="w-6 h-6 text-text-muted" strokeWidth={2} />
+              <span className="text-[10px] font-bold leading-none text-text-muted">More</span>
+            </button>
+          </div>
+        </nav>
+      )}
+
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <CookieConsent />
       <BrunoPanel
@@ -1946,7 +2057,7 @@ export default function App() {
 function AppFooter({ links, teamName }: { links: { id: string; path: string; label: string }[]; teamName?: string }) {
   const navigate = useNavigate();
   return (
-    <footer className="flex-shrink-0 border-t border-white/[0.06] bg-secondary/60">
+    <footer className="hidden md:block flex-shrink-0 border-t border-white/[0.06] bg-secondary/60">
       <div className="px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-6 h-6 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
@@ -2984,8 +3095,317 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
   );
 }
 
+// ---------- QR check-in ----------
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return 'Expired';
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return (h > 0 ? `${h}:` : '') + `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+
+// Full-screen in-app camera scanner — students point it at the projected QR.
+function QrScannerModal({ onClose, onToken }: { onClose: () => void; onToken: (token: string) => void }) {
+  const [error, setError] = useState('');
+  const handledRef = useRef(false);
+  useEffect(() => {
+    let scanner: Html5Qrcode | null = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        scanner = new Html5Qrcode('qr-reader-region');
+        await scanner.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 240, height: 240 } },
+          (decodedText: string) => {
+            if (handledRef.current) return;
+            const m = decodedText.match(/\/checkin\/([A-Za-z0-9]+)/i) || decodedText.trim().match(/^([a-f0-9]{24,})$/i);
+            if (m) {
+              handledRef.current = true;
+              onToken(m[1]);
+            }
+          },
+          () => { /* per-frame miss — ignore */ }
+        );
+      } catch (e) {
+        if (!cancelled) setError("Couldn't access the camera. Type the day's code instead.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      try {
+        const stopP = scanner?.stop() as unknown as Promise<void> | undefined;
+        if (stopP && typeof stopP.then === 'function') {
+          stopP.then(() => { try { scanner?.clear(); } catch { /* noop */ } }).catch(() => {});
+        } else {
+          try { scanner?.clear(); } catch { /* noop */ }
+        }
+      } catch { /* noop */ }
+    };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col">
+      <div className="flex items-center justify-between px-4 py-4">
+        <p className="text-white font-bold">Scan the check-in QR</p>
+        <button onClick={onClose} className="p-2 rounded-full bg-white/10 text-white" aria-label="Close scanner">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-10">
+        {error ? (
+          <div className="text-center">
+            <Camera className="w-12 h-12 text-text-muted mx-auto mb-4" />
+            <p className="text-white text-sm mb-6">{error}</p>
+            <Button onClick={onClose}>Go back</Button>
+          </div>
+        ) : (
+          <>
+            <div id="qr-reader-region" className="w-full max-w-sm rounded-2xl overflow-hidden" />
+            <p className="text-text-muted text-sm mt-6 text-center">Point your camera at the QR code<br />projected by your admin</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Admin panel: start a session, show the QR + day code, project fullscreen.
+function QrSessionPanel({ teamName }: { teamName: string }) {
+  const [session, setSession] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [duration, setDuration] = useState<number | 'today'>(60);
+  const [presenting, setPresenting] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  const load = async () => {
+    try {
+      const res = await apiFetch('/api/attendance/qr-session');
+      const data = await res.json();
+      if (res.ok) setSession(data.session);
+    } catch { /* offline — leave as-is */ }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!session) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [session?.token]);
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/attendance/qr-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ durationMinutes: duration }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not start session');
+      setSession(data.session);
+      notify('Check-in session is live — project the QR.', 'success');
+    } catch (e: any) {
+      notify(e.message || 'Could not start session', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = async () => {
+    setBusy(true);
+    try {
+      await apiFetch('/api/attendance/qr-session/stop', { method: 'POST' });
+      setSession(null);
+      setPresenting(false);
+      notify('Check-in session ended.', 'info');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const durations: { label: string; value: number | 'today' }[] = [
+    { label: '15 min', value: 15 },
+    { label: '30 min', value: 30 },
+    { label: '1 hour', value: 60 },
+    { label: '3 hours', value: 180 },
+    { label: 'Rest of today', value: 'today' },
+  ];
+  const remaining = session ? new Date(session.expiresAt).getTime() - now : 0;
+  useEffect(() => {
+    if (session && remaining <= 0) setSession(null);
+  }, [remaining]);
+
+  return (
+    <>
+      <Card icon={QrCode} title="QR Check-in" subtitle="Project the code — students scan to mark themselves present">
+        {loading ? (
+          <p className="text-sm text-text-muted py-4 text-center">Loading…</p>
+        ) : !session ? (
+          <div className="space-y-4">
+            <p className="text-sm text-text-muted">Start a session and put the QR up on the board. Students scan it with their phone camera — no more honor-system check-ins.</p>
+            <div className="flex flex-wrap gap-2">
+              {durations.map((d) => (
+                <button
+                  key={d.label}
+                  onClick={() => setDuration(d.value)}
+                  className={cn(
+                    'px-3 py-2 rounded-xl text-sm font-bold border transition-all',
+                    duration === d.value
+                      ? 'bg-accent text-accent-ink border-accent'
+                      : 'bg-white/5 text-text-muted border-white/10 hover:text-white'
+                  )}
+                >
+                  {d.label}
+                </button>
+              ))}
+            </div>
+            <Button onClick={start} disabled={busy} className="w-full sm:w-auto">
+              <QrCode className="w-5 h-5" /> {busy ? 'Starting…' : 'Start check-in session'}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col sm:flex-row gap-6 items-center">
+            <div className="bg-white p-4 rounded-2xl shrink-0">
+              <QRCodeSVG value={session.url} size={200} level="M" />
+            </div>
+            <div className="flex-1 w-full text-center sm:text-left space-y-3">
+              <div>
+                <p className="text-xs text-text-muted uppercase font-bold tracking-widest mb-1">Day code (camera not working? type this)</p>
+                <p className="text-4xl font-display font-bold tracking-[0.2em] text-white">{session.code}</p>
+              </div>
+              <p className="text-sm text-text-muted flex items-center justify-center sm:justify-start gap-2">
+                <Timer className="w-4 h-4 text-accent" />
+                Session ends in <span className="text-white font-bold tabular-nums">{formatCountdown(remaining)}</span>
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => setPresenting(true)} variant="secondary">
+                  <Maximize2 className="w-4 h-4" /> Project fullscreen
+                </Button>
+                <Button onClick={stop} disabled={busy} variant="danger">
+                  <X className="w-4 h-4" /> End session
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {presenting && session && (
+        <div className="fixed inset-0 z-[90] bg-black flex flex-col items-center justify-center p-6 text-center">
+          <button
+            onClick={() => setPresenting(false)}
+            className="absolute top-4 right-4 p-3 rounded-full bg-white/10 text-white hover:bg-white/20"
+            aria-label="Exit fullscreen"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <p className="text-white/60 text-sm font-bold uppercase tracking-[0.25em] mb-2">{teamName}</p>
+          <h2 className="text-white text-2xl sm:text-4xl font-display font-bold mb-6">Scan to check in</h2>
+          <div className="bg-white p-5 sm:p-8 rounded-3xl">
+            <QRCodeSVG value={session.url} size={Math.min(420, typeof window !== 'undefined' ? window.innerWidth - 120 : 300)} level="M" />
+          </div>
+          <p className="text-white/60 text-sm mt-6 mb-1 uppercase tracking-widest font-bold">No camera? Enter code</p>
+          <p className="text-white text-5xl sm:text-6xl font-display font-bold tracking-[0.25em]">{session.code}</p>
+          <p className="text-white/50 text-sm mt-6 tabular-nums">Ends in {formatCountdown(remaining)}</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Landing page for a scanned QR (also used by the in-app flow deep link).
+function QrCheckinPage({ currentUser, onRefresh }: any) {
+  const { token } = useParams();
+  const navigate = useNavigate();
+  const [info, setInfo] = useState<any>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/attendance/qr-session/${token}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Session not found');
+        setInfo(data);
+        if (data.alreadyCheckedIn) {
+          setDone(true);
+          onRefresh?.();
+        }
+      } catch (e: any) {
+        setError(e.message || 'Could not load session');
+      }
+    })();
+  }, [token]);
+
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/api/attendance/checkin/${token}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Check-in failed');
+      setDone(true);
+      onRefresh?.();
+    } catch (e: any) {
+      setError(e.message || 'Check-in failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-primary flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
+        <Card className="text-center py-8">
+          <div className={cn(
+            'w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4',
+            done ? 'bg-emerald-500/15' : error ? 'bg-rose-500/15' : 'bg-accent/15'
+          )}>
+            {done ? <Check className="w-8 h-8 text-emerald-400" /> : error ? <X className="w-8 h-8 text-rose-400" /> : <QrCode className="w-8 h-8 text-accent" />}
+          </div>
+          {error ? (
+            <>
+              <h3 className="text-xl font-display font-bold text-white mb-2">Can't check in</h3>
+              <p className="text-sm text-text-muted mb-6">{error}</p>
+              <Button onClick={() => navigate('/dashboard')} variant="secondary">Back to dashboard</Button>
+            </>
+          ) : done ? (
+            <>
+              <h3 className="text-xl font-display font-bold text-white mb-2">You're checked in</h3>
+              <p className="text-sm text-text-muted mb-6">{info?.teamName} · {format(new Date(), 'EEEE, MMMM d')}</p>
+              <Button onClick={() => navigate('/dashboard')}>Back to dashboard</Button>
+            </>
+          ) : !info ? (
+            <p className="text-sm text-text-muted">Loading session…</p>
+          ) : !info.isMember ? (
+            <>
+              <h3 className="text-xl font-display font-bold text-white mb-2">Wrong team</h3>
+              <p className="text-sm text-text-muted mb-6">You're signed in as {currentUser?.name}, who isn't on {info.teamName}.</p>
+              <Button onClick={() => navigate('/dashboard')} variant="secondary">Back to dashboard</Button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-text-muted uppercase font-bold tracking-widest mb-1">{info.teamName}</p>
+              <h3 className="text-xl font-display font-bold text-white mb-2">Check in{info.memberName ? ` as ${info.memberName}` : ''}?</h3>
+              <p className="text-sm text-text-muted mb-6">Session ends {format(new Date(info.expiresAt), 'h:mm a')}</p>
+              <Button onClick={confirm} disabled={busy} className="px-8 py-3 text-base w-full">
+                <CalendarCheck className="w-5 h-5" /> {busy ? 'Checking in…' : "Yes, I'm here"}
+              </Button>
+            </>
+          )}
+        </Card>
+      </motion.div>
+    </div>
+  );
+}
+
 function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
-  const [checkingIn, setCheckingIn] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [codeMode, setCodeMode] = useState(false);
+  const [code, setCode] = useState('');
+  const [codeBusy, setCodeBusy] = useState(false);
   const today = format(new Date(), 'yyyy-MM-dd');
   const myRecords = (attendance || [])
     .filter((r: any) => r.member_id === currentUser?.id)
@@ -3001,17 +3421,39 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
     S: { label: 'Sick', cls: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
   };
 
-  const handleCheckin = async () => {
-    setCheckingIn(true);
+  const checkinWithToken = async (token: string) => {
+    setScanOpen(false);
     try {
-      const res = await apiFetch('/api/attendance/checkin', { method: 'POST' });
-      if (res.ok) {
-        await onRefresh();
-      } else {
-        notify('Could not check in — try again.', 'error');
-      }
+      const res = await apiFetch(`/api/attendance/checkin/${token}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Check-in failed');
+      notify(data.already ? 'You were already checked in.' : 'Checked in — welcome!', 'success');
+      await onRefresh();
+    } catch (e: any) {
+      notify(e.message || 'Check-in failed', 'error');
+    }
+  };
+
+  const handleCodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!code.trim()) return;
+    setCodeBusy(true);
+    try {
+      const res = await apiFetch('/api/attendance/checkin-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Check-in failed');
+      notify(data.already ? 'You were already checked in.' : 'Checked in — welcome!', 'success');
+      setCode('');
+      setCodeMode(false);
+      await onRefresh();
+    } catch (e: any) {
+      notify(e.message || 'Check-in failed', 'error');
     } finally {
-      setCheckingIn(false);
+      setCodeBusy(false);
     }
   };
 
@@ -3038,13 +3480,37 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
           </>
         ) : (
           <>
-            <h4 className="text-xl font-display font-bold text-white mb-4">Not checked in yet</h4>
-            <Button onClick={handleCheckin} disabled={checkingIn} className="px-8 py-3 text-base">
-              <CalendarCheck className="w-5 h-5" /> {checkingIn ? 'Checking in...' : 'Check In'}
+            <h4 className="text-xl font-display font-bold text-white mb-2">Not checked in yet</h4>
+            <p className="text-sm text-text-muted mb-5">Scan the QR code your admin has projected,<br />or enter today's code.</p>
+            <Button onClick={() => setScanOpen(true)} className="px-8 py-3 text-base w-full sm:w-auto">
+              <ScanLine className="w-5 h-5" /> Scan QR code
             </Button>
+            <div className="mt-3">
+              <button
+                onClick={() => setCodeMode(!codeMode)}
+                className="text-sm text-text-muted hover:text-white underline underline-offset-4"
+              >
+                {codeMode ? 'Hide code entry' : 'Camera not working? Enter the code'}
+              </button>
+            </div>
+            {codeMode && (
+              <form onSubmit={handleCodeSubmit} className="mt-3 flex gap-2 max-w-xs mx-auto">
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                  placeholder="Day code"
+                  autoComplete="off"
+                  className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center text-lg font-bold tracking-[0.2em] text-white placeholder:text-text-muted/50 uppercase focus:outline-none focus:border-accent/60"
+                />
+                <Button type="submit" disabled={codeBusy || !code.trim()}>
+                  {codeBusy ? '…' : 'Go'}
+                </Button>
+              </form>
+            )}
           </>
         )}
       </Card>
+      {scanOpen && <QrScannerModal onClose={() => setScanOpen(false)} onToken={checkinWithToken} />}
       <div>
         <h4 className="text-sm font-bold text-white uppercase tracking-widest mb-3">My history</h4>
         {myRecords.length === 0 ? (
@@ -3066,7 +3532,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
   );
 }
 
-function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser }: any) {
+function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'grid' | 'history' | 'summary'>('grid');
   const [sessions, setSessions] = useState<string[]>([]);
   const [summary, setSummary] = useState<any[]>([]);
@@ -3280,7 +3746,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     <div className="space-y-4">
       <div>
         <h3 className="text-lg sm:text-xl font-display font-bold text-white">Attendance</h3>
-        <p className="text-sm text-text-muted mt-1">Mark who's here each day — click a cell to cycle status. Students check themselves in from their own view.</p>
+        <p className="text-sm text-text-muted mt-1">Mark who's here each day — click a cell to cycle status. Students check in by scanning the QR code above.</p>
       </div>
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div className="flex gaps-2 sm:gap-3 items-center">
@@ -3448,6 +3914,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
       <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
           onClick={() => setActiveSubTab('grid')}
@@ -5551,7 +6018,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
 
   return (
     <div
-      className="flex flex-col h-[calc(100vh-200px)] sm:h-[calc(100vh-180px)] glass rounded-2xl overflow-hidden relative"
+      className="flex flex-col h-[calc(100dvh-240px)] sm:h-[calc(100dvh-180px)] glass rounded-2xl overflow-hidden relative"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}

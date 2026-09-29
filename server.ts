@@ -16,6 +16,7 @@ dotenv.config();
 import { createServer as createViteServer } from "vite";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { simpleGit, SimpleGit } from "simple-git";
@@ -711,6 +712,20 @@ if (!(await hasColumn('teams', 'navgpt_enabled'))) {
 if (!(await hasColumn('feedback', 'screenshot_url'))) {
   (await dbExec("ALTER TABLE feedback ADD COLUMN screenshot_url TEXT"));
 }
+
+// QR check-in sessions: an admin starts one (projected on the board), students
+// scan the QR or type the short day-code. Replaces unsupervised self check-in.
+(await dbExec(`CREATE TABLE IF NOT EXISTS checkin_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  code TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES members(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1
+)`));
+(await dbExec("CREATE INDEX IF NOT EXISTS idx_checkin_sessions_team ON checkin_sessions(team_id, is_active)"));
 
 // Does this team name qualify for the NavGPT ❤️ secret persona?
 function navGptQualifies(teamName: any): boolean {
@@ -1425,7 +1440,7 @@ async function startServer() {
 
   const oauthStates = new Map<string, { expiry: number; intent: string; provider: string }>(); // state -> {expiry, intent, provider}
   // Pending OAuth signups: token -> {provider, providerSub, email, name, intent, expiry}. Single-use, 10 min.
-  const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; intent: string; expiry: number }>();
+  const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; avatarUrl: string | null; intent: string; expiry: number }>();
 
   function getOAuthRedirectUri(req: any, provider: string): string {
     const base = (process.env.APP_URL || "").replace(/\/$/, "");
@@ -1497,7 +1512,25 @@ async function startServer() {
 
   // Shared finish step for every OAuth provider: link or create the member, then
   // either start a session (existing member) or stash a single-use signup token.
-  async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, intent: string, res: any) {
+  // Fill in a missing name/avatar from the OAuth provider profile for every
+  // membership row on this account. Never clobbers a name the user chose or an
+  // avatar they uploaded themselves (uploads live under /uploads/).
+  async function fillOAuthProfile(email: string, name: string, avatarUrl: string | null) {
+    const rows = (await dbAll("SELECT id, name, avatar_url FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email)) as any[];
+    const cleanName = (name || '').trim();
+    const emailPrefix = email.split('@')[0];
+    for (const r of rows) {
+      const nameIsDefault = !r.name || r.name === emailPrefix;
+      const avatarIsEmpty = !r.avatar_url;
+      const newName = cleanName && nameIsDefault ? cleanName : r.name;
+      const newAvatar = avatarUrl && avatarIsEmpty ? avatarUrl : r.avatar_url;
+      if (newName !== r.name || newAvatar !== r.avatar_url) {
+        await dbRun("UPDATE members SET name = ?, avatar_url = ? WHERE id = ?", newName, newAvatar, r.id);
+      }
+    }
+  }
+
+  async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, avatarUrl: string | null, intent: string, res: any) {
     const idColumn = OAUTH_PROVIDERS[provider].idColumn;
     let rows: any[] = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
     if (!rows.length) {
@@ -1506,14 +1539,18 @@ async function startServer() {
         // Link this provider identity to every membership row for the account,
         // so future logins can land in the most recently used team.
         (await dbRun(`UPDATE members SET ${idColumn} = ? WHERE email = ? AND COALESCE(is_active, 1) = 1`, providerSub, email));
+        await fillOAuthProfile(email, name, avatarUrl);
         rows = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
       } else if (intent === 'admin_signup' || intent === 'student_signup' || intent === 'signup') {
         const token = randomHex(32);
-        pendingOAuthSignups.set(token, { provider, providerSub, email, name, intent, expiry: Date.now() + 10 * 60 * 1000 });
+        pendingOAuthSignups.set(token, { provider, providerSub, email, name, avatarUrl, intent, expiry: Date.now() + 10 * 60 * 1000 });
         return res.redirect(`/?oauth_signup=${token}&intent=${intent}&provider=${provider}`);
       } else {
         return res.redirect("/?oauth_error=not_invited");
       }
+    } else {
+      await fillOAuthProfile(email, name, avatarUrl);
+      rows = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
     }
     const member = await pickMemberRow(rows);
     const sessionId = await createSession(member.id);
@@ -1548,8 +1585,8 @@ async function startServer() {
         const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", cleanTeam, (teamNumber || '').trim(), code)) as any;
         const teamId = tInfo.lastInsertRowid;
         const mInfo = (await dbRun(
-          `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?)`,
-          teamId, cleanName, 'Admin', cleanEmail, pending.providerSub, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
+          `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes, avatar_url) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?, ?)`,
+          teamId, cleanName, 'Admin', cleanEmail, pending.providerSub, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin']), pending.avatarUrl || null
         )) as any;
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
@@ -1565,8 +1602,8 @@ async function startServer() {
         const dupe = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", cleanEmail, team.id)) as any;
         if (dupe) return res.status(400).json({ error: "This account is already on that team — sign in instead" });
         const mInfo = (await dbRun(
-          `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?)`,
-          team.id, cleanName, 'Member', cleanEmail, pending.providerSub, JSON.stringify([])
+          `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes, avatar_url) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?, ?)`,
+          team.id, cleanName, 'Member', cleanEmail, pending.providerSub, JSON.stringify([]), pending.avatarUrl || null
         )) as any;
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
@@ -1631,7 +1668,10 @@ async function startServer() {
         return res.redirect("/?oauth_error=email_unverified");
       }
       const name = profile.global_name || profile.username || "";
-      await finishOAuthLogin('discord', String(profile.id), profile.email, name, pending.intent || 'login', res);
+      const avatarUrl = profile.avatar
+        ? `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png`
+        : null;
+      await finishOAuthLogin('discord', String(profile.id), profile.email, name, avatarUrl, pending.intent || 'login', res);
     } catch (error) {
       console.error("Discord OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -1691,7 +1731,8 @@ async function startServer() {
         return res.redirect("/?oauth_error=email_unverified");
       }
       const name = ghUser.name || ghUser.login || "";
-      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, pending.intent || 'login', res);
+      const avatarUrl = ghUser.avatar_url || null;
+      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, avatarUrl, pending.intent || 'login', res);
     } catch (error) {
       console.error("GitHub OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -1736,7 +1777,7 @@ async function startServer() {
       const profile = (await profileRes.json()) as any;
       if (!profile.email) throw new Error("No email in Google profile");
 
-      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', intent, res);
+      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', profile.picture || null, intent, res);
     } catch (error) {
       console.error("Google OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -2646,11 +2687,15 @@ async function startServer() {
     }
   });
 
-  // Self check-in: any member marks THEMSELVES present for today.
+  // Self check-in: now restricted — students must use the QR code / day code.
+  // Callers with attendance-management permission (admins) keep direct access.
   app.post("/api/attendance/checkin", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
+      if (!(await hasPerm(auth, "manage_attendance"))) {
+        return res.status(403).json({ error: "Check-in needs the QR code — ask your admin to put it up." });
+      }
       const today = new Date().toISOString().slice(0, 10);
       (await dbRun(
         `INSERT INTO attendance (member_id, date, status, team_id)
@@ -2661,6 +2706,224 @@ async function startServer() {
       res.json({ success: true, date: today });
     } catch (error) {
       console.error("Error in attendance checkin:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ---- QR check-in sessions ----
+  const SESSION_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  function genSessionCode(): string {
+    const bytes = crypto.randomBytes(6);
+    let s = "";
+    for (const b of bytes) s += SESSION_CODE_ALPHABET[b % SESSION_CODE_ALPHABET.length];
+    return s;
+  }
+  function getBaseUrl(req: any): string {
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+    const host = req.get("host");
+    return `${proto}://${host}`;
+  }
+  // End of today in America/New_York, for the "rest of day" session length.
+  function endOfTodayEastern(): Date {
+    // End of the current day in America/New_York, returned as a real UTC instant.
+    // toLocaleString gives NY wall-clock components; derive the NY offset at
+    // that moment so DST (EDT -4 vs EST -5) is always right.
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", year: "numeric", month: "numeric", day: "numeric",
+    }).formatToParts(new Date());
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+    const asUtc = new Date(Date.UTC(get("year"), get("month") - 1, get("day"), 23, 59, 59, 999));
+    const nyAtThat = new Date(asUtc.toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const offsetMs = asUtc.getTime() - nyAtThat.getTime();
+    return new Date(asUtc.getTime() + offsetMs);
+  }
+  // YYYY-MM-DD of "today" in America/New_York (teams are US-based; UTC date is
+  // wrong near midnight local time).
+  function easternToday(): string {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+  }
+  async function activeSession(teamId: number | null): Promise<any | null> {
+    if (!teamId) return null;
+    const s = (await dbGet(
+      "SELECT * FROM checkin_sessions WHERE team_id = ? AND is_active = 1 AND expires_at > datetime('now') ORDER BY id DESC LIMIT 1",
+      teamId
+    )) as any;
+    if (!s) {
+      // Lazily retire anything stale so only one live session ever exists.
+      await dbRun("UPDATE checkin_sessions SET is_active = 0 WHERE team_id = ? AND is_active = 1 AND expires_at <= datetime('now')", teamId);
+    }
+    return s || null;
+  }
+  // Resolve the caller's membership row inside the session's team (multi-team
+  // aware: the active session team may differ from the caller's active team).
+  async function memberInTeam(auth: { memberId: number; email?: string }, teamId: number): Promise<any | null> {
+    let row = (await dbGet("SELECT * FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", auth.memberId, teamId)) as any;
+    if (!row && auth.email) {
+      row = (await dbGet("SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", auth.email, teamId)) as any;
+    }
+    return row || null;
+  }
+  async function applyQrCheckin(session: any, auth: { memberId: number; email?: string }) {
+    const member = await memberInTeam(auth, session.team_id);
+    if (!member) return { error: "You're not on this team — ask your admin for the right code.", status: 403 };
+    const today = easternToday();
+    const existing = (await dbGet("SELECT status FROM attendance WHERE member_id = ? AND date = ?", member.id, today)) as any;
+    if (existing && (existing.status === "P" || existing.status === "L")) {
+      return { already: true, date: today, memberName: member.name };
+    }
+    await dbRun(
+      `INSERT INTO attendance (member_id, date, status, team_id)
+       VALUES (?, ?, 'P', ?)
+       ON CONFLICT(member_id, date) DO UPDATE SET status = 'P'`,
+      member.id, today, session.team_id
+    );
+    return { success: true, date: today, memberName: member.name };
+  }
+  // SQLite stores UTC "YYYY-MM-DD HH:MM:SS"; parse it back as UTC.
+  function parseDbUtc(s: string): number {
+    return new Date(s.replace(" ", "T") + "Z").getTime();
+  }
+  function sessionPayload(req: any, s: any) {
+    return {
+      token: s.token,
+      code: s.code,
+      expiresAt: new Date(parseDbUtc(s.expires_at)).toISOString(),
+      url: `${getBaseUrl(req)}/checkin/${s.token}`,
+    };
+  }
+
+  // Start a session (admin). Body: { durationMinutes } — 15/30/60/180, or
+  // "today" for rest of day. Starting a new one retires any previous session.
+  app.post("/api/attendance/qr-session", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!(await hasPerm(auth, "manage_attendance"))) return res.status(403).json({ error: "Not allowed" });
+      if (!auth.teamId) return res.status(400).json({ error: "No active team" });
+      const { durationMinutes } = req.body || {};
+      let expires: Date;
+      if (durationMinutes === "today") {
+        expires = endOfTodayEastern();
+      } else {
+        const mins = [15, 30, 60, 180].includes(Number(durationMinutes)) ? Number(durationMinutes) : 60;
+        expires = new Date(Date.now() + mins * 60 * 1000);
+      }
+      if (expires.getTime() - Date.now() < 60 * 1000) {
+        return res.status(400).json({ error: "The day is over — start a session tomorrow." });
+      }
+      await dbRun("UPDATE checkin_sessions SET is_active = 0 WHERE team_id = ? AND is_active = 1", auth.teamId);
+      const token = crypto.randomBytes(24).toString("hex");
+      let code = genSessionCode();
+      for (let i = 0; i < 5; i++) {
+        const clash = (await dbGet("SELECT id FROM checkin_sessions WHERE code = ? AND is_active = 1 AND expires_at > datetime('now')", code)) as any;
+        if (!clash) break;
+        code = genSessionCode();
+      }
+      const expStr = expires.toISOString().slice(0, 19).replace("T", " ");
+      const info = (await dbRun(
+        "INSERT INTO checkin_sessions (team_id, token, code, created_by, expires_at) VALUES (?, ?, ?, ?, ?)",
+        auth.teamId, token, code, auth.memberId, expStr
+      )) as any;
+      const s = (await dbGet("SELECT * FROM checkin_sessions WHERE id = ?", info.lastInsertRowid)) as any;
+      res.json({ session: sessionPayload(req, s) });
+    } catch (error) {
+      console.error("Error starting QR session:", error);
+      res.status(500).json({ error: "Could not start session" });
+    }
+  });
+
+  // Current live session for the caller's team (admin display / refresh).
+  app.get("/api/attendance/qr-session", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!(await hasPerm(auth, "manage_attendance"))) return res.status(403).json({ error: "Not allowed" });
+      const s = await activeSession(auth.teamId);
+      res.json({ session: s ? sessionPayload(req, s) : null });
+    } catch (error) {
+      console.error("Error fetching QR session:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Stop the live session early.
+  app.post("/api/attendance/qr-session/stop", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!(await hasPerm(auth, "manage_attendance"))) return res.status(403).json({ error: "Not allowed" });
+      await dbRun("UPDATE checkin_sessions SET is_active = 0 WHERE team_id = ? AND is_active = 1", auth.teamId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error stopping QR session:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Session info for the scanned landing page (token is unguessable; the team
+  // name shown here is what the QR itself encodes).
+  app.get("/api/attendance/qr-session/:token", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const s = (await dbGet("SELECT * FROM checkin_sessions WHERE token = ?", req.params.token)) as any;
+      if (!s || !s.is_active || parseDbUtc(s.expires_at) <= Date.now()) {
+        return res.status(410).json({ error: "This check-in code has expired — ask your admin for a new one." });
+      }
+      const team = (await dbGet("SELECT name FROM teams WHERE id = ?", s.team_id)) as any;
+      const member = await memberInTeam(auth, s.team_id);
+      const today = easternToday();
+      const rec = member ? (await dbGet("SELECT status FROM attendance WHERE member_id = ? AND date = ?", member.id, today)) as any : null;
+      res.json({
+        teamName: team?.name || "Your team",
+        expiresAt: new Date(parseDbUtc(s.expires_at)).toISOString(),
+        isMember: !!member,
+        memberName: member?.name || null,
+        alreadyCheckedIn: !!(rec && (rec.status === "P" || rec.status === "L")),
+      });
+    } catch (error) {
+      console.error("Error fetching QR session info:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Check in via scanned QR token.
+  app.post("/api/attendance/checkin/:token", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const s = (await dbGet("SELECT * FROM checkin_sessions WHERE token = ?", req.params.token)) as any;
+      if (!s || !s.is_active || parseDbUtc(s.expires_at) <= Date.now()) {
+        return res.status(410).json({ error: "This check-in code has expired — ask your admin for a new one." });
+      }
+      const result = await applyQrCheckin(s, auth);
+      if (result.error) return res.status(result.status || 403).json({ error: result.error });
+      res.json(result);
+    } catch (error) {
+      console.error("Error in QR checkin:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Check in via the typed day-code (camera fallback).
+  app.post("/api/attendance/checkin-code", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const raw = String(req.body?.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!raw) return res.status(400).json({ error: "Enter the code shown under the QR." });
+      const s = (await dbGet(
+        "SELECT * FROM checkin_sessions WHERE code = ? AND is_active = 1 AND expires_at > datetime('now') ORDER BY id DESC LIMIT 1",
+        raw
+      )) as any;
+      if (!s) return res.status(404).json({ error: "No live session matches that code — check it and try again." });
+      const result = await applyQrCheckin(s, auth);
+      if (result.error) return res.status(result.status || 403).json({ error: result.error });
+      res.json(result);
+    } catch (error) {
+      console.error("Error in code checkin:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

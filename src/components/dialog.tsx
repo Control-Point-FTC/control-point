@@ -252,7 +252,7 @@ const toastStyles: Record<ToastKind, { wrap: string; icon: typeof Info; iconClas
 function ToastStack({ items }: { items: Toast[] }) {
   if (!items.length) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2 max-w-sm w-[calc(100vw-2rem)]">
+    <div className="fixed bottom-[calc(84px+env(safe-area-inset-bottom))] md:bottom-4 right-4 z-[60] flex flex-col gap-2 max-w-sm w-[calc(100vw-2rem)]">
       {items.map((t) => {
         const s = toastStyles[t.kind];
         const Icon = s.icon;
