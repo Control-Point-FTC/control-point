@@ -1393,6 +1393,8 @@ export default function App() {
       // multi-team: switcher, add/delete/leave, active team name
       onSwitchTeam: handleSwitchTeam, onAddTeam: handleAddTeam, onDeleteTeam: handleDeleteTeam, onLeaveTeam: handleLeaveTeam,
       activeTeamName, botName, navGptQualified, navGptActive,
+      // app owner (OWNER_EMAILS) — gates owner-only UI like AI limit config
+      isOwner,
       // give child views a way to explicitly refresh the AI news cache
       refreshNews: () => updateNews(true),
       updateInsights,
@@ -6460,7 +6462,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   );
 }
 
-function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive }: any) {
+function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive, isOwner }: any) {
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
   const [maxTokensNews, setMaxTokensNews] = useState(settings.max_tokens_news || '1024');
   const [maxTokensAttendance, setMaxTokensAttendance] = useState(settings.max_tokens_attendance || '1024');
@@ -6633,11 +6635,14 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
   const handleSave = async () => {
     const payloads = [
       { key: 'excuse_criteria', value: criteria },
-      { key: 'max_tokens_news', value: maxTokensNews },
-      { key: 'max_tokens_attendance', value: maxTokensAttendance },
-      { key: 'max_tokens_excuse', value: maxTokensExcuse },
-      { key: 'max_tokens_summary', value: maxTokensSummary },
-      { key: 'max_tokens_chat', value: maxTokensChat },
+      // AI token limits are owner-only; non-owners never send them.
+      ...(isOwner ? [
+        { key: 'max_tokens_news', value: maxTokensNews },
+        { key: 'max_tokens_attendance', value: maxTokensAttendance },
+        { key: 'max_tokens_excuse', value: maxTokensExcuse },
+        { key: 'max_tokens_summary', value: maxTokensSummary },
+        { key: 'max_tokens_chat', value: maxTokensChat },
+      ] : []),
     ];
 
     for (const payload of payloads) {
@@ -6826,6 +6831,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
         </div>
       </Card>
 
+      {isOwner && (
       <Card title="AI Configuration (Max Tokens)" icon={Bolt}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1">
@@ -6853,6 +6859,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
           <Button onClick={handleSave}>Save AI Limits</Button>
         </div>
       </Card>
+      )}
 
       {isPresident && (
         <Card title="Admin Delegation" icon={Users}>

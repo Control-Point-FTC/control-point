@@ -2899,6 +2899,14 @@ async function startServer() {
       const auth = await requireAdmin(req, res);
       if (!auth) return;
       const { key, value } = req.body;
+      // AI token limits are global and affect every team + API usage:
+      // only the app owner may change them.
+      if (typeof key === "string" && key.startsWith("max_tokens_")) {
+        const member = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+        if (!ownerEmails().includes((member?.email || "").toLowerCase())) {
+          return res.status(403).json({ error: "Only the app owner can change AI limits." });
+        }
+      }
       (await dbRun("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", key, value));
       res.json({ success: true });
     } catch (error) {
