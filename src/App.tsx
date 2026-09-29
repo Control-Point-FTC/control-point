@@ -58,6 +58,10 @@ import {
   Medal,
   Layers,
   ChevronDown,
+  ChevronUp,
+  Music2,
+  Youtube,
+  Pin,
   Bot,
   QrCode,
   ScanLine,
@@ -787,6 +791,7 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [budget, setBudget] = useState<BudgetItem[]>([]);
   const [outreach, setOutreach] = useState<OutreachEvent[]>([]);
+  const [socialProfiles, setSocialProfiles] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [communications, setCommunications] = useState<Communication[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -894,6 +899,8 @@ export default function App() {
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [discordEnabled, setDiscordEnabled] = useState(false);
   const [githubEnabled, setGithubEnabled] = useState(false);
+  const [youtubeEnabled, setYoutubeEnabled] = useState(false);
+  const [tiktokEnabled, setTiktokEnabled] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
   const [oauthSignup, setOauthSignup] = useState<{ token: string; intent: 'admin_signup' | 'student_signup' | 'signup'; provider: 'google' | 'discord' | 'github' } | null>(null);
 
@@ -912,6 +919,8 @@ export default function App() {
         setGoogleEnabled(!!d.googleEnabled);
         setDiscordEnabled(!!d.discordEnabled);
         setGithubEnabled(!!d.githubEnabled);
+        setYoutubeEnabled(!!d.youtubeEnabled);
+        setTiktokEnabled(!!d.tiktokEnabled);
       })
       .catch(() => {});
     const params = new URLSearchParams(window.location.search);
@@ -1155,13 +1164,14 @@ export default function App() {
         }
       };
 
-      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d, ev] = await Promise.all([
+      const [t, m, a, tk, b, o, soc, inv, c, msgs, s, h, d, ev] = await Promise.all([
         fetchJson('/api/teams'),
         fetchJson('/api/members'),
         fetchJson('/api/attendance'),
         fetchJson('/api/tasks'),
         fetchJson('/api/budget'),
         fetchJson('/api/outreach'),
+        fetchJson('/api/outreach/social'),
         fetchJson('/api/inventory'),
         fetchJson('/api/communications'),
         fetchJson('/api/messages'),
@@ -1185,6 +1195,7 @@ export default function App() {
       if (Array.isArray(tk)) setTasks(tk);
       if (Array.isArray(b)) setBudget(b);
       if (Array.isArray(o)) setOutreach(o);
+      if (Array.isArray(soc)) setSocialProfiles(soc);
       if (Array.isArray(inv)) setInventory(inv);
       if (Array.isArray(c)) setCommunications(c);
       if (Array.isArray(msgs)) setMessages(msgs);
@@ -1545,7 +1556,7 @@ export default function App() {
 
   const renderContent = () => {
     const viewProps = {
-      teams, members, attendance, tasks, budget, outreach, inventory, communications, events,
+      teams, members, attendance, tasks, budget, outreach, socialProfiles, youtubeEnabled, tiktokEnabled, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
       // setters for optimistic UI (instant-feeling mutations with rollback on error)
       setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
@@ -5338,7 +5349,115 @@ function OutreachField({ label, children }: any) {
   );
 }
 
-function OutreachView({ outreach, onRefresh }: any) {
+const PLATFORM_META: Record<string, { label: string; Icon: any; color: string; metric: string }> = {
+  tiktok: { label: 'TikTok', Icon: Music2, color: '#22d3ee', metric: 'Followers' },
+  youtube: { label: 'YouTube', Icon: Youtube, color: '#f87171', metric: 'Subscribers' },
+};
+
+function Sparkline({ points }: any) {
+  const vals = (points || []).filter((v: any) => typeof v === 'number' && isFinite(v));
+  if (vals.length < 2) return <p className="text-[11px] text-text-muted">Sync history will chart here</p>;
+  const w = 120, h = 36, pad = 4;
+  const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1;
+  const pts = vals.map((v: number, i: number) => {
+    const x = pad + (i * (w - 2 * pad)) / (vals.length - 1);
+    const y = h - pad - ((v - min) / span) * (h - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const up = vals[vals.length - 1] >= vals[0];
+  return (
+    <svg width={w} height={h} className="overflow-visible" aria-hidden>
+      <polyline points={pts} fill="none" stroke={up ? '#4ade80' : '#fb7185'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function timeAgoSocial(ts: number) {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh }: any) {
+  const isAdminSocial = (currentUser as any)?.account_type === 'admin';
+  const [showLinkYT, setShowLinkYT] = useState(false);
+  const [ytInput, setYtInput] = useState('');
+  const [linkingYT, setLinkingYT] = useState(false);
+  const [syncingId, setSyncingId] = useState<number | null>(null);
+
+  // TikTok OAuth result (?social=connected|error|cancelled)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const s = params.get('social');
+    if (!s) return;
+    if (s === 'connected') notify('TikTok connected — stats synced.', 'success');
+    else if (s === 'cancelled') notify('TikTok connection cancelled.', 'error');
+    else if (s === 'error') notify('TikTok connection failed — try again.', 'error');
+    params.delete('social');
+    window.history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
+    if (s === 'connected') onRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLinkYouTube = async () => {
+    if (!ytInput.trim()) { notify('Enter a channel handle, URL, or channel ID.', 'error'); return; }
+    setLinkingYT(true);
+    try {
+      const res = await apiFetch('/api/outreach/social/youtube', { method: 'POST', body: JSON.stringify({ input: ytInput.trim() }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not link channel');
+      notify('YouTube channel linked — stats synced.', 'success');
+      setYtInput('');
+      setShowLinkYT(false);
+      onRefresh();
+    } catch (e: any) {
+      notify(e.message || 'Could not link channel', 'error');
+    } finally {
+      setLinkingYT(false);
+    }
+  };
+
+  const handleUnlinkProfile = async (id: number) => {
+    if (!window.confirm('Unlink this profile? Its sync history will be removed.')) return;
+    await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
+    onRefresh();
+  };
+
+  const handlePinProfile = async (id: number, pinned: boolean) => {
+    await apiFetch(`/api/outreach/social/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned: !pinned }) });
+    onRefresh();
+  };
+
+  const handleMoveProfile = async (id: number, dir: -1 | 1) => {
+    const ids = (socialProfiles || []).map((p: any) => p.id);
+    const i = ids.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await apiFetch('/api/outreach/social/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
+    onRefresh();
+  };
+
+  const handleSyncNow = async (id: number) => {
+    setSyncingId(id);
+    try {
+      const res = await apiFetch(`/api/outreach/social/${id}/sync`, { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Sync failed');
+      notify('Stats updated.', 'success');
+      onRefresh();
+    } catch (e: any) {
+      notify(e.message || 'Sync failed', 'error');
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const connectTikTok = () => { window.location.href = '/api/auth/tiktok/connect'; };
+  const profiles = socialProfiles || [];
+  const tiktokLinked = profiles.some((p: any) => p.platform === 'tiktok');
   const emptyForm = () => ({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '2', location: '', attendees: '', funds_raised: '' });
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -5436,6 +5555,127 @@ function OutreachView({ outreach, onRefresh }: any) {
           </div>
         ))}
       </div>
+
+      {/* Social media — auto-synced */}
+      <Card title="Social Media" subtitle="Connect YouTube and TikTok — stats sync automatically every day" icon={TrendingUp}>
+        {profiles.length === 0 ? (
+          <div className="text-center py-6 space-y-3">
+            <p className="text-sm text-text-muted">No social profiles linked yet.</p>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {isAdminSocial && youtubeEnabled && (
+                <Button variant="secondary" onClick={() => setShowLinkYT(true)}><Youtube className="w-4 h-4" /> Link YouTube channel</Button>
+              )}
+              {isAdminSocial && tiktokEnabled && (
+                <Button variant="secondary" onClick={connectTikTok}><Music2 className="w-4 h-4" /> Connect TikTok</Button>
+              )}
+            </div>
+            {isAdminSocial && !youtubeEnabled && !tiktokEnabled && (
+              <p className="text-xs text-text-muted">Social auto-sync isn't configured on the server yet.</p>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {profiles.map((p: any) => {
+              const meta = PLATFORM_META[p.platform] || PLATFORM_META.youtube;
+              const PIcon = meta.Icon;
+              const g = p.growth;
+              const needsReconnect = p.platform === 'tiktok' && p.token_status === 'needs_reconnect';
+              return (
+                <div key={p.id} className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      {p.avatar_url ? (
+                        <img src={p.avatar_url} alt="" className="w-9 h-9 rounded-lg object-cover" />
+                      ) : (
+                        <div className="rounded-lg p-2" style={{ backgroundColor: meta.color + '22' }}>
+                          <PIcon className="w-4 h-4" style={{ color: meta.color }} />
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm font-bold text-white">{p.display_name || p.handle}</p>
+                        <p className="text-[11px] text-text-muted">{meta.label}{p.handle ? ` • ${p.handle}` : ''}</p>
+                      </div>
+                    </div>
+                    {isAdminSocial && (
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => handlePinProfile(p.id, !!p.is_pinned)} className={`${p.is_pinned ? 'text-volt' : 'text-slate-600'} hover:text-volt transition-colors`} title={p.is_pinned ? 'Unpin from top' : 'Pin to top'}>
+                          <Pin className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleMoveProfile(p.id, -1)} className="text-slate-600 hover:text-white transition-colors" title="Move up">
+                          <ChevronUp className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleMoveProfile(p.id, 1)} className="text-slate-600 hover:text-white transition-colors" title="Move down">
+                          <ChevronDown className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => handleUnlinkProfile(p.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Unlink profile">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {needsReconnect ? (
+                    <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-200">
+                      TikTok connection expired.{' '}
+                      {isAdminSocial && <button className="underline font-bold" onClick={connectTikTok}>Reconnect</button>}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-end justify-between gap-2">
+                        <div>
+                          <p className="text-2xl font-display font-bold text-white">{fmtCompact(p.latest?.followers)}</p>
+                          <p className="text-[10px] text-text-muted uppercase font-bold">{meta.metric}</p>
+                          {g && (
+                            <p className={`text-xs font-semibold mt-1 ${g.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {g.delta >= 0 ? '+' : ''}{fmtCompact(g.delta)} ({g.delta >= 0 ? '+' : ''}{g.pct}%)
+                            </p>
+                          )}
+                        </div>
+                        <Sparkline points={p.history} />
+                      </div>
+                      {(p.latest?.likes != null || p.latest?.posts != null || p.latest?.views != null) && (
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
+                          {p.platform === 'tiktok' && p.latest?.likes != null && <span><b className="text-white/80">{fmtCompact(p.latest.likes)}</b> likes</span>}
+                          {p.latest?.posts != null && <span><b className="text-white/80">{fmtCompact(p.latest.posts)}</b> {p.platform === 'youtube' ? 'videos' : 'posts'}</span>}
+                          {p.platform === 'youtube' && p.latest?.views != null && <span><b className="text-white/80">{fmtCompact(p.latest.views)}</b> views</span>}
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] text-text-muted">{p.last_synced_at ? `Synced ${timeAgoSocial(p.last_synced_at)}` : 'Not synced yet'}</p>
+                        {isAdminSocial && (
+                          <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => handleSyncNow(p.id)} disabled={syncingId === p.id}>
+                            {syncingId === p.id ? 'Syncing…' : 'Sync now'}
+                          </Button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {showLinkYT && (
+          <div className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3 mt-4">
+            <OutreachField label="YouTube channel">
+              <Input placeholder="@yourteam or paste a channel URL" value={ytInput} onChange={(e: any) => setYtInput(e.target.value)} />
+            </OutreachField>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={() => setShowLinkYT(false)}>Cancel</Button>
+              <Button onClick={handleLinkYouTube} disabled={linkingYT}>{linkingYT ? 'Linking…' : 'Link channel'}</Button>
+            </div>
+          </div>
+        )}
+        {profiles.length > 0 && isAdminSocial && (
+          <div className="flex flex-wrap gap-2 mt-4">
+            {youtubeEnabled && (
+              <Button variant="secondary" onClick={() => setShowLinkYT(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Link YouTube</Button>
+            )}
+            {tiktokEnabled && !tiktokLinked && (
+              <Button variant="secondary" onClick={connectTikTok} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Connect TikTok</Button>
+            )}
+          </div>
+        )}
+      </Card>
 
       {/* Event cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">

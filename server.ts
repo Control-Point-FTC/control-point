@@ -188,6 +188,38 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     location TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS social_profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    platform TEXT NOT NULL, -- 'youtube' | 'tiktok'
+    handle TEXT,
+    external_id TEXT, -- youtube channelId | tiktok open_id
+    url TEXT,
+    display_name TEXT,
+    avatar_url TEXT,
+    access_token TEXT, -- encrypted, tiktok oauth
+    refresh_token TEXT, -- encrypted, tiktok oauth
+    token_expires_at INTEGER, -- ms epoch
+    token_status TEXT DEFAULT 'ok', -- 'ok' | 'needs_reconnect'
+    is_pinned INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    last_synced_at INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(team_id) REFERENCES teams(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS social_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    team_id INTEGER NOT NULL,
+    followers INTEGER DEFAULT 0,
+    likes INTEGER DEFAULT 0,
+    posts INTEGER DEFAULT 0,
+    views INTEGER DEFAULT 0,
+    recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(profile_id) REFERENCES social_profiles(id)
+  );
+
   CREATE TABLE IF NOT EXISTS inventory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id INTEGER,
@@ -1404,7 +1436,12 @@ async function startServer() {
   const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
   const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
   const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
+  // Social auto-sync: YouTube Data API key (public channel stats, no OAuth needed)
+  // and TikTok Login Kit (per-team OAuth connection).
+  const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
+  const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || "";
   const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
+  const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || "";
 
   const OAUTH_PROVIDERS: Record<string, { idColumn: string; label: string }> = {
     google: { idColumn: "google_id", label: "Google" },
@@ -1434,6 +1471,8 @@ async function startServer() {
       googleEnabled: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
       discordEnabled: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
       githubEnabled: !!(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET),
+      youtubeEnabled: !!YOUTUBE_API_KEY,
+      tiktokEnabled: !!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET),
     });
   });
 
@@ -2100,6 +2139,8 @@ async function startServer() {
       { sql: "DELETE FROM events WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM budget WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM outreach WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM social_stats WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM social_profiles WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
@@ -3598,6 +3639,396 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting outreach event:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ---- Social auto-sync (YouTube + TikTok) ----
+  // YouTube: server API key pulls public channel stats — no per-user OAuth needed.
+  // TikTok: per-team OAuth via Login Kit (user.info.basic + user.info.stats).
+  const SOCIAL_PLATFORMS = ["youtube", "tiktok"];
+
+  // --- Token encryption (AES-256-GCM) for TikTok OAuth tokens ---
+  const SOCIAL_TOKEN_KEY = process.env.SOCIAL_TOKEN_KEY || "";
+  let socialCipherKey: Buffer;
+  if (SOCIAL_TOKEN_KEY) {
+    socialCipherKey = crypto.scryptSync(SOCIAL_TOKEN_KEY, "control-point-social", 32);
+  } else {
+    socialCipherKey = crypto.randomBytes(32);
+    console.warn("[Social] SOCIAL_TOKEN_KEY not set — TikTok tokens use an ephemeral key and will need reconnecting after a restart.");
+  }
+  function encryptSocialToken(plain: string): string {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv("aes-256-gcm", socialCipherKey, iv);
+    const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
+    return `${iv.toString("base64")}.${enc.toString("base64")}.${cipher.getAuthTag().toString("base64")}`;
+  }
+  function decryptSocialToken(blob: string): string {
+    const [ivB64, encB64, tagB64] = blob.split(".");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", socialCipherKey, Buffer.from(ivB64, "base64"));
+    decipher.setAuthTag(Buffer.from(tagB64, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(encB64, "base64")), decipher.final()]).toString("utf8");
+  }
+
+  // --- YouTube Data API v3 ---
+  async function youtubeApi(path: string, params: Record<string, string>): Promise<any> {
+    const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+    url.searchParams.set("key", YOUTUBE_API_KEY);
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 10000);
+    try {
+      const r = await fetch(url.toString(), { signal: ctl.signal });
+      if (!r.ok) {
+        const body = await r.text().catch(() => "");
+        throw new Error(`YouTube API error ${r.status}: ${body.slice(0, 160)}`);
+      }
+      return await r.json();
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  function pickYouTubeChannel(ch: any) {
+    const s = ch.statistics || {};
+    return {
+      displayName: ch.snippet?.title || "",
+      avatarUrl: ch.snippet?.thumbnails?.default?.url || "",
+      followers: Number(s.subscriberCount || 0),
+      views: Number(s.viewCount || 0),
+      posts: Number(s.videoCount || 0),
+    };
+  }
+  async function resolveYouTubeChannel(input: string) {
+    const clean = input.trim();
+    // Direct channel URL or bare channel ID
+    const m = clean.match(/youtube\.com\/channel\/([A-Za-z0-9_-]{10,})/) || clean.match(/^UC[A-Za-z0-9_-]{20,}$/);
+    if (m) {
+      const id = m[1] || m[0];
+      const data = await youtubeApi("channels", { part: "snippet,statistics", id });
+      const ch = data.items?.[0];
+      if (!ch) throw new Error("Channel not found on YouTube");
+      return { channelId: ch.id, ...pickYouTubeChannel(ch) };
+    }
+    // @handle lookup
+    const handle = clean.replace(/^@/, "").split(/[/?#]/)[0];
+    if (!handle) throw new Error("Enter a channel handle or URL");
+    const data = await youtubeApi("channels", { part: "snippet,statistics", forHandle: handle });
+    const ch = data.items?.[0];
+    if (!ch) throw new Error(`No YouTube channel found for @${handle}`);
+    return { channelId: ch.id, ...pickYouTubeChannel(ch) };
+  }
+  async function fetchYouTubeStats(channelId: string) {
+    const data = await youtubeApi("channels", { part: "snippet,statistics", id: channelId });
+    const ch = data.items?.[0];
+    if (!ch) throw new Error("YouTube channel not found");
+    return pickYouTubeChannel(ch);
+  }
+
+  // --- TikTok Login Kit ---
+  const tiktokOauthStates = new Map<string, { teamId: number; verifier: string; expiry: number }>();
+  function tiktokRedirectUri(req: any): string {
+    const base = (process.env.APP_URL || "").replace(/\/$/, "");
+    if (base) return `${base}/api/auth/tiktok/callback`;
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
+    return `${proto}://${req.get("host")}/api/auth/tiktok/callback`;
+  }
+  async function tiktokTokenRequest(body: Record<string, string>): Promise<any> {
+    const r = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_key: TIKTOK_CLIENT_KEY, client_secret: TIKTOK_CLIENT_SECRET, ...body }),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.access_token) {
+      throw new Error(data?.error_description || data?.error || "TikTok token request failed");
+    }
+    return data;
+  }
+  async function tiktokUserInfo(accessToken: string): Promise<any> {
+    const r = await fetch("https://open.tiktokapis.com/v2/user/info/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ fields: ["open_id", "avatar_url", "display_name", "username", "follower_count", "following_count", "likes_count", "video_count"] }),
+    });
+    const data = await r.json().catch(() => null);
+    const u = data?.data?.user;
+    if (!r.ok || !u?.open_id) throw new Error(data?.error?.message || "Failed to fetch TikTok profile");
+    return u;
+  }
+  async function getTikTokAccessToken(profile: any): Promise<string | null> {
+    const now = Date.now();
+    try {
+      if (profile.access_token && profile.token_expires_at && profile.token_expires_at > now + 5 * 60 * 1000) {
+        return decryptSocialToken(profile.access_token);
+      }
+      if (!profile.refresh_token) throw new Error("no refresh token");
+      const t = await tiktokTokenRequest({ grant_type: "refresh_token", refresh_token: decryptSocialToken(profile.refresh_token) });
+      const expiresAt = Date.now() + (t.expires_in || 86400) * 1000;
+      const newRefresh = t.refresh_token ? encryptSocialToken(t.refresh_token) : profile.refresh_token;
+      await dbRun("UPDATE social_profiles SET access_token = ?, refresh_token = ?, token_expires_at = ?, token_status = 'ok' WHERE id = ?",
+        encryptSocialToken(t.access_token), newRefresh, expiresAt, profile.id);
+      return t.access_token;
+    } catch (e) {
+      console.error(`[Social] TikTok token refresh failed for profile ${profile.id}:`, (e as Error).message);
+      await dbRun("UPDATE social_profiles SET token_status = 'needs_reconnect' WHERE id = ?", profile.id);
+      return null;
+    }
+  }
+
+  // --- Snapshot + sync core ---
+  async function recordSocialSnapshot(profileId: number, teamId: number, stats: { followers: number; likes: number; posts: number; views: number }) {
+    await dbRun("INSERT INTO social_stats (profile_id, team_id, followers, likes, posts, views) VALUES (?, ?, ?, ?, ?, ?)",
+      profileId, teamId, Math.round(stats.followers || 0), Math.round(stats.likes || 0), Math.round(stats.posts || 0), Math.round(stats.views || 0));
+    await dbRun("UPDATE social_profiles SET last_synced_at = ? WHERE id = ?", Date.now(), profileId);
+  }
+  async function syncSocialProfile(profile: any): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (profile.platform === "youtube") {
+        if (!YOUTUBE_API_KEY) return { ok: false, error: "YouTube API key not configured" };
+        if (!profile.external_id) return { ok: false, error: "No channel linked" };
+        const s = await fetchYouTubeStats(profile.external_id);
+        await dbRun("UPDATE social_profiles SET display_name = ?, avatar_url = ? WHERE id = ?", s.displayName, s.avatarUrl, profile.id);
+        await recordSocialSnapshot(profile.id, profile.team_id, { followers: s.followers, likes: 0, posts: s.posts, views: s.views });
+        return { ok: true };
+      }
+      if (profile.platform === "tiktok") {
+        if (!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET)) return { ok: false, error: "TikTok not configured" };
+        const token = await getTikTokAccessToken(profile);
+        if (!token) return { ok: false, error: "TikTok connection expired — reconnect it" };
+        const u = await tiktokUserInfo(token);
+        await dbRun("UPDATE social_profiles SET display_name = ?, avatar_url = ? WHERE id = ?", u.display_name || profile.display_name, u.avatar_url || profile.avatar_url, profile.id);
+        await recordSocialSnapshot(profile.id, profile.team_id, {
+          followers: Number(u.follower_count || 0),
+          likes: Number(u.likes_count || 0),
+          posts: Number(u.video_count || 0),
+          views: 0,
+        });
+        return { ok: true };
+      }
+      return { ok: false, error: "Unknown platform" };
+    } catch (e: any) {
+      console.error(`[Social] Sync failed for profile ${profile.id}:`, e.message);
+      return { ok: false, error: e.message || "Sync failed" };
+    }
+  }
+  function socialGrowth(snaps: any[]) {
+    if (snaps.length < 2) return null;
+    const first = snaps[0], last = snaps[snaps.length - 1];
+    const delta = (last.followers || 0) - (first.followers || 0);
+    const pct = first.followers ? (delta / first.followers) * 100 : 0;
+    return { delta, pct: Math.round(pct * 10) / 10 };
+  }
+
+  // Daily auto-sync: every profile, once a day. First run shortly after boot.
+  let lastSocialSyncDate = "";
+  async function runDailySocialSync() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (today === lastSocialSyncDate) return;
+    lastSocialSyncDate = today;
+    try {
+      const profiles = (await dbAll("SELECT * FROM social_profiles")) as any[];
+      let ok = 0;
+      for (const p of profiles) {
+        if (p.platform === "tiktok" && p.token_status === "needs_reconnect") continue;
+        const r = await syncSocialProfile(p);
+        if (r.ok) ok++;
+      }
+      console.log(`[Social] Daily auto-sync finished: ${ok}/${profiles.length} profiles updated`);
+    } catch (e) {
+      console.error("[Social] Daily auto-sync failed:", e);
+    }
+  }
+  setInterval(runDailySocialSync, 60 * 60 * 1000);
+  setTimeout(runDailySocialSync, 90 * 1000);
+
+  // --- TikTok connect (admin starts OAuth; tokens attach to the TEAM) ---
+  app.get("/api/auth/tiktok/connect", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    if (!auth.teamId) return res.status(400).json({ error: "No team selected" });
+    if (!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET)) {
+      return res.status(400).json({ error: "TikTok is not configured yet" });
+    }
+    const state = randomHex(16);
+    const verifier = crypto.randomBytes(32).toString("base64url");
+    const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
+    tiktokOauthStates.set(state, { teamId: auth.teamId, verifier, expiry: Date.now() + 10 * 60 * 1000 });
+    const params = new URLSearchParams({
+      client_key: TIKTOK_CLIENT_KEY,
+      response_type: "code",
+      scope: "user.info.basic,user.info.stats",
+      redirect_uri: tiktokRedirectUri(req),
+      state,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+    res.redirect("https://www.tiktok.com/v2/auth/authorize/?" + params.toString());
+  });
+
+  app.get("/api/auth/tiktok/callback", async (req, res) => {
+    try {
+      const { code, state, error: tiktokError } = req.query as { code?: string; state?: string; error?: string };
+      const pending = state ? tiktokOauthStates.get(state) : undefined;
+      if (state) tiktokOauthStates.delete(state);
+      if (tiktokError) return res.redirect("/outreach?social=cancelled");
+      if (!code || !pending || pending.expiry < Date.now()) {
+        return res.redirect("/outreach?social=error");
+      }
+      const tokens = await tiktokTokenRequest({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: tiktokRedirectUri(req),
+        code_verifier: pending.verifier,
+      });
+      const u = await tiktokUserInfo(tokens.access_token);
+      const expiresAt = Date.now() + (tokens.expires_in || 86400) * 1000;
+      const handle = u.username ? `@${u.username}` : (u.display_name || "TikTok account");
+      const existing: any = await dbGet("SELECT id FROM social_profiles WHERE team_id = ? AND platform = 'tiktok'", pending.teamId);
+      let profileId: number;
+      if (existing) {
+        profileId = existing.id;
+        await dbRun(
+          "UPDATE social_profiles SET handle = ?, external_id = ?, display_name = ?, avatar_url = ?, access_token = ?, refresh_token = ?, token_expires_at = ?, token_status = 'ok', last_synced_at = ? WHERE id = ?",
+          handle, u.open_id, u.display_name, u.avatar_url,
+          encryptSocialToken(tokens.access_token), encryptSocialToken(tokens.refresh_token),
+          expiresAt, Date.now(), profileId
+        );
+      } else {
+        const maxOrder: any = await dbGet("SELECT COALESCE(MAX(sort_order), -1) AS m FROM social_profiles WHERE team_id = ?", pending.teamId);
+        const info: any = await dbRun(
+          "INSERT INTO social_profiles (team_id, platform, handle, external_id, display_name, avatar_url, access_token, refresh_token, token_expires_at, token_status, sort_order, last_synced_at) VALUES (?, 'tiktok', ?, ?, ?, ?, ?, ?, ?, 'ok', ?, ?)",
+          pending.teamId, handle, u.open_id, u.display_name, u.avatar_url,
+          encryptSocialToken(tokens.access_token), encryptSocialToken(tokens.refresh_token),
+          expiresAt, (maxOrder.m + 1), Date.now()
+        );
+        profileId = info.lastInsertRowid;
+      }
+      await recordSocialSnapshot(profileId, pending.teamId, {
+        followers: Number(u.follower_count || 0),
+        likes: Number(u.likes_count || 0),
+        posts: Number(u.video_count || 0),
+        views: 0,
+      });
+      return res.redirect("/outreach?social=connected");
+    } catch (e) {
+      console.error("TikTok OAuth error:", e);
+      return res.redirect("/outreach?social=error");
+    }
+  });
+
+  // --- Social API ---
+  app.get("/api/outreach/social", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const profiles = (await dbAll(
+        "SELECT id, team_id, platform, handle, url, display_name, avatar_url, token_status, is_pinned, sort_order, last_synced_at, created_at FROM social_profiles WHERE team_id = ? ORDER BY is_pinned DESC, sort_order ASC, created_at ASC",
+        auth.teamId
+      )) as any[];
+      for (const p of profiles) {
+        const snaps = (await dbAll(
+          "SELECT followers, likes, posts, views, recorded_at FROM social_stats WHERE profile_id = ? AND team_id = ? ORDER BY recorded_at ASC LIMIT 90",
+          p.id, auth.teamId
+        )) as any[];
+        p.latest = snaps[snaps.length - 1] || null;
+        p.history = snaps.map((s: any) => s.followers);
+        p.growth = socialGrowth(snaps);
+        p.snapshot_count = snaps.length;
+      }
+      res.json(profiles);
+    } catch (error) {
+      console.error("Error fetching social profiles:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/outreach/social/youtube", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      if (!YOUTUBE_API_KEY) return res.status(400).json({ error: "YouTube sync isn't configured yet — add a YOUTUBE_API_KEY on the server" });
+      const input = (req.body?.input || "").toString().trim();
+      if (!input) return res.status(400).json({ error: "Enter a channel handle, URL, or channel ID" });
+      let ch: any;
+      try {
+        ch = await resolveYouTubeChannel(input);
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message || "Couldn't find that YouTube channel" });
+      }
+      const dup: any = await dbGet("SELECT id FROM social_profiles WHERE team_id = ? AND platform = 'youtube' AND external_id = ?", auth.teamId, ch.channelId);
+      if (dup) return res.status(400).json({ error: "That channel is already linked" });
+      const maxOrder: any = await dbGet("SELECT COALESCE(MAX(sort_order), -1) AS m FROM social_profiles WHERE team_id = ?", auth.teamId);
+      const handle = "@" + input.replace(/^@/, "").split(/[/?#]/)[0];
+      const info: any = await dbRun(
+        "INSERT INTO social_profiles (team_id, platform, handle, external_id, url, display_name, avatar_url, sort_order, last_synced_at) VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?)",
+        auth.teamId, handle, ch.channelId, input.startsWith("http") ? input : null, ch.displayName, ch.avatarUrl, (maxOrder.m + 1), Date.now()
+      );
+      await recordSocialSnapshot(info.lastInsertRowid, auth.teamId, { followers: ch.followers, likes: 0, posts: ch.posts, views: ch.views });
+      res.json({ ok: true, id: info.lastInsertRowid });
+    } catch (error) {
+      console.error("Error linking YouTube channel:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/outreach/social/:id", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id);
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      await dbRun("DELETE FROM social_stats WHERE profile_id = ?", req.params.id);
+      await dbRun("DELETE FROM social_profiles WHERE id = ?", req.params.id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error deleting social profile:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/outreach/social/:id", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const existing: any = await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id);
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const pinned = !!req.body?.pinned;
+      await dbRun("UPDATE social_profiles SET is_pinned = ? WHERE id = ?", pinned ? 1 : 0, req.params.id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error pinning social profile:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/outreach/social/reorder", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const ids = (req.body?.ids || []) as number[];
+      if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "No order provided" });
+      await dbBatch(ids.map((id, i) => ({
+        sql: "UPDATE social_profiles SET sort_order = ? WHERE id = ? AND team_id = ?",
+        args: [i, id, auth.teamId],
+      })));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error reordering social profiles:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/outreach/social/:id/sync", async (req, res) => {
+    try {
+      const auth = await requireAdmin(req, res);
+      if (!auth) return;
+      const profile: any = await dbGet("SELECT * FROM social_profiles WHERE id = ?", req.params.id);
+      if (!profile || profile.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const result = await syncSocialProfile(profile);
+      if (!result.ok) return res.status(400).json({ error: result.error || "Sync failed" });
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error syncing social profile:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
