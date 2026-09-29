@@ -253,6 +253,25 @@ import {
     FOREIGN KEY(chat_id) REFERENCES bruno_chats(id)
   );
 
+  CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT DEFAULT '#71717A',
+    permissions TEXT DEFAULT '[]', -- JSON array of permission keys; ["*"] = all
+    position INTEGER DEFAULT 0,
+    is_system INTEGER DEFAULT 0, -- 1 for seeded Admin/Member roles (can't be edited/deleted)
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS member_roles (
+    member_id INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    PRIMARY KEY (member_id, role_id),
+    FOREIGN KEY(member_id) REFERENCES members(id),
+    FOREIGN KEY(role_id) REFERENCES roles(id)
+  );
+
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     member_id INTEGER NOT NULL,
@@ -286,6 +305,12 @@ if (!memberColumns.some((c: any) => c.name === 'is_setup')) {
 }
 if (!memberColumns.some((c: any) => c.name === 'google_id')) {
   (await dbExec("ALTER TABLE members ADD COLUMN google_id TEXT"));
+}
+if (!memberColumns.some((c: any) => c.name === 'discord_id')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN discord_id TEXT"));
+}
+if (!memberColumns.some((c: any) => c.name === 'github_id')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN github_id TEXT"));
 }
 
 const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
@@ -526,13 +551,161 @@ async function requireAuth(req: any, res: any): Promise<{ memberId: number; team
 }
 
 async function requireAdmin(req: any, res: any) {
+  return requirePerm(req, res, "manage_members");
+}
+
+// ---- Discord-like roles ----
+const ROLE_PERMISSIONS = [
+  { key: "manage_members", label: "Manage members" },
+  { key: "manage_roles", label: "Manage roles" },
+  { key: "manage_budget", label: "Manage budget" },
+  { key: "manage_inventory", label: "Manage inventory" },
+  { key: "manage_code", label: "Manage code" },
+  { key: "manage_calendar", label: "Manage calendar" },
+  { key: "manage_attendance", label: "Manage attendance" },
+  { key: "manage_tasks", label: "Manage tasks" },
+  { key: "manage_outreach", label: "Manage outreach" },
+  { key: "view_ai", label: "Use AI features" },
+];
+const KNOWN_PERMS = new Set(ROLE_PERMISSIONS.map((p) => p.key));
+
+function parsePerms(json: any): string[] {
+  try {
+    const a = JSON.parse(json || "[]");
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// Seed the system roles for a team and backfill existing members:
+// account_type 'admin' -> Admin role, everyone else -> Member role.
+async function ensureRolesSeeded(teamId: number) {
+  const has = (await dbGet("SELECT id FROM roles WHERE team_id = ? LIMIT 1", teamId)) as any;
+  if (has) return;
+  const adminRole = (await dbRun(
+    "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
+    teamId, "Admin", "#FFC700", JSON.stringify(["*"]), 0
+  )) as any;
+  const memberRole = (await dbRun(
+    "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
+    teamId, "Member", "#71717A", JSON.stringify(["view_ai"]), 1
+  )) as any;
+  const members = (await dbAll(
+    "SELECT id, account_type FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId
+  )) as any[];
+  for (const m of members) {
+    await dbRun(
+      "INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)",
+      m.id, m.account_type === "admin" ? adminRole.lastInsertRowid : memberRole.lastInsertRowid
+    );
+  }
+}
+
+async function systemRoleId(teamId: number, name: string): Promise<number | null> {
+  const r = (await dbGet("SELECT id FROM roles WHERE team_id = ? AND name = ? AND is_system = 1", teamId, name)) as any;
+  return r ? r.id : null;
+}
+
+// Union of permission keys from the member's roles (roles only, no legacy fallback).
+async function rolePerms(memberId: number, teamId: number): Promise<Set<string>> {
+  const perms = new Set<string>();
+  const rows = (await dbAll(
+    "SELECT r.permissions FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.member_id = ? AND r.team_id = ?",
+    memberId, teamId
+  )) as any[];
+  for (const r of rows) for (const p of parsePerms(r.permissions)) perms.add(p);
+  return perms;
+}
+
+async function getMemberPerms(memberId: number, teamId: number | null): Promise<Set<string>> {
+  const perms = teamId ? await rolePerms(memberId, teamId) : new Set<string>();
+  // Legacy safety net: members flagged admin before roles existed keep full access.
+  const member = (await dbGet("SELECT account_type FROM members WHERE id = ?", memberId)) as any;
+  if (member?.account_type === "admin") perms.add("*");
+  return perms;
+}
+
+async function hasPerm(auth: { memberId: number; teamId: number | null }, perm: string): Promise<boolean> {
+  const perms = await getMemberPerms(auth.memberId, auth.teamId);
+  return perms.has("*") || perms.has(perm);
+}
+
+async function requirePerm(req: any, res: any, perm: string) {
   const auth = await requireAuth(req, res);
   if (!auth) return null;
-  if (auth.accountType !== 'admin') {
-    res.status(403).json({ error: "Admins only" });
+  if (!(await hasPerm(auth, perm))) {
+    res.status(403).json({ error: "You don't have permission for that" });
     return null;
   }
   return auth;
+}
+
+// Would this member still count as an admin if excludedRoleId were gone?
+// (Pure-legacy admins with no roles at all keep their account_type flag.)
+async function wouldBeAdmin(memberId: number, teamId: number, excludedRoleId: number | null): Promise<boolean> {
+  const params: any[] = [memberId, teamId];
+  let sql = "SELECT r.permissions FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.member_id = ? AND r.team_id = ?";
+  if (excludedRoleId) { sql += " AND r.id != ?"; params.push(excludedRoleId); }
+  const rows = (await dbAll(sql, ...params)) as any[];
+  for (const r of rows) {
+    const p = parsePerms(r.permissions);
+    if (p.includes("*") || p.includes("manage_members")) return true;
+  }
+  if (!rows.length) {
+    const m = (await dbGet("SELECT account_type FROM members WHERE id = ?", memberId)) as any;
+    return m?.account_type === "admin";
+  }
+  return false;
+}
+
+// Keep account_type in sync with roles: anyone holding manage_members (or *)
+// counts as an admin for the legacy coarse checks.
+async function syncAccountType(memberId: number, teamId: number) {
+  const perms = await rolePerms(memberId, teamId);
+  const isAdmin = perms.has("*") || perms.has("manage_members");
+  await dbRun("UPDATE members SET account_type = ? WHERE id = ?", isAdmin ? "admin" : "student", memberId);
+}
+
+async function countAdmins(teamId: number): Promise<number> {
+  const members = (await dbAll(
+    "SELECT id, account_type FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId
+  )) as any[];
+  let n = 0;
+  for (const m of members) {
+    if (m.account_type === "admin") { n++; continue; }
+    const perms = await rolePerms(m.id, teamId);
+    if (perms.has("*") || perms.has("manage_members")) n++;
+  }
+  return n;
+}
+
+async function memberRoleList(memberId: number, teamId: number) {
+  return (await dbAll(
+    "SELECT r.id, r.name, r.color FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.member_id = ? AND r.team_id = ? ORDER BY r.position, r.id",
+    memberId, teamId
+  )) as any[];
+}
+
+// Seed (if needed) and give a fresh member their system role.
+async function assignSystemRole(teamId: number, memberId: number, name: "Admin" | "Member") {
+  await ensureRolesSeeded(teamId);
+  const roleId = await systemRoleId(teamId, name);
+  if (roleId) await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, roleId);
+}
+
+// Set the system Admin role to match an explicit admin/student choice
+// (used by the member add/edit forms). Custom roles are left alone.
+async function setAdminRole(memberId: number, teamId: number, isAdmin: boolean) {
+  await ensureRolesSeeded(teamId);
+  const adminRoleId = await systemRoleId(teamId, "Admin");
+  const memberRoleId = await systemRoleId(teamId, "Member");
+  if (isAdmin && adminRoleId) {
+    await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, adminRoleId);
+  } else if (!isAdmin) {
+    if (adminRoleId) await dbRun("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?", memberId, adminRoleId);
+    if (memberRoleId) await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, memberRoleId);
+  }
 }
 
 // App owner (Sushil) — sees feedback and usage across all workspaces.
@@ -801,6 +974,7 @@ async function startServer() {
           teamId, cleanName, 'Admin', cleanEmail, hashedPassword, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
         )) as any;
         const sessionId = await createSession(mInfo.lastInsertRowid);
+        await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
       }
@@ -815,6 +989,7 @@ async function startServer() {
           team.id, cleanName, 'Member', cleanEmail, hashedPassword, JSON.stringify([])
         )) as any;
         const sessionId = await createSession(mInfo.lastInsertRowid);
+        await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
@@ -826,22 +1001,43 @@ async function startServer() {
     }
   });
 
-  // ---- Google OAuth ----
+  // ---- OAuth (Google, Discord, GitHub) ----
   const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
   const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-  const oauthStates = new Map<string, { expiry: number; intent: string }>(); // state -> {expiry, intent}
-  // Pending Google signups: token -> {googleSub, email, name, intent, expiry}. Single-use, 10 min.
-  const pendingGoogleSignups = new Map<string, { googleSub: string; email: string; name: string; intent: string; expiry: number }>();
+  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
+  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
+  const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
+  const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
 
-  function getOAuthRedirectUri(req: any): string {
+  const OAUTH_PROVIDERS: Record<string, { idColumn: string; label: string }> = {
+    google: { idColumn: "google_id", label: "Google" },
+    discord: { idColumn: "discord_id", label: "Discord" },
+    github: { idColumn: "github_id", label: "GitHub" },
+  };
+
+  function randomHex(bytes: number): string {
+    const b = new Uint8Array(bytes);
+    crypto.getRandomValues(b);
+    return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+  }
+
+  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string }>(); // state -> {expiry, intent, provider}
+  // Pending OAuth signups: token -> {provider, providerSub, email, name, intent, expiry}. Single-use, 10 min.
+  const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; intent: string; expiry: number }>();
+
+  function getOAuthRedirectUri(req: any, provider: string): string {
     const base = (process.env.APP_URL || "").replace(/\/$/, "");
-    if (base) return `${base}/api/auth/google/callback`;
+    if (base) return `${base}/api/auth/${provider}/callback`;
     const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
-    return `${proto}://${req.get("host")}/api/auth/google/callback`;
+    return `${proto}://${req.get("host")}/api/auth/${provider}/callback`;
   }
 
   app.get("/api/auth/config", async (req, res) => {
-    res.json({ googleEnabled: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) });
+    res.json({
+      googleEnabled: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+      discordEnabled: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
+      githubEnabled: !!(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET),
+    });
   });
 
   // Resolve the current user from a session id (used after Google sign-in)
@@ -852,6 +1048,14 @@ async function startServer() {
     if (!valid || !memberId) return res.status(401).json({ error: "Invalid session" });
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
     const isOwner = ownerEmails().includes(((user?.email) || "").toLowerCase());
+    if (user?.team_id) {
+      await ensureRolesSeeded(user.team_id);
+      (user as any).roles = await memberRoleList(user.id, user.team_id);
+      (user as any).permissions = [...(await getMemberPerms(user.id, user.team_id))];
+    } else {
+      (user as any).roles = [];
+      (user as any).permissions = [];
+    }
     res.json({ user, sessionId, isOwner });
   });
 
@@ -861,13 +1065,11 @@ async function startServer() {
     }
     const rawIntent = (req.query.intent as string) || 'login';
     const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
-    const bytes = new Uint8Array(16);
-    crypto.getRandomValues(bytes);
-    const state = Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent });
+    const state = randomHex(16);
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google' });
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: getOAuthRedirectUri(req),
+      redirect_uri: getOAuthRedirectUri(req, 'google'),
       response_type: "code",
       scope: "openid email profile",
       state,
@@ -876,82 +1078,43 @@ async function startServer() {
     res.redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString());
   });
 
-  app.get("/api/auth/google/callback", async (req, res) => {
-    try {
-      const { code, state } = req.query as { code?: string; state?: string };
-      const pending = state ? oauthStates.get(state) : undefined;
-      if (state) oauthStates.delete(state);
-      if (!code || !pending || pending.expiry < Date.now()) {
-        return res.redirect("/?google_error=invalid_state");
+  // Shared finish step for every OAuth provider: link or create the member, then
+  // either start a session (existing member) or stash a single-use signup token.
+  async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, intent: string, res: any) {
+    const idColumn = OAUTH_PROVIDERS[provider].idColumn;
+    let member: any = (await dbGet(`SELECT * FROM members WHERE ${idColumn} = ?`, providerSub));
+    if (!member) {
+      member = (await dbGet("SELECT * FROM members WHERE email = ?", email));
+      if (member) {
+        (await dbRun(`UPDATE members SET ${idColumn} = ? WHERE id = ?`, providerSub, member.id));
+        member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
+      } else if (intent === 'admin_signup' || intent === 'student_signup' || intent === 'signup') {
+        const token = randomHex(32);
+        pendingOAuthSignups.set(token, { provider, providerSub, email, name, intent, expiry: Date.now() + 10 * 60 * 1000 });
+        return res.redirect(`/?oauth_signup=${token}&intent=${intent}&provider=${provider}`);
+      } else {
+        return res.redirect("/?oauth_error=not_invited");
       }
-      const intent = pending.intent || 'login';
-      // Exchange the authorization code for tokens
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          code,
-          client_id: GOOGLE_CLIENT_ID,
-          client_secret: GOOGLE_CLIENT_SECRET,
-          redirect_uri: getOAuthRedirectUri(req),
-          grant_type: "authorization_code",
-        }),
-      });
-      if (!tokenRes.ok) throw new Error("Token exchange failed");
-      const { access_token } = (await tokenRes.json()) as any;
-      // Fetch the Google profile directly from Google (token came from Google over TLS)
-      const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-        headers: { Authorization: `Bearer ${access_token}` },
-      });
-      if (!profileRes.ok) throw new Error("Failed to fetch Google profile");
-      const profile = (await profileRes.json()) as any;
-      if (!profile.email) throw new Error("No email in Google profile");
-
-      // Members sign in directly; new users complete signup when they arrived with a signup intent
-      let member: any = (await dbGet("SELECT * FROM members WHERE google_id = ?", profile.sub));
-      if (!member) {
-        member = (await dbGet("SELECT * FROM members WHERE email = ?", profile.email));
-        if (member) {
-          (await dbRun("UPDATE members SET google_id = ? WHERE id = ?", profile.sub, member.id));
-          member = (await dbGet("SELECT * FROM members WHERE id = ?", member.id));
-        } else if (intent === 'admin_signup' || intent === 'student_signup' || intent === 'signup') {
-          const tokenBytes = new Uint8Array(32);
-          crypto.getRandomValues(tokenBytes);
-          const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, "0")).join("");
-          pendingGoogleSignups.set(token, {
-            googleSub: profile.sub,
-            email: profile.email,
-            name: profile.name || '',
-            intent,
-            expiry: Date.now() + 10 * 60 * 1000,
-          });
-          return res.redirect(`/?google_signup=${token}&intent=${intent}`);
-        } else {
-          return res.redirect("/?google_error=not_invited");
-        }
-      }
-      const sessionId = await createSession(member.id);
-      if (member.is_active === 0) return res.redirect("/?google_error=account_removed");
-      res.redirect(`/?google_session=${sessionId}`);
-    } catch (error) {
-      console.error("Google OAuth error:", error);
-      res.redirect("/?google_error=oauth_failed");
     }
-  });
+    const sessionId = await createSession(member.id);
+    if (member.is_active === 0) return res.redirect("/?oauth_error=account_removed");
+    res.redirect(`/?oauth_session=${sessionId}`);
+  }
 
-  // Finish a Google signup: the user verified their Google identity, now they
-  // provide the role-specific details (team name for admins, access code for students)
-  app.post("/api/auth/google/complete", async (req, res) => {
+  // Shared completion step for every OAuth provider: the identity is verified,
+  // now collect the role-specific details (team name for admins, access code for students).
+  async function completeOAuthSignup(provider: string, req: any, res: any) {
     try {
       const { token, teamName, teamNumber, accessCode, role } = req.body || {};
-      const pending = token ? pendingGoogleSignups.get(token) : undefined;
-      if (pending) pendingGoogleSignups.delete(token); // single-use
-      if (!pending || pending.expiry < Date.now()) {
-        return res.status(400).json({ error: "Google signup expired — please try again" });
+      const pending = token ? pendingOAuthSignups.get(token) : undefined;
+      if (pending) pendingOAuthSignups.delete(token); // single-use
+      if (!pending || pending.expiry < Date.now() || pending.provider !== provider) {
+        return res.status(400).json({ error: "Signup expired — please try again" });
       }
+      const idColumn = OAUTH_PROVIDERS[provider].idColumn;
       const cleanEmail = (pending.email || '').trim();
       const cleanName = (pending.name || '').trim() || cleanEmail.split('@')[0];
-      if (!cleanEmail) return res.status(400).json({ error: "Google signup expired — please try again" });
+      if (!cleanEmail) return res.status(400).json({ error: "Signup expired — please try again" });
       const existing = (await dbGet("SELECT id FROM members WHERE email = ?", cleanEmail));
       if (existing) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
 
@@ -965,10 +1128,11 @@ async function startServer() {
         const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", cleanTeam, (teamNumber || '').trim(), code)) as any;
         const teamId = tInfo.lastInsertRowid;
         const mInfo = (await dbRun(
-          "INSERT INTO members (team_id, name, role, email, password, google_id, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?)",
-          teamId, cleanName, 'Admin', cleanEmail, pending.googleSub, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
+          `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?)`,
+          teamId, cleanName, 'Admin', cleanEmail, pending.providerSub, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
         )) as any;
         const sessionId = await createSession(mInfo.lastInsertRowid);
+        await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         return res.json({ user, sessionId, team: { id: teamId, name: cleanTeam, access_code: code } });
       }
@@ -979,19 +1143,187 @@ async function startServer() {
         const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
         if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
         const mInfo = (await dbRun(
-          "INSERT INTO members (team_id, name, role, email, password, google_id, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?)",
-          team.id, cleanName, 'Member', cleanEmail, pending.googleSub, JSON.stringify([])
+          `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?)`,
+          team.id, cleanName, 'Member', cleanEmail, pending.providerSub, JSON.stringify([])
         )) as any;
         const sessionId = await createSession(mInfo.lastInsertRowid);
+        await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         return res.json({ user, sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
-      return res.status(400).json({ error: "Google signup expired — please try again" });
+      return res.status(400).json({ error: "Signup expired — please try again" });
     } catch (e: any) {
-      console.error("Google signup completion error:", e);
+      console.error("OAuth signup completion error:", e);
       return res.status(500).json({ error: "Signup failed — try again" });
     }
+  }
+
+  // ---- Discord OAuth ----
+  app.get("/api/auth/discord", async (req, res) => {
+    if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
+      return res.status(400).json({ error: "Discord sign-in is not configured" });
+    }
+    const rawIntent = (req.query.intent as string) || 'login';
+    const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
+    const state = randomHex(16);
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord' });
+    const params = new URLSearchParams({
+      client_id: DISCORD_CLIENT_ID,
+      redirect_uri: getOAuthRedirectUri(req, 'discord'),
+      response_type: "code",
+      scope: "identify email",
+      state,
+      prompt: "consent",
+    });
+    res.redirect("https://discord.com/oauth2/authorize?" + params.toString());
+  });
+
+  app.get("/api/auth/discord/callback", async (req, res) => {
+    try {
+      const { code, state } = req.query as { code?: string; state?: string };
+      const pending = state ? oauthStates.get(state) : undefined;
+      if (state) oauthStates.delete(state);
+      if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'discord') {
+        return res.redirect("/?oauth_error=invalid_state");
+      }
+      const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: DISCORD_CLIENT_ID,
+          client_secret: DISCORD_CLIENT_SECRET,
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: getOAuthRedirectUri(req, 'discord'),
+        }),
+      });
+      if (!tokenRes.ok) throw new Error("Token exchange failed");
+      const { access_token } = (await tokenRes.json()) as any;
+      const meRes = await fetch("https://discord.com/api/users/@me", {
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+      if (!meRes.ok) throw new Error("Failed to fetch Discord profile");
+      const profile = (await meRes.json()) as any;
+      if (!profile.email || profile.verified !== true) {
+        return res.redirect("/?oauth_error=email_unverified");
+      }
+      const name = profile.global_name || profile.username || "";
+      await finishOAuthLogin('discord', String(profile.id), profile.email, name, pending.intent || 'login', res);
+    } catch (error) {
+      console.error("Discord OAuth error:", error);
+      res.redirect("/?oauth_error=oauth_failed");
+    }
+  });
+
+  // ---- GitHub OAuth ----
+  app.get("/api/auth/github", async (req, res) => {
+    if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+      return res.status(400).json({ error: "GitHub sign-in is not configured" });
+    }
+    const rawIntent = (req.query.intent as string) || 'login';
+    const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
+    const state = randomHex(16);
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github' });
+    const params = new URLSearchParams({
+      client_id: GITHUB_CLIENT_ID,
+      redirect_uri: getOAuthRedirectUri(req, 'github'),
+      scope: "user:email",
+      state,
+    });
+    res.redirect("https://github.com/login/oauth/authorize?" + params.toString());
+  });
+
+  app.get("/api/auth/github/callback", async (req, res) => {
+    try {
+      const { code, state } = req.query as { code?: string; state?: string };
+      const pending = state ? oauthStates.get(state) : undefined;
+      if (state) oauthStates.delete(state);
+      if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'github') {
+        return res.redirect("/?oauth_error=invalid_state");
+      }
+      const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({
+          client_id: GITHUB_CLIENT_ID,
+          client_secret: GITHUB_CLIENT_SECRET,
+          code,
+          redirect_uri: getOAuthRedirectUri(req, 'github'),
+        }),
+      });
+      if (!tokenRes.ok) throw new Error("Token exchange failed");
+      const { access_token, error: tokenError } = (await tokenRes.json()) as any;
+      if (!access_token || tokenError) throw new Error("Token exchange failed");
+      const ghHeaders = { Authorization: `Bearer ${access_token}`, "User-Agent": "Control-Point" };
+      const userRes = await fetch("https://api.github.com/user", { headers: ghHeaders });
+      if (!userRes.ok) throw new Error("Failed to fetch GitHub profile");
+      const ghUser = (await userRes.json()) as any;
+      const emailsRes = await fetch("https://api.github.com/user/emails", { headers: ghHeaders });
+      if (!emailsRes.ok) throw new Error("Failed to fetch GitHub emails");
+      const emails = (await emailsRes.json()) as any[];
+      const primary = Array.isArray(emails)
+        ? emails.find((e) => e.primary && e.verified) || emails.find((e) => e.verified)
+        : undefined;
+      if (!primary?.email) {
+        return res.redirect("/?oauth_error=email_unverified");
+      }
+      const name = ghUser.name || ghUser.login || "";
+      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, pending.intent || 'login', res);
+    } catch (error) {
+      console.error("GitHub OAuth error:", error);
+      res.redirect("/?oauth_error=oauth_failed");
+    }
+  });
+
+  // Generic OAuth completion (Discord/GitHub); the Google route below delegates here too.
+  app.post("/api/auth/oauth/complete", async (req, res) => {
+    const provider = String(req.body?.provider || "");
+    if (!OAUTH_PROVIDERS[provider]) return res.status(400).json({ error: "Unknown provider" });
+    await completeOAuthSignup(provider, req, res);
+  });
+
+  app.get("/api/auth/google/callback", async (req, res) => {
+    try {
+      const { code, state } = req.query as { code?: string; state?: string };
+      const pending = state ? oauthStates.get(state) : undefined;
+      if (state) oauthStates.delete(state);
+      if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'google') {
+        return res.redirect("/?oauth_error=invalid_state");
+      }
+      const intent = pending.intent || 'login';
+      // Exchange the authorization code for tokens
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          redirect_uri: getOAuthRedirectUri(req, 'google'),
+          grant_type: "authorization_code",
+        }),
+      });
+      if (!tokenRes.ok) throw new Error("Token exchange failed");
+      const { access_token } = (await tokenRes.json()) as any;
+      // Fetch the Google profile directly from Google (token came from Google over TLS)
+      const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+      if (!profileRes.ok) throw new Error("Failed to fetch Google profile");
+      const profile = (await profileRes.json()) as any;
+      if (!profile.email) throw new Error("No email in Google profile");
+
+      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', intent, res);
+    } catch (error) {
+      console.error("Google OAuth error:", error);
+      res.redirect("/?oauth_error=oauth_failed");
+    }
+  });
+
+  // Back-compat: the old Google-only completion route now delegates to the generic one.
+  app.post("/api/auth/google/complete", async (req, res) => {
+    await completeOAuthSignup('google', req, res);
   });
 
   // --- Self-service account management ---
@@ -1266,12 +1598,16 @@ async function startServer() {
   app.get("/api/members", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
     const members = (await dbAll(`
       SELECT m.*, t.name as team_name 
       FROM members m 
       LEFT JOIN teams t ON m.team_id = t.id
       WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1
-    `, auth.teamId));
+    `, auth.teamId)) as any[];
+    for (const m of members) {
+      m.roles = await memberRoleList(m.id, auth.teamId!);
+    }
     res.json(members);
   });
 
@@ -1288,11 +1624,13 @@ async function startServer() {
         name, role, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student',
         cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color), existing.id
       ));
+      await setAdminRole(existing.id, auth.teamId, account_type === 'admin');
       return res.json({ id: existing.id, restored: true });
     }
     if (existing) return res.status(400).json({ error: "That email is already on the roster" });
     const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)));
-    res.json({ id: info.lastInsertRowid });
+    await assignSystemRole(auth.teamId, (info as any).lastInsertRowid, account_type === 'admin' ? "Admin" : "Member");
+    res.json({ id: (info as any).lastInsertRowid });
   });
 
   app.patch("/api/members/:id", async (req, res) => {
@@ -1329,6 +1667,11 @@ async function startServer() {
     const setClause = columns.map(col => `${col} = ?`).join(', ');
 
     (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), memberId));
+
+    // Keep the system Admin role aligned with an explicit admin/student change,
+    // then reconcile account_type with any custom roles the member holds.
+    await setAdminRole(memberId, auth.teamId, nextType === 'admin');
+    await syncAccountType(memberId, auth.teamId);
 
     res.json({ success: true });
   });
@@ -1389,12 +1732,161 @@ async function startServer() {
       return res.status(400).json({ error: "You can't remove your own account" });
     }
     if (target.account_type === 'admin') {
-      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin' AND COALESCE(is_active, 1) = 1", auth.teamId)) as any;
-      if (admins.n <= 1) return res.status(400).json({ error: "You need at least one admin" });
+      if ((await countAdmins(auth.teamId)) <= 1) return res.status(400).json({ error: "You need at least one admin" });
     }
     // Soft remove: the member loses access immediately, but their messages,
     // tasks, attendance, and other history stay intact.
     (await dbRun("UPDATE members SET is_active = 0 WHERE id = ?", memberId));
+    res.json({ success: true });
+  });
+
+  // ---- Roles (Discord-like) ----
+  // List roles with member counts. Any team member can view.
+  app.get("/api/roles", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
+    const roles = (await dbAll(
+      "SELECT * FROM roles WHERE team_id = ? ORDER BY position, id", auth.teamId
+    )) as any[];
+    const counts = (await dbAll(
+      `SELECT mr.role_id as role_id, COUNT(*) as n FROM member_roles mr
+       JOIN members m ON m.id = mr.member_id
+       WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 GROUP BY mr.role_id`,
+      auth.teamId
+    )) as any[];
+    const countBy = new Map(counts.map((c: any) => [c.role_id, c.n]));
+    res.json(roles.map((r: any) => ({
+      ...r,
+      permissions: parsePerms(r.permissions),
+      member_count: countBy.get(r.id) || 0,
+    })));
+  });
+
+  app.get("/api/role-permissions", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    res.json(ROLE_PERMISSIONS);
+  });
+
+  // Create a custom role (manage_roles only)
+  app.post("/api/roles", async (req, res) => {
+    const auth = await requirePerm(req, res, "manage_roles");
+    if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
+    const name = String(req.body?.name || "").trim().slice(0, 40);
+    if (!name) return res.status(400).json({ error: "Role name is required" });
+    const color = cleanHex(req.body?.color) || "#71717A";
+    const permissions = Array.isArray(req.body?.permissions)
+      ? [...new Set(req.body.permissions.filter((p: any) => KNOWN_PERMS.has(p)))]
+      : [];
+    const maxPos = (await dbGet("SELECT COALESCE(MAX(position), -1) as m FROM roles WHERE team_id = ?", auth.teamId)) as any;
+    const info = (await dbRun(
+      "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,0)",
+      auth.teamId, name, color, JSON.stringify(permissions), (maxPos?.m ?? -1) + 1
+    )) as any;
+    res.json({ id: info.lastInsertRowid });
+  });
+
+  // Edit a custom role (system roles are fixed)
+  app.patch("/api/roles/:id", async (req, res) => {
+    const auth = await requirePerm(req, res, "manage_roles");
+    if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
+    const roleId = parseInt(req.params.id, 10);
+    const role = (await dbGet("SELECT * FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
+    if (!role) return res.status(404).json({ error: "Role not found" });
+    if (role.is_system) return res.status(403).json({ error: "System roles can't be edited" });
+    const updates: any = {};
+    if (req.body?.name !== undefined) {
+      const name = String(req.body.name).trim().slice(0, 40);
+      if (!name) return res.status(400).json({ error: "Role name is required" });
+      updates.name = name;
+    }
+    if (req.body?.color !== undefined) updates.color = cleanHex(req.body.color) || "#71717A";
+    if (req.body?.permissions !== undefined) {
+      updates.permissions = JSON.stringify(
+        Array.isArray(req.body.permissions)
+          ? [...new Set(req.body.permissions.filter((p: any) => KNOWN_PERMS.has(p)))]
+          : []
+      );
+    }
+    if (Object.keys(updates).length) {
+      const cols = Object.keys(updates);
+      await dbRun(`UPDATE roles SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`, ...Object.values(updates), roleId);
+    }
+    // Re-sync admin flags: a role gaining/losing manage_members promotes/demotes holders.
+    const holders = (await dbAll("SELECT member_id FROM member_roles WHERE role_id = ?", roleId)) as any[];
+    for (const h of holders) await syncAccountType(h.member_id, auth.teamId!);
+    res.json({ success: true });
+  });
+
+  // Delete a custom role (system roles are fixed); never strand the team without an admin.
+  app.delete("/api/roles/:id", async (req, res) => {
+    const auth = await requirePerm(req, res, "manage_roles");
+    if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
+    const roleId = parseInt(req.params.id, 10);
+    const role = (await dbGet("SELECT * FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
+    if (!role) return res.status(404).json({ error: "Role not found" });
+    if (role.is_system) return res.status(403).json({ error: "System roles can't be deleted" });
+    const holders = (await dbAll(
+      `SELECT m.id FROM member_roles mr JOIN members m ON m.id = mr.member_id
+       WHERE mr.role_id = ? AND COALESCE(m.is_active, 1) = 1`, roleId
+    )) as any[];
+    // Would deleting this role leave zero admins?
+    const members = (await dbAll(
+      "SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId
+    )) as any[];
+    let adminsAfter = 0;
+    for (const m of members) {
+      if (await wouldBeAdmin(m.id, auth.teamId!, roleId)) adminsAfter++;
+    }
+    if (adminsAfter <= 0) {
+      return res.status(400).json({ error: "Can't delete this role — the team would be left without an admin" });
+    }
+    await dbRun("DELETE FROM member_roles WHERE role_id = ?", roleId);
+    await dbRun("DELETE FROM roles WHERE id = ?", roleId);
+    for (const h of holders) await syncAccountType(h.id, auth.teamId!);
+    res.json({ success: true });
+  });
+
+  // Assign a role to a member (manage_roles only) — this is how you make extra admins.
+  app.post("/api/members/:id/roles", async (req, res) => {
+    const auth = await requirePerm(req, res, "manage_roles");
+    if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
+    const memberId = parseInt(req.params.id, 10);
+    const roleId = parseInt(req.body?.role_id, 10);
+    const target = (await dbGet(
+      "SELECT id FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", memberId, auth.teamId
+    )) as any;
+    if (!target) return res.status(404).json({ error: "Member not found" });
+    const role = (await dbGet("SELECT id FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
+    if (!role) return res.status(404).json({ error: "Role not found" });
+    await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, roleId);
+    await syncAccountType(memberId, auth.teamId!);
+    res.json({ success: true });
+  });
+
+  // Revoke a role from a member (manage_roles only); last-admin guard applies.
+  app.delete("/api/members/:id/roles/:roleId", async (req, res) => {
+    const auth = await requirePerm(req, res, "manage_roles");
+    if (!auth) return;
+    await ensureRolesSeeded(auth.teamId!);
+    const memberId = parseInt(req.params.id, 10);
+    const roleId = parseInt(req.params.roleId, 10);
+    const target = (await dbGet(
+      "SELECT id, account_type FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", memberId, auth.teamId
+    )) as any;
+    if (!target) return res.status(404).json({ error: "Member not found" });
+    const role = (await dbGet("SELECT * FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
+    if (!role) return res.status(404).json({ error: "Role not found" });
+    if (!(await wouldBeAdmin(memberId, auth.teamId!, roleId)) && (await countAdmins(auth.teamId!)) <= 1) {
+      return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
+    }
+    await dbRun("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?", memberId, roleId);
+    await syncAccountType(memberId, auth.teamId!);
     res.json({ success: true });
   });
 
@@ -1914,6 +2406,15 @@ async function startServer() {
     }
   });
 
+  // Shared team-event insert (used by the admin route and by Bruno).
+  async function insertTeamEvent(teamId: number, memberId: number, e: { title: string; date: string; time?: string; notes?: string }) {
+    const info = (await dbRun(
+      "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      e.title, e.notes || "", e.date, e.time || "", "", "", "meeting", teamId, memberId
+    )) as any;
+    return info.lastInsertRowid;
+  }
+
   app.post("/api/events", async (req, res) => {
     try {
       const auth = await requireAdmin(req, res);
@@ -1922,18 +2423,13 @@ async function startServer() {
       if (!title || !date) {
         return res.status(400).json({ error: "Title and date are required" });
       }
-      const info = (await dbRun(
-        "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-      , title,
-        description || '',
-        date,
-        start_time || '',
-        end_time || '',
-        location || '',
-        event_type || 'meeting',
-        auth.teamId,
-        created_by || auth.memberId));
-      res.json({ id: info.lastInsertRowid });
+      const id = await insertTeamEvent(auth.teamId, Number(created_by) || auth.memberId, {
+        title, date, time: start_time, notes: description,
+      });
+      // Preserve the extra fields the admin form collects
+      (await dbRun("UPDATE events SET end_time = ?, location = ?, event_type = ? WHERE id = ?",
+        end_time || '', location || '', event_type || 'meeting', id));
+      res.json({ id });
     } catch (error) {
       console.error("Error creating event:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -2501,9 +2997,13 @@ async function startServer() {
       const maxTokens = await getMaxTokens("max_tokens_news", 2048);
       const raw = await scoutFeed(maxTokens);
       const items = parseScoutFeed(raw);
-      // Drop YouTube items whose URLs don't resolve — the model sometimes invents
-      // video IDs. oEmbed is keyless and fast; non-200 means the video doesn't exist.
+      // Drop YouTube items whose URLs don't resolve to the claimed video — the model
+      // sometimes invents video IDs (even real-looking ones). oEmbed is keyless and fast:
+      // non-200 means the video doesn't exist, and a title mismatch means the ID was
+      // fabricated for an unrelated video.
       const ytRe = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{6,})/i;
+      const STOP = new Set(["the","and","for","with","from","this","that","your","you","our","are","was","will","about","into","over","how","what","when","all"]);
+      const sigWords = (s: string) => (s.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => !STOP.has(w));
       const checked = await Promise.all(
         items.map(async (it: any) => {
           const m = String(it.url || "").match(ytRe);
@@ -2516,7 +3016,14 @@ async function startServer() {
               { signal: ctl.signal }
             );
             clearTimeout(t);
-            return r.ok ? it : null;
+            if (!r.ok) return null;
+            let meta: any = null;
+            try { meta = await r.json(); } catch { return null; }
+            const claimed = new Set(sigWords(String(it.title || "")));
+            const actual = new Set(sigWords(String(meta?.title || "")));
+            let overlap = 0;
+            claimed.forEach((w) => { if (actual.has(w)) overlap++; });
+            return overlap >= 2 ? it : null;
           } catch {
             return null;
           }
@@ -2581,6 +3088,31 @@ async function startServer() {
   });
 
   // --- Bruno: FTC build-mentor chatbot (floating widget) ---
+  // Bruno calendar skill: the model ends its reply with a fenced ```event block
+  // when the user confirms an event. Parse it, validate, strip it from the
+  // visible text. Returns { text, event } where event is null when absent/invalid.
+  const EVENT_BLOCK_RE = /```event\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractEventBlock(fullText: string): { text: string; event: { title: string; date: string; time: string; notes: string } | null } {
+    const src = String(fullText || "");
+    const m = src.match(EVENT_BLOCK_RE);
+    if (!m) return { text: src, event: null };
+    let event: { title: string; date: string; time: string; notes: string } | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      const okDate = typeof p?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && !isNaN(new Date(p.date + "T00:00:00").getTime());
+      const okTime = !p?.time || (typeof p.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(p.time));
+      if (p && typeof p.title === "string" && p.title.trim() && okDate && okTime) {
+        event = {
+          title: p.title.trim().slice(0, 120),
+          date: p.date,
+          time: typeof p.time === "string" ? p.time : "",
+          notes: typeof p.notes === "string" ? p.notes.trim().slice(0, 500) : "",
+        };
+      }
+    } catch { /* malformed JSON — treat as no event */ }
+    return { text: src.replace(EVENT_BLOCK_RE, "").trim(), event };
+  }
+
   app.post("/api/ai/build-helper", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -2599,6 +3131,22 @@ async function startServer() {
       const maxTokens = await getMaxTokens("max_tokens_chat", 1024);
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
+      const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
+      const fullContext = [teamContext, todayLine].filter(Boolean).join("\n\n");
+      // After generation, handle a ```event block: create the calendar event,
+      // strip the raw block, and append a confirmation line.
+      const applyEventBlock = async (rawText: string): Promise<string> => {
+        const { text, event } = extractEventBlock(rawText);
+        if (!event) return text;
+        try {
+          await insertTeamEvent(auth.teamId, auth.memberId, event);
+          const when = event.time ? `${event.date} at ${event.time}` : event.date;
+          return (text ? text + "\n\n" : "") + `📅 Added to the team calendar: **${event.title}** — ${when}.`;
+        } catch (e) {
+          console.error("Bruno calendar event insert failed:", e);
+          return (text ? text + "\n\n" : "") + "⚠️ I couldn't save that to the team calendar — please try again.";
+        }
+      };
       // Optional chat persistence: validate access, store the user message now
       const chatId = parseInt(req.body?.chatId, 10) || 0;
       let chat: any = null;
@@ -2620,9 +3168,10 @@ async function startServer() {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), teamContext);
-          if (chat && String(fullText || "").trim()) {
-            (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(fullText).slice(0, 20000)));
+          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), fullContext);
+          const finalText = await applyEventBlock(fullText);
+          if (chat && String(finalText || "").trim()) {
+            (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
           res.end();
         } catch (err) {
@@ -2631,14 +3180,15 @@ async function startServer() {
         }
         return;
       }
-      const result = await buildHelperChat(messages, maxTokens, undefined, teamContext);
+      const result = await buildHelperChat(messages, maxTokens, undefined, fullContext);
+      const finalResult = await applyEventBlock(String(result || ""));
       if (chat) {
-        const modelText = String(result || "");
+        const modelText = String(finalResult || "");
         if (modelText.trim()) {
           (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, modelText.slice(0, 20000)));
         }
       }
-      res.json({ result, chatId: chat ? chat.id : undefined });
+      res.json({ result: finalResult, chatId: chat ? chat.id : undefined });
     } catch (error) {
       console.error("AI build-helper error:", error);
       res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
