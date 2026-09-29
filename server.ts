@@ -24,6 +24,15 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
 import {
+  ONBOARDING_DDL,
+  defaultOnboardingState,
+  mergeOnboardingState,
+  validateOnboardingPatch,
+  normalizeOnboardingEmail,
+  legacyOnboardingState,
+  type OnboardingState,
+} from "./server/onboarding.js";
+import {
   isAIConfigured,
   getAISetting,
   getMaxTokens,
@@ -367,6 +376,9 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
   );
 `));
 
+// Onboarding progress store (additive only; see server/onboarding.ts).
+// Email-keyed so multi-team accounts keep one onboarding state.
+(await dbExec(ONBOARDING_DDL));
 
 // Migrations - Handle structural updates for existing databases
 const memberColumns = (await dbAll("PRAGMA table_info(members)"));if (!memberColumns.some((c: any) => c.name === 'password')) {
@@ -1393,6 +1405,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        await ensureOnboardingRow(cleanEmail);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
@@ -1420,6 +1433,7 @@ async function startServer() {
         const sessionId = await createSession(memberId);
         await assignSystemRole(team.id, memberId, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
+        await ensureOnboardingRow(cleanEmail);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -1610,6 +1624,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        await ensureOnboardingRow(cleanEmail);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
@@ -1627,6 +1642,7 @@ async function startServer() {
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+        await ensureOnboardingRow(cleanEmail);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -1902,6 +1918,7 @@ async function startServer() {
       await dbRun(`DELETE FROM member_roles WHERE member_id IN (${ph})`, ...ids);
     }
     await dbRun("DELETE FROM members WHERE email = ?", email);
+    await dbRun("DELETE FROM onboarding_state WHERE email = ?", normalizeOnboardingEmail(email) || "");
     res.json({ ok: true });
   });
 
@@ -2410,6 +2427,7 @@ async function startServer() {
     if (existing) return res.status(400).json({ error: "That email is already on the roster" });
     const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", targetTeamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)));
     await assignSystemRole(targetTeamId, (info as any).lastInsertRowid, account_type === 'admin' ? "Admin" : "Member");
+    await ensureOnboardingRow(email);
     res.json({ id: (info as any).lastInsertRowid });
   });
 
@@ -2482,10 +2500,76 @@ async function startServer() {
     res.json({ user: sanitizeMember(user) });
   });
 
+  // ---- Onboarding progress ----
+  // Per-account (email-keyed) onboarding state. The email always comes from
+  // the caller's own session — clients can never read or write another
+  // account's state.
+  //
+  // New accounts get a default (incomplete) row at signup, so the welcome
+  // screen shows on first login. Accounts created before this feature have no
+  // row and are treated as already dismissed — never force-onboarded — while
+  // still able to restart via the account menu's Setup guide.
+  async function ensureOnboardingRow(email: string): Promise<void> {
+    const key = normalizeOnboardingEmail(email);
+    if (!key) return;
+    await dbRun(
+      "INSERT OR IGNORE INTO onboarding_state (email, state, updated_at) VALUES (?, ?, ?)",
+      key,
+      JSON.stringify(defaultOnboardingState()),
+      new Date().toISOString()
+    );
+  }
+
+  async function onboardingEmailFor(req: any, auth: any): Promise<string | null> {
+    const email = auth.teamless
+      ? auth.email
+      : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
+    return normalizeOnboardingEmail(email);
+  }
+
+  app.get("/api/onboarding", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const email = await onboardingEmailFor(req, auth);
+    if (!email) return res.status(401).json({ error: "Not signed in" });
+    const row = (await dbGet("SELECT state FROM onboarding_state WHERE email = ?", email)) as any;
+    if (!row) return res.json({ state: legacyOnboardingState() });
+    let stored = null;
+    try {
+      stored = row?.state ? JSON.parse(row.state) : null;
+    } catch {
+      stored = null;
+    }
+    res.json({ state: mergeOnboardingState(stored, null) });
+  });
+
+  app.put("/api/onboarding", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const email = await onboardingEmailFor(req, auth);
+    if (!email) return res.status(401).json({ error: "Not signed in" });
+    const v = validateOnboardingPatch(req.body);
+    if (v.ok === false) return res.status(400).json({ error: v.error });
+    const row = (await dbGet("SELECT state FROM onboarding_state WHERE email = ?", email)) as any;
+    let stored = null;
+    try {
+      stored = row?.state ? JSON.parse(row.state) : null;
+    } catch {
+      stored = null;
+    }
+    const merged = mergeOnboardingState(stored, v.patch);
+    const now = new Date().toISOString();
+    if (row) {
+      await dbRun("UPDATE onboarding_state SET state = ?, updated_at = ? WHERE email = ?", JSON.stringify(merged), now, email);
+    } else {
+      await dbRun("INSERT INTO onboarding_state (email, state, updated_at) VALUES (?, ?, ?)", email, JSON.stringify(merged), now);
+    }
+    res.json({ state: merged });
+  });
+
   // Reset theme colors to the default Volt & Carbon palette: clears the
   // member's personal overrides, and the team's (for workspace managers).
-  app.post("/api/theme/reset", async (req, res) => {
-    const auth = await requireAuth(req, res);
+  app.post("/api/theme/reset", async (req, res) => {    const auth = await requireAuth(req, res);
     if (!auth) return;
     (await dbRun("UPDATE members SET accent_color = NULL, primary_color = NULL, text_color = NULL WHERE id = ?", auth.memberId));
     if (await hasPerm(auth, "manage_members")) {

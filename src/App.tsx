@@ -83,6 +83,20 @@ import {
 import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
+import {
+  WelcomeScreen,
+  Walkthrough,
+  SetupWizard,
+  SetupChecklist,
+  fetchOnboardingState,
+  saveOnboardingState,
+  defaultOnboardingState,
+  shouldShowWelcome,
+  shouldShowChecklist,
+  firstIncompleteWizardStep,
+  resolveTourSteps,
+  type OnboardingState,
+} from './components/onboarding';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
@@ -753,6 +767,19 @@ export default function App() {
   const [showTeamMenu, setShowTeamMenu] = useState(false);
   const [brunoPanelOpen, setBrunoPanelOpen] = useState(false);
   const brunoClickTimer = useRef<number | null>(null);
+
+  // ---- Onboarding (welcome, tour, setup wizard, dashboard checklist) ----
+  // Persisted per account (email-keyed) on the server so progress survives
+  // refresh, logout/login, and team switches.
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourStartStep, setTourStartStep] = useState(0);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStartStep, setWizardStartStep] = useState<0 | 1 | 2>(0);
+  const tourSaveTimer = useRef<number | null>(null);
+  const tourStepRef = useRef(0);
 
   // Single click → Copilot-style side panel; double-click → full /bruno view
   const handleBrunoButton = () => {
@@ -1558,6 +1585,136 @@ export default function App() {
     }
   }, [isLoggedIn]);
 
+  // ---- Onboarding orchestration ----
+  // Load the account's onboarding state once per login. On any failure we
+  // fail silent (no onboarding UI) rather than blocking the app.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setOnboarding(null);
+      setOnboardingReady(false);
+      setShowWelcome(false);
+      setTourOpen(false);
+      setWizardOpen(false);
+      return;
+    }
+    let cancelled = false;
+    setOnboardingReady(false);
+    fetchOnboardingState()
+      .then((s) => {
+        if (cancelled) return;
+        setOnboarding(s);
+        setOnboardingReady(true);
+        setShowWelcome(shouldShowWelcome(s));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOnboarding(defaultOnboardingState());
+        setOnboardingReady(true);
+      });
+    return () => { cancelled = true; };
+  }, [isLoggedIn]);
+
+  const patchOnboarding = async (patch: Record<string, unknown>): Promise<OnboardingState> => {
+    const next = await saveOnboardingState(patch);
+    setOnboarding(next);
+    return next;
+  };
+
+  const handleWelcomeGetStarted = async () => {
+    try {
+      const next = await patchOnboarding({ welcomeSeen: true });
+      setWizardStartStep(firstIncompleteWizardStep(next));
+    } catch {
+      /* non-fatal: still open the wizard locally */
+    }
+    setShowWelcome(false);
+    setWizardOpen(true);
+  };
+
+  const handleWelcomeSkip = async () => {
+    try {
+      await patchOnboarding({ welcomeSeen: true, dismissed: true });
+    } catch {
+      /* non-fatal */
+    }
+    setShowWelcome(false);
+  };
+
+  /** Open the setup wizard at the first incomplete step (account menu, checklist). */
+  const openSetupGuide = () => {
+    const s = onboarding || defaultOnboardingState();
+    setWizardStartStep(firstIncompleteWizardStep(s));
+    setWizardOpen(true);
+  };
+
+  const startTour = (fromStep = 0) => {
+    setWizardOpen(false);
+    tourStepRef.current = fromStep;
+    setTourStartStep(fromStep);
+    setTourOpen(true);
+  };
+
+  // Memoized so the Walkthrough's effects don't re-fire on every App render.
+  const tourSteps = useMemo(() => resolveTourSteps(isAdmin), [isAdmin]);
+
+  /** Persist the tour's resume position (lightly debounced). */
+  const handleTourStepChange = (index: number) => {
+    tourStepRef.current = index;
+    if (tourSaveTimer.current) window.clearTimeout(tourSaveTimer.current);
+    tourSaveTimer.current = window.setTimeout(() => {
+      patchOnboarding({ walkthrough: { lastStep: index } }).catch(() => {});
+    }, 600);
+  };
+
+  const handleTourExit = async () => {
+    if (tourSaveTimer.current) window.clearTimeout(tourSaveTimer.current);
+    setTourOpen(false);
+    // Persist the resume position; the tour stays resumable from the account menu.
+    try {
+      await patchOnboarding({ walkthrough: { lastStep: tourStepRef.current } });
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  const handleTourFinish = async (next: 'setup' | 'explore') => {
+    if (tourSaveTimer.current) window.clearTimeout(tourSaveTimer.current);
+    setTourOpen(false);
+    const now = new Date().toISOString();
+    try {
+      const s = await patchOnboarding({
+        walkthrough: { completed: true, lastStep: 0 },
+        steps: { tour: { status: 'done', updatedAt: now } },
+      });
+      if (next === 'setup') {
+        setWizardStartStep(s.steps.profile.status === 'done' ? 2 : 0);
+        setWizardOpen(true);
+      }
+    } catch {
+      if (next === 'setup') setWizardOpen(true);
+    }
+  };
+
+  const handleChecklistDismiss = async () => {
+    try {
+      await patchOnboarding({ checklistDismissed: true });
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  const handleWizardSaveProfile = async (patch: { name: string; role: string }) => {
+    const res = await apiFetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error || 'Could not save your profile. Please try again.');
+    }
+  };
+
   const renderContent = () => {
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, socialProfiles, youtubeEnabled, tiktokEnabled, inventory, communications, events,
@@ -1575,7 +1732,11 @@ export default function App() {
       // give child views a way to explicitly refresh the AI news cache
       refreshNews: () => updateNews(true),
       updateInsights,
-      updateSummary: () => updateSummary(true)
+      updateSummary: () => updateSummary(true),
+      // onboarding: dashboard checklist + resume entry points
+      onboardingState: onboarding,
+      onContinueSetup: openSetupGuide,
+      onDismissChecklist: handleChecklistDismiss,
     };
     const dashboardEl = isAdmin
       ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, scoutFeed, summary, members, events }} />
@@ -1852,6 +2013,7 @@ export default function App() {
             return (
               <button
                 key={item.id}
+                data-onboard={`nav-${item.id}`}
                 onClick={() => navigate(`/${item.path}`)}
                 title={!isSidebarOpen ? item.label : undefined}
                 className={cn(
@@ -2030,6 +2192,7 @@ export default function App() {
             )}
             <button
               onClick={handleBrunoButton}
+              data-onboard="header-bruno"
               title={`${botName} — click for quick chat, double-click for full view`}
               aria-label={`Open ${botName}`}
               className="w-10 h-10 rounded-full bg-accent/15 border border-accent/40 hover:bg-accent/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
@@ -2081,6 +2244,13 @@ export default function App() {
                         >
                           <UserCircle className="w-[18px] h-[18px] text-accent" />
                           My Profile
+                        </button>
+                        <button
+                          onClick={() => { setShowUserMenu(false); openSetupGuide(); }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/[0.06] transition-colors"
+                        >
+                          <Sparkles className="w-[18px] h-[18px] text-accent" />
+                          Setup guide
                         </button>
                         {(currentUser as any)?.account_type === 'admin' && (
                           <button
@@ -2147,6 +2317,7 @@ export default function App() {
               return (
                 <button
                   key={t.id}
+                  data-onboard={`mtab-${t.id}`}
                   onClick={() => navigate(`/${t.path}`)}
                   aria-current={isActive ? 'page' : undefined}
                   className="relative flex-1 flex flex-col items-center justify-center gap-1 py-2.5 min-h-[62px] active:scale-95 transition-transform"
@@ -2180,6 +2351,36 @@ export default function App() {
         currentUser={currentUser}
         botName={botName}
       />
+
+      {/* ---- Onboarding overlays ---- */}
+      {showWelcome && onboarding && (
+        <WelcomeScreen
+          userName={currentUser?.name}
+          onGetStarted={() => void handleWelcomeGetStarted()}
+          onSkip={() => void handleWelcomeSkip()}
+        />
+      )}
+      {tourOpen && (
+        <Walkthrough
+          steps={tourSteps}
+          initialStep={Math.min(tourStartStep, Math.max(0, tourSteps.length - 1))}
+          onStepChange={handleTourStepChange}
+          onFinish={(next) => void handleTourFinish(next)}
+          onExit={() => void handleTourExit()}
+        />
+      )}
+      {wizardOpen && onboarding && currentUser && (
+        <SetupWizard
+          user={{ name: currentUser.name, role: currentUser.role }}
+          initialStep={wizardStartStep}
+          state={onboarding}
+          onPatchState={patchOnboarding}
+          onSaveProfile={handleWizardSaveProfile}
+          onProfileChanged={(name, role) => setCurrentUser((u) => (u ? { ...u, name, role } : u))}
+          onStartTour={() => startTour(Math.max(0, onboarding.walkthrough.lastStep || 0))}
+          onClose={() => setWizardOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -2309,7 +2510,7 @@ function CookieConsent() {
 
 // --- View Components ---
 
-function DashboardView({ data, currentUser, onRefresh, settings, setLoading, insights, updateInsights, isAiLoading, setIsAiLoading, ThinkingIndicator, updateSummary, colorVersion, teams }: any) {
+function DashboardView({ data, currentUser, onRefresh, settings, setLoading, insights, updateInsights, isAiLoading, setIsAiLoading, ThinkingIndicator, updateSummary, colorVersion, teams, onboardingState, onContinueSetup, onDismissChecklist }: any) {
   const [aiTab, setAiTab] = useState<'summary' | 'insights'>('summary');
   const navigate = useNavigate();
   const ftc = useFtcTeam();
@@ -2400,6 +2601,15 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
 
   return (
     <>
+    {onboardingState && shouldShowChecklist(onboardingState) && (
+      <div className="mb-3">
+        <SetupChecklist
+          state={onboardingState}
+          onContinue={onContinueSetup}
+          onDismiss={onDismissChecklist}
+        />
+      </div>
+    )}
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3">
       {/* ── KPI row ─────────────────────────────────────────── */}
       <Card className="xl:col-span-3 p-3 gap-3" icon={Trophy} title="FTC Standing" subtitle={ftc.data ? `Team ${ftc.data.number} · ${seasonLabel(ftc.season)}` : 'Connect your team in Settings'}>
@@ -2636,7 +2846,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
 }
 
 // Personal dashboard for students: my tasks, my attendance, upcoming events
-function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading }: any) {
+function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading, onboardingState, onContinueSetup, onDismissChecklist }: any) {
   const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
   const today = format(new Date(), 'yyyy-MM-dd');
   const myTasks = (tasks || []).filter((t: any) => t.assigned_to === currentUser?.id);
@@ -2682,6 +2892,16 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
   };
 
   return (
+    <>
+    {onboardingState && shouldShowChecklist(onboardingState) && (
+      <div className="mb-4 sm:mb-6">
+        <SetupChecklist
+          state={onboardingState}
+          onContinue={onContinueSetup}
+          onDismiss={onDismissChecklist}
+        />
+      </div>
+    )}
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
       <Card className="lg:col-span-3" icon={GraduationCap}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2781,6 +3001,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
         )}
       </Card>
     </div>
+    </>
   );
 }
 

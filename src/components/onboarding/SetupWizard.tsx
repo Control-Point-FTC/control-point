@@ -1,0 +1,357 @@
+import { useEffect, useRef, useState } from 'react';
+import { X, ArrowLeft, ArrowRight, Check, Compass, UserCircle, AlertTriangle } from 'lucide-react';
+import {
+  cn,
+  buildProfilePatch,
+  validateProfileInput,
+  type OnboardingState,
+} from './onboardingState';
+import { confirmDialog } from '../dialog';
+
+export interface SetupWizardProps {
+  user: { name?: string; role?: string };
+  initialStep?: 0 | 1 | 2;
+  /** Current onboarding state (used to render accurate resume/summary info). */
+  state: OnboardingState;
+  /** Persist a partial onboarding state patch; resolves with the merged state. */
+  onPatchState: (patch: Record<string, unknown>) => Promise<OnboardingState>;
+  /** PATCH /api/profile; throws on failure. */
+  onSaveProfile: (patch: { name: string; role: string }) => Promise<void>;
+  /** Parent updates its user object after a successful profile save. */
+  onProfileChanged: (name: string, role: string) => void;
+  onStartTour: () => void;
+  onClose: () => void;
+}
+
+const STEP_LABELS = ['Your profile', 'Take the tour', 'All set'];
+
+const inputClass =
+  'w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all';
+
+export default function SetupWizard({
+  user,
+  initialStep = 0,
+  state,
+  onPatchState,
+  onSaveProfile,
+  onProfileChanged,
+  onStartTour,
+  onClose,
+}: SetupWizardProps) {
+  const [step, setStep] = useState<0 | 1 | 2>(initialStep);
+  const [name, setName] = useState(user.name || '');
+  const [role, setRole] = useState(user.role || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{ profile: string; tour: string }>(() => ({
+    profile: state.steps.profile.status,
+    tour: state.steps.tour.status,
+  }));
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const dirtyRef = useRef(false);
+
+  useEffect(() => {
+    dirtyRef.current = name.trim() !== (user.name || '').trim() || role.trim() !== (user.role || '').trim();
+  }, [name, role, user.name, user.role]);
+
+  // Focus the dialog on open / step change; Esc asks before abandoning.
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, [step]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        void handleClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, role]);
+
+  const handleClose = async () => {
+    if (dirtyRef.current && step === 0) {
+      const ok = await confirmDialog({
+        title: 'Leave setup?',
+        message: 'Your profile changes haven\u2019t been saved yet. You can finish setup anytime from your account menu.',
+        confirmLabel: 'Leave',
+        cancelLabel: 'Keep editing',
+      });
+      if (!ok) return;
+    }
+    onClose();
+  };
+
+  const markStep = async (id: 'profile' | 'tour', status: 'done' | 'skipped') => {
+    const now = new Date().toISOString();
+    await onPatchState({ steps: { [id]: { status, updatedAt: now } } });
+  };
+
+  const saveProfile = async (skip: boolean) => {
+    setError(null);
+    setFieldError(null);
+    if (skip) {
+      setBusy(true);
+      try {
+        await markStep('profile', 'skipped');
+        setSummary((s) => ({ ...s, profile: 'skipped' }));
+        setStep(1);
+      } catch (e: any) {
+        setError(e?.message || 'Could not save. Please try again.');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    const v = validateProfileInput(name);
+    if (v) {
+      setFieldError(v);
+      return;
+    }
+    setBusy(true);
+    try {
+      const patch = buildProfilePatch({ name: user.name, role: user.role }, { name, role });
+      if (patch) {
+        await onSaveProfile(patch);
+        onProfileChanged(patch.name, patch.role);
+      }
+      await markStep('profile', 'done');
+      setSummary((s) => ({ ...s, profile: 'done' }));
+      setStep(1);
+    } catch (e: any) {
+      setError(e?.message || 'Could not save your profile. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skipTour = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await markStep('tour', 'skipped');
+      setSummary((s) => ({ ...s, tour: 'skipped' }));
+      setStep(2);
+    } catch (e: any) {
+      setError(e?.message || 'Could not save. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[85] flex items-end sm:items-center justify-center p-0 sm:p-6">
+      <button
+        aria-label="Close setup"
+        onClick={() => void handleClose()}
+        className="absolute inset-0 bg-black/70 backdrop-blur-sm cursor-default"
+      />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wizard-title"
+        tabIndex={-1}
+        className="relative w-full sm:max-w-md bg-secondary border border-white/10 rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/60 max-h-[92dvh] overflow-y-auto focus-visible:outline-none"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">
+              Setup · Step {step + 1} of 3
+            </p>
+            <h2 id="wizard-title" className="mt-1 font-display text-xl font-bold text-white">
+              {STEP_LABELS[step]}
+            </h2>
+          </div>
+          <button
+            onClick={() => void handleClose()}
+            aria-label="Close setup"
+            className="p-1.5 -m-1.5 rounded-lg text-text-muted hover:text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Step dots */}
+        <div className="mt-3 flex items-center gap-1.5" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className={cn('h-1.5 flex-1 rounded-full transition-colors', i <= step ? 'bg-accent' : 'bg-white/10')}
+            />
+          ))}
+        </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="mt-4 flex items-start gap-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3.5"
+          >
+            <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm text-rose-200">{error}</p>
+              <button
+                onClick={() => setError(null)}
+                className="mt-1 text-xs font-bold text-rose-300 hover:text-white"
+              >
+                Dismiss — you can retry
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 0 && (
+          <div className="mt-5">
+            <p className="text-sm text-text-muted leading-relaxed">
+              How should teammates see you? <span className="text-white/70 font-medium">Recommended</span> —
+              you can change this anytime in My Profile.
+            </p>
+            <div className="mt-4 space-y-3.5">
+              <div>
+                <label htmlFor="wizard-name" className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">
+                  Display name <span className="text-accent">*</span>
+                </label>
+                <input
+                  id="wizard-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Alex Rivera"
+                  maxLength={80}
+                  autoComplete="name"
+                  className={inputClass}
+                />
+                {fieldError && (
+                  <p role="alert" className="mt-1.5 text-xs text-rose-400 font-medium">
+                    {fieldError}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="wizard-role" className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">
+                  Role or title <span className="text-text-muted/60 normal-case font-medium">(optional)</span>
+                </label>
+                <input
+                  id="wizard-role"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  placeholder="e.g. Build Captain"
+                  maxLength={80}
+                  autoComplete="organization-title"
+                  className={inputClass}
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between gap-2">
+              <button
+                onClick={() => void saveProfile(true)}
+                disabled={busy}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-white disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              >
+                Skip
+              </button>
+              <button
+                onClick={() => void saveProfile(false)}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-bold bg-accent text-accent-ink hover:brightness-105 active:scale-95 disabled:opacity-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
+              >
+                {busy ? 'Saving…' : (
+                  <>Save &amp; continue <ArrowRight className="w-4 h-4" strokeWidth={2.5} /></>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="mt-5 text-center">
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
+              <Compass className="w-6 h-6 text-accent" strokeWidth={2.25} />
+            </div>
+            {state.steps.tour.status === 'done' ? (
+              <>
+                <p className="text-sm text-text-muted leading-relaxed">
+                  You&apos;ve already completed the tour — nice.
+                </p>
+                <button
+                  onClick={() => setStep(2)}
+                  className="mt-6 w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
+                >
+                  Continue
+                </button>
+              </>
+            ) : (
+              <>
+            <p className="text-sm text-text-muted leading-relaxed">
+              Take a quick interactive tour of the workspace — dashboard, attendance, tasks,
+              messaging, and more. It only takes a minute.
+            </p>
+            <div className="mt-6 space-y-2">
+              <button
+                onClick={onStartTour}
+                disabled={busy}
+                className="w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] disabled:opacity-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
+              >
+                Start the tour
+              </button>
+              <button
+                onClick={() => void skipTour()}
+                disabled={busy}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-white disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              >
+                {busy ? 'Saving…' : 'Maybe later'}
+              </button>
+            </div>
+            <button
+              onClick={() => setStep(0)}
+              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-white transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" /> Back to profile
+            </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="mt-5 text-center">
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-accent flex items-center justify-center mb-3">
+              <Check className="w-6 h-6 text-accent-ink" strokeWidth={2.75} />
+            </div>
+            <h3 className="font-display text-lg font-bold text-white">Setup complete</h3>
+            <ul className="mt-4 space-y-2 text-left">
+              <li className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3.5 py-2.5">
+                <UserCircle className="w-5 h-5 text-accent flex-shrink-0" />
+                <span className="text-sm text-white font-medium flex-1">Profile</span>
+                <span className="text-xs font-bold text-text-muted uppercase tracking-wide">
+                  {summary.profile === 'skipped' ? 'Skipped' : summary.profile === 'done' ? 'Done' : 'Pending'}
+                </span>
+              </li>
+              <li className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3.5 py-2.5">
+                <Compass className="w-5 h-5 text-accent flex-shrink-0" />
+                <span className="text-sm text-white font-medium flex-1">Tour</span>
+                <span className="text-xs font-bold text-text-muted uppercase tracking-wide">
+                  {summary.tour === 'skipped' ? 'Skipped' : summary.tour === 'done' ? 'Done' : 'Pending'}
+                </span>
+              </li>
+            </ul>
+            {(summary.profile === 'skipped' || summary.tour === 'skipped') && (
+              <p className="mt-3 text-xs text-text-muted leading-relaxed">
+                You skipped a step — no problem. Pick it up anytime from the setup card on your dashboard
+                or your account menu.
+              </p>
+            )}
+            <button
+              onClick={onClose}
+              className="mt-6 w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
+            >
+              Start using Control Point
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
