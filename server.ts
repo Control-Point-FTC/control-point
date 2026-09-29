@@ -2263,7 +2263,9 @@ async function startServer() {
       try {
         const t = await lookupFtcTeam(num);
         if (t && t.name) {
-          return { name: nameStr || t.name, number: numStr, ftcNumber: t.number };
+          // A resolved FTC number always wins: the official name cannot be
+          // overridden by a user-supplied team name.
+          return { name: t.name, number: numStr, ftcNumber: t.number };
         }
       } catch { /* FTC Scout unreachable — fall through to manual */ }
       if (!nameStr) {
@@ -2779,16 +2781,31 @@ async function startServer() {
   // End of today in America/New_York, for the "rest of day" session length.
   function endOfTodayEastern(): Date {
     // End of the current day in America/New_York, returned as a real UTC instant.
-    // toLocaleString gives NY wall-clock components; derive the NY offset at
-    // that moment so DST (EDT -4 vs EST -5) is always right.
-    const parts = new Intl.DateTimeFormat("en-US", {
+    // Computes the NY offset with pure arithmetic (formatToParts + Date.UTC) so
+    // the result never depends on the server's local timezone. Iterates twice
+    // so DST-transition days converge on the correct offset.
+    const nyDate = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York", year: "numeric", month: "numeric", day: "numeric",
-    }).formatToParts(new Date());
-    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-    const asUtc = new Date(Date.UTC(get("year"), get("month") - 1, get("day"), 23, 59, 59, 999));
-    const nyAtThat = new Date(asUtc.toLocaleString("en-US", { timeZone: "America/New_York" }));
-    const offsetMs = asUtc.getTime() - nyAtThat.getTime();
-    return new Date(asUtc.getTime() + offsetMs);
+    });
+    const nyWall = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric", month: "numeric", day: "numeric",
+      hour: "numeric", minute: "numeric", second: "numeric", hour12: false,
+    });
+    const offsetMinutesAt = (utc: Date): number => {
+      const p = nyWall.formatToParts(utc);
+      const get = (t: string) => Number(p.find((x) => x.type === t)?.value);
+      const asIfUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+      return Math.round((asIfUtc - utc.getTime()) / 60000);
+    };
+    const dp = nyDate.formatToParts(new Date());
+    const g = (t: string) => Number(dp.find((p) => p.type === t)?.value);
+    const wallAsUtc = Date.UTC(g("year"), g("month") - 1, g("day"), 23, 59, 59, 999);
+    let guess = wallAsUtc;
+    for (let i = 0; i < 2; i++) {
+      guess = wallAsUtc - offsetMinutesAt(new Date(guess)) * 60000;
+    }
+    return new Date(guess);
   }
   // YYYY-MM-DD of "today" in America/New_York (teams are US-based; UTC date is
   // wrong near midnight local time).
