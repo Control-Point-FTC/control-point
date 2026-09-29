@@ -359,8 +359,16 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
 
 
 // Migrations - Handle structural updates for existing databases
-const memberColumns = (await dbAll("PRAGMA table_info(members)"));
-if (!memberColumns.some((c: any) => c.name === 'password')) {
+// Social profile pinning / manual ordering.
+const socialProfileColumns = (await dbAll("PRAGMA table_info(social_profiles)"));
+if (!socialProfileColumns.some((c: any) => c.name === 'is_pinned')) {
+  (await dbExec("ALTER TABLE social_profiles ADD COLUMN is_pinned INTEGER DEFAULT 0"));
+}
+if (!socialProfileColumns.some((c: any) => c.name === 'sort_order')) {
+  (await dbExec("ALTER TABLE social_profiles ADD COLUMN sort_order INTEGER DEFAULT 0"));
+}
+
+const memberColumns = (await dbAll("PRAGMA table_info(members)"));if (!memberColumns.some((c: any) => c.name === 'password')) {
   (await dbExec("ALTER TABLE members ADD COLUMN password TEXT"));
 }
 if (!memberColumns.some((c: any) => c.name === 'is_setup')) {
@@ -3647,7 +3655,7 @@ async function startServer() {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const profiles = (await dbAll("SELECT * FROM social_profiles WHERE team_id = ? ORDER BY created_at", auth.teamId)) as any[];
+      const profiles = (await dbAll("SELECT * FROM social_profiles WHERE team_id = ? ORDER BY is_pinned DESC, sort_order ASC, created_at ASC", auth.teamId)) as any[];
       const out = [];
       for (const p of profiles) {
         const snaps = (await dbAll(
@@ -3657,6 +3665,7 @@ async function startServer() {
         out.push({
           id: p.id, platform: p.platform, handle: p.handle, url: p.url,
           display_name: p.display_name, created_at: p.created_at,
+          is_pinned: !!p.is_pinned, sort_order: p.sort_order ?? 0,
           latest: snaps.length ? snaps[snaps.length - 1] : null,
           growth: socialGrowth(snaps),
           snapshot_count: snaps.length,
@@ -3686,10 +3695,24 @@ async function startServer() {
       }
       const dup = (await dbGet("SELECT id FROM social_profiles WHERE team_id = ? AND platform = ? AND LOWER(handle) = LOWER(?)", auth.teamId, platform, handle)) as any;
       if (dup) return res.status(409).json({ error: "This profile is already linked" });
+      const maxOrder = (await dbGet("SELECT COALESCE(MAX(sort_order), -1) AS m FROM social_profiles WHERE team_id = ?", auth.teamId)) as any;
       const info = (await dbRun(
-        "INSERT INTO social_profiles (team_id, platform, handle, url) VALUES (?, ?, ?, ?)",
-        auth.teamId, platform, handle.slice(0, 80), url.slice(0, 300) || null
+        "INSERT INTO social_profiles (team_id, platform, handle, url, sort_order) VALUES (?, ?, ?, ?, ?)",
+        auth.teamId, platform, handle.slice(0, 80), url.slice(0, 300) || null, (maxOrder?.m ?? -1) + 1
       )) as any;
+      // Optional baseline: start tracking from the current numbers right away.
+      const initial = req.body?.initial_stats || {};
+      const num = (v: any) => {
+        const n = parseInt(v, 10);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+      };
+      const f = num(initial.followers), l = num(initial.likes), p = num(initial.posts), vw = num(initial.views);
+      if (f != null || l != null || p != null || vw != null) {
+        await dbRun(
+          "INSERT INTO social_stats (profile_id, team_id, followers, likes, posts, views) VALUES (?, ?, ?, ?, ?, ?)",
+          info.lastInsertRowid, auth.teamId, f, l, p, vw
+        );
+      }
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error adding social profile:", error);
@@ -3708,6 +3731,42 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting social profile:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.patch("/api/outreach/social/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const pinned = req.body?.is_pinned;
+      if (pinned === undefined) return res.status(400).json({ error: "is_pinned is required" });
+      await dbRun("UPDATE social_profiles SET is_pinned = ? WHERE id = ?", pinned ? 1 : 0, req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error pinning social profile:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/outreach/social/reorder", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const ids = req.body?.ids;
+      if (!Array.isArray(ids) || !ids.length || ids.length > 50) {
+        return res.status(400).json({ error: "ids must be a non-empty array" });
+      }
+      const stmts = ids.map((id: any, i: number) => ({
+        sql: "UPDATE social_profiles SET sort_order = ? WHERE id = ? AND team_id = ?",
+        args: [i, parseInt(id, 10), auth.teamId],
+      }));
+      await dbBatch(stmts);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reordering social profiles:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

@@ -58,6 +58,8 @@ import {
   Medal,
   Layers,
   ChevronDown,
+  ChevronUp,
+  Pin,
   Bot,
   Instagram,
   Youtube,
@@ -5375,7 +5377,7 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
   const [showAddProfile, setShowAddProfile] = useState(false);
-  const [newProfile, setNewProfile] = useState({ platform: 'instagram', handle: '', url: '' });
+  const [newProfile, setNewProfile] = useState({ platform: 'instagram', handle: '', url: '', followers: '', likes: '', posts: '', views: '' });
   const [snapshotFor, setSnapshotFor] = useState<number | null>(null);
   const [snapshot, setSnapshot] = useState({ followers: '', likes: '', posts: '', views: '' });
 
@@ -5448,24 +5450,51 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
 
   const handleAddProfile = async () => {
     if (!newProfile.handle.trim()) { notify('Enter a handle or channel name.', 'error'); return; }
+    const num = (v: string) => { const n = parseInt(v, 10); return v.trim() === '' || !Number.isFinite(n) || n < 0 ? null : n; };
+    const initial_stats = {
+      followers: num(newProfile.followers), likes: num(newProfile.likes),
+      posts: num(newProfile.posts), views: num(newProfile.views),
+    };
     const res = await apiFetch('/api/outreach/social', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: newProfile.platform, handle: newProfile.handle.trim(), url: newProfile.url.trim() }),
+      body: JSON.stringify({ platform: newProfile.platform, handle: newProfile.handle.trim(), url: newProfile.url.trim(), initial_stats }),
     });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       notify(d.error || 'Could not link the profile.', 'error');
       return;
     }
-    setNewProfile({ platform: 'instagram', handle: '', url: '' });
+    const hasBaseline = Object.values(initial_stats).some((v) => v != null);
+    setNewProfile({ platform: 'instagram', handle: '', url: '', followers: '', likes: '', posts: '', views: '' });
     setShowAddProfile(false);
     onRefresh();
-    notify('Profile linked. Log a snapshot to start tracking growth.');
+    notify(hasBaseline ? 'Profile linked — tracking starts from today.' : 'Profile linked. Log a snapshot to start tracking growth.');
   };
 
   const handleDeleteProfile = async (id: number) => {
     if (!(await confirmDialog({ title: 'Unlink profile', message: 'Unlink this profile and delete its tracked stats?', confirmLabel: 'Unlink', danger: true }))) return;
     await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
+    onRefresh();
+  };
+
+  const handlePinProfile = async (id: number, pinned: boolean) => {
+    await apiFetch(`/api/outreach/social/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_pinned: !pinned }),
+    });
+    onRefresh();
+  };
+
+  const handleMoveProfile = async (id: number, dir: -1 | 1) => {
+    const ids = (socialProfiles || []).map((p: any) => p.id);
+    const i = ids.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    await apiFetch('/api/outreach/social/reorder', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
     onRefresh();
   };
 
@@ -5556,9 +5585,21 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
                         <p className="text-[11px] text-text-muted">{meta.label}{p.display_name ? ` • ${p.display_name}` : ''}</p>
                       </div>
                     </div>
-                    <button onClick={() => handleDeleteProfile(p.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Unlink profile">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {p.is_pinned ? <Pin className="w-3.5 h-3.5 text-volt" /> : null}
+                      <button onClick={() => handlePinProfile(p.id, !!p.is_pinned)} className={`${p.is_pinned ? 'text-volt' : 'text-slate-600'} hover:text-volt transition-colors`} title={p.is_pinned ? 'Unpin from top' : 'Pin to top'}>
+                        <Pin className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleMoveProfile(p.id, -1)} className="text-slate-600 hover:text-white transition-colors" title="Move up">
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleMoveProfile(p.id, 1)} className="text-slate-600 hover:text-white transition-colors" title="Move down">
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDeleteProfile(p.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Unlink profile">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="flex items-end justify-between gap-2">
                     <div>
@@ -5624,6 +5665,23 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
               <OutreachField label="Profile URL (optional)">
                 <Input placeholder="https://…" value={newProfile.url} onChange={(e: any) => setNewProfile({ ...newProfile, url: e.target.value })} />
               </OutreachField>
+            </div>
+            <div>
+              <p className="text-[11px] text-text-muted mb-2">Current numbers <span className="opacity-70">(optional — starts tracking from today)</span></p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <OutreachField label="Followers">
+                  <Input placeholder="0" type="number" value={newProfile.followers} onChange={(e: any) => setNewProfile({ ...newProfile, followers: e.target.value })} />
+                </OutreachField>
+                <OutreachField label="Likes">
+                  <Input placeholder="0" type="number" value={newProfile.likes} onChange={(e: any) => setNewProfile({ ...newProfile, likes: e.target.value })} />
+                </OutreachField>
+                <OutreachField label="Posts">
+                  <Input placeholder="0" type="number" value={newProfile.posts} onChange={(e: any) => setNewProfile({ ...newProfile, posts: e.target.value })} />
+                </OutreachField>
+                <OutreachField label="Views">
+                  <Input placeholder="0" type="number" value={newProfile.views} onChange={(e: any) => setNewProfile({ ...newProfile, views: e.target.value })} />
+                </OutreachField>
+              </div>
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="secondary" onClick={() => setShowAddProfile(false)}>Cancel</Button>
