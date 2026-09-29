@@ -58,12 +58,7 @@ import {
   Medal,
   Layers,
   ChevronDown,
-  ChevronUp,
-  Pin,
   Bot,
-  Instagram,
-  Youtube,
-  Music2,
   QrCode,
   ScanLine,
   Maximize2,
@@ -792,7 +787,6 @@ export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [budget, setBudget] = useState<BudgetItem[]>([]);
   const [outreach, setOutreach] = useState<OutreachEvent[]>([]);
-  const [socialProfiles, setSocialProfiles] = useState<any[]>([]);
   const [inventory, setInventory] = useState<any[]>([]);
   const [communications, setCommunications] = useState<Communication[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -1161,7 +1155,7 @@ export default function App() {
         }
       };
 
-      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d, ev, soc] = await Promise.all([
+      const [t, m, a, tk, b, o, inv, c, msgs, s, h, d, ev] = await Promise.all([
         fetchJson('/api/teams'),
         fetchJson('/api/members'),
         fetchJson('/api/attendance'),
@@ -1175,7 +1169,6 @@ export default function App() {
         fetchJson('/api/hidden-dates'),
         fetchJson('/api/documentation'),
         fetchJson('/api/events'),
-        fetchJson('/api/outreach/social'),
       ]);
 
       if (Array.isArray(t)) setTeams(t);
@@ -1192,7 +1185,6 @@ export default function App() {
       if (Array.isArray(tk)) setTasks(tk);
       if (Array.isArray(b)) setBudget(b);
       if (Array.isArray(o)) setOutreach(o);
-      if (Array.isArray(soc)) setSocialProfiles(soc);
       if (Array.isArray(inv)) setInventory(inv);
       if (Array.isArray(c)) setCommunications(c);
       if (Array.isArray(msgs)) setMessages(msgs);
@@ -1553,7 +1545,7 @@ export default function App() {
 
   const renderContent = () => {
     const viewProps = {
-      teams, members, attendance, tasks, budget, outreach, socialProfiles, inventory, communications, events,
+      teams, members, attendance, tasks, budget, outreach, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
       // setters for optimistic UI (instant-feeling mutations with rollback on error)
       setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
@@ -5329,36 +5321,12 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
 
 const OUTREACH_PRESETS = ['Demo', 'Workshop', 'Volunteering', 'Fundraiser', 'Presentation', 'Competition'];
 
-const PLATFORM_META: Record<string, { label: string; Icon: any; color: string; metric: string }> = {
-  instagram: { label: 'Instagram', Icon: Instagram, color: '#E1306C', metric: 'Followers' },
-  tiktok: { label: 'TikTok', Icon: Music2, color: '#22d3ee', metric: 'Followers' },
-  youtube: { label: 'YouTube', Icon: Youtube, color: '#f87171', metric: 'Subscribers' },
-};
-
 function fmtCompact(n: any) {
   const v = Number(n);
   if (!isFinite(v)) return '—';
   if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
   if (v >= 1_000) return (v / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
   return String(Math.round(v * 100) / 100);
-}
-
-function Sparkline({ points }: any) {
-  const vals = (points || []).filter((v: any) => typeof v === 'number' && isFinite(v));
-  if (vals.length < 2) return <p className="text-[11px] text-text-muted">Log snapshots to see growth</p>;
-  const w = 120, h = 36, pad = 4;
-  const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1;
-  const pts = vals.map((v: number, i: number) => {
-    const x = pad + (i * (w - 2 * pad)) / (vals.length - 1);
-    const y = h - pad - ((v - min) / span) * (h - 2 * pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  const up = vals[vals.length - 1] >= vals[0];
-  return (
-    <svg width={w} height={h} className="overflow-visible" aria-hidden>
-      <polyline points={pts} fill="none" stroke={up ? '#4ade80' : '#fb7185'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
 }
 
 function OutreachField({ label, children }: any) {
@@ -5370,16 +5338,12 @@ function OutreachField({ label, children }: any) {
   );
 }
 
-function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
+function OutreachView({ outreach, onRefresh }: any) {
   const emptyForm = () => ({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '2', location: '', attendees: '', funds_raised: '' });
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
-  const [showAddProfile, setShowAddProfile] = useState(false);
-  const [newProfile, setNewProfile] = useState({ platform: 'instagram', handle: '', url: '', followers: '', likes: '', posts: '', views: '' });
-  const [snapshotFor, setSnapshotFor] = useState<number | null>(null);
-  const [snapshot, setSnapshot] = useState({ followers: '', likes: '', posts: '', views: '' });
 
   const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
 
@@ -5392,11 +5356,6 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
       funds: list.reduce((s: number, e: any) => s + (Number(e.funds_raised) || 0), 0),
     };
   }, [outreach]);
-
-  const totalFollowers = useMemo(
-    () => (socialProfiles || []).reduce((s: number, p: any) => s + (Number(p.latest?.followers) || 0), 0),
-    [socialProfiles]
-  );
 
   const openAdd = () => { setEditingId(null); setForm(emptyForm()); setShowForm(true); };
   const openEdit = (event: any) => {
@@ -5448,92 +5407,12 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
     onRefresh();
   };
 
-  const handleAddProfile = async () => {
-    if (!newProfile.handle.trim()) { notify('Enter a handle or channel name.', 'error'); return; }
-    const num = (v: string) => { const n = parseInt(v, 10); return v.trim() === '' || !Number.isFinite(n) || n < 0 ? null : n; };
-    const initial_stats = {
-      followers: num(newProfile.followers), likes: num(newProfile.likes),
-      posts: num(newProfile.posts), views: num(newProfile.views),
-    };
-    const res = await apiFetch('/api/outreach/social', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform: newProfile.platform, handle: newProfile.handle.trim(), url: newProfile.url.trim(), initial_stats }),
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      notify(d.error || 'Could not link the profile.', 'error');
-      return;
-    }
-    const hasBaseline = Object.values(initial_stats).some((v) => v != null);
-    setNewProfile({ platform: 'instagram', handle: '', url: '', followers: '', likes: '', posts: '', views: '' });
-    setShowAddProfile(false);
-    onRefresh();
-    notify(hasBaseline ? 'Profile linked — tracking starts from today.' : 'Profile linked. Log a snapshot to start tracking growth.');
-  };
-
-  const handleDeleteProfile = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Unlink profile', message: 'Unlink this profile and delete its tracked stats?', confirmLabel: 'Unlink', danger: true }))) return;
-    await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
-    onRefresh();
-  };
-
-  const handlePinProfile = async (id: number, pinned: boolean) => {
-    await apiFetch(`/api/outreach/social/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_pinned: !pinned }),
-    });
-    onRefresh();
-  };
-
-  const handleMoveProfile = async (id: number, dir: -1 | 1) => {
-    const ids = (socialProfiles || []).map((p: any) => p.id);
-    const i = ids.indexOf(id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    await apiFetch('/api/outreach/social/reorder', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    });
-    onRefresh();
-  };
-
-  const handleLogSnapshot = async (id: number) => {
-    const res = await apiFetch(`/api/outreach/social/${id}/stats`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        followers: snapshot.followers === '' ? null : parseInt(snapshot.followers),
-        likes: snapshot.likes === '' ? null : parseInt(snapshot.likes),
-        posts: snapshot.posts === '' ? null : parseInt(snapshot.posts),
-        views: snapshot.views === '' ? null : parseInt(snapshot.views),
-      }),
-    });
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      notify(d.error || 'Could not log the snapshot.', 'error');
-      return;
-    }
-    setSnapshot({ followers: '', likes: '', posts: '', views: '' });
-    setSnapshotFor(null);
-    onRefresh();
-    notify('Snapshot logged.');
-  };
-
-  const handleRefreshProfile = async (id: number) => {
-    const res = await apiFetch(`/api/outreach/social/${id}/refresh`, { method: 'POST' });
-    const d = await res.json().catch(() => ({}));
-    notify(d.message || 'Refresh done.');
-    onRefresh();
-  };
-
-  const profiles = socialProfiles || [];
-
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Outreach Log</h3>
-          <p className="text-sm text-text-muted mt-1">Track community events, service hours, and social growth.</p>
+          <p className="text-sm text-text-muted mt-1">Track community events and service hours.</p>
         </div>
         <Button onClick={openAdd} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
       </div>
@@ -5545,7 +5424,6 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
           { label: 'Hours', value: `${totals.hours}h`, Icon: Clock },
           { label: 'Attendees', value: fmtCompact(totals.attendees), Icon: User },
           { label: 'Funds raised', value: `$${fmtCompact(totals.funds)}`, Icon: Wallet },
-          { label: 'Social followers', value: fmtCompact(totalFollowers), Icon: TrendingUp },
         ].map(({ label, value, Icon }: any) => (
           <div key={label} className="card-surface rounded-2xl p-4 flex items-center gap-3">
             <div className="rounded-xl bg-accent/12 p-2">
@@ -5558,142 +5436,6 @@ function OutreachView({ outreach, socialProfiles, onRefresh }: any) {
           </div>
         ))}
       </div>
-
-      {/* Social media tracking */}
-      <Card title="Social Media" subtitle="Link profiles and log snapshots to track growth over time" icon={TrendingUp}>
-        <p className="text-xs text-text-muted -mt-2">Auto-sync isn't available without platform API keys — log a snapshot whenever you check your numbers and we'll chart the growth.</p>
-        {profiles.length === 0 && !showAddProfile ? (
-          <div className="text-center py-6">
-            <p className="text-sm text-text-muted mb-3">No social profiles linked yet.</p>
-            <Button variant="secondary" onClick={() => setShowAddProfile(true)}><Plus className="w-4 h-4" /> Link a profile</Button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {profiles.map((p: any) => {
-              const meta = PLATFORM_META[p.platform] || PLATFORM_META.instagram;
-              const PIcon = meta.Icon;
-              const g = p.growth;
-              return (
-                <div key={p.id} className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="rounded-lg p-2" style={{ backgroundColor: meta.color + '22' }}>
-                        <PIcon className="w-4 h-4" style={{ color: meta.color }} />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-white">@{p.handle}</p>
-                        <p className="text-[11px] text-text-muted">{meta.label}{p.display_name ? ` • ${p.display_name}` : ''}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {p.is_pinned ? <Pin className="w-3.5 h-3.5 text-volt" /> : null}
-                      <button onClick={() => handlePinProfile(p.id, !!p.is_pinned)} className={`${p.is_pinned ? 'text-volt' : 'text-slate-600'} hover:text-volt transition-colors`} title={p.is_pinned ? 'Unpin from top' : 'Pin to top'}>
-                        <Pin className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => handleMoveProfile(p.id, -1)} className="text-slate-600 hover:text-white transition-colors" title="Move up">
-                        <ChevronUp className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => handleMoveProfile(p.id, 1)} className="text-slate-600 hover:text-white transition-colors" title="Move down">
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                      <button onClick={() => handleDeleteProfile(p.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Unlink profile">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-end justify-between gap-2">
-                    <div>
-                      <p className="text-2xl font-display font-bold text-white">{fmtCompact(p.latest?.followers)}</p>
-                      <p className="text-[10px] text-text-muted uppercase font-bold">{meta.metric}</p>
-                      {g && (
-                        <p className={`text-xs font-semibold mt-1 ${g.followers >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {g.followers >= 0 ? '+' : ''}{fmtCompact(g.followers)} ({g.followers >= 0 ? '+' : ''}{g.pct}%)
-                        </p>
-                      )}
-                    </div>
-                    <Sparkline points={p.history} />
-                  </div>
-                  {(p.latest?.likes != null || p.latest?.posts != null || p.latest?.views != null) && (
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
-                      {p.latest?.likes != null && <span><b className="text-white/80">{fmtCompact(p.latest.likes)}</b> likes</span>}
-                      {p.latest?.posts != null && <span><b className="text-white/80">{fmtCompact(p.latest.posts)}</b> {p.platform === 'youtube' ? 'videos' : 'posts'}</span>}
-                      {p.latest?.views != null && <span><b className="text-white/80">{fmtCompact(p.latest.views)}</b> views</span>}
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <Button variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={() => { setSnapshotFor(snapshotFor === p.id ? null : p.id); setSnapshot({ followers: '', likes: '', posts: '', views: '' }); }}>
-                      Log snapshot
-                    </Button>
-                    <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => handleRefreshProfile(p.id)}>
-                      Verify profile
-                    </Button>
-                  </div>
-                  {snapshotFor === p.id && (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <Input placeholder={meta.metric} type="number" value={snapshot.followers} onChange={(e: any) => setSnapshot({ ...snapshot, followers: e.target.value })} />
-                      <Input placeholder="Likes" type="number" value={snapshot.likes} onChange={(e: any) => setSnapshot({ ...snapshot, likes: e.target.value })} />
-                      <Input placeholder={p.platform === 'youtube' ? 'Videos' : 'Posts'} type="number" value={snapshot.posts} onChange={(e: any) => setSnapshot({ ...snapshot, posts: e.target.value })} />
-                      <Input placeholder="Views" type="number" value={snapshot.views} onChange={(e: any) => setSnapshot({ ...snapshot, views: e.target.value })} />
-                      <div className="col-span-2 flex gap-2 justify-end">
-                        <Button variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => setSnapshotFor(null)}>Cancel</Button>
-                        <Button className="!px-3 !py-1.5 !text-xs" onClick={() => handleLogSnapshot(p.id)}>Save snapshot</Button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {showAddProfile ? (
-          <div className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <OutreachField label="Platform">
-                <Select
-                  options={[
-                    { label: 'Instagram', value: 'instagram' },
-                    { label: 'TikTok', value: 'tiktok' },
-                    { label: 'YouTube', value: 'youtube' },
-                  ]}
-                  value={newProfile.platform}
-                  onChange={(e: any) => setNewProfile({ ...newProfile, platform: e.target.value })}
-                />
-              </OutreachField>
-              <OutreachField label="Handle / channel">
-                <Input placeholder="@yourteam" value={newProfile.handle} onChange={(e: any) => setNewProfile({ ...newProfile, handle: e.target.value })} />
-              </OutreachField>
-              <OutreachField label="Profile URL (optional)">
-                <Input placeholder="https://…" value={newProfile.url} onChange={(e: any) => setNewProfile({ ...newProfile, url: e.target.value })} />
-              </OutreachField>
-            </div>
-            <div>
-              <p className="text-[11px] text-text-muted mb-2">Current numbers <span className="opacity-70">(optional — starts tracking from today)</span></p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <OutreachField label="Followers">
-                  <Input placeholder="0" type="number" value={newProfile.followers} onChange={(e: any) => setNewProfile({ ...newProfile, followers: e.target.value })} />
-                </OutreachField>
-                <OutreachField label="Likes">
-                  <Input placeholder="0" type="number" value={newProfile.likes} onChange={(e: any) => setNewProfile({ ...newProfile, likes: e.target.value })} />
-                </OutreachField>
-                <OutreachField label="Posts">
-                  <Input placeholder="0" type="number" value={newProfile.posts} onChange={(e: any) => setNewProfile({ ...newProfile, posts: e.target.value })} />
-                </OutreachField>
-                <OutreachField label="Views">
-                  <Input placeholder="0" type="number" value={newProfile.views} onChange={(e: any) => setNewProfile({ ...newProfile, views: e.target.value })} />
-                </OutreachField>
-              </div>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="secondary" onClick={() => setShowAddProfile(false)}>Cancel</Button>
-              <Button onClick={handleAddProfile}>Link profile</Button>
-            </div>
-          </div>
-        ) : (
-          profiles.length > 0 && (
-            <Button variant="secondary" onClick={() => setShowAddProfile(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Link another profile</Button>
-          )
-        )}
-      </Card>
 
       {/* Event cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">

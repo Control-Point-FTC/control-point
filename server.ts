@@ -188,28 +188,6 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     location TEXT
   );
 
-  CREATE TABLE IF NOT EXISTS social_profiles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    team_id INTEGER,
-    platform TEXT NOT NULL,
-    handle TEXT NOT NULL,
-    url TEXT,
-    display_name TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS social_stats (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    profile_id INTEGER,
-    team_id INTEGER,
-    followers INTEGER,
-    likes INTEGER,
-    posts INTEGER,
-    views INTEGER,
-    recorded_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(profile_id) REFERENCES social_profiles(id)
-  );
-
   CREATE TABLE IF NOT EXISTS inventory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id INTEGER,
@@ -359,15 +337,6 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
 
 
 // Migrations - Handle structural updates for existing databases
-// Social profile pinning / manual ordering.
-const socialProfileColumns = (await dbAll("PRAGMA table_info(social_profiles)"));
-if (!socialProfileColumns.some((c: any) => c.name === 'is_pinned')) {
-  (await dbExec("ALTER TABLE social_profiles ADD COLUMN is_pinned INTEGER DEFAULT 0"));
-}
-if (!socialProfileColumns.some((c: any) => c.name === 'sort_order')) {
-  (await dbExec("ALTER TABLE social_profiles ADD COLUMN sort_order INTEGER DEFAULT 0"));
-}
-
 const memberColumns = (await dbAll("PRAGMA table_info(members)"));if (!memberColumns.some((c: any) => c.name === 'password')) {
   (await dbExec("ALTER TABLE members ADD COLUMN password TEXT"));
 }
@@ -2131,8 +2100,6 @@ async function startServer() {
       { sql: "DELETE FROM events WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM budget WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM outreach WHERE team_id = ?", args: [teamId] },
-      { sql: "DELETE FROM social_stats WHERE team_id = ?", args: [teamId] },
-      { sql: "DELETE FROM social_profiles WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM inventory WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM communications WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM messages WHERE team_id = ?", args: [teamId] },
@@ -3631,204 +3598,6 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting outreach event:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  // Outreach: social media tracking (Instagram, TikTok, YouTube).
-  // Honest by design: follower/like counts are logged as manual snapshots because
-  // the platforms offer no keyless public API for them. The refresh endpoint only
-  // validates that the profile URL resolves (YouTube oEmbed) — it never invents numbers.
-  const SOCIAL_PLATFORMS = ["instagram", "tiktok", "youtube"];
-
-  function socialGrowth(snapshots: any[]) {
-    if (!snapshots || snapshots.length < 2) return null;
-    const first = snapshots[0];
-    const last = snapshots[snapshots.length - 1];
-    const dFollowers = (last.followers || 0) - (first.followers || 0);
-    const dLikes = (last.likes || 0) - (first.likes || 0);
-    const pct = first.followers ? (dFollowers / first.followers) * 100 : 0;
-    return { followers: dFollowers, likes: dLikes, pct: Math.round(pct * 10) / 10 };
-  }
-
-  app.get("/api/outreach/social", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const profiles = (await dbAll("SELECT * FROM social_profiles WHERE team_id = ? ORDER BY is_pinned DESC, sort_order ASC, created_at ASC", auth.teamId)) as any[];
-      const out = [];
-      for (const p of profiles) {
-        const snaps = (await dbAll(
-          "SELECT followers, likes, posts, views, recorded_at FROM social_stats WHERE profile_id = ? AND team_id = ? ORDER BY recorded_at ASC LIMIT 60",
-          p.id, auth.teamId
-        )) as any[];
-        out.push({
-          id: p.id, platform: p.platform, handle: p.handle, url: p.url,
-          display_name: p.display_name, created_at: p.created_at,
-          is_pinned: !!p.is_pinned, sort_order: p.sort_order ?? 0,
-          latest: snaps.length ? snaps[snaps.length - 1] : null,
-          growth: socialGrowth(snaps),
-          snapshot_count: snaps.length,
-          history: snaps.slice(-12).map((s: any) => s.followers),
-        });
-      }
-      res.json(out);
-    } catch (error) {
-      console.error("Error fetching social profiles:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.post("/api/outreach/social", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const platform = String(req.body?.platform || "").toLowerCase().trim();
-      let handle = String(req.body?.handle || "").trim().replace(/^@/, "");
-      const url = String(req.body?.url || "").trim();
-      if (!SOCIAL_PLATFORMS.includes(platform)) {
-        return res.status(400).json({ error: "Platform must be instagram, tiktok, or youtube" });
-      }
-      if (!handle) return res.status(400).json({ error: "A handle or channel name is required" });
-      if (url && !/^https?:\/\//i.test(url)) {
-        return res.status(400).json({ error: "URL must start with http:// or https://" });
-      }
-      const dup = (await dbGet("SELECT id FROM social_profiles WHERE team_id = ? AND platform = ? AND LOWER(handle) = LOWER(?)", auth.teamId, platform, handle)) as any;
-      if (dup) return res.status(409).json({ error: "This profile is already linked" });
-      const maxOrder = (await dbGet("SELECT COALESCE(MAX(sort_order), -1) AS m FROM social_profiles WHERE team_id = ?", auth.teamId)) as any;
-      const info = (await dbRun(
-        "INSERT INTO social_profiles (team_id, platform, handle, url, sort_order) VALUES (?, ?, ?, ?, ?)",
-        auth.teamId, platform, handle.slice(0, 80), url.slice(0, 300) || null, (maxOrder?.m ?? -1) + 1
-      )) as any;
-      // Optional baseline: start tracking from the current numbers right away.
-      const initial = req.body?.initial_stats || {};
-      const num = (v: any) => {
-        const n = parseInt(v, 10);
-        return Number.isFinite(n) && n >= 0 ? n : null;
-      };
-      const f = num(initial.followers), l = num(initial.likes), p = num(initial.posts), vw = num(initial.views);
-      if (f != null || l != null || p != null || vw != null) {
-        await dbRun(
-          "INSERT INTO social_stats (profile_id, team_id, followers, likes, posts, views) VALUES (?, ?, ?, ?, ?, ?)",
-          info.lastInsertRowid, auth.teamId, f, l, p, vw
-        );
-      }
-      res.json({ id: info.lastInsertRowid });
-    } catch (error) {
-      console.error("Error adding social profile:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.delete("/api/outreach/social/:id", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const existing: any = (await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id));
-      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      (await dbRun("DELETE FROM social_stats WHERE profile_id = ?", req.params.id));
-      (await dbRun("DELETE FROM social_profiles WHERE id = ?", req.params.id));
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting social profile:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.patch("/api/outreach/social/:id", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const existing: any = (await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id));
-      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      const pinned = req.body?.is_pinned;
-      if (pinned === undefined) return res.status(400).json({ error: "is_pinned is required" });
-      await dbRun("UPDATE social_profiles SET is_pinned = ? WHERE id = ?", pinned ? 1 : 0, req.params.id);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error pinning social profile:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.post("/api/outreach/social/reorder", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const ids = req.body?.ids;
-      if (!Array.isArray(ids) || !ids.length || ids.length > 50) {
-        return res.status(400).json({ error: "ids must be a non-empty array" });
-      }
-      const stmts = ids.map((id: any, i: number) => ({
-        sql: "UPDATE social_profiles SET sort_order = ? WHERE id = ? AND team_id = ?",
-        args: [i, parseInt(id, 10), auth.teamId],
-      }));
-      await dbBatch(stmts);
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error reordering social profiles:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.post("/api/outreach/social/:id/stats", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const existing: any = (await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id));
-      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      const num = (v: any) => { const n = parseInt(v); return isNaN(n) || n < 0 ? null : n; };
-      const followers = num(req.body?.followers), likes = num(req.body?.likes),
-            posts = num(req.body?.posts), views = num(req.body?.views);
-      if (followers === null && likes === null && posts === null && views === null) {
-        return res.status(400).json({ error: "Enter at least one number" });
-      }
-      (await dbRun(
-        "INSERT INTO social_stats (profile_id, team_id, followers, likes, posts, views) VALUES (?, ?, ?, ?, ?, ?)",
-        req.params.id, auth.teamId, followers, likes, posts, views
-      ));
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error logging social stats:", error);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  // Best-effort public validation of a linked profile. YouTube oEmbed confirms the
-  // URL resolves to a real channel/video and returns its display name — no counts
-  // are available without API keys, so this never writes stats.
-  app.post("/api/outreach/social/:id/refresh", async (req, res) => {
-    try {
-      const auth = await requireAuth(req, res);
-      if (!auth) return;
-      const profile: any = (await dbGet("SELECT * FROM social_profiles WHERE id = ?", req.params.id));
-      if (!profile || profile.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      let displayName: string | null = null;
-      if (profile.platform === "youtube" && profile.url) {
-        try {
-          const ctl = new AbortController();
-          const t = setTimeout(() => ctl.abort(), 8000);
-          const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(profile.url)}&format=json`, { signal: ctl.signal });
-          clearTimeout(t);
-          if (r.ok) {
-            const meta: any = await r.json().catch(() => null);
-            displayName = meta?.author_name || meta?.title || null;
-          }
-        } catch { /* network failure — report honestly below */ }
-      }
-      if (displayName) {
-        (await dbRun("UPDATE social_profiles SET display_name = ? WHERE id = ?", displayName.slice(0, 120), profile.id));
-      }
-      res.json({
-        ok: true,
-        auto: false,
-        displayName,
-        message: displayName
-          ? `Profile verified as "${displayName}". Follower counts can't auto-sync without platform API keys — log a snapshot to track growth.`
-          : "Couldn't auto-verify this profile. Follower counts can't auto-sync without platform API keys — log a snapshot manually to track growth.",
-      });
-    } catch (error) {
-      console.error("Error refreshing social profile:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
