@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Send, ExternalLink, Sparkles, Maximize2 } from 'lucide-react';
-import { streamBuildHelper, stripEventBlocks, detectBrunoDataActions, notifyBrunoDataChanged, type BuildHelperMessage } from '../services/aiService';
+import { X, ExternalLink, Sparkles, Maximize2 } from 'lucide-react';
+import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
+import ChatInput from './ChatInput';
+import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
@@ -28,6 +30,20 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
 }) {
   const name = botName || 'Bruno';
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
+  // Data-action proposals: pending until the user taps the confirm card.
+  const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
+
+  const confirmProposals = async (idx: number, proposals: ActionProposal[]) => {
+    setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
+    try {
+      const applied = await applyActionProposals(proposals);
+      const types = Object.keys(applied).map((k) => (k === 'event' ? 'calendar' : k));
+      notifyBrunoDataChanged(types);
+      setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
+    } catch (e: any) {
+      setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
+    }
+  };
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [chatId, setChatId] = useState<number | null>(null);
@@ -105,10 +121,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       }, id || undefined);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
-      } else {
-        // Bruno may have inserted calendar/outreach data — refresh those views without a reload.
-        notifyBrunoDataChanged(detectBrunoDataActions(agg));
       }
+      // Note: data-action proposal blocks are NOT auto-inserted anymore — the
+      // confirm card calls applyActionProposals + notify on tap.
     } catch {
       setMessages([...next, { role: 'model', text: `${name} isn't reachable right now. Check your connection and try again.` }]);
     } finally {
@@ -217,6 +232,23 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                           ))}
                         </span>
                       )}
+                      {(() => {
+                        // Data-action proposals: confirm card once the reply is complete.
+                        if (!m.text || (busy && i === messages.length - 1)) return null;
+                        const proposals = extractActionProposals(m.text);
+                        if (!proposals.length) return null;
+                        const st = proposalState[i]?.status || 'pending';
+                        if (st === 'dismissed') return null;
+                        return (
+                          <ActionProposalCard
+                            proposals={proposals}
+                            status={st}
+                            error={proposalState[i]?.error}
+                            onConfirm={() => confirmProposals(i, proposals)}
+                            onDismiss={() => setProposalState((s) => ({ ...s, [i]: { status: 'dismissed' } }))}
+                          />
+                        );
+                      })()}
                     </div>
                   </div>
                 )
@@ -231,23 +263,13 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
               }}
               className="p-3 border-t border-white/10 bg-white/[0.02] flex-shrink-0"
             >
-              <div className="flex gap-2">
-                <input
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask about mechanisms, code, strategy…"
-                  disabled={busy}
-                  className="flex-1 min-w-0 bg-primary border border-white/10 rounded-xl px-3.5 py-2.5 text-[13px] text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/50 transition-colors disabled:opacity-50"
-                />
-                <button
-                  type="submit"
-                  disabled={busy || !input.trim()}
-                  aria-label="Send"
-                  className="w-10 h-10 shrink-0 rounded-xl bg-accent text-primary flex items-center justify-center hover:brightness-110 active:scale-95 transition disabled:opacity-40"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
+              <ChatInput
+                value={input}
+                onChange={setInput}
+                onSend={() => send()}
+                disabled={busy}
+                placeholder="Ask about mechanisms, code, strategy…"
+              />
               <p className="text-[10px] text-text-muted/60 mt-1.5 px-1">
                 Grounded in GM0, FTC docs &amp; REV resources. Verify rules in the official manual.
               </p>

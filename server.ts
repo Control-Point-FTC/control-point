@@ -4264,25 +4264,32 @@ async function startServer() {
   // when the user confirms an event. Parse it, validate, strip it from the
   // visible text. Returns { text, event } where event is null when absent/invalid.
   const EVENT_BLOCK_RE = /```event\s*\r?\n([\s\S]*?)\r?\n```/;
-  function extractEventBlock(fullText: string): { text: string; event: { title: string; date: string; time: string; notes: string } | null } {
+  // Bruno calendar skill: the model ends its reply with a fenced ```event block
+  // (a JSON object OR array) when the user confirms calendar events. Parse,
+  // validate, strip. Events are only PROPOSED here — the client shows a
+  // confirm button and the user confirms via POST /api/ai/apply-actions.
+  function extractEventBlock(fullText: string): { text: string; events: { title: string; date: string; time: string; notes: string }[] | null } {
     const src = String(fullText || "");
     const m = src.match(EVENT_BLOCK_RE);
-    if (!m) return { text: src, event: null };
-    let event: { title: string; date: string; time: string; notes: string } | null = null;
+    if (!m) return { text: src, events: null };
+    let events: { title: string; date: string; time: string; notes: string }[] | null = null;
     try {
-      const p = JSON.parse(m[1]);
-      const okDate = typeof p?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && !isNaN(new Date(p.date + "T00:00:00").getTime());
-      const okTime = !p?.time || (typeof p.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(p.time));
-      if (p && typeof p.title === "string" && p.title.trim() && okDate && okTime) {
-        event = {
+      const raw = JSON.parse(m[1]);
+      const arr = Array.isArray(raw) ? raw : [raw];
+      const valid = arr.map((p: any) => {
+        const okDate = typeof p?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && !isNaN(new Date(p.date + "T00:00:00").getTime());
+        const okTime = !p?.time || (typeof p.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(p.time));
+        if (!p || typeof p.title !== "string" || !p.title.trim() || !okDate || !okTime) return null;
+        return {
           title: p.title.trim().slice(0, 120),
           date: p.date,
           time: typeof p.time === "string" ? p.time : "",
           notes: typeof p.notes === "string" ? p.notes.trim().slice(0, 500) : "",
         };
-      }
-    } catch { /* malformed JSON — treat as no event */ }
-    return { text: src.replace(EVENT_BLOCK_RE, "").trim(), event };
+      }).filter(Boolean);
+      if (valid.length && valid.length <= 20) events = valid;
+    } catch { /* malformed JSON — treat as no events */ }
+    return { text: src.replace(EVENT_BLOCK_RE, "").trim(), events };
   }
 
   // Bruno outreach skill: the model ends its reply with a fenced ```outreach block
@@ -4316,6 +4323,71 @@ async function startServer() {
       }
     } catch { /* malformed JSON — treat as no entries */ }
     return { text: src.replace(OUTREACH_BLOCK_RE, "").trim(), entries };
+  }
+
+  // Bruno tasks skill: the model ends its reply with a fenced ```tasks block
+  // (a JSON array) when the user confirms task entries. Parse, validate, strip.
+  // Tasks are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
+  const TASKS_BLOCK_RE = /```tasks\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractTasksBlock(fullText: string): { text: string; tasks: { title: string; description: string; due_date: string }[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(TASKS_BLOCK_RE);
+    if (!m) return { text: src, tasks: null };
+    let tasks: { title: string; description: string; due_date: string }[] | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
+        const valid = p.map((t: any) => {
+          if (!t || typeof t.title !== "string" || !t.title.trim()) return null;
+          let due = "";
+          if (typeof t.due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.due_date) && !isNaN(new Date(t.due_date + "T00:00:00").getTime())) {
+            due = t.due_date;
+          }
+          return {
+            title: t.title.trim().slice(0, 120),
+            description: typeof t.description === "string" ? t.description.trim().slice(0, 500) : "",
+            due_date: due,
+          };
+        }).filter(Boolean);
+        if (valid.length) tasks = valid;
+      }
+    } catch { /* malformed JSON — treat as no tasks */ }
+    return { text: src.replace(TASKS_BLOCK_RE, "").trim(), tasks };
+  }
+
+  // Bruno budget skill: the model ends its reply with a fenced ```budget block
+  // (a JSON array) when the user confirms budget entries. Parse, validate, strip.
+  // Entries are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
+  const BUDGET_BLOCK_RE = /```budget\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractBudgetBlock(fullText: string): { text: string; entries: { type: string; amount: number; category: string; description: string; date: string }[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(BUDGET_BLOCK_RE);
+    if (!m) return { text: src, entries: null };
+    let entries: { type: string; amount: number; category: string; description: string; date: string }[] | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
+        const today = new Date().toISOString().slice(0, 10);
+        const valid = p.map((b: any) => {
+          const amount = parseFloat(b?.amount);
+          if (isNaN(amount) || amount <= 0) return null;
+          const type = b?.type === "income" ? "income" : "expense";
+          let date = today;
+          if (typeof b?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && !isNaN(new Date(b.date + "T00:00:00").getTime())) {
+            date = b.date;
+          }
+          return {
+            type,
+            amount: Math.round(amount * 100) / 100,
+            category: typeof b?.category === "string" ? b.category.trim().slice(0, 80) : "",
+            description: typeof b?.description === "string" ? b.description.trim().slice(0, 500) : "",
+            date,
+          };
+        }).filter(Boolean);
+        if (valid.length) entries = valid;
+      }
+    } catch { /* malformed JSON — treat as no entries */ }
+    return { text: src.replace(BUDGET_BLOCK_RE, "").trim(), entries };
   }
 
   // NavGPT coding handoff: the model ends its reply with a fenced ```switch block
@@ -4360,41 +4432,17 @@ async function startServer() {
       const personaOverride = req.body?.persona === "bruno" ? "bruno" : null;
       const navGptOn = !personaOverride && (await navGptActiveForTeam(auth.teamId));
       const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", fullContext].filter(Boolean).join("\n\n");
-      // After generation, handle a ```event block: create the calendar event,
-      // strip the raw block, and append a confirmation line.
-      const applyEventBlock = async (rawText: string): Promise<string> => {
-        const { text, event } = extractEventBlock(rawText);
-        if (!event) return text;
-        try {
-          await insertTeamEvent(auth.teamId, auth.memberId, event);
-          const when = event.time ? `${event.date} at ${event.time}` : event.date;
-          return (text ? text + "\n\n" : "") + `📅 Added to the team calendar: **${event.title}** — ${when}.`;
-        } catch (e) {
-          console.error("Bruno calendar event insert failed:", e);
-          return (text ? text + "\n\n" : "") + "⚠️ I couldn't save that to the team calendar — please try again.";
-        }
-      };
-      // Same pattern for a ```outreach block: log one or many outreach entries,
-      // strip the raw block, and append a confirmation line.
-      const applyOutreachBlock = async (rawText: string): Promise<string> => {
-        const { text, entries } = extractOutreachBlock(rawText);
-        if (!entries) return text;
-        try {
-          for (const e of entries) {
-            (await dbRun(
-              "INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              e.title, e.description, e.date, e.hours, e.location, e.attendees, e.funds_raised, auth.teamId
-            ));
-          }
-          const names = entries.map((e: any) => `**${e.title}**`).join(", ");
-          const line = entries.length === 1
-            ? `📣 Logged outreach event: ${names}.`
-            : `📣 Logged ${entries.length} outreach events: ${names}.`;
-          return (text ? text + "\n\n" : "") + line;
-        } catch (e) {
-          console.error("Bruno outreach insert failed:", e);
-          return (text ? text + "\n\n" : "") + "⚠️ I couldn't save those to the outreach log — please try again.";
-        }
+      // Data-action blocks (```event, ```outreach, ```tasks, ```budget) are
+      // PROPOSALS only: strip them from the reply text here. Nothing is
+      // inserted until the user taps the confirm button, which calls
+      // POST /api/ai/apply-actions with the parsed items.
+      const stripActionBlocks = (rawText: string): string => {
+        let t = extractSwitchBlock(rawText).text;
+        t = extractEventBlock(t).text;
+        t = extractOutreachBlock(t).text;
+        t = extractTasksBlock(t).text;
+        t = extractBudgetBlock(t).text;
+        return t;
       };
       // Optional chat persistence: validate access, store the user message now
       const chatId = parseInt(req.body?.chatId, 10) || 0;
@@ -4424,9 +4472,10 @@ async function startServer() {
         res.setHeader("Cache-Control", "no-cache");
         try {
           const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra);
-          // Strip the NavGPT ```switch handoff block before persisting (the live
-          // client strips it for display itself and renders the switch button).
-          const finalText = await applyOutreachBlock(await applyEventBlock(extractSwitchBlock(fullText).text));
+          // Strip the NavGPT ```switch handoff block and any data-action proposal
+          // blocks before persisting (the live client strips them for display
+          // itself and renders the switch button / confirm card).
+          const finalText = stripActionBlocks(fullText);
           if (chat && String(finalText || "").trim()) {
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
@@ -4438,7 +4487,7 @@ async function startServer() {
         return;
       }
       const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra);
-      const finalResult = await applyOutreachBlock(await applyEventBlock(extractSwitchBlock(String(result || "")).text));
+      const finalResult = stripActionBlocks(String(result || ""));
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
@@ -4449,6 +4498,78 @@ async function startServer() {
     } catch (error) {
       console.error("AI build-helper error:", error);
       res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
+    }
+  });
+
+  // Confirm + apply Bruno/NavGPT data-action proposals (```event, ```outreach,
+  // ```tasks, ```budget blocks). The AI only proposes; nothing is inserted
+  // until the user taps the confirm button, which calls this endpoint with the
+  // parsed items. Server re-validates everything before inserting.
+  // Permissions mirror the direct APIs: events/outreach any team member (same
+  // as the old Bruno auto-insert behavior), tasks/budget admins only.
+  app.post("/api/ai/apply-actions", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const actions = req.body?.actions;
+      if (!Array.isArray(actions) || !actions.length || actions.length > 4) {
+        return res.status(400).json({ error: "No actions to apply" });
+      }
+      const isAdmin = await hasPerm(auth, "manage_members");
+      const applied: Record<string, number> = {};
+      const createdAt = new Date().toISOString();
+      for (const a of actions) {
+        const kind = a?.kind;
+        const items = Array.isArray(a?.items) ? a.items : [];
+        if (!items.length || items.length > 20) continue;
+        if (kind === "event") {
+          const { events } = extractEventBlock("```event\n" + JSON.stringify(items) + "\n```");
+          if (!events?.length) continue;
+          for (const e of events) {
+            (await insertTeamEvent(auth.teamId, auth.memberId, e));
+          }
+          applied.event = (applied.event || 0) + events.length;
+        } else if (kind === "outreach") {
+          const { entries } = extractOutreachBlock("```outreach\n" + JSON.stringify(items) + "\n```");
+          if (!entries?.length) continue;
+          for (const e of entries) {
+            (await dbRun(
+              "INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              e.title, e.description, e.date, e.hours, e.location, e.attendees, e.funds_raised, auth.teamId
+            ));
+          }
+          applied.outreach = (applied.outreach || 0) + entries.length;
+        } else if (kind === "task") {
+          if (!isAdmin) return res.status(403).json({ error: "Only admins can add tasks" });
+          const { tasks } = extractTasksBlock("```tasks\n" + JSON.stringify(items) + "\n```");
+          if (!tasks?.length) continue;
+          for (const t of tasks) {
+            (await dbRun(
+              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, 'todo', NULL, ?, 0, ?)",
+              auth.teamId, t.title, t.description, t.due_date || null, createdAt
+            ));
+          }
+          applied.task = (applied.task || 0) + tasks.length;
+        } else if (kind === "budget") {
+          if (!isAdmin) return res.status(403).json({ error: "Only admins can add budget entries" });
+          const { entries } = extractBudgetBlock("```budget\n" + JSON.stringify(items) + "\n```");
+          if (!entries?.length) continue;
+          for (const b of entries) {
+            (await dbRun(
+              "INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)",
+              auth.teamId, b.type, b.amount, b.category, b.description, b.date
+            ));
+          }
+          applied.budget = (applied.budget || 0) + entries.length;
+        }
+      }
+      if (!Object.keys(applied).length) {
+        return res.status(400).json({ error: "Nothing valid to add — please try again" });
+      }
+      res.json({ ok: true, applied });
+    } catch (error) {
+      console.error("AI apply-actions error:", error);
+      res.status(500).json({ error: "Couldn't save those — please try again" });
     }
   });
 

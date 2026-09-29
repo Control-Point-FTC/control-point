@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
-  Bot, Plus, Trash2, Send, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
+  Bot, Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
-import { streamBuildHelper, stripEventBlocks, stripSwitchBlock, detectBrunoDataActions, notifyBrunoDataChanged, type BuildHelperMessage } from '../services/aiService';
+import ChatInput from './ChatInput';
+import { streamBuildHelper, stripEventBlocks, stripSwitchBlock, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
+import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 import { confirmDialog } from './dialog';
 
 const STARTERS = [
@@ -45,6 +47,22 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   // tracked by message index so "Nah" sticks.
   const [personaByChat, setPersonaByChat] = useState<Record<number, string>>({});
   const [dismissedSwitch, setDismissedSwitch] = useState<number[]>([]);
+  // Data-action proposals (```event/```outreach/```tasks/```budget blocks):
+  // pending until the user taps the confirm card's "Add all" button.
+  const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
+
+  const confirmProposals = async (idx: number, proposals: ActionProposal[]) => {
+    setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
+    try {
+      const applied = await applyActionProposals(proposals);
+      // Refresh any views the applied actions touch (calendar, tasks, ...).
+      const types = Object.keys(applied).map((k) => (k === 'event' ? 'calendar' : k));
+      notifyBrunoDataChanged(types);
+      setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
+    } catch (e: any) {
+      setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
+    }
+  };
 
   const isAdmin = hasScope ? hasScope('admin') : false;
   const activeChat = chats.find((c) => c.id === activeId) || null;
@@ -78,6 +96,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       return;
     }
     setDismissedSwitch([]);
+    setProposalState({});
     (async () => {
       try {
         const res = await apiFetch(`/api/bruno/chats/${activeId}`);
@@ -126,10 +145,9 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       }, chatId || undefined, persona ? { persona } : undefined);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
-      } else {
-        // Bruno may have inserted calendar/outreach data — refresh those views without a reload.
-        notifyBrunoDataChanged(detectBrunoDataActions(agg));
       }
+      // Note: data-action proposal blocks (```event etc.) are NOT auto-inserted
+      // anymore — the confirm card calls applyActionProposals + notify on tap.
       fetchChats(chatId);
     } catch {
       setMessages((prev) => {
@@ -164,8 +182,6 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       }, cid, { persona: 'bruno' });
       if (!agg.trim()) {
         setMessages([...base, { role: 'model', text: `Bruno hit a snag — please try again in a moment.` }]);
-      } else {
-        notifyBrunoDataChanged(detectBrunoDataActions(agg));
       }
     } catch {
       setMessages([...base, { role: 'model', text: `Bruno isn't reachable right now. Check your connection and try again.` }]);
@@ -404,6 +420,24 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                       ))}
                     </span>
                   )}
+                  {(() => {
+                    // Data-action proposals: show the confirm card once the reply
+                    // is complete (not while this message is still streaming).
+                    if (!m.text || (busy && i === messages.length - 1)) return null;
+                    const proposals = extractActionProposals(m.text);
+                    if (!proposals.length) return null;
+                    const st = proposalState[i]?.status || 'pending';
+                    if (st === 'dismissed') return null;
+                    return (
+                      <ActionProposalCard
+                        proposals={proposals}
+                        status={st}
+                        error={proposalState[i]?.error}
+                        onConfirm={() => confirmProposals(i, proposals)}
+                        onDismiss={() => setProposalState((s) => ({ ...s, [i]: { status: 'dismissed' } }))}
+                      />
+                    );
+                  })()}
                   {i === lastModelIdx && stripSwitchBlock(m.text).switchTo === 'bruno' && !dismissedSwitch.includes(i) && !busy && (
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <button
@@ -431,26 +465,17 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
           onSubmit={(e) => { e.preventDefault(); send(); }}
           className="p-3 border-t border-white/10 bg-white/[0.02]"
         >
-          <div className="flex gap-2">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about mechanisms, code, strategy…"
-              disabled={busy}
-              className="flex-1 min-w-0 bg-primary border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/50 transition-colors disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={busy || !input.trim()}
-              aria-label="Send"
-              className="w-10 h-10 shrink-0 rounded-xl bg-accent text-primary flex items-center justify-center hover:brightness-110 active:scale-95 transition disabled:opacity-40"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </div>
+          <ChatInput
+            value={input}
+            onChange={setInput}
+            onSend={() => send()}
+            disabled={busy}
+            placeholder="Ask about mechanisms, code, strategy…"
+          />
           <p className="text-[10px] text-text-muted/60 mt-1.5 px-1 flex items-center gap-1">
             <Sparkles className="w-3 h-3" />
             Grounded in GM0, FTC docs &amp; supplier resources. Verify rules in the official manual.
+            <span className="ml-auto hidden sm:inline">Shift+Enter for a new line</span>
           </p>
         </form>
       </div>

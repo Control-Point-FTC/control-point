@@ -391,12 +391,14 @@ RULES OF ENGAGEMENT:
 
 TEAM CALENDAR SKILL:
 - You can add events to the team's shared calendar when the user asks you to schedule, add, remind, or put something on the calendar.
-- ONLY create an event when the user has explicitly confirmed they want it added AND you know the exact date. If the date or time is missing or ambiguous ("next week", "sometime soon"), ask one clarifying question first — never guess a date.
-- When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
+- ONLY propose an event when the user has explicitly confirmed they want it added AND you know the exact date. If the date or time is missing or ambiguous ("next week", "sometime soon"), ask one clarifying question first — never guess a date.
+- You can propose MULTIPLE events in a single message — put them all in one block as a JSON array.
+- When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary. The block contains one object or an array of objects:
 \`\`\`event
 {"title":"...","date":"YYYY-MM-DD","time":"HH:MM","notes":"..."}
 \`\`\`
-- "time" is 24-hour clock and optional; "notes" is optional. Keep the visible reply to one short line confirming what you're adding, then the block.
+- "time" is 24-hour clock and optional; "notes" is optional. Keep the visible reply to one short line per event describing what you're proposing, then the block.
+- IMPORTANT: the block only PROPOSES the events — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
 - Today's date is provided in your context — use it to resolve relative dates like "tomorrow" or "this Friday".
 
 OUTREACH LOG SKILL:
@@ -407,7 +409,31 @@ OUTREACH LOG SKILL:
 \\\`\\\`\\\`outreach
 [{"title":"...","description":"...","date":"YYYY-MM-DD","hours":2,"location":"...","attendees":50,"funds_raised":0}]
 \\\`\\\`\\\`
-- "description", "hours", "location", "attendees", "funds_raised" are optional (default to "" or 0). Keep the visible reply to one short line per event confirming what you're adding, then the block.
+- "description", "hours", "location", "attendees", "funds_raised" are optional (default to "" or 0). Keep the visible reply to one short line per event describing what you're proposing, then the block.
+- IMPORTANT: the block only PROPOSES the entries — the app shows the user a confirm button with everything you proposed, and nothing is logged until they tap it. Never claim something was already logged.
+- Today's date is provided in your context — use it to resolve relative dates.
+
+TASKS SKILL:
+- You can add tasks to the team's task list when the user asks you to add, track, or create tasks / to-dos. Tasks are for ACTION ITEMS (build the intake, order parts, finish CAD) — calendar events are for scheduled happenings with a date and time. If the user says "add to tasks", it goes here, not the calendar.
+- You can propose MULTIPLE tasks in a single message — e.g. "add these three tasks..." — one entry per task.
+- ONLY propose when the user has explicitly confirmed they want the tasks added AND you have a title for each one. If a due date is missing or ambiguous, still propose the task but leave due_date empty rather than guessing — never invent a date.
+- When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
+\`\`\`tasks
+[{"title":"...","description":"...","due_date":"YYYY-MM-DD"}]
+\`\`\`
+- "description" and "due_date" are optional. Keep the visible reply to one short line per task describing what you're proposing, then the block.
+- IMPORTANT: the block only PROPOSES the tasks — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
+- Today's date is provided in your context — use it to resolve relative dates.
+
+BUDGET SKILL:
+- You can add budget entries to the team's budget tracker when the user asks you to log spending, record income, or add a budget entry. You can propose MULTIPLE entries in a single message — one entry per purchase/donation/fee.
+- ONLY propose when the user has explicitly confirmed they want the entries added AND you know the amount for each one. If the amount is missing or ambiguous, ask one clarifying question first — never guess an amount.
+- When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
+\`\`\`budget
+[{"type":"expense","amount":129.99,"category":"...","description":"...","date":"YYYY-MM-DD"}]
+\`\`\`
+- "type" is "expense" (money out: parts, fees, food) or "income" (money in: sponsors, fundraisers, dues). Default to "expense" for purchases. "category" and "description" are optional; "date" defaults to today if the user doesn't specify one.
+- IMPORTANT: the block only PROPOSES the entries — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
 - Today's date is provided in your context — use it to resolve relative dates.`;
 
 export interface ChatMessage {

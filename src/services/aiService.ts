@@ -179,7 +179,57 @@ export interface BuildHelperMessage {
 
 /** Remove ```event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
 export function stripEventBlocks(text: string): string {
-  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").trim();
+  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").trim();
+}
+
+/**
+ * Parse Bruno/NavGPT data-action proposal blocks from raw reply text into
+ * structured proposals for the confirm card. The AI only proposes — nothing
+ * is inserted until the user taps confirm, which POSTs to /api/ai/apply-actions.
+ * Light client-side validation; the server re-validates strictly on apply.
+ */
+export interface ActionProposal {
+  kind: 'event' | 'outreach' | 'task' | 'budget';
+  items: any[];
+}
+
+const ACTION_BLOCK_RES: Record<ActionProposal['kind'], RegExp> = {
+  event: /```event\s*\r?\n([\s\S]*?)\r?\n```/,
+  outreach: /```outreach\s*\r?\n([\s\S]*?)\r?\n```/,
+  task: /```tasks\s*\r?\n([\s\S]*?)\r?\n```/,
+  budget: /```budget\s*\r?\n([\s\S]*?)\r?\n```/,
+};
+
+function parseActionBlock(kind: ActionProposal['kind'], raw: string): any[] {
+  try {
+    const parsed = JSON.parse(raw);
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    return arr.filter((it: any) => it && typeof it === 'object').slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+export function extractActionProposals(text: string): ActionProposal[] {
+  const t = String(text || "");
+  const proposals: ActionProposal[] = [];
+  (Object.keys(ACTION_BLOCK_RES) as ActionProposal['kind'][]).forEach((kind) => {
+    const m = t.match(ACTION_BLOCK_RES[kind]);
+    if (!m) return;
+    const items = parseActionBlock(kind, m[1]);
+    if (items.length) proposals.push({ kind, items });
+  });
+  return proposals;
+}
+
+/**
+ * Confirm + apply proposed data actions. Returns the server's applied counts.
+ * Throws on permission/validation errors with a human-readable message.
+ */
+export async function applyActionProposals(actions: ActionProposal[]): Promise<Record<string, number>> {
+  const { ok, applied, error } = await postJSON('/api/ai/apply-actions', { actions });
+  if (!ok) throw new Error(error || "Couldn't save those — please try again");
+  return applied || {};
 }
 
 /**
@@ -210,6 +260,8 @@ export function detectBrunoDataActions(text: string): string[] {
   const types: string[] = [];
   if (/```event[\s\S]*?```/.test(t) || t.includes("📅 Added to the team calendar:")) types.push("calendar");
   if (/```outreach[\s\S]*?```/.test(t) || /📣 Logged (\d+ )?outreach events?:/.test(t)) types.push("outreach");
+  if (/```tasks[\s\S]*?```/.test(t)) types.push("tasks");
+  if (/```budget[\s\S]*?```/.test(t)) types.push("budget");
   return types;
 }
 
