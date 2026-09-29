@@ -81,6 +81,13 @@ function getCSSVariable(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '';
 }
 
+// Only accept real 6-digit hex colors. A junk string saved as a theme color
+// (e.g. "null", " ", "#") would make var(--color-accent) invalid and silently
+// strip the volt yellow from the whole UI, so invalid values fall back.
+function validHex(v: any): v is string {
+  return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim());
+}
+
 // --- Components ---
 
 const Card = ({ children, className, title, subtitle, icon: Icon }: any) => (
@@ -753,9 +760,9 @@ export default function App() {
     if (isLoggedIn && currentUser) {
       const myTeam = teams.find(t => t.id === currentUser.team_id);
       
-      const accent = currentUser.accent_color || myTeam?.accent_color || '#F5B700';
-      const primary = currentUser.primary_color || myTeam?.primary_color || '#111111';
-      const text = currentUser.text_color || myTeam?.text_color || '#F8FAFC'; // slate-100 default
+      const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim() || '#F5B700';
+      const primary = [currentUser.primary_color, myTeam?.primary_color].find(validHex)?.trim() || '#111111';
+      const text = [currentUser.text_color, myTeam?.text_color].find(validHex)?.trim() || '#F8FAFC'; // slate-100 default
 
       const root = document.documentElement;
       root.style.setProperty('--color-accent', accent);
@@ -4952,9 +4959,12 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   // Apply color changes in real-time to the page
   useEffect(() => {
     const root = document.documentElement;
-    if (accentColor) root.style.setProperty('--color-accent', accentColor);
-    if (primaryColor) root.style.setProperty('--color-primary', primaryColor);
-    if (textColor) root.style.setProperty('--color-text-base', textColor);
+    if (validHex(accentColor)) root.style.setProperty('--color-accent', accentColor.trim());
+    else root.style.removeProperty('--color-accent');
+    if (validHex(primaryColor)) root.style.setProperty('--color-primary', primaryColor.trim());
+    else root.style.removeProperty('--color-primary');
+    if (validHex(textColor)) root.style.setProperty('--color-text-base', textColor.trim());
+    else root.style.removeProperty('--color-text-base');
     
     // Trigger re-render of all components to pick up new CSS variables
     setColorVersion((v) => v + 1);

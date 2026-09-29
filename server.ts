@@ -482,6 +482,13 @@ function ownerEmails(): string[] {
     .filter(Boolean);
 }
 
+// Theme colors must be real 6-digit hex values. Junk strings (e.g. "null",
+// " ", "#") would make var(--color-accent) invalid and silently strip the
+// volt yellow from the whole UI, so they are stored as NULL (theme default).
+function cleanHex(v: any): string | null {
+  return (typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim())) ? v.trim() : null;
+}
+
 async function requireOwner(req: any, res: any) {
   const auth = await requireAuth(req, res);
   if (!auth) return null;
@@ -1049,9 +1056,9 @@ async function startServer() {
     const vals: any[] = [];
     if (name !== undefined) { sets.push("name = ?"); vals.push(name); }
     if (number !== undefined) { sets.push("number = ?"); vals.push(number); }
-    if (accent_color !== undefined) { sets.push("accent_color = ?"); vals.push(accent_color || null); }
-    if (primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(primary_color || null); }
-    if (text_color !== undefined) { sets.push("text_color = ?"); vals.push(text_color || null); }
+    if (accent_color !== undefined) { sets.push("accent_color = ?"); vals.push(cleanHex(accent_color)); }
+    if (primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(cleanHex(primary_color)); }
+    if (text_color !== undefined) { sets.push("text_color = ?"); vals.push(cleanHex(text_color)); }
     if (ftc_team_number !== undefined) {
       const ftcNum = ftc_team_number === null || ftc_team_number === ''
         ? null
@@ -1211,7 +1218,7 @@ async function startServer() {
     const existing = (await dbGet("SELECT id FROM members WHERE email = ?", email));
     if (existing) return res.status(400).json({ error: "That email is already on the roster" });
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
-    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', accent_color || null, primary_color || null, text_color || null));
+    const info = (await dbRun("INSERT INTO members (team_id, name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, name, role, email, is_board ? 1 : 0, finalScopes, account_type === 'admin' ? 'admin' : 'student', cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)));
     res.json({ id: info.lastInsertRowid });
   });
 
@@ -1241,9 +1248,9 @@ async function startServer() {
       account_type: nextType,
     };
 
-    if (accent_color !== undefined) updates.accent_color = accent_color;
-    if (primary_color !== undefined) updates.primary_color = primary_color;
-    if (text_color !== undefined) updates.text_color = text_color;
+    if (accent_color !== undefined) updates.accent_color = cleanHex(accent_color);
+    if (primary_color !== undefined) updates.primary_color = cleanHex(primary_color);
+    if (text_color !== undefined) updates.text_color = cleanHex(text_color);
 
     const columns = Object.keys(updates);
     const setClause = columns.map(col => `${col} = ?`).join(', ');
@@ -1263,9 +1270,9 @@ async function startServer() {
     const cleanName = (name || '').trim();
     if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
     const updates: any = { name: cleanName, role: (role || '').trim() };
-    if (accent_color !== undefined) updates.accent_color = accent_color || null;
-    if (primary_color !== undefined) updates.primary_color = primary_color || null;
-    if (text_color !== undefined) updates.text_color = text_color || null;
+    if (accent_color !== undefined) updates.accent_color = cleanHex(accent_color);
+    if (primary_color !== undefined) updates.primary_color = cleanHex(primary_color);
+    if (text_color !== undefined) updates.text_color = cleanHex(text_color);
     if (avatar_url !== undefined) updates.avatar_url = avatar_url || null;
     const cols = Object.keys(updates);
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
