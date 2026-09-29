@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -44,7 +44,6 @@ import {
   Download,
   Bolt,
   Code2,
-  Bot,
   Check,
   ShieldCheck,
   GraduationCap,
@@ -64,8 +63,8 @@ import {
   BarChart, Bar, Cell, PieChart, Pie
 } from 'recharts';
 import Markdown from 'react-markdown';
-import BuildHelperChat from './components/BuildHelperChat';
 import BrunoView from './components/BrunoView';
+import BrunoPanel from './components/BrunoPanel';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
@@ -74,6 +73,7 @@ import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getAct
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
 import { DialogHost, confirmDialog, notify } from './components/dialog';
+import RolesView, { RoleBadge } from './components/RolesView';
 import Landing from './Landing';
 
 function cn(...inputs: ClassValue[]) {
@@ -215,7 +215,19 @@ const GoogleIcon = () => (
   </svg>
 );
 
-const RoleScreen = ({ onBack, onSelect, googleEnabled }: { onBack: () => void; onSelect: (mode: 'admin' | 'student') => void; googleEnabled: boolean }) => (
+const DiscordIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M20.317 4.37a19.79 19.79 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.009c.12.099.246.198.373.292a.077.077 0 01-.006.127 12.3 12.3 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.84 19.84 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.331c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+  </svg>
+);
+
+const GithubIcon = () => (
+  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+  </svg>
+);
+
+const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEnabled }: { onBack: () => void; onSelect: (mode: 'admin' | 'student') => void; googleEnabled: boolean; discordEnabled: boolean; githubEnabled: boolean }) => (
   <AuthShell>
     <button
       onClick={onBack}
@@ -265,16 +277,30 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled }: { onBack: () => void; o
           </div>
         </button>
       </div>
-      {googleEnabled && (
+      {(googleEnabled || discordEnabled || githubEnabled) && (
         <>
           <div className="flex items-center gap-3 mt-5">
             <div className="flex-1 h-px bg-white/10" />
             <span className="text-xs text-text-muted">or</span>
             <div className="flex-1 h-px bg-white/10" />
           </div>
-          <a href="/api/auth/google?intent=signup" className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
-            <GoogleIcon /> Continue with Google
-          </a>
+          <div className="mt-4 space-y-2.5">
+            {googleEnabled && (
+              <a href="/api/auth/google?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+                <GoogleIcon /> Continue with Google
+              </a>
+            )}
+            {discordEnabled && (
+              <a href="/api/auth/discord?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+                <DiscordIcon /> Continue with Discord
+              </a>
+            )}
+            {githubEnabled && (
+              <a href="/api/auth/github?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+                <GithubIcon /> Continue with GitHub
+              </a>
+            )}
+          </div>
           <p className="mt-2 text-center text-xs text-text-muted">You'll pick Admin or Student right after signing in.</p>
         </>
       )}
@@ -385,9 +411,9 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
   );
 };
 
-// After Google OAuth: the identity is verified, now collect the role-specific details
-const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
-  token: string; intent: 'admin_signup' | 'student_signup' | 'signup';
+// After OAuth: the identity is verified, now collect the role-specific details
+const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
+  token: string; intent: 'admin_signup' | 'student_signup' | 'signup'; provider: 'google' | 'discord' | 'github';
   onBack: () => void; onDone: (data: any) => void;
 }) => {
   const needsRole = intent === 'signup';
@@ -404,10 +430,10 @@ const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
     setError(null);
     setBusy(true);
     try {
-      const res = await apiFetch('/api/auth/google/complete', {
+      const res = await apiFetch('/api/auth/oauth/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, teamName, teamNumber, accessCode, role: needsRole ? pickedRole : undefined }),
+        body: JSON.stringify({ provider, token, teamName, teamNumber, accessCode, role: needsRole ? pickedRole : undefined }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Signup failed');
@@ -440,7 +466,8 @@ const GoogleSignupScreen = ({ token, intent, onBack, onDone }: {
           </div>
           <h1 className="text-2xl font-display font-bold text-white tracking-tight">Almost done</h1>
           <p className="text-text-muted text-sm flex items-center gap-2">
-            <GoogleIcon /> Signed in with Google — one more step.
+            {provider === 'discord' ? <DiscordIcon /> : provider === 'github' ? <GithubIcon /> : <GoogleIcon />}
+            {' '}Signed in with {provider === 'discord' ? 'Discord' : provider === 'github' ? 'GitHub' : 'Google'} — one more step.
           </p>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -541,6 +568,7 @@ const navItems = [
   { id: 'dashboard', path: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'stats', path: 'stats', label: 'Team Stats', icon: Trophy },
   { id: 'teams', path: 'teams', label: 'Teams & Members', icon: Users },
+  { id: 'roles', path: 'roles', label: 'Roles', icon: ShieldCheck, perm: 'manage_roles' },
   { id: 'attendance', path: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance' },
   { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare },
   { id: 'calendar', path: 'calendar', label: 'Calendar', icon: Calendar },
@@ -551,7 +579,6 @@ const navItems = [
   { id: 'comm', path: 'comm', label: 'Communication', icon: Mail },
   { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare },
   { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper },
-  { id: 'bruno', path: 'bruno', label: 'Bruno', icon: Bot },
   { id: 'profile', path: 'profile', label: 'My Profile', icon: UserCircle },
   { id: 'settings', path: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
   { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
@@ -572,6 +599,23 @@ export default function App() {
   }, [location.pathname]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [brunoPanelOpen, setBrunoPanelOpen] = useState(false);
+  const brunoClickTimer = useRef<number | null>(null);
+
+  // Single click → Copilot-style side panel; double-click → full /bruno view
+  const handleBrunoButton = () => {
+    if (brunoClickTimer.current) {
+      window.clearTimeout(brunoClickTimer.current);
+      brunoClickTimer.current = null;
+      setBrunoPanelOpen(false);
+      navigate('/bruno');
+      return;
+    }
+    brunoClickTimer.current = window.setTimeout(() => {
+      brunoClickTimer.current = null;
+      setBrunoPanelOpen(true);
+    }, 260);
+  };
   
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
@@ -700,28 +744,41 @@ export default function App() {
   const [socket, setSocket] = useState<WebSocket | null>(null);
 
   const [googleEnabled, setGoogleEnabled] = useState(false);
-  const [googleError, setGoogleError] = useState<string | null>(null);
-  const [googleSignup, setGoogleSignup] = useState<{ token: string; intent: 'admin_signup' | 'student_signup' | 'signup' } | null>(null);
+  const [discordEnabled, setDiscordEnabled] = useState(false);
+  const [githubEnabled, setGithubEnabled] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [oauthSignup, setOauthSignup] = useState<{ token: string; intent: 'admin_signup' | 'student_signup' | 'signup'; provider: 'google' | 'discord' | 'github' } | null>(null);
 
-  // Handle Google OAuth callback (?google_session= / ?google_error= / ?google_signup=)
+  const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+    not_invited: 'This account is not registered yet — create an account to get started.',
+    email_unverified: 'We need a verified email from that provider — verify your email there and try again.',
+    account_removed: 'This account was removed — contact your team admin.',
+    invalid_state: 'Sign-in expired — please try again.',
+  };
+
+  // Handle OAuth callbacks (?oauth_session= / ?oauth_error= / ?oauth_signup=, plus legacy google_* params)
   useEffect(() => {
     apiFetch('/api/auth/config')
       .then(r => r.json())
-      .then(d => setGoogleEnabled(!!d.googleEnabled))
+      .then(d => {
+        setGoogleEnabled(!!d.googleEnabled);
+        setDiscordEnabled(!!d.discordEnabled);
+        setGithubEnabled(!!d.githubEnabled);
+      })
       .catch(() => {});
     const params = new URLSearchParams(window.location.search);
-    const gs = params.get('google_session');
-    const ge = params.get('google_error');
-    const gsu = params.get('google_signup');
+    const gs = params.get('oauth_session') || params.get('google_session');
+    const ge = params.get('oauth_error') || params.get('google_error');
+    const gsu = params.get('oauth_signup') || params.get('google_signup');
     const gi = params.get('intent');
+    const gp = params.get('provider');
+    const provider = gp === 'discord' || gp === 'github' ? gp : 'google';
     if (ge) {
-      setGoogleError(ge === 'not_invited'
-        ? 'This Google account is not registered yet — create an account to get started.'
-        : 'Google sign-in failed. Please try again.');
+      setOauthError(OAUTH_ERROR_MESSAGES[ge] || 'Sign-in failed. Please try again.');
       window.history.replaceState({}, '', window.location.pathname);
     }
     if (gsu && (gi === 'admin_signup' || gi === 'student_signup' || gi === 'signup')) {
-      setGoogleSignup({ token: gsu, intent: gi });
+      setOauthSignup({ token: gsu, intent: gi, provider });
       window.history.replaceState({}, '', window.location.pathname);
     }
     if (gs) {
@@ -734,10 +791,10 @@ export default function App() {
             setCurrentUser(data.user);
             setIsLoggedIn(true);
           } else {
-            setGoogleError('Google sign-in failed. Please try again.');
+            setOauthError('Sign-in failed. Please try again.');
           }
         })
-        .catch(() => setGoogleError('Google sign-in failed. Please try again.'))
+        .catch(() => setOauthError('Sign-in failed. Please try again.'))
         .finally(() => {
           window.history.replaceState({}, '', window.location.pathname);
           setAuthReady(true);
@@ -1079,11 +1136,36 @@ export default function App() {
 
   const isAdmin = (currentUser as any)?.account_type === 'admin';
 
+  // Effective role permissions from /api/auth/me (falls back to legacy account_type)
+  const userPerms: string[] = (() => {
+    try {
+      const p = (currentUser as any)?.permissions;
+      if (Array.isArray(p)) return p;
+      if ((currentUser as any)?.account_type === 'admin') return ['*'];
+      return [];
+    } catch { return []; }
+  })();
+  const hasPerm = (perm: string) => userPerms.includes('*') || userPerms.includes(perm);
+
+  // Map legacy scope names to the closest role permission
+  const SCOPE_TO_PERM: Record<string, string> = {
+    admin: 'manage_members',
+    attendance: 'manage_attendance',
+    budget: 'manage_budget',
+    tasks: 'manage_tasks',
+    inventory: 'manage_inventory',
+    code: 'manage_code',
+    calendar: 'manage_calendar',
+    outreach: 'manage_outreach',
+  };
+
   const hasScope = (scope: string) => {
     if (!currentUser) return false;
     if (isAdmin) return true;
     if (currentUser.role === 'President') return true;
     if (scope === 'admin' && currentUser.is_board) return true;
+    const perm = SCOPE_TO_PERM[scope];
+    if (perm && hasPerm(perm)) return true;
     try {
       let scopes = currentUser.scopes;
       // Handle double-stringification if it somehow happened in the DB
@@ -1099,16 +1181,18 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'bruno', 'profile'];
+  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'profile'];
   const visibleTabs = navItems.filter((t) => {
     if ((t as any).ownerOnly) return isOwner;
+    if ((t as any).perm) return hasPerm((t as any).perm);
     if (isAdmin) return !t.scope || hasScope(t.scope);
     return studentTabIds.includes(t.id);
   });
 
   // Keep students (and scope-restricted users) on tabs they can actually see
+  // (Bruno is intentionally not a nav tab — reachable via the header button)
   useEffect(() => {
-    if (isLoggedIn && !visibleTabs.some((t) => t.id === activeTab)) {
+    if (isLoggedIn && activeTab !== 'bruno' && !visibleTabs.some((t) => t.id === activeTab)) {
       navigate('/dashboard', { replace: true });
     }
   }, [isLoggedIn, currentUser, activeTab]);
@@ -1143,6 +1227,7 @@ export default function App() {
         <Route path="/dashboard" element={dashboardEl} />
         <Route path="/stats" element={<TeamStatsView />} />
         <Route path="/teams" element={<TeamsView {...viewProps} />} />
+        <Route path="/roles" element={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />
         <Route path="/attendance" element={<AttendanceView {...viewProps} />} />
         <Route path="/tasks" element={<TasksView {...viewProps} />} />
         <Route path="/calendar" element={<CalendarView {...viewProps} />} />
@@ -1173,18 +1258,19 @@ export default function App() {
   }
 
   if (!isLoggedIn) {
-    // A brand-new Google user just finished OAuth — collect their last signup
+    // A brand-new OAuth user just finished sign-in — collect their last signup
     // step first. This must come before the landing screen or the callback
     // bounces them back to the homepage.
-    if (googleSignup) {
+    if (oauthSignup) {
       return (
-        <GoogleSignupScreen
-          token={googleSignup.token}
-          intent={googleSignup.intent}
-          onBack={() => { setGoogleSignup(null); setAuthScreen('landing'); }}
+        <OAuthSignupScreen
+          token={oauthSignup.token}
+          intent={oauthSignup.intent}
+          provider={oauthSignup.provider}
+          onBack={() => { setOauthSignup(null); setAuthScreen('landing'); }}
           onDone={(data) => {
             persistSession(data.sessionId, data.user);
-            setGoogleSignup(null);
+            setOauthSignup(null);
             if (data?.team) setSignupTeam(data.team);
           }}
         />
@@ -1194,7 +1280,7 @@ export default function App() {
       return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
     }
     if (authScreen === 'role') {
-      return <RoleScreen googleEnabled={googleEnabled} onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
+      return <RoleScreen googleEnabled={googleEnabled} discordEnabled={discordEnabled} githubEnabled={githubEnabled} onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
     }
 
     if (authScreen === 'signup-admin' || authScreen === 'signup-student') {
@@ -1247,22 +1333,42 @@ export default function App() {
                 {needsSetup ? "Complete Setup" : "Sign In"}
               </Button>
             </form>
-            {googleError && !needsSetup && (
-              <p className="text-sm text-rose-400 text-center mt-4">{googleError}</p>
+            {oauthError && !needsSetup && (
+              <p className="text-sm text-rose-400 text-center mt-4">{oauthError}</p>
             )}
-            {googleEnabled && !needsSetup && (
+            {(googleEnabled || discordEnabled || githubEnabled) && !needsSetup && (
               <>
                 <div className="flex items-center gap-3 mt-6">
                   <div className="flex-1 h-px bg-white/10" />
                   <span className="text-xs text-text-muted">or</span>
                   <div className="flex-1 h-px bg-white/10" />
                 </div>
-                <a href="/api/auth/google?intent=login" className="block mt-6">
-                  <Button variant="secondary" className="w-full py-3" type="button">
-                    <GoogleIcon />
-                    Continue with Google
-                  </Button>
-                </a>
+                <div className="mt-6 space-y-2.5">
+                  {googleEnabled && (
+                    <a href="/api/auth/google?intent=login" className="block">
+                      <Button variant="secondary" className="w-full py-3" type="button">
+                        <GoogleIcon />
+                        Continue with Google
+                      </Button>
+                    </a>
+                  )}
+                  {discordEnabled && (
+                    <a href="/api/auth/discord?intent=login" className="block">
+                      <Button variant="secondary" className="w-full py-3" type="button">
+                        <DiscordIcon />
+                        Continue with Discord
+                      </Button>
+                    </a>
+                  )}
+                  {githubEnabled && (
+                    <a href="/api/auth/github?intent=login" className="block">
+                      <Button variant="secondary" className="w-full py-3" type="button">
+                        <GithubIcon />
+                        Continue with GitHub
+                      </Button>
+                    </a>
+                  )}
+                </div>
               </>
             )}
           </Card>
@@ -1398,7 +1504,7 @@ export default function App() {
             >
               <Menu className="w-6 h-6" />
             </button>
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeNav?.label || 'Dashboard'}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab === 'bruno' ? 'Bruno' : activeNav?.label || 'Dashboard'}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
@@ -1452,6 +1558,14 @@ export default function App() {
                 )}
               </AnimatePresence>
             </div>
+            <button
+              onClick={handleBrunoButton}
+              title="Bruno — click for quick chat, double-click for full view"
+              aria-label="Open Bruno"
+              className="w-10 h-10 rounded-full bg-accent/15 border border-accent/40 hover:bg-accent/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
+            >
+              <span className="text-[20px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>
+            </button>
             {currentUser && (
               <div className="relative">
                 <button
@@ -1545,7 +1659,12 @@ export default function App() {
       </main>
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <CookieConsent />
-      <BuildHelperChat currentUser={currentUser} />
+      <BrunoPanel
+        open={brunoPanelOpen}
+        onClose={() => setBrunoPanelOpen(false)}
+        onExpand={() => { setBrunoPanelOpen(false); navigate('/bruno'); }}
+        currentUser={currentUser}
+      />
     </div>
   );
 }
@@ -2324,7 +2443,16 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope }: any) {
           <tbody className="divide-y divide-white/5">
             {members.map((m: any) => (
               <tr key={m.id} className="hover:bg-white/5 transition-colors">
-                <td className="px-6 py-4 text-sm text-white font-medium">{m.name}</td>
+                <td className="px-6 py-4 text-sm text-white font-medium">
+                  {m.name}
+                  {(m.roles || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {(m.roles || []).map((r: any) => (
+                        <RoleBadge key={r.id} role={r} />
+                      ))}
+                    </div>
+                  )}
+                </td>
                 <td className="px-6 py-4 text-sm text-text-muted">{m.team_name || 'N/A'}</td>
                 <td className="px-6 py-4 text-sm text-text-muted">{m.role}</td>
                 <td className="px-6 py-4">

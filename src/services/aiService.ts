@@ -177,6 +177,11 @@ export interface BuildHelperMessage {
   text: string;
 }
 
+/** Remove ```event blocks (complete or still streaming) from displayed Bruno text. */
+export function stripEventBlocks(text: string): string {
+  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").trim();
+}
+
 export async function getBuildHelper(messages: BuildHelperMessage[], chatId?: number) {
   try {
     const { result } = await postJSON('/api/ai/build-helper', chatId ? { messages, chatId } : { messages });

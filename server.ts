@@ -1607,6 +1607,7 @@ async function startServer() {
     `, auth.teamId)) as any[];
     for (const m of members) {
       m.roles = await memberRoleList(m.id, auth.teamId!);
+      m.permissions = [...(await getMemberPerms(m.id, auth.teamId!))];
     }
     res.json(members);
   });

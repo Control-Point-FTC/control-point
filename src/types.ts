@@ -19,6 +19,8 @@ export interface Member {
   accent_color?: string;
   primary_color?: string;
   text_color?: string;
+  roles?: Array<{ id: number; name: string; color: string }>;
+  permissions?: string[];
 }
 
 export interface AttendanceRecord {

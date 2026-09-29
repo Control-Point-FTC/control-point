@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Send, ExternalLink, Sparkles } from 'lucide-react';
-import { streamBuildHelper, type BuildHelperMessage } from '../services/aiService';
+import { X, Send, ExternalLink, Sparkles, Maximize2 } from 'lucide-react';
+import { streamBuildHelper, stripEventBlocks, type BuildHelperMessage } from '../services/aiService';
 import { apiFetch } from '../services/api';
 
 const RESOURCES = [
@@ -19,8 +19,12 @@ const STARTERS = [
   'How do I tune PID for our lift?',
 ];
 
-export default function BuildHelperChat({ currentUser }: any) {
-  const [open, setOpen] = useState(false);
+export default function BrunoPanel({ open, onClose, onExpand, currentUser }: {
+  open: boolean;
+  onClose: () => void;
+  onExpand: () => void;
+  currentUser: any;
+}) {
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -33,7 +37,7 @@ export default function BuildHelperChat({ currentUser }: any) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, open]);
 
-  // Resume the user's most recent chat when the widget first opens — no silent ephemeral chats
+  // Resume the user's most recent chat when the panel first opens
   useEffect(() => {
     if (!open || historyLoaded) return;
     setHistoryLoaded(true);
@@ -56,6 +60,14 @@ export default function BuildHelperChat({ currentUser }: any) {
       }
     })();
   }, [open, historyLoaded, currentUser]);
+
+  // Escape closes the panel
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
   const ensureChat = async (): Promise<number | null> => {
     if (chatId) return chatId;
@@ -100,27 +112,22 @@ export default function BuildHelperChat({ currentUser }: any) {
   };
 
   return (
-    <>
-      {/* Floating launcher */}
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-label={open ? 'Close Bruno build helper' : 'Open Bruno build helper'}
-        className="fixed bottom-5 right-5 z-40 w-14 h-14 rounded-full bg-accent text-primary shadow-[0_8px_30px_rgba(255,199,0,0.35)] flex items-center justify-center hover:scale-105 active:scale-95 transition-transform"
-      >
-        {open ? <X className="w-6 h-6" /> : <span className="text-[28px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>}
-      </button>
-
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            transition={{ duration: 0.18 }}
-            className="fixed bottom-24 right-5 z-40 w-[380px] max-w-[calc(100vw-2.5rem)] h-[540px] max-h-[calc(100vh-8rem)] flex flex-col rounded-2xl border border-white/10 bg-[#101014]/95 backdrop-blur-xl shadow-2xl overflow-hidden"
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Transparent click-catcher over the rest of the screen (no dimming, Copilot-style) */}
+          <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+          <motion.aside
+            initial={{ x: 420, opacity: 0.6 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 420, opacity: 0.6 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 40 }}
+            className="fixed right-0 top-0 z-50 h-full w-[400px] max-w-[94vw] flex flex-col bg-[#101014]/98 backdrop-blur-xl border-l border-white/10 shadow-2xl"
+            role="complementary"
+            aria-label="Bruno quick chat"
           >
             {/* Header */}
-            <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03]">
+            <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03] flex-shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shadow-[0_2px_10px_rgba(255,199,0,0.25)]">
                   <span className="text-[22px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>
@@ -129,7 +136,15 @@ export default function BuildHelperChat({ currentUser }: any) {
                   <p className="text-white font-bold text-sm leading-tight">Bruno</p>
                   <p className="text-text-muted text-[11px] leading-tight">FTC build mentor · BIOBUZZ season</p>
                 </div>
-                <button onClick={() => setOpen(false)} aria-label="Close" className="text-text-muted hover:text-white transition-colors">
+                <button
+                  onClick={onExpand}
+                  aria-label="Open full Bruno view"
+                  title="Open full view"
+                  className="p-1.5 text-text-muted hover:text-accent transition-colors"
+                >
+                  <Maximize2 className="w-4 h-4" />
+                </button>
+                <button onClick={onClose} aria-label="Close" className="p-1.5 text-text-muted hover:text-white transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -150,7 +165,7 @@ export default function BuildHelperChat({ currentUser }: any) {
             </div>
 
             {/* Messages */}
-            <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 space-y-3">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 space-y-3 min-h-0">
               {messages.length === 0 && (
                 <div className="space-y-3">
                   <div className="rounded-xl bg-white/[0.04] border border-white/[0.07] p-3">
@@ -158,7 +173,7 @@ export default function BuildHelperChat({ currentUser }: any) {
                       <Sparkles className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                       <span>
                         Hey, I'm <span className="font-bold text-accent">Bruno</span> — ask me anything about building
-                        your FTC robot: mechanisms, code, strategy, or troubleshooting.
+                        your FTC robot: mechanisms, code, strategy, or scheduling.
                       </span>
                     </p>
                   </div>
@@ -189,7 +204,7 @@ export default function BuildHelperChat({ currentUser }: any) {
                   <div key={i} className="flex justify-start">
                     <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.05] border border-white/[0.07] px-3.5 py-2.5 text-[13px] text-white/85 leading-relaxed prose-sm">
                       {m.text ? (
-                        <Markdown>{m.text}</Markdown>
+                        <Markdown>{stripEventBlocks(m.text)}</Markdown>
                       ) : (
                         <span className="flex gap-1 items-center text-text-muted">
                           {[0, 1, 2].map((d) => (
@@ -209,7 +224,7 @@ export default function BuildHelperChat({ currentUser }: any) {
                 e.preventDefault();
                 send();
               }}
-              className="p-3 border-t border-white/10 bg-white/[0.02]"
+              className="p-3 border-t border-white/10 bg-white/[0.02] flex-shrink-0"
             >
               <div className="flex gap-2">
                 <input
@@ -232,9 +247,9 @@ export default function BuildHelperChat({ currentUser }: any) {
                 Grounded in GM0, FTC docs &amp; REV resources. Verify rules in the official manual.
               </p>
             </form>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
