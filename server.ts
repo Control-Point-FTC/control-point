@@ -2501,11 +2501,33 @@ async function startServer() {
       const maxTokens = await getMaxTokens("max_tokens_news", 2048);
       const raw = await scoutFeed(maxTokens);
       const items = parseScoutFeed(raw);
-      if (!items.length) {
+      // Drop YouTube items whose URLs don't resolve — the model sometimes invents
+      // video IDs. oEmbed is keyless and fast; non-200 means the video doesn't exist.
+      const ytRe = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{6,})/i;
+      const checked = await Promise.all(
+        items.map(async (it: any) => {
+          const m = String(it.url || "").match(ytRe);
+          if (!m) return it;
+          try {
+            const ctl = new AbortController();
+            const t = setTimeout(() => ctl.abort(), 8000);
+            const r = await fetch(
+              `https://www.youtube.com/oembed?url=${encodeURIComponent(it.url)}&format=json`,
+              { signal: ctl.signal }
+            );
+            clearTimeout(t);
+            return r.ok ? it : null;
+          } catch {
+            return null;
+          }
+        })
+      );
+      const validItems = checked.filter(Boolean);
+      if (!validItems.length) {
         return res.status(502).json({ error: "The scout feed came back empty — please try refreshing.", items: [] });
       }
-      scoutFeedCache.set(teamKey, { at: Date.now(), items });
-      res.json({ items });
+      scoutFeedCache.set(teamKey, { at: Date.now(), items: validItems });
+      res.json({ items: validItems });
     } catch (error) {
       console.error("AI scout feed error:", error);
       res.status(502).json({ error: "Could not build the scout feed. Please try again.", items: [] });
