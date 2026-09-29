@@ -29,6 +29,8 @@ import {
   aiGenerate,
   aiStream,
   scoutNews,
+  scoutFeed,
+  parseScoutFeed,
   buildAttendancePrompt,
   buildCoachPrompt,
   buildHelperChat,
@@ -2476,6 +2478,37 @@ async function startServer() {
     } catch (error) {
       console.error("AI news error:", error);
       res.status(502).json({ error: "AI request failed", result: "Failed to fetch latest news. Please check your connection." });
+    }
+  });
+
+  // --- AI Scout feed (JSON cards for the visual feed; cached per team) ---
+  const scoutFeedCache = new Map<number, { at: number; items: any[] }>();
+  const SCOUT_FEED_TTL_MS = 6 * 60 * 60 * 1000;
+
+  app.post("/api/ai/scout-feed", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!isAIConfigured()) {
+        return res.status(501).json({ error: "AI not configured", items: [] });
+      }
+      const teamKey = auth.teamId ?? 0;
+      const force = req.body?.force === true;
+      const hit = scoutFeedCache.get(teamKey);
+      if (!force && hit && Date.now() - hit.at < SCOUT_FEED_TTL_MS) {
+        return res.json({ items: hit.items, cached: true });
+      }
+      const maxTokens = await getMaxTokens("max_tokens_news", 2048);
+      const raw = await scoutFeed(maxTokens);
+      const items = parseScoutFeed(raw);
+      if (!items.length) {
+        return res.status(502).json({ error: "The scout feed came back empty — please try refreshing.", items: [] });
+      }
+      scoutFeedCache.set(teamKey, { at: Date.now(), items });
+      res.json({ items });
+    } catch (error) {
+      console.error("AI scout feed error:", error);
+      res.status(502).json({ error: "Could not build the scout feed. Please try again.", items: [] });
     }
   });
 

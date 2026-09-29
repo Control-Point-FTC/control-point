@@ -218,6 +218,72 @@ ${teamData}`.trim();
   return callGemini({ system: SCOUT_SYSTEM, user, maxTokens, stream: false, useSearchGrounding: true });
 }
 
+// --- AI Scout feed (JSON cards for the visual feed) -------------------------
+
+export const SCOUT_FEED_SYSTEM = `You are Control Point's AI Scout, a news assistant for FIRST Tech Challenge (FTC) robotics teams competing in the 2026-2027 BIOBUZZ season.
+
+You MUST respond with ONLY a single JSON object — no markdown fences, no commentary, no prose. Exact shape:
+{
+  "items": [
+    {
+      "category": "Game Updates" | "Parts & Suppliers" | "Community" | "Competitions" | "Videos",
+      "title": "short headline, under 90 characters",
+      "summary": "1-2 sentences, plain text, no markdown",
+      "source": "publisher or channel name, e.g. \\"YouTube — Brogan Pratt\\" or \\"firstinspires.org\\"",
+      "url": "https://..."
+    }
+  ]
+}
+
+Rules:
+- 10-14 items total, spanning the categories; include at least 2 "Videos" items.
+- For "Videos": actively hunt for recent FTC YouTube content (Ri3D builds, robot reveals, mechanism tutorials, BIOBUZZ strategy) via search and include the real youtube.com/watch URLs you found. NEVER invent video URLs — only include videos you actually found.
+- Every url must be a real link you found via search; never fabricate URLs.
+- Cover competitive FTC only. Do NOT include VEX, FRC, or generic STEM-education content.
+- Never invent dates, scores, or announcements you are not confident about; when unsure, omit the item.`;
+
+const SCOUT_FEED_CATEGORIES = ["Game Updates", "Parts & Suppliers", "Community", "Competitions", "Videos"] as const;
+
+export interface ScoutFeedItem {
+  category: string;
+  title: string;
+  summary: string;
+  source: string;
+  url: string;
+}
+
+export async function scoutFeed(maxTokens: number): Promise<string> {
+  const today = new Date().toISOString().slice(0, 10);
+  const user = `Today is ${today}. Build the FTC news feed for teams competing in the 2026-2027 BIOBUZZ season: recent Game Manual / Q&A updates, FTC-legal parts and supplier news (REV, goBILDA, AndyMark, Swyft, Offset), community announcements, notable competitions, and recent FTC YouTube videos. Return ONLY the JSON object described in your instructions.`;
+  return callGemini({ system: SCOUT_FEED_SYSTEM, user, maxTokens, stream: false, useSearchGrounding: true });
+}
+
+// Defensive parse of the model's JSON feed output. Never throws — returns [] on failure.
+export function parseScoutFeed(raw: string): ScoutFeedItem[] {
+  try {
+    let text = String(raw || "").trim();
+    // strip markdown code fences if the model added them anyway
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) return [];
+    const obj = JSON.parse(text.slice(start, end + 1));
+    const items = Array.isArray(obj?.items) ? obj.items : [];
+    return items
+      .filter((it: any) => it && typeof it.title === "string" && it.title.trim() && typeof it.url === "string" && /^https?:\/\//i.test(it.url))
+      .slice(0, 20)
+      .map((it: any) => ({
+        category: (SCOUT_FEED_CATEGORIES as readonly string[]).includes(it.category) ? it.category : "Community",
+        title: String(it.title).slice(0, 140),
+        summary: String(it.summary || "").slice(0, 400),
+        source: String(it.source || "FTC community").slice(0, 80),
+        url: String(it.url),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export const ATTENDANCE_SYSTEM = `You are a coach's assistant for a student robotics team. You analyze attendance data and give short, practical insights. Be direct and supportive, not scolding. Keep the whole response under 200 words.`;
 
 export function buildAttendancePrompt(

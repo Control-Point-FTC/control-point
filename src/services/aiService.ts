@@ -77,6 +77,40 @@ export async function fetchFTCNews(force: boolean = false) {
   }
 }
 
+// JSON feed variant for the visual AI Scout feed (cards, not a text roundup)
+const FEED_CACHE_KEY = 'ftcScoutFeedCache';
+const FEED_TS_KEY = 'ftcScoutFeedTimestamp';
+
+export interface ScoutFeedItem {
+  category: string;
+  title: string;
+  summary: string;
+  source: string;
+  url: string;
+}
+
+export async function fetchScoutFeed(force: boolean = false): Promise<{ items: ScoutFeedItem[]; cached?: boolean }> {
+  if (!force && typeof localStorage !== 'undefined') {
+    try {
+      const cached = localStorage.getItem(FEED_CACHE_KEY);
+      const ts = localStorage.getItem(FEED_TS_KEY);
+      if (cached && ts && Date.now() - parseInt(ts, 10) < 24 * 60 * 60 * 1000) {
+        const items = JSON.parse(cached);
+        if (Array.isArray(items)) return { items, cached: true };
+      }
+    } catch { /* fall through to network */ }
+  }
+  const data = await postJSON('/api/ai/scout-feed', { force });
+  const items: ScoutFeedItem[] = Array.isArray(data.items) ? data.items : [];
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(items));
+      localStorage.setItem(FEED_TS_KEY, Date.now().toString());
+    } catch { /* storage full — ignore */ }
+  }
+  return { items, cached: !!data.cached };
+}
+
 // streaming variant using fetch body's readable stream
 export function streamFTCNews(
   force: boolean = false,

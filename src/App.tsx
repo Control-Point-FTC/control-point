@@ -11,6 +11,8 @@ import {
   Wallet, 
   Globe, 
   Newspaper,
+  Play,
+  ExternalLink,
   Mail,
   Settings,
   Menu,
@@ -68,7 +70,7 @@ import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
-import { fetchFTCNews, streamFTCNews, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary } from './services/aiService';
+import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary } from './services/aiService';
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
 import Landing from './Landing';
@@ -600,7 +602,9 @@ export default function App() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [hiddenDates, setHiddenDates] = useState<string[]>([]);
   const [settings, setSettings] = useState<any>({});
-  const [news, setNews] = useState<string>("");
+  const [scoutFeed, setScoutFeed] = useState<any[]>([]);
+  const [scoutUpdatedAt, setScoutUpdatedAt] = useState<number | null>(null);
+  const [scoutError, setScoutError] = useState<string>("");
   const [insights, setInsights] = useState<string>("");
   const [summary, setSummary] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -645,45 +649,46 @@ export default function App() {
     );
   };
 
-  // helper that uses our service; can force a refresh bypassing the 24h cache
-  // this implementation streams the response so the UI updates as tokens arrive
+  // AI Scout visual feed: JSON cards cached in localStorage (24h), refreshed on demand
   const updateNews = async (force: boolean = false) => {
-    const CACHE_KEY = 'ftcNewsCache';
-    const TS_KEY = 'ftcNewsTimestamp';
+    const CACHE_KEY = 'ftcScoutFeedCache';
+    const TS_KEY = 'ftcScoutFeedTimestamp';
 
     // check local cache first
     if (!force && typeof localStorage !== 'undefined') {
-      const cached = localStorage.getItem(CACHE_KEY);
-      const ts = localStorage.getItem(TS_KEY);
-      if (cached && ts) {
-        const age = Date.now() - parseInt(ts, 10);
-        if (age < 24 * 60 * 60 * 1000) {
-          setNews(cached);
-          return;
+      try {
+        const cached = localStorage.getItem(CACHE_KEY);
+        const ts = localStorage.getItem(TS_KEY);
+        if (cached && ts) {
+          const age = Date.now() - parseInt(ts, 10);
+          const items = JSON.parse(cached);
+          if (Array.isArray(items) && age < 24 * 60 * 60 * 1000) {
+            setScoutFeed(items);
+            setScoutUpdatedAt(parseInt(ts, 10));
+            return;
+          }
         }
-      }
+      } catch { /* fall through to network */ }
     }
 
     setIsAiLoading(true);
     setAiLoadingTarget('news');
-    setNews(""); // Clear old news to show "Thinking..."
+    setScoutError('');
     try {
-      let aggregate = '';
-      let receivedFirstChunk = false;
-      await streamFTCNews(force, (chunk) => {
-        if (!receivedFirstChunk) {
-          receivedFirstChunk = true;
-        }
-        aggregate += chunk;
-        setNews(aggregate);
-      });
+      const { items } = await fetchScoutFeed(force);
+      setScoutFeed(items);
+      const now = Date.now();
+      setScoutUpdatedAt(now);
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(CACHE_KEY, aggregate);
-        localStorage.setItem(TS_KEY, Date.now().toString());
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(items));
+          localStorage.setItem(TS_KEY, now.toString());
+        } catch { /* storage full — ignore */ }
       }
     } catch (err) {
       console.error('Error updating news:', err);
-      setNews('Failed to fetch latest news. Please check your connection.');
+      // keep any previously loaded feed visible; the view shows a retry banner
+      setScoutError('Failed to fetch latest news. Please check your connection.');
     } finally {
       setIsAiLoading(false);
       setAiLoadingTarget(null);
@@ -1120,7 +1125,7 @@ export default function App() {
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
-      insights, news, summary, socket, hasScope,
+      insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
       colorVersion, setColorVersion,
       // give child views a way to explicitly refresh the AI news cache
@@ -1129,7 +1134,7 @@ export default function App() {
       updateSummary: () => updateSummary(true)
     };
     const dashboardEl = isAdmin
-      ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, news, summary, members, events }} />
+      ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, scoutFeed, summary, members, events }} />
       : <StudentDashboardView {...viewProps} />;
     return (
       <Routes>
@@ -4287,73 +4292,137 @@ function OutreachView({ outreach, onRefresh }: any) {
   );
 }
 
-function ScoutView({ news, refreshNews, isAiLoading, ThinkingIndicator }: any) {
-  // Split the AI scout report into its ## sections so each renders as a card
-  const sections = useMemo(() => {
-    if (!news) return [];
-    const parts = String(news).split(/^##\s+/m).filter((s) => s.trim());
-    return parts.map((p) => {
-      const nl = p.indexOf('\n');
-      return {
-        title: (nl >= 0 ? p.slice(0, nl) : p).trim(),
-        body: (nl >= 0 ? p.slice(nl + 1) : '').trim(),
-      };
-    }).filter((s) => s.title);
-  }, [news]);
+const SCOUT_FILTERS = ['All', 'Game Updates', 'Parts & Suppliers', 'Community', 'Competitions', 'Videos'];
 
-  const sectionIcon = (title: string) => {
-    const t = title.toLowerCase();
-    if (t.includes('your team')) return Trophy;
-    if (t.includes('rule') || t.includes('game update')) return Flag;
-    if (t.includes('part') || t.includes('rev')) return Cog;
-    if (t.includes('communit')) return Users;
-    if (t.includes('competition')) return Medal;
-    return Newspaper;
+function scoutTimeAgo(ts: number | null): string {
+  if (!ts) return '';
+  const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
+
+function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoading, aiLoadingTarget, ThinkingIndicator }: any) {
+  const [filter, setFilter] = useState('All');
+  const loading = isAiLoading && aiLoadingTarget === 'news';
+
+  const items = useMemo(() => {
+    const list = Array.isArray(scoutFeed) ? scoutFeed : [];
+    return filter === 'All' ? list : list.filter((it: any) => it.category === filter);
+  }, [scoutFeed, filter]);
+
+  const counts = useMemo(() => {
+    const list = Array.isArray(scoutFeed) ? scoutFeed : [];
+    const c: any = { All: list.length };
+    for (const f of SCOUT_FILTERS.slice(1)) c[f] = list.filter((it: any) => it.category === f).length;
+    return c;
+  }, [scoutFeed]);
+
+  const catMeta = (cat: string) => {
+    switch (cat) {
+      case 'Game Updates': return { Icon: Flag, badge: 'text-sky-300 bg-sky-400/10 border-sky-400/30' };
+      case 'Parts & Suppliers': return { Icon: Cog, badge: 'text-accent bg-accent/10 border-accent/30' };
+      case 'Community': return { Icon: Users, badge: 'text-violet-300 bg-violet-400/10 border-violet-400/30' };
+      case 'Competitions': return { Icon: Medal, badge: 'text-amber-300 bg-amber-400/10 border-amber-400/30' };
+      case 'Videos': return { Icon: Play, badge: 'text-rose-300 bg-rose-400/10 border-rose-400/30' };
+      default: return { Icon: Newspaper, badge: 'text-text-muted bg-white/5 border-white/10' };
+    }
   };
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div>
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">AI Scout: FTC BIOBUZZ</h3>
           <p className="text-sm text-text-muted mt-1">Competitive FTC news, rules, parts, and events — scoped to the 2026–27 BIOBUZZ season.</p>
         </div>
-        <Button onClick={refreshNews} variant="outline" disabled={isAiLoading} className="w-full sm:w-auto"><Clock className="w-4 h-4 mr-1" /> Refresh News</Button>
+        <div className="flex items-center gap-3">
+          {scoutUpdatedAt ? <span className="text-xs text-text-muted whitespace-nowrap">Updated {scoutTimeAgo(scoutUpdatedAt)}</span> : null}
+          <Button onClick={refreshNews} variant="outline" disabled={loading} className="w-full sm:w-auto">
+            <Clock className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Scouting...' : 'Refresh News'}
+          </Button>
+        </div>
       </div>
 
-      {isAiLoading && !news ? (
-        <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4">
-          <ThinkingIndicator />
-          <p className="text-text-muted">Scouring the web for FTC updates...</p>
-        </Card>
-      ) : sections.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          {sections.map((s, i) => {
-            const Icon = sectionIcon(s.title);
-            const isTeam = s.title.toLowerCase().includes('your team');
+      {/* category filter chips */}
+      <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 -mx-1 px-1">
+        {SCOUT_FILTERS.map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all active:scale-95 ${
+              filter === f
+                ? 'bg-accent text-primary border-accent shadow-[0_4px_16px_rgba(255,199,0,0.25)]'
+                : 'bg-white/[0.03] text-text-muted border-white/10 hover:text-white hover:border-white/25'
+            }`}
+          >
+            {f}{counts[f] > 0 ? <span className="opacity-70"> · {counts[f]}</span> : null}
+          </button>
+        ))}
+      </div>
+
+      {/* stale-data warning */}
+      {scoutError && items.length > 0 ? (
+        <div className="rounded-2xl border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-sm text-amber-200/90">
+          Couldn't refresh the feed — showing the last saved stories.
+        </div>
+      ) : null}
+
+      {loading && items.length === 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-3 animate-pulse">
+              <div className="h-6 w-32 rounded-full bg-white/10" />
+              <div className="h-5 w-4/5 rounded bg-white/10" />
+              <div className="h-4 w-full rounded bg-white/5" />
+              <div className="h-4 w-2/3 rounded bg-white/5" />
+            </div>
+          ))}
+        </div>
+      ) : items.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+          {items.map((it: any, i: number) => {
+            const { Icon, badge } = catMeta(it.category);
+            const isVideo = it.category === 'Videos';
             return (
-              <Card
+              <a
                 key={i}
-                title={s.title.replace(/^#+\s*/, '')}
-                icon={Icon}
-                className={isTeam ? 'lg:col-span-2 border-accent/30' : undefined}
+                href={it.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 flex flex-col gap-3 hover:border-accent/40 hover:bg-white/[0.05] transition-all active:scale-[0.99]"
               >
-                <div className="prose prose-invert max-w-none text-sm">
-                  <Markdown>{s.body}</Markdown>
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${badge}`}>
+                    <Icon className="w-3 h-3" /> {it.category}
+                  </span>
+                  {isVideo ? (
+                    <span className="w-8 h-8 rounded-full bg-accent text-primary flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(255,199,0,0.25)]">
+                      <Play className="w-4 h-4 ml-0.5" />
+                    </span>
+                  ) : (
+                    <ExternalLink className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors shrink-0" />
+                  )}
                 </div>
-              </Card>
+                <h4 className="text-white font-bold leading-snug">{it.title}</h4>
+                <p className="text-sm text-text-muted leading-relaxed line-clamp-3 flex-1">{it.summary}</p>
+                <p className="text-xs text-text-muted/70 truncate">{it.source}</p>
+              </a>
             );
           })}
         </div>
-      ) : news ? (
-        <Card className="min-h-[300px]">
-          <div className="prose prose-invert max-w-none">
-            <Markdown>{news}</Markdown>
-          </div>
+      ) : scoutError ? (
+        <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4 text-center px-6">
+          <p className="text-white font-bold">Couldn't load the scout feed</p>
+          <p className="text-sm text-text-muted">{scoutError}</p>
+          <Button onClick={refreshNews} variant="outline">Try again</Button>
         </Card>
       ) : (
         <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4">
-          <p className="text-text-muted">No news available. Click refresh to scout for updates.</p>
+          <ThinkingIndicator />
+          <p className="text-text-muted">Scouting the FTC world for you...</p>
         </Card>
       )}
     </div>
