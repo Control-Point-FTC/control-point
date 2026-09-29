@@ -920,6 +920,103 @@ async function startServer() {
     }
   });
 
+  // --- Self-service account management ---
+
+  const currentSessionId = (req: any): string | null =>
+    (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string) || null;
+
+  // Log out: invalidate the current session server-side
+  app.post("/api/auth/logout", async (req, res) => {
+    try {
+      const sid = currentSessionId(req);
+      if (sid) await dbRun("DELETE FROM sessions WHERE id = ?", sid);
+      res.json({ ok: true });
+    } catch (e) {
+      res.json({ ok: true }); // logout should never fail client-side
+    }
+  });
+
+  // Change password (password accounts only)
+  app.post("/api/auth/change-password", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const { currentPassword, newPassword } = req.body || {};
+    if (!newPassword || String(newPassword).length < 6) {
+      return res.status(400).json({ error: "New password must be at least 6 characters" });
+    }
+    const member = (await dbGet("SELECT password FROM members WHERE id = ?", auth.memberId)) as any;
+    if (!member) return res.status(404).json({ error: "Account not found" });
+    if (!member.password) {
+      return res.status(400).json({ error: "This account signs in with Google — there is no password to change" });
+    }
+    if (!bcrypt.compareSync(String(currentPassword || ""), member.password)) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+    await dbRun("UPDATE members SET password = ? WHERE id = ?", bcrypt.hashSync(String(newPassword), 10), auth.memberId);
+    // Keep this session alive, kill every other one
+    const sid = currentSessionId(req);
+    if (sid) await dbRun("DELETE FROM sessions WHERE member_id = ? AND id != ?", auth.memberId, sid);
+    else await dbRun("DELETE FROM sessions WHERE member_id = ?", auth.memberId);
+    res.json({ ok: true });
+  });
+
+  // Export my data (GDPR-style download)
+  app.get("/api/auth/export", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const member = (await dbGet("SELECT id, team_id, name, role, email, is_setup, is_board, scopes, account_type, avatar_url FROM members WHERE id = ?", auth.memberId)) as any;
+    const attendance = await dbAll("SELECT * FROM attendance WHERE member_id = ?", auth.memberId);
+    const feedback = await dbAll("SELECT * FROM feedback WHERE user_id = ?", auth.memberId);
+    const messages = await dbAll("SELECT * FROM messages WHERE sender_id = ?", auth.memberId);
+    const notifications = await dbAll("SELECT * FROM notifications WHERE user_id = ?", auth.memberId);
+    res.json({ exported_at: new Date().toISOString(), member, attendance, feedback, messages, notifications });
+  });
+
+  // Delete my account — with password confirmation and last-admin guard
+  app.delete("/api/auth/account", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const member = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
+    if (!member) return res.status(404).json({ error: "Account not found" });
+
+    if (member.password) {
+      if (!bcrypt.compareSync(String(req.body?.password || ""), member.password)) {
+        return res.status(401).json({ error: "Password is incorrect — account not deleted" });
+      }
+    }
+
+    // Don't orphan a team: the last admin can't delete their account
+    if ((member.account_type || 'student') === 'admin' && member.team_id) {
+      const row = (await dbGet(
+        "SELECT COUNT(*) AS c FROM members WHERE team_id = ? AND (account_type = 'admin' OR is_board = 1)",
+        member.team_id
+      )) as any;
+      if ((row?.c || 0) <= 1) {
+        return res.status(409).json({
+          error: "You're the only admin of this team. Promote another member to admin (or Board) before deleting your account, so the team isn't left without an owner."
+        });
+      }
+    }
+
+    // Remove avatar file
+    try {
+      if (member.avatar_url?.startsWith('/uploads/')) {
+        const p = path.join(uploadDir, member.avatar_url.slice('/uploads/'.length));
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      }
+    } catch { /* best effort */ }
+
+    // Cascade-delete personal data
+    await dbRun("DELETE FROM sessions WHERE member_id = ?", auth.memberId);
+    await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", auth.memberId);
+    await dbRun("DELETE FROM attendance WHERE member_id = ?", auth.memberId);
+    await dbRun("DELETE FROM feedback WHERE user_id = ?", auth.memberId);
+    await dbRun("DELETE FROM notifications WHERE user_id = ?", auth.memberId);
+    await dbRun("DELETE FROM messages WHERE sender_id = ?", auth.memberId);
+    await dbRun("DELETE FROM members WHERE id = ?", auth.memberId);
+    res.json({ ok: true });
+  });
+
 
   // --- API Routes ---
 

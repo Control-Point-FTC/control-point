@@ -992,7 +992,8 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch { /* best effort — still sign out locally */ }
     setIsLoggedIn(false);
     setCurrentUser(null);
     setSessionId(null);
@@ -4565,6 +4566,177 @@ function OwnerView(_props: any) {
   );
 }
 
+function AccountManager({ currentUser }: any) {
+  const hasPassword = !!currentUser?.password;
+
+  const [cur, setCur] = useState('');
+  const [nw, setNw] = useState('');
+  const [nw2, setNw2] = useState('');
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
+
+  const [showDelete, setShowDelete] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [delPassword, setDelPassword] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+
+  const [exporting, setExporting] = useState(false);
+
+  const changePassword = async () => {
+    setPwMsg(null);
+    if (nw !== nw2) { setPwMsg({ ok: false, text: 'New passwords do not match.' }); return; }
+    if (nw.length < 6) { setPwMsg({ ok: false, text: 'New password must be at least 6 characters.' }); return; }
+    setPwBusy(true);
+    try {
+      const res = await apiFetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: cur, newPassword: nw })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setPwMsg({ ok: true, text: 'Password changed. Other devices were signed out.' });
+        setCur(''); setNw(''); setNw2('');
+      } else {
+        setPwMsg({ ok: false, text: data.error || 'Could not change password.' });
+      }
+    } finally {
+      setPwBusy(false);
+    }
+  };
+
+  const exportData = async () => {
+    setExporting(true);
+    try {
+      const res = await apiFetch('/api/auth/export');
+      if (!res.ok) { alert('Could not export your data.'); return; }
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `control-point-my-data-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const deleteAccount = async () => {
+    if (confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase()) {
+      alert('Type your email address exactly to confirm.');
+      return;
+    }
+    if (!window.confirm('This is permanent. Delete your account and all of your personal data?')) return;
+    setDelBusy(true);
+    try {
+      const res = await apiFetch('/api/auth/account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(hasPassword ? { password: delPassword } : {})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+        window.location.reload();
+      } else {
+        alert(data.error || 'Could not delete your account.');
+      }
+    } finally {
+      setDelBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card title="Security" icon={KeyRound} subtitle="Keep your sign-in safe">
+        {hasPassword ? (
+          <div className="space-y-3 max-w-sm">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-text-muted uppercase">Current password</label>
+              <Input type="password" value={cur} onChange={(e: any) => setCur(e.target.value)} autoComplete="current-password" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-text-muted uppercase">New password</label>
+              <Input type="password" value={nw} onChange={(e: any) => setNw(e.target.value)} autoComplete="new-password" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-text-muted uppercase">Confirm new password</label>
+              <Input type="password" value={nw2} onChange={(e: any) => setNw2(e.target.value)} autoComplete="new-password" />
+            </div>
+            {pwMsg && (
+              <p className={cn("text-xs", pwMsg.ok ? "text-emerald-400" : "text-rose-400")}>{pwMsg.text}</p>
+            )}
+            <Button onClick={changePassword} disabled={pwBusy || !cur || !nw || !nw2}>
+              {pwBusy ? 'Changing…' : 'Change password'}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-text-muted">
+            You sign in with Google, so there's no password here to change — manage it in your Google account instead.
+          </p>
+        )}
+      </Card>
+
+      <Card title="Your Data" icon={Download} subtitle="Take your data with you">
+        <p className="text-sm text-text-muted mb-3">
+          Download everything this app stores about you — your profile, attendance, messages, feedback, and notifications — as a JSON file.
+        </p>
+        <Button variant="secondary" onClick={exportData} disabled={exporting}>
+          <Download className="w-4 h-4 mr-2" /> {exporting ? 'Preparing…' : 'Download my data'}
+        </Button>
+      </Card>
+
+      <Card title="Danger Zone" icon={ShieldCheck} subtitle="Irreversible actions" className="border-rose-500/25">
+        {!showDelete ? (
+          <div>
+            <p className="text-sm text-text-muted mb-3">
+              Permanently delete your account and all of your personal data (profile, attendance, messages, feedback, notifications, avatar). Team-level data like tasks and budgets stays with the team.
+            </p>
+            <Button
+              onClick={() => setShowDelete(true)}
+              className="bg-rose-500/15 text-rose-300 border border-rose-500/40 hover:bg-rose-500/25"
+            >
+              <Trash2 className="w-4 h-4 mr-2" /> Delete my account
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3 max-w-sm">
+            <p className="text-sm text-rose-300 font-semibold">
+              This cannot be undone. Type your email (<span className="text-white">{currentUser?.email}</span>) to confirm.
+            </p>
+            <Input
+              value={confirmEmail}
+              onChange={(e: any) => setConfirmEmail(e.target.value)}
+              placeholder="your@email.com"
+            />
+            {hasPassword && (
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-text-muted uppercase">Your password</label>
+                <Input type="password" value={delPassword} onChange={(e: any) => setDelPassword(e.target.value)} autoComplete="current-password" />
+              </div>
+            )}
+            <div className="flex gap-3">
+              <Button variant="secondary" onClick={() => { setShowDelete(false); setConfirmEmail(''); setDelPassword(''); }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={deleteAccount}
+                disabled={delBusy || confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase() || (hasPassword && !delPassword)}
+                className="bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
+              >
+                {delBusy ? 'Deleting…' : 'Yes, delete everything'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVersion }: any) {
   const [name, setName] = useState(currentUser?.name || '');
   const [role, setRole] = useState(currentUser?.role || '');
@@ -4779,6 +4951,8 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
           </span></p>
         </div>
       </Card>
+
+      <AccountManager currentUser={currentUser} />
     </div>
   );
 }
