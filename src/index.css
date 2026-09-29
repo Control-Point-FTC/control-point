@@ -152,3 +152,24 @@
     animation: none;
   }
 }
+
+/* ---------- interactive affordances ---------- */
+/* Every clickable surface gets a pointer cursor; disabled controls get not-allowed. */
+@layer base {
+  button, a, [role="button"], [role="tab"], [role="menuitem"], [role="option"],
+  [role="switch"], select, summary, label,
+  input[type="checkbox"], input[type="radio"], input[type="file"] {
+    cursor: pointer;
+  }
+  button:disabled, [aria-disabled="true"], input:disabled, select:disabled {
+    cursor: not-allowed;
+  }
+  /* Clickable generic containers that JS wires up as controls */
+  [data-clickable="true"] {
+    cursor: pointer;
+  }
+  /* Resize/drag handles */
+  [data-resize] {
+    cursor: ew-resize;
+  }
+}

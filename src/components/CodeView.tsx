@@ -544,7 +544,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                         <div key={commit.id} className="w-full border-b border-slate-700">
                           <div className={`w-full text-left px-3 py-2 hover:bg-slate-700/50 transition-all ${selectedCommit?.id === commit.id ? 'bg-accent/20' : ''}`}>
                             <div className="flex items-start gap-2">
-                              <div className="flex-1" onClick={() => handleViewCommit(commit)}>
+                              <div className="flex-1 cursor-pointer" onClick={() => handleViewCommit(commit)}>
                                 <div className="text-xs font-bold text-accent">{commit.hash.substring(0, 8)}</div>
                                 <div className="text-xs text-slate-200">{commit.message}</div>
                                 <div className="flex items-center gap-1 text-[10px] text-slate-400">

@@ -139,6 +139,7 @@ export default function RolesView({ members, onRefresh }: any) {
   const [saving, setSaving] = useState(false);
   const [managingMember, setManagingMember] = useState<any>(null);
   const [memberRoles, setMemberRoles] = useState<number[]>([]);
+  const [toggling, setToggling] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -213,24 +214,32 @@ export default function RolesView({ members, onRefresh }: any) {
   };
 
   const toggleMemberRole = async (role: Role) => {
-    if (!managingMember) return;
+    if (!managingMember || toggling) return;
     const has = memberRoles.includes(role.id);
-    const url = has
-      ? `/api/members/${managingMember.id}/roles/${role.id}`
-      : `/api/members/${managingMember.id}/roles`;
-    const res = await apiFetch(url, {
-      method: has ? 'DELETE' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: has ? undefined : JSON.stringify({ role_id: role.id }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      notify(data.error || 'Could not update roles', 'error');
-      return;
-    }
+    // Optimistic: flip the chip instantly, roll back on failure.
+    const prev = memberRoles;
     setMemberRoles((prev) => (has ? prev.filter((id) => id !== role.id) : [...prev, role.id]));
-    await load();
-    onRefresh?.();
+    setToggling(true);
+    try {
+      const url = has
+        ? `/api/members/${managingMember.id}/roles/${role.id}`
+        : `/api/members/${managingMember.id}/roles`;
+      const res = await apiFetch(url, {
+        method: has ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: has ? undefined : JSON.stringify({ role_id: role.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMemberRoles(prev);
+        notify(data.error || 'Could not update roles', 'error');
+        return;
+      }
+      await load();
+      onRefresh?.();
+    } finally {
+      setToggling(false);
+    }
   };
 
   if (loading) {

@@ -866,6 +866,15 @@ export default function App() {
     }
   }, [isLoggedIn]);
 
+  // Bruno structured actions (calendar/outreach inserts) refresh team data
+  // without a page reload — event-driven, no polling.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const handler = () => { fetchData(); };
+    window.addEventListener('bruno-data-changed', handler);
+    return () => window.removeEventListener('bruno-data-changed', handler);
+  }, [isLoggedIn]);
+
 
   const connectSocket = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1376,6 +1385,8 @@ export default function App() {
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, socialProfiles, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
+      // setters for optimistic UI (instant-feeling mutations with rollback on error)
+      setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
       insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
       colorVersion, setColorVersion,
@@ -2381,7 +2392,7 @@ function DashboardView({ data, currentUser, onRefresh, settings, setLoading, ins
 }
 
 // Personal dashboard for students: my tasks, my attendance, upcoming events
-function StudentDashboardView({ teams, members, attendance, tasks, events, currentUser, onRefresh, setLoading }: any) {
+function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading }: any) {
   const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
   const today = format(new Date(), 'yyyy-MM-dd');
   const myTasks = (tasks || []).filter((t: any) => t.assigned_to === currentUser?.id);
@@ -2396,16 +2407,25 @@ function StudentDashboardView({ teams, members, attendance, tasks, events, curre
     .slice(0, 5);
 
   const toggleTask = async (task: any) => {
-    setLoading(true);
+    // Optimistic: flip instantly, roll back on failure. No global spinner.
+    const next = task.status === 'done' ? 'todo' : 'done';
+    const prev = tasks;
+    setTasks((ts: any[]) => ts.map((t: any) => t.id === task.id
+      ? { ...t, status: next, completed_at: next === 'done' ? new Date().toISOString() : null }
+      : t));
     try {
       const res = await apiFetch(`/api/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: task.status === 'done' ? 'todo' : 'done' })
+        body: JSON.stringify({ status: next })
       });
-      if (res.ok) onRefresh();
-    } finally {
-      setLoading(false);
+      if (!res.ok) {
+        setTasks(prev);
+        notify('Could not update task — try again.', 'error');
+      }
+    } catch {
+      setTasks(prev);
+      notify('Could not update task — try again.', 'error');
     }
   };
 
@@ -3814,23 +3834,40 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
   );
 }
 
-function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: any) {
+function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, hasScope }: any) {
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assigned_to: '', due_date: '' });
   const [filterTeam, setFilterTeam] = useState('all');
+  const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
+  const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
+    const s = new Set(prev);
+    if (on) s.add(id); else s.delete(id);
+    return s;
+  });
 
   const isAdmin = hasScope('admin');
 
   const handleAddTask = async () => {
-    await apiFetch('/api/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 })
-    });
-    setShowAddTask(false);
-    onRefresh();
+    if (pendingIds.has(-1)) return;
+    markPending(-1, true);
+    try {
+      const res = await apiFetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 })
+      });
+      if (res.ok) {
+        setShowAddTask(false);
+        setNewTask({ team_id: '', title: '', description: '', assigned_to: '', due_date: '' });
+        onRefresh();
+      } else {
+        notify('Could not create task — try again.', 'error');
+      }
+    } finally {
+      markPending(-1, false);
+    }
   };
 
   const filteredTasks = tasks.filter((t: any) => {
@@ -3840,18 +3877,50 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
   });
 
   const updateStatus = async (id: number, status: string) => {
-    await apiFetch(`/api/tasks/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
-    onRefresh();
+    if (pendingIds.has(id)) return;
+    // Optimistic: flip the status instantly, roll back if the server rejects.
+    const prev = tasks;
+    setTasks((ts: any[]) => ts.map((t: any) => t.id === id
+      ? { ...t, status, completed_at: status === 'done' ? new Date().toISOString() : null }
+      : t));
+    markPending(id, true);
+    try {
+      const res = await apiFetch(`/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (!res.ok) {
+        setTasks(prev);
+        notify('Could not update task — try again.', 'error');
+      }
+    } catch {
+      setTasks(prev);
+      notify('Could not update task — try again.', 'error');
+    } finally {
+      markPending(id, false);
+    }
   };
 
   const handleDeleteTask = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete task', message: 'Delete this task?', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' });
-    onRefresh();
+    if (pendingIds.has(id)) return;
+    // Optimistic: remove instantly, restore on failure.
+    const prev = tasks;
+    setTasks((ts: any[]) => ts.filter((t: any) => t.id !== id));
+    markPending(id, true);
+    try {
+      const res = await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        setTasks(prev);
+        notify('Could not delete task — try again.', 'error');
+      }
+    } catch {
+      setTasks(prev);
+      notify('Could not delete task — try again.', 'error');
+    } finally {
+      markPending(id, false);
+    }
   };
 
   // Analytics Data
@@ -4068,7 +4137,7 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
 
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setShowAddTask(false)}>Cancel</Button>
-                <Button onClick={handleAddTask}>Create Task</Button>
+                <Button onClick={handleAddTask} disabled={pendingIds.has(-1)}>{pendingIds.has(-1) ? 'Creating…' : 'Create Task'}</Button>
               </div>
             </div>
           </Card>
@@ -4081,21 +4150,39 @@ function TasksView({ tasks, teams, members, onRefresh, currentUser, hasScope }: 
 function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
+  const [busy, setBusy] = useState(false);
 
   const handleAdd = async () => {
-    await apiFetch('/api/budget', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({...newItem, amount: parseFloat(newItem.amount)})
-    });
-    setShowAdd(false);
-    onRefresh();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({...newItem, amount: parseFloat(newItem.amount)})
+      });
+      if (res.ok) {
+        setShowAdd(false);
+        onRefresh();
+      } else {
+        notify('Could not log entry — try again.', 'error');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleDelete = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete transaction', message: 'Delete this transaction?', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
-    onRefresh();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
+      if (res.ok) onRefresh();
+      else notify('Could not delete entry — try again.', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const totalIncome = budget.filter((i: any) => i.type === 'income').reduce((acc: number, i: any) => acc + i.amount, 0);
@@ -4198,7 +4285,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
               <Input type="date" value={newItem.date} onChange={(e: any) => setNewItem({...newItem, date: e.target.value})} />
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
-                <Button onClick={handleAdd}>Log Entry</Button>
+                <Button onClick={handleAdd} disabled={busy}>{busy ? 'Saving…' : 'Log Entry'}</Button>
               </div>
             </div>
           </Card>
@@ -4223,12 +4310,15 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
     team_id: '', name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', 
     location: '', category: '', description: '', cost: '' 
   });
+  const [busy, setBusy] = useState(false);
 
   const handleAdd = async () => {
     if (!newPart.name || !newPart.sku) {
       notify('Name and SKU are required', 'error');
       return;
     }
+    if (busy) return;
+    setBusy(true);
     try {
       const res = await apiFetch('/api/inventory', {
         method: 'POST',
@@ -4251,11 +4341,15 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
       }
     } catch (error) {
       notify('Error adding part: ' + error, 'error');
+    } finally {
+      setBusy(false);
     }
   };
 
   const handleUpdate = async () => {
     if (!showEdit) return;
+    if (busy) return;
+    setBusy(true);
     try {
       const res = await apiFetch(`/api/inventory/${showEdit.id}`, {
         method: 'PATCH',
@@ -4276,13 +4370,22 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
       }
     } catch (error) {
       notify('Error updating part: ' + error, 'error');
+    } finally {
+      setBusy(false);
     }
   };
 
   const handleDelete = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete part', message: 'Delete this part?', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
-    onRefresh();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
+      if (res.ok) onRefresh();
+      else notify('Could not delete part — try again.', 'error');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleImportRev = async () => {
@@ -4532,7 +4635,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
               <Input placeholder="Description" value={newPart.description} onChange={(e: any) => setNewPart({...newPart, description: e.target.value})} />
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
-                <Button onClick={handleAdd}>Add Part</Button>
+                <Button onClick={handleAdd} disabled={busy}>{busy ? 'Adding…' : 'Add Part'}</Button>
               </div>
             </div>
           </Card>
@@ -4627,7 +4730,7 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
               <Input placeholder="Description" value={showEdit.description || ''} onChange={(e: any) => setShowEdit({...showEdit, description: e.target.value})} />
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setShowEdit(null)}>Cancel</Button>
-                <Button onClick={handleUpdate}>Save Changes</Button>
+                <Button onClick={handleUpdate} disabled={busy}>{busy ? 'Saving…' : 'Save Changes'}</Button>
               </div>
             </div>
           </Card>
@@ -6029,7 +6132,7 @@ function OwnerView(_props: any) {
 }
 
 function AccountManager({ currentUser }: any) {
-  const hasPassword = !!currentUser?.password;
+  const hasPassword = !!currentUser?.hasPassword;
 
   const [cur, setCur] = useState('');
   const [nw, setNw] = useState('');
