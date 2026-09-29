@@ -565,6 +565,7 @@ export default function App() {
     if (typeof window !== 'undefined' && window.innerWidth <= 768) setIsSidebarOpen(false);
   }, [location.pathname]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   
   // Auth State
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
@@ -1441,15 +1442,67 @@ export default function App() {
               </AnimatePresence>
             </div>
             {currentUser && (
-              <div className="flex items-center gap-3 px-4 py-2 bg-white/5 rounded-full border border-white/10">
-                <Avatar user={currentUser} size="sm" />
-                <div className="hidden sm:block">
-                  <p className="text-xs font-bold text-white">{currentUser.name}</p>
-                  <p className="text-[10px] text-text-muted">{currentUser.role}</p>
-                </div>
-                <button onClick={handleLogout} className="ml-2 p-1 text-text-muted/70 hover:text-rose-400 transition-colors">
-                  <LogOut className="w-4 h-4" />
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center gap-3 px-4 py-2 bg-white/5 rounded-full border border-white/10 hover:border-accent/40 hover:bg-white/[0.08] transition-all cursor-pointer"
+                  aria-label="Account menu"
+                >
+                  <Avatar user={currentUser} size="sm" />
+                  <div className="hidden sm:block text-left">
+                    <p className="text-xs font-bold text-white">{currentUser.name}</p>
+                    <p className="text-[10px] text-text-muted">{currentUser.role}</p>
+                  </div>
+                  <LogOut className="w-4 h-4 text-text-muted/70" />
                 </button>
+
+                {showUserMenu && (
+                  <>
+                    <button
+                      className="fixed inset-0 z-40 cursor-default"
+                      onClick={() => setShowUserMenu(false)}
+                      aria-label="Close account menu"
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 8 }}
+                      transition={{ duration: 0.15, ease: 'easeOut' }}
+                      className="absolute right-0 mt-2 w-52 glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50"
+                    >
+                      <div className="p-3 border-b border-white/10 bg-white/5">
+                        <p className="text-sm font-bold text-white truncate">{currentUser.name}</p>
+                        <p className="text-[11px] text-text-muted truncate">{currentUser.email || currentUser.role}</p>
+                      </div>
+                      <div className="p-1.5">
+                        <button
+                          onClick={() => { setShowUserMenu(false); navigate('/profile'); }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/[0.06] transition-colors"
+                        >
+                          <UserCircle className="w-[18px] h-[18px] text-accent" />
+                          My Profile
+                        </button>
+                        {(currentUser as any)?.account_type === 'admin' && (
+                          <button
+                            onClick={() => { setShowUserMenu(false); navigate('/settings'); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/[0.06] transition-colors"
+                          >
+                            <Settings className="w-[18px] h-[18px] text-accent" />
+                            Settings
+                          </button>
+                        )}
+                        <div className="my-1.5 border-t border-white/[0.06]" />
+                        <button
+                          onClick={() => { setShowUserMenu(false); handleLogout(); }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
+                        >
+                          <LogOut className="w-[18px] h-[18px]" />
+                          Sign out
+                        </button>
+                      </div>
+                    </motion.div>
+                  </>
+                )}
               </div>
             )}
           </div>
