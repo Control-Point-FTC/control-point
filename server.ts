@@ -3084,9 +3084,16 @@ async function startServer() {
     try { tree = JSON.parse(row.file_tree || "[]"); } catch { /* keep empty */ }
     const blobs = tree.filter((e) => e && e.type === "blob").map((e) => e.path as string);
     const srcExts = [".java", ".kt", ".py", ".js", ".ts", ".c", ".cpp", ".h", ".hpp", ".xml", ".gradle", ".md"];
-    const preferred = blobs.filter((p) => srcExts.some((x) => p.toLowerCase().endsWith(x)));
-    const rest = blobs.filter((p) => !srcExts.some((x) => p.toLowerCase().endsWith(x)));
-    let listing = [...preferred, ...rest].join("\n");
+    // Rank: team's own code first (TeamCode/), SDK sample boilerplate last
+    const rank = (p: string) => {
+      const l = p.toLowerCase();
+      if (l.includes("/teamcode/")) return 0;
+      if (l.includes("/external/samples/")) return 3;
+      if (srcExts.some((x) => l.endsWith(x))) return 1;
+      return 2;
+    };
+    const sorted = [...blobs].sort((a, b) => rank(a) - rank(b));
+    let listing = sorted.join("\n");
     if (listing.length > 4000) listing = listing.slice(0, 4000) + "\n…(truncated)";
     return `TEAM CODE REPO\nLinked GitHub repo: ${row.owner}/${row.repo} (branch: ${row.branch}, ${row.file_count} files, synced ${row.synced_at})\nFile tree (paths only):\n${listing}`;
   }
