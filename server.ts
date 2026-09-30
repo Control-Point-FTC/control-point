@@ -5882,6 +5882,28 @@ Rules:
     return { text: src.replace(EVENT_BLOCK_RE, "").trim(), events };
   }
 
+  // Bruno calendar skill: the model ends its reply with a fenced ```delete-event
+  // block (a JSON object OR array of {id} entries) when the user confirms
+  // deleting calendar events. Parse, validate, strip. Deletions are only
+  // PROPOSED here — confirmed via POST /api/ai/apply-actions.
+  const DELETE_EVENT_BLOCK_RE = /```delete-event\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractDeleteEventBlock(fullText: string): { text: string; ids: number[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(DELETE_EVENT_BLOCK_RE);
+    if (!m) return { text: src, ids: null };
+    let ids: number[] | null = null;
+    try {
+      const raw = JSON.parse(m[1]);
+      const arr = Array.isArray(raw) ? raw : [raw];
+      const valid = arr
+        .map((p: any) => (typeof p?.id === "number" ? p.id : parseInt(p?.id)))
+        .filter((n: any) => Number.isInteger(n) && n > 0)
+        .slice(0, 20);
+      if (valid.length) ids = valid;
+    } catch { /* malformed JSON — treat as no deletions */ }
+    return { text: src.replace(DELETE_EVENT_BLOCK_RE, "").trim(), ids };
+  }
+
   // Bruno outreach skill: the model ends its reply with a fenced ```outreach block
   // (a JSON array) when the user confirms outreach entries. Parse, validate, strip.
   const OUTREACH_BLOCK_RE = /```outreach\s*\r?\n([\s\S]*?)\r?\n```/;
@@ -6071,20 +6093,35 @@ Rules:
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
       const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
-      const fullContext = [teamContext, todayLine].filter(Boolean).join("\n\n");
+      // Compact upcoming-events context so Bruno can answer "what's coming up"
+      // and propose deletions by event id (```delete-event). Capped at 15 rows
+      // to keep the token cost negligible.
+      let upcomingCtx = "";
+      try {
+        const upcoming = (await dbAll(
+          "SELECT id, title, date, time FROM events WHERE team_id = ? AND date >= date('now', '-1 day') ORDER BY date ASC, time ASC LIMIT 15",
+          auth.teamId
+        )) as any[];
+        if (upcoming.length) {
+          const lines = upcoming.map((e) => `#${e.id} ${e.title} — ${e.date}${e.time ? " " + e.time : ""}`);
+          upcomingCtx = `UPCOMING TEAM EVENTS (next ${upcoming.length}):\n${lines.join("\n")}`;
+        }
+      } catch { /* context is best-effort — never block the reply */ }
+      const fullContext = [teamContext, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
       // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
       // unless the client explicitly asked for Bruno (the coding-handoff switch).
       const personaOverride = req.body?.persona === "bruno" ? "bruno" : null;
       const navGptOn = !personaOverride && (await navGptActiveForTeam(auth.teamId));
       const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", fullContext].filter(Boolean).join("\n\n");
-      // Data-action blocks (```event, ```outreach, ```tasks, ```budget) are
+      // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget) are
       // PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls
       // POST /api/ai/apply-actions with the parsed items.
       const stripActionBlocks = (rawText: string): string => {
         let t = extractSwitchBlock(rawText).text;
         t = extractEventBlock(t).text;
+        t = extractDeleteEventBlock(t).text;
         t = extractOutreachBlock(t).text;
         t = extractTasksBlock(t).text;
         t = extractBudgetBlock(t).text;
