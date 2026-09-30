@@ -6222,6 +6222,24 @@ Rules:
             (await insertTeamEvent(auth.teamId, auth.memberId, e));
           }
           applied.event = (applied.event || 0) + events.length;
+        } else if (kind === "delete-event") {
+          // Destructive: deleting calendar events requires the same permission
+          // as DELETE /api/events/:id.
+          if (!(await hasPerm(auth, "manage_calendar"))) {
+            return res.status(403).json({ error: "Only members with calendar access can delete events" });
+          }
+          const ids = items
+            .map((it: any) => (typeof it?.id === "number" ? it.id : parseInt(it?.id)))
+            .filter((n: any) => Number.isInteger(n) && n > 0)
+            .slice(0, 20);
+          if (!ids.length) continue;
+          const placeholders = ids.map(() => "?").join(",");
+          const info: any = await dbRun(
+            `DELETE FROM events WHERE team_id = ? AND id IN (${placeholders})`,
+            auth.teamId, ...ids
+          );
+          const deleted = Number(info?.changes) || 0;
+          if (deleted) applied["delete-event"] = (applied["delete-event"] || 0) + deleted;
         } else if (kind === "outreach") {
           const { entries } = extractOutreachBlock("```outreach\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
