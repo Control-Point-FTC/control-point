@@ -174,8 +174,10 @@ async function callGemini(opts: {
       { signal: opts.signal }
     );
     if (!res.ok) {
+      // Log generously: the body names the exact quota bucket (quotaId) on
+      // 429s, which the rate-limit dashboard doesn't always break out.
       const text = await res.text().catch(() => "");
-      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
+      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
     }
     return res;
   };
@@ -633,8 +635,10 @@ export async function buildHelperChat(
       { signal }
     );
     if (!res.ok) {
+      // Log generously: the body names the exact quota bucket (quotaId) on
+      // 429s, which the rate-limit dashboard doesn't always break out.
       const text = await res.text().catch(() => "");
-      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
+      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
     }
     return res;
   };
