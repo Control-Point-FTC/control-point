@@ -42,6 +42,7 @@ import {
   Trash2,
   FileUp,
   FileText,
+  Tags,
   MapPin,
   Download,
   Bolt,
@@ -5161,13 +5162,18 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
 }
 
 function InventoryView({ inventory, members, teams, onRefresh, currentUser }: any) {
+  const INVENTORY_CATEGORIES = [
+    "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
+    "Hardware", "Tools", "Raw Material", "3D Printing", "Field", "Other",
+  ];
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [revLink, setRevLink] = useState('');
   const [isLoadingRev, setIsLoadingRev] = useState(false);
-  const [invoiceParsing, setInvoiceParsing] = useState(false);
+  const [invoiceParsing, setInvoiceParsing] = useState<string | null>(null); // null = idle, string = status text
+  const [autoCategorizing, setAutoCategorizing] = useState(false);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
   const invoiceFileRef = React.useRef<HTMLInputElement>(null);
@@ -5291,25 +5297,38 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
   };
 
   const handleInvoiceFile = async (e: any) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files || []) as File[];
     e.target.value = '';
-    if (!file) return;
-    setInvoiceParsing(true);
+    if (!files.length) return;
+    const allItems: any[] = [];
     try {
-      const form = new FormData();
-      form.append('file', file);
-      const res = await apiFetch('/api/inventory/import-invoice/parse', { method: 'POST', body: form });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        notify('Error: ' + (data.error || 'Could not read that file'), 'error');
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setInvoiceParsing(files.length > 1 ? `Reading ${i + 1} of ${files.length}...` : 'Reading file...');
+        const form = new FormData();
+        form.append('file', file);
+        const res = await apiFetch('/api/inventory/import-invoice/parse', { method: 'POST', body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          notify(`Couldn't read ${file.name}: ` + (data.error || 'Unsupported file'), 'error');
+          continue;
+        }
+        if (!data.items || data.items.length === 0) {
+          notify(`No line items found in ${file.name}`, 'error');
+          continue;
+        }
+        for (const it of data.items) allItems.push({ ...it, selected: true });
+      }
+      if (allItems.length === 0) {
+        notify('No line items found in the selected file(s)', 'error');
         return;
       }
-      setInvoiceItems((data.items || []).map((it: any) => ({ ...it, selected: true })));
+      setInvoiceItems(allItems);
       setShowInvoicePreview(true);
     } catch (error) {
       notify('Error reading file: ' + error, 'error');
     } finally {
-      setInvoiceParsing(false);
+      setInvoiceParsing(null);
     }
   };
 
@@ -5332,7 +5351,8 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
             sku: it.sku,
             name: it.name,
             quantity: parseInt(it.quantity, 10) || 0,
-            cost: parseFloat(it.unitPrice) || 0
+            cost: parseFloat(it.unitPrice) || 0,
+            category: it.category || 'Other'
           }))
         })
       });
@@ -5349,6 +5369,25 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
       notify('Import complete: ' + parts.join(', '), 'success');
     } catch (error) {
       notify('Error importing: ' + error, 'error');
+    }
+  };
+
+  const handleAutoCategorize = async () => {
+    if (autoCategorizing) return;
+    setAutoCategorizing(true);
+    try {
+      const res = await apiFetch('/api/inventory/auto-categorize', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        notify('Error: ' + (data.error || 'Auto-categorize failed'), 'error');
+        return;
+      }
+      onRefresh();
+      notify(data.categorized > 0 ? `Categorized ${data.categorized} part${data.categorized === 1 ? '' : 's'}` : 'Everything is already categorized', 'success');
+    } catch (error) {
+      notify('Error: ' + error, 'error');
+    } finally {
+      setAutoCategorizing(false);
     }
   };
 
@@ -5395,10 +5434,15 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
               className="sm:w-48"
             />
             <Button onClick={() => { setNewPart({ team_id: defaultTeamId(teams, currentUser), name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
-            <Button onClick={() => invoiceFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={invoiceParsing}>
-              <FileUp className="w-4 h-4" /> {invoiceParsing ? 'Reading file...' : 'Import Invoice'}
+            <Button onClick={() => invoiceFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={!!invoiceParsing}>
+              <FileUp className="w-4 h-4" /> {invoiceParsing || 'Import Invoice'}
             </Button>
-            <input ref={invoiceFileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleInvoiceFile} />
+            {inventory.some((p: any) => !p.category) && (
+              <Button onClick={handleAutoCategorize} variant="secondary" className="w-full sm:w-auto" disabled={autoCategorizing}>
+                <Tags className="w-4 h-4" /> {autoCategorizing ? 'Categorizing...' : 'Auto-categorize'}
+              </Button>
+            )}
+            <input ref={invoiceFileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple className="hidden" onChange={handleInvoiceFile} />
           </div>
 
           <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
@@ -5410,8 +5454,6 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Part #</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Qty</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Category</th>
-                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Team</th>
-                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Assigned To</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Cost</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
                 </tr>
@@ -5419,7 +5461,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
               <tbody className="divide-y divide-white/5">
                 {filteredParts.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-text-muted/70">No parts found</td>
+                    <td colSpan={7} className="px-4 py-8 text-center text-text-muted/70">No parts found</td>
                   </tr>
                 ) : (
                   filteredParts.map((part: any) => (
@@ -5429,8 +5471,6 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                       <td className="px-4 py-3 text-sm text-text-muted">{part.part_number || '—'}</td>
                       <td className="px-4 py-3 text-sm text-white"><span className="bg-white/10 px-2 py-1 rounded">{part.quantity}</span></td>
                       <td className="px-4 py-3 text-sm text-text-muted">{part.category || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-text-muted">{teams.find((t: any) => t.id === part.team_id)?.name || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-text-muted">{part.assigned_member_name || '—'}</td>
                       <td className="px-4 py-3 text-sm text-blue-400">${(part.cost * part.quantity).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
                       <td className="px-4 py-3 text-right flex gap-2 justify-end">
                         <button onClick={() => setShowEdit(part)} className="text-slate-600 hover:text-accent transition-colors">
@@ -5486,16 +5526,12 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                   onChange={(e: any) => setNewPart({...newPart, team_id: e.target.value})}
                 />
                 <Input placeholder="Location" value={newPart.location} onChange={(e: any) => setNewPart({...newPart, location: e.target.value})} />
-                <Input placeholder="Category" value={newPart.category} onChange={(e: any) => setNewPart({...newPart, category: e.target.value})} />
-                <Input placeholder="Cost per Unit" type="number" step="0.01" value={newPart.cost} onChange={(e: any) => setNewPart({...newPart, cost: e.target.value})} />
-                <Select 
-                  options={[
-                    { label: 'Not Assigned', value: '' },
-                    ...members.map((m: any) => ({ label: m.name, value: m.id }))
-                  ]}
-                  value={newPart.assigned_to}
-                  onChange={(e: any) => setNewPart({...newPart, assigned_to: e.target.value})}
+                <Select
+                  options={INVENTORY_CATEGORIES.map((c: string) => ({ label: c, value: c }))}
+                  value={newPart.category || 'Other'}
+                  onChange={(e: any) => setNewPart({...newPart, category: e.target.value})}
                 />
+                <Input placeholder="Cost per Unit" type="number" step="0.01" value={newPart.cost} onChange={(e: any) => setNewPart({...newPart, cost: e.target.value})} />
               </div>
               <Input placeholder="Description" value={newPart.description} onChange={(e: any) => setNewPart({...newPart, description: e.target.value})} />
               <div className="flex gap-3 justify-end">
@@ -5512,8 +5548,9 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
           <Card title="Import order invoice" className="w-full max-w-3xl my-8">
             <div className="space-y-4">
               <p className="text-sm text-text-muted leading-relaxed">
-                Review the items read from your invoice. Uncheck anything you don't want,
-                fix names, quantities, or prices if needed, then import — items already in inventory get restocked.
+                Review the items read from your invoice{invoiceItems.length > 1 ? 's' : ''}. The AI assigned a category
+                to each item — adjust anything wrong, uncheck what you don't want, then import.
+                Items already in inventory get restocked.
               </p>
               <div className="glass rounded-2xl overflow-x-auto custom-scrollbar max-h-96">
                 <table className="w-full text-left text-sm">
@@ -5524,6 +5561,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                       <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase">SKU</th>
                       <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase w-24">Qty</th>
                       <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase w-28">Unit $</th>
+                      <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase w-36">Category</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -5546,6 +5584,14 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                         </td>
                         <td className="px-3 py-2">
                           <Input type="number" min="0" step="0.01" value={it.unitPrice} onChange={(e: any) => updateInvoiceItem(i, { unitPrice: e.target.value })} className="!py-1.5 text-sm" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <Select
+                            options={INVENTORY_CATEGORIES.map((c: string) => ({ label: c, value: c }))}
+                            value={it.category || 'Other'}
+                            onChange={(e: any) => updateInvoiceItem(i, { category: e.target.value })}
+                            className="!py-1.5 text-sm"
+                          />
                         </td>
                       </tr>
                     ))}
@@ -5581,16 +5627,12 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                   onChange={(e: any) => setShowEdit({...showEdit, team_id: e.target.value})}
                 />
                 <Input placeholder="Location" value={showEdit.location || ''} onChange={(e: any) => setShowEdit({...showEdit, location: e.target.value})} />
-                <Input placeholder="Category" value={showEdit.category || ''} onChange={(e: any) => setShowEdit({...showEdit, category: e.target.value})} />
-                <Input placeholder="Cost per Unit" type="number" step="0.01" value={showEdit.cost} onChange={(e: any) => setShowEdit({...showEdit, cost: e.target.value})} />
-                <Select 
-                  options={[
-                    { label: 'Not Assigned', value: '' },
-                    ...members.map((m: any) => ({ label: m.name, value: m.id }))
-                  ]}
-                  value={showEdit.assigned_to || ''}
-                  onChange={(e: any) => setShowEdit({...showEdit, assigned_to: e.target.value})}
+                <Select
+                  options={INVENTORY_CATEGORIES.map((c: string) => ({ label: c, value: c }))}
+                  value={showEdit.category || 'Other'}
+                  onChange={(e: any) => setShowEdit({...showEdit, category: e.target.value})}
                 />
+                <Input placeholder="Cost per Unit" type="number" step="0.01" value={showEdit.cost} onChange={(e: any) => setShowEdit({...showEdit, cost: e.target.value})} />
               </div>
               <Input placeholder="Description" value={showEdit.description || ''} onChange={(e: any) => setShowEdit({...showEdit, description: e.target.value})} />
               <div className="flex gap-3 justify-end">

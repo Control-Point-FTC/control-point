@@ -4394,27 +4394,35 @@ async function startServer() {
   // --- Generic invoice import: any supplier's order invoice (PDF or photo/scan).
   // AI extracts line items from arbitrary layouts; the old goBILDA regex
   // parser remains as a fallback for PDFs when AI is unavailable.
-  const INVOICE_EXTRACT_SYSTEM = `You extract purchasable line items from supplier order invoices and receipts for a robotics team's parts inventory. Return ONLY a JSON array — no markdown fences, no commentary, no trailing text. Each element must be an object: {"sku": string, "name": string, "quantity": number, "unitPrice": number}.
+  const INVENTORY_CATEGORIES = [
+    "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
+    "Hardware", "Tools", "Raw Material", "3D Printing", "Field", "Other",
+  ];
+  const INVOICE_EXTRACT_SYSTEM = `You extract purchasable line items from supplier order invoices and receipts for a robotics team's parts inventory. Return ONLY a JSON array — no markdown fences, no commentary, no trailing text. Each element must be an object: {"sku": string, "name": string, "quantity": number, "unitPrice": number, "category": string}.
 Rules:
 - One element per distinct line item on the invoice.
 - "sku" is the supplier's part/SKU/model number as printed; use "" when none is shown.
 - "name" is the item description, trimmed to about 120 characters.
 - "quantity" is units ordered on that line (default 1 when unclear).
 - "unitPrice" is the per-unit price in dollars (default 0 when unclear).
+- "category" must be exactly one of: ${INVENTORY_CATEGORIES.join(", ")} — pick the closest fit for the item.
 - Skip shipping, handling, tax, discounts, coupons, subtotals, totals, and gift cards.
 - Never invent items that are not on the invoice.`;
 
   function sanitizeInvoiceItems(raw: any) {
     if (!Array.isArray(raw)) return [];
-    const out: { sku: string; name: string; quantity: number; unitPrice: number }[] = [];
+    const out: { sku: string; name: string; quantity: number; unitPrice: number; category: string }[] = [];
     for (const it of raw.slice(0, 500)) {
       if (!it || typeof it !== "object") continue;
       const sku = String(it.sku || "").trim().slice(0, 60);
       const name = String(it.name || "").trim().slice(0, 120) || sku;
       const quantity = Math.max(0, parseInt(it.quantity, 10) || 0);
       const unitPrice = Math.max(0, parseFloat(it.unitPrice) || 0);
+      const category = INVENTORY_CATEGORIES.includes(String(it.category || "").trim())
+        ? String(it.category).trim()
+        : "Other";
       if (!name && !sku) continue;
-      out.push({ sku, name, quantity: quantity || 1, unitPrice });
+      out.push({ sku, name, quantity: quantity || 1, unitPrice, category });
     }
     return out;
   }
@@ -4513,6 +4521,9 @@ Rules:
         const name = String(it.name || "").trim().slice(0, 120) || sku;
         const quantity = Math.max(0, parseInt(it.quantity, 10) || 0);
         const cost = Math.max(0, parseFloat(it.cost) || 0);
+        const category = INVENTORY_CATEGORIES.includes(String(it.category || "").trim())
+          ? String(it.category).trim()
+          : "Other";
         if (!sku) {
           skipped.push(name || "(unnamed)");
           continue;
@@ -4520,16 +4531,17 @@ Rules:
         try {
           const existing: any = await dbGet("SELECT id, quantity FROM inventory WHERE team_id = ? AND sku = ?", auth.teamId, sku);
           if (existing) {
-            await dbRun("UPDATE inventory SET quantity = quantity + ?, cost = ? WHERE id = ?", quantity, cost, existing.id);
+            await dbRun("UPDATE inventory SET quantity = quantity + ?, cost = ?, category = ? WHERE id = ?", quantity, cost, category, existing.id);
             merged++;
           } else {
             await dbRun(
-              "INSERT INTO inventory (team_id, name, part_number, sku, quantity, location, category, description, cost, date_added) VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?)",
+              "INSERT INTO inventory (team_id, name, part_number, sku, quantity, location, category, description, cost, date_added) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
               auth.teamId,
               name,
               sku,
               sku,
               quantity,
+              category,
               sourceLabel,
               cost,
               date_added
@@ -4555,6 +4567,49 @@ Rules:
   app.post("/api/inventory/import-gobilda/confirm", (req, res) =>
     handleInvoiceConfirm(req, res, "Imported from goBILDA order")
   );
+
+  // One-shot AI categorization for parts that have no category yet.
+  app.post("/api/inventory/auto-categorize", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!isAIConfigured()) {
+      return res.status(501).json({ error: "AI is not configured — ask Sushil to check the Gemini API key." });
+    }
+    try {
+      const parts: any[] = await dbAll(
+        "SELECT id, sku, name FROM inventory WHERE team_id = ? AND (category IS NULL OR category = '') LIMIT 300",
+        auth.teamId
+      );
+      if (!parts.length) return res.json({ categorized: 0 });
+      const system = `You organize a robotics team's parts inventory into categories. You are given a JSON array of parts: [{"id": number, "sku": string, "name": string}]. Return ONLY a JSON array of {"id": number, "category": string} — one entry per part, same ids in the same order. Each category must be exactly one of: ${INVENTORY_CATEGORIES.join(", ")}. Pick the closest fit. No markdown, no commentary.`;
+      const raw = await aiGenerate(system, JSON.stringify(parts.map((p) => ({ id: p.id, sku: p.sku, name: p.name }))).slice(0, 15000), 4096);
+      const cleaned = String(raw || "").replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+      const start = cleaned.indexOf("[");
+      const end = cleaned.lastIndexOf("]");
+      let categorized = 0;
+      if (start !== -1 && end > start) {
+        try {
+          const arr = JSON.parse(cleaned.slice(start, end + 1));
+          if (Array.isArray(arr)) {
+            for (const r of arr) {
+              if (!r || typeof r.id === "undefined") continue;
+              const cat = INVENTORY_CATEGORIES.includes(String(r.category || "").trim())
+                ? String(r.category).trim()
+                : "Other";
+              await dbRun("UPDATE inventory SET category = ? WHERE id = ? AND team_id = ?", cat, r.id, auth.teamId);
+              categorized++;
+            }
+          }
+        } catch (e: any) {
+          console.error("auto-categorize JSON parse error:", e?.message);
+        }
+      }
+      res.json({ categorized });
+    } catch (e: any) {
+      console.error("auto-categorize error:", e?.message);
+      res.status(500).json({ error: "Auto-categorize failed" });
+    }
+  });
 
   // Documentation
   app.get("/api/documentation", async (req, res) => {
