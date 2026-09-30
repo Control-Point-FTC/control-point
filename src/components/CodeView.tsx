@@ -42,9 +42,10 @@ interface CodeViewProps {
   onRefresh: () => void;
   setLoading: (loading: boolean) => void;
   hasScope?: (scope: string) => boolean;
+  activeTeamId?: number | null;
 }
 
-export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading, hasScope }) => {
+export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading, hasScope, activeTeamId }) => {
   const canManageCode = hasScope ? hasScope('code') : false;
   const [files, setFiles] = useState<CodeFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<CodeFile | null>(null);
@@ -80,6 +81,19 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
   const currentTeam = useMemo(() => {
     return teams.find(t => t.id === selectedTeamId);
   }, [teams, selectedTeamId]);
+
+  // The Code page is scoped to the active team (top-right switcher). There is
+  // no cross-team picker here — the API 403s other teams anyway.
+  useEffect(() => {
+    const next = activeTeamId ?? null;
+    if (next !== selectedTeamId) {
+      setSelectedTeamId(next);
+      setSelectedFile(null);
+      setCode('');
+      setFiles([]);
+      setError(null);
+    }
+  }, [activeTeamId]);
 
   // Load files when team changes
   useEffect(() => {
@@ -353,24 +367,13 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
         </div>
       )}
 
-      {/* Team & File Selection */}
+      {/* Team & File Selection — scoped to the active team */}
       <div className="flex gap-4 flex-wrap flex-shrink-0">
         <div className="flex-1 min-w-[200px]">
-          <label className="text-xs font-bold text-slate-300 mb-2 block">SELECT TEAM</label>
-          <select
-            value={selectedTeamId || ''}
-            onChange={(e) => {
-              setSelectedTeamId(e.target.value ? parseInt(e.target.value) : null);
-              setSelectedFile(null);
-              setCode('');
-            }}
-            className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-700 focus:border-accent focus:outline-none"
-          >
-            <option value="">Choose a team...</option>
-            {teams.map(t => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+          <label className="text-xs font-bold text-slate-300 mb-2 block">TEAM</label>
+          <div className="w-full px-3 py-2 bg-slate-800/60 text-white rounded-lg border border-slate-700 font-semibold">
+            {currentTeam?.name || 'Loading…'}
+          </div>
         </div>
 
         {selectedTeamId && (
@@ -605,7 +608,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <FileText className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-            <p className="text-slate-400 mb-2">Select a team and file to view code</p>
+            <p className="text-slate-400 mb-2">Select a file to view code</p>
             {canManageCode && (
               <button
                 onClick={() => setShowNewFileModal(true)}

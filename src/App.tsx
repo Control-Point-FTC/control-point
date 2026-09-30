@@ -1917,7 +1917,7 @@ export default function App() {
       colorVersion, setColorVersion,
       // multi-team: switcher, add/delete/leave, active team name
       onSwitchTeam: handleSwitchTeam, onAddTeam: handleAddTeam, onDeleteTeam: handleDeleteTeam, onLeaveTeam: handleLeaveTeam,
-      activeTeamName, botName, navGptQualified, navGptActive,
+      activeTeamName, activeTeamId: currentTeamId, botName, navGptQualified, navGptActive,
       // app owner (OWNER_EMAILS) — gates owner-only UI like AI limit config
       isOwner,
       // give child views a way to explicitly refresh the AI news cache
