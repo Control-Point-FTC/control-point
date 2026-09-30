@@ -5173,6 +5173,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
   const [revLink, setRevLink] = useState('');
   const [isLoadingRev, setIsLoadingRev] = useState(false);
   const [invoiceParsing, setInvoiceParsing] = useState<string | null>(null); // null = idle, string = status text
+  const [invoiceConfirming, setInvoiceConfirming] = useState(false);
   const [autoCategorizing, setAutoCategorizing] = useState(false);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
   const [showInvoicePreview, setShowInvoicePreview] = useState(false);
@@ -5342,6 +5343,8 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
       notify('Select at least one item to import', 'info');
       return;
     }
+    if (invoiceConfirming) return;
+    setInvoiceConfirming(true);
     try {
       const res = await apiFetch('/api/inventory/import-invoice/confirm', {
         method: 'POST',
@@ -5369,6 +5372,8 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
       notify('Import complete: ' + parts.join(', '), 'success');
     } catch (error) {
       notify('Error importing: ' + error, 'error');
+    } finally {
+      setInvoiceConfirming(false);
     }
   };
 
@@ -5599,9 +5604,13 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                 </table>
               </div>
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => setShowInvoicePreview(false)}>Cancel</Button>
-                <Button onClick={handleInvoiceConfirm}>
-                  Import {invoiceItems.filter((it: any) => it.selected).length} items
+                <Button variant="secondary" onClick={() => setShowInvoicePreview(false)} disabled={invoiceConfirming}>Cancel</Button>
+                <Button onClick={handleInvoiceConfirm} disabled={invoiceConfirming}>
+                  {invoiceConfirming ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Importing...</>
+                  ) : (
+                    <>Import {invoiceItems.filter((it: any) => it.selected).length} items</>
+                  )}
                 </Button>
               </div>
             </div>
