@@ -8821,6 +8821,12 @@ function OwnerView(_props: any) {
               <p className="text-xs text-text-muted">Open misuse flags</p>
             </Card>
           </div>
+          {(aiOverview?.providers || []).length > 0 && (
+            <p className="text-xs text-text-muted">
+              Today's providers:{' '}
+              {(aiOverview.providers || []).map((p: any) => `${p.provider} · ${p.messages} msgs`).join('  |  ')}
+            </p>
+          )}
           <Card title="Heaviest AI users" subtitle="Last 7 days by tokens — spot runaway usage at a glance">
             <div className="space-y-1">
               {(aiOverview?.top || []).map((t: any, i: number) => (

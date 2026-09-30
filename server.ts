@@ -4063,7 +4063,12 @@ async function startServer() {
     const flagRows = (await dbAll("SELECT status, COUNT(*) AS n FROM ai_flags GROUP BY status")) as any[];
     const flags: Record<string, number> = {};
     for (const r of flagRows) flags[r.status] = r.n;
-    res.json({ today, top, flags });
+    // Provider split (Groq vs Gemini) for today's traffic — shows the hybrid
+    // router working. Older rows default to 'gemini' via the column default.
+    const providers = (await dbAll(
+      "SELECT provider, COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage WHERE created_at >= datetime('now', 'start of day') GROUP BY provider"
+    )) as any[];
+    res.json({ today, top, flags, providers });
   });
 
   // Richer users list: AI status, 7-day usage, open flags, warnings
