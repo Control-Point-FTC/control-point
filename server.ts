@@ -362,6 +362,11 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     sort_order INTEGER DEFAULT 0,
     last_synced_at INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- YouTube rich channel details (populated on link + sync)
+    country TEXT,
+    published_at TEXT,
+    description TEXT,
+    custom_url TEXT,
     FOREIGN KEY(team_id) REFERENCES teams(id)
   );
 
@@ -622,6 +627,13 @@ if (!memberPresenceColumns.some((c: any) => c.name === 'presence_status')) {
 const messageChannelColumns = (await dbAll("PRAGMA table_info(messages)"));
 if (!messageChannelColumns.some((c: any) => c.name === 'channel_id')) {
   (await dbExec("ALTER TABLE messages ADD COLUMN channel_id INTEGER"));
+}
+// YouTube rich channel details on social_profiles (link + sync populate them)
+const socialProfileColumns = (await dbAll("PRAGMA table_info(social_profiles)"));
+for (const [col, type] of [['country', 'TEXT'], ['published_at', 'TEXT'], ['description', 'TEXT'], ['custom_url', 'TEXT']] as const) {
+  if (!socialProfileColumns.some((c: any) => c.name === col)) {
+    (await dbExec(`ALTER TABLE social_profiles ADD COLUMN ${col} ${type}`));
+  }
 }
 // Message replies + forwarding (Discord-style)
 const messageReplyColumns = (await dbAll("PRAGMA table_info(messages)"));
@@ -4627,7 +4639,7 @@ async function startServer() {
         if (!YOUTUBE_API_KEY) return { ok: false, error: "YouTube API key not configured" };
         if (!profile.external_id) return { ok: false, error: "No channel linked" };
         const s = await fetchYouTubeStats(profile.external_id);
-        await dbRun("UPDATE social_profiles SET display_name = ?, avatar_url = ? WHERE id = ?", s.displayName, s.avatarUrl, profile.id);
+        await dbRun("UPDATE social_profiles SET display_name = ?, avatar_url = ?, country = ?, published_at = ?, description = ?, custom_url = ? WHERE id = ?", s.displayName, s.avatarUrl, s.country || null, s.publishedAt || null, s.description || null, s.customUrl || null, profile.id);
         await recordSocialSnapshot(profile.id, profile.team_id, { followers: s.followers, likes: 0, posts: s.posts, views: s.views });
         return { ok: true };
       }
@@ -4767,7 +4779,7 @@ async function startServer() {
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const profiles = (await dbAll(
-        "SELECT id, team_id, platform, handle, url, display_name, avatar_url, token_status, is_pinned, sort_order, last_synced_at, created_at FROM social_profiles WHERE team_id = ? ORDER BY is_pinned DESC, sort_order ASC, created_at ASC",
+        "SELECT id, team_id, platform, handle, url, display_name, avatar_url, token_status, is_pinned, sort_order, last_synced_at, created_at, country, published_at, description, custom_url, external_id FROM social_profiles WHERE team_id = ? ORDER BY is_pinned DESC, sort_order ASC, created_at ASC",
         auth.teamId
       )) as any[];
       for (const p of profiles) {
@@ -4805,8 +4817,9 @@ async function startServer() {
       const maxOrder: any = await dbGet("SELECT COALESCE(MAX(sort_order), -1) AS m FROM social_profiles WHERE team_id = ?", auth.teamId);
       const handle = (ch as any).handle || "@" + input.replace(/^@/, "").split(/[/?#]/)[0];
       const info: any = await dbRun(
-        "INSERT INTO social_profiles (team_id, platform, handle, external_id, url, display_name, avatar_url, sort_order, last_synced_at) VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?)",
-        auth.teamId, handle, ch.channelId, input.startsWith("http") ? input : null, ch.displayName, ch.avatarUrl, (maxOrder.m + 1), Date.now()
+        "INSERT INTO social_profiles (team_id, platform, handle, external_id, url, display_name, avatar_url, sort_order, last_synced_at, country, published_at, description, custom_url) VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        auth.teamId, handle, ch.channelId, input.startsWith("http") ? input : null, ch.displayName, ch.avatarUrl, (maxOrder.m + 1), Date.now(),
+        ch.country || null, ch.publishedAt || null, ch.description || null, ch.customUrl || null
       );
       await recordSocialSnapshot(info.lastInsertRowid, auth.teamId, { followers: ch.followers, likes: 0, posts: ch.posts, views: ch.views });
       res.json({ ok: true, id: info.lastInsertRowid });

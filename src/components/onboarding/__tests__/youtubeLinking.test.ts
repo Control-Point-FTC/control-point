@@ -99,6 +99,15 @@ describe('resolveYouTubeChannel', () => {
     expect(url.searchParams.get('id')).toBe('UCi6bxo-zIbgLrZf3DYpT24A');
   });
 
+  it('accepts a youtool.io channel-analyzer URL by extracting the channel ID', async () => {
+    const fetchMock = mockFetchOnce(FTC_GENERAL_RESPONSE);
+    const ch = await resolveYouTubeChannel('https://www.youtool.io/tools/channel-analyzer/UCi6bxo-zIbgLrZf3DYpT24A', 'test-key');
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.searchParams.get('id')).toBe('UCi6bxo-zIbgLrZf3DYpT24A');
+    expect(url.searchParams.get('forHandle')).toBeNull();
+    expect(ch.channelId).toBe('UCi6bxo-zIbgLrZf3DYpT24A');
+  });
+
   it('throws a clear error when the handle matches nothing', async () => {
     mockFetchOnce({ items: [] });
     await expect(resolveYouTubeChannel('@NoSuchChannelXYZ123', 'test-key')).rejects.toThrow(
@@ -137,7 +146,28 @@ describe('fetchYouTubeStats', () => {
 describe('pickYouTubeChannel', () => {
   it('defaults missing stats to zero', () => {
     const s = pickYouTubeChannel({ snippet: { title: 'X' } });
-    expect(s).toEqual({ displayName: 'X', avatarUrl: '', followers: 0, views: 0, posts: 0 });
+    expect(s).toEqual({
+      displayName: 'X', avatarUrl: '', followers: 0, views: 0, posts: 0,
+      description: '', country: null, publishedAt: null, customUrl: null,
+    });
+  });
+
+  it('picks up rich snippet details', () => {
+    const s = pickYouTubeChannel({
+      snippet: {
+        title: 'FTC Decode Highlights',
+        description: 'Highlights from the FTC season',
+        country: 'US',
+        publishedAt: '2020-05-01T12:00:00Z',
+        customUrl: '@FTCGeneral4215',
+        thumbnails: { default: { url: 'https://i.ytimg.com/x.jpg' } },
+      },
+      statistics: { subscriberCount: '100', viewCount: '200', videoCount: '3' },
+    });
+    expect(s.description).toBe('Highlights from the FTC season');
+    expect(s.country).toBe('US');
+    expect(s.publishedAt).toBe('2020-05-01T12:00:00Z');
+    expect(s.customUrl).toBe('@FTCGeneral4215');
   });
 });
 

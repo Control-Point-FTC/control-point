@@ -9,6 +9,11 @@ export interface YouTubeChannelInfo {
   followers: number;
   views: number;
   posts: number;
+  // Rich channel details (from snippet) for the analytics display
+  description: string;
+  country: string | null;
+  publishedAt: string | null; // ISO date
+  customUrl: string | null; // e.g. "@FTCGeneral"
 }
 
 export interface ResolvedYouTubeChannel extends YouTubeChannelInfo {
@@ -37,19 +42,27 @@ export async function youtubeApi(apiKey: string, path: string, params: Record<st
 
 export function pickYouTubeChannel(ch: any): YouTubeChannelInfo {
   const s = ch.statistics || {};
+  const sn = ch.snippet || {};
   return {
-    displayName: ch.snippet?.title || "",
-    avatarUrl: ch.snippet?.thumbnails?.default?.url || "",
+    displayName: sn.title || "",
+    avatarUrl: sn.thumbnails?.default?.url || "",
     followers: Number(s.subscriberCount || 0),
     views: Number(s.viewCount || 0),
     posts: Number(s.videoCount || 0),
+    description: (sn.description || "").slice(0, 1000),
+    country: sn.country || null,
+    publishedAt: sn.publishedAt || null,
+    customUrl: sn.customUrl || null,
   };
 }
 
 export async function resolveYouTubeChannel(input: string, apiKey: string): Promise<ResolvedYouTubeChannel> {
   const clean = input.trim();
-  // Direct channel URL or bare channel ID
-  const m = clean.match(/youtube\.com\/channel\/([A-Za-z0-9_-]{10,})/) || clean.match(/^UC[A-Za-z0-9_-]{20,}$/);
+  // Channel analyzer URLs (e.g. https://www.youtool.io/tools/channel-analyzer/UC...)
+  // carry the channel ID in the path — extract it directly.
+  const analyzer = clean.match(/(?:youtool\.io\/tools\/channel-analyzer|youtube\.com\/channel)\/([A-Za-z0-9_-]{10,})/i);
+  const bareId = !analyzer && clean.match(/^UC[A-Za-z0-9_-]{20,}$/);
+  const m = analyzer || bareId;
   if (m) {
     const id = m[1] || m[0];
     const data = await youtubeApi(apiKey, "channels", { part: "snippet,statistics", id });

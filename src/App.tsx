@@ -6061,6 +6061,59 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
 
 const OUTREACH_PRESETS = ['Demo', 'Workshop', 'Volunteering', 'Fundraiser', 'Presentation', 'Competition'];
 
+// Rich YouTube channel analytics, analyzer-style: stat tiles, channel meta
+// (handle, country, join date), and an expandable description. Data comes
+// from the YouTube Data API via social_profiles (populated on link + sync).
+function YouTubeChannelDetails({ p }: { p: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const videos = Number(p.latest?.posts) || 0;
+  const views = Number(p.latest?.views) || 0;
+  const avgViews = videos > 0 ? Math.round(views / videos) : 0;
+  const joined = (() => {
+    if (!p.published_at) return null;
+    const d = new Date(p.published_at);
+    return isNaN(d.getTime()) ? null : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  })();
+  const channelUrl = p.custom_url
+    ? `https://www.youtube.com/${String(p.custom_url).replace(/^@/, '@')}`
+    : p.external_id ? `https://www.youtube.com/channel/${p.external_id}` : null;
+  const tiles = [
+    { label: 'Total views', value: fmtCompact(views) },
+    { label: 'Videos', value: fmtCompact(videos) },
+    { label: 'Avg views / video', value: fmtCompact(avgViews) },
+  ];
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-2">
+        {tiles.map(t => (
+          <div key={t.label} className="rounded-lg bg-white/[0.03] border border-white/5 px-2 py-1.5">
+            <p className="text-sm font-bold text-white leading-tight">{t.value}</p>
+            <p className="text-[9px] text-text-muted uppercase font-bold leading-tight mt-0.5">{t.label}</p>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+        {p.custom_url && <span className="text-white/70 font-semibold">{p.custom_url}</span>}
+        {p.country && <span>{p.country}</span>}
+        {joined && <span>Joined {joined}</span>}
+        {channelUrl && (
+          <a href={channelUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+            <ExternalLink className="w-3 h-3" /> Open channel
+          </a>
+        )}
+      </div>
+      {p.description && (
+        <div>
+          <p className={`text-[11px] text-text-muted whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}>{p.description}</p>
+          <button onClick={() => setExpanded(!expanded)} className="text-[11px] text-accent hover:underline mt-0.5">
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function fmtCompact(n: any) {
   const v = Number(n);
   if (!isFinite(v)) return '—';
@@ -6353,11 +6406,15 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                         <Sparkline points={p.history} />
                       </div>
                       {(p.latest?.likes != null || p.latest?.posts != null || p.latest?.views != null) && (
+                        p.platform === 'youtube'
+                          ? <YouTubeChannelDetails p={p} />
+                          : (
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
                           {p.platform === 'tiktok' && p.latest?.likes != null && <span><b className="text-white/80">{fmtCompact(p.latest.likes)}</b> likes</span>}
                           {p.latest?.posts != null && <span><b className="text-white/80">{fmtCompact(p.latest.posts)}</b> {p.platform === 'youtube' ? 'videos' : 'posts'}</span>}
                           {p.platform === 'youtube' && p.latest?.views != null && <span><b className="text-white/80">{fmtCompact(p.latest.views)}</b> views</span>}
                         </div>
+                          )
                       )}
                       <div className="flex items-center justify-between">
                         <p className="text-[11px] text-text-muted">{p.last_synced_at ? `Synced ${timeAgoSocial(p.last_synced_at)}` : 'Not synced yet'}</p>
@@ -6376,7 +6433,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
         {showLinkYT && (
           <div className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3 mt-4">
             <OutreachField label="YouTube channel">
-              <Input placeholder="@yourteam or paste a channel URL" value={ytInput} onChange={(e: any) => setYtInput(e.target.value)} />
+              <Input placeholder="@handle, channel URL, channel ID, or analyzer link" value={ytInput} onChange={(e: any) => setYtInput(e.target.value)} />
             </OutreachField>
             <div className="flex gap-2 justify-end">
               <Button variant="secondary" onClick={() => setShowLinkYT(false)}>Cancel</Button>
