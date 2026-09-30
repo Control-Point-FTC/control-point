@@ -1525,6 +1525,12 @@ async function startServer() {
           }
           return;
         }
+        // Client reports which channel it's viewing (for @here pings)
+        if (message.type === "viewing") {
+          const cid = parseInt(message.channel_id, 10);
+          (ws as any).viewingChannelId = Number.isFinite(cid) ? cid : null;
+          return;
+        }
         if (message.type === "chat") {
           const teamId = (ws as any).teamId;
           if (teamId == null) return; // ignore unidentified clients
@@ -1570,6 +1576,27 @@ async function startServer() {
           }
 
           // Handle mentions (scoped to the sender's workspace)
+          const plainContent = String(message.content || '').replace(/@\[([^\]]+)\]/g, '@$1');
+          const chanName = (restrictedChan as any)?.name || 'general';
+          if (plainContent.includes('@everyone')) {
+            // Notify every active member of the team (except the sender)
+            const all = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 AND id != ?", teamId, message.sender_id)) as any[];
+            for (const u of all) {
+              createNotification(u.id, `${message.sender_name} pinged @everyone in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention');
+            }
+          } else if (plainContent.includes('@here')) {
+            // Notify members currently viewing this channel (except the sender)
+            const viewers = new Set<number>();
+            for (const c of clients) {
+              const mid = (c as any).memberId;
+              if ((c as any).teamId === teamId && (c as any).viewingChannelId === channelId && mid && mid !== message.sender_id) {
+                viewers.add(mid);
+              }
+            }
+            for (const id of viewers) {
+              createNotification(id, `${message.sender_name} pinged @here in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention');
+            }
+          }
           const mentions = message.content.match(/@\[([^\]]+)\]/g);
           if (mentions) {
             for (const m of mentions) {

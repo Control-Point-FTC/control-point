@@ -1047,6 +1047,13 @@ export default function App() {
 
   // WebSocket
   const [socket, setSocket] = useState<WebSocket | null>(null);
+  // Tell the server which channel we're viewing so @here pings reach the
+  // right people.
+  useEffect(() => {
+    if (socket && socket.readyState === WebSocket.OPEN && activeChannelId != null) {
+      try { socket.send(JSON.stringify({ type: 'viewing', channel_id: activeChannelId })); } catch {}
+    }
+  }, [socket, activeChannelId]);
 
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [discordEnabled, setDiscordEnabled] = useState(false);
@@ -6833,6 +6840,10 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
     for (const m of sorted) {
       out = out.split(`@${m.name}`).join(`@[${m.name}]`);
     }
+    // Broadcast pings (kept out of the name loop so a member literally named
+    // "everyone" can't shadow them)
+    out = out.split('@everyone').join('@[everyone]');
+    out = out.split('@here').join('@[here]');
     return out;
   };
 
@@ -7039,7 +7050,13 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
     }
   };
 
-  const filteredMentions = members.filter((m: any) => m.name.toLowerCase().includes(mentionSearch.toLowerCase()));
+  const filteredMentions = [
+    ...[
+      { id: 'everyone', name: 'everyone', special: 'Notify everyone in the team' },
+      { id: 'here', name: 'here', special: 'Notify everyone viewing this channel' },
+    ].filter((m) => m.name.includes(mentionSearch.toLowerCase())),
+    ...members.filter((m: any) => m.name.toLowerCase().includes(mentionSearch.toLowerCase())),
+  ];
 
   const isImageFile = (filepath: string) => {
     return /\.(jpg|jpeg|png|gif|webp)$/i.test(filepath);
@@ -7688,8 +7705,15 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
                   }}
                   className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-accent hover:text-primary transition-colors flex items-center gap-2.5"
                 >
-                  <Avatar user={m} size="xs" />
-                  {m.name}
+                  {m.special ? (
+                    <span className="w-6 h-6 rounded-full bg-accent/15 flex items-center justify-center flex-shrink-0">
+                      <Bell className="w-3.5 h-3.5 text-accent" />
+                    </span>
+                  ) : (
+                    <Avatar user={m} size="xs" />
+                  )}
+                  <span className="flex-1">@{m.name}</span>
+                  {m.special && <span className="text-[11px] text-text-muted/70 truncate">{m.special}</span>}
                 </button>
               ))}
             </div>
