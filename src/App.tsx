@@ -6750,6 +6750,21 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
   const [renamingCat, setRenamingCat] = useState<number | null>(null);
   const [renameCatName, setRenameCatName] = useState('');
   const [moveMenuFor, setMoveMenuFor] = useState<number | null>(null); // channel id with the move-to-category menu open
+  const [dragChannelId, setDragChannelId] = useState<number | null>(null); // admin drag-and-drop between categories
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null); // 'cat:<id>' | 'uncat'
+
+  // Admin drag-and-drop: drop a channel row onto a category header to move it.
+  const handleDropOnCategory = async (e: React.DragEvent, categoryId: number | null) => {
+    e.preventDefault();
+    setDragOverTarget(null);
+    const raw = e.dataTransfer.getData('text/plain');
+    const id = dragChannelId ?? parseInt(raw, 10);
+    setDragChannelId(null);
+    if (!isAdmin || !Number.isFinite(id)) return;
+    const chan = (channels || []).find((c: any) => c.id === id);
+    if (!chan || (chan.category_id ?? null) === categoryId) return;
+    await handleMoveChannel(id, categoryId);
+  };
   const [collapsedCats, setCollapsedCats] = useState<Set<number>>(() => {
     try {
       const raw = localStorage.getItem(`cp-collapsed-cats-${currentUser?.team_id ?? 'x'}`);
@@ -7134,9 +7149,19 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
         <button
           onClick={() => { setActiveChannelId(c.id); setReplyTo(null); setShowChannelsMobile(false); }}
           title={c.topic || `#${c.name}`}
+          draggable={isAdmin && !isTouchDevice}
+          onDragStart={(e) => {
+            if (!isAdmin) return;
+            e.dataTransfer.setData('text/plain', String(c.id));
+            e.dataTransfer.effectAllowed = 'move';
+            setDragChannelId(c.id);
+          }}
+          onDragEnd={() => { setDragChannelId(null); setDragOverTarget(null); }}
           className={cn(
             'w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
-            isActive ? 'bg-white/[0.08] text-white font-semibold' : 'text-text-muted hover:bg-white/[0.04] hover:text-white'
+            isActive ? 'bg-white/[0.08] text-white font-semibold' : 'text-text-muted hover:bg-white/[0.04] hover:text-white',
+            dragChannelId === c.id && 'opacity-40',
+            isAdmin && !isTouchDevice && 'cursor-grab active:cursor-grabbing'
           )}
         >
           <Hash className={cn('w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} />
@@ -7221,8 +7246,16 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
     );
   };
 
-  const renderCategoryHeader = (cat: any, ungrouped: boolean) => (
-    <div className="group/cat flex items-center gap-0.5 px-2.5 pt-3 pb-1">
+  const renderCategoryHeader = (cat: any, ungrouped: boolean) => {
+    const dropKey = ungrouped ? 'uncat' : `cat:${cat.id}`;
+    const isDropTarget = isAdmin && dragOverTarget === dropKey;
+    return (
+    <div
+      className={cn('group/cat flex items-center gap-0.5 px-2.5 pt-3 pb-1 rounded-lg transition-colors', isDropTarget && 'bg-accent/15 outline outline-1 outline-accent/50')}
+      onDragOver={isAdmin ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverTarget(dropKey); } : undefined}
+      onDragLeave={() => setDragOverTarget((prev) => (prev === dropKey ? null : prev))}
+      onDrop={isAdmin ? (e) => handleDropOnCategory(e, ungrouped ? null : cat.id) : undefined}
+    >
       <button
         onClick={() => { if (!ungrouped) toggleCat(cat.id); }}
         className="flex items-center gap-1 flex-1 min-w-0 text-left"
@@ -7268,7 +7301,8 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
         </span>
       )}
     </div>
-  );
+    );
+  };
 
   const channelList = (
     <div className="flex flex-col h-full">
