@@ -31,7 +31,6 @@ import {
   Bell,
   LogOut,
   Lock,
-  UserPlus,
   Search,
   EyeOff,
   Eye,
@@ -40,6 +39,7 @@ import {
   FolderInput,
   Calendar,
   User,
+  UserCheck,
   UserCircle,
   Zap,
   Trash2,
@@ -89,8 +89,6 @@ import {
   Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell, PieChart, Pie
@@ -125,10 +123,8 @@ import RolesView, { RoleBadge } from './components/RolesView';
 import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { cn, Card, Button } from './components/ui';
+import DashboardView from './components/dashboard/DashboardView';
 
 // Helper to get CSS variable values
 function getCSSVariable(name: string): string {
@@ -144,60 +140,6 @@ function validHex(v: any): v is string {
 }
 
 // --- Components ---
-
-const Card = ({ children, className, title, subtitle, icon: Icon }: any) => (
-  <div className={cn("card-surface p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgba(0,0,0,0.35)]", className)}>
-    {(title || Icon) && (
-      <div className="flex items-center justify-between mb-1">
-        <div>
-          {title && <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>}
-          {subtitle && <p className="text-xs text-text-muted mt-0.5">{subtitle}</p>}
-        </div>
-        {Icon && (
-          <div className="rounded-xl bg-accent/12 p-2.5">
-            <Icon className="w-5 h-5 text-accent" />
-          </div>
-        )}
-      </div>
-    )}
-    {children}
-  </div>
-);
-
-const Button = ({ children, className, variant = 'primary', ...props }: any) => {
-  const accentColor = getCSSVariable('--color-accent');
-  const primaryColor = getCSSVariable('--color-primary');
-  
-  const variants: any = {
-    primary: {
-      className: 'font-bold hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)]',
-      style: { backgroundColor: accentColor || '#FFC700', color: '#231A00' }
-    },
-    secondary: 'bg-elevated text-white hover:bg-white/10 border border-white/10 font-semibold',
-    outline: {
-      className: 'text-accent hover:opacity-80 border border-current font-bold',
-    },
-    ghost: 'text-text-muted hover:text-white hover:bg-white/5 font-semibold',
-    danger: 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30 font-semibold'
-  };
-  
-  const variantConfig = variants[variant as keyof typeof variants];
-  const isObject = typeof variantConfig === 'object' && !Array.isArray(variantConfig);
-  
-  return (
-    <button 
-      className={cn(
-        "px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50", 
-        isObject ? variantConfig.className : variantConfig,
-        className
-      )}
-      style={isObject ? variantConfig.style : undefined}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-};
 
 const Input = ({ className, ...props }: any) => (
   <input 
@@ -2913,438 +2855,24 @@ function CookieConsent() {
 
 // --- View Components ---
 
-// Clickable KPI stat card for the dashboard top row.
-const KpiCard = ({ icon: Icon, label, value, sub, onClick, valueClass }: any) => (
-  <button
-    onClick={onClick}
-    className="card-surface p-4 flex flex-col gap-2 text-left shadow-[0_8px_30px_rgba(0,0,0,0.35)] hover:border-accent/40 hover:-translate-y-0.5 transition-all cursor-pointer group"
-  >
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">{label}</span>
-      <div className="rounded-lg bg-accent/12 p-1.5 shrink-0">
-        <Icon className="w-4 h-4 text-accent" />
-      </div>
-    </div>
-    <p className={cn('text-2xl font-display font-bold text-white leading-none truncate', valueClass)}>{value}</p>
-    <p className="text-[11px] text-text-muted truncate group-hover:text-accent transition-colors">{sub} →</p>
-  </button>
-);
-
-function DashboardView({ data, currentUser, onRefresh, setLoading, insights, updateInsights, isAiLoading, setIsAiLoading, ThinkingIndicator, updateSummary, teams, onboardingState, onContinueSetup, onDismissChecklist, inventory, setTasks }: any) {
-  const [aiTab, setAiTab] = useState<'summary' | 'insights'>('summary');
-  const navigate = useNavigate();
-  const ftc = useFtcTeam();
-  const [showOut, setShowOut] = useState(false);
-  const [outReason, setOutReason] = useState('');
-
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const myStatus = data.attendance?.find((r: any) => r.member_id === currentUser?.id && r.date === today);
-
-  const handleSelfReport = async (status: string, reason?: string) => {
-    setLoading(true);
-    try {
-      let finalStatus = status;
-
-      // AI excuse checker is skipped for now: a self-reported absence is
-      // logged as unexcused with the reason saved, and an admin can flip it
-      // to excused from the Attendance view.
-      if (status === 'O' && reason) {
-        finalStatus = 'U';
-      }
-
-      const res = await apiFetch('/api/attendance/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: today,
-          records: [{ member_id: currentUser.id, status: finalStatus, reason }]
-        })
-      });
-      if (res.ok) {
-        setShowOut(false);
-        onRefresh();
-        if (reason) notify('Absence logged. An admin can mark it excused from the Attendance view.', 'success');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ── operational data ──────────────────────────────────────
-  const members = data.members || [];
-  const tasks = data.tasks || [];
-  const events = data.events || [];
-  const stock = inventory || [];
-
-  const todayAttendance = data.attendance?.filter((r: any) => r.date === today) || [];
-  const presentCount = todayAttendance.filter((r: any) => r.status === 'P' || r.status === 'L').length;
-
-  const activeTasks = tasks.filter((t: any) => t.status !== 'done');
-  const overdueTasks = activeTasks
-    .filter((t: any) => t.due_date && t.due_date < today)
-    .sort((a: any, b: any) => String(a.due_date).localeCompare(String(b.due_date)));
-
-  const upcomingEvents = (events || [])
-    .filter((e: any) => e.date >= today)
-    .sort((a: any, b: any) =>
-      String(a.date).localeCompare(String(b.date)) ||
-      String(a.start_time || '').localeCompare(String(b.start_time || '')));
-  const nextEvent = upcomingEvents[0];
-
-  const lowStock = stock
-    .filter((i: any) => (i.quantity ?? 0) <= 2)
-    .sort((a: any, b: any) => (a.quantity ?? 0) - (b.quantity ?? 0));
-
-  const missingCheckin = todayAttendance.length > 0
-    ? members.filter((m: any) => !todayAttendance.some((r: any) => r.member_id === m.id)
-        && m.id !== currentUser?.id)
-    : [];
-
-  const weekAhead = format(new Date(Date.now() + 7 * 864e5), 'yyyy-MM-dd');
-  const deadlinesSoon = activeTasks
-    .filter((t: any) => t.due_date && t.due_date >= today && t.due_date <= weekAhead)
-    .sort((a: any, b: any) => String(a.due_date).localeCompare(String(b.due_date)));
-
-  const totalBudget = data.budget?.reduce((acc: number, item: any) =>
-    item.type === 'income' ? acc + item.amount : acc - item.amount, 0
-  ) || 0;
-
-  // Recent team activity, derived client-side from the last 7 days.
-  const weekAgoMs = Date.now() - 7 * 864e5;
-  const activityItems: any[] = [];
-  tasks.forEach((t: any) => {
-    if (t.completed_at && new Date(t.completed_at).getTime() >= weekAgoMs) {
-      activityItems.push({ ts: t.completed_at, Icon: CheckSquare, tone: 'text-emerald-400', text: `Completed \u201c${t.title}\u201d` });
-    } else if (t.created_at && new Date(t.created_at).getTime() >= weekAgoMs) {
-      activityItems.push({ ts: t.created_at, Icon: CheckSquare, tone: 'text-blue-400', text: `New task: \u201c${t.title}\u201d` });
-    }
-  });
-  stock.forEach((i: any) => {
-    if (i.date_added && new Date(i.date_added).getTime() >= weekAgoMs) {
-      activityItems.push({ ts: i.date_added, Icon: Package, tone: 'text-accent', text: `Stocked ${i.name} \u00d7${i.quantity ?? 0}` });
-    }
-  });
-  activityItems.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-  const recentActivity = activityItems.slice(0, 6);
-
-  const markTaskDone = async (id: number) => {
-    if (!setTasks) { navigate('/tasks'); return; }
-    const prev = tasks;
-    setTasks((ts: any[]) => ts.map((t: any) =>
-      t.id === id ? { ...t, status: 'done', completed_at: new Date().toISOString() } : t));
-    try {
-      const res = await apiFetch(`/api/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      });
-      if (!res.ok) setTasks(prev);
-      else onRefresh?.();
-    } catch {
-      setTasks(prev);
-    }
-  };
-
-  const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
-  const attentionCount =
-    overdueTasks.length + lowStock.length + deadlinesSoon.length + (missingCheckin.length > 0 ? 1 : 0);
-  const hasAttention = attentionCount > 0;
-
-  return (
-    <>
-    {onboardingState && shouldShowChecklist(onboardingState) && (
-      <div className="mb-3">
-        <SetupChecklist
-          state={onboardingState}
-          onContinue={onContinueSetup}
-          onDismiss={onDismissChecklist}
-        />
-      </div>
-    )}
-
-    {/* header — answers "what is happening today?" at a glance */}
-    <div className="flex items-end justify-between gap-3 mb-3">
-      <div>
-        <h2 className="text-xl font-display font-bold text-white tracking-tight">
-          {(() => {
-            const h = new Date().getHours();
-            const greet = h >= 5 && h < 12 ? 'Good morning' : h >= 12 && h < 17 ? 'Good afternoon' : h >= 17 && h < 22 ? 'Good evening' : 'Hello';
-            const first = String(currentUser?.name || '').split(' ')[0];
-            return first ? `${greet}, ${first}` : greet;
-          })()}
-        </h2>
-        <p className="text-xs text-text-muted mt-0.5">
-          {myTeam?.name || 'Your team'}{myTeam?.number ? ` · Team ${myTeam.number}` : ''}
-          {' · '}{format(new Date(), 'EEEE, MMMM d, yyyy')}
-        </p>
-      </div>
-    </div>
-
-    {/* ── KPI row — every card navigates ─────────────────── */}
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-      <KpiCard
-        icon={CalendarCheck}
-        label="Today's attendance"
-        value={todayAttendance.length > 0 ? `${presentCount} / ${members.length}` : '\u2014'}
-        sub={todayAttendance.length > 0 ? 'members present' : 'no session logged yet'}
-        onClick={() => navigate('/attendance')}
-      />
-      <KpiCard
-        icon={CheckSquare}
-        label="Open tasks"
-        value={activeTasks.length}
-        sub={overdueTasks.length > 0 ? `${overdueTasks.length} overdue` : 'all on track'}
-        valueClass={overdueTasks.length > 0 ? 'text-rose-400' : 'text-blue-400'}
-        onClick={() => navigate('/tasks')}
-      />
-      <KpiCard
-        icon={Calendar}
-        label="Up next"
-        value={nextEvent ? nextEvent.title : 'Nothing scheduled'}
-        sub={nextEvent
-          ? `${format(new Date(nextEvent.date + 'T12:00:00'), 'EEE, MMM d')}${nextEvent.start_time ? ` · ${nextEvent.start_time}` : ''}`
-          : 'enjoy the calm'}
-        onClick={() => navigate('/calendar')}
-      />
-      <KpiCard
-        icon={Wallet}
-        label="Budget"
-        value={`$${totalBudget.toLocaleString()}`}
-        sub="net balance"
-        valueClass="text-emerald-400"
-        onClick={() => navigate('/budget')}
-      />
-    </div>
-
-    {/* ── My status strip ────────────────────────────────── */}
-    <div className="card-surface mt-3 px-4 py-3 flex flex-wrap items-center gap-3 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
-      <div className="flex items-center gap-2">
-        <div className="rounded-lg bg-accent/12 p-1.5">
-          <User className="w-4 h-4 text-accent" />
-        </div>
-        <span className="text-sm font-bold text-white">My status</span>
-        <span className="text-[11px] text-text-muted">today's check-in</span>
-      </div>
-      <div className="flex-1" />
-      {myStatus ? (
-        <div className={cn(
-          'px-3 py-1.5 rounded-xl border flex items-center gap-3 text-sm font-bold',
-          myStatus.status === 'P' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
-          myStatus.status === 'A' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' :
-          myStatus.status === 'L' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' :
-          'bg-blue-500/10 border-blue-500/30 text-blue-400'
-        )}>
-          <span className="flex items-center gap-2">
-            <CalendarCheck className="w-4 h-4" />
-            {myStatus.status === 'P' ? 'Present' : myStatus.status === 'A' ? 'Absent' : myStatus.status === 'E' ? 'Excused' : myStatus.status === 'L' ? 'Late' : 'Other'}
-          </span>
-          <button onClick={() => handleSelfReport('-')} className="text-[11px] opacity-60 hover:opacity-100 font-medium">Reset</button>
-        </div>
-      ) : (
-        <div className="flex gap-2">
-          <Button onClick={() => handleSelfReport('P')} variant="outline" className="text-xs border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10" disabled={isAiLoading}>
-            <CheckSquare className="w-3.5 h-3.5" /> I'm Here
-          </Button>
-          <Button onClick={() => handleSelfReport('L')} variant="outline" className="text-xs border-amber-500/50 text-amber-400 hover:bg-amber-500/10" disabled={isAiLoading}>
-            <Clock className="w-3.5 h-3.5" /> Late
-          </Button>
-          <Button onClick={() => setShowOut(true)} variant="secondary" className="text-xs" disabled={isAiLoading}>
-            <LogOut className="w-3.5 h-3.5" /> Out
-          </Button>
-        </div>
-      )}
-    </div>
-
-    {/* ── Needs attention + Up next ──────────────────────── */}
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 mt-3">
-      <Card className="xl:col-span-7 p-4 gap-3" icon={AlertTriangle} title="Needs attention"
-        subtitle={hasAttention ? `${attentionCount} thing${attentionCount === 1 ? '' : 's'} need a look` : 'Everything is on track'}>
-        {!hasAttention ? (
-          <div className="flex items-center gap-2 py-3 text-sm text-text-muted">
-            <span className="w-6 h-6 rounded-full bg-emerald-500/15 flex items-center justify-center shrink-0">
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-            </span>
-            Nothing needs attention — nice work.
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
-            {overdueTasks.slice(0, 4).map((t: any) => (
-              <div key={`od-${t.id}`} className="flex items-center gap-3 p-2.5 bg-rose-500/5 rounded-xl border border-rose-500/20">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-bold text-white truncate">{t.title}</p>
-                  <p className="text-[10px] text-rose-300/80">Overdue{t.due_date ? ` · due ${t.due_date}` : ''}</p>
-                </div>
-                <button onClick={() => markTaskDone(t.id)} className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 whitespace-nowrap">Mark done</button>
-                <button onClick={() => navigate('/tasks')} className="text-[11px] font-bold text-text-muted hover:text-white whitespace-nowrap">Review</button>
-              </div>
-            ))}
-            {lowStock.slice(0, 4).map((i: any) => (
-              <div key={`ls-${i.id}`} className="flex items-center gap-3 p-2.5 bg-amber-500/5 rounded-xl border border-amber-500/20">
-                <Package className="w-4 h-4 text-amber-400 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-bold text-white truncate">{i.name}</p>
-                  <p className="text-[10px] text-amber-300/80">{i.quantity} left{i.location ? ` · ${i.location}` : ''}</p>
-                </div>
-                <button onClick={() => navigate('/inventory')} className="text-[11px] font-bold text-accent hover:opacity-80 whitespace-nowrap">Restock →</button>
-              </div>
-            ))}
-            {missingCheckin.length > 0 && (
-              <div className="flex items-center gap-3 p-2.5 bg-blue-500/5 rounded-xl border border-blue-500/20">
-                <User className="w-4 h-4 text-blue-400 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-bold text-white truncate">
-                    {missingCheckin.length} member{missingCheckin.length === 1 ? '' : 's'} missing check-in
-                  </p>
-                  <p className="text-[10px] text-text-muted">No record for today's session</p>
-                </div>
-                <button onClick={() => navigate('/attendance')} className="text-[11px] font-bold text-accent hover:opacity-80 whitespace-nowrap">View →</button>
-              </div>
-            )}
-            {deadlinesSoon.slice(0, 3).map((t: any) => (
-              <div key={`dl-${t.id}`} className="flex items-center gap-3 p-2.5 bg-white/5 rounded-xl border border-white/5">
-                <Clock className="w-4 h-4 text-text-muted shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-bold text-white truncate">{t.title}</p>
-                  <p className="text-[10px] text-text-muted">Due {t.due_date}</p>
-                </div>
-                <button onClick={() => navigate('/tasks')} className="text-[11px] font-bold text-text-muted hover:text-white whitespace-nowrap">View →</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card className="xl:col-span-5 p-4 gap-3" icon={Calendar} title="Up next" subtitle="Events on the calendar">
-        {upcomingEvents.length === 0 ? (
-          <p className="text-xs text-text-muted/70 italic py-3">Nothing scheduled — enjoy the calm.</p>
-        ) : (
-          <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
-            {upcomingEvents.slice(0, 5).map((e: any) => (
-              <button
-                key={`e-${e.id}`}
-                onClick={() => navigate('/calendar')}
-                className="w-full flex items-center gap-3 p-2 bg-white/5 rounded-xl border border-white/5 hover:border-accent/40 transition-colors text-left"
-              >
-                <div className="w-9 h-9 rounded-lg bg-accent/15 flex flex-col items-center justify-center shrink-0">
-                  <span className="text-[9px] font-bold text-accent uppercase leading-none">{format(new Date(e.date + 'T12:00:00'), 'MMM')}</span>
-                  <span className="text-sm font-display font-bold text-white leading-none">{format(new Date(e.date + 'T12:00:00'), 'd')}</span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-bold text-white truncate">{e.title}</p>
-                  <p className="text-[10px] text-text-muted">
-                    {format(new Date(e.date + 'T12:00:00'), 'EEEE')}
-                    {e.start_time ? ` · ${e.start_time}` : ''}{e.location ? ` · ${e.location}` : ''}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
-
-    {/* ── Recent activity + AI team summary ──────────────── */}
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 mt-3">
-      <Card className="xl:col-span-7 p-4 gap-3" icon={Zap} title="Recent team activity" subtitle="Last 7 days">
-        {recentActivity.length === 0 ? (
-          <p className="text-xs text-text-muted/70 italic py-3">Quiet week so far — completed tasks and new stock will show up here.</p>
-        ) : (
-          <div className="divide-y divide-white/5">
-            {recentActivity.map((a, idx) => (
-              <div key={idx} className="flex items-center gap-3 py-2">
-                <a.Icon className={cn('w-4 h-4 shrink-0', a.tone)} />
-                <p className="text-[13px] text-white/80 truncate flex-1">{a.text}</p>
-                <span className="text-[10px] text-text-muted shrink-0">{format(new Date(a.ts), 'MMM d')}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card className="xl:col-span-5 p-4 gap-3" icon={Zap} title="AI team summary" subtitle="Today's operational overview">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
-            {(['summary', 'insights'] as const).map(t => (
-              <button key={t} onClick={() => setAiTab(t)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${aiTab === t ? 'bg-accent text-accent-ink' : 'text-text-muted hover:text-white'}`}>
-                {t === 'summary' ? 'Summary' : 'Insights'}
-              </button>
-            ))}
-          </div>
-          {aiTab === 'summary' ? (
-            <Button variant="ghost" size="sm" className="h-7 text-[11px] text-accent" onClick={() => updateSummary(true)} disabled={isAiLoading}>
-              <Clock className="w-3 h-3 mr-1" /> Refresh
-            </Button>
-          ) : (
-            <Button variant="ghost" size="sm" onClick={() => updateInsights()} disabled={isAiLoading} className="text-[11px] h-7">
-              {insights ? 'Refresh' : 'Generate'}
-            </Button>
-          )}
-        </div>
-        <div className="text-[13px] text-white/80 leading-relaxed prose prose-invert max-w-none max-h-40 min-h-[48px] overflow-y-auto custom-scrollbar pr-1">
-          {aiTab === 'summary' ? (
-            isAiLoading && !data.summary ? <ThinkingIndicator /> : <Markdown>{data.summary || 'No summary available yet.'}</Markdown>
-          ) : (
-            isAiLoading && !insights ? <ThinkingIndicator /> : insights ? <Markdown>{insights}</Markdown> : <p className="text-xs text-text-muted/70 italic">Generate AI insights from your attendance data.</p>
-          )}
-        </div>
-      </Card>
-    </div>
-
-    {/* ── Competition snapshot — compact, secondary ──────── */}
-    <button
-      onClick={() => navigate('/stats')}
-      className="card-surface mt-3 w-full p-4 flex items-center gap-4 text-left shadow-[0_8px_30px_rgba(0,0,0,0.35)] hover:border-accent/40 transition-colors group"
-    >
-      <div className="rounded-xl bg-accent/12 p-2.5 shrink-0">
-        <Trophy className="w-5 h-5 text-accent" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-white">Competition snapshot</p>
-        <p className="text-xs text-text-muted truncate">
-          {ftc.loading ? 'Loading…' : ftc.data?.opr?.tot
-            ? `#${ftc.data.opr.tot.rank?.toLocaleString() ?? '\u2013'} · OPR ${ftc.data.opr.tot.value} · ${seasonLabel(ftc.season)}`
-            : 'Connect your team in Settings to see live standings'}
-        </p>
-      </div>
-      <span className="text-xs font-bold text-accent group-hover:opacity-80 whitespace-nowrap">View team stats →</span>
-    </button>
-
-    {showOut && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-        <Card title="Log Absence" className="w-full max-w-md">
-          <div className="space-y-4">
-            <p className="text-sm text-text-muted">Let the team know why you'll be missing today's session.</p>
-            <textarea
-              className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-24 disabled:opacity-50"
-              placeholder="Reason for absence..."
-              value={outReason}
-              onChange={(e) => setOutReason(e.target.value)}
-              disabled={isAiLoading}
-            />
-            {isAiLoading && <div className="flex justify-center"><ThinkingIndicator /></div>}
-            <div className="flex gap-3 justify-end">
-              <Button variant="secondary" onClick={() => setShowOut(false)} disabled={isAiLoading}>Cancel</Button>
-              <Button onClick={() => handleSelfReport('O', outReason)} disabled={isAiLoading || !outReason}>Submit</Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-    )}
-    </>
-  );
-}
-
 // Personal dashboard for students: my tasks, my attendance, upcoming events
+// Personal dashboard for students: check-in, my tasks, upcoming events, my attendance.
+// Deliberately focused — no budget, access codes, admin AI, team-wide metrics, or FTC details.
 function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading, onboardingState, onContinueSetup, onDismissChecklist }: any) {
+  const navigate = useNavigate();
   const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
   const today = format(new Date(), 'yyyy-MM-dd');
+  const tomorrow = format(new Date(Date.now() + 864e5), 'yyyy-MM-dd');
   const myTasks = (tasks || []).filter((t: any) => t.assigned_to === currentUser?.id);
   const openTasks = myTasks.filter((t: any) => t.status !== 'done');
   const myAttendance = (attendance || []).filter((r: any) => r.member_id === currentUser?.id);
+  const todayRecord = myAttendance.find((r: any) => r.date === today);
+  const checkedIn = !!(todayRecord && (todayRecord.status === 'P' || todayRecord.status === 'L'));
+  const presentCount = myAttendance.filter((r: any) => r.status === 'P').length;
+  const lateCount = myAttendance.filter((r: any) => r.status === 'L').length;
+  const excusedCount = myAttendance.filter((r: any) => r.status === 'E').length;
   const attendanceRate = myAttendance.length > 0
-    ? Math.round(myAttendance.filter((r: any) => r.status === 'P' || r.status === 'L' || r.status === 'E').length / myAttendance.length * 100)
+    ? Math.round((presentCount + lateCount + excusedCount) / myAttendance.length * 100)
     : null;
   const upcomingEvents = (events || [])
     .filter((e: any) => e.date >= today)
@@ -3366,21 +2894,16 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
       });
       if (!res.ok) {
         setTasks(prev);
-        notify('Could not update task — try again.', 'error');
+        notify('Could not update task \u2014 try again.', 'error');
       }
     } catch {
       setTasks(prev);
-      notify('Could not update task — try again.', 'error');
+      notify('Could not update task \u2014 try again.', 'error');
     }
   };
 
-  const statusChip: any = {
-    P: 'bg-emerald-400/15 text-emerald-400',
-    L: 'bg-amber-400/15 text-amber-400',
-    E: 'bg-sky-400/15 text-sky-400',
-    O: 'bg-slate-400/15 text-slate-400',
-    U: 'bg-rose-400/15 text-rose-400',
-  };
+  const dayLabel = (dateStr: string) =>
+    dateStr === today ? 'Today' : dateStr === tomorrow ? 'Tomorrow' : format(new Date(dateStr + 'T12:00:00'), 'EEEE');
 
   return (
     <>
@@ -3393,37 +2916,49 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
         />
       </div>
     )}
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 pb-8 sm:pb-20">
-      <Card className="lg:col-span-3" icon={GraduationCap}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-xl sm:text-2xl font-display font-bold text-white tracking-tight">
-              Welcome back, {currentUser?.name?.split(' ')[0]}
-            </h2>
-            <p className="text-sm text-text-muted mt-1">
-              {myTeam?.name ? `${myTeam.name} • ` : ''}{members?.length || 0} teammates
-            </p>
+    <div className="mb-3 sm:mb-4">
+      <h2 className="text-xl sm:text-2xl font-display font-bold text-white tracking-tight">
+        Welcome back, {currentUser?.name?.split(' ')[0]}
+      </h2>
+      <p className="text-xs text-text-muted mt-0.5">
+        {myTeam?.name ? `${myTeam.name} \u00b7 ` : ''}{format(new Date(), 'EEE, MMM d, yyyy')}
+      </p>
+    </div>
+
+    {/* Today's check-in */}
+    <Card className="mb-3 sm:mb-4" icon={CalendarCheck} title="Today&apos;s check-in">
+      {checkedIn ? (
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0">
+            <Check className="w-5 h-5 text-emerald-400" />
           </div>
-          <div className="flex gap-4 sm:gap-6">
-            <div className="text-center">
-              <p className="text-2xl font-display font-bold text-accent">{openTasks.length}</p>
-              <p className="text-[11px] text-text-muted uppercase font-bold">Open tasks</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-display font-bold text-accent">{attendanceRate === null ? '—' : `${attendanceRate}%`}</p>
-              <p className="text-[11px] text-text-muted uppercase font-bold">My attendance</p>
-            </div>
-            <div className="text-center">
-              <p className="text-2xl font-display font-bold text-accent">{upcomingEvents.length}</p>
-              <p className="text-[11px] text-text-muted uppercase font-bold">Upcoming events</p>
-            </div>
+          <div>
+            <p className="text-sm font-bold text-white">You are checked in</p>
+            <p className="text-xs text-text-muted">{todayRecord.status === 'L' ? 'Marked late' : 'Marked present'}</p>
           </div>
         </div>
-      </Card>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex-1 min-w-[180px]">
+            <p className="text-sm font-bold text-white">You are not checked in</p>
+            <p className="text-xs text-text-muted mt-0.5">Scan the QR code your admin projected, or enter today&apos;s code.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => navigate('/attendance')} className="text-xs">
+              <ScanLine className="w-4 h-4" /> Scan QR
+            </Button>
+            <Button variant="secondary" onClick={() => navigate('/attendance')} className="text-xs">
+              <Keyboard className="w-4 h-4" /> Enter code
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
 
-      <Card title="My Tasks" icon={CheckSquare} className="lg:col-span-2">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+      <Card title="My tasks" icon={CheckSquare} subtitle={openTasks.length === 0 ? 'All caught up' : `${openTasks.length} open`}>
         {myTasks.length === 0 ? (
-          <p className="text-sm text-text-muted py-6 text-center">No tasks assigned to you yet. Nice work — you're all caught up.</p>
+          <p className="text-sm text-text-muted py-6 text-center">No tasks assigned to you yet. Nice work \u2014 you&apos;re all caught up.</p>
         ) : (
           <div className="space-y-2">
             {myTasks.map((task: any) => (
@@ -3456,45 +2991,41 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
         )}
       </Card>
 
-      <Card title="Upcoming Events" icon={Calendar}>
+      <Card title="Upcoming events" icon={Calendar}>
         {upcomingEvents.length === 0 ? (
           <p className="text-sm text-text-muted py-6 text-center">No upcoming events scheduled.</p>
         ) : (
           <div className="space-y-3">
             {upcomingEvents.map((e: any) => (
-              <div key={e.id} className="flex gap-3">
+              <button key={e.id} onClick={() => navigate('/calendar')} className="w-full flex gap-3 text-left group">
                 <div className="w-11 shrink-0 rounded-xl bg-accent/10 border border-accent/20 flex flex-col items-center justify-center py-1.5">
                   <span className="text-[10px] font-bold text-accent uppercase">{format(new Date(e.date + 'T12:00:00'), 'MMM')}</span>
                   <span className="text-lg font-display font-bold text-white leading-none">{format(new Date(e.date + 'T12:00:00'), 'd')}</span>
                 </div>
                 <div className="min-w-0">
+                  <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted group-hover:text-accent transition-colors">{dayLabel(e.date)}</p>
                   <p className="text-sm font-semibold text-white truncate">{e.title}</p>
-                  <p className="text-xs text-text-muted truncate">{[e.time, e.location].filter(Boolean).join(' • ')}</p>
+                  <p className="text-xs text-text-muted truncate">{[e.time, e.location].filter(Boolean).join(' \u00b7 ')}</p>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      <Card title="My Recent Attendance" icon={CalendarCheck} className="lg:col-span-3">
-        {myAttendance.length === 0 ? (
-          <p className="text-sm text-text-muted py-4 text-center">No attendance records yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-2">
-            {myAttendance.slice(0, 14).map((r: any) => (
-              <div key={r.id} className={cn("flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold", statusChip[r.status] || statusChip.O)}>
-                <span>{r.date}</span>
-                <span className="opacity-80">{r.status === 'P' ? 'Present' : r.status === 'L' ? 'Late' : r.status === 'E' ? 'Excused' : r.status === 'U' ? 'Unexcused' : 'Out'}</span>
-              </div>
+              </button>
             ))}
           </div>
         )}
       </Card>
     </div>
+
+    <Card className="mt-3 sm:mt-4" title="My attendance" icon={UserCheck}>
+      <p className="text-2xl font-display font-bold text-white">
+        {attendanceRate === null ? '\u2014' : `${attendanceRate}%`}
+        <span className="text-sm font-normal text-text-muted ml-2">
+          \u00b7 {presentCount} present \u00b7 {lateCount} late
+        </span>
+      </p>
+    </Card>
     </>
   );
 }
+
 
 function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam }: any) {
   const [showAddTeam, setShowAddTeam] = useState(false);
