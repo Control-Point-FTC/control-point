@@ -62,7 +62,7 @@ export default function MyStatusStrip({
 
   return (
     <>
-      <div className="card-surface mt-3 px-4 py-3 flex flex-wrap items-center gap-3 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
+      <div className="card-surface px-4 py-3 flex flex-wrap items-center gap-3 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
         <div className="flex items-center gap-2">
           <div className="rounded-lg bg-accent/12 p-1.5">
             <User className="w-4 h-4 text-accent" />

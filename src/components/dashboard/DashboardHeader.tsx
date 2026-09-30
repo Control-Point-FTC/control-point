@@ -20,8 +20,8 @@ export default function DashboardHeader({ userName, teamName, teamNumber }: Dash
   const first = String(userName || '').split(' ')[0];
 
   return (
-    <div className="mb-3">
-      <h2 className="text-xl font-display font-bold text-white tracking-tight">
+    <div className="mb-1">
+      <h2 className="text-lg font-display font-bold text-white tracking-tight">
         {first ? `${greet}, ${first}` : greet}
       </h2>
       <p className="text-xs text-text-muted mt-0.5">

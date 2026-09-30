@@ -43,10 +43,10 @@ export default function AttendanceTrend({ attendance, onNavigate }: AttendanceTr
       title="Attendance Trend"
       subtitle="Present check-ins · last 14 days"
       icon={TrendingUp}
-      className="md:col-span-2 xl:col-span-7 cursor-pointer hover:border-accent/30 transition-colors"
+      className="md:col-span-2 xl:col-span-7 p-4 gap-2 xl:min-h-0 xl:overflow-hidden cursor-pointer hover:border-accent/30 transition-colors"
       onClick={() => onNavigate('/attendance')}
     >
-      <div className="h-40 w-full">
+      <div className="flex-1 min-h-[110px] w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />

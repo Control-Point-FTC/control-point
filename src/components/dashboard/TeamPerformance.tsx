@@ -19,7 +19,7 @@ export default function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
       title="Team Performance"
       subtitle={ftc.data ? `${ftc.data.name} · ftc-scout.org` : 'FTC Scout integration'}
       icon={Trophy}
-      className="md:col-span-2 xl:col-span-8"
+      className="md:col-span-2 xl:col-span-8 p-4 gap-2 xl:min-h-0 xl:overflow-hidden"
     >
       {ftc.loading ? (
         <div className="flex items-center gap-3 py-6">

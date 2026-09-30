@@ -5,21 +5,21 @@ function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: a
   return (
     <button
       onClick={onClick}
-      className="text-left rounded-2xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.07] hover:border-accent/40 active:scale-[0.98] transition-all p-4 sm:p-5 group cursor-pointer"
+      className="text-left rounded-2xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.07] hover:border-accent/40 active:scale-[0.98] transition-all p-3 sm:p-4 group cursor-pointer"
     >
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-1.5">
         <Icon className="w-4 h-4 text-accent shrink-0" />
         <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted group-hover:text-white transition-colors truncate">
           {label}
         </p>
       </div>
       <p className={cn(
-        "text-2xl sm:text-3xl font-display font-bold tracking-tight truncate",
+        "text-xl sm:text-2xl font-display font-bold tracking-tight truncate",
         tone === 'warn' ? 'text-rose-400' : tone === 'ok' ? 'text-emerald-400' : 'text-white'
       )}>
         {value}
       </p>
-      <p className="text-[11px] text-text-muted mt-1 truncate">{sub}</p>
+      <p className="text-[11px] text-text-muted mt-0.5 truncate">{sub}</p>
     </button>
   );
 }
@@ -50,7 +50,7 @@ export default function DashboardMetricRow({
   onNavigate,
 }: DashboardMetricRowProps) {
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4 sm:mb-6">
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
       <KpiCard
         icon={CalendarCheck}
         label="Today's attendance"

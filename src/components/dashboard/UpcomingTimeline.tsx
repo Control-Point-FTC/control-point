@@ -42,31 +42,31 @@ export default function UpcomingTimeline({ events, onNavigate }: UpcomingTimelin
       title="Up next"
       subtitle={upcoming.length === 0 ? 'Nothing on the calendar' : `${upcoming.length} upcoming ${upcoming.length === 1 ? 'event' : 'events'}`}
       icon={Calendar}
-      className="xl:col-span-5"
+      className="xl:col-span-5 p-4 gap-2 xl:min-h-0 xl:overflow-hidden"
     >
       {upcoming.length === 0 ? (
         <p className="text-sm text-text-muted py-6 text-center">
           No events scheduled. Add one from the calendar.
         </p>
       ) : (
-        <div className="space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-3 pr-1">
           {groups.map((g) => (
             <div key={g.label}>
-              <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted mb-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5">
                 {g.label}
               </p>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {g.items.map((e: any) => (
                   <button
                     key={e.id}
                     onClick={() => onNavigate('/calendar')}
-                    className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-white/[0.03] border border-white/10 hover:border-accent/40 hover:bg-white/[0.06] transition-all text-left group"
+                    className="w-full flex items-center gap-2.5 p-2 rounded-xl bg-white/[0.03] border border-white/10 hover:border-accent/40 hover:bg-white/[0.06] transition-all text-left group"
                   >
-                    <div className="w-11 shrink-0 rounded-xl bg-accent/10 border border-accent/20 flex flex-col items-center justify-center py-1.5">
-                      <span className="text-[10px] font-bold text-accent uppercase">
+                    <div className="w-10 shrink-0 rounded-lg bg-accent/10 border border-accent/20 flex flex-col items-center justify-center py-1">
+                      <span className="text-[9px] font-bold text-accent uppercase">
                         {format(new Date(e.date + 'T12:00:00'), 'MMM')}
                       </span>
-                      <span className="text-lg font-display font-bold text-white leading-none">
+                      <span className="text-base font-display font-bold text-white leading-none">
                         {format(new Date(e.date + 'T12:00:00'), 'd')}
                       </span>
                     </div>

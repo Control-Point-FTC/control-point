@@ -50,23 +50,25 @@ export default function AccessCodeCard({ team, setLoading, onRefresh }: AccessCo
   if (!team) return null;
 
   return (
-    <Card title="Team Access Code" subtitle="Students join with this code" icon={KeyRound} className="xl:col-span-4">
-      <p className="text-xl font-mono font-bold text-accent tracking-[0.12em] break-all">{team.access_code}</p>
-      <div className="flex gap-2 mt-1">
-        <Button variant="secondary" onClick={copyAccessCode} className="text-xs flex-1">
-          {copiedCode ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied
-            </>
-          ) : (
-            <>
-              <Copy className="w-3.5 h-3.5" /> Copy
-            </>
-          )}
-        </Button>
-        <Button variant="ghost" onClick={regenerateCode} className="text-xs">
-          Regenerate
-        </Button>
+    <Card title="Team Access Code" subtitle="Students join with this code" icon={KeyRound} className="xl:col-span-4 p-4 gap-2 xl:min-h-0 xl:overflow-hidden">
+      <div className="flex-1 flex flex-col justify-center gap-2 min-h-0">
+        <p className="text-lg font-mono font-bold text-accent tracking-[0.12em] break-all">{team.access_code}</p>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={copyAccessCode} className="text-xs flex-1">
+            {copiedCode ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" /> Copy
+              </>
+            )}
+          </Button>
+          <Button variant="ghost" onClick={regenerateCode} className="text-xs">
+            Regenerate
+          </Button>
+        </div>
       </div>
     </Card>
   );

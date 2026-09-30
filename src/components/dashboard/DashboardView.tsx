@@ -44,6 +44,10 @@ interface DashboardViewProps {
  *   <AccessCodeCard />      — team join code, copy + regenerate
  *
  * Every card leads somewhere: click a widget to open its full view.
+ *
+ * On xl screens the whole dashboard fits the viewport with no page scroll:
+ * the card grid takes the remaining height in three equal rows and variable
+ * content (timeline, activity, AI text) scrolls inside its card.
  */
 export default function DashboardView({
   data,
@@ -167,9 +171,9 @@ export default function DashboardView({
   const activityItems = feed.slice(0, 12);
 
   return (
-    <>
+    <div className="flex flex-col h-full min-h-0 gap-3">
       {onboardingState && shouldShowChecklist(onboardingState) && (
-        <div className="mb-3">
+        <div>
           <SetupChecklist
             state={onboardingState}
             onContinue={onContinueSetup}
@@ -205,12 +209,15 @@ export default function DashboardView({
         onRefresh={onRefresh}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
+      {/*
+        Single-screen grid (xl+): three equal rows that share the remaining
+        viewport height. Each card clips on xl and scrolls internally where
+        its content is variable (timeline, activity, AI text). Below xl the
+        page scrolls normally.
+      */}
+      <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 xl:grid-rows-3">
         <AttendanceTrend attendance={data.attendance || []} onNavigate={navigate} />
         <UpcomingTimeline events={events} onNavigate={navigate} />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
         <TeamActivity items={activityItems} onNavigate={navigate} />
         <TeamSummary
           summary={data.summary}
@@ -220,12 +227,9 @@ export default function DashboardView({
           onRefreshSummary={() => updateSummary(true)}
           onRefreshInsights={() => updateInsights()}
         />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
         <TeamPerformance onNavigate={navigate} />
         <AccessCodeCard team={myTeam} setLoading={setLoading} onRefresh={onRefresh} />
       </div>
-    </>
+    </div>
   );
 }
