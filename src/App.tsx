@@ -3911,21 +3911,52 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   }, [attendance]);
 
   // Generate dates: 2-week chunks starting from today
+  // Parse a 'yyyy-MM-dd' string as a LOCAL date. Plain new Date(str) parses as
+  // UTC midnight, which shifts the weekday back a day in US timezones and
+  // broke the day-of-week hide/show toggles.
+  const parseLocalDate = (dateStr: string): Date => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+  };
+  const weekdayOf = (dateStr: string): number => parseLocalDate(dateStr).getDay();
+
+  // The grid always shows at least MIN_VISIBLE_DATES columns: it scans the
+  // 14-day window as before, then keeps scanning forward (skipping hidden
+  // days) until it has enough. Sunday-only teams see 5 consecutive Sundays;
+  // Mon–Fri teams see their weekdays in order with weekends skipped.
+  const MIN_VISIBLE_DATES = 5;
+  const MAX_LOOKAHEAD_DAYS = 365;
+
   const visibleDates = useMemo(() => {
     const dates: string[] = [];
     const startDate = new Date();
     startDate.setDate(startDate.getDate() + calendarStart * 14);
-    
-    for (let i = 0; i < 14; i++) {
-      const d = new Date(startDate);
-      d.setDate(d.getDate() + i);
+
+    const d = new Date(startDate);
+    for (let i = 0; i < MAX_LOOKAHEAD_DAYS && (i < 14 || dates.length < MIN_VISIBLE_DATES); i++) {
       const dateStr = format(d, 'yyyy-MM-dd');
       if (!hiddenDates.includes(dateStr)) {
         dates.push(dateStr);
       }
+      d.setDate(d.getDate() + 1);
     }
     return dates;
   }, [calendarStart, hiddenDates]);
+
+  // Date-range label follows the dates actually shown (the window may extend
+  // past 14 days when hidden days are skipped).
+  const rangeLabel = useMemo(() => {
+    if (visibleDates.length > 0) {
+      const first = parseLocalDate(visibleDates[0]);
+      const last = parseLocalDate(visibleDates[visibleDates.length - 1]);
+      return `${format(first, 'MMM dd')} - ${format(last, 'MMM dd')}`;
+    }
+    const s = new Date();
+    s.setDate(s.getDate() + calendarStart * 14);
+    const e = new Date(s);
+    e.setDate(e.getDate() + 13);
+    return `${format(s, 'MMM dd')} - ${format(e, 'MMM dd')}`;
+  }, [visibleDates, calendarStart]);
 
   // Check if there are more dates to load
   const hasMoreDates = useMemo(() => {
@@ -4004,15 +4035,6 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
       setHiddenDates([...hiddenDates, dateStr]);
     }
   };
-
-  // Parse a 'yyyy-MM-dd' string as a LOCAL date. Plain new Date(str) parses as
-  // UTC midnight, which shifts the weekday back a day in US timezones and
-  // broke the day-of-week hide/show toggles.
-  const parseLocalDate = (dateStr: string): Date => {
-    const [y, m, d] = dateStr.split('-').map(Number);
-    return new Date(y, (m || 1) - 1, d || 1);
-  };
-  const weekdayOf = (dateStr: string): number => parseLocalDate(dateStr).getDay();
 
   const hideByDayOfWeek = async (dayIndex: number) => {
     // dayIndex: 0=Sunday, 1=Monday, ..., 6=Saturday
@@ -4124,7 +4146,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
             ← Previous
           </button>
           <span className="text-xs text-text-muted">
-            {format(new Date(new Date().getTime() + calendarStart * 14 * 24 * 60 * 60 * 1000), 'MMM dd')} - {format(new Date(new Date().getTime() + (calendarStart * 14 + 13) * 24 * 60 * 60 * 1000), 'MMM dd')}
+            {rangeLabel}
           </span>
           {hasMoreDates && (
             <button 
