@@ -893,6 +893,9 @@ export default function App() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [documentation, setDocumentation] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+  // Per-channel message cache so switching channels feels instant: show the
+  // cached list immediately, then revalidate in the background.
+  const msgCache = useRef(new Map<number, any[]>());
   // Discord-style text channels (no servers — channels live inside the team)
   const [channels, setChannels] = useState<any[]>([]);
   const [chatCategories, setChatCategories] = useState<any[]>([]);
@@ -930,9 +933,14 @@ export default function App() {
   // Load this channel's messages whenever it changes.
   useEffect(() => {
     if (!currentUser || !activeChannelId) return;
+    const cached = msgCache.current.get(activeChannelId);
+    if (cached) setMessages(cached);
     (async () => {
       const msgs = await fetchJsonStandalone(`/api/messages?channel_id=${activeChannelId}`);
-      if (Array.isArray(msgs)) setMessages(msgs);
+      if (Array.isArray(msgs)) {
+        msgCache.current.set(activeChannelId, msgs);
+        if (activeChannelIdRef.current === activeChannelId) setMessages(msgs);
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChannelId, currentUser?.id]);
@@ -1181,10 +1189,22 @@ export default function App() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'chat') {
-          // Only keep it in the visible list if it belongs to the active channel.
           const cur = activeChannelIdRef.current;
-          setMessages(prev => (cur == null || msg.channel_id === cur || msg.channel_id == null ? [...prev, msg] : prev));
+          setMessages(prev => {
+            // Reconcile: replace our optimistic message with the server echo.
+            if (msg.client_id && prev.some((m: any) => m.client_id === msg.client_id)) {
+              const next = prev.map((m: any) => (m.client_id === msg.client_id ? { ...msg, pending: false } : m));
+              if (cur != null && (msg.channel_id === cur || msg.channel_id == null)) msgCache.current.set(cur, next);
+              return next;
+            }
+            if (prev.some((m: any) => m.id === msg.id)) return prev;
+            if (cur != null && msg.channel_id !== cur && msg.channel_id != null) return prev;
+            const next = [...prev, msg];
+            if (cur != null && (msg.channel_id === cur || msg.channel_id == null)) msgCache.current.set(cur, next);
+            return next;
+          });
         } else if (msg.type === 'chat_denied') {
+          if (msg.client_id) setMessages(prev => prev.filter((m: any) => m.client_id !== msg.client_id));
           notify(msg.error || 'You cannot post in that channel.', 'error');
         } else if (msg.type === 'channel_created') {
           setChannels(prev => (prev.some((c: any) => c.id === msg.channel.id) ? prev : [...prev, msg.channel]));
@@ -1201,15 +1221,15 @@ export default function App() {
           setChatCategories(prev => prev.filter((c: any) => c.id !== msg.categoryId));
           setChannels(prev => prev.map((c: any) => (c.category_id === msg.categoryId ? { ...c, category_id: null } : c)));
         } else if (msg.type === 'message_deleted') {
-          if (msg.deleted_permanently) {
-            // Remove message completely for permanent deletion
-            setMessages(prev => prev.filter(m => m.id !== msg.id));
-          } else {
-            // Soft delete - mark as deleted
-            setMessages(prev => 
-              prev.map(m => m.id === msg.id ? { ...m, deleted_at: msg.deleted_at } : m)
-            );
-          }
+          const cur = activeChannelIdRef.current;
+          const applyDel = (prev: any[]) => {
+            const next = msg.deleted_permanently
+              ? prev.filter(m => m.id !== msg.id)
+              : prev.map(m => m.id === msg.id ? { ...m, deleted_at: msg.deleted_at } : m);
+            if (cur != null) msgCache.current.set(cur, next);
+            return next;
+          };
+          setMessages(applyDel);
         } else if (msg.type === 'notification') {
           if (currentUser && msg.notification.user_id === currentUser.id) {
             setNotifications(prev => [msg.notification, ...prev]);
@@ -1884,6 +1904,7 @@ export default function App() {
       isAdmin,
       // setters for optimistic UI (instant-feeling mutations with rollback on error)
       setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
+      setMessages, msgCache,
       insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
       colorVersion, setColorVersion,
@@ -6709,7 +6730,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
 // Discord-style messaging: channel list on the left, conversation in the
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
-function ChatView({ messages, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
+function ChatView({ messages, setMessages, msgCache, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -6805,6 +6826,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
     if (!canPostInChannel) return;
     const finalContent = convertMentions(content);
     const replyToId = replyTo?.id || null;
+    const clientId = `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     if (pendingFile) {
       setUploading(true);
@@ -6834,6 +6856,25 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
       return;
     }
 
+    // Optimistic: show the message instantly, reconcile when the server echoes it.
+    const optimisticMsg = {
+      id: clientId,
+      client_id: clientId,
+      sender_id: currentUser.id,
+      sender_name: currentUser.name,
+      content: finalContent,
+      channel_id: activeChannelId,
+      reply_to_id: replyToId,
+      reply_sender_name: replyTo?.sender_name || null,
+      reply_content: replyTo?.content || null,
+      timestamp: new Date().toISOString(),
+      pending: true,
+    };
+    setMessages(prev => {
+      const next = [...prev, optimisticMsg];
+      if (activeChannelId != null) msgCache.current.set(activeChannelId, next);
+      return next;
+    });
     socket.send(JSON.stringify({
       type: 'chat',
       sender_id: currentUser.id,
@@ -6841,6 +6882,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
       content: finalContent,
       channel_id: activeChannelId,
       reply_to_id: replyToId,
+      client_id: clientId,
     }));
     setContent('');
     setReplyTo(null);
