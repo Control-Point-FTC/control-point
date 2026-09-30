@@ -55,6 +55,24 @@ import {
   resolveYouTubeChannel as resolveYouTubeChannelImpl,
   fetchYouTubeStats as fetchYouTubeStatsImpl,
 } from "./server/youtube.js";
+import {
+  CAD_DDL,
+  CAD_SECTIONS,
+  REVIEW_STATUSES,
+  REVIEW_STATUS_LABELS,
+  PART_SOURCES,
+  PART_STATUSES,
+  PART_SOURCE_LABELS,
+  PART_STATUS_LABELS,
+  normalizeSection,
+  isValidReviewStatus,
+  isValidPartSource,
+  isValidPartStatus,
+  detectModelType,
+  isValidHttpUrl,
+  canTransitionReviewStatus,
+  sanitizePartInput,
+} from "./server/cad.js";
 
 // Last-resort safety net: a single malformed request must never take the
 // whole server down for every team. Log it and keep serving; Render's
@@ -466,6 +484,8 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     FOREIGN KEY(team_id) REFERENCES teams(id),
     UNIQUE(team_id)
   );
+
+  ${CAD_DDL}
 
   CREATE TABLE IF NOT EXISTS bruno_chats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1457,6 +1477,20 @@ async function startServer() {
     fileFilter: (req, file, cb) => {
       if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
       else cb(new Error('Only image files are allowed'));
+    }
+  });
+
+  // CAD uploads: 3D model files (.step/.stp/.stl) + images, 25MB cap.
+  // STEP files arrive with assorted mimetypes, so filter by extension.
+  const cadUpload = multer({
+    storage,
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      const name = (file.originalname || '').toLowerCase();
+      const ok3d = name.endsWith('.step') || name.endsWith('.stp') || name.endsWith('.stl');
+      const okImg = (file.mimetype && file.mimetype.startsWith('image/')) || /\.(png|jpe?g|gif|webp)$/.test(name);
+      if (ok3d || okImg) cb(null, true);
+      else cb(new Error('Only .step/.stp/.stl model files and images are allowed'));
     }
   });
   
@@ -5910,6 +5944,42 @@ Rules:
     return { text: src.replace(BUDGET_BLOCK_RE, "").trim(), entries };
   }
 
+  // Bruno communication skill: the model ends its reply with a fenced ```communication block
+  // (a JSON array) when the user confirms communication log entries. Parse, validate, strip.
+  // Entries are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
+  const COMMUNICATION_BLOCK_RE = /```communication\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractCommunicationBlock(fullText: string): { text: string; entries: { recipient: string; subject: string; body: string; type: string; date: string }[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(COMMUNICATION_BLOCK_RE);
+    if (!m) return { text: src, entries: null };
+    let entries: { recipient: string; subject: string; body: string; type: string; date: string }[] | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
+        const now = new Date();
+        const todayDefault = now.toISOString().slice(0, 10) + " " + String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+        const valid = p.map((c: any) => {
+          if (!c || typeof c.subject !== "string" || !c.subject.trim()) return null;
+          let date = todayDefault;
+          if (typeof c?.date === "string") {
+            const d = c.date.trim();
+            if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(d) && !isNaN(new Date(d.replace(" ", "T") + ":00").getTime())) date = d;
+            else if (/^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(new Date(d + "T00:00:00").getTime())) date = d + " 00:00";
+          }
+          return {
+            recipient: typeof c?.recipient === "string" ? c.recipient.trim().slice(0, 200) : "",
+            subject: c.subject.trim().slice(0, 200),
+            body: typeof c?.body === "string" ? c.body.trim().slice(0, 5000) : "",
+            type: c?.type === "announcement" ? "announcement" : "email",
+            date,
+          };
+        }).filter(Boolean);
+        if (valid.length) entries = valid;
+      }
+    } catch { /* malformed JSON — treat as no entries */ }
+    return { text: src.replace(COMMUNICATION_BLOCK_RE, "").trim(), entries };
+  }
+
   // NavGPT coding handoff: the model ends its reply with a fenced ```switch block
   // when the user's request is a coding task. Parse, validate, strip — the client
   // renders a "Yes, switch to Bruno" button from the stripped signal.
@@ -6915,6 +6985,320 @@ Rules:
       console.error("Error deleting code file:", error);
       res.status(500).json({ error: "Internal server error" });
     }
+  });
+
+  // ================= CAD =================
+  // Every route binds auth.teamId; cross-team access is rejected.
+  const cadTeam = (auth: any, res: any) => {
+    if (!auth.teamId) { res.status(400).json({ error: "Join a team first" }); return null; }
+    return auth.teamId as number;
+  };
+
+  // ---- Onshape docs ----
+  app.get("/api/cad/docs", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const docs = await dbAll("SELECT * FROM cad_docs WHERE team_id = ? ORDER BY created_at DESC", teamId);
+      res.json(docs);
+    } catch (e) { console.error("CAD docs list error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/cad/docs", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const name = String(req.body?.name ?? "").trim().slice(0, 160);
+      const url = String(req.body?.url ?? "").trim().slice(0, 500);
+      if (!name) return res.status(400).json({ error: "Document name is required" });
+      if (!isValidHttpUrl(url)) return res.status(400).json({ error: "Enter a valid http(s) URL" });
+      const now = new Date().toISOString();
+      const r = await dbRun("INSERT INTO cad_docs (team_id, name, url, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
+        teamId, name, url, auth.memberId, now);
+      res.json({ id: r.lastInsertRowid, name, url });
+    } catch (e) { console.error("CAD doc create error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/cad/docs/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const doc = (await dbGet("SELECT id, created_by FROM cad_docs WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!doc) return res.status(404).json({ error: "Not found" });
+      const isAdmin = await hasPerm(auth, "manage_members");
+      if (doc.created_by !== auth.memberId && !isAdmin) return res.status(403).json({ error: "You don't have permission for that" });
+      await dbRun("DELETE FROM cad_docs WHERE id = ?", id);
+      res.json({ success: true });
+    } catch (e) { console.error("CAD doc delete error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ---- Design reviews ----
+  app.get("/api/cad/reviews", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const reviews = await dbAll(`
+        SELECT r.*, m.name AS author_name,
+          (SELECT COUNT(*) FROM cad_review_comments c WHERE c.review_id = r.id) AS comment_count
+        FROM cad_reviews r LEFT JOIN members m ON m.id = r.created_by
+        WHERE r.team_id = ? ORDER BY r.updated_at DESC`, teamId);
+      res.json(reviews);
+    } catch (e) { console.error("CAD reviews list error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/cad/reviews", cadUpload.single("screenshot"), async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const title = String(req.body?.title ?? "").trim().slice(0, 160);
+      if (!title) return res.status(400).json({ error: "Title is required" });
+      const section = normalizeSection(req.body?.section);
+      const onshape_url = String(req.body?.onshape_url ?? "").trim().slice(0, 500);
+      if (onshape_url && !isValidHttpUrl(onshape_url)) return res.status(400).json({ error: "Onshape link must be a valid http(s) URL" });
+      const description = String(req.body?.description ?? "").trim().slice(0, 4000);
+      const screenshot_url = (req as any).file ? `/uploads/${(req as any).file.filename}` : null;
+      const now = new Date().toISOString();
+      const r = await dbRun(
+        `INSERT INTO cad_reviews (team_id, title, section, onshape_url, screenshot_url, description, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'concept', ?, ?, ?)`,
+        teamId, title, section, onshape_url || null, screenshot_url, description, auth.memberId, now, now);
+      res.json({ id: r.lastInsertRowid });
+    } catch (e) { console.error("CAD review create error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/cad/reviews/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const review = (await dbGet("SELECT * FROM cad_reviews WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!review) return res.status(404).json({ error: "Not found" });
+      const to = req.body?.status;
+      if (!isValidReviewStatus(to)) return res.status(400).json({ error: "Invalid status" });
+      const isAdmin = await hasPerm(auth, "manage_members");
+      const isAuthor = review.created_by === auth.memberId;
+      if (!canTransitionReviewStatus({ from: review.status, to, isAdmin, isAuthor })) {
+        return res.status(403).json({ error: "That status change isn't allowed" });
+      }
+      const now = new Date().toISOString();
+      await dbRun("UPDATE cad_reviews SET status = ?, updated_at = ? WHERE id = ?", to, now, id);
+      res.json({ success: true, status: to });
+    } catch (e) { console.error("CAD review status error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/cad/reviews/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const review = (await dbGet("SELECT id, created_by FROM cad_reviews WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!review) return res.status(404).json({ error: "Not found" });
+      const isAdmin = await hasPerm(auth, "manage_members");
+      if (review.created_by !== auth.memberId && !isAdmin) return res.status(403).json({ error: "You don't have permission for that" });
+      await dbRun("DELETE FROM cad_review_comments WHERE review_id = ?", id);
+      await dbRun("DELETE FROM cad_reviews WHERE id = ?", id);
+      res.json({ success: true });
+    } catch (e) { console.error("CAD review delete error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.get("/api/cad/reviews/:id/comments", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const review = (await dbGet("SELECT id FROM cad_reviews WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!review) return res.status(404).json({ error: "Not found" });
+      const comments = await dbAll(`
+        SELECT c.*, m.name AS author_name FROM cad_review_comments c
+        LEFT JOIN members m ON m.id = c.author_id
+        WHERE c.review_id = ? AND c.team_id = ? ORDER BY c.created_at ASC`, id, teamId);
+      res.json(comments);
+    } catch (e) { console.error("CAD comments list error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/cad/reviews/:id/comments", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const review = (await dbGet("SELECT id FROM cad_reviews WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!review) return res.status(404).json({ error: "Not found" });
+      const comment = String(req.body?.comment ?? "").trim().slice(0, 2000);
+      if (!comment) return res.status(400).json({ error: "Comment is required" });
+      const now = new Date().toISOString();
+      const r = await dbRun("INSERT INTO cad_review_comments (review_id, team_id, author_id, comment, created_at) VALUES (?, ?, ?, ?, ?)",
+        id, teamId, auth.memberId, comment, now);
+      res.json({ id: r.lastInsertRowid });
+    } catch (e) { console.error("CAD comment create error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ---- Snapshots ----
+  app.get("/api/cad/snapshots", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const snaps = await dbAll(`
+        SELECT s.*, m.name AS author_name FROM cad_snapshots s
+        LEFT JOIN members m ON m.id = s.created_by
+        WHERE s.team_id = ? ORDER BY s.created_at DESC`, teamId);
+      res.json(snaps);
+    } catch (e) { console.error("CAD snapshots list error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/cad/snapshots", cadUpload.fields([{ name: "model", maxCount: 1 }, { name: "screenshot", maxCount: 1 }]), async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const files = (req as any).files || {};
+      const model = files.model?.[0];
+      if (!model) return res.status(400).json({ error: "A 3D model file is required" });
+      const file_type = detectModelType(model.originalname);
+      if (!file_type) return res.status(400).json({ error: "Model must be .step/.stp or .stl" });
+      const title = String(req.body?.title ?? "").trim().slice(0, 160) || model.originalname;
+      const section = normalizeSection(req.body?.section);
+      const notes = String(req.body?.notes ?? "").trim().slice(0, 4000);
+      const screenshot = files.screenshot?.[0];
+      const now = new Date().toISOString();
+      const r = await dbRun(
+        `INSERT INTO cad_snapshots (team_id, title, section, file_url, file_name, file_size, file_type, screenshot_url, notes, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        teamId, title, section, `/uploads/${model.filename}`, model.originalname, model.size, file_type,
+        screenshot ? `/uploads/${screenshot.filename}` : null, notes, auth.memberId, now);
+      res.json({ id: r.lastInsertRowid });
+    } catch (e) { console.error("CAD snapshot upload error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/cad/snapshots/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const snap = (await dbGet("SELECT * FROM cad_snapshots WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!snap) return res.status(404).json({ error: "Not found" });
+      const isAdmin = await hasPerm(auth, "manage_members");
+      if (snap.created_by !== auth.memberId && !isAdmin) return res.status(403).json({ error: "You don't have permission for that" });
+      await dbRun("DELETE FROM cad_snapshots WHERE id = ?", id);
+      for (const u of [snap.file_url, snap.screenshot_url]) {
+        try {
+          if (u && u.startsWith("/uploads/")) fs.unlinkSync(path.join(process.cwd(), "uploads", u.slice(9)));
+        } catch { /* best effort */ }
+      }
+      res.json({ success: true });
+    } catch (e) { console.error("CAD snapshot delete error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ---- Parts / BOM ----
+  app.get("/api/cad/parts", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const parts = await dbAll("SELECT * FROM cad_parts WHERE team_id = ? ORDER BY section, name", teamId);
+      res.json(parts);
+    } catch (e) { console.error("CAD parts list error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.post("/api/cad/parts", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const parsed = sanitizePartInput(req.body);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const v = parsed.value!;
+      const now = new Date().toISOString();
+      const r = await dbRun(
+        `INSERT INTO cad_parts (team_id, name, section, quantity, source, unit_cost, status, assignee, notes, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        teamId, v.name, v.section, v.quantity, v.source, v.unit_cost, v.status, v.assignee, v.notes, auth.memberId, now, now);
+      res.json({ id: r.lastInsertRowid });
+    } catch (e) { console.error("CAD part create error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.patch("/api/cad/parts/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const part = (await dbGet("SELECT id FROM cad_parts WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!part) return res.status(404).json({ error: "Not found" });
+      const parsed = sanitizePartInput(req.body);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const v = parsed.value!;
+      await dbRun(
+        `UPDATE cad_parts SET name = ?, section = ?, quantity = ?, source = ?, unit_cost = ?, status = ?, assignee = ?, notes = ?, updated_at = ? WHERE id = ?`,
+        v.name, v.section, v.quantity, v.source, v.unit_cost, v.status, v.assignee, v.notes, new Date().toISOString(), id);
+      res.json({ success: true });
+    } catch (e) { console.error("CAD part update error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  app.delete("/api/cad/parts/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const part = (await dbGet("SELECT id FROM cad_parts WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      if (!part) return res.status(404).json({ error: "Not found" });
+      await dbRun("DELETE FROM cad_parts WHERE id = ?", id);
+      res.json({ success: true });
+    } catch (e) { console.error("CAD part delete error:", e); res.status(500).json({ error: "Internal server error" }); }
+  });
+
+  // ---- Dashboard aggregates ----
+  app.get("/api/cad/dashboard", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const teamId = cadTeam(auth, res); if (!teamId) return;
+      const docsCount = (await dbGet("SELECT COUNT(*) AS n FROM cad_docs WHERE team_id = ?", teamId) as any).n;
+      const pendingReviews = (await dbGet("SELECT COUNT(*) AS n FROM cad_reviews WHERE team_id = ? AND status = 'in_review'", teamId) as any).n;
+      const snapshotsCount = (await dbGet("SELECT COUNT(*) AS n FROM cad_snapshots WHERE team_id = ?", teamId) as any).n;
+      const partsAgg = (await dbGet("SELECT COUNT(*) AS n, COALESCE(SUM(quantity * unit_cost), 0) AS total FROM cad_parts WHERE team_id = ?", teamId)) as any;
+      const needsAttention = await dbAll(`
+        SELECT r.id, r.title, r.section, r.updated_at, m.name AS author_name
+        FROM cad_reviews r LEFT JOIN members m ON m.id = r.created_by
+        WHERE r.team_id = ? AND r.status = 'in_review' ORDER BY r.updated_at ASC LIMIT 5`, teamId);
+      const recent = await dbAll(`
+        SELECT 'review' AS kind, id, title, section, status AS detail, updated_at AS ts FROM cad_reviews WHERE team_id = ?
+        UNION ALL
+        SELECT 'snapshot' AS kind, id, title, section, file_type AS detail, created_at AS ts FROM cad_snapshots WHERE team_id = ?
+        UNION ALL
+        SELECT 'part' AS kind, id, name AS title, section, status AS detail, updated_at AS ts FROM cad_parts WHERE team_id = ?
+        UNION ALL
+        SELECT 'doc' AS kind, id, name AS title, '' AS section, url AS detail, created_at AS ts FROM cad_docs WHERE team_id = ?
+        ORDER BY ts DESC LIMIT 10`, teamId, teamId, teamId, teamId);
+      res.json({
+        docsCount, pendingReviews, snapshotsCount,
+        partsCount: partsAgg.n, partsTotalCost: Math.round(partsAgg.total * 100) / 100,
+        needsAttention, recent,
+        sections: CAD_SECTIONS, reviewStatuses: REVIEW_STATUSES,
+        reviewStatusLabels: REVIEW_STATUS_LABELS, partSources: PART_SOURCES,
+        partStatuses: PART_STATUSES, partSourceLabels: PART_SOURCE_LABELS, partStatusLabels: PART_STATUS_LABELS,
+      });
+    } catch (e) { console.error("CAD dashboard error:", e); res.status(500).json({ error: "Internal server error" }); }
   });
 
   // Vite middleware for development
