@@ -55,6 +55,24 @@ function extractText(data: any): string {
   }
 }
 
+export interface AiUsage {
+  promptTokens: number;
+  responseTokens: number;
+  totalTokens: number;
+}
+
+function extractUsage(data: any): AiUsage | null {
+  try {
+    const u = data?.usageMetadata;
+    if (!u) return null;
+    const promptTokens = u.promptTokenCount || 0;
+    const responseTokens = u.candidatesTokenCount || 0;
+    return { promptTokens, responseTokens, totalTokens: u.totalTokenCount || promptTokens + responseTokens };
+  } catch {
+    return null;
+  }
+}
+
 export interface AIImage {
   mimeType: string;
   data: string; // base64
@@ -498,7 +516,8 @@ export async function buildHelperChat(
   messages: ChatMessage[],
   maxTokens: number,
   onChunk?: (text: string) => void,
-  extraSystem?: string
+  extraSystem?: string,
+  onUsage?: (usage: AiUsage) => void
 ): Promise<string> {
   // Keep cost/latency bounded: last 12 turns, each capped.
   const trimmed = messages
@@ -540,13 +559,17 @@ export async function buildHelperChat(
   }
 
   if (!stream || !res.body) {
-    return extractText(await res.json());
+    const data = await res.json();
+    const u = extractUsage(data);
+    if (u && onUsage) onUsage(u);
+    return extractText(data);
   }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
+  let lastUsage: AiUsage | null = null;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -559,7 +582,10 @@ export async function buildHelperChat(
       const payload = t.slice(5).trim();
       if (!payload || payload === "[DONE]") continue;
       try {
-        const text = extractText(JSON.parse(payload));
+        const parsed = JSON.parse(payload);
+        const u = extractUsage(parsed);
+        if (u) lastUsage = u;
+        const text = extractText(parsed);
         if (text) {
           full += text;
           onChunk(text);
@@ -569,5 +595,6 @@ export async function buildHelperChat(
       }
     }
   }
+  if (lastUsage && onUsage) onUsage(lastUsage);
   return full;
 }

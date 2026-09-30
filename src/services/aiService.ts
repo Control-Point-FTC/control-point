@@ -35,7 +35,12 @@ async function postStream(
 
   if (!res.ok || !res.body) {
     const text = await res.text();
-    throw new Error(`AI request failed: ${res.status} ${text}`);
+    let serverError = '';
+    try { serverError = JSON.parse(text)?.error || ''; } catch { /* non-JSON body */ }
+    const err: any = new Error(`AI request failed: ${res.status}`);
+    err.status = res.status;
+    err.serverError = serverError;
+    throw err;
   }
 
   const reader = res.body.getReader();

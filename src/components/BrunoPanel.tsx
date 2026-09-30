@@ -124,8 +124,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       }
       // Note: data-action proposal blocks are NOT auto-inserted anymore — the
       // confirm card calls applyActionProposals + notify on tap.
-    } catch {
-      setMessages([...next, { role: 'model', text: `${name} isn't reachable right now. Check your connection and try again.` }]);
+    } catch (e: any) {
+      const blockedMsg = e?.serverError;
+      setMessages([...next, { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` }]);
     } finally {
       setBusy(false);
     }

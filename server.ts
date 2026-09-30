@@ -397,6 +397,54 @@ if (!memberColumns.some((c: any) => c.name === 'discord_id')) {
 if (!memberColumns.some((c: any) => c.name === 'github_id')) {
   (await dbExec("ALTER TABLE members ADD COLUMN github_id TEXT"));
 }
+// Owner AI controls (per-member): kill switch, timeout, token budgets
+if (!memberColumns.some((c: any) => c.name === 'ai_disabled')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN ai_disabled INTEGER DEFAULT 0"));
+}
+if (!memberColumns.some((c: any) => c.name === 'ai_timeout_until')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN ai_timeout_until TEXT"));
+}
+if (!memberColumns.some((c: any) => c.name === 'ai_daily_token_limit')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN ai_daily_token_limit INTEGER"));
+}
+if (!memberColumns.some((c: any) => c.name === 'ai_max_tokens_reply')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN ai_max_tokens_reply INTEGER"));
+}
+// AI usage log: one row per Bruno/NavGPT request
+(await dbExec(`CREATE TABLE IF NOT EXISTS ai_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id INTEGER NOT NULL,
+  team_id INTEGER,
+  endpoint TEXT DEFAULT 'build-helper',
+  prompt_tokens INTEGER DEFAULT 0,
+  response_tokens INTEGER DEFAULT 0,
+  total_tokens INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_ai_usage_member_day ON ai_usage(member_id, created_at)`));
+// AI misuse flags: review queue for the app owner
+(await dbExec(`CREATE TABLE IF NOT EXISTS ai_flags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id INTEGER NOT NULL,
+  team_id INTEGER,
+  chat_id INTEGER,
+  excerpt TEXT,
+  reason TEXT,
+  score INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'open',
+  reviewer_note TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  reviewed_at TEXT
+)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_ai_flags_status ON ai_flags(status, created_at)`));
+// AI warnings issued by the app owner
+(await dbExec(`CREATE TABLE IF NOT EXISTS ai_warnings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  member_id INTEGER NOT NULL,
+  team_id INTEGER,
+  note TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`));
 
 const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {
@@ -3394,17 +3442,6 @@ async function startServer() {
     res.json({ totals, teams });
   });
 
-  app.get("/api/owner/users", async (req, res) => {
-    const auth = await requireOwner(req, res);
-    if (!auth) return;
-    const users = (await dbAll(`
-      SELECT m.id, m.name, m.email, m.role, m.account_type, m.team_id, t.name as team_name
-      FROM members m LEFT JOIN teams t ON m.team_id = t.id
-      ORDER BY m.id DESC LIMIT 500
-    `));
-    res.json(users);
-  });
-
   app.get("/api/owner/feedback", async (req, res) => {
     const auth = await requireOwner(req, res);
     if (!auth) return;
@@ -3431,6 +3468,214 @@ async function startServer() {
     if (!auth) return;
     const member = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
     res.json({ isOwner: ownerEmails().includes((member?.email || "").toLowerCase()) });
+  });
+
+  // --- Owner: AI governance (usage, flags, per-user controls, deletion) ---
+  app.get("/api/owner/ai-overview", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const today = (await dbGet(
+      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT member_id) AS users FROM ai_usage WHERE created_at >= datetime('now', 'start of day')"
+    )) as any;
+    const top = (await dbAll(`
+      SELECT u.member_id AS id, m.name, m.email, t.name AS team_name,
+             COUNT(*) AS messages, COALESCE(SUM(u.total_tokens), 0) AS tokens
+      FROM ai_usage u
+      LEFT JOIN members m ON m.id = u.member_id
+      LEFT JOIN teams t ON t.id = u.team_id
+      WHERE u.created_at >= datetime('now', '-7 days')
+      GROUP BY u.member_id ORDER BY tokens DESC LIMIT 10
+    `)) as any[];
+    const flagRows = (await dbAll("SELECT status, COUNT(*) AS n FROM ai_flags GROUP BY status")) as any[];
+    const flags: Record<string, number> = {};
+    for (const r of flagRows) flags[r.status] = r.n;
+    res.json({ today, top, flags });
+  });
+
+  // Richer users list: AI status, 7-day usage, open flags, warnings
+  app.get("/api/owner/users", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const users = (await dbAll(`
+      SELECT m.id, m.name, m.email, m.role, m.account_type, m.team_id, t.name as team_name,
+        m.ai_disabled, m.ai_timeout_until, m.ai_daily_token_limit, m.ai_max_tokens_reply,
+        m.google_id, m.discord_id, m.github_id,
+        (SELECT COUNT(*) FROM ai_usage u WHERE u.member_id = m.id AND u.created_at >= datetime('now', '-7 days')) AS msgs_7d,
+        (SELECT COALESCE(SUM(u.total_tokens), 0) FROM ai_usage u WHERE u.member_id = m.id AND u.created_at >= datetime('now', '-7 days')) AS tokens_7d,
+        (SELECT COUNT(*) FROM ai_flags f WHERE f.member_id = m.id AND f.status = 'open') AS flags_open,
+        (SELECT COUNT(*) FROM ai_warnings w WHERE w.member_id = m.id) AS warnings,
+        (SELECT MAX(u.created_at) FROM ai_usage u WHERE u.member_id = m.id) AS last_ai_use
+      FROM members m LEFT JOIN teams t ON m.team_id = t.id
+      ORDER BY m.id DESC LIMIT 500
+    `));
+    res.json(users);
+  });
+
+  app.get("/api/owner/users/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const user = (await dbGet(
+      `SELECT m.*, t.name AS team_name FROM members m LEFT JOIN teams t ON m.team_id = t.id WHERE m.id = ?`, id
+    )) as any;
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const siblings = (await dbAll(
+      `SELECT m.id, m.team_id, t.name AS team_name, m.role, m.account_type FROM members m
+       LEFT JOIN teams t ON t.id = m.team_id WHERE m.email = ? AND m.id != ?`, user.email, id
+    )) as any[];
+    const usage14 = (await dbAll(
+      `SELECT date(created_at) AS day, COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens
+       FROM ai_usage WHERE member_id = ? AND created_at >= datetime('now', '-14 days')
+       GROUP BY day ORDER BY day`, id
+    )) as any[];
+    const flags = (await dbAll(
+      `SELECT * FROM ai_flags WHERE member_id = ? ORDER BY created_at DESC LIMIT 20`, id
+    )) as any[];
+    const warnings = (await dbAll(
+      `SELECT * FROM ai_warnings WHERE member_id = ? ORDER BY created_at DESC`, id
+    )) as any[];
+    delete user.password;
+    res.json({ user, siblings, usage14, flags, warnings });
+  });
+
+  app.patch("/api/owner/users/:id/ai", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const target = (await dbGet("SELECT id, email FROM members WHERE id = ?", id)) as any;
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (ownerEmails().includes((target.email || "").toLowerCase())) {
+      return res.status(403).json({ error: "You can't restrict the app owner's AI access." });
+    }
+    const b = req.body || {};
+    const sets: string[] = [];
+    const args: any[] = [];
+    if (typeof b.ai_disabled === "boolean") { sets.push("ai_disabled = ?"); args.push(b.ai_disabled ? 1 : 0); }
+    if (b.timeoutHours !== undefined && b.timeoutHours !== null) {
+      const h = parseFloat(b.timeoutHours);
+      if (Number.isFinite(h) && h > 0) {
+        sets.push("ai_timeout_until = ?");
+        args.push(new Date(Date.now() + h * 3600_000).toISOString().slice(0, 19).replace("T", " "));
+      }
+    } else if (b.ai_timeout_until !== undefined) {
+      sets.push("ai_timeout_until = ?"); args.push(b.ai_timeout_until || null);
+    }
+    if (b.ai_daily_token_limit !== undefined) {
+      const n = parseInt(b.ai_daily_token_limit, 10);
+      sets.push("ai_daily_token_limit = ?"); args.push(Number.isFinite(n) && n > 0 ? n : null);
+    }
+    if (b.ai_max_tokens_reply !== undefined) {
+      const n = parseInt(b.ai_max_tokens_reply, 10);
+      sets.push("ai_max_tokens_reply = ?"); args.push(Number.isFinite(n) && n > 0 ? n : null);
+    }
+    if (!sets.length) return res.status(400).json({ error: "Nothing to update" });
+    await dbRun(`UPDATE members SET ${sets.join(", ")} WHERE id = ?`, ...args, id);
+    const updated = (await dbGet("SELECT ai_disabled, ai_timeout_until, ai_daily_token_limit, ai_max_tokens_reply FROM members WHERE id = ?", id)) as any;
+    res.json({ success: true, controls: updated });
+  });
+
+  app.post("/api/owner/users/:id/warn", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const target = (await dbGet("SELECT id, team_id FROM members WHERE id = ?", id)) as any;
+    if (!target) return res.status(404).json({ error: "User not found" });
+    const note = String(req.body?.note || "").slice(0, 1000);
+    await dbRun("INSERT INTO ai_warnings (member_id, team_id, note) VALUES (?, ?, ?)", id, target.team_id, note || null);
+    const count = (await dbGet("SELECT COUNT(*) AS n FROM ai_warnings WHERE member_id = ?", id)) as any;
+    res.json({ success: true, warnings: count?.n || 0 });
+  });
+
+  async function ownerDeleteMembership(memberId: number): Promise<{ ok: boolean; error?: string }> {
+    const target = (await dbGet("SELECT id, email, team_id, account_type FROM members WHERE id = ?", memberId)) as any;
+    if (!target) return { ok: false, error: "User not found" };
+    if (ownerEmails().includes((target.email || "").toLowerCase())) {
+      return { ok: false, error: "You can't delete the app owner's account." };
+    }
+    const perms = await rolePerms(target.id, target.team_id);
+    const isAdminish = target.account_type === "admin" || perms.has("*") || perms.has("manage_members");
+    if (isAdminish && (await countAdmins(target.team_id)) <= 1) {
+      return { ok: false, error: "They're the last admin of their team — promote someone else first." };
+    }
+    // Sessions + role assignments
+    await dbRun("DELETE FROM sessions WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM member_roles WHERE member_id = ?", target.id);
+    // Their private AI chats (public team chats stay for the team)
+    const privChats = (await dbAll("SELECT id FROM bruno_chats WHERE member_id = ? AND COALESCE(is_public, 0) != 1", target.id)) as any[];
+    for (const c of privChats) {
+      await dbRun("DELETE FROM bruno_messages WHERE chat_id = ?", c.id);
+      await dbRun("DELETE FROM bruno_chats WHERE id = ?", c.id);
+    }
+    await dbRun("DELETE FROM ai_usage WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM members WHERE id = ?", target.id);
+    return { ok: true };
+  }
+
+  // Delete one team membership (they keep their other teams)
+  app.delete("/api/owner/users/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const r = await ownerDeleteMembership(parseInt(req.params.id, 10));
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    res.json({ success: true });
+  });
+
+  // Delete an entire account: every membership under one email
+  app.delete("/api/owner/accounts", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const email = String(req.query.email || "").trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: "email query param required" });
+    if (ownerEmails().includes(email)) return res.status(403).json({ error: "You can't delete the app owner's account." });
+    const rows = (await dbAll("SELECT id FROM members WHERE lower(email) = ?", email)) as any[];
+    const deleted: number[] = [];
+    const skipped: { id: number; error: string }[] = [];
+    for (const r of rows) {
+      const out = await ownerDeleteMembership(r.id);
+      if (out.ok) deleted.push(r.id); else skipped.push({ id: r.id, error: out.error || "failed" });
+    }
+    res.json({ success: true, deleted, skipped });
+  });
+
+  app.get("/api/owner/ai-flags", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const status = String(req.query.status || "open");
+    const where = status === "all" ? "" : "WHERE f.status = 'open'";
+    const items = (await dbAll(`
+      SELECT f.*, m.name AS user_name, m.email AS user_email, t.name AS team_name
+      FROM ai_flags f
+      LEFT JOIN members m ON m.id = f.member_id
+      LEFT JOIN teams t ON t.id = f.team_id
+      ${where} ORDER BY f.created_at DESC LIMIT 200
+    `)) as any[];
+    res.json(items);
+  });
+
+  app.patch("/api/owner/ai-flags/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const flag = (await dbGet("SELECT * FROM ai_flags WHERE id = ?", id)) as any;
+    if (!flag) return res.status(404).json({ error: "Flag not found" });
+    const { action, note, timeoutHours } = req.body || {};
+    const cleanNote = String(note || "").slice(0, 1000) || null;
+    let status = "dismissed";
+    if (action === "warn") {
+      status = "warned";
+      await dbRun("INSERT INTO ai_warnings (member_id, team_id, note) VALUES (?, ?, ?)", flag.member_id, flag.team_id, cleanNote);
+    } else if (action === "timeout") {
+      status = "timed_out";
+      const h = Number.isFinite(parseFloat(timeoutHours)) && parseFloat(timeoutHours) > 0 ? parseFloat(timeoutHours) : 24;
+      const until = new Date(Date.now() + h * 3600_000).toISOString().slice(0, 19).replace("T", " ");
+      await dbRun("UPDATE members SET ai_timeout_until = ? WHERE id = ?", until, flag.member_id);
+    } else if (action === "disable") {
+      status = "ai_disabled";
+      await dbRun("UPDATE members SET ai_disabled = 1 WHERE id = ?", flag.member_id);
+    }
+    await dbRun("UPDATE ai_flags SET status = ?, reviewer_note = ?, reviewed_at = datetime('now') WHERE id = ?", status, cleanNote, id);
+    res.json({ success: true, status });
   });
 
   // Settings
@@ -4658,6 +4903,115 @@ Rules:
 
   // --- AI endpoints (Google Gemini, server-side; key stays in env) ---
 
+  // --- Owner AI governance: per-member kill switch / timeout / token budgets ---
+  async function aiAccessCheck(memberId: number): Promise<{ blocked: boolean; message?: string; timeoutUntil?: string }> {
+    const m = (await dbGet("SELECT ai_disabled, ai_timeout_until, ai_daily_token_limit FROM members WHERE id = ?", memberId)) as any;
+    if (!m) return { blocked: true, message: "Account not found." };
+    if (m.ai_disabled === 1) {
+      return { blocked: true, message: "AI access has been disabled for your account. Contact the app owner if you think this is a mistake." };
+    }
+    if (m.ai_timeout_until) {
+      const until = new Date(m.ai_timeout_until).getTime();
+      if (Number.isFinite(until) && until > Date.now()) {
+        const when = new Date(m.ai_timeout_until).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        return { blocked: true, message: `Your AI access is paused until ${when}.`, timeoutUntil: m.ai_timeout_until };
+      }
+    }
+    const limit = parseInt(m.ai_daily_token_limit, 10);
+    if (Number.isFinite(limit) && limit > 0) {
+      const used = (await dbGet(
+        "SELECT COALESCE(SUM(total_tokens), 0) AS t FROM ai_usage WHERE member_id = ? AND created_at >= datetime('now', 'start of day')",
+        memberId
+      )) as any;
+      if ((used?.t || 0) >= limit) {
+        return { blocked: true, message: "You've reached your daily AI token limit. Try again tomorrow." };
+      }
+    }
+    return { blocked: false };
+  }
+
+  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number) {
+    try {
+      const prompt = usage?.promptTokens || Math.ceil(promptChars / 4);
+      const response = usage?.responseTokens || Math.ceil(responseChars / 4);
+      const total = usage?.totalTokens || prompt + response;
+      await dbRun(
+        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens) VALUES (?, ?, 'build-helper', ?, ?, ?)",
+        memberId, teamId, prompt, response, total
+      );
+    } catch (e) {
+      console.error("[AI] usage log failed:", (e as any)?.message || e);
+    }
+  }
+
+  // Heuristic misuse signals. Flags are review-only — nothing auto-blocks.
+  const HOMEWORK_SIGNALS: [RegExp, number][] = [
+    [/\bhomework\b/i, 2], [/\bassignment\b/i, 2], [/\bessay\b/i, 2],
+    [/\bquiz\b/i, 2], [/\btest answers\b/i, 3], [/\bmath problem\b/i, 2],
+    [/write my\b/i, 3], [/do my (homework|assignment|essay|quiz)\b/i, 3],
+    [/solve (this|these|the|for me)\b/i, 2], [/answer (this|these|the) (question|problem)/i, 2],
+    [/summarize (this|the) (article|chapter|book|passage|reading)\b/i, 2],
+    [/complete (this|the|my) (worksheet|assignment|homework)\b/i, 3],
+  ];
+  const HOMEWORK_FLAG_THRESHOLD = 4;
+
+  async function flagMisuse(memberId: number, teamId: number | null, chatId: number | null, text: string) {
+    try {
+      const excerpt = String(text || "").slice(0, 400);
+      // 1) Homework-like request
+      let score = 0;
+      for (const [re, pts] of HOMEWORK_SIGNALS) if (re.test(text)) score += pts;
+      if (score >= HOMEWORK_FLAG_THRESHOLD) {
+        const dup = (await dbGet(
+          "SELECT id FROM ai_flags WHERE member_id = ? AND reason = 'homework' AND status = 'open' AND created_at >= datetime('now', '-6 hours')",
+          memberId
+        )) as any;
+        if (!dup) {
+          await dbRun(
+            "INSERT INTO ai_flags (member_id, team_id, chat_id, excerpt, reason, score) VALUES (?, ?, ?, ?, 'homework', ?)",
+            memberId, teamId, chatId, excerpt, score
+          );
+        }
+      }
+      // 2) Spam burst: 12+ AI messages in 10 minutes
+      const burst = (await dbGet(
+        "SELECT COUNT(*) AS n FROM ai_usage WHERE member_id = ? AND created_at >= datetime('now', '-10 minutes')",
+        memberId
+      )) as any;
+      if ((burst?.n || 0) >= 12) {
+        const dup = (await dbGet(
+          "SELECT id FROM ai_flags WHERE member_id = ? AND reason = 'spam' AND status = 'open' AND created_at >= datetime('now', '-1 hour')",
+          memberId
+        )) as any;
+        if (!dup) {
+          await dbRun(
+            "INSERT INTO ai_flags (member_id, team_id, chat_id, excerpt, reason, score) VALUES (?, ?, ?, ?, 'spam', ?)",
+            memberId, teamId, chatId, excerpt, burst.n
+          );
+        }
+      }
+      // 3) Excessive daily use: 80+ AI messages in a day
+      const dayCount = (await dbGet(
+        "SELECT COUNT(*) AS n FROM ai_usage WHERE member_id = ? AND created_at >= datetime('now', 'start of day')",
+        memberId
+      )) as any;
+      if ((dayCount?.n || 0) >= 80) {
+        const dup = (await dbGet(
+          "SELECT id FROM ai_flags WHERE member_id = ? AND reason = 'excessive-use' AND status = 'open' AND created_at >= datetime('now', 'start of day')",
+          memberId
+        )) as any;
+        if (!dup) {
+          await dbRun(
+            "INSERT INTO ai_flags (member_id, team_id, chat_id, excerpt, reason, score) VALUES (?, ?, ?, ?, 'excessive-use', ?)",
+            memberId, teamId, chatId, excerpt, dayCount.n
+          );
+        }
+      }
+    } catch (e) {
+      console.error("[AI] flagging failed:", (e as any)?.message || e);
+    }
+  }
+
   app.post("/api/ai/fetch-news", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -4970,6 +5324,11 @@ Rules:
       if (!isAIConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Gemini API key." });
       }
+      // Owner AI governance: disabled / timed-out / over daily token budget
+      const gate = await aiAccessCheck(auth.memberId);
+      if (gate.blocked) {
+        return res.status(403).json({ error: gate.message, aiBlocked: true, timeoutUntil: gate.timeoutUntil || null });
+      }
       const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
       const messages = raw
         .filter((m: any) => m && (m.role === "user" || m.role === "model") && typeof m.text === "string")
@@ -4978,7 +5337,13 @@ Rules:
       if (!messages.length || messages[messages.length - 1].role !== "user") {
         return res.status(400).json({ error: "A user message is required" });
       }
-      const maxTokens = await getMaxTokens("max_tokens_chat", 1024);
+      // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue
+      const reqChatId = parseInt(req.body?.chatId, 10) || null;
+      flagMisuse(auth.memberId, auth.teamId, reqChatId, messages[messages.length - 1].text);
+      const globalMax = await getMaxTokens("max_tokens_chat", 1024);
+      const memberCap = (await dbGet("SELECT ai_max_tokens_reply FROM members WHERE id = ?", auth.memberId)) as any;
+      const perUserMax = parseInt(memberCap?.ai_max_tokens_reply, 10);
+      const maxTokens = Number.isFinite(perUserMax) && perUserMax > 0 ? Math.min(globalMax, perUserMax) : globalMax;
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
       const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
@@ -5028,7 +5393,10 @@ Rules:
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra);
+          let usage: any = null;
+          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra, (u) => { usage = u; });
+          const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+          logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length);
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
@@ -5043,8 +5411,11 @@ Rules:
         }
         return;
       }
-      const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra);
+      let nonStreamUsage: any = null;
+      const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra, (u) => { nonStreamUsage = u; });
       const finalResult = stripActionBlocks(String(result || ""));
+      const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length);
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {

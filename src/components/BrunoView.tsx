@@ -149,10 +149,11 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       // Note: data-action proposal blocks (```event etc.) are NOT auto-inserted
       // anymore — the confirm card calls applyActionProposals + notify on tap.
       fetchChats(chatId);
-    } catch {
+    } catch (e: any) {
+      const blockedMsg = e?.serverError;
       setMessages((prev) => {
         const base = prev.filter((m) => !(m.role === 'model' && !m.text));
-        return [...base, { role: 'model', text: `${name} isn't reachable right now. Check your connection and try again.` }];
+        return [...base, { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` }];
       });
     } finally {
       setBusy(false);

@@ -49,6 +49,10 @@ import {
   Code2,
   Check,
   ShieldCheck,
+  ShieldAlert,
+  Ban,
+  AlertTriangle,
+  UserX,
   GraduationCap,
   KeyRound,
   Copy,
@@ -6955,28 +6959,90 @@ function FeedbackModal({ onClose }: any) {
 }
 
 // Owner portal: Sushil's cross-workspace view of usage + feedback
+function fmtTokens(n: any): string {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return `${v}`;
+}
+
+function aiStatusOf(u: any) {
+  if (!u) return { label: '—', cls: 'bg-white/5 text-text-muted' };
+  if (u.ai_disabled === 1) return { label: 'AI disabled', cls: 'bg-rose-500/15 text-rose-400' };
+  if (u.ai_timeout_until && new Date(String(u.ai_timeout_until).replace(' ', 'T') + 'Z').getTime() > Date.now())
+    return { label: 'Timed out', cls: 'bg-amber-500/15 text-amber-400' };
+  if (u.ai_daily_token_limit) return { label: `${fmtTokens(u.ai_daily_token_limit)}/day`, cls: 'bg-sky-500/15 text-sky-400' };
+  return { label: 'AI ok', cls: 'bg-emerald-500/15 text-emerald-400' };
+}
+
+function loginChips(u: any) {
+  const chips: string[] = [];
+  if (u.google_id) chips.push('Google');
+  if (u.discord_id) chips.push('Discord');
+  if (u.github_id) chips.push('GitHub');
+  return chips;
+}
+
+const FLAG_REASONS: Record<string, { label: string; cls: string }> = {
+  'homework': { label: 'Homework-like', cls: 'bg-amber-500/15 text-amber-400' },
+  'spam': { label: 'Spam burst', cls: 'bg-rose-500/15 text-rose-400' },
+  'excessive-use': { label: 'Excessive use', cls: 'bg-orange-500/15 text-orange-400' },
+};
+
+const FLAG_STATUSES: Record<string, { label: string; cls: string }> = {
+  'open': { label: 'Open', cls: 'bg-rose-500/15 text-rose-400' },
+  'dismissed': { label: 'Dismissed', cls: 'bg-white/5 text-text-muted' },
+  'warned': { label: 'Warned', cls: 'bg-amber-500/15 text-amber-400' },
+  'timed_out': { label: 'Timed out', cls: 'bg-orange-500/15 text-orange-400' },
+  'ai_disabled': { label: 'AI disabled', cls: 'bg-rose-500/20 text-rose-300' },
+};
+
 function OwnerView(_props: any) {
-  const [tab, setTab] = useState<'overview' | 'feedback' | 'users'>('overview');
+  const [tab, setTab] = useState<'overview' | 'users' | 'ai' | 'flags' | 'feedback'>('overview');
   const [overview, setOverview] = useState<any>(null);
   const [feedback, setFeedback] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [aiOverview, setAiOverview] = useState<any>(null);
+  const [flags, setFlags] = useState<any[]>([]);
+  const [flagFilter, setFlagFilter] = useState<'open' | 'all'>('open');
   const [loading, setLoading] = useState(true);
+  const [userSearch, setUserSearch] = useState('');
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const [o, f, u] = await Promise.all([
-          apiFetch('/api/owner/overview').then(r => r.json()),
-          apiFetch('/api/owner/feedback').then(r => r.json()),
-          apiFetch('/api/owner/users').then(r => r.json()),
-        ]);
-        setOverview(o); setFeedback(Array.isArray(f) ? f : []); setUsers(Array.isArray(u) ? u : []);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const loadAll = async () => {
+    setLoading(true);
+    try {
+      const [o, f, u, a, fl] = await Promise.all([
+        apiFetch('/api/owner/overview').then(r => r.json()),
+        apiFetch('/api/owner/feedback').then(r => r.json()),
+        apiFetch('/api/owner/users').then(r => r.json()),
+        apiFetch('/api/owner/ai-overview').then(r => r.json()),
+        apiFetch('/api/owner/ai-flags').then(r => r.json()),
+      ]);
+      setOverview(o);
+      setFeedback(Array.isArray(f) ? f : []);
+      setUsers(Array.isArray(u) ? u : []);
+      setAiOverview(a);
+      setFlags(Array.isArray(fl) ? fl : []);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { loadAll(); }, []);
+
+  const reloadFlags = async (filter: 'open' | 'all' = flagFilter) => {
+    const r = await apiFetch(`/api/owner/ai-flags?status=${filter}`);
+    if (r.ok) setFlags(await r.json());
+  };
+  const reloadUsers = async () => {
+    const r = await apiFetch('/api/owner/users');
+    if (r.ok) setUsers(await r.json());
+  };
+  const reloadAi = async () => {
+    const r = await apiFetch('/api/owner/ai-overview');
+    if (r.ok) setAiOverview(await r.json());
+  };
 
   const setFeedbackStatus = async (id: number, status: 'new' | 'resolved') => {
     const res = await apiFetch(`/api/owner/feedback/${id}`, {
@@ -6986,13 +7052,59 @@ function OwnerView(_props: any) {
     if (res.ok) setFeedback(feedback.map(f => f.id === id ? { ...f, status } : f));
   };
 
+  const handleFlagAction = async (id: number, action: string, note: string, timeoutHours?: number) => {
+    const r = await apiFetch(`/api/owner/ai-flags/${id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, note, timeoutHours })
+    });
+    if (r.ok) {
+      notify(action === 'dismiss' ? 'Flag dismissed' : action === 'warn' ? 'Warning recorded' : action === 'timeout' ? 'AI timed out for user' : 'AI disabled for user', 'success');
+      reloadFlags(); reloadUsers(); reloadAi();
+    } else {
+      notify('Action failed', 'error');
+    }
+  };
+
+  const quickDeleteUser = async (u: any) => {
+    const ok = await confirmDialog({
+      title: 'Delete user',
+      message: `Remove ${u.name} (${u.email}) from ${u.team_name || 'their team'}? Their private AI chats and usage history go with them. This can't be undone.`,
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    const r = await apiFetch(`/api/owner/users/${u.id}`, { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { notify(j.error || 'Delete failed', 'error'); return; }
+    notify('User deleted', 'success');
+    reloadUsers(); reloadAi(); reloadFlags();
+  };
+
   const totals = overview?.totals || {};
+  const openFlagCount = aiOverview?.flags?.open || 0;
   const statCards = [
     { label: 'Workspaces', value: totals.teams || 0, icon: Users },
     { label: 'Users', value: totals.users || 0, icon: UserCircle },
-    { label: 'Messages', value: totals.messages || 0, icon: MessageSquare },
+    { label: 'AI msgs today', value: aiOverview?.today?.messages || 0, icon: Zap },
     { label: 'Feedback notes', value: totals.feedback || 0, icon: MessageSquareHeart },
   ];
+
+  const teams = Array.from(new Set(users.map(u => u.team_name).filter(Boolean))).sort() as string[];
+  const filteredUsers = users.filter(u => {
+    if (teamFilter !== 'all' && u.team_name !== teamFilter) return false;
+    if (userSearch) {
+      const q = userSearch.toLowerCase();
+      return (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const tabs = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'users', label: 'Users' },
+    { id: 'ai', label: 'AI Control' },
+    { id: 'flags', label: `Flags${openFlagCount > 0 ? ` (${openFlagCount})` : ''}` },
+    { id: 'feedback', label: `Feedback${totals.new_feedback > 0 ? ` (${totals.new_feedback})` : ''}` },
+  ] as const;
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -7000,17 +7112,17 @@ function OwnerView(_props: any) {
         <h3 className="text-lg sm:text-xl font-display font-bold text-white flex items-center gap-2">
           <Crown className="w-5 h-5 text-accent" /> Owner Portal
         </h3>
-        <p className="text-sm text-text-muted mt-1">Your private view of how Control Point is being used — every workspace, user, and feedback note in one place.</p>
+        <p className="text-sm text-text-muted mt-1">Your private command center — every workspace, user, AI flag, and feedback note in one place.</p>
       </div>
 
       <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
-        {(['overview', 'feedback', 'users'] as const).map((t) => (
+        {tabs.map((t) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn("px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap capitalize", tab === t ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
+            key={t.id}
+            onClick={() => setTab(t.id as any)}
+            className={cn("px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap capitalize", tab === t.id ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
           >
-            {t}{t === 'feedback' && (totals.new_feedback > 0) && ` (${totals.new_feedback})`}
+            {t.label}
           </button>
         ))}
       </div>
@@ -7050,7 +7162,141 @@ function OwnerView(_props: any) {
             </div>
           </Card>
         </>
-      ) : tab === 'feedback' ? (
+      ) : tab === 'users' ? (
+        <Card title="Users" subtitle={`${filteredUsers.length} shown — click Manage for AI controls, warnings, and deletion`}>
+          <div className="flex flex-col sm:flex-row gap-2 mb-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Search name or email…"
+                className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+              />
+            </div>
+            <select
+              value={teamFilter}
+              onChange={(e) => setTeamFilter(e.target.value)}
+              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none"
+            >
+              <option value="all">All teams</option>
+              {teams.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
+            {filteredUsers.map((u: any) => {
+              const st = aiStatusOf(u);
+              return (
+                <div key={u.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                  <Avatar user={u} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-white truncate flex items-center gap-2">
+                      {u.name}
+                      {u.flags_open > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400">{u.flags_open} flag{u.flags_open > 1 ? 's' : ''}</span>
+                      )}
+                      {u.warnings > 0 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400">{u.warnings} warn</span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-text-muted truncate">
+                      {u.email}{u.team_name ? ` · ${u.team_name}` : ''} · {u.account_type}
+                      {u.tokens_7d > 0 ? ` · ${fmtTokens(u.tokens_7d)} tokens / 7d` : ''}
+                    </p>
+                  </div>
+                  <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full whitespace-nowrap hidden sm:inline-block", st.cls)}>{st.label}</span>
+                  <Button variant="secondary" size="sm" className="!text-xs" onClick={() => setSelectedId(u.id)}>Manage</Button>
+                  <button
+                    onClick={() => quickDeleteUser(u)}
+                    title="Delete user"
+                    className="p-2 rounded-lg border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 transition-colors flex-shrink-0"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
+            {filteredUsers.length === 0 && (
+              <p className="text-sm text-text-muted text-center py-6">No users match.</p>
+            )}
+          </div>
+        </Card>
+      ) : tab === 'ai' ? (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <Card className="!p-4 !gap-2">
+              <Zap className="w-5 h-5 text-accent" />
+              <p className="text-2xl font-display font-bold text-white">{aiOverview?.today?.messages || 0}</p>
+              <p className="text-xs text-text-muted">AI messages today</p>
+            </Card>
+            <Card className="!p-4 !gap-2">
+              <MessageSquare className="w-5 h-5 text-accent" />
+              <p className="text-2xl font-display font-bold text-white">{fmtTokens(aiOverview?.today?.tokens || 0)}</p>
+              <p className="text-xs text-text-muted">Tokens today</p>
+            </Card>
+            <Card className="!p-4 !gap-2">
+              <Users className="w-5 h-5 text-accent" />
+              <p className="text-2xl font-display font-bold text-white">{aiOverview?.today?.users || 0}</p>
+              <p className="text-xs text-text-muted">People used AI today</p>
+            </Card>
+            <Card className="!p-4 !gap-2">
+              <Flag className="w-5 h-5 text-rose-400" />
+              <p className="text-2xl font-display font-bold text-white">{openFlagCount}</p>
+              <p className="text-xs text-text-muted">Open misuse flags</p>
+            </Card>
+          </div>
+          <Card title="Heaviest AI users" subtitle="Last 7 days by tokens — spot runaway usage at a glance">
+            <div className="space-y-1">
+              {(aiOverview?.top || []).map((t: any, i: number) => (
+                <div key={t.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                  <span className="text-xs font-bold text-text-muted w-5 text-center">{i + 1}</span>
+                  <Avatar user={t} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                    <p className="text-[11px] text-text-muted truncate">{t.email}{t.team_name ? ` · ${t.team_name}` : ''}</p>
+                  </div>
+                  <div className="text-right text-xs text-text-muted flex-shrink-0">
+                    <p><b className="text-white">{fmtTokens(t.tokens)}</b> tokens</p>
+                    <p>{t.messages} messages</p>
+                  </div>
+                  <Button variant="secondary" size="sm" className="!text-xs" onClick={() => setSelectedId(t.id)}>Manage</Button>
+                </div>
+              ))}
+              {(aiOverview?.top || []).length === 0 && (
+                <p className="text-sm text-text-muted text-center py-6">No AI usage in the last 7 days.</p>
+              )}
+            </div>
+          </Card>
+          <Card title="How flagging works" subtitle="Automatic misuse detection">
+            <ul className="text-sm text-text-muted space-y-1.5 list-disc pl-5">
+              <li><b className="text-white">Homework-like</b> — messages matching homework/essay/quiz patterns get flagged for your review.</li>
+              <li><b className="text-white">Spam burst</b> — 12+ AI messages within 10 minutes.</li>
+              <li><b className="text-white">Excessive use</b> — 80+ AI messages in a day.</li>
+              <li>Flags never block anyone by themselves — you decide: dismiss, warn, time out, or disable AI.</li>
+            </ul>
+          </Card>
+        </>
+      ) : tab === 'flags' ? (
+        <div className="space-y-3">
+          <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
+            {(['open', 'all'] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => { setFlagFilter(f); reloadFlags(f); }}
+                className={cn("px-4 py-1.5 rounded-lg text-xs font-bold capitalize transition-all", flagFilter === f ? "bg-accent text-primary" : "text-text-muted hover:text-white")}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          {flags.length === 0 && (
+            <Card><p className="text-sm text-text-muted text-center py-8">No {flagFilter === 'open' ? 'open ' : ''}flags. Quiet on the AI front.</p></Card>
+          )}
+          {flags.map((f: any) => (
+            <FlagCard key={f.id} flag={f} onAction={handleFlagAction} onManageUser={(id: number) => setSelectedId(id)} />
+          ))}
+        </div>
+      ) : (
         <div className="space-y-3">
           {feedback.length === 0 && <Card><p className="text-sm text-text-muted text-center py-8">No feedback yet.</p></Card>}
           {feedback.map((f: any) => (
@@ -7080,22 +7326,336 @@ function OwnerView(_props: any) {
             </Card>
           ))}
         </div>
-      ) : (
-        <Card title="Users" subtitle="Everyone signed up, newest first">
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
-            {users.map((u: any) => (
-              <div key={u.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
-                <Avatar user={u} size="sm" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-white truncate">{u.name}</p>
-                  <p className="text-[11px] text-text-muted truncate">{u.email}{u.team_name ? ` · ${u.team_name}` : ''}</p>
-                </div>
-                <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted flex-shrink-0">{u.account_type}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
       )}
+
+      {selectedId !== null && (
+        <OwnerUserDrawer
+          userId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onChanged={() => { reloadUsers(); reloadAi(); reloadFlags(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: number, action: string, note: string, timeoutHours?: number) => Promise<void>; onManageUser: (id: number) => void }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const reason = FLAG_REASONS[flag.reason] || { label: flag.reason, cls: 'bg-white/5 text-text-muted' };
+  const status = FLAG_STATUSES[flag.status] || { label: flag.status, cls: 'bg-white/5 text-text-muted' };
+
+  const run = async (action: string, timeoutHours?: number) => {
+    setBusy(true);
+    try { await onAction(flag.id, action, note, timeoutHours); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="!p-4 !gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full", reason.cls)}>{reason.label}</span>
+        <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full", status.cls)}>{status.label}</span>
+        <span className="text-[11px] text-text-muted ml-auto">{flag.created_at ? format(new Date(flag.created_at), 'MMM d, h:mm a') : ''}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Avatar user={{ name: flag.user_name, email: flag.user_email }} size="sm" />
+        <div className="min-w-0">
+          <button onClick={() => flag.member_id && onManageUser(flag.member_id)} className="text-sm font-bold text-white truncate hover:text-accent transition-colors text-left">
+            {flag.user_name || 'Unknown user'}
+          </button>
+          <p className="text-[11px] text-text-muted truncate">{flag.user_email}{flag.team_name ? ` · ${flag.team_name}` : ''}</p>
+        </div>
+      </div>
+      <p className="text-sm text-white/90 bg-white/5 border border-white/10 rounded-xl px-3 py-2 whitespace-pre-wrap">“{flag.excerpt}”</p>
+      {flag.reviewer_note && (
+        <p className="text-[11px] text-text-muted">Your note: {flag.reviewer_note}</p>
+      )}
+      {flag.status === 'open' && (
+        <>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Note (optional — recorded with warn/timeout/disable)…"
+            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" className="!text-xs" disabled={busy} onClick={() => run('dismiss')}>Dismiss</Button>
+            <Button variant="secondary" size="sm" className="!text-xs !border-amber-500/40 !text-amber-400" disabled={busy} onClick={() => run('warn')}>
+              <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Warn
+            </Button>
+            <Button variant="secondary" size="sm" className="!text-xs !border-orange-500/40 !text-orange-400" disabled={busy} onClick={() => run('timeout', 24)}>
+              <Timer className="w-3.5 h-3.5 mr-1" /> Timeout 24h
+            </Button>
+            <Button variant="secondary" size="sm" className="!text-xs !border-rose-500/40 !text-rose-400" disabled={busy} onClick={() => run('disable')}>
+              <Ban className="w-3.5 h-3.5 mr-1" /> Disable AI
+            </Button>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClose: () => void; onChanged: () => void }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [dailyLimit, setDailyLimit] = useState('');
+  const [replyMax, setReplyMax] = useState('');
+  const [warnNote, setWarnNote] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch(`/api/owner/users/${userId}`);
+      if (r.ok) {
+        const d = await r.json();
+        setData(d);
+        setDailyLimit(d.user.ai_daily_token_limit ? String(d.user.ai_daily_token_limit) : '');
+        setReplyMax(d.user.ai_max_tokens_reply ? String(d.user.ai_max_tokens_reply) : '');
+      }
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [userId]);
+
+  const patchAi = async (body: any, msg = 'AI controls updated') => {
+    setBusy(true);
+    try {
+      const r = await apiFetch(`/api/owner/users/${userId}/ai`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { notify(j.error || 'Update failed', 'error'); return; }
+      notify(msg, 'success');
+      await load(); onChanged();
+    } finally { setBusy(false); }
+  };
+
+  const doWarn = async () => {
+    setBusy(true);
+    try {
+      const r = await apiFetch(`/api/owner/users/${userId}/warn`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: warnNote }),
+      });
+      if (!r.ok) { notify('Warn failed', 'error'); return; }
+      notify('Warning recorded', 'success');
+      setWarnNote('');
+      await load(); onChanged();
+    } finally { setBusy(false); }
+  };
+
+  const doDeleteMembership = async () => {
+    const u = data?.user;
+    const ok = await confirmDialog({
+      title: 'Delete user',
+      message: `Remove ${u?.name} (${u?.email}) from ${u?.team_name || 'their team'}? Sessions, private AI chats, and usage history are removed too. This can't be undone.`,
+      confirmLabel: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    const r = await apiFetch(`/api/owner/users/${userId}`, { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { notify(j.error || 'Delete failed', 'error'); return; }
+    notify('User deleted', 'success');
+    onClose(); onChanged();
+  };
+
+  const doDeleteAccount = async () => {
+    const u = data?.user;
+    const teams = (data?.siblings?.length || 0) + 1;
+    const ok = await confirmDialog({
+      title: 'Delete entire account',
+      message: `Delete EVERYTHING for ${u?.email} across ${teams} team${teams > 1 ? 's' : ''}? This can't be undone.`,
+      confirmLabel: 'Delete everything', danger: true,
+    });
+    if (!ok) return;
+    const r = await apiFetch(`/api/owner/accounts?email=${encodeURIComponent(u.email)}`, { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { notify(j.error || 'Delete failed', 'error'); return; }
+    if (j.skipped?.length) notify(`Deleted ${j.deleted.length}, skipped ${j.skipped.length} (see console)`, 'info');
+    else notify(`Account deleted (${j.deleted.length} membership${j.deleted.length === 1 ? '' : 's'})`, 'success');
+    onClose(); onChanged();
+  };
+
+  const u = data?.user;
+  const st = aiStatusOf(u);
+  const usage = (data?.usage14 || []) as any[];
+  const maxT = Math.max(1, ...usage.map((d: any) => Number(d.tokens) || 0));
+  const chips = u ? loginChips(u) : [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative w-full max-w-md h-full bg-[#0b0b0d] border-l border-white/10 overflow-y-auto custom-scrollbar p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <h4 className="text-base font-display font-bold text-white">Manage user</h4>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-text-muted hover:text-white transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {loading || !u ? (
+          <p className="text-sm text-text-muted text-center py-8">Loading…</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              <Avatar user={u} size="md" />
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-bold text-white truncate">{u.name}</p>
+                <p className="text-xs text-text-muted truncate">{u.email}</p>
+                <p className="text-xs text-text-muted">{u.team_name || 'No team'} · {u.role} · {u.account_type}</p>
+              </div>
+              <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full whitespace-nowrap", st.cls)}>{st.label}</span>
+            </div>
+
+            {chips.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {chips.map((c) => (
+                  <span key={c} className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/5 text-text-muted">via {c}</span>
+                ))}
+                {(data?.siblings?.length || 0) > 0 && (
+                  <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/5 text-text-muted">
+                    {data.siblings.length + 1} teams total
+                  </span>
+                )}
+              </div>
+            )}
+
+            <Card title="AI access" subtitle="Kill switch, timeouts, and token budgets" className="!gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-white">AI enabled</p>
+                  <p className="text-[11px] text-text-muted">Turn off to block all Bruno / NavGPT replies</p>
+                </div>
+                <button
+                  disabled={busy}
+                  onClick={() => patchAi({ ai_disabled: u.ai_disabled !== 1 }, u.ai_disabled === 1 ? 'AI re-enabled' : 'AI disabled for user')}
+                  className={cn("relative w-11 h-6 rounded-full transition-colors flex-shrink-0", u.ai_disabled === 1 ? "bg-white/10" : "bg-emerald-500")}
+                >
+                  <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all", u.ai_disabled === 1 ? "left-0.5" : "left-[22px]")} />
+                </button>
+              </div>
+
+              <div>
+                <p className="text-sm font-bold text-white mb-1.5">Timeout AI</p>
+                <div className="flex flex-wrap gap-2">
+                  {[{ l: '1 hour', h: 1 }, { l: '24 hours', h: 24 }, { l: '7 days', h: 168 }].map((t) => (
+                    <Button key={t.l} variant="secondary" size="sm" className="!text-xs" disabled={busy} onClick={() => patchAi({ timeoutHours: t.h }, `AI paused for ${t.l}`)}>
+                      <Timer className="w-3.5 h-3.5 mr-1" /> {t.l}
+                    </Button>
+                  ))}
+                  {u.ai_timeout_until && new Date(String(u.ai_timeout_until).replace(' ', 'T') + 'Z').getTime() > Date.now() && (
+                    <Button variant="secondary" size="sm" className="!text-xs" disabled={busy} onClick={() => patchAi({ ai_timeout_until: null }, 'Timeout cleared')}>
+                      Clear timeout
+                    </Button>
+                  )}
+                </div>
+                {u.ai_timeout_until && new Date(String(u.ai_timeout_until).replace(' ', 'T') + 'Z').getTime() > Date.now() && (
+                  <p className="text-[11px] text-amber-400 mt-1.5 flex items-center gap-1"><Clock className="w-3 h-3" /> Paused until {format(new Date(String(u.ai_timeout_until).replace(' ', 'T') + 'Z'), 'MMM d, h:mm a')}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-xs font-bold text-white mb-1">Daily token limit</p>
+                  <div className="flex gap-1.5">
+                    <input
+                      value={dailyLimit}
+                      onChange={(e) => setDailyLimit(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="Unlimited"
+                      inputMode="numeric"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                    />
+                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_daily_token_limit: dailyLimit || null }, 'Daily limit saved')}>Set</Button>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white mb-1">Max tokens / reply</p>
+                  <div className="flex gap-1.5">
+                    <input
+                      value={replyMax}
+                      onChange={(e) => setReplyMax(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="Default"
+                      inputMode="numeric"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                    />
+                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_max_tokens_reply: replyMax || null }, 'Reply cap saved')}>Set</Button>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-text-muted">Blank = no limit. Limits apply to Bruno / NavGPT chat; blocked users see your message in the chat.</p>
+            </Card>
+
+            <Card title="Warn user" subtitle="Warnings are logged and visible here" className="!gap-2">
+              <div className="flex gap-2">
+                <input
+                  value={warnNote}
+                  onChange={(e) => setWarnNote(e.target.value)}
+                  placeholder="Reason for the warning…"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                />
+                <Button variant="secondary" size="sm" disabled={busy} onClick={doWarn}>
+                  <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Warn
+                </Button>
+              </div>
+              {(data?.warnings || []).length > 0 && (
+                <div className="space-y-1.5 mt-1">
+                  {(data.warnings as any[]).map((w: any) => (
+                    <div key={w.id} className="text-xs bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                      <p className="text-amber-200">{w.note || 'Warning issued'}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">{w.created_at ? format(new Date(w.created_at), 'MMM d, yyyy h:mm a') : ''}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card title="AI usage" subtitle="Last 14 days">
+              {usage.length === 0 ? (
+                <p className="text-xs text-text-muted">No AI usage recorded.</p>
+              ) : (
+                <div className="flex items-end gap-1 h-24">
+                  {usage.map((d: any) => (
+                    <div key={d.day} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${d.day}: ${d.messages} messages, ${fmtTokens(d.tokens)} tokens`}>
+                      <div className="w-full bg-accent/70 rounded-sm" style={{ height: `${Math.max(4, (Number(d.tokens) / maxT) * 80)}px` }} />
+                      <span className="text-[8px] text-text-muted">{String(d.day).slice(5)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {(data?.flags || []).length > 0 && (
+              <Card title="Flag history" subtitle="Misuse flags for this user" className="!gap-2">
+                {(data.flags as any[]).map((f: any) => {
+                  const rs = FLAG_STATUSES[f.status] || { label: f.status, cls: 'bg-white/5 text-text-muted' };
+                  const rr = FLAG_REASONS[f.reason] || { label: f.reason, cls: 'bg-white/5 text-text-muted' };
+                  return (
+                    <div key={f.id} className="text-xs bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className={cn("text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full", rr.cls)}>{rr.label}</span>
+                        <span className={cn("text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full", rs.cls)}>{rs.label}</span>
+                        <span className="text-[10px] text-text-muted ml-auto">{f.created_at ? format(new Date(f.created_at), 'MMM d') : ''}</span>
+                      </div>
+                      <p className="text-white/80 line-clamp-2">“{f.excerpt}”</p>
+                    </div>
+                  );
+                })}
+              </Card>
+            )}
+
+            <Card title="Danger zone" subtitle="Irreversible" className="!gap-2 !border-rose-500/20">
+              <Button variant="secondary" size="sm" className="w-full !text-xs !border-rose-500/40 !text-rose-400" disabled={busy} onClick={doDeleteMembership}>
+                <UserX className="w-3.5 h-3.5 mr-1" /> Remove from {u.team_name || 'team'}
+              </Button>
+              <Button variant="secondary" size="sm" className="w-full !text-xs !border-rose-500/40 !text-rose-400" disabled={busy} onClick={doDeleteAccount}>
+                <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete entire account ({(data?.siblings?.length || 0) + 1} team{(data?.siblings?.length || 0) + 1 > 1 ? 's' : ''})
+              </Button>
+              <p className="text-[11px] text-text-muted">Deleting the account removes every membership under {u.email}. You can't delete your own owner account or a team's last admin.</p>
+            </Card>
+          </>
+        )}
+      </div>
     </div>
   );
 }
