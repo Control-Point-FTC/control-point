@@ -45,6 +45,7 @@ interface CodeViewProps {
 }
 
 export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading, hasScope }) => {
+  const canManageCode = hasScope ? hasScope('code') : false;
   const [files, setFiles] = useState<CodeFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<CodeFile | null>(null);
   const [currentBranch, setCurrentBranch] = useState<'main' | 'drafts'>('drafts');
@@ -105,7 +106,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
 
   // Auto-save timer
   useEffect(() => {
-    if (!unsavedChanges || !selectedFile || currentBranch !== 'drafts') {
+    if (!canManageCode || !unsavedChanges || !selectedFile || currentBranch !== 'drafts') {
       return;
     }
 
@@ -325,17 +326,19 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
           <Code2 className="w-6 h-6 text-accent" />
           <h2 className="text-2xl font-bold text-white">Code Management</h2>
         </div>
-        <button
-          onClick={() => setShowNewFileModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-accent text-primary font-bold rounded-lg hover:brightness-90 transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          New File
-        </button>
+        {canManageCode && (
+          <button
+            onClick={() => setShowNewFileModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-primary font-bold rounded-lg hover:brightness-90 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            New File
+          </button>
+        )}
       </div>
 
       {/* GitHub repo linking */}
-      <GitHubRepoSection teamId={selectedTeamId} isAdmin={hasScope ? hasScope('admin') : false} />
+      <GitHubRepoSection teamId={selectedTeamId} isAdmin={hasScope ? hasScope('code') : false} />
 
       {/* Error Alert */}
       {error && (        <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-4 flex items-start gap-3 flex-shrink-0">
@@ -462,7 +465,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                 <Download className="w-4 h-4" />
                 Download
               </button>
-              {currentBranch === 'drafts' && (
+              {currentBranch === 'drafts' && canManageCode && (
                 <button
                   onClick={() => setShowCommitModal(true)}
                   disabled={loading || !(unsavedChanges || canCommit)}
@@ -472,14 +475,16 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                   Commit
                 </button>
               )}
-              <button
-                onClick={handleDeleteFile}
-                disabled={loading}
-                className="flex items-center gap-1 px-3 py-1 bg-red-700 text-red-100 rounded text-sm hover:bg-red-600 transition-all disabled:opacity-50"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </button>
+              {canManageCode && (
+                <button
+                  onClick={handleDeleteFile}
+                  disabled={loading}
+                  className="flex items-center gap-1 px-3 py-1 bg-red-700 text-red-100 rounded text-sm hover:bg-red-600 transition-all disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
+              )}
             </div>
           </div>
 
@@ -521,7 +526,9 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                           wordWrap: 'on',
                           fontSize: 13,
                           fontFamily: '"Fira Code", monospace',
-                          automaticLayout: true
+                          automaticLayout: true,
+                          readOnly: !canManageCode,
+                          domReadOnly: !canManageCode
                         }}
                       />
                     )}
@@ -570,12 +577,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                                   </button>
                                 </div>
                                 <div className="flex gap-1 mt-1">
-                                  <button
-                                    onClick={() => handleRevert(commit.id, currentBranch === 'main' ? 'main' : 'drafts')}
-                                    className="px-2 py-1 text-[11px] rounded bg-red-700 text-red-100 hover:bg-red-600"
-                                  >
-                                    Revert
-                                  </button>
+                                  {canManageCode && (
+                                    <button
+                                      onClick={() => handleRevert(commit.id, currentBranch === 'main' ? 'main' : 'drafts')}
+                                      className="px-2 py-1 text-[11px] rounded bg-red-700 text-red-100 hover:bg-red-600"
+                                    >
+                                      Revert
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -597,12 +606,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
           <div className="text-center">
             <FileText className="w-16 h-16 text-slate-600 mx-auto mb-4" />
             <p className="text-slate-400 mb-2">Select a team and file to view code</p>
-            <button
-              onClick={() => setShowNewFileModal(true)}
-              className="text-accent hover:underline text-sm font-bold"
-            >
-              Create a new file to get started
-            </button>
+            {canManageCode && (
+              <button
+                onClick={() => setShowNewFileModal(true)}
+                className="text-accent hover:underline text-sm font-bold"
+              >
+                Create a new file to get started
+              </button>
+            )}
           </div>
         </div>
       )}

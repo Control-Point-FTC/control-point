@@ -1511,6 +1511,8 @@ export default function App() {
     code: 'manage_code',
     calendar: 'manage_calendar',
     outreach: 'manage_outreach',
+    documentation: 'manage_documentation',
+    communications: 'manage_communications',
   };
 
   const hasScope = (scope: string) => {
@@ -4447,7 +4449,8 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   );
 }
 
-function CalendarView({ events, teams, onRefresh, currentUser }: any) {
+function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) {
+  const canManageCalendar = hasScope ? hasScope('calendar') : false;
   const [cursor, setCursor] = useState(() => new Date());
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -4552,7 +4555,7 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
           <Button variant="secondary" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
           <span className="text-white font-semibold min-w-[150px] text-center">{monthLabel}</span>
           <Button variant="secondary" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
-          <Button onClick={() => openNew(todayKey)}><Plus className="w-4 h-4" /> New Event</Button>
+          {canManageCalendar && <Button onClick={() => openNew(todayKey)}><Plus className="w-4 h-4" /> New Event</Button>}
         </div>
       </div>
 
@@ -4570,9 +4573,10 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
               return (
                 <div
                   key={key}
-                  onClick={() => openNew(key)}
+                  onClick={() => canManageCalendar && openNew(key)}
                   className={cn(
-                    'min-h-[92px] rounded-xl border p-1.5 cursor-pointer transition-colors',
+                    'min-h-[92px] rounded-xl border p-1.5 transition-colors',
+                    canManageCalendar ? 'cursor-pointer' : 'cursor-default',
                     isToday ? 'border-accent/60 bg-accent/5' : 'border-white/5 bg-white/[0.02] hover:border-white/20'
                   )}
                 >
@@ -4584,8 +4588,8 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
                     {dayEvents.slice(0, 3).map((e: any) => (
                       <button
                         key={e.id}
-                        onClick={(ev) => { ev.stopPropagation(); openEdit(e); }}
-                        className={cn('w-full text-left text-[11px] px-1.5 py-0.5 rounded-md border truncate', typeStyle[e.event_type] || typeStyle.other)}
+                        onClick={(ev) => { ev.stopPropagation(); if (canManageCalendar) openEdit(e); }}
+                        className={cn('w-full text-left text-[11px] px-1.5 py-0.5 rounded-md border truncate', canManageCalendar ? 'cursor-pointer' : 'cursor-default', typeStyle[e.event_type] || typeStyle.other)}
                       >
                         {e.start_time && <span className="opacity-70">{fmtTime(e.start_time)} </span>}{e.title}
                       </button>
@@ -4714,6 +4718,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
   });
 
   const isAdmin = hasScope('admin');
+  const canManageTasks = hasScope('tasks');
 
   const handleAddTask = async () => {
     if (pendingIds.has(-1)) return;
@@ -4858,7 +4863,9 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             {showAnalytics ? "Board View" : "Analytics"}
           </Button>
         </div>
-        <Button onClick={() => { setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assigned_to: '', due_date: '' }); setShowAddTask(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
+        {canManageTasks && (
+          <Button onClick={() => { setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assigned_to: '', due_date: '' }); setShowAddTask(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
+        )}
       </div>
 
       {showAnalytics ? (
@@ -4937,7 +4944,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
                     <h5 className="text-sm font-bold text-white">{task.title}</h5>
                     <div className="flex items-center gap-2">
                       {task.is_board && <Lock className="w-3 h-3 text-accent" />}
-                      {isAdmin && (
+                      {canManageTasks && (
                         <button onClick={() => handleDeleteTask(task.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -5060,7 +5067,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
     <div className="space-y-4 sm:space-y-6">
       <div>
         <h3 className="text-lg sm:text-xl font-display font-bold text-white">Budget</h3>
-        <p className="text-sm text-text-muted mt-1">Team money at a glance — income, expenses, and every transaction. Students can view; only admins can add or edit entries.</p>
+        <p className="text-sm text-text-muted mt-1">Team money at a glance — income, expenses, and every transaction. Everyone can view; only members with the budget permission (via their role) can add or edit entries.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         <Card className="bg-emerald-500/10 border-emerald-500/20">
@@ -5161,7 +5168,8 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
   );
 }
 
-function InventoryView({ inventory, members, teams, onRefresh, currentUser }: any) {
+function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasScope }: any) {
+  const canManage = hasScope ? hasScope('inventory') : false;
   const INVENTORY_CATEGORIES = [
     "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
     "Hardware", "Tools", "Raw Material", "3D Printing", "Field", "Other",
@@ -5438,11 +5446,15 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
               onChange={(e: any) => setFilterCategory(e.target.value)}
               className="sm:w-48"
             />
-            <Button onClick={() => { setNewPart({ team_id: defaultTeamId(teams, currentUser), name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
-            <Button onClick={() => invoiceFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={!!invoiceParsing}>
-              <FileUp className="w-4 h-4" /> {invoiceParsing || 'Import Invoice'}
-            </Button>
-            {inventory.some((p: any) => !p.category) && (
+            {canManage && (
+              <Button onClick={() => { setNewPart({ team_id: defaultTeamId(teams, currentUser), name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
+            )}
+            {canManage && (
+              <Button onClick={() => invoiceFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={!!invoiceParsing}>
+                <FileUp className="w-4 h-4" /> {invoiceParsing || 'Import Invoice'}
+              </Button>
+            )}
+            {canManage && inventory.some((p: any) => !p.category) && (
               <Button onClick={handleAutoCategorize} variant="secondary" className="w-full sm:w-auto" disabled={autoCategorizing}>
                 <Tags className="w-4 h-4" /> {autoCategorizing ? 'Categorizing...' : 'Auto-categorize'}
               </Button>
@@ -5460,13 +5472,13 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Qty</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Category</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Cost</th>
-                  <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
+                  {canManage && <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredParts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-text-muted/70">No parts found</td>
+                    <td colSpan={canManage ? 7 : 6} className="px-4 py-8 text-center text-text-muted/70">No parts found</td>
                   </tr>
                 ) : (
                   filteredParts.map((part: any) => (
@@ -5477,14 +5489,16 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser }: an
                       <td className="px-4 py-3 text-sm text-white"><span className="bg-white/10 px-2 py-1 rounded">{part.quantity}</span></td>
                       <td className="px-4 py-3 text-sm text-text-muted">{part.category || '—'}</td>
                       <td className="px-4 py-3 text-sm text-blue-400">${(part.cost * part.quantity).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
-                      <td className="px-4 py-3 text-right flex gap-2 justify-end">
-                        <button onClick={() => setShowEdit(part)} className="text-slate-600 hover:text-accent transition-colors">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleDelete(part.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
+                      {canManage && (
+                        <td className="px-4 py-3 text-right flex gap-2 justify-end">
+                          <button onClick={() => setShowEdit(part)} className="text-slate-600 hover:text-accent transition-colors">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDelete(part.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -5706,8 +5720,8 @@ function timeAgoSocial(ts: number) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh }: any) {
-  const isAdminSocial = (currentUser as any)?.account_type === 'admin';
+function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, hasScope }: any) {
+  const isAdminSocial = hasScope ? hasScope('outreach') : (currentUser as any)?.account_type === 'admin';
   const [showLinkYT, setShowLinkYT] = useState(false);
   const [ytInput, setYtInput] = useState('');
   const [linkingYT, setLinkingYT] = useState(false);
@@ -6247,7 +6261,8 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
   );
 }
 
-function CommunicationView({ communications, onRefresh }: any) {
+function CommunicationView({ communications, onRefresh, hasScope }: any) {
+  const canManage = hasScope ? hasScope('communications') : false;
   const [showAdd, setShowAdd] = useState(false);
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
 
@@ -6274,7 +6289,7 @@ function CommunicationView({ communications, onRefresh }: any) {
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Communication Log</h3>
           <p className="text-sm text-text-muted mt-1">A shared record of emails and messages sent on the team's behalf.</p>
         </div>
-        <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log New Message</Button>
+        {canManage && <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log New Message</Button>}
       </div>
 
       <div className="space-y-3 sm:space-y-4">
@@ -6297,9 +6312,11 @@ function CommunicationView({ communications, onRefresh }: any) {
                 <p className="text-sm text-text-muted mb-3">To: {comm.recipient}</p>
                 <p className="text-sm text-white/80 whitespace-pre-wrap">{comm.body}</p>
               </div>
-              <button onClick={() => handleDelete(comm.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {canManage && (
+                <button onClick={() => handleDelete(comm.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </Card>
         ))}

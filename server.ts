@@ -948,6 +948,8 @@ const ROLE_PERMISSIONS = [
   { key: "manage_attendance", label: "Manage attendance" },
   { key: "manage_tasks", label: "Manage tasks" },
   { key: "manage_outreach", label: "Manage outreach" },
+  { key: "manage_documentation", label: "Manage documentation" },
+  { key: "manage_communications", label: "Manage communications" },
   { key: "view_ai", label: "Use AI features" },
 ];
 const KNOWN_PERMS = new Set(ROLE_PERMISSIONS.map((p) => p.key));
@@ -2817,6 +2819,12 @@ async function startServer() {
           return res.status(403).json({ error: "Not your workspace" });
         }
       }
+      // Anyone may log their OWN attendance (self check-in / self report);
+      // touching anyone else's records needs the attendance permission.
+      const selfOnly = memberIds.length > 0 && memberIds.every((mid) => mid === auth.memberId);
+      if (!selfOnly && !(await hasPerm(auth, "manage_attendance"))) {
+        return res.status(403).json({ error: "You don't have permission for that" });
+      }
 
       console.log(`[Attendance] Updating ${records.length} records for ${date}`);
       
@@ -2969,7 +2977,7 @@ async function startServer() {
   // "today" for rest of day. Starting a new one retires any previous session.
   app.post("/api/attendance/qr-session", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      const auth = await requirePerm(req, res, "manage_attendance");
       if (!auth) return;
       if (!(await hasPerm(auth, "manage_attendance"))) return res.status(403).json({ error: "Not allowed" });
       if (!auth.teamId) return res.status(400).json({ error: "No active team" });
@@ -3022,7 +3030,7 @@ async function startServer() {
   // Stop the live session early.
   app.post("/api/attendance/qr-session/stop", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      const auth = await requirePerm(req, res, "manage_attendance");
       if (!auth) return;
       if (!(await hasPerm(auth, "manage_attendance"))) return res.status(403).json({ error: "Not allowed" });
       await dbRun("UPDATE checkin_sessions SET is_active = 0 WHERE team_id = ? AND is_active = 1", auth.teamId);
@@ -3155,7 +3163,7 @@ async function startServer() {
   });
 
   app.post("/api/hidden-dates", async (req, res) => {
-    const auth = await requireAdmin(req, res);
+    const auth = await requirePerm(req, res, "manage_attendance");
     if (!auth) return;
     const { date } = req.body;
     (await dbRun("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)", date));
@@ -3163,7 +3171,7 @@ async function startServer() {
   });
 
   app.delete("/api/hidden-dates/:date", async (req, res) => {
-    const auth = await requireAdmin(req, res);
+    const auth = await requirePerm(req, res, "manage_attendance");
     if (!auth) return;
     (await dbRun("DELETE FROM hidden_dates WHERE date = ?", req.params.date));
     res.json({ success: true });
@@ -3171,7 +3179,7 @@ async function startServer() {
 
   // Bulk hide/unhide (used by the day-of-week toggles — one request instead of ~100)
   app.post("/api/hidden-dates/bulk", async (req, res) => {
-    const auth = await requireAdmin(req, res);
+    const auth = await requirePerm(req, res, "manage_attendance");
     if (!auth) return;
     const { dates } = req.body;
     if (!Array.isArray(dates)) { res.status(400).json({ error: "dates must be an array" }); return; }
@@ -3186,7 +3194,7 @@ async function startServer() {
   });
 
   app.post("/api/hidden-dates/bulk-delete", async (req, res) => {
-    const auth = await requireAdmin(req, res);
+    const auth = await requirePerm(req, res, "manage_attendance");
     if (!auth) return;
     const { dates } = req.body;
     if (!Array.isArray(dates)) { res.status(400).json({ error: "dates must be an array" }); return; }
@@ -3492,7 +3500,7 @@ async function startServer() {
 
   app.post("/api/tasks", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
       const { title, description, status, assigned_to, due_date, is_board } = req.body;
       const createdAt = new Date().toISOString();
@@ -3552,7 +3560,7 @@ async function startServer() {
 
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
       const task = (await dbGet("SELECT team_id FROM tasks WHERE id = ?", req.params.id)) as any;
       if (!task || task.team_id !== auth.teamId) {
@@ -3591,7 +3599,7 @@ async function startServer() {
 
   app.post("/api/events", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
       const { title, description, date, start_time, end_time, location, event_type, created_by } = req.body;
       if (!title || !date) {
@@ -3612,7 +3620,7 @@ async function startServer() {
 
   app.patch("/api/events/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
       const { title, description, date, start_time, end_time, location, event_type } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
@@ -3636,7 +3644,7 @@ async function startServer() {
 
   app.delete("/api/events/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
@@ -3662,7 +3670,7 @@ async function startServer() {
 
   app.post("/api/budget", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_budget");
       if (!auth) return;
       const { type, amount, category, description, date } = req.body;
       const info = (await dbRun("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)", auth.teamId, type, amount, category, description, date));
@@ -3682,7 +3690,7 @@ async function startServer() {
 
   app.delete("/api/budget/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_budget");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM budget WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -3962,7 +3970,7 @@ async function startServer() {
 
   // --- TikTok connect (admin starts OAuth; tokens attach to the TEAM) ---
   app.get("/api/auth/tiktok/connect", async (req, res) => {
-    const auth = await requireAdmin(req, res);
+    const auth = await requirePerm(req, res, "manage_outreach");
     if (!auth) return;
     if (!auth.teamId) return res.status(400).json({ error: "No team selected" });
     if (!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET)) {
@@ -4063,7 +4071,7 @@ async function startServer() {
 
   app.post("/api/outreach/social/youtube", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       if (!YOUTUBE_API_KEY) return res.status(400).json({ error: "YouTube sync isn't configured yet — add a YOUTUBE_API_KEY on the server" });
       const input = (req.body?.input || "").toString().trim();
@@ -4092,7 +4100,7 @@ async function startServer() {
 
   app.delete("/api/outreach/social/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const existing: any = await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id);
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -4107,7 +4115,7 @@ async function startServer() {
 
   app.patch("/api/outreach/social/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const existing: any = await dbGet("SELECT team_id FROM social_profiles WHERE id = ?", req.params.id);
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -4122,7 +4130,7 @@ async function startServer() {
 
   app.post("/api/outreach/social/reorder", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const ids = (req.body?.ids || []) as number[];
       if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: "No order provided" });
@@ -4139,7 +4147,7 @@ async function startServer() {
 
   app.post("/api/outreach/social/:id/sync", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_outreach");
       if (!auth) return;
       const profile: any = await dbGet("SELECT * FROM social_profiles WHERE id = ?", req.params.id);
       if (!profile || profile.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -4173,7 +4181,7 @@ async function startServer() {
 
   app.post("/api/inventory", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      const auth = await requirePerm(req, res, "manage_inventory");
       if (!auth) return;
       const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       if (!sku || !name) {
@@ -4198,7 +4206,7 @@ async function startServer() {
 
   app.patch("/api/inventory/:id", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      const auth = await requirePerm(req, res, "manage_inventory");
       if (!auth) return;
       const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       const id = req.params.id;
@@ -4224,7 +4232,7 @@ async function startServer() {
 
   app.delete("/api/inventory/:id", async (req, res) => {
     try {
-      const auth = await requireAuth(req, res);
+      const auth = await requirePerm(req, res, "manage_inventory");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM inventory WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -4239,7 +4247,7 @@ async function startServer() {
   // Scrape REV Robotics product page
   app.post("/api/inventory/scrape-rev", async (req, res) => {
     {
-      const _srAuth = await requireAdmin(req, res);
+      const _srAuth = await requirePerm(req, res, "manage_inventory");
       if (!_srAuth) return;
     }
     try {
@@ -4443,7 +4451,7 @@ Rules:
   }
 
   async function handleInvoiceParse(req: any, res: any, upload: any, fieldName: string) {
-    const auth = await requireAuth(req, res);
+    const auth = await requirePerm(req, res, "manage_inventory");
     if (!auth) return;
     upload.single(fieldName)(req, res, async (err: any) => {
       if (err) return res.status(400).json({ error: err.message || "Upload failed" });
@@ -4507,7 +4515,7 @@ Rules:
   );
 
   async function handleInvoiceConfirm(req: any, res: any, sourceLabel: string) {
-    const auth = await requireAuth(req, res);
+    const auth = await requirePerm(req, res, "manage_inventory");
     if (!auth) return;
     try {
       const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -4570,7 +4578,7 @@ Rules:
 
   // One-shot AI categorization for parts that have no category yet.
   app.post("/api/inventory/auto-categorize", async (req, res) => {
-    const auth = await requireAuth(req, res);
+    const auth = await requirePerm(req, res, "manage_inventory");
     if (!auth) return;
     if (!isAIConfigured()) {
       return res.status(501).json({ error: "AI is not configured — ask Sushil to check the Gemini API key." });
@@ -4625,7 +4633,7 @@ Rules:
 
   app.post("/api/documentation", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_documentation");
       if (!auth) return;
       const { type, title, content, images, date } = req.body;
       const info = (await dbRun("INSERT INTO documentation (type, title, content, images, date, created_at, team_id) VALUES (?, ?, ?, ?, ?, ?, ?)", type, title, content, JSON.stringify(images || []), date, new Date().toISOString(), auth.teamId));
@@ -4637,7 +4645,7 @@ Rules:
 
   app.delete("/api/documentation/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_documentation");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM documentation WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -5290,7 +5298,7 @@ Rules:
 
   app.post("/api/communications", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
       const { recipient, subject, body, date, type } = req.body;
       const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id) VALUES (?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId));
@@ -5303,7 +5311,7 @@ Rules:
 
   app.delete("/api/communications/:id", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
@@ -5375,7 +5383,7 @@ Rules:
   // POST: Create/upload code file
   app.post("/api/code/files", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const { file_name, file_path, language = 'java', content } = req.body;
       const team_id = auth.teamId;
@@ -5469,7 +5477,7 @@ Rules:
   // POST: Save draft
   app.post("/api/code/files/:fileId/draft", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
@@ -5504,7 +5512,7 @@ Rules:
   // POST: Commit to main (publish)
   app.post("/api/code/files/:fileId/commit", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
@@ -5608,7 +5616,7 @@ Rules:
   // POST: Revert a commit by creating a new commit on the chosen branch (main or drafts)
   app.post("/api/code/commits/:commitId/revert", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const commitId = parseInt(req.params.commitId, 10);
       if (isNaN(commitId)) return res.status(400).json({ error: "Invalid commit ID" });
@@ -5774,7 +5782,7 @@ Rules:
   // Link a GitHub repo (admin only)
   app.post("/api/code/repo", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const parsed = parseGitHubRepoUrl(req.body?.repoUrl);
       if (!parsed) return res.status(400).json({ error: "That doesn't look like a GitHub repo link — paste a github.com/owner/repo URL" });
@@ -5803,7 +5811,7 @@ Rules:
   // Re-sync the tree (admin only)
   app.post("/api/code/repo/sync", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const row = (await dbGet("SELECT * FROM code_repos WHERE team_id = ?", auth.teamId)) as any;
       if (!row) return res.status(404).json({ error: "No repo linked yet" });
@@ -5818,7 +5826,7 @@ Rules:
   // Unlink (admin only)
   app.delete("/api/code/repo", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       (await dbRun("DELETE FROM code_repos WHERE team_id = ?", auth.teamId));
       res.json({ success: true });
@@ -5896,7 +5904,7 @@ Rules:
   // DELETE: Delete code file
   app.delete("/api/code/files/:fileId", async (req, res) => {
     try {
-      const auth = await requireAdmin(req, res);
+      const auth = await requirePerm(req, res, "manage_code");
       if (!auth) return;
       const fileId = parseInt(req.params.fileId, 10);
       if (isNaN(fileId)) {
