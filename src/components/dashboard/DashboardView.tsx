@@ -39,8 +39,8 @@ interface DashboardViewProps {
  *   <AttendanceTrend />     — present check-ins, last 14 days (clickable)
  *   <UpcomingTimeline />    — what's coming, grouped by day
  *   <TeamActivity />        — what the team has been up to (clickable rows)
- *   <TeamSummary />         — Bruno's summary / insights tabs
  *   <TeamPerformance />     — FTC OPR detail with season switcher
+ *   <TeamSummary />         — Bruno's summary / insights tabs
  *   <AccessCodeCard />      — team join code, copy + regenerate
  *
  * Every card leads somewhere: click a widget to open its full view.
@@ -219,6 +219,7 @@ export default function DashboardView({
         <AttendanceTrend attendance={data.attendance || []} onNavigate={navigate} />
         <UpcomingTimeline events={events} onNavigate={navigate} />
         <TeamActivity items={activityItems} onNavigate={navigate} />
+        <TeamPerformance onNavigate={navigate} />
         <TeamSummary
           summary={data.summary}
           insights={insights}
@@ -227,7 +228,6 @@ export default function DashboardView({
           onRefreshSummary={() => updateSummary(true)}
           onRefreshInsights={() => updateInsights()}
         />
-        <TeamPerformance onNavigate={navigate} />
         <AccessCodeCard team={myTeam} setLoading={setLoading} onRefresh={onRefresh} />
       </div>
     </div>

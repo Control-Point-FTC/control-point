@@ -27,7 +27,7 @@ export default function TeamSummary({
   const [aiTab, setAiTab] = useState<'summary' | 'insights'>('summary');
 
   return (
-    <Card title="AI team summary" subtitle="Today's operational overview" icon={Zap} className="xl:col-span-5 p-4 gap-2 xl:min-h-0 xl:overflow-hidden">
+    <Card title="AI team summary" subtitle="Today's operational overview" icon={Zap} className="xl:col-span-7 p-4 gap-2 xl:min-h-0 xl:overflow-hidden">
       <div className="flex items-center justify-between gap-2">
         <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
           {(['summary', 'insights'] as const).map((t) => (
