@@ -69,6 +69,30 @@ export function shouldRetryWithoutGrounding(status: number, withGrounding: boole
   return withGrounding === true && status === 429;
 }
 
+// Idle timeout for SSE streams: the streaming endpoint can stall (headers
+// accepted, then no data). Without this, reader.read() waits forever and the
+// chat UI shows a typing indicator that never resolves. A stall surfaces as
+// a normal error ("try again") instead of an infinite hang.
+const SSE_IDLE_TIMEOUT_MS = 30_000;
+
+export async function readStreamChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleMs: number = SSE_IDLE_TIMEOUT_MS
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Gemini stream stalled: no data for ${Math.round(idleMs / 1000)}s`)),
+        idleMs
+      );
+    });
+    return await Promise.race([reader.read(), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function fetchWithPolicy(
   url: string,
   init: RequestInit,
@@ -226,7 +250,14 @@ async function callGemini(opts: {
   const maxAccumChars = Math.max(8000, opts.maxTokens * 8);
   for (;;) {
     if (opts.signal?.aborted) break;
-    const { done, value } = await reader.read();
+    let read: ReadableStreamReadResult<Uint8Array>;
+    try {
+      read = await readStreamChunk(reader);
+    } catch (err) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      throw err;
+    }
+    const { done, value } = read;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
@@ -695,7 +726,14 @@ export async function buildHelperChat(
   const maxAccumChars = Math.max(8000, maxTokens * 8);
   for (;;) {
     if (signal?.aborted) break;
-    const { done, value } = await reader.read();
+    let read: ReadableStreamReadResult<Uint8Array>;
+    try {
+      read = await readStreamChunk(reader);
+    } catch (err) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      throw err;
+    }
+    const { done, value } = read;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");

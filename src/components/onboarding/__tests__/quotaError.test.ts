@@ -3,7 +3,7 @@
  * see instead of the generic "(Something glitched — try asking again.)".
  */
 import { describe, it, expect } from 'vitest';
-import { isQuotaError, QUOTA_EXHAUSTED_MSG, shouldRetryWithoutGrounding } from '../../../../ai';
+import { isQuotaError, QUOTA_EXHAUSTED_MSG, shouldRetryWithoutGrounding, readStreamChunk } from '../../../../ai';
 
 describe('isQuotaError', () => {
   it('detects the 429 quota error thrown by doFetch', () => {
@@ -41,5 +41,26 @@ describe('shouldRetryWithoutGrounding', () => {
     expect(shouldRetryWithoutGrounding(400, true)).toBe(false);
     expect(shouldRetryWithoutGrounding(500, true)).toBe(false);
     expect(shouldRetryWithoutGrounding(503, true)).toBe(false);
+  });
+});
+
+describe('readStreamChunk (SSE stall guard)', () => {
+  it('rejects when the stream stalls with no data', async () => {
+    const s = new ReadableStream<Uint8Array>({ start() { /* never enqueue, never close */ } });
+    const reader = s.getReader();
+    await expect(readStreamChunk(reader, 50)).rejects.toThrow(/stalled/);
+    reader.releaseLock();
+  }, 10000);
+
+  it('passes through chunks from a live stream', async () => {
+    const enc = new TextEncoder();
+    const s = new ReadableStream<Uint8Array>({
+      start(c) { c.enqueue(enc.encode('data: {"x":1}\n\n')); c.close(); },
+    });
+    const reader = s.getReader();
+    const r = await readStreamChunk(reader, 2000);
+    expect(r.done).toBe(false);
+    if (!r.done) expect(new TextDecoder().decode(r.value).includes('data:')).toBe(true);
+    reader.releaseLock();
   });
 });
