@@ -2600,6 +2600,7 @@ export default function App() {
             <button
               onClick={() => setIsSidebarOpen(true)}
               aria-label="More sections"
+              data-onboard="mtab-more"
               className="relative flex-1 flex flex-col items-center justify-center gap-1 py-2.5 min-h-[62px] active:scale-95 transition-transform"
             >
               <LayoutGrid className="w-6 h-6 text-text-muted" strokeWidth={2} />

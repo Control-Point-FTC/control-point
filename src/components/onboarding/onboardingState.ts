@@ -139,8 +139,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'teams',
     title: 'Teams & Members',
-    body: 'Manage your roster here — invite members, assign Discord-style roles, and control who can see or change what.',
+    body: 'Manage your roster here — invite members, assign Discord-style roles, and control who can see or change what. On phones, it lives under the More tab.',
     target: 'nav-teams',
+    mobileTargets: ['mtab-more'],
   },
   {
     id: 'attendance',
@@ -159,8 +160,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'calendar',
     title: 'Calendar',
-    body: 'Keep meetings, build sessions, and competition dates in one shared team calendar.',
+    body: 'Keep meetings, build sessions, and competition dates in one shared team calendar. On phones, find it under the More tab.',
     target: 'nav-calendar',
+    mobileTargets: ['mtab-more'],
   },
   {
     id: 'chat',
@@ -172,8 +174,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'outreach',
     title: 'Outreach',
-    body: 'Connect your team\u2019s YouTube channel to track subscriber growth automatically over the season.',
+    body: 'Connect your team\u2019s YouTube channel to track subscriber growth automatically over the season. On phones, it lives under the More tab.',
     target: 'nav-outreach',
+    mobileTargets: ['mtab-more'],
   },
   {
     id: 'bruno',
@@ -184,8 +187,9 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'settings',
     title: 'Settings',
-    body: 'Your profile, avatar, and online status — plus team settings for admins — all live behind the gear button next to your name.',
+    body: 'Your profile, avatar, and online status — plus team settings for admins — all live in Settings: the gear button by your name, or under the More tab on phones.',
     target: 'nav-settings-gear',
+    mobileTargets: ['mtab-more'],
   },
 ];
 
