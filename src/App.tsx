@@ -111,7 +111,7 @@ import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
-import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary } from './services/aiService';
+import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
@@ -4845,6 +4845,74 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
 
+  // AI quick-add: paste/type natural language, Bruno parses it into event
+  // proposals. One proposal fills the form; several get a bulk-create preview.
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiText, setAiText] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
+  const [aiProposals, setAiProposals] = useState<any[]>([]);
+  const [aiCreating, setAiCreating] = useState(false);
+
+  const resetAi = () => { setAiText(''); setAiNote(null); setAiProposals([]); };
+
+  const handleAiParse = async () => {
+    const text = aiText.trim();
+    if (!text || aiBusy) return;
+    setAiBusy(true);
+    setAiNote(null);
+    setAiProposals([]);
+    let agg = '';
+    try {
+      await streamBuildHelper([
+        { role: 'user', text: `You are helping fill in a calendar event form. The user pasted the text below into the "AI quick-add" box and clicked Parse — that click is their confirmation that they want the events proposed. Extract EVERY calendar event mentioned and propose them with the \`\`\`event block exactly as your team calendar skill specifies. Resolve relative dates (tomorrow, this Friday, etc.) against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
+      ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
+      const proposals = extractActionProposals(agg);
+      const items = proposals.find(p => p.kind === 'event')?.items || [];
+      // Strip fenced blocks for the human-readable note
+      const note = agg.replace(/```event[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
+      if (items.length === 1) {
+        const e = items[0];
+        setForm(f => ({
+          ...f,
+          title: e.title || f.title,
+          description: e.notes || f.description,
+          date: e.date || f.date,
+          start_time: e.time || f.start_time,
+        }));
+        setAiNote('Bruno filled in the form below — review it and hit Create Event.');
+        setAiOpen(false);
+      } else if (items.length > 1) {
+        setAiProposals(items);
+        setAiNote(`Bruno found ${items.length} events — review and create them all at once.`);
+      } else {
+        setAiNote(note || 'Bruno could not find any events in that text — try adding dates and times.');
+      }
+    } catch (e: any) {
+      setAiNote(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const handleAiCreateAll = async () => {
+    if (!aiProposals.length || aiCreating) return;
+    setAiCreating(true);
+    try {
+      const applied = await applyActionProposals([{ kind: 'event', items: aiProposals } as ActionProposal]);
+      notifyBrunoDataChanged(['calendar']);
+      notify(`Created ${applied.event || aiProposals.length} events.`, 'success');
+      resetAi();
+      setAiOpen(false);
+      setShowModal(false);
+      onRefresh();
+    } catch (e: any) {
+      setAiNote(e?.message || "Couldn't create those events — please try again.");
+    } finally {
+      setAiCreating(false);
+    }
+  };
+
   const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const todayKey = toKey(new Date());
 
@@ -4880,11 +4948,15 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
   const openNew = (dateKey: string) => {
     setEditingId(null);
     setForm({ title: '', description: '', date: dateKey, start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
+    resetAi();
+    setAiOpen(false);
     setShowModal(true);
   };
 
   const openEdit = (e: any) => {
     setEditingId(e.id);
+    resetAi();
+    setAiOpen(false);
     setForm({
       title: e.title, description: e.description || '', date: e.date,
       start_time: e.start_time || '', end_time: e.end_time || '',
@@ -5020,6 +5092,60 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md">
             <div className="space-y-4">
+              {!editingId && (
+                <div className="rounded-xl border border-accent/20 bg-accent/[0.04] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAiOpen(!aiOpen)}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-left"
+                  >
+                    <Sparkles className="w-4 h-4 text-accent shrink-0" />
+                    <span className="text-sm font-bold text-white flex-1">AI quick-add</span>
+                    <span className="text-[11px] text-text-muted">Describe it, Bruno fills the form</span>
+                    {aiOpen ? <ChevronUp className="w-4 h-4 text-text-muted" /> : <ChevronDown className="w-4 h-4 text-text-muted" />}
+                  </button>
+                  {aiOpen && (
+                    <div className="px-4 pb-4 space-y-2.5">
+                      <textarea
+                        className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-accent/50 transition-colors h-20"
+                        placeholder="e.g. Parent meeting tomorrow at 6pm in Room 101 — or paste several events at once"
+                        value={aiText}
+                        onChange={(e: any) => setAiText(e.target.value)}
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-text-muted">Same Bruno AI, right here in the form.</p>
+                        <Button variant="secondary" className="!text-xs !py-1.5" onClick={handleAiParse} disabled={aiBusy || !aiText.trim()}>
+                          {aiBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
+                        </Button>
+                      </div>
+                      {aiNote && <p className="text-xs text-white/80">{aiNote}</p>}
+                      {aiProposals.length > 1 && (
+                        <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                          {aiProposals.map((e: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-1.5">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-white truncate">{e.title}</p>
+                                <p className="text-[11px] text-text-muted">{e.date}{e.time ? ` • ${e.time}` : ''}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setAiProposals(aiProposals.filter((_, j) => j !== i))}
+                                className="text-slate-500 hover:text-rose-400 transition-colors shrink-0"
+                                title="Remove"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          <Button className="!text-xs w-full" onClick={handleAiCreateAll} disabled={aiCreating || !aiProposals.length}>
+                            {aiCreating ? 'Creating…' : `Create all ${aiProposals.length} events`}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <Input placeholder="Event title" value={form.title} onChange={(e: any) => setForm({ ...form, title: e.target.value })} />
               <textarea
                 className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-20"
