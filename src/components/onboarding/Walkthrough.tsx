@@ -94,36 +94,47 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
     );
   }, [steps]);
 
-  // On step change: scroll the target into view, then measure.
+  // On step change: snap the target into view instantly, then measure in the
+  // same frame — no timeouts, so the tooltip and highlight react immediately.
   useEffect(() => {
     const step = steps[index];
     const el = step ? resolveTarget(step) : null;
     if (el) {
+      // The app sets `scroll-behavior: smooth` globally; override it inline so
+      // the tour jumps instantly instead of animating for ~500ms.
+      const root = document.documentElement;
+      const prev = root.style.scrollBehavior;
+      root.style.scrollBehavior = 'auto';
       try {
-        el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
       } catch {
         /* noop */
       }
-      const t = window.setTimeout(reposition, 350);
-      // Focus the tooltip for screen readers / keyboard users.
-      const f = window.setTimeout(() => tooltipRef.current?.focus(), 380);
-      return () => {
-        window.clearTimeout(t);
-        window.clearTimeout(f);
-      };
+      root.style.scrollBehavior = prev;
     }
     reposition();
-    const f = window.setTimeout(() => tooltipRef.current?.focus(), 60);
-    return () => window.clearTimeout(f);
+    // Focus the tooltip for screen readers / keyboard users without
+    // re-scrolling the page we just positioned.
+    tooltipRef.current?.focus({ preventScroll: true });
   }, [index, steps, reposition]);
 
-  // Keep the highlight glued to the target on scroll/resize/route change.
+  // Keep the highlight glued to the target on scroll/resize, throttled to one
+  // measurement per animation frame so scrolling stays smooth.
   useEffect(() => {
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        reposition();
+      });
+    };
+    window.addEventListener('resize', schedule);
+    window.addEventListener('scroll', schedule, { capture: true, passive: true });
     return () => {
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('scroll', schedule, true);
+      if (frame) window.cancelAnimationFrame(frame);
     };
   }, [reposition]);
 
@@ -165,7 +176,7 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
       {targetRect && placement.kind === 'anchored' && (
         <div
           aria-hidden="true"
-          className="fixed z-[79] pointer-events-none rounded-2xl transition-all duration-300"
+          className="fixed z-[79] pointer-events-none rounded-2xl"
           style={{
             top: targetRect.top - 6,
             left: targetRect.left - 6,
@@ -238,7 +249,7 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
                   aria-label={`Tour progress: step ${index + 1} of ${steps.length}`}
                 >
                   <div
-                    className="h-full bg-accent rounded-full transition-all duration-300"
+                    className="h-full bg-accent rounded-full transition-[width] duration-150"
                     style={{ width: `${Math.max(((index + 1) / steps.length) * 100, 8)}%` }}
                   />
                 </div>
