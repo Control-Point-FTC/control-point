@@ -150,7 +150,6 @@ const CHAT_TEMPLATE: Array<{ category: string; channels: Array<{ name: string; t
     category: 'Club Information',
     channels: [
       { name: 'announcements', topic: 'Important club updates' },
-      { name: 'new-users', topic: 'Say hello when you join' },
       { name: 'welcome-and-rules', topic: 'Start here — how this club works' },
     ],
   },
@@ -158,8 +157,6 @@ const CHAT_TEMPLATE: Array<{ category: string; channels: Array<{ name: string; t
     category: 'Robotics Club',
     channels: [
       { name: 'general', topic: 'Team-wide chat' },
-      { name: 'cad-challenges', topic: 'CAD design challenges' },
-      { name: 'club-photos', topic: 'Share your build photos' },
       { name: 'off-topic', topic: 'Anything goes' },
     ],
   },
