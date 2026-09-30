@@ -1761,7 +1761,7 @@ export default function App() {
         <Route path="/comm" element={<CommunicationView {...viewProps} />} />
         <Route path="/chat" element={<ChatView {...viewProps} />} />
         <Route path="/scout" element={<ScoutView {...viewProps} />} />
-        <Route path="/bruno" element={<BrunoView {...viewProps} />} />
+        <Route path="/bruno" element={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />
         <Route path="/profile" element={<ProfileView {...viewProps} />} />
         <Route path="/settings" element={<SettingsView {...viewProps} />} />
         <Route path="/owner" element={<OwnerView {...viewProps} />} />
@@ -2348,6 +2348,7 @@ export default function App() {
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       <CookieConsent />
       <BrunoPanel
+        key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
         onClose={() => setBrunoPanelOpen(false)}
         onExpand={() => { setBrunoPanelOpen(false); navigate('/bruno'); }}
