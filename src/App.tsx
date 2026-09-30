@@ -6658,6 +6658,11 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const [replyTo, setReplyTo] = useState<any | null>(null);
   const [forwardMsg, setForwardMsg] = useState<any | null>(null);
   const [flashId, setFlashId] = useState<number | null>(null);
+  // touch devices have no hover — tapping a message reveals its action bar
+  const [activeMsgId, setActiveMsgId] = useState<number | null>(null);
+  const [isTouchDevice] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches
+  );
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
@@ -7051,24 +7056,28 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
         )}
         <div
           ref={(el) => { if (el) msgRefs.current.set(msg.id, el); else msgRefs.current.delete(msg.id); }}
+          onClick={() => { if (isTouchDevice) setActiveMsgId((id) => (id === msg.id ? null : msg.id)); }}
           className={cn(
             'group relative flex gap-3 px-4 py-1.5 transition-colors',
             flashed ? 'bg-accent/15' : 'hover:bg-white/[0.03]'
           )}
         >
-          {/* hover action bar — Discord style */}
-          <div className="absolute -top-3 right-4 z-10 hidden group-hover:flex items-center rounded-lg border border-white/10 bg-secondary shadow-xl overflow-hidden">
-            <button onClick={() => startReply(msg)} title="Reply (R)" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+          {/* action bar — hover on desktop, tap-to-toggle on touch devices */}
+          <div className={cn(
+            'absolute -top-3 right-4 z-10 items-center rounded-lg border border-white/10 bg-secondary shadow-xl overflow-hidden',
+            activeMsgId === msg.id ? 'flex' : 'hidden group-hover:flex'
+          )}>
+            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); startReply(msg); }} title="Reply (R)" aria-label="Reply to message" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
               <Reply className="w-4 h-4" />
             </button>
-            <button onClick={() => setForwardMsg(msg)} title="Forward" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); setForwardMsg(msg); }} title="Forward" aria-label="Forward message" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
               <Forward className="w-4 h-4" />
             </button>
-            <button onClick={() => copyMessageText(msg)} title="Copy text" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); copyMessageText(msg); }} title="Copy text" aria-label="Copy message text" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
               <Copy className="w-4 h-4" />
             </button>
             {canDelete(msg) && (
-              <button onClick={() => handleDeleteMessage(msg.id)} title="Delete" className="p-2 text-text-muted hover:text-rose-400 hover:bg-white/[0.07] transition-colors">
+              <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); handleDeleteMessage(msg.id); }} title="Delete" aria-label="Delete message" className="p-2 text-text-muted hover:text-rose-400 hover:bg-white/[0.07] transition-colors">
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
@@ -7081,7 +7090,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
               <p className="text-[11px] font-semibold text-text-muted/80 mb-0.5">Forwarded{msg.forwarded_from ? ` · ${msg.forwarded_from}` : ''}</p>
             ) : null}
             {msg.reply_to_id && !replyGone && (
-              <button onClick={() => scrollToMessage(msg.reply_to_id)} className="flex items-center gap-1.5 mb-1 text-xs text-text-muted hover:text-white transition-colors max-w-full" title="Jump to original">
+              <button onClick={(e) => { e.stopPropagation(); scrollToMessage(msg.reply_to_id); }} className="flex items-center gap-1.5 mb-1 text-xs text-text-muted hover:text-white transition-colors max-w-full" title="Jump to original">
                 <Reply className="w-3 h-3 rotate-180 flex-shrink-0 text-text-muted/60" />
                 <span className="font-bold truncate">{msg.reply_sender_name}</span>
                 <span className="truncate opacity-70">{(msg.reply_content || '').slice(0, 90)}</span>
