@@ -4005,46 +4005,56 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     }
   };
 
+  // Parse a 'yyyy-MM-dd' string as a LOCAL date. Plain new Date(str) parses as
+  // UTC midnight, which shifts the weekday back a day in US timezones and
+  // broke the day-of-week hide/show toggles.
+  const parseLocalDate = (dateStr: string): Date => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, (m || 1) - 1, d || 1);
+  };
+  const weekdayOf = (dateStr: string): number => parseLocalDate(dateStr).getDay();
+
   const hideByDayOfWeek = async (dayIndex: number) => {
     // dayIndex: 0=Sunday, 1=Monday, ..., 6=Saturday
     const newHidden = [...hiddenDates];
+    const toAdd: string[] = [];
     const checkDate = new Date();
     checkDate.setDate(checkDate.getDate() - 365); // Check past year too for cleanup
-    
+
     for (let i = 0; i < 730; i++) { // Check ~2 years
       checkDate.setDate(checkDate.getDate() + 1);
       if (checkDate.getDay() === dayIndex) {
         const dateStr = format(checkDate, 'yyyy-MM-dd');
         if (!newHidden.includes(dateStr)) {
           newHidden.push(dateStr);
+          toAdd.push(dateStr);
         }
       }
     }
-    
+
     setHiddenDates(newHidden);
-    // Save all hidden dates
-    for (const date of newHidden) {
-      if (!hiddenDates.includes(date)) {
-        await apiFetch('/api/hidden-dates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date })
-        }).catch(console.error);
-      }
+    // Single bulk request instead of ~100 sequential ones.
+    if (toAdd.length > 0) {
+      await apiFetch('/api/hidden-dates/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: toAdd })
+      }).catch(console.error);
     }
   };
 
   const unhideByDayOfWeek = async (dayIndex: number) => {
-    const newHidden = hiddenDates.filter(dateStr => {
-      return new Date(dateStr).getDay() !== dayIndex;
-    });
-    
+    const removed = hiddenDates.filter(dateStr => weekdayOf(dateStr) === dayIndex);
+    const newHidden = hiddenDates.filter(dateStr => weekdayOf(dateStr) !== dayIndex);
+
     setHiddenDates(newHidden);
-    // Delete all removed dates
-    for (const date of hiddenDates) {
-      if (!newHidden.includes(date)) {
-        await apiFetch(`/api/hidden-dates/${date}`, { method: 'DELETE' }).catch(console.error);
-      }
+    // Single bulk request instead of ~100 sequential ones.
+    if (removed.length > 0) {
+      await apiFetch('/api/hidden-dates/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: removed })
+      }).catch(console.error);
     }
   };
 
@@ -4059,22 +4069,26 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     }
     
     const newHidden = Array.from(allDates);
+    const toAdd = newHidden.filter(d => !hiddenDates.includes(d));
     setHiddenDates(newHidden);
-    for (const date of newHidden) {
-      if (!hiddenDates.includes(date)) {
-        await apiFetch('/api/hidden-dates', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date })
-        }).catch(console.error);
-      }
+    if (toAdd.length > 0) {
+      await apiFetch('/api/hidden-dates/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: toAdd })
+      }).catch(console.error);
     }
   };
 
   const unhideAll = async () => {
+    const removed = [...hiddenDates];
     setHiddenDates([]);
-    for (const date of hiddenDates) {
-      await apiFetch(`/api/hidden-dates/${date}`, { method: 'DELETE' }).catch(console.error);
+    if (removed.length > 0) {
+      await apiFetch('/api/hidden-dates/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates: removed })
+      }).catch(console.error);
     }
   };
 
@@ -4153,7 +4167,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                   <button
                     key={idx}
                     onClick={() => {
-                      const isHidden = hiddenDates.some(d => new Date(d).getDay() === idx);
+                      const isHidden = hiddenDates.some(d => weekdayOf(d) === idx);
                       if (isHidden) {
                         unhideByDayOfWeek(idx);
                       } else {
@@ -4162,7 +4176,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                     }}
                     className={cn(
                       "py-2 rounded-lg text-[10px] font-bold uppercase transition-all",
-                      hiddenDates.some(d => new Date(d).getDay() === idx)
+                      hiddenDates.some(d => weekdayOf(d) === idx)
                         ? "bg-rose-500/20 text-rose-400 border border-rose-500/30"
                         : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
                     )}
@@ -4208,8 +4222,8 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                 {visibleDates.map(date => (
                   <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative">
                     <div className="text-center">
-                      {format(new Date(date), 'MMM dd')}
-                      <div className="text-[8px] text-slate-600">{format(new Date(date), 'EEE')}</div>
+                      {format(parseLocalDate(date), 'MMM dd')}
+                      <div className="text-[8px] text-slate-600">{format(parseLocalDate(date), 'EEE')}</div>
                     </div>
                     {isAdmin && (
                       <button

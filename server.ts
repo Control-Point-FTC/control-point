@@ -3168,6 +3168,37 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Bulk hide/unhide (used by the day-of-week toggles — one request instead of ~100)
+  app.post("/api/hidden-dates/bulk", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const { dates } = req.body;
+    if (!Array.isArray(dates)) { res.status(400).json({ error: "dates must be an array" }); return; }
+    let count = 0;
+    for (const d of dates) {
+      if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        await dbRun("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)", d);
+        count++;
+      }
+    }
+    res.json({ success: true, count });
+  });
+
+  app.post("/api/hidden-dates/bulk-delete", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const { dates } = req.body;
+    if (!Array.isArray(dates)) { res.status(400).json({ error: "dates must be an array" }); return; }
+    let count = 0;
+    for (const d of dates) {
+      if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        await dbRun("DELETE FROM hidden_dates WHERE date = ?", d);
+        count++;
+      }
+    }
+    res.json({ success: true, count });
+  });
+
   // Messages
   app.get("/api/messages", async (req, res) => {
     const auth = await requireAuth(req, res);
