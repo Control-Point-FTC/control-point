@@ -2542,7 +2542,7 @@ export default function App() {
 
         <div className={cn(
           "flex flex-col flex-1 min-h-0",
-          isChatRoute ? "overflow-hidden" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto custom-scrollbar"
+          isChatRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto custom-scrollbar"
         )}>
           <AnimatePresence mode="wait">
             <motion.div
