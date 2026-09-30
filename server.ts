@@ -593,9 +593,16 @@ if (!memberColumns.some((c: any) => c.name === 'ai_max_tokens_reply')) {
   prompt_tokens INTEGER DEFAULT 0,
   response_tokens INTEGER DEFAULT 0,
   total_tokens INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'ok',
   created_at TEXT DEFAULT (datetime('now'))
 )`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_ai_usage_member_day ON ai_usage(member_id, created_at)`));
+// status: 'ok' | 'error' | 'quota' — failed attempts are logged too so the
+// owner dashboard reflects real usage even during an upstream outage.
+const aiUsageColumns = (await dbAll(`PRAGMA table_info(ai_usage)`)) as any[];
+if (!aiUsageColumns.some((c: any) => c.name === 'status')) {
+  (await dbExec("ALTER TABLE ai_usage ADD COLUMN status TEXT DEFAULT 'ok'"));
+}
 // AI misuse flags: review queue for the app owner
 (await dbExec(`CREATE TABLE IF NOT EXISTS ai_flags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5487,14 +5494,14 @@ Rules:
     return { blocked: false };
   }
 
-  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number) {
+  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number, status: string = 'ok') {
     try {
       const prompt = usage?.promptTokens || Math.ceil(promptChars / 4);
       const response = usage?.responseTokens || Math.ceil(responseChars / 4);
       const total = usage?.totalTokens || prompt + response;
       await dbRun(
-        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens) VALUES (?, ?, 'build-helper', ?, ?, ?)",
-        memberId, teamId, prompt, response, total
+        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens, status) VALUES (?, ?, 'build-helper', ?, ?, ?, ?)",
+        memberId, teamId, prompt, response, total, status
       );
     } catch (e) {
       console.error("[AI] usage log failed:", (e as any)?.message || e);
@@ -6011,8 +6018,10 @@ Rules:
   }
 
   app.post("/api/ai/build-helper", async (req, res) => {
+    // Hoisted so the catch block can attribute failed attempts to the caller.
+    let auth: Awaited<ReturnType<typeof requireAuth>> = null;
     try {
-      const auth = await requireAuth(req, res);
+      auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isAIConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Gemini API key." });
@@ -6033,9 +6042,13 @@ Rules:
       if (!messages.length || messages[messages.length - 1].role !== "user") {
         return res.status(400).json({ error: "A user message is required" });
       }
-      // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue
+      // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue.
+      // The owner's own testing is never flagged — reviewing your own flags is noise.
       const reqChatId = parseInt(req.body?.chatId, 10) || null;
-      flagMisuse(auth.memberId, auth.teamId, reqChatId, messages[messages.length - 1].text);
+      const callerIsOwner = ownerEmails().includes(((auth.email) || "").toLowerCase());
+      if (!callerIsOwner) {
+        flagMisuse(auth.memberId, auth.teamId, reqChatId, messages[messages.length - 1].text);
+      }
       const globalMax = await getMaxTokens("max_tokens_chat", 1024);
       const memberCap = (await dbGet("SELECT ai_max_tokens_reply FROM members WHERE id = ?", auth.memberId)) as any;
       const perUserMax = parseInt(memberCap?.ai_max_tokens_reply, 10);
@@ -6107,7 +6120,11 @@ Rules:
           res.end();
         } catch (err) {
           console.error("AI build-helper stream error:", err);
-          res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Something glitched — try asking again.)");
+          const quota = isQuotaError(err);
+          // Track the attempt even on failure so the owner dashboard reflects
+          // real usage during an upstream outage (0 tokens — nothing was generated).
+          logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error");
+          res.end(quota ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Something glitched — try asking again.)");
         }
         return;
       }
@@ -6127,7 +6144,9 @@ Rules:
       res.json({ result: finalResult, chatId: chat ? chat.id : undefined });
     } catch (error) {
       console.error("AI build-helper error:", error);
-      if (isQuotaError(error)) {
+      const quota = isQuotaError(error);
+      if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error");
+      if (quota) {
         res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
       } else {
         res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
