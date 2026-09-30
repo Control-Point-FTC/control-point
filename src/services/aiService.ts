@@ -190,9 +190,9 @@ export interface BuildHelperMessage {
   text: string;
 }
 
-/** Remove ```event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
+/** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
 export function stripEventBlocks(text: string): string {
-  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").trim();
+  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").trim();
 }
 
 /**
@@ -202,12 +202,13 @@ export function stripEventBlocks(text: string): string {
  * Light client-side validation; the server re-validates strictly on apply.
  */
 export interface ActionProposal {
-  kind: 'event' | 'outreach' | 'task' | 'budget';
+  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'budget';
   items: any[];
 }
 
 const ACTION_BLOCK_RES: Record<ActionProposal['kind'], RegExp> = {
   event: /```event\s*\r?\n([\s\S]*?)\r?\n```/,
+  'delete-event': /```delete-event\s*\r?\n([\s\S]*?)\r?\n```/,
   outreach: /```outreach\s*\r?\n([\s\S]*?)\r?\n```/,
   task: /```tasks\s*\r?\n([\s\S]*?)\r?\n```/,
   budget: /```budget\s*\r?\n([\s\S]*?)\r?\n```/,
@@ -217,6 +218,16 @@ function parseActionBlock(kind: ActionProposal['kind'], raw: string): any[] {
   try {
     const parsed = JSON.parse(raw);
     const arr = Array.isArray(parsed) ? parsed : [parsed];
+    if (kind === 'delete-event') {
+      // Deletions are id-only; drop anything without a valid positive integer id.
+      return arr
+        .map((it: any) => {
+          const id = typeof it?.id === 'number' ? it.id : parseInt(it?.id);
+          return Number.isInteger(id) && id > 0 ? { id, title: typeof it?.title === 'string' ? it.title : '', date: typeof it?.date === 'string' ? it.date : '' } : null;
+        })
+        .filter(Boolean)
+        .slice(0, 20);
+    }
     return arr.filter((it: any) => it && typeof it === 'object').slice(0, 20);
   } catch {
     return [];

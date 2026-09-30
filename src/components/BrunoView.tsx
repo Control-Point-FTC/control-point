@@ -56,7 +56,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
     try {
       const applied = await applyActionProposals(proposals);
       // Refresh any views the applied actions touch (calendar, tasks, ...).
-      const types = Object.keys(applied).map((k) => (k === 'event' ? 'calendar' : k));
+      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' ? 'calendar' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
     } catch (e: any) {

@@ -1,8 +1,9 @@
-import { Calendar, Megaphone, ListTodo, Wallet, Check, X, Loader2 } from 'lucide-react';
+import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Check, X, Loader2 } from 'lucide-react';
 import type { ActionProposal } from '../services/aiService';
 
-const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any }> = {
+const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; destructive?: boolean }> = {
   event: { label: 'Calendar', icon: Calendar },
+  'delete-event': { label: 'Delete from Calendar', icon: CalendarX, destructive: true },
   outreach: { label: 'Outreach log', icon: Megaphone },
   task: { label: 'Tasks', icon: ListTodo },
   budget: { label: 'Budget', icon: Wallet },
@@ -13,6 +14,9 @@ function itemSummary(kind: ActionProposal['kind'], it: any): string {
   if (kind === 'event') {
     const when = it.time ? `${it.date} at ${it.time}` : it.date || '';
     return `${title}${when ? ` — ${when}` : ''}`;
+  }
+  if (kind === 'delete-event') {
+    return `${title}${it.date ? ` — ${it.date}` : ''}`;
   }
   if (kind === 'outreach') return `${title}${it.date ? ` — ${it.date}` : ''}`;
   if (kind === 'task') return `${title}${it.due_date ? ` — due ${it.due_date}` : ''}`;
@@ -31,21 +35,25 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   onDismiss: () => void;
 }) {
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
+  const isDestructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   if (status === 'done') {
     return (
       <div className="mt-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-2.5 flex items-center gap-2">
         <Check className="w-4 h-4 text-emerald-400 shrink-0" />
         <p className="text-[13px] text-emerald-200 font-medium">
-          Added {total} {total === 1 ? 'item' : 'items'} ✓
+          {isDestructive ? `Deleted ${total} ${total === 1 ? 'item' : 'items'}` : `Added ${total} ${total === 1 ? 'item' : 'items'}`} ✓
         </p>
       </div>
     );
   }
+  const frameCls = isDestructive
+    ? "mt-2 rounded-xl border border-red-400/30 bg-red-400/[0.06] overflow-hidden"
+    : "mt-2 rounded-xl border border-accent/30 bg-accent/[0.06] overflow-hidden";
   return (
-    <div className="mt-2 rounded-xl border border-accent/30 bg-accent/[0.06] overflow-hidden">
+    <div className={frameCls}>
       <div className="px-3.5 pt-3 pb-1 flex items-center justify-between gap-2">
         <p className="text-[13px] font-bold text-white">
-          Add {total} {total === 1 ? 'item' : 'items'}?
+          {isDestructive ? `Delete ${total} ${total === 1 ? 'item' : 'items'}?` : `Add ${total} ${total === 1 ? 'item' : 'items'}?`}
         </p>
         <button
           onClick={onDismiss}
@@ -84,15 +92,17 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
         <button
           onClick={onConfirm}
           disabled={status === 'confirming'}
-          className="w-full rounded-xl bg-accent text-primary font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"
+          className={isDestructive
+            ? "w-full rounded-xl bg-red-500 text-white font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"
+            : "w-full rounded-xl bg-accent text-primary font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"}
         >
           {status === 'confirming' ? (
             <>
               <Loader2 className="w-4 h-4 animate-spin" />
-              Adding…
+              {isDestructive ? 'Deleting…' : 'Adding…'}
             </>
           ) : (
-            <>Add all {total}</>
+            <>{isDestructive ? `Delete all ${total}` : `Add all ${total}`}</>
           )}
         </button>
       </div>

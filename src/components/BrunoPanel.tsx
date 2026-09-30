@@ -37,7 +37,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
     try {
       const applied = await applyActionProposals(proposals);
-      const types = Object.keys(applied).map((k) => (k === 'event' ? 'calendar' : k));
+      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' ? 'calendar' : k));
       notifyBrunoDataChanged(types);
       setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
     } catch (e: any) {
