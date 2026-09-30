@@ -20,6 +20,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Plus,
   ImagePlus,
   TrendingUp,
@@ -62,7 +63,7 @@ import {
   Cog,
   Medal,
   Layers,
-  ChevronDown,
+  Hash,
   ChevronUp,
   Music2,
   Youtube,
@@ -111,6 +112,7 @@ import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
+import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
 
@@ -231,6 +233,20 @@ const Avatar = ({ user, size = 'md', className }: any) => {
   }
   return <div className={cls}>{(user?.name || '?').charAt(0).toUpperCase()}</div>;
 };
+
+import { PRESENCE_META, PresenceDot, PresencePicker } from './components/presence';
+
+// --- Presence (Discord-style online / idle / dnd / invisible) ---
+// Display values live in ./components/presence (shared with the settings modal).
+const AvatarWithPresence = ({ user, size = 'md', presence, dotClassName }: any) => (
+  <span className="relative inline-flex flex-shrink-0">
+    <Avatar user={user} size={size} />
+    <PresenceDot
+      presence={presence || user?.presence || 'offline'}
+      className={cn('absolute bottom-0 right-0', dotClassName || 'w-3 h-3')}
+    />
+  </span>
+);
 
 // --- Role choice + signup screens ---
 
@@ -711,25 +727,34 @@ const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code
 
 // Static nav model: lives at module scope so it can be referenced anywhere in
 // the component (including above its old declaration site) without TDZ issues.
+// Sidebar navigation. `pinned` items stay at the top; everything else is grouped
+// under a section label. The Teams & Members entry expands into a submenu
+// (Members / Roles) instead of Roles being a top-level tab.
 const navItems = [
-  { id: 'dashboard', path: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'stats', path: 'stats', label: 'Team Stats', icon: Trophy },
-  { id: 'teams', path: 'teams', label: 'Teams & Members', icon: Users },
-  { id: 'roles', path: 'roles', label: 'Roles', icon: ShieldCheck, perm: 'manage_roles' },
-  { id: 'attendance', path: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance' },
-  { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare },
-  { id: 'calendar', path: 'calendar', label: 'Calendar', icon: Calendar },
-  { id: 'budget', path: 'budget', label: 'Budget', icon: Wallet, scope: 'budget' },
-  { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory' },
-  { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe },
-  { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code' },
-  { id: 'comm', path: 'comm', label: 'Communication', icon: Mail },
-  { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare },
-  { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper },
-  { id: 'profile', path: 'profile', label: 'My Profile', icon: UserCircle },
-  { id: 'settings', path: 'settings', label: 'Admin Settings', icon: Settings, scope: 'admin' },
-  { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true },
+  { id: 'dashboard', path: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, pinned: true },
+  { id: 'stats', path: 'stats', label: 'Team Stats', icon: Trophy, pinned: true },
+  {
+    id: 'teams', path: 'teams', label: 'Teams & Members', icon: Users, pinned: true,
+    children: [
+      { id: 'teams', path: 'teams', label: 'Members', icon: Users },
+      { id: 'roles', path: 'roles', label: 'Roles', icon: ShieldCheck, perm: 'manage_roles' },
+    ],
+  },
+  { id: 'attendance', path: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance', group: 'Manage' },
+  { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Manage' },
+  { id: 'calendar', path: 'calendar', label: 'Calendar', icon: Calendar, group: 'Manage' },
+  { id: 'budget', path: 'budget', label: 'Budget', icon: Wallet, scope: 'budget', group: 'Manage' },
+  { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory', group: 'Manage' },
+  { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe, group: 'Manage' },
+  { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code', group: 'Manage' },
+  { id: 'comm', path: 'comm', label: 'Communication', icon: Mail, group: 'Connect' },
+  { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare, group: 'Connect' },
+  { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper, group: 'Connect' },
+  { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true, pinned: true },
 ];
+// NOTE: 'profile' and 'settings' are intentionally not nav items anymore —
+// they live in the Discord-style settings popup (gear button by the user card).
+// Their routes still work for deep links.
 
 // Reactive mobile breakpoint (md breakpoint, 768px). Replaces direct
 // window.innerWidth reads so the layout responds to rotation/resize.
@@ -753,9 +778,41 @@ export default function App() {
   const navigate = useNavigate();
   const activeTab = location.pathname.split('/')[1] || 'dashboard';
   const setActiveTab = (id: string) => navigate(`/${id}`);
-  const activeNav = navItems.find((t) => t.id === activeTab);
+  const activeNav = navItems.find((t) => t.id === activeTab)
+    || navItems.flatMap((t) => (t as any).children || []).find((c: any) => c.id === activeTab);
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const isMobile = useIsMobile();
+  // Teams & Members submenu (Members / Roles), Discord-style settings popup,
+  // and the presence status picker live here so the sidebar owns them.
+  const [teamsNavOpen, setTeamsNavOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+
+  // Auto-expand the Teams submenu when we're on one of its pages.
+  useEffect(() => {
+    if (activeTab === 'teams' || activeTab === 'roles') setTeamsNavOpen(true);
+  }, [activeTab]);
+
+  /** Change my presence status (online / idle / dnd / invisible). */
+  const handleStatusPick = async (status: string) => {
+    if (!currentUser) return;
+    setStatusPickerOpen(false);
+    try {
+      const res = await apiFetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: currentUser.name, role: currentUser.role || '', presence_status: status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.user) {
+        setCurrentUser({ ...currentUser, ...data.user });
+      } else {
+        notify(data.error || 'Could not update status.', 'error');
+      }
+    } catch {
+      notify('Could not update status.', 'error');
+    }
+  };
 
   // Keep the sidebar/drawer state in sync when crossing the mobile breakpoint
   // (drawer on phones, docked sidebar on larger screens).
@@ -830,6 +887,51 @@ export default function App() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [documentation, setDocumentation] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
+  // Discord-style text channels (no servers — channels live inside the team)
+  const [channels, setChannels] = useState<any[]>([]);
+  const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
+
+  const fetchJsonStandalone = async (url: string) => {
+    try {
+      const res = await apiFetch(url);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  // Load the team's channels once signed in; remember the active channel.
+  useEffect(() => {
+    if (!currentUser || !currentUser.team_id) return;
+    (async () => {
+      const ch = await fetchJsonStandalone('/api/chat/channels');
+      if (Array.isArray(ch) && ch.length > 0) {
+        setChannels(ch);
+        setActiveChannelId((prev) => {
+          if (prev && ch.some((c: any) => c.id === prev)) return prev;
+          const general = ch.find((c: any) => c.name === 'general') || ch[0];
+          return general ? general.id : null;
+        });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.team_id]);
+
+  // Load this channel's messages whenever it changes.
+  useEffect(() => {
+    if (!currentUser || !activeChannelId) return;
+    (async () => {
+      const msgs = await fetchJsonStandalone(`/api/messages?channel_id=${activeChannelId}`);
+      if (Array.isArray(msgs)) setMessages(msgs);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannelId, currentUser?.id]);
+
+  // The socket connects once per login, so mirror the active channel in a ref
+  // for the (stale-closure) onmessage handler.
+  const activeChannelIdRef = useRef<number | null>(null);
+  useEffect(() => { activeChannelIdRef.current = activeChannelId; }, [activeChannelId]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [hiddenDates, setHiddenDates] = useState<string[]>([]);
   const [settings, setSettings] = useState<any>({});
@@ -1070,7 +1172,14 @@ export default function App() {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'chat') {
-          setMessages(prev => [...prev, msg]);
+          // Only keep it in the visible list if it belongs to the active channel.
+          const cur = activeChannelIdRef.current;
+          setMessages(prev => (cur == null || msg.channel_id === cur || msg.channel_id == null ? [...prev, msg] : prev));
+        } else if (msg.type === 'channel_created') {
+          setChannels(prev => (prev.some((c: any) => c.id === msg.channel.id) ? prev : [...prev, msg.channel]));
+        } else if (msg.type === 'channel_deleted') {
+          setChannels(prev => prev.filter((c: any) => c.id !== msg.channelId));
+          setActiveChannelId(prev => (prev === msg.channelId ? msg.movedTo : prev));
         } else if (msg.type === 'message_deleted') {
           if (msg.deleted_permanently) {
             // Remove message completely for permanent deletion
@@ -1541,13 +1650,24 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'profile'];
-  const visibleTabs = navItems.filter((t) => {
-    if ((t as any).ownerOnly) return isOwner;
-    if ((t as any).perm) return hasPerm((t as any).perm);
+  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat'];
+  const tabVisible = (t: any): boolean => {
+    if (t.ownerOnly) return isOwner;
+    if (t.perm) return hasPerm(t.perm);
     if (isAdmin) return !t.scope || hasScope(t.scope);
     return studentTabIds.includes(t.id);
-  });
+  };
+  const visibleTabs = navItems
+    .map((t) => {
+      const kids = (t as any).children?.filter(tabVisible);
+      return { ...t, children: kids };
+    })
+    .filter((t) => {
+      if (!tabVisible(t)) return false;
+      // Hide a parent whose submenu is entirely invisible
+      if ((t as any).children && (t as any).children.length === 0) return false;
+      return true;
+    });
 
   // Bottom tab bar on phones: the student-critical destinations first, plus a
   // "More" button that opens the full sidebar as a drawer. Admins keep every
@@ -1565,11 +1685,24 @@ export default function App() {
 
   // Keep students (and scope-restricted users) on tabs they can actually see
   // (Bruno is intentionally not a nav tab — reachable via the header button)
+  // Note: profile/settings/roles are reachable pages even when they aren't
+  // top-level sidebar items (settings + profile live in the settings popup;
+  // roles is nested under Teams & Members).
+  const allVisibleTabIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of visibleTabs) {
+      ids.add(t.id);
+      for (const c of (t as any).children || []) ids.add(c.id);
+    }
+    ids.add('profile');
+    ids.add('settings');
+    return ids;
+  }, [visibleTabs]);
   useEffect(() => {
-    if (isLoggedIn && activeTab !== 'bruno' && !visibleTabs.some((t) => t.id === activeTab)) {
+    if (isLoggedIn && activeTab !== 'bruno' && !allVisibleTabIds.has(activeTab)) {
       navigate('/dashboard', { replace: true });
     }
-  }, [isLoggedIn, currentUser, activeTab]);
+  }, [isLoggedIn, currentUser, activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Owner status drives the Owner tab; only Sushil's email(s) qualify
   useEffect(() => {
@@ -1744,6 +1877,32 @@ export default function App() {
       onboardingState: onboarding,
       onContinueSetup: openSetupGuide,
       onDismissChecklist: handleChecklistDismiss,
+      // Discord-style chat channels
+      channels, activeChannelId, setActiveChannelId,
+      handleCreateChannel: async (name: string, topic: string) => {
+        const res = await apiFetch('/api/chat/channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, topic }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(data.error || 'Could not create channel.', 'error'); return null; }
+        if (data.channel) {
+          setChannels((prev) => (prev.some((c: any) => c.id === data.channel.id) ? prev : [...prev, data.channel]));
+          setActiveChannelId(data.channel.id);
+        }
+        return data.channel;
+      },
+      handleDeleteChannel: async (id: number) => {
+        const ok = await confirmDialog({ title: 'Delete this channel?', message: "Its messages move to #general. This can't be undone.", confirmLabel: 'Delete', danger: true });
+        if (!ok) return;
+        const res = await apiFetch(`/api/chat/channels/${id}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(data.error || 'Could not delete channel.', 'error'); return; }
+        setChannels((prev) => prev.filter((c: any) => c.id !== id));
+        setActiveChannelId((prev) => (prev === id ? data.movedTo : prev));
+        notify('Channel deleted.', 'success');
+      },
     };
     const dashboardEl = isAdmin
       ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, scoutFeed, summary, members, events }} />
@@ -2012,51 +2171,141 @@ export default function App() {
         </div>
 
         <nav className="flex-1 px-3 sm:px-4 space-y-1 mt-2 overflow-y-auto custom-scrollbar pb-4">
-          {isSidebarOpen && (
-            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">Workspace</p>
-          )}
-          {visibleTabs.map((item) => {
-            const isActive = activeTab === item.id;
+          {(() => {
+            const pinned = visibleTabs.filter((t) => (t as any).pinned);
+            const groups: { label: string; items: typeof visibleTabs }[] = [];
+            for (const t of visibleTabs.filter((t) => !(t as any).pinned)) {
+              const label = (t as any).group || 'More';
+              let g = groups.find((x) => x.label === label);
+              if (!g) { g = { label, items: [] }; groups.push(g); }
+              g.items.push(t);
+            }
+            const renderItem = (item: any, depth = 0) => {
+              const isActive = activeTab === item.id;
+              const kids = item.children as any[] | undefined;
+              if (kids && kids.length > 0) {
+                const childActive = kids.some((k) => k.id === activeTab);
+                const open = teamsNavOpen || childActive;
+                return (
+                  <div key={item.id}>
+                    <button
+                      data-onboard={`nav-${item.id}`}
+                      onClick={() => (isSidebarOpen ? setTeamsNavOpen(!teamsNavOpen) : navigate(`/${item.path}`))}
+                      title={!isSidebarOpen ? item.label : undefined}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
+                        childActive
+                          ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
+                          : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
+                      )}
+                    >
+                      <item.icon className={cn("w-[18px] h-[18px] shrink-0", childActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
+                      {isSidebarOpen && (
+                        <>
+                          <span className="truncate flex-1 text-left">{item.label}</span>
+                          <ChevronDown className={cn("w-4 h-4 flex-shrink-0 transition-transform", open && "rotate-180")} />
+                        </>
+                      )}
+                    </button>
+                    {isSidebarOpen && open && (
+                      <div className="ml-5 mt-1 space-y-1 border-l border-white/10 pl-2">
+                        {kids.map((k) => {
+                          const kActive = activeTab === k.id;
+                          return (
+                            <button
+                              key={k.id}
+                              data-onboard={`nav-${k.id}`}
+                              onClick={() => navigate(`/${k.path}`)}
+                              className={cn(
+                                "w-full flex items-center gap-3 px-3 py-2 rounded-xl transition-all group relative text-[13px]",
+                                kActive
+                                  ? "bg-accent/20 text-accent font-bold"
+                                  : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
+                              )}
+                            >
+                              <k.icon className={cn("w-4 h-4 shrink-0", kActive ? "text-accent" : "text-accent/70 group-hover:text-accent")} strokeWidth={2.25} />
+                              <span className="truncate">{k.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <button
+                  key={item.id}
+                  data-onboard={`nav-${item.id}`}
+                  onClick={() => navigate(`/${item.path}`)}
+                  title={!isSidebarOpen ? item.label : undefined}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
+                    depth > 0 && "py-2 text-[13px]",
+                    isActive
+                      ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
+                      : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
+                  )}
+                >
+                  <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
+                  {isSidebarOpen && <span className="truncate">{item.label}</span>}
+                </button>
+              );
+            };
             return (
-              <button
-                key={item.id}
-                data-onboard={`nav-${item.id}`}
-                onClick={() => navigate(`/${item.path}`)}
-                title={!isSidebarOpen ? item.label : undefined}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
-                  isActive
-                    ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
-                    : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
-                )}
-              >
-                <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
-                {isSidebarOpen && <span className="truncate">{item.label}</span>}
-              </button>
+              <>
+                {pinned.filter((t) => t.id !== 'owner').map((t) => renderItem(t))}
+                {groups.map((g) => (
+                  <div key={g.label}>
+                    {isSidebarOpen && (
+                      <p className="px-3 pt-3 pb-2 text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">{g.label}</p>
+                    )}
+                    <div className="space-y-1">{g.items.map((t) => renderItem(t))}</div>
+                  </div>
+                ))}
+                {pinned.filter((t) => t.id === 'owner').map((t) => renderItem(t))}
+              </>
             );
-          })}
+          })()}
         </nav>
 
         <div className="p-3 sm:p-4 border-t border-white/[0.06] flex-shrink-0 space-y-1.5">
-          <div className={cn("flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06]", isSidebarOpen ? "p-2.5" : "p-2 justify-center")}>
-            <button
-              onClick={() => setActiveTab('profile')}
-              className="hover:ring-2 hover:ring-accent/50 transition-all rounded-full flex-shrink-0"
-              title="My profile"
-            >
-              <Avatar user={currentUser} size="md" />
-            </button>
-            {isSidebarOpen && (
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-bold text-white truncate leading-tight">{currentUser?.name}</p>
-                <p className="text-[11px] text-text-muted truncate">{currentUser?.role}</p>
-              </div>
+          {/* Discord-style user card: avatar w/ presence, name, status picker, settings gear */}
+          <div className="relative">
+            {statusPickerOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setStatusPickerOpen(false)} />
+                <div className="absolute bottom-full left-0 mb-2 w-64 z-50 bg-elevated border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+                  <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">Set status</p>
+                  <PresencePicker value={currentUser?.presence_status || 'online'} onPick={handleStatusPick} />
+                </div>
+              </>
             )}
-            {isSidebarOpen && (
-              <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
-                <LogOut className="w-4 h-4" />
+            <div className={cn("flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06]", isSidebarOpen ? "p-2.5" : "p-2 justify-center")}>
+              <button
+                onClick={() => setStatusPickerOpen(!statusPickerOpen)}
+                className="hover:ring-2 hover:ring-accent/50 transition-all rounded-full flex-shrink-0"
+                title={`Status: ${PRESENCE_META[currentUser?.presence]?.label || 'Offline'} — click to change`}
+              >
+                <AvatarWithPresence user={currentUser} size="md" presence={currentUser?.presence} />
               </button>
-            )}
+              {isSidebarOpen && (
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-bold text-white truncate leading-tight">{currentUser?.name}</p>
+                  <p className="text-[11px] text-text-muted truncate">{PRESENCE_META[currentUser?.presence]?.label || currentUser?.role}</p>
+                </div>
+              )}
+              {isSidebarOpen && (
+                <>
+                  <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-white transition-colors flex-shrink-0" title="Settings">
+                    <Settings className="w-4 h-4" />
+                  </button>
+                  <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -2385,8 +2634,22 @@ export default function App() {
           onPatchState={patchOnboarding}
           onSaveProfile={handleWizardSaveProfile}
           onProfileChanged={(name, role) => setCurrentUser((u) => (u ? { ...u, name, role } : u))}
-          onStartTour={() => startTour(Math.max(0, onboarding.walkthrough.lastStep || 0))}
+          onStartTour={(fromStep) => startTour(fromStep ?? Math.max(0, onboarding.walkthrough.lastStep || 0))}
           onClose={() => setWizardOpen(false)}
+        />
+      )}
+      {/* Discord-style settings popup (gear by the user card) */}
+      {settingsOpen && currentUser && (
+        <SettingsModal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          user={currentUser}
+          team={activeTeam}
+          isAdmin={isAdmin}
+          onUserSaved={(u) => setCurrentUser((prev) => (prev ? { ...prev, ...u } : u))}
+          onTeamSaved={(t) => setTeams((prev) => prev.map((x: any) => (x.id === t.id ? { ...x, ...t } : x)))}
+          onOpenRoles={() => { setSettingsOpen(false); navigate('/roles'); }}
+          onStatusPick={handleStatusPick}
         />
       )}
     </div>
@@ -3243,6 +3506,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
           <thead className="bg-white/5 border-b border-white/10">
             <tr>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Name</th>
+              <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Status</th>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Team</th>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Role</th>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Board</th>
@@ -3254,14 +3518,25 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
             {members.map((m: any) => (
               <tr key={m.id} className="hover:bg-white/5 transition-colors">
                 <td className="px-6 py-4 text-sm text-white font-medium">
-                  {m.name}
-                  {(m.roles || []).length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {(m.roles || []).map((r: any) => (
-                        <RoleBadge key={r.id} role={r} />
-                      ))}
-                    </div>
-                  )}
+                  <span className="flex items-center gap-2.5">
+                    <AvatarWithPresence user={m} size="sm" presence={m.presence} />
+                    <span>
+                      {m.name}
+                      {(m.roles || []).length > 0 && (
+                        <span className="flex flex-wrap gap-1 mt-1.5">
+                          {(m.roles || []).map((r: any) => (
+                            <RoleBadge key={r.id} role={r} />
+                          ))}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                </td>
+                <td className="px-6 py-4">
+                  <span className="inline-flex items-center gap-2 text-xs text-text-muted">
+                    <PresenceDot presence={m.presence} className="w-2.5 h-2.5 !border-0" />
+                    {PRESENCE_META[m.presence]?.label || 'Offline'}
+                  </span>
                 </td>
                 <td className="px-6 py-4 text-sm text-text-muted">{m.team_name || 'N/A'}</td>
                 <td className="px-6 py-4 text-sm text-text-muted">{m.role}</td>
@@ -6350,7 +6625,10 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
   );
 }
 
-function ChatView({ messages, members, currentUser, socket }: any) {
+// Discord-style messaging: channel list on the left, conversation in the
+// center, member list with presence on the right. No servers — channels live
+// inside the team.
+function ChatView({ messages, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin }: any) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -6358,12 +6636,20 @@ function ChatView({ messages, members, currentUser, socket }: any) {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [showChannelsMobile, setShowChannelsMobile] = useState(false);
+  const [showMembersMobile, setShowMembersMobile] = useState(false);
+  const [creatingChannel, setCreatingChannel] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelTopic, setNewChannelTopic] = useState('');
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const composerRef = React.useRef<HTMLTextAreaElement>(null);
+
+  const activeChannel = (channels || []).find((c: any) => c.id === activeChannelId) || (channels || [])[0];
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages]);
+  }, [messages, activeChannelId]);
 
   const convertMentions = (text: string) => {
     // Match @Full Name for multi-word names — longest names first
@@ -6386,6 +6672,7 @@ function ChatView({ messages, members, currentUser, socket }: any) {
       formData.append('sender_id', currentUser.id.toString());
       formData.append('sender_name', currentUser.name);
       formData.append('content', finalContent);
+      if (activeChannelId) formData.append('channel_id', activeChannelId.toString());
       try {
         const response = await apiFetch('/api/messages/upload', { method: 'POST', body: formData });
         if (response.ok) {
@@ -6408,7 +6695,8 @@ function ChatView({ messages, members, currentUser, socket }: any) {
       type: 'chat',
       sender_id: currentUser.id,
       sender_name: currentUser.name,
-      content: finalContent
+      content: finalContent,
+      channel_id: activeChannelId,
     }));
     setContent('');
   };
@@ -6456,6 +6744,18 @@ function ChatView({ messages, members, currentUser, socket }: any) {
       }
     } catch (error) {
       console.error('Delete error:', error);
+    }
+  };
+
+  const handleCreateChannelSubmit = async () => {
+    const name = newChannelName.trim();
+    if (!name) return;
+    const ch = await handleCreateChannel(name, newChannelTopic.trim());
+    if (ch) {
+      setNewChannelName('');
+      setNewChannelTopic('');
+      setCreatingChannel(false);
+      setShowChannelsMobile(false);
     }
   };
 
@@ -6507,9 +6807,240 @@ function ChatView({ messages, members, currentUser, socket }: any) {
     return new Date(dateString).toLocaleDateString() + ' ' + new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const formatDayDivider = (ts: string) => {
+    const d = new Date(ts);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'long', day: 'numeric', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+  };
+
+  const renderContent = (text: string) => {
+    return text.split(/(@\[[^\]]+\])/).map((part: string, i: number) => {
+      if (part.startsWith('@[') && part.endsWith(']')) {
+        const name = part.slice(2, -1);
+        return (
+          <span key={i} className="font-bold text-accent bg-accent/10 rounded px-1 py-0.5">
+            @{name}
+          </span>
+        );
+      }
+      return part;
+    });
+  };
+
+  const onlineMembers = members.filter((m: any) => m.presence === 'online' || m.presence === 'idle' || m.presence === 'dnd');
+  const offlineMembers = members.filter((m: any) => !onlineMembers.includes(m));
+
+  const channelList = (
+    <div className="flex flex-col h-full">
+      <div className="px-4 pt-4 pb-2 flex items-center justify-between flex-shrink-0">
+        <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-muted/70">Text channels</p>
+        {isAdmin && (
+          <button
+            onClick={() => setCreatingChannel(!creatingChannel)}
+            className="p-1 rounded text-text-muted hover:text-accent transition-colors"
+            title="Create channel"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+      {creatingChannel && isAdmin && (
+        <div className="mx-3 mb-2 p-3 rounded-xl bg-primary border border-white/10 space-y-2 flex-shrink-0">
+          <input
+            value={newChannelName}
+            onChange={(e) => setNewChannelName(e.target.value)}
+            placeholder="channel-name"
+            maxLength={40}
+            autoFocus
+            className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+          />
+          <input
+            value={newChannelTopic}
+            onChange={(e) => setNewChannelTopic(e.target.value)}
+            placeholder="Topic (optional)"
+            maxLength={140}
+            className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreateChannelSubmit}
+              disabled={!newChannelName.trim()}
+              className="flex-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink hover:brightness-105 disabled:opacity-40 transition-all"
+            >
+              Create
+            </button>
+            <button
+              onClick={() => { setCreatingChannel(false); setNewChannelName(''); setNewChannelTopic(''); }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-4 space-y-0.5">
+        {(channels || []).map((c: any) => {
+          const isActive = c.id === activeChannelId;
+          return (
+            <div key={c.id} className="group/channel relative">
+              <button
+                onClick={() => { setActiveChannelId(c.id); setShowChannelsMobile(false); }}
+                title={c.topic || `#${c.name}`}
+                className={cn(
+                  'w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
+                  isActive ? 'bg-white/[0.08] text-white font-semibold' : 'text-text-muted hover:bg-white/[0.04] hover:text-white'
+                )}
+              >
+                <Hash className={cn('w-4.5 h-4.5 w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} />
+                <span className="truncate flex-1">{c.name}</span>
+                {isAdmin && c.name !== 'general' && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => { e.stopPropagation(); handleDeleteChannel(c.id); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleDeleteChannel(c.id); } }}
+                    className="p-1 rounded text-text-muted/60 hover:text-rose-400 opacity-0 group-hover/channel:opacity-100 transition-opacity flex-shrink-0"
+                    title={`Delete #${c.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const memberList = (
+    <div className="flex flex-col h-full">
+      <div className="px-4 pt-4 pb-2 flex-shrink-0">
+        <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-muted/70">
+          Members — {members.length}
+        </p>
+      </div>
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-4">
+        {onlineMembers.length > 0 && (
+          <p className="px-2.5 pt-2 pb-1 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted/60">
+            Online — {onlineMembers.length}
+          </p>
+        )}
+        {onlineMembers.map((m: any) => (
+          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors">
+            <AvatarWithPresence user={m} size="sm" presence={m.presence} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-white truncate leading-tight">{m.name}</p>
+              <p className="text-[11px] text-text-muted truncate">{PRESENCE_META[m.presence]?.label || 'Offline'}</p>
+            </div>
+          </div>
+        ))}
+        {offlineMembers.length > 0 && (
+          <p className="px-2.5 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted/60">
+            Offline — {offlineMembers.length}
+          </p>
+        )}
+        {offlineMembers.map((m: any) => (
+          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg opacity-60 hover:opacity-90 hover:bg-white/[0.04] transition-all">
+            <AvatarWithPresence user={m} size="sm" presence={m.presence} />
+            <p className="text-sm font-medium text-text-muted truncate flex-1">{m.name}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  let lastDay = '';
+  const messageList = messages.map((msg: any, idx: number) => {
+    const day = formatDayDivider(msg.timestamp);
+    const showDivider = day !== lastDay;
+    lastDay = day;
+    const sender = members.find((m: any) => m.id === msg.sender_id);
+    const senderName = msg.sender_name || sender?.name || 'Unknown';
+    const isOwn = msg.sender_id === currentUser.id;
+    return (
+      <div key={msg.id ?? idx}>
+        {showDivider && (
+          <div className="flex items-center gap-3 my-4 px-4">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted/70">{day}</span>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+        )}
+        <div className="group flex gap-3 px-4 py-1.5 hover:bg-white/[0.03] transition-colors">
+          <div className="flex-shrink-0 pt-0.5">
+            <AvatarWithPresence user={{ name: senderName, avatar_url: sender?.avatar_url }} size="sm" presence={sender?.presence} dotClassName="w-2.5 h-2.5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="text-sm font-bold text-white">{senderName}</span>
+              <span className="text-[10px] text-text-muted/60">{format(new Date(msg.timestamp), 'HH:mm')}</span>
+              {isOwn && !msg.deleted_at && (
+                <button
+                  onClick={() => handleDeleteMessage(msg.id)}
+                  className="text-text-muted/60 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Delete message"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {msg.deleted_at ? (
+              <p className="text-sm text-text-muted/60 italic">{senderName} unsent a message</p>
+            ) : (
+              <div className="text-[15px] text-white/90 leading-relaxed break-words">
+                {msg.file_path && (
+                  <div className="flex flex-col gap-2 mb-1.5 mt-1">
+                    {isImageFile(msg.file_path) && (
+                      <a href={msg.file_path} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={msg.file_path}
+                          alt={msg.file_name || 'uploaded'}
+                          className="rounded-lg max-w-xs max-h-64 object-cover border border-white/10 shadow-sm hover:opacity-95 transition-opacity"
+                        />
+                      </a>
+                    )}
+                    {!isImageFile(msg.file_path) && (
+                      <div className="flex flex-col gap-1 p-3 rounded-xl border min-w-[200px] max-w-xs bg-white/5 border-white/10">
+                        <div className="flex items-center gap-2 text-sm font-medium text-white">
+                          <FileText className="w-4 h-4 text-accent shrink-0" />
+                          <span className="truncate">{msg.file_name || msg.file_path.split('/').pop()}</span>
+                        </div>
+                        {(msg.file_size || msg.file_updated) && (
+                          <div className="flex items-center gap-3 text-[10px] text-text-muted">
+                            {msg.file_size && <span>{formatFileSize(msg.file_size)}</span>}
+                            {msg.file_updated && <span>{formatFileDate(msg.file_updated)}</span>}
+                          </div>
+                        )}
+                        <a
+                          href={msg.file_path}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1.5 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/20 hover:bg-accent/20 transition-colors text-xs text-accent font-medium"
+                        >
+                          <Download className="w-3 h-3" />
+                          Download
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {msg.content && <div>{renderContent(msg.content)}</div>}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  });
+
   return (
     <div
-      className="flex flex-col h-[calc(100dvh-240px)] sm:h-[calc(100dvh-180px)] glass rounded-2xl overflow-hidden relative"
+      className="flex h-[calc(100dvh-240px)] sm:h-[calc(100dvh-180px)] glass rounded-2xl overflow-hidden relative"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
@@ -6519,159 +7050,141 @@ function ChatView({ messages, members, currentUser, socket }: any) {
           <p className="text-accent font-bold">Drop to attach</p>
         </div>
       )}
-      <div className="px-4 sm:px-6 pt-4 sm:pt-5">
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Team Chat</h3>
-        <p className="text-sm text-text-muted mt-0.5">Real-time messaging for the whole team — @mention anyone to ping them.</p>
+
+      {/* Left: channels (drawer on mobile) */}
+      <div className="hidden md:flex w-60 flex-shrink-0 border-r border-white/[0.06] bg-secondary/40 flex-col">
+        {channelList}
       </div>
-      <div ref={scrollRef} className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-3 sm:space-y-4 custom-scrollbar">
-        {messages.map((msg: any) => (
-          <div key={msg.id} className={cn("flex flex-col group", msg.sender_id === currentUser.id ? "items-end" : "items-start")}>
-            <div className="flex items-center gap-2 mb-1">
-              <Avatar user={{ name: msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name, avatar_url: members.find((m: any) => m.id === msg.sender_id)?.avatar_url }} size="xs" />
-              <span className="text-[10px] font-bold text-text-muted/70">{msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name}</span>
-              <span className="text-[10px] text-slate-600">{format(new Date(msg.timestamp), 'HH:mm')}</span>
-              {msg.sender_id === currentUser.id && !msg.deleted_at && (
-                <button
-                  onClick={() => handleDeleteMessage(msg.id)}
-                  className="text-[10px] text-text-muted/70 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Delete message"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-            {msg.deleted_at ? (
-              <div className={cn(
-                "px-4 py-2 rounded-2xl max-w-[80%] text-sm italic",
-                "bg-white/5 text-text-muted border border-white/5"
-              )}>
-                {msg.sender_name || members.find((m: any) => m.id === msg.sender_id)?.name} unsent a message
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-w-[80%]">
-                {msg.file_path && (
-                  <div className="flex flex-col gap-2 mb-1">
-                    {isImageFile(msg.file_path) && (
-                      <img 
-                        src={msg.file_path} 
-                        alt={msg.file_name || "uploaded"} 
-                        className="rounded-lg max-w-xs max-h-64 object-cover border border-white/5 shadow-sm"
-                      />
-                    )}
-                    <div className={cn(
-                      "flex flex-col gap-1 p-3 rounded-2xl border min-w-[200px] max-w-xs",
-                      msg.sender_id === currentUser.id ? "bg-accent/10 border-accent/20" : "bg-white/5 border-white/10"
-                    )}>
-                      <div className="flex items-center gap-2 text-sm font-medium text-white">
-                        <FileText className="w-4 h-4 text-accent shrink-0" />
-                        <span className="truncate">{msg.file_name || msg.file_path.split('/').pop()}</span>
-                      </div>
-                      {(msg.file_size || msg.file_updated) && (
-                        <div className="flex items-center gap-3 text-[10px] text-text-muted">
-                          {msg.file_size && <span>{formatFileSize(msg.file_size)}</span>}
-                          {msg.file_updated && <span>{formatFileDate(msg.file_updated)}</span>}
-                        </div>
-                      )}
-                      <a 
-                        href={msg.file_path}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-2 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/20 hover:bg-accent/20 transition-colors text-xs text-accent font-medium"
-                      >
-                        <Download className="w-3 h-3" />
-                        Download
-                      </a>
-                    </div>
-                  </div>
-                )}
-                {msg.content && (
-                  <div className={cn(
-                    "px-4 py-2 rounded-2xl text-sm",
-                    msg.sender_id === currentUser.id ? "bg-accent text-primary font-medium" : "bg-white/5 text-white border border-white/5"
-                  )}>
-                    {msg.content.split(/(@\[[^\]]+\])/).map((part: string, i: number) => {
-                      if (part.startsWith('@[') && part.endsWith(']')) {
-                        const name = part.slice(2, -1);
-                        return <span key={i} className="font-bold underline decoration-accent decoration-2 underline-offset-2">@{name}</span>;
-                      }
-                      return part;
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
+      {showChannelsMobile && (
+        <div className="md:hidden absolute inset-y-0 left-0 w-64 z-30 bg-secondary border-r border-white/10 flex flex-col">
+          <div className="flex items-center justify-between px-4 pt-3">
+            <span className="text-sm font-bold text-white">Channels</span>
+            <button onClick={() => setShowChannelsMobile(false)} className="p-1.5 text-text-muted hover:text-white" aria-label="Close channels">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-        ))}
-      </div>
-      
-      <div className="p-3 sm:p-4 border-t border-white/5 bg-secondary/30 relative">
-        {pendingFile && (
-          <div className="mb-2 flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
-            {pendingPreview ? (
-              <img src={pendingPreview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
-            ) : (
-              <div className="w-14 h-14 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
-                <FileText className="w-6 h-6 text-accent" />
+          <div className="flex-1 min-h-0">{channelList}</div>
+        </div>
+      )}
+
+      {/* Center: conversation */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-1.5 -ml-1 text-text-muted hover:text-white" aria-label="Open channels">
+            <Hash className="w-5 h-5" />
+          </button>
+          <Hash className="w-5 h-5 text-text-muted/70 flex-shrink-0" />
+          <h3 className="text-base font-display font-bold text-white truncate">{activeChannel?.name || 'general'}</h3>
+          {activeChannel?.topic && (
+            <p className="hidden sm:block text-xs text-text-muted truncate border-l border-white/10 pl-2 ml-1">{activeChannel.topic}</p>
+          )}
+          <div className="flex-1" />
+          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="lg:hidden p-1.5 text-text-muted hover:text-white" aria-label="Toggle members">
+            <Users className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar py-3">
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-6 gap-3">
+              <div className="w-16 h-16 rounded-full bg-white/[0.05] flex items-center justify-center">
+                <Hash className="w-8 h-8 text-text-muted/50" />
               </div>
-            )}
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-white truncate">{pendingFile.name}</p>
-              <p className="text-[11px] text-text-muted">{formatFileSize(pendingFile.size)} — will send with your message</p>
+              <div>
+                <p className="text-white font-bold">Welcome to #{activeChannel?.name || 'general'}!</p>
+                <p className="text-sm text-text-muted mt-1">This is the start of the conversation.</p>
+              </div>
             </div>
-            <button onClick={clearPending} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove attachment">
-              <X className="w-4 h-4" />
+          ) : messageList}
+        </div>
+
+        <div className="p-3 sm:p-4 flex-shrink-0 relative">
+          {pendingFile && (
+            <div className="mb-2 flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
+              {pendingPreview ? (
+                <img src={pendingPreview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+              ) : (
+                <div className="w-14 h-14 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                  <FileText className="w-6 h-6 text-accent" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-white truncate">{pendingFile.name}</p>
+                <p className="text-[11px] text-text-muted">{formatFileSize(pendingFile.size)} — will send with your message</p>
+              </div>
+              <button onClick={clearPending} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove attachment">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+          {showMentions && filteredMentions.length > 0 && (
+            <div className="absolute bottom-full left-4 mb-2 glass rounded-xl border border-white/10 overflow-hidden w-56 shadow-2xl z-10">
+              {filteredMentions.slice(0, 5).map((m: any) => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    const parts = content.split(' ');
+                    parts.pop();
+                    setContent([...parts, `@${m.name} `].join(' '));
+                    setShowMentions(false);
+                    composerRef.current?.focus();
+                  }}
+                  className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-accent hover:text-primary transition-colors flex items-center gap-2.5"
+                >
+                  <Avatar user={m} size="xs" />
+                  {m.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 items-end">
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleFileUpload}
+              className="hidden"
+              disabled={uploading}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="h-11 w-11 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 bg-white/[0.06] text-text-muted hover:text-white hover:bg-white/[0.1] flex-shrink-0"
+              title="Attach file"
+            >
+              <FileUp className="w-5 h-5" />
+            </button>
+            <textarea
+              ref={composerRef}
+              className="flex-1 bg-secondary/60 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/50 transition-colors min-h-[44px] max-h-32 resize-none"
+              placeholder={`Message #${activeChannel?.name || 'general'} — @ to mention, paste or drop files`}
+              value={content}
+              onChange={onContentChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              disabled={uploading}
+              rows={1}
+            />
+            <Button onClick={handleSend} disabled={uploading || (!content.trim() && !pendingFile)} className="h-11 w-11 p-0 flex-shrink-0 rounded-xl"><Send className="w-5 h-5" /></Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Right: members (toggleable on smaller screens) */}
+      <div className={cn('w-56 flex-shrink-0 border-l border-white/[0.06] bg-secondary/40 flex-col', showMembersMobile ? 'absolute inset-y-0 right-0 z-30 flex bg-secondary' : 'hidden lg:flex')}>
+        {showMembersMobile && (
+          <div className="lg:hidden flex items-center justify-between px-4 pt-3 flex-shrink-0">
+            <span className="text-sm font-bold text-white">Members</span>
+            <button onClick={() => setShowMembersMobile(false)} className="p-1.5 text-text-muted hover:text-white" aria-label="Close members">
+              <X className="w-5 h-5" />
             </button>
           </div>
         )}
-        {showMentions && filteredMentions.length > 0 && (
-          <div className="absolute bottom-full left-4 mb-2 glass rounded-xl border border-white/10 overflow-hidden w-48 shadow-2xl">
-            {filteredMentions.slice(0, 5).map((m: any) => (
-              <button 
-                key={m.id}
-                onClick={() => {
-                  const parts = content.split(' ');
-                  parts.pop();
-                  setContent([...parts, `@${m.name} `].join(' '));
-                  setShowMentions(false);
-                }}
-                className="w-full text-left px-4 py-2 text-xs text-white/80 hover:bg-accent hover:text-primary transition-colors"
-              >
-                {m.name}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            onChange={handleFileUpload}
-            className="hidden"
-            disabled={uploading}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="h-10 sm:h-12 w-10 sm:w-12 p-0 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 bg-slate-800 text-white hover:bg-slate-700 flex-shrink-0"
-            title="Attach file"
-          >
-            <FileUp className="w-4 sm:w-5 h-4 sm:h-5" />
-          </button>
-          <textarea
-            className="flex-1 bg-primary border border-white/10 rounded-xl px-3 sm:px-4 py-2 text-sm text-white focus:outline-none focus:border-accent/50 transition-colors h-10 sm:h-12 resize-none"
-            placeholder="Type a message... use @ to mention, paste or drop images"
-            value={content}
-            onChange={onContentChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            disabled={uploading}
-          />
-          <Button onClick={handleSend} disabled={uploading} className="h-10 sm:h-12 w-10 sm:w-12 p-0 flex-shrink-0"><Send className="w-4 sm:w-5 h-4 sm:h-5" /></Button>
-        </div>
+        <div className="flex-1 min-h-0">{memberList}</div>
       </div>
     </div>
   );
 }
+
 
 // Feedback: any signed-in user can send a note straight to Sushil
 // Empty state for accounts with zero team memberships: create a team, join

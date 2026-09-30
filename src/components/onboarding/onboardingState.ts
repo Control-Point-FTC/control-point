@@ -182,18 +182,11 @@ export const TOUR_STEPS: TourStep[] = [
     target: 'header-bruno',
   },
   {
-    id: 'profile',
-    title: 'My Profile',
-    body: 'Your personal space: update your name and avatar, pick your theme colors, and review your own check-in history.',
-    target: 'nav-profile',
-  },
-  {
     id: 'settings',
-    title: 'Admin Settings',
-    body: 'Admins manage the workspace here: team info, the FTC team connection for live stats, attendance defaults, and more.',
-    target: 'nav-settings',
-    adminOnly: true,
-  } as TourStep & { adminOnly: boolean },
+    title: 'Settings',
+    body: 'Your profile, avatar, and online status — plus team settings for admins — all live behind the gear button next to your name.',
+    target: 'nav-settings-gear',
+  },
 ];
 
 export interface TourStepResolved extends TourStep {

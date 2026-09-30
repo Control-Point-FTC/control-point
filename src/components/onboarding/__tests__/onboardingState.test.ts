@@ -115,12 +115,12 @@ describe('scenario 12 — existing profiles are never overwritten', () => {
 });
 
 describe('tour step resolution', () => {
-  it('hides the admin-only settings step from non-admins', () => {
+  it('shows the unified settings step to everyone (profile + team settings live behind the gear)', () => {
     const adminSteps = resolveTourSteps(true);
     const studentSteps = resolveTourSteps(false);
-    expect(adminSteps.length).toBeGreaterThan(studentSteps.length);
-    expect(studentSteps.some((s) => s.id === 'settings')).toBe(false);
+    expect(studentSteps.some((s) => s.id === 'settings')).toBe(true);
     expect(adminSteps.some((s) => s.id === 'settings')).toBe(true);
+    expect(studentSteps.find((s) => s.id === 'settings')?.target).toBe('nav-settings-gear');
   });
   it('every targeted step uses the data-onboard convention', () => {
     for (const s of TOUR_STEPS) {

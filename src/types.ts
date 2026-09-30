@@ -26,6 +26,8 @@ export interface Member {
   hasPassword?: boolean;
   roles?: Array<{ id: number; name: string; color: string }>;
   permissions?: string[];
+  presence?: string; // computed display presence: online | idle | dnd | offline
+  presence_status?: string; // user setting: online | idle | dnd | invisible
 }
 
 export interface AttendanceRecord {

@@ -19,7 +19,8 @@ export interface SetupWizardProps {
   onSaveProfile: (patch: { name: string; role: string }) => Promise<void>;
   /** Parent updates its user object after a successful profile save. */
   onProfileChanged: (name: string, role: string) => void;
-  onStartTour: () => void;
+  /** Start the tour; optional fromStep restarts it from the beginning (retake). */
+  onStartTour: (fromStep?: number) => void;
   onClose: () => void;
 }
 
@@ -273,14 +274,23 @@ export default function SetupWizard({
             {state.steps.tour.status === 'done' ? (
               <>
                 <p className="text-sm text-text-muted leading-relaxed">
-                  You&apos;ve already completed the tour — nice.
+                  You&apos;ve already completed the tour — nice. Want a refresher?
                 </p>
-                <button
-                  onClick={() => setStep(2)}
-                  className="mt-6 w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
-                >
-                  Continue
-                </button>
+                <div className="mt-6 space-y-2">
+                  <button
+                    onClick={() => onStartTour(0)}
+                    disabled={busy}
+                    className="w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] disabled:opacity-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
+                  >
+                    Retake the tour
+                  </button>
+                  <button
+                    onClick={() => setStep(2)}
+                    className="w-full py-3 rounded-xl font-bold text-[15px] text-text-muted hover:text-white hover:bg-white/[0.06] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                  >
+                    Continue
+                  </button>
+                </div>
               </>
             ) : (
               <>
@@ -290,7 +300,7 @@ export default function SetupWizard({
             </p>
             <div className="mt-6 space-y-2">
               <button
-                onClick={onStartTour}
+                onClick={() => onStartTour()}
                 disabled={busy}
                 className="w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] disabled:opacity-50 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
               >

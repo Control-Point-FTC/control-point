@@ -81,6 +81,73 @@ function sanitizeMembers<T>(rows: T[]): T[] {
   return (rows || []).map(sanitizeMember);
 }
 
+// --- Presence (online / idle / dnd / invisible) -------------------------------
+// members.presence_status is the user's chosen mode ('online' = automatic).
+// The displayed presence blends that choice with real activity:
+//   invisible → always shown as offline
+//   dnd / idle → shown as-is (explicit override)
+//   online (auto) → online if active in the last 3 min, idle if within 15 min,
+//                   otherwise offline. last_activity is refreshed by
+//                   validateSession on every authenticated request.
+const PRESENCE_STATUSES = ["online", "idle", "dnd", "invisible"] as const;
+const ONLINE_WINDOW_MS = 3 * 60 * 1000;
+const IDLE_WINDOW_MS = 15 * 60 * 1000;
+function computePresence(setting: string | null | undefined, lastActivity: string | null): string {
+  if (setting === "invisible") return "offline";
+  if (setting === "dnd") return "dnd";
+  if (setting === "idle") return "idle";
+  if (!lastActivity) return "offline";
+  const age = Date.now() - new Date(lastActivity).getTime();
+  if (Number.isNaN(age) || age < 0) return "online";
+  if (age <= ONLINE_WINDOW_MS) return "online";
+  if (age <= IDLE_WINDOW_MS) return "idle";
+  return "offline";
+}
+async function presenceMap(memberIds: number[]): Promise<Record<number, string>> {
+  const out: Record<number, string> = {};
+  const ids = [...new Set(memberIds)].filter((n) => Number.isFinite(n));
+  if (!ids.length) return out;
+  const ph = ids.map(() => "?").join(",");
+  const lastRows = (await dbAll(
+    `SELECT member_id, MAX(last_activity) AS last FROM sessions WHERE member_id IN (${ph}) GROUP BY member_id`,
+    ...ids
+  )) as any[];
+  const lastById = new Map<number, string>(lastRows.map((r) => [r.member_id, r.last]));
+  const settings = (await dbAll(
+    `SELECT id, presence_status FROM members WHERE id IN (${ph})`,
+    ...ids
+  )) as any[];
+  for (const s of settings) {
+    out[s.id] = computePresence(s.presence_status, lastById.get(s.id) || null);
+  }
+  return out;
+}
+
+// --- Chat channels ----------------------------------------------------------
+// Every team gets a #general channel. Existing messages (channel_id NULL)
+// belong to general.
+async function ensureGeneralChannel(teamId: number): Promise<any> {
+  let general = (await dbGet(
+    "SELECT * FROM chat_channels WHERE team_id = ? AND name = 'general'",
+    teamId
+  )) as any;
+  if (!general) {
+    const info = (await dbRun(
+      "INSERT INTO chat_channels (team_id, name, topic, position) VALUES (?, 'general', 'Team-wide chat', 0)",
+      teamId
+    ));
+    general = (await dbGet("SELECT * FROM chat_channels WHERE id = ?", info.lastInsertRowid)) as any;
+  }
+  return general;
+}
+async function backfillMessageChannels(teamId: number): Promise<void> {
+  const general = await ensureGeneralChannel(teamId);
+  (await dbRun(
+    "UPDATE messages SET channel_id = ? WHERE team_id = ? AND channel_id IS NULL",
+    general.id, teamId
+  ));
+}
+
 // Members DDL (single source of truth — also reused by the multi-team migration below).
 // One email (account) may hold one membership row PER TEAM, hence
 // UNIQUE(team_id, email) instead of a global UNIQUE(email).
@@ -165,6 +232,19 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     content TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     FOREIGN KEY(sender_id) REFERENCES members(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS chat_channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    topic TEXT DEFAULT '',
+    position INTEGER DEFAULT 0,
+    created_by INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(team_id) REFERENCES teams(id),
+    FOREIGN KEY(created_by) REFERENCES members(id),
+    UNIQUE(team_id, name)
   );
 
   CREATE TABLE IF NOT EXISTS settings (
@@ -471,6 +551,16 @@ if (!memberColumns.some((c: any) => c.name === 'ai_max_tokens_reply')) {
 const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {
   (await dbExec("ALTER TABLE tasks ADD COLUMN is_board INTEGER DEFAULT 0"));
+}
+// Presence: user-chosen status mode (online = automatic from activity)
+const memberPresenceColumns = (await dbAll("PRAGMA table_info(members)"));
+if (!memberPresenceColumns.some((c: any) => c.name === 'presence_status')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN presence_status TEXT DEFAULT 'online'"));
+}
+// Chat channels: messages.channel_id points at chat_channels(id)
+const messageChannelColumns = (await dbAll("PRAGMA table_info(messages)"));
+if (!messageChannelColumns.some((c: any) => c.name === 'channel_id')) {
+  (await dbExec("ALTER TABLE messages ADD COLUMN channel_id INTEGER"));
 }
 
 const teamColumns = (await dbAll("PRAGMA table_info(teams)"));
@@ -1348,8 +1438,14 @@ async function startServer() {
           // Verify the claimed sender belongs to this workspace
           const sender = (await dbGet("SELECT id, team_id FROM members WHERE id = ?", message.sender_id)) as any;
           if (!sender || sender.team_id !== teamId) return;
+          // Channel must belong to this team; default to #general
+          const general = await ensureGeneralChannel(teamId);
+          let channelId = parseInt(message.channel_id, 10);
+          if (!Number.isFinite(channelId)) channelId = general.id;
+          const chan = (await dbGet("SELECT id FROM chat_channels WHERE id = ? AND team_id = ?", channelId, teamId)) as any;
+          if (!chan) channelId = general.id;
           const timestamp = new Date().toISOString();
-          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id) VALUES (?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId);
+          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id, channel_id) VALUES (?, ?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId, channelId);
 
           // Handle mentions (scoped to the sender's workspace)
           const mentions = message.content.match(/@\[([^\]]+)\]/g);
@@ -1369,6 +1465,7 @@ async function startServer() {
             sender_id: message.sender_id,
             sender_name: message.sender_name,
             content: message.content,
+            channel_id: channelId,
             timestamp
           });
         }
@@ -1606,6 +1703,10 @@ async function startServer() {
     }
     // Every workspace this account belongs to (for the team switcher)
     (user as any).teams = user?.email ? await userTeams(user.email) : [];
+    if (user?.id) {
+      const pm = await presenceMap([user.id]);
+      (user as any).presence = pm[user.id] || "offline";
+    }
     res.json({ user: sanitizeMember(user), sessionId, isOwner });
   });
 
@@ -2491,6 +2592,10 @@ async function startServer() {
       m.roles = await memberRoleList(m.id, auth.teamId!);
       m.permissions = [...(await getMemberPerms(m.id, auth.teamId!))];
     }
+    const pm = await presenceMap(members.map((m: any) => m.id));
+    for (const m of members) {
+      m.presence = pm[m.id] || "offline";
+    }
     res.json(sanitizeMembers(members));
   });
 
@@ -2582,10 +2687,16 @@ async function startServer() {
   app.patch("/api/profile", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const { name, role, accent_color, primary_color, text_color, avatar_url } = req.body || {};
+    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status } = req.body || {};
     const cleanName = (name || '').trim();
     if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
     const updates: any = { name: cleanName, role: (role || '').trim() };
+    if (presence_status !== undefined) {
+      if (!(PRESENCE_STATUSES as readonly string[]).includes(presence_status)) {
+        return res.status(400).json({ error: "Invalid status — choose online, idle, dnd, or invisible" });
+      }
+      updates.presence_status = presence_status;
+    }
     if (accent_color !== undefined) updates.accent_color = cleanHex(accent_color);
     if (primary_color !== undefined) updates.primary_color = cleanHex(primary_color);
     if (text_color !== undefined) updates.text_color = cleanHex(text_color);
@@ -2593,7 +2704,9 @@ async function startServer() {
     const cols = Object.keys(updates);
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
-    res.json({ user: sanitizeMember(user) });
+    const sanitized = sanitizeMember(user);
+    sanitized.presence = (await presenceMap([auth.memberId!]))[auth.memberId!] || 'offline';
+    res.json({ user: sanitized });
   });
 
   // ---- Onboarding progress ----
@@ -3305,14 +3418,71 @@ async function startServer() {
   app.get("/api/messages", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
+    await backfillMessageChannels(auth.teamId!);
+    const channelId = parseInt(String(req.query.channel_id || ''), 10);
+    const where = Number.isFinite(channelId) && channelId > 0
+      ? "m.team_id = ? AND m.channel_id = ?"
+      : "m.team_id = ?";
+    const args = Number.isFinite(channelId) && channelId > 0 ? [auth.teamId, channelId] : [auth.teamId];
     const msgs = (await dbAll(`
       SELECT m.*, mem.name as sender_name 
       FROM messages m 
       JOIN members mem ON m.sender_id = mem.id 
-      WHERE m.team_id = ?
-      ORDER BY timestamp ASC LIMIT 100
-    `, auth.teamId));
+      WHERE ${where}
+      ORDER BY timestamp ASC LIMIT 200
+    `, ...args));
     res.json(msgs);
+  });
+
+  // ---- Chat channels ----
+  app.get("/api/chat/channels", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    await ensureGeneralChannel(auth.teamId!);
+    const channels = (await dbAll(
+      "SELECT * FROM chat_channels WHERE team_id = ? ORDER BY position ASC, id ASC",
+      auth.teamId
+    )) as any[];
+    res.json(channels);
+  });
+
+  app.post("/api/chat/channels", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const rawName = String(req.body?.name || '').trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+    if (!rawName) return res.status(400).json({ error: "Channel name can't be empty" });
+    const topic = String(req.body?.topic || '').trim().slice(0, 140);
+    try {
+      const pos = ((await dbGet("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM chat_channels WHERE team_id = ?", auth.teamId)) as any)?.p ?? 0;
+      const info = (await dbRun(
+        "INSERT INTO chat_channels (team_id, name, topic, position, created_by) VALUES (?, ?, ?, ?, ?)",
+        auth.teamId, rawName, topic, pos, auth.memberId
+      ));
+      const channel = (await dbGet("SELECT * FROM chat_channels WHERE id = ?", info.lastInsertRowid));
+      broadcastToTeam(auth.teamId!, { type: "channel_created", channel });
+      res.json({ channel });
+    } catch (e: any) {
+      if (String(e?.message || '').includes('UNIQUE')) {
+        return res.status(409).json({ error: "A channel with that name already exists" });
+      }
+      throw e;
+    }
+  });
+
+  app.delete("/api/chat/channels/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const channel = (await dbGet("SELECT * FROM chat_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
+    if (!channel) return res.status(404).json({ error: "Channel not found" });
+    if (channel.name === 'general') return res.status(400).json({ error: "The #general channel can't be deleted" });
+    const general = await ensureGeneralChannel(auth.teamId!);
+    await dbBatch([
+      { sql: "UPDATE messages SET channel_id = ? WHERE channel_id = ?", args: [general.id, id] },
+      { sql: "DELETE FROM chat_channels WHERE id = ?", args: [id] },
+    ]);
+    broadcastToTeam(auth.teamId!, { type: "channel_deleted", channelId: id, movedTo: general.id });
+    res.json({ ok: true, movedTo: general.id });
   });
 
   // File upload for messages
@@ -3333,17 +3503,24 @@ async function startServer() {
     const fileName = req.file.originalname;
     const fileSize = req.file.size;
     const fileUpdated = new Date().toISOString();
-    
+
+    const general = await ensureGeneralChannel(auth.teamId!);
+    let channelId = parseInt(req.body.channel_id, 10);
+    if (!Number.isFinite(channelId)) channelId = general.id;
+    const chan = (await dbGet("SELECT id FROM chat_channels WHERE id = ? AND team_id = ?", channelId, auth.teamId)) as any;
+    if (!chan) channelId = general.id;
+
     const info = (await dbRun(
-      "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId));
-    
+      "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id, channel_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId, channelId));
+
     broadcastToTeam(auth.teamId, {
       type: "chat",
       id: info.lastInsertRowid,
       sender_id: parseInt(sender_id),
       sender_name,
       content: content || '',
+      channel_id: channelId,
       file_path: filePath,
       file_name: fileName,
       file_size: fileSize,
