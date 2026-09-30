@@ -44,6 +44,23 @@ function isGroundingUnsupported(err: any): boolean {
   return /400|google_search|grounding|tool.*not supported|not supported.*tool|invalid.*tool/.test(msg);
 }
 
+/** True when the upstream Gemini call failed because the API key's quota is
+ *  exhausted (free-tier limit hit). Surfaced to users with an honest message
+ *  instead of a generic "glitched" note. */
+export function isQuotaError(err: any): boolean {
+  const msg = String(err?.message || err || "");
+  return /Gemini API error 429/i.test(msg)
+    || /RESOURCE_EXHAUSTED/i.test(msg)
+    || /exceeded your current quota/i.test(msg);
+}
+
+/** User-facing copy for quota exhaustion. Keep it plain: the fix is on the
+ *  Google side (quota reset or billing), not something retrying will solve. */
+export const QUOTA_EXHAUSTED_MSG =
+  "Bruno's AI quota is used up right now — the free Gemini allowance ran out. " +
+  "It refills on its own (usually daily); if this keeps happening, the team owner " +
+  "can add billing to the Gemini API key for uninterrupted use.";
+
 async function fetchWithPolicy(
   url: string,
   init: RequestInit,

@@ -48,6 +48,8 @@ import {
   NAVGPT_SYSTEM,
   ATTENDANCE_SYSTEM,
   COACH_SYSTEM,
+  isQuotaError,
+  QUOTA_EXHAUSTED_MSG,
 } from "./ai.js";
 import {
   youtubeApi as youtubeApiImpl,
@@ -5606,7 +5608,7 @@ Rules:
           res.end();
         } catch (err) {
           console.error("AI news stream error:", err);
-          res.end("\n\n(Failed to finish the news roundup.)");
+          res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Failed to finish the news roundup.)");
         }
         return;
       }
@@ -5614,7 +5616,11 @@ Rules:
       res.json({ result });
     } catch (error) {
       console.error("AI news error:", error);
-      res.status(502).json({ error: "AI request failed", result: "Failed to fetch latest news. Please check your connection." });
+      if (isQuotaError(error)) {
+        res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
+      } else {
+        res.status(502).json({ error: "AI request failed", result: "Failed to fetch latest news. Please check your connection." });
+      }
     }
   });
 
@@ -5760,7 +5766,11 @@ Rules:
       res.json({ items: validItems });
     } catch (error) {
       console.error("AI scout feed error:", error);
-      res.status(502).json({ error: "Could not build the scout feed. Please try again.", items: [] });
+      if (isQuotaError(error)) {
+        res.status(429).json({ error: "AI quota exhausted", items: [] });
+      } else {
+        res.status(502).json({ error: "Could not build the scout feed. Please try again.", items: [] });
+      }
     }
   });
 
@@ -5792,7 +5802,7 @@ Rules:
           res.end();
         } catch (err) {
           console.error("AI attendance stream error:", err);
-          res.end("\n\n(Failed to finish insights.)");
+          res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Failed to finish insights.)");
         }
         return;
       }
@@ -5800,7 +5810,11 @@ Rules:
       res.json({ result });
     } catch (error) {
       console.error("AI attendance error:", error);
-      res.status(502).json({ error: "AI request failed", result: "Insights unavailable." });
+      if (isQuotaError(error)) {
+        res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
+      } else {
+        res.status(502).json({ error: "AI request failed", result: "Insights unavailable." });
+      }
     }
   });
 
@@ -6093,7 +6107,7 @@ Rules:
           res.end();
         } catch (err) {
           console.error("AI build-helper stream error:", err);
-          res.end("\n\n(Something glitched — try asking again.)");
+          res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Something glitched — try asking again.)");
         }
         return;
       }
@@ -6113,7 +6127,11 @@ Rules:
       res.json({ result: finalResult, chatId: chat ? chat.id : undefined });
     } catch (error) {
       console.error("AI build-helper error:", error);
-      res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
+      if (isQuotaError(error)) {
+        res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
+      } else {
+        res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
+      }
     }
   });
 
@@ -6335,7 +6353,7 @@ Rules:
           res.end();
         } catch (err) {
           console.error("AI summary stream error:", err);
-          res.end("\n\n(Failed to finish the summary.)");
+          res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Failed to finish the summary.)");
         }
         return;
       }
@@ -6343,7 +6361,11 @@ Rules:
       res.json({ result });
     } catch (error) {
       console.error("AI summary error:", error);
-      res.status(502).json({ error: "AI request failed", result: "Failed to generate summary." });
+      if (isQuotaError(error)) {
+        res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
+      } else {
+        res.status(502).json({ error: "AI request failed", result: "Failed to generate summary." });
+      }
     }
   });
   app.get("/api/communications", async (req, res) => {
