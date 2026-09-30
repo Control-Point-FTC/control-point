@@ -4691,8 +4691,16 @@ function CalendarView({ events, teams, onRefresh, currentUser }: any) {
   );
 }
 
-function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, hasScope }: any) {
-  const [showAddTask, setShowAddTask] = useState(false);
+// Default a creation form's team to the user's currently-selected team, so the
+// "Select Team" dropdown in New Task / Log Transaction / Add Part modals is
+// already set when you're working inside a team.
+function defaultTeamId(teams: any[], currentUser: any): any {
+  const tid = currentUser?.team_id;
+  if (tid == null || tid === '') return '';
+  return teams.some((t: any) => String(t.id) === String(tid)) ? tid : '';
+}
+
+function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, hasScope }: any) {  const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assigned_to: '', due_date: '' });
@@ -4849,7 +4857,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             {showAnalytics ? "Board View" : "Analytics"}
           </Button>
         </div>
-        <Button onClick={() => setShowAddTask(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
+        <Button onClick={() => { setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assigned_to: '', due_date: '' }); setShowAddTask(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
       </div>
 
       {showAnalytics ? (
@@ -5004,7 +5012,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
   );
 }
 
-function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
+function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
   const [showAdd, setShowAdd] = useState(false);
   const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
   const [busy, setBusy] = useState(false);
@@ -5073,7 +5081,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Transaction History</h3>
           <p className="text-sm text-text-muted mt-1">A line-by-line record of money in and out.</p>
         </div>
-        {isAdmin && <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
+        {isAdmin && <Button onClick={() => { setNewItem({ team_id: defaultTeamId(teams, currentUser), type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
       </div>
 
       <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
@@ -5152,17 +5160,17 @@ function BudgetView({ budget, teams, onRefresh, hasScope }: any) {
   );
 }
 
-function InventoryView({ inventory, members, teams, onRefresh }: any) {
+function InventoryView({ inventory, members, teams, onRefresh, currentUser }: any) {
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [revLink, setRevLink] = useState('');
   const [isLoadingRev, setIsLoadingRev] = useState(false);
-  const [gobildaParsing, setGobildaParsing] = useState(false);
-  const [gobildaItems, setGobildaItems] = useState<any[]>([]);
-  const [showGobildaPreview, setShowGobildaPreview] = useState(false);
-  const gobildaFileRef = React.useRef<HTMLInputElement>(null);
+  const [invoiceParsing, setInvoiceParsing] = useState(false);
+  const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
+  const [showInvoicePreview, setShowInvoicePreview] = useState(false);
+  const invoiceFileRef = React.useRef<HTMLInputElement>(null);
   const [newPart, setNewPart] = useState({ 
     team_id: '', name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', 
     location: '', category: '', description: '', cost: '' 
@@ -5282,41 +5290,41 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
     }
   };
 
-  const handleGobildaFile = async (e: any) => {
+  const handleInvoiceFile = async (e: any) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    setGobildaParsing(true);
+    setInvoiceParsing(true);
     try {
       const form = new FormData();
-      form.append('pdf', file);
-      const res = await apiFetch('/api/inventory/import-gobilda/parse', { method: 'POST', body: form });
+      form.append('file', file);
+      const res = await apiFetch('/api/inventory/import-invoice/parse', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        notify('Error: ' + (data.error || 'Could not read that PDF'), 'error');
+        notify('Error: ' + (data.error || 'Could not read that file'), 'error');
         return;
       }
-      setGobildaItems((data.items || []).map((it: any) => ({ ...it, selected: true })));
-      setShowGobildaPreview(true);
+      setInvoiceItems((data.items || []).map((it: any) => ({ ...it, selected: true })));
+      setShowInvoicePreview(true);
     } catch (error) {
-      notify('Error reading PDF: ' + error, 'error');
+      notify('Error reading file: ' + error, 'error');
     } finally {
-      setGobildaParsing(false);
+      setInvoiceParsing(false);
     }
   };
 
-  const updateGobildaItem = (index: number, patch: any) => {
-    setGobildaItems(items => items.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  const updateInvoiceItem = (index: number, patch: any) => {
+    setInvoiceItems(items => items.map((it, i) => (i === index ? { ...it, ...patch } : it)));
   };
 
-  const handleGobildaConfirm = async () => {
-    const selected = gobildaItems.filter((it: any) => it.selected);
+  const handleInvoiceConfirm = async () => {
+    const selected = invoiceItems.filter((it: any) => it.selected);
     if (!selected.length) {
       notify('Select at least one item to import', 'info');
       return;
     }
     try {
-      const res = await apiFetch('/api/inventory/import-gobilda/confirm', {
+      const res = await apiFetch('/api/inventory/import-invoice/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -5333,8 +5341,8 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
         notify('Error: ' + (data.error || 'Import failed'), 'error');
         return;
       }
-      setShowGobildaPreview(false);
-      setGobildaItems([]);
+      setShowInvoicePreview(false);
+      setInvoiceItems([]);
       onRefresh();
       const parts = [`${data.added} added`, `${data.merged} restocked`];
       if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
@@ -5386,11 +5394,11 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
               onChange={(e: any) => setFilterCategory(e.target.value)}
               className="sm:w-48"
             />
-            <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
-            <Button onClick={() => gobildaFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={gobildaParsing}>
-              <FileUp className="w-4 h-4" /> {gobildaParsing ? 'Reading PDF...' : 'Import goBILDA PDF'}
+            <Button onClick={() => { setNewPart({ team_id: defaultTeamId(teams, currentUser), name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
+            <Button onClick={() => invoiceFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={invoiceParsing}>
+              <FileUp className="w-4 h-4" /> {invoiceParsing ? 'Reading file...' : 'Import Invoice'}
             </Button>
-            <input ref={gobildaFileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={handleGobildaFile} />
+            <input ref={invoiceFileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" className="hidden" onChange={handleInvoiceFile} />
           </div>
 
           <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
@@ -5499,12 +5507,12 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
         </div>
       )}
 
-      {showGobildaPreview && (
+      {showInvoicePreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-          <Card title="Import goBILDA order" className="w-full max-w-3xl my-8">
+          <Card title="Import order invoice" className="w-full max-w-3xl my-8">
             <div className="space-y-4">
               <p className="text-sm text-text-muted leading-relaxed">
-                Review the items read from your goBILDA order PDF. Uncheck anything you don't want,
+                Review the items read from your invoice. Uncheck anything you don't want,
                 fix names, quantities, or prices if needed, then import — items already in inventory get restocked.
               </p>
               <div className="glass rounded-2xl overflow-x-auto custom-scrollbar max-h-96">
@@ -5519,25 +5527,25 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {gobildaItems.map((it: any, i: number) => (
+                    {invoiceItems.map((it: any, i: number) => (
                       <tr key={i} className={it.selected ? '' : 'opacity-40'}>
                         <td className="px-3 py-2">
                           <input
                             type="checkbox"
                             checked={!!it.selected}
-                            onChange={(e: any) => updateGobildaItem(i, { selected: e.target.checked })}
+                            onChange={(e: any) => updateInvoiceItem(i, { selected: e.target.checked })}
                             className="w-4 h-4 accent-[#FFC700]"
                           />
                         </td>
                         <td className="px-3 py-2">
-                          <Input value={it.name} onChange={(e: any) => updateGobildaItem(i, { name: e.target.value })} className="!py-1.5 text-sm" />
+                          <Input value={it.name} onChange={(e: any) => updateInvoiceItem(i, { name: e.target.value })} className="!py-1.5 text-sm" />
                         </td>
                         <td className="px-3 py-2 text-xs text-accent font-mono whitespace-nowrap">{it.sku}</td>
                         <td className="px-3 py-2">
-                          <Input type="number" min="0" value={it.quantity} onChange={(e: any) => updateGobildaItem(i, { quantity: e.target.value })} className="!py-1.5 text-sm" />
+                          <Input type="number" min="0" value={it.quantity} onChange={(e: any) => updateInvoiceItem(i, { quantity: e.target.value })} className="!py-1.5 text-sm" />
                         </td>
                         <td className="px-3 py-2">
-                          <Input type="number" min="0" step="0.01" value={it.unitPrice} onChange={(e: any) => updateGobildaItem(i, { unitPrice: e.target.value })} className="!py-1.5 text-sm" />
+                          <Input type="number" min="0" step="0.01" value={it.unitPrice} onChange={(e: any) => updateInvoiceItem(i, { unitPrice: e.target.value })} className="!py-1.5 text-sm" />
                         </td>
                       </tr>
                     ))}
@@ -5545,9 +5553,9 @@ function InventoryView({ inventory, members, teams, onRefresh }: any) {
                 </table>
               </div>
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => setShowGobildaPreview(false)}>Cancel</Button>
-                <Button onClick={handleGobildaConfirm}>
-                  Import {gobildaItems.filter((it: any) => it.selected).length} items
+                <Button variant="secondary" onClick={() => setShowInvoicePreview(false)}>Cancel</Button>
+                <Button onClick={handleInvoiceConfirm}>
+                  Import {invoiceItems.filter((it: any) => it.selected).length} items
                 </Button>
               </div>
             </div>

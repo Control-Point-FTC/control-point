@@ -37,6 +37,7 @@ import {
   getAISetting,
   getMaxTokens,
   aiGenerate,
+  aiGenerateWithImages,
   aiStream,
   scoutNews,
   scoutFeed,
@@ -4315,6 +4316,21 @@ async function startServer() {
     },
   });
 
+  // Invoice import: any supplier's invoice — PDF or a photo/scan of one.
+  const invoiceUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (_req, file, cb) => {
+      const name = file.originalname.toLowerCase();
+      const ok =
+        file.mimetype === "application/pdf" || name.endsWith(".pdf") ||
+        ["image/png", "image/jpeg", "image/webp"].includes(file.mimetype) ||
+        [".png", ".jpg", ".jpeg", ".webp"].some((ext) => name.endsWith(ext));
+      if (ok) cb(null, true);
+      else cb(new Error("Only PDF or image files are allowed"));
+    },
+  });
+
   /** Heuristic line-item parser for goBILDA order/invoice PDFs.
    *  goBILDA SKUs look like 5203-2402-0019 or 5027103001. Each line holding a
    *  SKU is treated as one line item: name = nearby text, qty = nearby integer,
@@ -4375,38 +4391,114 @@ async function startServer() {
     return [...items.values()];
   }
 
-  app.post("/api/inventory/import-gobilda/parse", async (req, res) => {
+  // --- Generic invoice import: any supplier's order invoice (PDF or photo/scan).
+  // AI extracts line items from arbitrary layouts; the old goBILDA regex
+  // parser remains as a fallback for PDFs when AI is unavailable.
+  const INVOICE_EXTRACT_SYSTEM = `You extract purchasable line items from supplier order invoices and receipts for a robotics team's parts inventory. Return ONLY a JSON array — no markdown fences, no commentary, no trailing text. Each element must be an object: {"sku": string, "name": string, "quantity": number, "unitPrice": number}.
+Rules:
+- One element per distinct line item on the invoice.
+- "sku" is the supplier's part/SKU/model number as printed; use "" when none is shown.
+- "name" is the item description, trimmed to about 120 characters.
+- "quantity" is units ordered on that line (default 1 when unclear).
+- "unitPrice" is the per-unit price in dollars (default 0 when unclear).
+- Skip shipping, handling, tax, discounts, coupons, subtotals, totals, and gift cards.
+- Never invent items that are not on the invoice.`;
+
+  function sanitizeInvoiceItems(raw: any) {
+    if (!Array.isArray(raw)) return [];
+    const out: { sku: string; name: string; quantity: number; unitPrice: number }[] = [];
+    for (const it of raw.slice(0, 500)) {
+      if (!it || typeof it !== "object") continue;
+      const sku = String(it.sku || "").trim().slice(0, 60);
+      const name = String(it.name || "").trim().slice(0, 120) || sku;
+      const quantity = Math.max(0, parseInt(it.quantity, 10) || 0);
+      const unitPrice = Math.max(0, parseFloat(it.unitPrice) || 0);
+      if (!name && !sku) continue;
+      out.push({ sku, name, quantity: quantity || 1, unitPrice });
+    }
+    return out;
+  }
+
+  function parseInvoiceJson(text: string) {
+    const cleaned = String(text || "")
+      .replace(/```json\s*/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    const start = cleaned.indexOf("[");
+    const end = cleaned.lastIndexOf("]");
+    if (start === -1 || end === -1 || end <= start) return [];
+    try {
+      return sanitizeInvoiceItems(JSON.parse(cleaned.slice(start, end + 1)));
+    } catch {
+      return [];
+    }
+  }
+
+  async function handleInvoiceParse(req: any, res: any, upload: any, fieldName: string) {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    pdfUpload.single("pdf")(req, res, async (err: any) => {
+    upload.single(fieldName)(req, res, async (err: any) => {
       if (err) return res.status(400).json({ error: err.message || "Upload failed" });
       try {
         const file = (req as any).file;
-        if (!file?.buffer?.length) return res.status(400).json({ error: "No PDF file received" });
-        const { PDFParse } = await import("pdf-parse");
-        const parser = new PDFParse({ data: file.buffer });
+        if (!file?.buffer?.length) return res.status(400).json({ error: "No file received" });
+        const isPdf =
+          file.mimetype === "application/pdf" ||
+          String(file.originalname || "").toLowerCase().endsWith(".pdf");
         let text = "";
-        try {
-          const result = await parser.getText();
-          text = result?.text || "";
-        } finally {
-          await parser.destroy().catch(() => {});
+        if (isPdf) {
+          const { PDFParse } = await import("pdf-parse");
+          const parser = new PDFParse({ data: file.buffer });
+          try {
+            const result = await parser.getText();
+            text = result?.text || "";
+          } finally {
+            await parser.destroy().catch(() => {});
+          }
         }
-        const items = parseGobildaOrder(text);
+        let items: { sku: string; name: string; quantity: number; unitPrice: number }[] = [];
+        if (isAIConfigured()) {
+          try {
+            const raw = isPdf
+              ? await aiGenerate(INVOICE_EXTRACT_SYSTEM, `Invoice text:\n${text.slice(0, 15000)}`, 4096)
+              : await aiGenerateWithImages(
+                  INVOICE_EXTRACT_SYSTEM,
+                  "Extract the purchasable line items from this invoice/receipt image.",
+                  [{ mimeType: file.mimetype, data: file.buffer.toString("base64") }],
+                  4096
+                );
+            items = parseInvoiceJson(raw);
+          } catch (e: any) {
+            console.error("invoice AI parse error:", e?.message);
+          }
+        }
+        if (!items.length && isPdf && text) {
+          items = parseGobildaOrder(text); // regex fallback for PDFs when AI is off or misses
+        }
         if (!items.length) {
           return res.status(422).json({
-            error: "No order line items found in this PDF. It may not be a goBILDA order/invoice, or the layout isn't recognized yet — send it to Sushil so the parser can be tuned.",
+            error: isPdf
+              ? "No order line items found in this file. The layout may not be recognized — try a clearer scan, or send it to Sushil so the parser can be tuned."
+              : "Could not read any line items from this image. AI invoice reading may not be configured — ask Sushil to check the Gemini API key.",
           });
         }
         res.json({ items, count: items.length });
       } catch (e: any) {
-        console.error("goBILDA PDF parse error:", e?.message);
-        res.status(500).json({ error: "Could not read that PDF. Make sure it's a valid goBILDA order PDF." });
+        console.error("invoice parse error:", e?.message);
+        res.status(500).json({ error: "Could not read that file." });
       }
     });
-  });
+  }
 
-  app.post("/api/inventory/import-gobilda/confirm", async (req, res) => {
+  app.post("/api/inventory/import-invoice/parse", (req, res) =>
+    handleInvoiceParse(req, res, invoiceUpload, "file")
+  );
+  // Legacy alias for the old goBILDA-only route (old client bundles).
+  app.post("/api/inventory/import-gobilda/parse", (req, res) =>
+    handleInvoiceParse(req, res, pdfUpload, "pdf")
+  );
+
+  async function handleInvoiceConfirm(req: any, res: any, sourceLabel: string) {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     try {
@@ -4438,7 +4530,7 @@ async function startServer() {
               sku,
               sku,
               quantity,
-              "Imported from goBILDA order",
+              sourceLabel,
               cost,
               date_added
             );
@@ -4451,10 +4543,18 @@ async function startServer() {
       }
       res.json({ added, merged, skipped });
     } catch (e) {
-      console.error("goBILDA import confirm error:", e);
+      console.error("invoice import confirm error:", e);
       res.status(500).json({ error: "Import failed" });
     }
-  });
+  }
+
+  app.post("/api/inventory/import-invoice/confirm", (req, res) =>
+    handleInvoiceConfirm(req, res, "Imported from order invoice")
+  );
+  // Legacy alias for the old goBILDA-only route (old client bundles).
+  app.post("/api/inventory/import-gobilda/confirm", (req, res) =>
+    handleInvoiceConfirm(req, res, "Imported from goBILDA order")
+  );
 
   // Documentation
   app.get("/api/documentation", async (req, res) => {

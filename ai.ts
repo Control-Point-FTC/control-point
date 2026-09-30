@@ -55,21 +55,31 @@ function extractText(data: any): string {
   }
 }
 
+export interface AIImage {
+  mimeType: string;
+  data: string; // base64
+}
+
 async function callGemini(opts: {
   system: string;
   user: string;
   maxTokens: number;
   stream: boolean;
   useSearchGrounding?: boolean;
+  images?: AIImage[];
   onChunk?: (text: string) => void;
 }): Promise<string> {
   const model = aiModel();
   const endpoint = opts.stream ? "streamGenerateContent" : "generateContent";
   const url = `${API_BASE}/models/${model}:${endpoint}${opts.stream ? "?alt=sse" : ""}`;
 
+  const parts: any[] = [{ text: opts.user }];
+  for (const img of opts.images || []) {
+    parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+  }
   const body: any = {
     system_instruction: { parts: [{ text: opts.system }] },
-    contents: [{ parts: [{ text: opts.user }] }],
+    contents: [{ parts }],
     generationConfig: { maxOutputTokens: opts.maxTokens, temperature: 0.7 },
   };
   if (opts.useSearchGrounding) {
@@ -152,6 +162,16 @@ export async function aiStream(
   onChunk: (text: string) => void
 ): Promise<string> {
   return callGemini({ system, user, maxTokens, stream: true, onChunk });
+}
+
+// Non-streaming generation with image attachments (invoice scans, etc.).
+export async function aiGenerateWithImages(
+  system: string,
+  user: string,
+  images: AIImage[],
+  maxTokens: number
+): Promise<string> {
+  return callGemini({ system, user, images, maxTokens, stream: false });
 }
 
 // --- Feature prompts -------------------------------------------------------
