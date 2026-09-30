@@ -202,7 +202,7 @@ async function ensureChatTemplate(teamId: number): Promise<void> {
     }
   }
   // Announcements are admin-post-only by default (applies to existing teams too)
-  await dbRun("UPDATE chat_channels SET post_restricted = 1 WHERE team_id = ? AND name = 'announcements'");
+  await dbRun("UPDATE chat_channels SET post_restricted = 1 WHERE team_id = ? AND name = 'announcements'", teamId);
 }
 async function backfillMessageChannels(teamId: number): Promise<void> {
   const general = await ensureGeneralChannel(teamId);
