@@ -35,10 +35,13 @@ export function meshFromOcct(occtMesh: any): THREE.BufferGeometry {
   } else {
     geo.computeVertexNormals();
   }
-  // occt index array is triplets: flatten to a plain index list
-  const tris: number[] = [];
-  for (const t of occtMesh.index.array) tris.push(t[0], t[1], t[2]);
-  geo.setIndex(tris);
+  // occt index.array is a flat list of vertex indices (e.g. [2,0,1, ...]) —
+  // pass it through directly. (An earlier version assumed triplets and pushed
+  // t[0]/t[1]/t[2] per element, which collapsed every triangle to zero area
+  // and rendered nothing while the triangle count still looked right.)
+  const idxArr = occtMesh.index.array;
+  const flat: number[] = Array.isArray(idxArr[0]) ? (idxArr as number[][]).flat() : Array.from(idxArr as number[]);
+  geo.setIndex(flat);
   return geo;
 }
 
