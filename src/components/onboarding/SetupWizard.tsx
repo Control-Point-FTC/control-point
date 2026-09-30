@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ArrowLeft, ArrowRight, Check, Compass, UserCircle, AlertTriangle } from 'lucide-react';
+import { X, ArrowLeft, ArrowRight, Check, Compass, UserCircle, AlertTriangle, Sun, Moon, Palette } from 'lucide-react';
 import {
   cn,
   buildProfilePatch,
@@ -7,10 +7,11 @@ import {
   type OnboardingState,
 } from './onboardingState';
 import { confirmDialog } from '../dialog';
+import { useTheme } from '../../hooks/useTheme';
 
 export interface SetupWizardProps {
   user: { name?: string; role?: string };
-  initialStep?: 0 | 1 | 2;
+  initialStep?: 0 | 1 | 2 | 3;
   /** Current onboarding state (used to render accurate resume/summary info). */
   state: OnboardingState;
   /** Persist a partial onboarding state patch; resolves with the merged state. */
@@ -24,7 +25,7 @@ export interface SetupWizardProps {
   onClose: () => void;
 }
 
-const STEP_LABELS = ['Your profile', 'Take the tour', 'All set'];
+const STEP_LABELS = ['Your profile', 'Appearance', 'Take the tour', 'All set'];
 
 const inputClass =
   'w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all';
@@ -39,7 +40,7 @@ export default function SetupWizard({
   onStartTour,
   onClose,
 }: SetupWizardProps) {
-  const [step, setStep] = useState<0 | 1 | 2>(initialStep);
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(initialStep);
   const [name, setName] = useState(user.name || '');
   const [role, setRole] = useState(user.role || '');
   const [busy, setBusy] = useState(false);
@@ -49,6 +50,7 @@ export default function SetupWizard({
     profile: state.steps.profile.status,
     tour: state.steps.tour.status,
   }));
+  const { theme, setTheme } = useTheme();
   const dialogRef = useRef<HTMLDivElement>(null);
   const dirtyRef = useRef(false);
 
@@ -135,7 +137,7 @@ export default function SetupWizard({
     try {
       await markStep('tour', 'skipped');
       setSummary((s) => ({ ...s, tour: 'skipped' }));
-      setStep(2);
+      setStep(3);
     } catch (e: any) {
       setError(e?.message || 'Could not save. Please try again.');
     } finally {
@@ -161,7 +163,7 @@ export default function SetupWizard({
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">
-              Setup · Step {step + 1} of 3
+              Setup · Step {step + 1} of 4
             </p>
             <h2 id="wizard-title" className="mt-1 font-display text-xl font-bold text-white">
               {STEP_LABELS[step]}
@@ -178,7 +180,7 @@ export default function SetupWizard({
 
         {/* Step dots */}
         <div className="mt-3 flex items-center gap-1.5" aria-hidden="true">
-          {[0, 1, 2].map((i) => (
+          {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
               className={cn('h-1.5 flex-1 rounded-full transition-colors', i <= step ? 'bg-accent' : 'bg-white/10')}
@@ -267,6 +269,94 @@ export default function SetupWizard({
         )}
 
         {step === 1 && (
+          <div className="mt-5">
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
+              <Palette className="w-6 h-6 text-accent" strokeWidth={2.25} />
+            </div>
+            <p className="text-sm text-text-muted leading-relaxed text-center">
+              Pick how Control Point looks. It applies instantly — and you can
+              change it anytime from the header.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-3" role="radiogroup" aria-label="Appearance">
+              {/* Dark option */}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={theme === 'dark'}
+                onClick={() => setTheme('dark')}
+                className={cn(
+                  'relative rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                  theme === 'dark'
+                    ? 'border-accent/70 ring-2 ring-accent/25 bg-accent/[0.06]'
+                    : 'border-white/10 bg-white/[0.03] hover:border-white/25'
+                )}
+              >
+                <span className="block rounded-xl overflow-hidden border border-white/10" aria-hidden="true">
+                  <span className="block h-16 p-2" style={{ backgroundColor: '#09090b' }}>
+                    <span className="block h-2 w-2/3 rounded-full mb-1.5" style={{ backgroundColor: '#ffc700' }} />
+                    <span className="block h-1.5 w-full rounded-full mb-1" style={{ backgroundColor: '#26262c' }} />
+                    <span className="block h-1.5 w-4/5 rounded-full" style={{ backgroundColor: '#26262c' }} />
+                  </span>
+                </span>
+                <span className="mt-2.5 flex items-center gap-1.5 text-sm font-bold text-white">
+                  <Moon className="w-4 h-4" /> Dark
+                </span>
+                <span className="block text-xs text-text-muted mt-0.5">Carbon black · default</span>
+                {theme === 'dark' && (
+                  <span className="absolute top-2 right-2 w-5 h-5 rounded-full bg-accent flex items-center justify-center">
+                    <Check className="w-3.5 h-3.5 text-accent-ink" strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+              {/* Light option */}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={theme === 'light'}
+                onClick={() => setTheme('light')}
+                className={cn(
+                  'relative rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                  theme === 'light'
+                    ? 'border-accent/70 ring-2 ring-accent/25 bg-accent/[0.06]'
+                    : 'border-white/10 bg-white/[0.03] hover:border-white/25'
+                )}
+              >
+                <span className="block rounded-xl overflow-hidden border border-black/10" aria-hidden="true">
+                  <span className="block h-16 p-2" style={{ backgroundColor: '#f4f4f2' }}>
+                    <span className="block h-2 w-2/3 rounded-full mb-1.5" style={{ backgroundColor: '#ffc700' }} />
+                    <span className="block h-1.5 w-full rounded-full mb-1" style={{ backgroundColor: '#d8d8d4' }} />
+                    <span className="block h-1.5 w-4/5 rounded-full" style={{ backgroundColor: '#d8d8d4' }} />
+                  </span>
+                </span>
+                <span className="mt-2.5 flex items-center gap-1.5 text-sm font-bold text-white">
+                  <Sun className="w-4 h-4" /> Light
+                </span>
+                <span className="block text-xs text-text-muted mt-0.5">Bright &amp; airy</span>
+                {theme === 'light' && (
+                  <span className="absolute top-2 right-2 w-5 h-5 rounded-full bg-accent flex items-center justify-center">
+                    <Check className="w-3.5 h-3.5 text-accent-ink" strokeWidth={3} />
+                  </span>
+                )}
+              </button>
+            </div>
+            <div className="mt-6 flex items-center justify-between gap-2">
+              <button
+                onClick={() => setStep(0)}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              >
+                <ArrowLeft className="w-4 h-4" /> Back
+              </button>
+              <button
+                onClick={() => setStep(2)}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-bold bg-accent text-accent-ink hover:brightness-105 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
+              >
+                Continue <ArrowRight className="w-4 h-4" strokeWidth={2.5} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
           <div className="mt-5 text-center">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
               <Compass className="w-6 h-6 text-accent" strokeWidth={2.25} />
@@ -285,7 +375,7 @@ export default function SetupWizard({
                     Retake the tour
                   </button>
                   <button
-                    onClick={() => setStep(2)}
+                    onClick={() => setStep(3)}
                     className="w-full py-3 rounded-xl font-bold text-[15px] text-text-muted hover:text-white hover:bg-white/[0.06] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                   >
                     Continue
@@ -315,17 +405,17 @@ export default function SetupWizard({
               </button>
             </div>
             <button
-              onClick={() => setStep(0)}
+              onClick={() => setStep(1)}
               className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-white transition-colors"
             >
-              <ArrowLeft className="w-3.5 h-3.5" /> Back to profile
+              <ArrowLeft className="w-3.5 h-3.5" /> Back to appearance
             </button>
               </>
             )}
           </div>
         )}
 
-        {step === 2 && (
+        {step === 3 && (
           <div className="mt-5 text-center">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent flex items-center justify-center mb-3">
               <Check className="w-6 h-6 text-accent-ink" strokeWidth={2.75} />

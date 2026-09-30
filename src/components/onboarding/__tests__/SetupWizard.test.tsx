@@ -52,7 +52,10 @@ describe('SetupWizard', () => {
     expect(onPatchState).toHaveBeenCalledWith(
       expect.objectContaining({ steps: expect.objectContaining({ profile: expect.objectContaining({ status: 'done' }) }) })
     );
-    // advances to the tour step
+    // advances to the appearance step
+    expect(await screen.findByRole('radiogroup', { name: /appearance/i })).toBeInTheDocument();
+    // continuing from appearance reaches the tour step
+    await user.click(screen.getByRole('button', { name: /^continue$/i }));
     expect(await screen.findByRole('button', { name: /start the tour/i })).toBeInTheDocument();
   });
 
@@ -78,12 +81,12 @@ describe('SetupWizard', () => {
     expect(onPatchState).toHaveBeenCalledWith(
       expect.objectContaining({ steps: expect.objectContaining({ profile: expect.objectContaining({ status: 'skipped' }) }) })
     );
-    expect(await screen.findByRole('button', { name: /start the tour/i })).toBeInTheDocument();
+    expect(await screen.findByRole('radiogroup', { name: /appearance/i })).toBeInTheDocument();
   });
 
   it('scenario 10 — tour step can be skipped for later', async () => {
     const user = userEvent.setup();
-    const { onPatchState } = wizardProps({ initialStep: 1 });
+    const { onPatchState } = wizardProps({ initialStep: 2 });
     await user.click(screen.getByRole('button', { name: /maybe later/i }));
     expect(onPatchState).toHaveBeenCalledWith(
       expect.objectContaining({ steps: expect.objectContaining({ tour: expect.objectContaining({ status: 'skipped' }) }) })
@@ -93,7 +96,7 @@ describe('SetupWizard', () => {
 
   it('scenario 10 — tour step can start the tour', async () => {
     const user = userEvent.setup();
-    const { onStartTour } = wizardProps({ initialStep: 1 });
+    const { onStartTour } = wizardProps({ initialStep: 2 });
     await user.click(screen.getByRole('button', { name: /start the tour/i }));
     expect(onStartTour).toHaveBeenCalledTimes(1);
   });
@@ -118,6 +121,30 @@ describe('SetupWizard', () => {
     onSaveProfile.mockResolvedValueOnce(undefined);
     await user.click(screen.getByRole('button', { name: /save & continue/i }));
     expect(onPatchState).toHaveBeenCalled();
+  });
+
+  it('appearance step applies the theme instantly and persists it', async () => {
+    const user = userEvent.setup();
+    window.localStorage.removeItem('cp-theme');
+    document.documentElement.classList.remove('light');
+    try {
+      wizardProps({ initialStep: 1 });
+      const group = screen.getByRole('radiogroup', { name: /appearance/i });
+      expect(group).toBeInTheDocument();
+      // dark is the default
+      expect(screen.getByRole('radio', { name: /dark/i })).toHaveAttribute('aria-checked', 'true');
+      // picking light flips <html> and persists
+      await user.click(screen.getByRole('radio', { name: /light/i }));
+      expect(document.documentElement.classList.contains('light')).toBe(true);
+      expect(window.localStorage.getItem('cp-theme')).toBe('light');
+      expect(screen.getByRole('radio', { name: /light/i })).toHaveAttribute('aria-checked', 'true');
+      // continue advances to the tour step
+      await user.click(screen.getByRole('button', { name: /^continue$/i }));
+      expect(await screen.findByRole('button', { name: /start the tour/i })).toBeInTheDocument();
+    } finally {
+      window.localStorage.removeItem('cp-theme');
+      document.documentElement.classList.remove('light');
+    }
   });
 
   it('scenario 14 — Escape closes the wizard when nothing is dirty', () => {

@@ -8,6 +8,12 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Apply the saved theme before React mounts to avoid a dark flash. -->
+    <script>
+      try {
+        if (localStorage.getItem('cp-theme') === 'light') document.documentElement.classList.add('light');
+      } catch (e) {}
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

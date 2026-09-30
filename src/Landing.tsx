@@ -171,7 +171,7 @@ function HeroMock() {
 export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => void; onGetStarted: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
-    <div className="min-h-screen bg-primary text-text-base overflow-x-clip">
+    <div className="theme-dark min-h-screen bg-primary text-text-base overflow-x-clip">
       {/* nav */}
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.06] bg-primary/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">

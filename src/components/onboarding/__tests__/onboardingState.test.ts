@@ -77,7 +77,7 @@ describe('scenario 11 — partial progress resumes', () => {
     const profileDone = normalizeOnboardingState({
       steps: { profile: { status: 'done' }, tour: { status: 'pending' } },
     });
-    expect(firstIncompleteWizardStep(profileDone)).toBe(1);
+    expect(firstIncompleteWizardStep(profileDone)).toBe(2);
     expect(firstIncompleteWizardStep(defaultOnboardingState())).toBe(0);
   });
   it('tolerates missing/corrupt server payloads', () => {

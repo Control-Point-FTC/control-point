@@ -101,10 +101,15 @@ export function checklistItems(s: OnboardingState): ChecklistItem[] {
   ];
 }
 
-/** First wizard step that still needs attention (for "Continue setup"). */
-export function firstIncompleteWizardStep(s: OnboardingState): 0 | 1 {
+/**
+ * First wizard step that still needs attention (for "Continue setup").
+ * Wizard order: 0 = profile, 1 = appearance, 2 = tour, 3 = all set.
+ * Appearance is never "incomplete": it defaults to dark, applies instantly,
+ * and persists to localStorage — so resume skips straight to the tour.
+ */
+export function firstIncompleteWizardStep(s: OnboardingState): 0 | 2 {
   if (s.steps.profile.status !== 'done') return 0;
-  return 1;
+  return 2;
 }
 
 // ---------------------------------------------------------------------------

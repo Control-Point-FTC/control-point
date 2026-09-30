@@ -90,6 +90,74 @@
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 199, 0, 0.12);
 }
 
+/* ---------- light mode ---------- */
+/* The app is dark-first; flipping the design tokens plus Tailwind's
+   white/black utilities under `html.light` makes the whole UI follow the
+   theme without touching every component. Opacity modifiers (bg-white/10
+   etc.) resolve through the same vars via color-mix, so they flip too. */
+:root {
+  color-scheme: dark;
+}
+html.light {
+  color-scheme: light;
+
+  --color-primary: #f4f4f2;      /* light page background */
+  --color-secondary: #ffffff;    /* raised surface */
+  --color-elevated: #ffffff;     /* cards, popovers */
+  --color-accent: #ffc700;       /* volt yellow — kept for brand */
+  --color-accent-hover: #eab308; /* slightly deepened for light surfaces */
+  --color-accent-ink: #231a00;   /* text on volt */
+  --color-accent-soft: #ffc70030;/* volt tint fills */
+  --color-line: #00000014;       /* hairline borders */
+  --color-info: #0284c7;
+  --color-success: #059669;
+  --color-warning: #ea580c;
+  --color-text-base: #09090b;
+  --color-text-muted: #52525b;
+
+  /* KEY TRICK: remap Tailwind's white/black so hardcoded dark-first
+     utilities (text-white, bg-white/5, border-white/10, bg-black/70, …)
+     automatically invert in light mode. */
+  --color-white: #18181b;
+  --color-black: #fafaf9;
+}
+
+html.light .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+}
+html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
+}
+
+/* Destructive palette buttons (App.tsx, ActionProposalCard) pair
+   bg-rose-600/bg-red-500 with text-white — keep true white text there so
+   the label stays crisp in light mode. */
+html.light :is(.bg-rose-600, .bg-rose-500, .bg-red-600, .bg-red-500) {
+  color: #ffffff;
+}
+
+/* Pin the marketing landing page to its designed dark look, in either mode.
+   The doubled selector beats `html.light` on specificity; the plain one wins
+   over :root by source order. */
+.theme-dark,
+html.light .theme-dark {
+  --color-primary: #09090b;
+  --color-secondary: #121215;
+  --color-elevated: #1a1a1f;
+  --color-accent: #ffc700;
+  --color-accent-hover: #ffd633;
+  --color-accent-ink: #231a00;
+  --color-accent-soft: #ffc7001f;
+  --color-line: #ffffff14;
+  --color-info: #38bdf8;
+  --color-success: #34d399;
+  --color-warning: #fb923c;
+  --color-text-base: #fafaf8;
+  --color-text-muted: #a1a1aa;
+  --color-white: #ffffff;
+  --color-black: #000000;
+}
+
 /* ---------- scrollbars ---------- */
 .custom-scrollbar::-webkit-scrollbar {
   width: 6px;
