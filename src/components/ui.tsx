@@ -15,8 +15,8 @@ function getCSSVariable(name: string): string {
 
 // --- Shared primitives (moved out of App.tsx) ---
 
-export const Card = ({ children, className, title, subtitle, icon: Icon }: any) => (
-  <div className={cn("card-surface p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgba(0,0,0,0.35)]", className)}>
+export const Card = ({ children, className, title, subtitle, icon: Icon, ...rest }: any) => (
+  <div className={cn("card-surface p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgba(0,0,0,0.35)]", className)} {...rest}>
     {(title || Icon) && (
       <div className="flex items-center justify-between mb-1">
         <div>

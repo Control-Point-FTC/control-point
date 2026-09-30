@@ -4,10 +4,12 @@ import { SetupChecklist, shouldShowChecklist } from '../onboarding';
 import DashboardHeader from './DashboardHeader';
 import DashboardMetricRow from './DashboardMetricRow';
 import MyStatusStrip from './MyStatusStrip';
+import AttendanceTrend from './AttendanceTrend';
 import TeamActivity, { type ActivityItem } from './TeamActivity';
 import UpcomingTimeline from './UpcomingTimeline';
 import TeamSummary from './TeamSummary';
-import CompetitionSnapshot from './CompetitionSnapshot';
+import TeamPerformance from './TeamPerformance';
+import AccessCodeCard from './AccessCodeCard';
 
 interface DashboardViewProps {
   data: any;
@@ -18,7 +20,7 @@ interface DashboardViewProps {
   updateInsights: () => void;
   isAiLoading: boolean;
   ThinkingIndicator: any;
-  updateSummary: () => void;
+  updateSummary: (force?: boolean) => void;
   teams: any[];
   onboardingState: any;
   onContinueSetup: () => void;
@@ -28,15 +30,20 @@ interface DashboardViewProps {
 }
 
 /**
- * The admin dashboard, composed from focused components:
+ * The full team dashboard, in the classic rich layout with the current
+ * visual system:
  *
- *   <DashboardHeader />        — who / which team / what day
- *   <DashboardMetricRow />     — attendance, open tasks, up next, budget
- *   <MyStatusStrip />          — your own check-in for today
- *   <TeamActivity />           — what the team has been up to
- *   <UpcomingTimeline />       — what's coming, grouped by day
- *   <TeamSummary />            — Bruno's operational overview
- *   <CompetitionSnapshot />    — compact FTC headline numbers
+ *   <DashboardHeader />     — who / which team / what day
+ *   <DashboardMetricRow />  — attendance, open tasks, up next, budget
+ *   <MyStatusStrip />       — your own check-in for today
+ *   <AttendanceTrend />     — present check-ins, last 14 days (clickable)
+ *   <UpcomingTimeline />    — what's coming, grouped by day
+ *   <TeamActivity />        — what the team has been up to (clickable rows)
+ *   <TeamSummary />         — Bruno's summary / insights tabs
+ *   <TeamPerformance />     — FTC OPR detail with season switcher
+ *   <AccessCodeCard />      — team join code, copy + regenerate
+ *
+ * Every card leads somewhere: click a widget to open its full view.
  */
 export default function DashboardView({
   data,
@@ -87,6 +94,8 @@ export default function DashboardView({
 
   const totalBudget = budget.reduce((acc: number, item: any) =>
     item.type === 'income' ? acc + item.amount : acc - item.amount, 0) || 0;
+
+  const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
 
   // ── team activity feed (last 7 days) ──────────────────────
   const weekAgoMs = Date.now() - 7 * 864e5;
@@ -157,8 +166,6 @@ export default function DashboardView({
   });
   const activityItems = feed.slice(0, 12);
 
-  const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
-
   return (
     <>
       {onboardingState && shouldShowChecklist(onboardingState) && (
@@ -198,22 +205,27 @@ export default function DashboardView({
         onRefresh={onRefresh}
       />
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
-        <TeamActivity items={activityItems} />
-        <div className="xl:col-span-5 flex flex-col gap-3 sm:gap-4">
-          <UpcomingTimeline events={events} onNavigate={navigate} />
-          <TeamSummary
-            summary={data.summary}
-            insights={insights}
-            isAiLoading={isAiLoading}
-            ThinkingIndicator={ThinkingIndicator}
-            onRefreshSummary={() => updateSummary()}
-            onRefreshInsights={() => updateInsights()}
-          />
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
+        <AttendanceTrend attendance={data.attendance || []} onNavigate={navigate} />
+        <UpcomingTimeline events={events} onNavigate={navigate} />
       </div>
 
-      <CompetitionSnapshot />
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
+        <TeamActivity items={activityItems} onNavigate={navigate} />
+        <TeamSummary
+          summary={data.summary}
+          insights={insights}
+          isAiLoading={isAiLoading}
+          ThinkingIndicator={ThinkingIndicator}
+          onRefreshSummary={() => updateSummary(true)}
+          onRefreshInsights={() => updateInsights()}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
+        <TeamPerformance onNavigate={navigate} />
+        <AccessCodeCard team={myTeam} setLoading={setLoading} onRefresh={onRefresh} />
+      </div>
     </>
   );
 }

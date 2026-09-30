@@ -10,6 +10,15 @@ const icons: Record<string, any> = {
   budget: Wallet,
 };
 
+/** Where each activity kind leads when clicked. */
+const kindRoutes: Record<ActivityItem['kind'], string> = {
+  task: '/tasks',
+  event: '/calendar',
+  attendance: '/attendance',
+  member: '/teams',
+  budget: '/budget',
+};
+
 export interface ActivityItem {
   kind: 'task' | 'event' | 'attendance' | 'member' | 'budget';
   title: string;
@@ -41,8 +50,9 @@ export function activityWhen(item: ActivityItem): string {
 /**
  * The team's pulse: task completions, new events, recorded attendance,
  * new members, and budget transactions — each with a human timestamp.
+ * Every row is clickable and leads to the relevant section.
  */
-export default function TeamActivity({ items }: { items: ActivityItem[] }) {
+export default function TeamActivity({ items, onNavigate }: { items: ActivityItem[]; onNavigate: (path: string) => void }) {
   return (
     <Card
       title="Team Activity"
@@ -62,7 +72,9 @@ export default function TeamActivity({ items }: { items: ActivityItem[] }) {
             return (
               <div
                 key={`${a.kind}-${i}`}
-                className="flex items-start gap-3 p-3 rounded-xl hover:bg-white/[0.04] transition-colors"
+                onClick={() => onNavigate(kindRoutes[a.kind])}
+                className="flex items-start gap-3 p-3 rounded-xl hover:bg-white/[0.04] hover:border-accent/20 border border-transparent transition-all cursor-pointer"
+                title={`Open ${kindRoutes[a.kind].replace('/', '')}`}
               >
                 <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
                   <Icon className="w-4 h-4 text-accent" />
