@@ -6503,8 +6503,8 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
 
-  // Bulk paste: paste a table/text, parse rows, preview, log them all.
-  // "Parse" is a deterministic local parser; "Parse with Bruno" uses the
+  // Bruno AI log: paste a table/text, parse rows, preview, log them all.
+  // "Quick parse" is a deterministic local parser; "Parse with Bruno" uses the
   // same Bruno AI for messy natural language (```outreach proposals).
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
@@ -6530,7 +6530,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
     let agg = '';
     try {
       await streamBuildHelper([
-        { role: 'user', text: `You are helping bulk-log outreach events (demos, workshops, volunteering, fundraisers, presentations). The user pasted the text below into the "Bulk paste" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entries proposed. Extract EVERY outreach event mentioned and propose them with the \`\`\`outreach block exactly as your outreach log skill specifies. Resolve relative dates against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
+        { role: 'user', text: `You are helping bulk-log outreach events (demos, workshops, volunteering, fundraisers, presentations). The user pasted the text below into the "Bruno AI" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entries proposed. Extract EVERY outreach event mentioned and propose them with the \`\`\`outreach block exactly as your outreach log skill specifies. Resolve relative dates against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
       ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
       const proposals = extractActionProposals(agg);
       const items = proposals.find(p => p.kind === 'outreach')?.items || [];
@@ -6647,22 +6647,22 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
           <p className="text-sm text-text-muted mt-1">Track community events and service hours.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-          <Button variant="secondary" onClick={() => setBulkOpen(!bulkOpen)} className="w-full sm:w-auto"><ClipboardPaste className="w-4 h-4" /> Bulk paste</Button>
+          <Button variant="secondary" onClick={() => setBulkOpen(!bulkOpen)} className="w-full sm:w-auto"><ClipboardPaste className="w-4 h-4" /> Bruno AI</Button>
           <Button onClick={openAdd} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
         </div>
       </div>
 
       {bulkOpen && (
-        <Card title="Bulk paste" subtitle="Paste a table or text — parse it and log every event at once" icon={ClipboardPaste}>
+        <Card title="Bruno AI" subtitle="Paste rows or describe events in plain words — Bruno turns them into log entries in one go" icon={ClipboardPaste}>
           <div className="space-y-3">
             <textarea
               className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-accent/50 transition-colors h-28"
-              placeholder={"Paste rows like:\nRobotics demo | 2026-09-12 | 2 | River Edge Library | 40 attendees\nSTEM workshop | Sep 18 | 3h | NJIT | $250 raised\n\n…or paste straight from a spreadsheet — tabs work too."}
+              placeholder={"Paste rows like:\nRobotics demo | 2026-09-12 | 2 | Community center | 40 attendees\nSTEM workshop | Sep 18 | 3h | Local high school | $250 raised\n\n…or paste straight from a spreadsheet — tabs work too."}
               value={bulkText}
               onChange={(e: any) => setBulkText(e.target.value)}
             />
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="secondary" className="!text-xs" onClick={handleBulkParse} disabled={!bulkText.trim()}>Parse rows</Button>
+              <Button variant="secondary" className="!text-xs" onClick={handleBulkParse} disabled={!bulkText.trim()}>Quick parse</Button>
               <Button variant="secondary" className="!text-xs" onClick={handleBulkAiParse} disabled={bulkBusy || !bulkText.trim()}>
                 <Sparkles className="w-3.5 h-3.5" /> {bulkBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
               </Button>
