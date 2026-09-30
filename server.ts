@@ -140,6 +140,68 @@ async function ensureGeneralChannel(teamId: number): Promise<any> {
   }
   return general;
 }
+
+// Default channel template for every team: two categories with starter
+// channels (matches the Discord layout Sushil picked). Idempotent — only
+// creates what's missing, and adopts pre-existing channels (e.g. #general
+// from before categories existed) into their template category.
+const CHAT_TEMPLATE: Array<{ category: string; channels: Array<{ name: string; topic: string }> }> = [
+  {
+    category: 'Club Information',
+    channels: [
+      { name: 'announcements', topic: 'Important club updates' },
+      { name: 'new-users', topic: 'Say hello when you join' },
+      { name: 'welcome-and-rules', topic: 'Start here — how this club works' },
+    ],
+  },
+  {
+    category: 'Robotics Club',
+    channels: [
+      { name: 'general', topic: 'Team-wide chat' },
+      { name: 'cad-challenges', topic: 'CAD design challenges' },
+      { name: 'club-photos', topic: 'Share your build photos' },
+      { name: 'off-topic', topic: 'Anything goes' },
+    ],
+  },
+];
+async function ensureChatCategory(teamId: number, name: string, position: number): Promise<any> {
+  let cat = (await dbGet(
+    "SELECT * FROM channel_categories WHERE team_id = ? AND name = ?",
+    teamId, name
+  )) as any;
+  if (!cat) {
+    const info = (await dbRun(
+      "INSERT INTO channel_categories (team_id, name, position) VALUES (?, ?, ?)",
+      teamId, name, position
+    ));
+    cat = (await dbGet("SELECT * FROM channel_categories WHERE id = ?", info.lastInsertRowid)) as any;
+  }
+  return cat;
+}
+async function ensureChatTemplate(teamId: number): Promise<void> {
+  let catPos = 0;
+  for (const group of CHAT_TEMPLATE) {
+    const cat = await ensureChatCategory(teamId, group.category, catPos++);
+    let chPos = (((await dbGet(
+      "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM chat_channels WHERE team_id = ? AND category_id = ?",
+      teamId, cat.id
+    )) as any)?.p ?? 0);
+    for (const ch of group.channels) {
+      const existing = (await dbGet(
+        "SELECT id, category_id FROM chat_channels WHERE team_id = ? AND name = ?",
+        teamId, ch.name
+      )) as any;
+      if (!existing) {
+        await dbRun(
+          "INSERT INTO chat_channels (team_id, name, topic, position, category_id) VALUES (?, ?, ?, ?, ?)",
+          teamId, ch.name, ch.topic, chPos++, cat.id
+        );
+      } else if (!existing.category_id) {
+        await dbRun("UPDATE chat_channels SET category_id = ? WHERE id = ?", cat.id, existing.id);
+      }
+    }
+  }
+}
 async function backfillMessageChannels(teamId: number): Promise<void> {
   const general = await ensureGeneralChannel(teamId);
   (await dbRun(
@@ -572,6 +634,21 @@ if (!messageReplyColumns.some((c: any) => c.name === 'is_forwarded')) {
 }
 if (!messageReplyColumns.some((c: any) => c.name === 'forwarded_from')) {
   (await dbExec("ALTER TABLE messages ADD COLUMN forwarded_from TEXT DEFAULT ''"));
+}
+
+// Channel categories (Discord-style groups)
+(await dbExec(`CREATE TABLE IF NOT EXISTS channel_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  position INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
+  UNIQUE(team_id, name)
+)`));
+const chatChannelCols = (await dbAll("PRAGMA table_info(chat_channels)"));
+if (!chatChannelCols.some((c: any) => c.name === 'category_id')) {
+  (await dbExec("ALTER TABLE chat_channels ADD COLUMN category_id INTEGER"));
 }
 
 const teamColumns = (await dbAll("PRAGMA table_info(teams)"));
@@ -3486,7 +3563,7 @@ async function startServer() {
   app.get("/api/chat/channels", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    await ensureGeneralChannel(auth.teamId!);
+    await ensureChatTemplate(auth.teamId!);
     const channels = (await dbAll(
       "SELECT * FROM chat_channels WHERE team_id = ? ORDER BY position ASC, id ASC",
       auth.teamId
@@ -3500,11 +3577,21 @@ async function startServer() {
     const rawName = String(req.body?.name || '').trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
     if (!rawName) return res.status(400).json({ error: "Channel name can't be empty" });
     const topic = String(req.body?.topic || '').trim().slice(0, 140);
+    let categoryId: number | null = parseInt(req.body?.category_id, 10);
+    if (!Number.isFinite(categoryId)) categoryId = null;
+    if (categoryId != null) {
+      const cat = (await dbGet("SELECT id FROM channel_categories WHERE id = ? AND team_id = ?", categoryId, auth.teamId)) as any;
+      if (!cat) return res.status(400).json({ error: "Category not found" });
+    }
     try {
-      const pos = ((await dbGet("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM chat_channels WHERE team_id = ?", auth.teamId)) as any)?.p ?? 0;
+      const posRow = (await dbGet(
+        "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM chat_channels WHERE team_id = ? AND (category_id = ? OR (category_id IS NULL AND ? IS NULL))",
+        auth.teamId, categoryId, categoryId
+      )) as any;
+      const pos = posRow?.p ?? 0;
       const info = (await dbRun(
-        "INSERT INTO chat_channels (team_id, name, topic, position, created_by) VALUES (?, ?, ?, ?, ?)",
-        auth.teamId, rawName, topic, pos, auth.memberId
+        "INSERT INTO chat_channels (team_id, name, topic, position, category_id, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+        auth.teamId, rawName, topic, pos, categoryId, auth.memberId
       ));
       const channel = (await dbGet("SELECT * FROM chat_channels WHERE id = ?", info.lastInsertRowid));
       broadcastToTeam(auth.teamId!, { type: "channel_created", channel });
@@ -3515,6 +3602,96 @@ async function startServer() {
       }
       throw e;
     }
+  });
+
+  app.patch("/api/chat/channels/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const channel = (await dbGet("SELECT * FROM chat_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
+    if (!channel) return res.status(404).json({ error: "Channel not found" });
+    const rawCat = req.body?.category_id;
+    const categoryId: number | null = rawCat === null || rawCat === undefined || rawCat === '' ? null : parseInt(rawCat, 10);
+    if (categoryId !== null && !Number.isFinite(categoryId)) {
+      return res.status(400).json({ error: "Invalid category" });
+    }
+    if (categoryId != null) {
+      const cat = (await dbGet("SELECT id FROM channel_categories WHERE id = ? AND team_id = ?", categoryId, auth.teamId)) as any;
+      if (!cat) return res.status(400).json({ error: "Category not found" });
+    }
+    await dbRun("UPDATE chat_channels SET category_id = ? WHERE id = ?", categoryId, id);
+    const updated = (await dbGet("SELECT * FROM chat_channels WHERE id = ?", id)) as any;
+    broadcastToTeam(auth.teamId!, { type: "channel_updated", channel: updated });
+    res.json({ channel: updated });
+  });
+
+  // Channel categories (Discord-style groups)
+  app.get("/api/chat/categories", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    await ensureChatTemplate(auth.teamId!);
+    const cats = (await dbAll(
+      "SELECT * FROM channel_categories WHERE team_id = ? ORDER BY position ASC, id ASC",
+      auth.teamId
+    )) as any[];
+    res.json(cats);
+  });
+
+  app.post("/api/chat/categories", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!name) return res.status(400).json({ error: "Category name can't be empty" });
+    try {
+      const pos = (((await dbGet("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM channel_categories WHERE team_id = ?", auth.teamId)) as any)?.p ?? 0);
+      const info = (await dbRun(
+        "INSERT INTO channel_categories (team_id, name, position) VALUES (?, ?, ?)",
+        auth.teamId, name, pos
+      ));
+      const category = (await dbGet("SELECT * FROM channel_categories WHERE id = ?", info.lastInsertRowid)) as any;
+      broadcastToTeam(auth.teamId!, { type: "category_created", category });
+      res.json({ category });
+    } catch (e: any) {
+      if (String(e?.message || '').includes('UNIQUE')) {
+        return res.status(409).json({ error: "A category with that name already exists" });
+      }
+      throw e;
+    }
+  });
+
+  app.patch("/api/chat/categories/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const cat = (await dbGet("SELECT * FROM channel_categories WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
+    if (!cat) return res.status(404).json({ error: "Category not found" });
+    const name = String(req.body?.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+    if (!name) return res.status(400).json({ error: "Category name can't be empty" });
+    try {
+      await dbRun("UPDATE channel_categories SET name = ? WHERE id = ?", name, id);
+    } catch (e: any) {
+      if (String(e?.message || '').includes('UNIQUE')) {
+        return res.status(409).json({ error: "A category with that name already exists" });
+      }
+      throw e;
+    }
+    const updated = (await dbGet("SELECT * FROM channel_categories WHERE id = ?", id)) as any;
+    broadcastToTeam(auth.teamId!, { type: "category_updated", category: updated });
+    res.json({ category: updated });
+  });
+
+  app.delete("/api/chat/categories/:id", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    const cat = (await dbGet("SELECT * FROM channel_categories WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
+    if (!cat) return res.status(404).json({ error: "Category not found" });
+    await dbBatch([
+      { sql: "UPDATE chat_channels SET category_id = NULL WHERE category_id = ?", args: [id] },
+      { sql: "DELETE FROM channel_categories WHERE id = ?", args: [id] },
+    ]);
+    broadcastToTeam(auth.teamId!, { type: "category_deleted", categoryId: id });
+    res.json({ ok: true });
   });
 
   app.delete("/api/chat/channels/:id", async (req, res) => {
