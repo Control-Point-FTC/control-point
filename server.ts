@@ -49,6 +49,12 @@ import {
   ATTENDANCE_SYSTEM,
   COACH_SYSTEM,
 } from "./ai.js";
+import {
+  youtubeApi as youtubeApiImpl,
+  pickYouTubeChannel as pickYouTubeChannelImpl,
+  resolveYouTubeChannel as resolveYouTubeChannelImpl,
+  fetchYouTubeStats as fetchYouTubeStatsImpl,
+} from "./server/youtube.js";
 
 // Last-resort safety net: a single malformed request must never take the
 // whole server down for every team. Log it and keep serving; Render's
@@ -446,6 +452,22 @@ if (!memberColumns.some((c: any) => c.name === 'ai_max_tokens_reply')) {
   created_at TEXT DEFAULT (datetime('now'))
 )`));
 
+// Hot-path indexes (verified against actual query patterns). All IF NOT EXISTS
+// and additive — safe to run on every boot against old or new databases.
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_members_email ON members(email)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_members_team ON members(team_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_members_team_active ON members(team_id, is_active)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_attendance_member ON attendance(member_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_attendance_team_date ON attendance(team_id, date)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_messages_team_ts ON messages(team_id, timestamp)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_sessions_member ON sessions(member_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_social_profiles_team ON social_profiles(team_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_social_stats_profile ON social_stats(profile_id, recorded_at)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_bruno_chats_team ON bruno_chats(team_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_bruno_messages_chat ON bruno_messages(chat_id)`));
+
 const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {
   (await dbExec("ALTER TABLE tasks ADD COLUMN is_board INTEGER DEFAULT 0"));
@@ -503,6 +525,7 @@ if (!memberColumns.some((c: any) => c.name === 'avatar_url')) {
     FOREIGN KEY(user_id) REFERENCES members(id)
   )
 `));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id)`));
 
 // Messages table migrations
 const messageColumns = (await dbAll("PRAGMA table_info(messages)"));
@@ -1197,7 +1220,12 @@ async function startServer() {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
-  app.use(express.json());
+  app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
+
+  // Health check for Render/uptime monitors. Cheap, unauthenticated, no AI/DB writes.
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true, time: new Date().toISOString(), uptimeSec: Math.round(process.uptime()) });
+  });
   
   // Configure multer for file uploads
   const uploadDir = path.join(process.cwd(), 'uploads');
@@ -1505,6 +1533,12 @@ async function startServer() {
   // and TikTok Login Kit (per-team OAuth connection).
   const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "";
   const TIKTOK_CLIENT_KEY = process.env.TIKTOK_CLIENT_KEY || "";
+  // TikTok Login Kit is UNVERIFIED — hard kill switch. Flip to true only after
+  // the TikTok dev app + OAuth flow are tested end to end. While false: the
+  // client hides all TikTok UI, /api/auth/config reports tiktokEnabled: false,
+  // connect/callback refuse, and sync skips TikTok profiles (rows stay in the
+  // DB so re-enabling loses nothing).
+  const TIKTOK_ENABLED = false;
   const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
   const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || "";
 
@@ -1537,7 +1571,7 @@ async function startServer() {
       discordEnabled: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
       githubEnabled: !!(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET),
       youtubeEnabled: !!YOUTUBE_API_KEY,
-      tiktokEnabled: !!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET),
+      tiktokEnabled: TIKTOK_ENABLED && !!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET),
     });
   });
 
@@ -1926,10 +1960,13 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const member = (await dbGet("SELECT id, team_id, name, role, email, is_setup, is_board, scopes, account_type, avatar_url FROM members WHERE id = ?", auth.memberId)) as any;
-    const attendance = await dbAll("SELECT * FROM attendance WHERE member_id = ?", auth.memberId);
-    const feedback = await dbAll("SELECT * FROM feedback WHERE user_id = ?", auth.memberId);
-    const messages = await dbAll("SELECT * FROM messages WHERE sender_id = ?", auth.memberId);
-    const notifications = await dbAll("SELECT * FROM notifications WHERE user_id = ?", auth.memberId);
+    // Bounded export: explicit columns (no SELECT *) and per-table row caps
+    // so a long-tenured user can't trigger an unbounded dump.
+    const EXPORT_LIMIT = 5000;
+    const attendance = await dbAll("SELECT id, team_id, member_id, date, status, reason, is_excused FROM attendance WHERE member_id = ? ORDER BY date DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
+    const feedback = await dbAll("SELECT id, team_id, user_id, category, message, status, created_at FROM feedback WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
+    const messages = await dbAll("SELECT id, team_id, sender_id, content, timestamp FROM messages WHERE sender_id = ? ORDER BY timestamp DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
+    const notifications = await dbAll("SELECT id, user_id, content, type, is_read, timestamp FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
     res.json({ exported_at: new Date().toISOString(), member, attendance, feedback, messages, notifications });
   });
 
@@ -1952,24 +1989,32 @@ async function startServer() {
     }
     const rows = (await dbAll("SELECT id, avatar_url FROM members WHERE email = ?", email)) as any[];
     const ids = rows.map((r) => r.id);
-    // Remove avatar files (best effort)
-    for (const r of rows) {
+    // Remove avatar files (best effort, async — never block the event loop)
+    await Promise.all(rows.map(async (r) => {
       try {
         if (r.avatar_url?.startsWith('/uploads/')) {
           const p = path.join(uploadDir, r.avatar_url.slice('/uploads/'.length));
-          if (fs.existsSync(p)) fs.unlinkSync(p);
+          await fs.promises.unlink(p).catch(() => {});
         }
       } catch { /* best effort */ }
-    }
+    }));
     if (ids.length) {
       const ph = ids.map(() => "?").join(",");
-      await dbRun(`DELETE FROM sessions WHERE member_id IN (${ph})`, ...ids);
-      await dbRun(`DELETE FROM stream_sessions WHERE member_id IN (${ph})`, ...ids);
-      await dbRun(`DELETE FROM notifications WHERE user_id IN (${ph})`, ...ids);
-      await dbRun(`DELETE FROM member_roles WHERE member_id IN (${ph})`, ...ids);
+      // Independent deletes → one batch (atomic on Turso, single round trip)
+      await dbBatch([
+        { sql: `DELETE FROM sessions WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM stream_sessions WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM notifications WHERE user_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM member_roles WHERE member_id IN (${ph})`, args: ids },
+        { sql: "DELETE FROM members WHERE email = ?", args: [email] },
+        { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
+      ]);
+    } else {
+      await dbBatch([
+        { sql: "DELETE FROM members WHERE email = ?", args: [email] },
+        { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
+      ]);
     }
-    await dbRun("DELETE FROM members WHERE email = ?", email);
-    await dbRun("DELETE FROM onboarding_state WHERE email = ?", normalizeOnboardingEmail(email) || "");
     res.json({ ok: true });
   });
 
@@ -4040,60 +4085,19 @@ async function startServer() {
   }
 
   // --- YouTube Data API v3 ---
+  // Pure helpers live in youtube.ts (unit-tested); these thin wrappers inject
+  // the configured server API key.
   async function youtubeApi(path: string, params: Record<string, string>): Promise<any> {
-    const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
-    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-    url.searchParams.set("key", YOUTUBE_API_KEY);
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 10000);
-    try {
-      const r = await fetch(url.toString(), { signal: ctl.signal });
-      if (!r.ok) {
-        const body = await r.text().catch(() => "");
-        throw new Error(`YouTube API error ${r.status}: ${body.slice(0, 160)}`);
-      }
-      return await r.json();
-    } finally {
-      clearTimeout(t);
-    }
+    return youtubeApiImpl(YOUTUBE_API_KEY, path, params);
   }
   function pickYouTubeChannel(ch: any) {
-    const s = ch.statistics || {};
-    return {
-      displayName: ch.snippet?.title || "",
-      avatarUrl: ch.snippet?.thumbnails?.default?.url || "",
-      followers: Number(s.subscriberCount || 0),
-      views: Number(s.viewCount || 0),
-      posts: Number(s.videoCount || 0),
-    };
+    return pickYouTubeChannelImpl(ch);
   }
   async function resolveYouTubeChannel(input: string) {
-    const clean = input.trim();
-    // Direct channel URL or bare channel ID
-    const m = clean.match(/youtube\.com\/channel\/([A-Za-z0-9_-]{10,})/) || clean.match(/^UC[A-Za-z0-9_-]{20,}$/);
-    if (m) {
-      const id = m[1] || m[0];
-      const data = await youtubeApi("channels", { part: "snippet,statistics", id });
-      const ch = data.items?.[0];
-      if (!ch) throw new Error("Channel not found on YouTube");
-      return { channelId: ch.id, handle: null as string | null, ...pickYouTubeChannel(ch) };
-    }
-    // @handle lookup — also accepts full URLs like https://www.youtube.com/@SomeHandle
-    let handle = clean;
-    const urlHandle = clean.match(/youtube\.com\/@([^/?#\s]+)/i);
-    if (urlHandle) handle = urlHandle[1];
-    else handle = clean.replace(/^@/, "").split(/[/?#]/)[0];
-    if (!handle) throw new Error("Enter a channel handle or URL");
-    const data = await youtubeApi("channels", { part: "snippet,statistics", forHandle: handle });
-    const ch = data.items?.[0];
-    if (!ch) throw new Error(`No YouTube channel found for @${handle}`);
-    return { channelId: ch.id, handle: "@" + handle, ...pickYouTubeChannel(ch) };
+    return resolveYouTubeChannelImpl(input, YOUTUBE_API_KEY);
   }
   async function fetchYouTubeStats(channelId: string) {
-    const data = await youtubeApi("channels", { part: "snippet,statistics", id: channelId });
-    const ch = data.items?.[0];
-    if (!ch) throw new Error("YouTube channel not found");
-    return pickYouTubeChannel(ch);
+    return fetchYouTubeStatsImpl(YOUTUBE_API_KEY, channelId);
   }
 
   // --- TikTok Login Kit ---
@@ -4164,6 +4168,7 @@ async function startServer() {
         return { ok: true };
       }
       if (profile.platform === "tiktok") {
+        if (!TIKTOK_ENABLED) return { ok: false, error: "TikTok is temporarily unavailable" };
         if (!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET)) return { ok: false, error: "TikTok not configured" };
         const token = await getTikTokAccessToken(profile);
         if (!token) return { ok: false, error: "TikTok connection expired — reconnect it" };
@@ -4201,7 +4206,7 @@ async function startServer() {
       const profiles = (await dbAll("SELECT * FROM social_profiles")) as any[];
       let ok = 0;
       for (const p of profiles) {
-        if (p.platform === "tiktok" && p.token_status === "needs_reconnect") continue;
+        if (p.platform === "tiktok" && (!TIKTOK_ENABLED || p.token_status === "needs_reconnect")) continue;
         const r = await syncSocialProfile(p);
         if (r.ok) ok++;
       }
@@ -4218,6 +4223,9 @@ async function startServer() {
     const auth = await requirePerm(req, res, "manage_outreach");
     if (!auth) return;
     if (!auth.teamId) return res.status(400).json({ error: "No team selected" });
+    if (!TIKTOK_ENABLED) {
+      return res.status(400).json({ error: "TikTok is temporarily unavailable while we verify the integration" });
+    }
     if (!(TIKTOK_CLIENT_KEY && TIKTOK_CLIENT_SECRET)) {
       return res.status(400).json({ error: "TikTok is not configured yet" });
     }
@@ -4238,6 +4246,7 @@ async function startServer() {
   });
 
   app.get("/api/auth/tiktok/callback", async (req, res) => {
+    if (!TIKTOK_ENABLED) return res.redirect("/outreach?social=tiktok_unavailable");
     try {
       const { code, state, error: tiktokError } = req.query as { code?: string; state?: string; error?: string };
       const pending = state ? tiktokOauthStates.get(state) : undefined;
@@ -4698,6 +4707,9 @@ Rules:
   async function handleInvoiceParse(req: any, res: any, upload: any, fieldName: string) {
     const auth = await requirePerm(req, res, "manage_inventory");
     if (!auth) return;
+    if (aiRateLimitExceeded(auth.memberId, "invoice-parse", 30)) {
+      return res.status(429).json({ error: AI_RATE_LIMIT_MSG });
+    }
     upload.single(fieldName)(req, res, async (err: any) => {
       if (err) return res.status(400).json({ error: err.message || "Upload failed" });
       try {
@@ -4821,12 +4833,44 @@ Rules:
     handleInvoiceConfirm(req, res, "Imported from goBILDA order")
   );
 
+  // --- AI rate limiting (in-memory, per member, per endpoint) -------------------
+  // Cost guard: caps how many AI requests one user can trigger per hour so a
+  // runaway client (or someone hammering refresh) can't burn the Gemini
+  // budget. Deliberate 429s — the client already shows "try again" copy.
+  // No new infrastructure: a bounded in-memory map is free; Redis would not be.
+  const aiRateBuckets = new Map<string, { count: number; resetAt: number }>();
+  const aiRateSweep = setInterval(() => {
+    const now = Date.now();
+    for (const [k, b] of aiRateBuckets) if (b.resetAt <= now) aiRateBuckets.delete(k);
+  }, 5 * 60 * 1000);
+  (aiRateSweep as any)?.unref?.();
+  function aiRateLimitExceeded(memberId: number | string, endpoint: string, maxPerHour: number): boolean {
+    const key = `${endpoint}:${memberId}`;
+    const now = Date.now();
+    let b = aiRateBuckets.get(key);
+    if (!b || b.resetAt <= now) {
+      // Bound the map itself: evict an arbitrary oldest-ish entry when huge.
+      if (aiRateBuckets.size > 5000) {
+        const first = aiRateBuckets.keys().next().value;
+        if (first !== undefined) aiRateBuckets.delete(first);
+      }
+      b = { count: 0, resetAt: now + 60 * 60 * 1000 };
+      aiRateBuckets.set(key, b);
+    }
+    b.count++;
+    return b.count > maxPerHour;
+  }
+  const AI_RATE_LIMIT_MSG = "You're sending AI requests too fast — take a breather and try again in a bit.";
+
   // One-shot AI categorization for parts that have no category yet.
   app.post("/api/inventory/auto-categorize", async (req, res) => {
     const auth = await requirePerm(req, res, "manage_inventory");
     if (!auth) return;
     if (!isAIConfigured()) {
       return res.status(501).json({ error: "AI is not configured — ask Sushil to check the Gemini API key." });
+    }
+    if (aiRateLimitExceeded(auth.memberId, "auto-categorize", 20)) {
+      return res.status(429).json({ error: AI_RATE_LIMIT_MSG });
     }
     try {
       const parts: any[] = await dbAll(
@@ -5019,6 +5063,9 @@ Rules:
       if (!isAIConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "AI features are not configured yet. The team owner needs to add a Gemini API key." });
       }
+      if (aiRateLimitExceeded(auth.memberId, "fetch-news", 30)) {
+        return res.status(429).json({ error: AI_RATE_LIMIT_MSG, result: AI_RATE_LIMIT_MSG });
+      }
       const stream = req.query.stream === "true";
       const maxTokens = await getMaxTokens("max_tokens_news", 1024);
       // Team-aware news: pull the connected FTC team's latest stats for the "Your Team" section
@@ -5061,8 +5108,109 @@ Rules:
   });
 
   // --- AI Scout feed (JSON cards for the visual feed; cached per team) ---
-  const scoutFeedCache = new Map<number, { at: number; items: any[] }>();
+  // Bounded in-memory cache (no new infra — a shared Redis would add cost).
+  // Entries are capped so a fleet of teams can't grow the map forever, and
+  // concurrent requests for the same team share one in-flight generation
+  // instead of each firing their own Gemini call.
   const SCOUT_FEED_TTL_MS = 6 * 60 * 60 * 1000;
+  const SCOUT_FEED_MAX_TEAMS = 200;
+  const scoutFeedCache = new Map<number, { at: number; items: any[] }>();
+  const scoutFeedInflight = new Map<number, Promise<any[]>>();
+  function scoutFeedCacheSet(teamKey: number, items: any[]) {
+    if (!scoutFeedCache.has(teamKey) && scoutFeedCache.size >= SCOUT_FEED_MAX_TEAMS) {
+      const oldest = scoutFeedCache.keys().next().value;
+      if (oldest !== undefined) scoutFeedCache.delete(oldest);
+    }
+    scoutFeedCache.set(teamKey, { at: Date.now(), items });
+  }
+
+  // oEmbed validation cache: video ID → valid? (24h). YouTube video
+  // existence barely changes, so re-validating the same ID per request is
+  // pure waste. Bounded + in-flight deduped like the feed cache.
+  const OEMBED_TTL_MS = 24 * 60 * 60 * 1000;
+  const OEMBED_CACHE_MAX = 2000;
+  const oembedCache = new Map<string, { at: number; ok: boolean }>();
+  const oembedInflight = new Map<string, Promise<boolean>>();
+  function oembedCacheSet(videoId: string, ok: boolean) {
+    if (!oembedCache.has(videoId) && oembedCache.size >= OEMBED_CACHE_MAX) {
+      const oldest = oembedCache.keys().next().value;
+      if (oldest !== undefined) oembedCache.delete(oldest);
+    }
+    oembedCache.set(videoId, { at: Date.now(), ok });
+  }
+
+  async function checkYouTubeVideo(videoId: string, url: string, title: string): Promise<boolean> {
+    const hit = oembedCache.get(videoId);
+    if (hit && Date.now() - hit.at < OEMBED_TTL_MS) return hit.ok;
+    const inflight = oembedInflight.get(videoId);
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const ctl = new AbortController();
+        const t = setTimeout(() => ctl.abort(), 8000);
+        let r: Response;
+        try {
+          r = await fetch(
+            `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+            { signal: ctl.signal }
+          );
+        } finally {
+          clearTimeout(t);
+        }
+        if (!r.ok) return false;
+        let meta: any = null;
+        try { meta = await r.json(); } catch { return false; }
+        const STOP = new Set(["the","and","for","with","from","this","that","your","you","our","are","was","will","about","into","over","how","what","when","all"]);
+        const sigWords = (s: string) => (s.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => !STOP.has(w));
+        const claimed = new Set(sigWords(String(title || "")));
+        const actual = new Set(sigWords(String(meta?.title || "")));
+        let overlap = 0;
+        claimed.forEach((w) => { if (actual.has(w)) overlap++; });
+        return overlap >= 2;
+      } catch {
+        return false;
+      }
+    })();
+    oembedInflight.set(videoId, p);
+    try {
+      const ok = await p;
+      oembedCacheSet(videoId, ok);
+      return ok;
+    } finally {
+      oembedInflight.delete(videoId);
+    }
+  }
+
+  // Run async tasks with at most `limit` in flight at once.
+  async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (it: T) => Promise<R>): Promise<R[]> {
+    const out: R[] = new Array(items.length);
+    let i = 0;
+    const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+      while (i < items.length) {
+        const idx = i++;
+        out[idx] = await fn(items[idx]);
+      }
+    });
+    await Promise.all(workers);
+    return out;
+  }
+
+  async function buildAndValidateScoutFeed(maxTokens: number): Promise<any[]> {
+    const raw = await scoutFeed(maxTokens);
+    const items = parseScoutFeed(raw);
+    // Drop YouTube items whose URLs don't resolve to the claimed video — the model
+    // sometimes invents video IDs (even real-looking ones). oEmbed is keyless and fast:
+    // non-200 means the video doesn't exist, and a title mismatch means the ID was
+    // fabricated for an unrelated video. Validated 3 at a time, cached by video ID.
+    const ytRe = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{6,})/i;
+    const checked = await mapWithConcurrency(items, 3, async (it: any) => {
+      const m = String(it.url || "").match(ytRe);
+      if (!m) return it;
+      const ok = await checkYouTubeVideo(m[1], String(it.url), String(it.title || ""));
+      return ok ? it : null;
+    });
+    return checked.filter(Boolean);
+  }
 
   app.post("/api/ai/scout-feed", async (req, res) => {
     try {
@@ -5071,52 +5219,33 @@ Rules:
       if (!isAIConfigured()) {
         return res.status(501).json({ error: "AI not configured", items: [] });
       }
+      if (aiRateLimitExceeded(auth.memberId, "scout-feed", 30)) {
+        return res.status(429).json({ error: AI_RATE_LIMIT_MSG, items: [] });
+      }
       const teamKey = auth.teamId ?? 0;
       const force = req.body?.force === true;
       const hit = scoutFeedCache.get(teamKey);
       if (!force && hit && Date.now() - hit.at < SCOUT_FEED_TTL_MS) {
         return res.json({ items: hit.items, cached: true });
       }
-      const maxTokens = await getMaxTokens("max_tokens_news", 2048);
-      const raw = await scoutFeed(maxTokens);
-      const items = parseScoutFeed(raw);
-      // Drop YouTube items whose URLs don't resolve to the claimed video — the model
-      // sometimes invents video IDs (even real-looking ones). oEmbed is keyless and fast:
-      // non-200 means the video doesn't exist, and a title mismatch means the ID was
-      // fabricated for an unrelated video.
-      const ytRe = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{6,})/i;
-      const STOP = new Set(["the","and","for","with","from","this","that","your","you","our","are","was","will","about","into","over","how","what","when","all"]);
-      const sigWords = (s: string) => (s.toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => !STOP.has(w));
-      const checked = await Promise.all(
-        items.map(async (it: any) => {
-          const m = String(it.url || "").match(ytRe);
-          if (!m) return it;
-          try {
-            const ctl = new AbortController();
-            const t = setTimeout(() => ctl.abort(), 8000);
-            const r = await fetch(
-              `https://www.youtube.com/oembed?url=${encodeURIComponent(it.url)}&format=json`,
-              { signal: ctl.signal }
-            );
-            clearTimeout(t);
-            if (!r.ok) return null;
-            let meta: any = null;
-            try { meta = await r.json(); } catch { return null; }
-            const claimed = new Set(sigWords(String(it.title || "")));
-            const actual = new Set(sigWords(String(meta?.title || "")));
-            let overlap = 0;
-            claimed.forEach((w) => { if (actual.has(w)) overlap++; });
-            return overlap >= 2 ? it : null;
-          } catch {
-            return null;
-          }
-        })
-      );
-      const validItems = checked.filter(Boolean);
+      // Dedupe: if another request is already generating this team's feed,
+      // wait for it instead of firing a second Gemini call. The check-and-set
+      // is synchronous so concurrent requests can't slip past each other.
+      if (force || !scoutFeedInflight.get(teamKey)) {
+        const gen: Promise<any[]> = (async () => {
+          const maxTokens = await getMaxTokens("max_tokens_news", 2048);
+          return buildAndValidateScoutFeed(maxTokens);
+        })();
+        scoutFeedInflight.set(teamKey, gen);
+        gen.then(
+          (items) => { scoutFeedCacheSet(teamKey, items); if (scoutFeedInflight.get(teamKey) === gen) scoutFeedInflight.delete(teamKey); },
+          () => { if (scoutFeedInflight.get(teamKey) === gen) scoutFeedInflight.delete(teamKey); }
+        );
+      }
+      const validItems = await scoutFeedInflight.get(teamKey)!;
       if (!validItems.length) {
         return res.status(502).json({ error: "The scout feed came back empty — please try refreshing.", items: [] });
       }
-      scoutFeedCache.set(teamKey, { at: Date.now(), items: validItems });
       res.json({ items: validItems });
     } catch (error) {
       console.error("AI scout feed error:", error);
@@ -5130,6 +5259,9 @@ Rules:
       if (!auth) return;
       if (!isAIConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Insights unavailable." });
+      }
+      if (aiRateLimitExceeded(auth.memberId, "attendance-insights", 30)) {
+        return res.status(429).json({ error: AI_RATE_LIMIT_MSG, result: AI_RATE_LIMIT_MSG });
       }
       // Prefer server-side data so clients can't spoof another team's records.
       const members = (await dbAll("SELECT id, name FROM members WHERE team_id = ?", auth.teamId)) as any[];
@@ -5329,6 +5461,9 @@ Rules:
       if (gate.blocked) {
         return res.status(403).json({ error: gate.message, aiBlocked: true, timeoutUntil: gate.timeoutUntil || null });
       }
+      if (aiRateLimitExceeded(auth.memberId, "build-helper", 120)) {
+        return res.status(429).json({ error: AI_RATE_LIMIT_MSG, result: AI_RATE_LIMIT_MSG });
+      }
       const raw = Array.isArray(req.body?.messages) ? req.body.messages : [];
       const messages = raw
         .filter((m: any) => m && (m.role === "user" || m.role === "model") && typeof m.text === "string")
@@ -5392,9 +5527,13 @@ Rules:
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
+        // If the browser goes away mid-stream, abort the upstream Gemini
+        // request instead of burning tokens on a reply nobody will read.
+        const streamAbort = new AbortController();
+        req.on("close", () => streamAbort.abort());
         try {
           let usage: any = null;
-          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra, (u) => { usage = u; });
+          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra, (u) => { usage = u; }, streamAbort.signal);
           const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
           logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length);
           // Strip the NavGPT ```switch handoff block and any data-action proposal
@@ -5412,7 +5551,9 @@ Rules:
         return;
       }
       let nonStreamUsage: any = null;
-      const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra, (u) => { nonStreamUsage = u; });
+      const nonStreamAbort = new AbortController();
+      req.on("close", () => nonStreamAbort.abort());
+      const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra, (u) => { nonStreamUsage = u; }, nonStreamAbort.signal);
       const finalResult = stripActionBlocks(String(result || ""));
       const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
       logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length);
@@ -5601,6 +5742,9 @@ Rules:
       if (!auth) return;
       if (!isAIConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Failed to generate summary." });
+      }
+      if (aiRateLimitExceeded(auth.memberId, "activity-summary", 30)) {
+        return res.status(429).json({ error: AI_RATE_LIMIT_MSG, result: AI_RATE_LIMIT_MSG });
       }
       const teamId = auth.teamId;
       const openTasks = (await dbAll(

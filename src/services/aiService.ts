@@ -71,8 +71,13 @@ export async function fetchFTCNews(force: boolean = false) {
     const value = result || 'No news found at the moment.';
 
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(CACHE_KEY, value);
-      localStorage.setItem(TS_KEY, Date.now().toString());
+      try {
+        // Don't cache absurd payloads — keeps localStorage from filling up.
+        if (value.length < 500_000) {
+          localStorage.setItem(CACHE_KEY, value);
+          localStorage.setItem(TS_KEY, Date.now().toString());
+        }
+      } catch { /* storage full — ignore */ }
     }
 
     return value;
@@ -109,8 +114,11 @@ export async function fetchScoutFeed(force: boolean = false): Promise<{ items: S
   const items: ScoutFeedItem[] = Array.isArray(data.items) ? data.items : [];
   if (typeof localStorage !== 'undefined') {
     try {
-      localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(items));
-      localStorage.setItem(FEED_TS_KEY, Date.now().toString());
+      const serialized = JSON.stringify(items);
+      if (serialized.length < 500_000) {
+        localStorage.setItem(FEED_CACHE_KEY, serialized);
+        localStorage.setItem(FEED_TS_KEY, Date.now().toString());
+      }
     } catch { /* storage full — ignore */ }
   }
   return { items, cached: !!data.cached };

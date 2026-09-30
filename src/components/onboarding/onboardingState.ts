@@ -172,7 +172,7 @@ export const TOUR_STEPS: TourStep[] = [
   {
     id: 'outreach',
     title: 'Outreach',
-    body: 'Connect your team\u2019s YouTube channel and TikTok account to track follower growth automatically over the season.',
+    body: 'Connect your team\u2019s YouTube channel to track subscriber growth automatically over the season.',
     target: 'nav-outreach',
   },
   {

@@ -27,6 +27,46 @@ function apiKey(): string {
   return key;
 }
 
+// --- Request policy: timeouts, abort, and a deliberately narrow retry rule --
+// Cost guard: a failed Gemini request is NEVER blindly retried. Timeouts,
+// rate limits (429), and 5xx errors are surfaced immediately so the user can
+// retry deliberately — automatic retries would double token spend on every
+// failure. The only retry is the search-grounding fallback below, and only
+// when the error actually indicates the tool is unsupported (a 400 naming
+// google_search), never on timeouts/429s/5xx.
+const GEMINI_TIMEOUT_MS = 90_000;
+
+function isGroundingUnsupported(err: any): boolean {
+  const msg = String(err?.message || "").toLowerCase();
+  // Never "fall back" on aborts, timeouts, rate limits, or server errors —
+  // those are real failures, not an unsupported tool.
+  if (/abort|timed out|timeout|429|quota|rate.?limit|\b5\d\d\b/.test(msg)) return false;
+  return /400|google_search|grounding|tool.*not supported|not supported.*tool|invalid.*tool/.test(msg);
+}
+
+async function fetchWithPolicy(
+  url: string,
+  init: RequestInit,
+  opts: { timeoutMs?: number; signal?: AbortSignal } = {}
+): Promise<Response> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(new Error("Gemini request timed out")), opts.timeoutMs ?? GEMINI_TIMEOUT_MS);
+  const ext = opts.signal;
+  const onExtAbort = () => {
+    try { ctl.abort((ext as any)?.reason ?? new Error("Request aborted")); } catch { /* noop */ }
+  };
+  if (ext) {
+    if (ext.aborted) onExtAbort();
+    else ext.addEventListener("abort", onExtAbort, { once: true });
+  }
+  try {
+    return await fetch(url, { ...init, signal: ctl.signal as any });
+  } finally {
+    clearTimeout(t);
+    ext?.removeEventListener("abort", onExtAbort);
+  }
+}
+
 export async function getAISetting(key: string, fallback: string): Promise<string> {
   try {
     const row = (await dbGet("SELECT value FROM settings WHERE key = ?", key)) as any;
@@ -86,6 +126,7 @@ async function callGemini(opts: {
   useSearchGrounding?: boolean;
   images?: AIImage[];
   onChunk?: (text: string) => void;
+  signal?: AbortSignal;
 }): Promise<string> {
   const model = aiModel();
   const endpoint = opts.stream ? "streamGenerateContent" : "generateContent";
@@ -106,11 +147,15 @@ async function callGemini(opts: {
 
   const doFetch = async (withGrounding: boolean) => {
     const b = withGrounding ? body : { ...body, tools: undefined };
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey() },
-      body: JSON.stringify(b),
-    });
+    const res = await fetchWithPolicy(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey() },
+        body: JSON.stringify(b),
+      },
+      { signal: opts.signal }
+    );
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
@@ -122,8 +167,9 @@ async function callGemini(opts: {
   try {
     res = await doFetch(!!opts.useSearchGrounding);
   } catch (err: any) {
-    // If search grounding isn't supported for this model/key, retry plain.
-    if (opts.useSearchGrounding) {
+    // If search grounding isn't supported for this model/key, retry plain —
+    // but ONLY then. Timeouts, 429s, and 5xx are thrown as-is (no double spend).
+    if (opts.useSearchGrounding && isGroundingUnsupported(err)) {
       res = await doFetch(false);
     } else {
       throw err;
@@ -140,7 +186,11 @@ async function callGemini(opts: {
   const decoder = new TextDecoder();
   let buffer = "";
   let full = "";
+  // Safety cap on accumulated output (~8 chars per token) so a runaway or
+  // misconfigured maxTokens can't balloon server memory.
+  const maxAccumChars = Math.max(8000, opts.maxTokens * 8);
   for (;;) {
+    if (opts.signal?.aborted) break;
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -156,12 +206,15 @@ async function callGemini(opts: {
         if (text) {
           full += text;
           opts.onChunk?.(text);
+          if (full.length >= maxAccumChars) break;
         }
       } catch {
         /* skip malformed chunk */
       }
     }
+    if (full.length >= maxAccumChars) break;
   }
+  try { await reader.cancel(); } catch { /* noop */ }
   return full;
 }
 
@@ -177,9 +230,10 @@ export async function aiStream(
   system: string,
   user: string,
   maxTokens: number,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  signal?: AbortSignal
 ): Promise<string> {
-  return callGemini({ system, user, maxTokens, stream: true, onChunk });
+  return callGemini({ system, user, maxTokens, stream: true, onChunk, signal });
 }
 
 // Non-streaming generation with image attachments (invoice scans, etc.).
@@ -517,13 +571,26 @@ export async function buildHelperChat(
   maxTokens: number,
   onChunk?: (text: string) => void,
   extraSystem?: string,
-  onUsage?: (usage: AiUsage) => void
+  onUsage?: (usage: AiUsage) => void,
+  signal?: AbortSignal
 ): Promise<string> {
-  // Keep cost/latency bounded: last 12 turns, each capped.
-  const trimmed = messages
+  // Keep cost/latency bounded: last 12 turns, each capped, plus a total
+  // history budget (~16k chars ≈ 4k tokens) so long pastes can't blow up
+  // the prompt. Newest messages are kept first.
+  const HISTORY_CHAR_BUDGET = 16000;
+  const capped = messages
     .filter((m) => m && (m.role === "user" || m.role === "model") && m.text)
     .slice(-12)
     .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, 2000) }] }));
+  const trimmed: typeof capped = [];
+  let budget = HISTORY_CHAR_BUDGET;
+  for (let i = capped.length - 1; i >= 0; i--) {
+    const len = capped[i].parts[0].text.length;
+    if (trimmed.length > 0 && len > budget) break;
+    trimmed.unshift(capped[i]);
+    budget -= len;
+    if (budget <= 0) break;
+  }
 
   const model = aiModel();
   const stream = !!onChunk;
@@ -539,11 +606,15 @@ export async function buildHelperChat(
 
   const doFetch = async (withGrounding: boolean) => {
     const b = withGrounding ? body : { ...body, tools: undefined };
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey() },
-      body: JSON.stringify(b),
-    });
+    const res = await fetchWithPolicy(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey() },
+        body: JSON.stringify(b),
+      },
+      { signal }
+    );
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
@@ -555,7 +626,13 @@ export async function buildHelperChat(
   try {
     res = await doFetch(true);
   } catch (err) {
-    res = await doFetch(false); // grounding unsupported → plain chat
+    // Grounding unsupported for this model/key → plain chat. Only then;
+    // timeouts, 429s, and 5xx are thrown as-is (no double spend).
+    if (isGroundingUnsupported(err)) {
+      res = await doFetch(false);
+    } else {
+      throw err;
+    }
   }
 
   if (!stream || !res.body) {
@@ -570,7 +647,9 @@ export async function buildHelperChat(
   let buffer = "";
   let full = "";
   let lastUsage: AiUsage | null = null;
+  const maxAccumChars = Math.max(8000, maxTokens * 8);
   for (;;) {
+    if (signal?.aborted) break;
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -589,12 +668,15 @@ export async function buildHelperChat(
         if (text) {
           full += text;
           onChunk(text);
+          if (full.length >= maxAccumChars) break;
         }
       } catch {
         /* skip malformed chunk */
       }
     }
+    if (full.length >= maxAccumChars) break;
   }
+  try { await reader.cancel(); } catch { /* noop */ }
   if (lastUsage && onUsage) onUsage(lastUsage);
   return full;
 }

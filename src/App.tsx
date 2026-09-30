@@ -5732,13 +5732,14 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
   const [linkingYT, setLinkingYT] = useState(false);
   const [syncingId, setSyncingId] = useState<number | null>(null);
 
-  // TikTok OAuth result (?social=connected|error|cancelled)
+  // TikTok OAuth result (?social=connected|error|cancelled|tiktok_unavailable)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const s = params.get('social');
     if (!s) return;
     if (s === 'connected') notify('TikTok connected — stats synced.', 'success');
     else if (s === 'cancelled') notify('TikTok connection cancelled.', 'error');
+    else if (s === 'tiktok_unavailable') notify('TikTok is temporarily unavailable.', 'error');
     else if (s === 'error') notify('TikTok connection failed — try again.', 'error');
     params.delete('social');
     window.history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
@@ -5800,9 +5801,9 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
     }
   };
 
-  const connectTikTok = () => { window.location.href = '/api/auth/tiktok/connect'; };
-  const profiles = socialProfiles || [];
-  const tiktokLinked = profiles.some((p: any) => p.platform === 'tiktok');
+  // TikTok is temporarily disabled until Login Kit is verified — hide any
+  // linked TikTok profiles from the UI (their data stays in the DB).
+  const profiles = (socialProfiles || []).filter((p: any) => p.platform !== 'tiktok');
   const emptyForm = () => ({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '2', location: '', attendees: '', funds_raised: '' });
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -5902,7 +5903,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
       </div>
 
       {/* Social media — auto-synced */}
-      <Card title="Social Media" subtitle="Connect YouTube and TikTok — stats sync automatically every day" icon={TrendingUp}>
+      <Card title="Social Media" subtitle="Connect YouTube — stats sync automatically every day" icon={TrendingUp}>
         {profiles.length === 0 ? (
           <div className="text-center py-6 space-y-3">
             <p className="text-sm text-text-muted">No social profiles linked yet.</p>
@@ -5910,11 +5911,8 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
               {isAdminSocial && youtubeEnabled && (
                 <Button variant="secondary" onClick={() => setShowLinkYT(true)}><Youtube className="w-4 h-4" /> Link YouTube channel</Button>
               )}
-              {isAdminSocial && tiktokEnabled && (
-                <Button variant="secondary" onClick={connectTikTok}><Music2 className="w-4 h-4" /> Connect TikTok</Button>
-              )}
             </div>
-            {isAdminSocial && !youtubeEnabled && !tiktokEnabled && (
+            {isAdminSocial && !youtubeEnabled && (
               <p className="text-xs text-text-muted">Social auto-sync isn't configured on the server yet.</p>
             )}
           </div>
@@ -5924,7 +5922,6 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
               const meta = PLATFORM_META[p.platform] || PLATFORM_META.youtube;
               const PIcon = meta.Icon;
               const g = p.growth;
-              const needsReconnect = p.platform === 'tiktok' && p.token_status === 'needs_reconnect';
               return (
                 <div key={p.id} className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
                   <div className="flex items-start justify-between">
@@ -5958,14 +5955,8 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                       </div>
                     )}
                   </div>
-                  {needsReconnect ? (
-                    <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-200">
-                      TikTok connection expired.{' '}
-                      {isAdminSocial && <button className="underline font-bold" onClick={connectTikTok}>Reconnect</button>}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-end justify-between gap-2">
+                  <div className="space-y-3">
+                    <div className="flex items-end justify-between gap-2">
                         <div>
                           <p className="text-2xl font-display font-bold text-white">{fmtCompact(p.latest?.followers)}</p>
                           <p className="text-[10px] text-text-muted uppercase font-bold">{meta.metric}</p>
@@ -5992,8 +5983,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                           </Button>
                         )}
                       </div>
-                    </>
-                  )}
+                    </div>
                 </div>
               );
             })}
@@ -6014,9 +6004,6 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
           <div className="flex flex-wrap gap-2 mt-4">
             {youtubeEnabled && (
               <Button variant="secondary" onClick={() => setShowLinkYT(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Link YouTube</Button>
-            )}
-            {tiktokEnabled && !tiktokLinked && (
-              <Button variant="secondary" onClick={connectTikTok} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Connect TikTok</Button>
             )}
           </div>
         )}
