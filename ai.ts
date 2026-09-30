@@ -1,12 +1,12 @@
 // AI backend for Control Point.
-// Uses the Google Gemini API (free tier, no credit card) server-side so the
-// API key never reaches the browser. All four AI features stream plain-text
-// chunks, matching what the React client's aiService expects.
+// Gemini (free tier, no credit card) powers web-grounded research and vision;
+// Groq (free tier, no credit card) powers ordinary chat via the hybrid router
+// in ai-hybrid.ts. Keys live server-side only and never reach the browser.
 //
-// Setup: set GEMINI_API_KEY in the environment (get one free at
-// https://aistudio.google.com/app/apikey). Optional: GEMINI_MODEL to pick a
-// different model (default: gemini-2.5-flash-lite, the cheapest fast model).
-// Until the key is set, the /api/ai/* endpoints answer 501 "AI not configured".
+// Setup: set GEMINI_API_KEY (https://aistudio.google.com/app/apikey) and/or
+// GROQ_API_KEY (https://console.groq.com/keys). Optional: GEMINI_MODEL
+// (default: gemini-3.5-flash-lite), GROQ_MODEL (default: openai/gpt-oss-120b).
+// Until a key is set, the /api/ai/* endpoints answer 501 "AI not configured".
 
 import { dbGet } from "./db.js";
 
@@ -18,7 +18,7 @@ export function aiModel(): string {
 }
 
 export function isAIConfigured(): boolean {
-  return !!process.env.GEMINI_API_KEY;
+  return !!process.env.GEMINI_API_KEY || !!process.env.GROQ_API_KEY;
 }
 
 function apiKey(): string {
@@ -93,13 +93,13 @@ export async function readStreamChunk(
   }
 }
 
-async function fetchWithPolicy(
+export async function fetchWithPolicy(
   url: string,
   init: RequestInit,
-  opts: { timeoutMs?: number; signal?: AbortSignal } = {}
+  opts: { timeoutMs?: number; signal?: AbortSignal; label?: string } = {}
 ): Promise<Response> {
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(new Error("Gemini request timed out")), opts.timeoutMs ?? GEMINI_TIMEOUT_MS);
+  const t = setTimeout(() => ctl.abort(new Error(`${opts.label ?? "Gemini"} request timed out`)), opts.timeoutMs ?? GEMINI_TIMEOUT_MS);
   const ext = opts.signal;
   const onExtAbort = () => {
     try { ctl.abort((ext as any)?.reason ?? new Error("Request aborted")); } catch { /* noop */ }
@@ -638,7 +638,8 @@ export async function buildHelperChat(
   onChunk?: (text: string) => void,
   extraSystem?: string,
   onUsage?: (usage: AiUsage) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  grounded: boolean = true
 ): Promise<string> {
   // Keep cost/latency bounded: last 12 turns, each capped, plus a total
   // history budget (~16k chars ≈ 4k tokens) so long pastes can't blow up
@@ -667,7 +668,9 @@ export async function buildHelperChat(
     system_instruction: { parts: [{ text: extraSystem ? BUILD_HELPER_SYSTEM + "\n\n" + extraSystem : BUILD_HELPER_SYSTEM }] },
     contents: trimmed,
     generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
-    tools: [{ google_search: {} }],
+    // grounded=false is the degraded path (Groq failover): plain chat, no
+    // search tools, so the call stays cheap and can't 429 on grounding quota.
+    tools: grounded ? [{ google_search: {} }] : undefined,
   };
 
   const doFetch = async (withGrounding: boolean) => {
@@ -700,11 +703,11 @@ export async function buildHelperChat(
 
   let res: Response;
   try {
-    res = await doFetch(true);
+    res = await doFetch(grounded);
   } catch (err) {
     // Grounding unsupported for this model/key → plain chat. Only then;
     // timeouts, 429s, and 5xx are thrown as-is (no double spend).
-    if (isGroundingUnsupported(err)) {
+    if (grounded && isGroundingUnsupported(err)) {
       res = await doFetch(false);
     } else {
       throw err;

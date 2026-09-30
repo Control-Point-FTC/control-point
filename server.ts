@@ -44,13 +44,18 @@ import {
   parseScoutFeed,
   buildAttendancePrompt,
   buildCoachPrompt,
-  buildHelperChat,
   NAVGPT_SYSTEM,
   ATTENDANCE_SYSTEM,
   COACH_SYSTEM,
   isQuotaError,
   QUOTA_EXHAUSTED_MSG,
 } from "./ai.js";
+import {
+  aiChat,
+  isGeminiConfigured,
+  isGroqQuotaError,
+  GROQ_QUOTA_EXHAUSTED_MSG,
+} from "./ai-hybrid.js";
 import {
   youtubeApi as youtubeApiImpl,
   pickYouTubeChannel as pickYouTubeChannelImpl,
@@ -602,6 +607,11 @@ if (!memberColumns.some((c: any) => c.name === 'ai_max_tokens_reply')) {
 const aiUsageColumns = (await dbAll(`PRAGMA table_info(ai_usage)`)) as any[];
 if (!aiUsageColumns.some((c: any) => c.name === 'status')) {
   (await dbExec("ALTER TABLE ai_usage ADD COLUMN status TEXT DEFAULT 'ok'"));
+}
+// provider: 'groq' | 'gemini' | 'unknown' — which backend served the request,
+// so the owner can see the hybrid split in the AI dashboard.
+if (!aiUsageColumns.some((c: any) => c.name === 'provider')) {
+  (await dbExec("ALTER TABLE ai_usage ADD COLUMN provider TEXT DEFAULT 'gemini'"));
 }
 // AI misuse flags: review queue for the app owner
 (await dbExec(`CREATE TABLE IF NOT EXISTS ai_flags (
@@ -5250,7 +5260,7 @@ Rules:
           }
         }
         let items: { sku: string; name: string; quantity: number; unitPrice: number }[] = [];
-        if (isAIConfigured()) {
+        if (isGeminiConfigured()) {
           try {
             const raw = isPdf
               ? await aiGenerate(INVOICE_EXTRACT_SYSTEM, `Invoice text:\n${text.slice(0, 15000)}`, 4096)
@@ -5386,7 +5396,7 @@ Rules:
   app.post("/api/inventory/auto-categorize", async (req, res) => {
     const auth = await requirePerm(req, res, "manage_inventory");
     if (!auth) return;
-    if (!isAIConfigured()) {
+    if (!isGeminiConfigured()) {
       return res.status(501).json({ error: "AI is not configured — ask Sushil to check the Gemini API key." });
     }
     if (aiRateLimitExceeded(auth.memberId, "auto-categorize", 20)) {
@@ -5494,14 +5504,14 @@ Rules:
     return { blocked: false };
   }
 
-  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number, status: string = 'ok') {
+  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number, status: string = 'ok', provider: string = 'gemini') {
     try {
       const prompt = usage?.promptTokens || Math.ceil(promptChars / 4);
       const response = usage?.responseTokens || Math.ceil(responseChars / 4);
       const total = usage?.totalTokens || prompt + response;
       await dbRun(
-        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens, status) VALUES (?, ?, 'build-helper', ?, ?, ?, ?)",
-        memberId, teamId, prompt, response, total, status
+        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens, status, provider) VALUES (?, ?, 'build-helper', ?, ?, ?, ?, ?)",
+        memberId, teamId, prompt, response, total, status, provider
       );
     } catch (e) {
       console.error("[AI] usage log failed:", (e as any)?.message || e);
@@ -5580,7 +5590,7 @@ Rules:
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      if (!isAIConfigured()) {
+      if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "AI features are not configured yet. The team owner needs to add a Gemini API key." });
       }
       if (aiRateLimitExceeded(auth.memberId, "fetch-news", 30)) {
@@ -5740,7 +5750,7 @@ Rules:
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      if (!isAIConfigured()) {
+      if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", items: [] });
       }
       if (aiRateLimitExceeded(auth.memberId, "scout-feed", 30)) {
@@ -5785,7 +5795,7 @@ Rules:
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      if (!isAIConfigured()) {
+      if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Insights unavailable." });
       }
       if (aiRateLimitExceeded(auth.memberId, "attendance-insights", 30)) {
@@ -6024,7 +6034,7 @@ Rules:
       auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isAIConfigured()) {
-        return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Gemini API key." });
+        return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Groq or Gemini API key." });
       }
       // Owner AI governance: disabled / timed-out / over daily token budget
       const gate = await aiAccessCheck(auth.memberId);
@@ -6107,9 +6117,22 @@ Rules:
         req.on("close", () => streamAbort.abort());
         try {
           let usage: any = null;
-          const fullText = await buildHelperChat(messages, maxTokens, (chunk) => res.write(chunk), systemExtra, (u) => { usage = u; }, streamAbort.signal);
+          // Hybrid provider: Groq handles ordinary chat, Gemini (grounded)
+          // handles web research. The router decides deterministically — no
+          // model call is spent choosing the provider.
+          const aiReply = await aiChat({
+            extraSystem: systemExtra,
+            messages,
+            maxTokens,
+            stream: true,
+            webSearch: req.body?.webSearch === true,
+            onChunk: (chunk) => res.write(chunk),
+            onUsage: (u) => { usage = u; },
+            signal: streamAbort.signal,
+          });
+          const fullText = aiReply.text;
           const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
-          logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length);
+          logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length, "ok", aiReply.provider);
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
@@ -6118,23 +6141,34 @@ Rules:
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
           res.end();
-        } catch (err) {
+        } catch (err: any) {
           console.error("AI build-helper stream error:", err);
-          const quota = isQuotaError(err);
+          const groqQuota = isGroqQuotaError(err);
+          const quota = groqQuota || isQuotaError(err);
+          const quotaMsg = groqQuota ? GROQ_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
           // Track the attempt even on failure so the owner dashboard reflects
           // real usage during an upstream outage (0 tokens — nothing was generated).
-          logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error");
-          res.end(quota ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Something glitched — try asking again.)");
+          logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (err as any)?.aiProvider || "unknown");
+          res.end(quota ? `\n\n(${quotaMsg})` : "\n\n(Something glitched — try asking again.)");
         }
         return;
       }
       let nonStreamUsage: any = null;
       const nonStreamAbort = new AbortController();
       req.on("close", () => nonStreamAbort.abort());
-      const result = await buildHelperChat(messages, maxTokens, undefined, systemExtra, (u) => { nonStreamUsage = u; }, nonStreamAbort.signal);
+      const aiReply = await aiChat({
+        extraSystem: systemExtra,
+        messages,
+        maxTokens,
+        stream: false,
+        webSearch: req.body?.webSearch === true,
+        onUsage: (u) => { nonStreamUsage = u; },
+        signal: nonStreamAbort.signal,
+      });
+      const result = aiReply.text;
       const finalResult = stripActionBlocks(String(result || ""));
       const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
-      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length);
+      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
@@ -6142,12 +6176,13 @@ Rules:
         }
       }
       res.json({ result: finalResult, chatId: chat ? chat.id : undefined });
-    } catch (error) {
+    } catch (error: any) {
       console.error("AI build-helper error:", error);
-      const quota = isQuotaError(error);
-      if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error");
+      const groqQuota = isGroqQuotaError(error);
+      const quota = groqQuota || isQuotaError(error);
+      if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (error as any)?.aiProvider || "unknown");
       if (quota) {
-        res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
+        res.status(429).json({ error: "AI quota exhausted", result: groqQuota ? GROQ_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG });
       } else {
         res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
       }
@@ -6324,7 +6359,7 @@ Rules:
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      if (!isAIConfigured()) {
+      if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Failed to generate summary." });
       }
       if (aiRateLimitExceeded(auth.memberId, "activity-summary", 30)) {

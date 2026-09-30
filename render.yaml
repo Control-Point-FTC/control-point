@@ -23,3 +23,11 @@ services:
       # Public URL of the deployed app (used for OAuth callbacks)
       - key: APP_URL
         sync: false
+      # AI providers (set values in the Render dashboard; never commit keys):
+      # - GROQ_API_KEY: free at https://console.groq.com/keys — ordinary chat
+      # - GEMINI_API_KEY: free at https://aistudio.google.com/app/apikey — web-grounded research
+      # - GROQ_MODEL / GEMINI_MODEL: optional model overrides
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
