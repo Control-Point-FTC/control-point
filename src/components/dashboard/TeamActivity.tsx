@@ -1,49 +1,77 @@
-import { Activity, CheckSquare, UserPlus, Calendar, Package } from 'lucide-react';
+import { format } from 'date-fns';
+import { Activity, CheckSquare, UserPlus, Calendar, CalendarCheck, Wallet } from 'lucide-react';
 import { Card } from '../ui';
 
 const icons: Record<string, any> = {
   task: CheckSquare,
-  member: UserPlus,
   event: Calendar,
-  inventory: Package,
+  attendance: CalendarCheck,
+  member: UserPlus,
+  budget: Wallet,
 };
 
-interface TeamActivityProps {
-  items: any[];
+export interface ActivityItem {
+  kind: 'task' | 'event' | 'attendance' | 'member' | 'budget';
+  title: string;
+  detail?: string;
+  /** Full timestamp for "Today · 2:14 PM" style labels. */
+  ts?: string;
+  /** YYYY-MM-DD fallback when no time is available (day label only). */
+  dateOnly?: string;
 }
 
-/** The team's pulse: what actually happened in the last 7 days. */
-export default function TeamActivity({ items }: TeamActivityProps) {
+/** "Today · 2:14 PM", "Yesterday · 6:20 PM", "Sep 28 · 3:00 PM" — or just the day when there's no time. */
+export function activityWhen(item: ActivityItem): string {
+  const dayLabel = (dateStr: string) => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const yesterdayStr = format(new Date(Date.now() - 864e5), 'yyyy-MM-dd');
+    if (dateStr === todayStr) return 'Today';
+    if (dateStr === yesterdayStr) return 'Yesterday';
+    return format(new Date(dateStr + 'T12:00:00'), 'MMM d');
+  };
+  if (item.ts) {
+    const d = new Date(item.ts);
+    if (isNaN(d.getTime())) return '';
+    return `${dayLabel(format(d, 'yyyy-MM-dd'))} · ${format(d, 'h:mm a')}`;
+  }
+  if (item.dateOnly) return dayLabel(item.dateOnly);
+  return '';
+}
+
+/**
+ * The team's pulse: task completions, new events, recorded attendance,
+ * new members, and budget transactions — each with a human timestamp.
+ */
+export default function TeamActivity({ items }: { items: ActivityItem[] }) {
   return (
     <Card
-      title="Recent team activity"
-      subtitle={items.length === 0 ? 'Quiet week so far' : 'The last 7 days'}
+      title="Team Activity"
+      subtitle={items.length === 0 ? 'Quiet week so far' : 'What the team has been up to'}
       icon={Activity}
       className="xl:col-span-7"
     >
       {items.length === 0 ? (
         <p className="text-sm text-text-muted py-6 text-center">
-          Nothing logged in the last 7 days. Once tasks move and parts arrive, they'll show up here.
+          Nothing logged in the last 7 days. Once tasks move and events get added, they'll show up here.
         </p>
       ) : (
-        <div className="space-y-1 max-h-80 overflow-y-auto">
-          {items.map((a: any, i: number) => {
+        <div className="space-y-1 max-h-96 overflow-y-auto custom-scrollbar pr-1">
+          {items.map((a, i) => {
             const Icon = icons[a.kind] || Activity;
+            const when = activityWhen(a);
             return (
               <div
                 key={`${a.kind}-${i}`}
-                className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-white/[0.04] transition-colors"
+                className="flex items-start gap-3 p-3 rounded-xl hover:bg-white/[0.04] transition-colors"
               >
-                <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
                   <Icon className="w-4 h-4 text-accent" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white truncate">
-                    <span className="font-semibold">{a.title}</span>
-                    {a.detail && <span className="text-text-muted"> · {a.detail}</span>}
-                  </p>
+                  <p className="text-sm font-semibold text-white leading-snug">{a.title}</p>
+                  {a.detail && <p className="text-sm text-text-muted leading-snug mt-0.5">{a.detail}</p>}
+                  {when && <p className="text-[11px] text-text-muted/70 mt-1">{when}</p>}
                 </div>
-                <span className="text-[11px] text-text-muted shrink-0">{a.when}</span>
               </div>
             );
           })}

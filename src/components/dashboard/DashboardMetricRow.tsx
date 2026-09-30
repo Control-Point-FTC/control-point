@@ -1,4 +1,4 @@
-import { CalendarCheck, CheckSquare, Calendar, BellRing } from 'lucide-react';
+import { CalendarCheck, CheckSquare, Calendar, Wallet } from 'lucide-react';
 import { cn } from '../ui';
 
 function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: any) {
@@ -31,14 +31,13 @@ interface DashboardMetricRowProps {
   activeTaskCount: number;
   overdueCount: number;
   nextEvent: any;
-  attentionCount: number;
+  totalBudget: number;
   onNavigate: (path: string) => void;
-  onNeedsAction: () => void;
 }
 
 /**
  * The four top-line numbers: today's attendance, open tasks, what's up next,
- * and how many alerts need action. Every card navigates somewhere useful.
+ * and the budget balance. Every card navigates somewhere useful.
  */
 export default function DashboardMetricRow({
   presentCount,
@@ -47,9 +46,8 @@ export default function DashboardMetricRow({
   activeTaskCount,
   overdueCount,
   nextEvent,
-  attentionCount,
+  totalBudget,
   onNavigate,
-  onNeedsAction,
 }: DashboardMetricRowProps) {
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4 sm:mb-6">
@@ -76,12 +74,12 @@ export default function DashboardMetricRow({
         onClick={() => onNavigate('/calendar')}
       />
       <KpiCard
-        icon={BellRing}
-        label="Needs action"
-        value={attentionCount}
-        sub={attentionCount === 1 ? 'alert needs you' : attentionCount === 0 ? "you're all caught up" : 'alerts need you'}
-        tone={attentionCount > 0 ? 'warn' : 'ok'}
-        onClick={onNeedsAction}
+        icon={Wallet}
+        label="Budget"
+        value={`$${totalBudget.toLocaleString()}`}
+        sub="net balance"
+        tone={totalBudget < 0 ? 'warn' : 'ok'}
+        onClick={() => onNavigate('/budget')}
       />
     </div>
   );

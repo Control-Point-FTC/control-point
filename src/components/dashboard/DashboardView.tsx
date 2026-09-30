@@ -1,13 +1,11 @@
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { apiFetch } from '../../services/api';
 import { SetupChecklist, shouldShowChecklist } from '../onboarding';
 import DashboardHeader from './DashboardHeader';
 import DashboardMetricRow from './DashboardMetricRow';
-import NeedsAttention from './NeedsAttention';
+import MyStatusStrip from './MyStatusStrip';
+import TeamActivity, { type ActivityItem } from './TeamActivity';
 import UpcomingTimeline from './UpcomingTimeline';
-import TeamActivity from './TeamActivity';
-import MyStatusCard from './MyStatusCard';
 import TeamSummary from './TeamSummary';
 import CompetitionSnapshot from './CompetitionSnapshot';
 
@@ -33,11 +31,10 @@ interface DashboardViewProps {
  * The admin dashboard, composed from focused components:
  *
  *   <DashboardHeader />        — who / which team / what day
- *   <DashboardMetricRow />     — attendance, open tasks, up next, needs action
- *   <NeedsAttention />         — what needs a decision right now
+ *   <DashboardMetricRow />     — attendance, open tasks, up next, budget
+ *   <MyStatusStrip />          — your own check-in for today
+ *   <TeamActivity />           — what the team has been up to
  *   <UpcomingTimeline />       — what's coming, grouped by day
- *   <TeamActivity />           — what the team did this week
- *   <MyStatusCard />           — your own check-in
  *   <TeamSummary />            — Bruno's operational overview
  *   <CompetitionSnapshot />    — compact FTC headline numbers
  */
@@ -55,8 +52,6 @@ export default function DashboardView({
   onboardingState,
   onContinueSetup,
   onDismissChecklist,
-  inventory,
-  setTasks,
 }: DashboardViewProps) {
   const navigate = useNavigate();
   const today = format(new Date(), 'yyyy-MM-dd');
@@ -65,35 +60,16 @@ export default function DashboardView({
   const members = data.members || [];
   const tasks = data.tasks || [];
   const events = data.events || [];
-  const stock = inventory || [];
+  const budget = data.budget || [];
+  const memberName = (id: any) => members.find((m: any) => m.id === id)?.name || 'Someone';
 
   const todayAttendance = data.attendance?.filter((r: any) => r.date === today) || [];
   const presentCount = todayAttendance.filter((r: any) => r.status === 'P' || r.status === 'L').length;
 
   const activeTasks = tasks.filter((t: any) => t.status !== 'done');
-  const overdueTasks = activeTasks
-    .filter((t: any) => t.due_date && t.due_date < today)
-    .sort((a: any, b: any) => String(a.due_date).localeCompare(String(b.due_date)));
+  const overdueCount = activeTasks.filter((t: any) => t.due_date && t.due_date < today).length;
 
-  const lowStock = stock
-    .filter((i: any) => (i.quantity ?? 0) <= 2)
-    .sort((a: any, b: any) => (a.quantity ?? 0) - (b.quantity ?? 0))
-    .slice(0, 4);
-
-  const missingCheckin = todayAttendance.length > 0
-    ? members.filter((m: any) => !todayAttendance.some((r: any) => r.member_id === m.id) && m.id !== currentUser?.id)
-    : [];
-
-  const threeDays = format(new Date(Date.now() + 3 * 864e5), 'yyyy-MM-dd');
-  const deadlinesSoon = activeTasks
-    .filter((t: any) => t.due_date && t.due_date >= today && t.due_date <= threeDays)
-    .sort((a: any, b: any) => String(a.due_date).localeCompare(String(b.due_date)))
-    .slice(0, 4);
-
-  const attentionCount =
-    overdueTasks.length + lowStock.length + deadlinesSoon.length + (missingCheckin.length > 0 ? 1 : 0);
-
-  const nextEvent = (events || [])
+  const nextEvent = events
     .filter((e: any) => e.date >= today)
     .sort((a: any, b: any) =>
       String(a.date).localeCompare(String(b.date)) ||
@@ -109,56 +85,77 @@ export default function DashboardView({
       }
     : null;
 
-  // Recent team activity, derived client-side from the last 7 days.
+  const totalBudget = budget.reduce((acc: number, item: any) =>
+    item.type === 'income' ? acc + item.amount : acc - item.amount, 0) || 0;
+
+  // ── team activity feed (last 7 days) ──────────────────────
   const weekAgoMs = Date.now() - 7 * 864e5;
-  const activityItems: any[] = [];
+  const feed: ActivityItem[] = [];
+
   tasks.forEach((t: any) => {
     if (t.completed_at && new Date(t.completed_at).getTime() >= weekAgoMs) {
-      activityItems.push({ kind: 'task', ts: t.completed_at, title: `Completed "${t.title}"`, when: format(new Date(t.completed_at), 'MMM d') });
+      feed.push({
+        kind: 'task',
+        title: `${memberName(t.assigned_to)} completed "${t.title}"`,
+        ts: t.completed_at,
+      });
     } else if (t.created_at && new Date(t.created_at).getTime() >= weekAgoMs) {
-      activityItems.push({ kind: 'task', ts: t.created_at, title: `New task: "${t.title}"`, when: format(new Date(t.created_at), 'MMM d') });
+      feed.push({
+        kind: 'task',
+        title: `New task: "${t.title}"`,
+        detail: t.assigned_to ? `Assigned to ${memberName(t.assigned_to)}` : undefined,
+        ts: t.created_at,
+      });
     }
   });
-  stock.forEach((i: any) => {
-    if (i.date_added && new Date(i.date_added).getTime() >= weekAgoMs) {
-      activityItems.push({ kind: 'inventory', ts: i.date_added, title: `Stocked ${i.name} ×${i.quantity ?? 0}`, when: format(new Date(i.date_added), 'MMM d') });
-    }
-  });
-  members.forEach((m: any) => {
-    if (m.created_at && new Date(m.created_at).getTime() >= weekAgoMs) {
-      activityItems.push({ kind: 'member', ts: m.created_at, title: `${m.name} joined the team`, when: format(new Date(m.created_at), 'MMM d') });
-    }
-  });
+
   events.forEach((e: any) => {
     if (e.created_at && new Date(e.created_at).getTime() >= weekAgoMs) {
-      activityItems.push({ kind: 'event', ts: e.created_at, title: `Event created: ${e.title}`, when: format(new Date(e.created_at), 'MMM d') });
+      feed.push({
+        kind: 'event',
+        title: 'A new event was added:',
+        detail: e.title,
+        ts: e.created_at,
+      });
     }
   });
-  activityItems.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-  const recentActivity = activityItems.slice(0, 8);
 
-  // ── actions ───────────────────────────────────────────────
-  const markTaskDone = async (task: any) => {
-    if (!setTasks) { navigate('/tasks'); return; }
-    const prev = tasks;
-    setTasks((ts: any[]) => ts.map((t: any) =>
-      t.id === task.id ? { ...t, status: 'done', completed_at: new Date().toISOString() } : t));
-    try {
-      const res = await apiFetch(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
+  if (todayAttendance.length > 0) {
+    feed.push({
+      kind: 'attendance',
+      title: "Attendance was recorded for today's session",
+      detail: `${presentCount} of ${todayAttendance.length} ${todayAttendance.length === 1 ? 'member' : 'members'} present`,
+      dateOnly: today,
+    });
+  }
+
+  members.forEach((m: any) => {
+    if (m.created_at && new Date(m.created_at).getTime() >= weekAgoMs) {
+      feed.push({
+        kind: 'member',
+        title: `${m.name} joined the team workspace`,
+        ts: m.created_at,
       });
-      if (!res.ok) setTasks(prev);
-      else onRefresh();
-    } catch {
-      setTasks(prev);
     }
-  };
+  });
 
-  const scrollToNeeds = () => {
-    document.getElementById('needs-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  budget.forEach((b: any) => {
+    if (b.date && b.date >= format(new Date(weekAgoMs), 'yyyy-MM-dd')) {
+      feed.push({
+        kind: 'budget',
+        title: `Budget ${b.type === 'income' ? 'income' : 'transaction'} added:`,
+        detail: `${b.description || b.category || 'Transaction'} · $${Number(b.amount || 0).toLocaleString()}`,
+        dateOnly: b.date,
+      });
+    }
+  });
+
+  feed.sort((a, b) => {
+    const ta = a.ts ? new Date(a.ts).getTime() : a.dateOnly ? new Date(a.dateOnly + 'T23:59:59').getTime() : 0;
+    const tb = b.ts ? new Date(b.ts).getTime() : b.dateOnly ? new Date(b.dateOnly + 'T23:59:59').getTime() : 0;
+    return tb - ta;
+  });
+  const activityItems = feed.slice(0, 12);
 
   const myTeam = (teams || []).find((t: any) => t.id === currentUser?.team_id);
 
@@ -185,38 +182,26 @@ export default function DashboardView({
         memberCount={members.length}
         hasSessionToday={todayAttendance.length > 0}
         activeTaskCount={activeTasks.length}
-        overdueCount={overdueTasks.length}
+        overdueCount={overdueCount}
         nextEvent={nextEventLabel}
-        attentionCount={attentionCount}
+        totalBudget={totalBudget}
         onNavigate={navigate}
-        onNeedsAction={scrollToNeeds}
       />
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 sm:gap-4">
-        <NeedsAttention
-          overdueTasks={overdueTasks.slice(0, 4)}
-          lowStock={lowStock}
-          missingCheckin={missingCheckin.slice(0, 4)}
-          deadlinesSoon={deadlinesSoon}
-          attentionCount={attentionCount}
-          onMarkTaskDone={markTaskDone}
-          onNavigate={navigate}
-        />
-        <UpcomingTimeline events={events} onNavigate={navigate} />
-      </div>
+      <MyStatusStrip
+        currentUser={currentUser}
+        attendance={data.attendance || []}
+        isLoading={false}
+        setLoading={setLoading}
+        isAiLoading={isAiLoading}
+        ThinkingIndicator={ThinkingIndicator}
+        onRefresh={onRefresh}
+      />
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
-        <TeamActivity items={recentActivity} />
+        <TeamActivity items={activityItems} />
         <div className="xl:col-span-5 flex flex-col gap-3 sm:gap-4">
-          <MyStatusCard
-            currentUser={currentUser}
-            attendance={data.attendance || []}
-            isLoading={false}
-            setLoading={setLoading}
-            isAiLoading={isAiLoading}
-            ThinkingIndicator={ThinkingIndicator}
-            onRefresh={onRefresh}
-          />
+          <UpcomingTimeline events={events} onNavigate={navigate} />
           <TeamSummary
             summary={data.summary}
             insights={insights}
