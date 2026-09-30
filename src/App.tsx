@@ -125,6 +125,7 @@ import Landing from './Landing';
 import LegalPage from './Legal';
 import { cn, Card, Button } from './components/ui';
 import DashboardView from './components/dashboard/DashboardView';
+import ThemeToggle from './components/ThemeToggle';
 
 // Helper to get CSS variable values
 function getCSSVariable(name: string): string {
@@ -805,7 +806,7 @@ export default function App() {
   const [tourOpen, setTourOpen] = useState(false);
   const [tourStartStep, setTourStartStep] = useState(0);
   const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardStartStep, setWizardStartStep] = useState<0 | 1 | 2>(0);
+  const [wizardStartStep, setWizardStartStep] = useState<0 | 1 | 2 | 3>(0);
   const tourSaveTimer = useRef<number | null>(null);
   const tourStepRef = useRef(0);
 
@@ -1834,7 +1835,7 @@ export default function App() {
         steps: { tour: { status: 'done', updatedAt: now } },
       });
       if (next === 'setup') {
-        setWizardStartStep(s.steps.profile.status === 'done' ? 2 : 0);
+        setWizardStartStep(s.steps.profile.status === 'done' ? 3 : 0);
         setWizardOpen(true);
       }
     } catch {
@@ -2513,6 +2514,7 @@ export default function App() {
                 )}
               </div>
             )}
+            <ThemeToggle />
             <button
               onClick={handleBrunoButton}
               data-onboard="header-bruno"
