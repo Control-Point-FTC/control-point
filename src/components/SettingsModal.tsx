@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2 } from 'lucide-react';
+import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2 } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify } from './dialog';
@@ -28,6 +28,8 @@ export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
   const [section, setSection] = useState<Section>('account');
+  // On phones the nav and content can't sit side-by-side — drill in instead.
+  const [mobileNav, setMobileNav] = useState(true);
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [teamName, setTeamName] = useState('');
@@ -164,8 +166,11 @@ export default function SettingsModal({
 
   return (
     <div className="fixed inset-0 z-[70] flex bg-primary" role="dialog" aria-modal="true" aria-label="Settings">
-      {/* Left nav */}
-      <div className="w-60 sm:w-72 flex-shrink-0 bg-secondary border-r border-white/[0.06] flex flex-col">
+      {/* Left nav — full-screen list on phones, sidebar on desktop */}
+      <div className={cn(
+        'w-full md:w-60 lg:w-72 flex-shrink-0 bg-secondary md:border-r border-white/[0.06] flex-col',
+        mobileNav ? 'flex' : 'hidden md:flex'
+      )}>
         <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-6">
           {['USER SETTINGS', 'TEAM SETTINGS'].map((heading) => {
             const items = sections.filter((s) => s.heading === heading);
@@ -177,7 +182,7 @@ export default function SettingsModal({
                   {items.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => setSection(s.id)}
+                      onClick={() => { setSection(s.id); setMobileNav(false); }}
                       className={cn(
                         'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all',
                         section === s.id
@@ -199,12 +204,21 @@ export default function SettingsModal({
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center justify-between px-6 sm:px-10 pt-6 pb-4 flex-shrink-0">
-          <h2 className="text-xl font-display font-bold text-white">
-            {sections.find((s) => s.id === section)?.label}
-          </h2>
+      {/* Content — full-screen drill-in on phones, pane on desktop */}
+      <div className={cn('flex-1 flex-col min-w-0', mobileNav ? 'hidden md:flex' : 'flex')}>
+        <div className="flex items-center justify-between px-4 sm:px-10 pt-6 pb-4 flex-shrink-0">
+          <div className="flex items-center gap-1 min-w-0">
+            <button
+              onClick={() => setMobileNav(true)}
+              aria-label="Back to settings list"
+              className="md:hidden p-2 -ml-2 rounded-xl text-text-muted hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <h2 className="text-xl font-display font-bold text-white truncate">
+              {sections.find((s) => s.id === section)?.label}
+            </h2>
+          </div>
           <button
             onClick={onClose}
             aria-label="Close settings"
