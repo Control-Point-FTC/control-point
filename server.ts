@@ -6650,14 +6650,18 @@ Rules:
 
   // ---- GitHub repo linking for the Code page ----
   const GITHUB_UA = "Control-Point";
+  const GITHUB_TOKEN = (process.env.GITHUB_TOKEN || "").trim();
   const GITHUB_TREE_CAP = 5000;
   const GITHUB_FILE_BYTES_CAP = 100 * 1024;
 
   async function githubFetch(url: string): Promise<Response> {
-    const res = await fetch(url, {
-      headers: { "User-Agent": GITHUB_UA, "Accept": "application/vnd.github+json" },
-    });
+    const headers: Record<string, string> = { "User-Agent": GITHUB_UA, "Accept": "application/vnd.github+json" };
+    // Optional GITHUB_TOKEN (classic PAT, no scopes needed for public repos)
+    // raises the API limit from 60/hr (shared IP) to 5,000/hr.
+    if (GITHUB_TOKEN) headers["Authorization"] = `Bearer ${GITHUB_TOKEN}`;
+    const res = await fetch(url, { headers });
     if (res.status === 403 || res.status === 429) {
+      if (!GITHUB_TOKEN) console.warn("[github] rate limited without GITHUB_TOKEN set — add it to raise the limit");
       const e: any = new Error("GitHub rate limit hit, try again shortly");
       e.rateLimited = true;
       throw e;
