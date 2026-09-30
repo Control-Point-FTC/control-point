@@ -62,6 +62,7 @@ import {
   Reply,
   Forward,
   Sparkles,
+  ClipboardPaste,
   Trophy,
   Flag,
   Cog,
@@ -6248,6 +6249,135 @@ function fmtCompact(n: any) {
   return String(Math.round(v * 100) / 100);
 }
 
+// Bulk outreach paste parser: turns pasted tables/text into outreach rows.
+// Handles tab/pipe/comma-delimited rows with an optional header line
+// (title, date, hours, location, attendees, funds_raised, description), or
+// freeform lines where dates/hours/attendees/funds are sniffed out.
+function normalizeBulkDate(cell: string): string | null {
+  const t = cell.trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+    return isNaN(d.getTime()) ? null : `${m[1]}-${m[2]}-${m[3]}`;
+  }
+  m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if (m) {
+    const nowY = new Date().getFullYear();
+    let y = m[3] ? parseInt(m[3], 10) : nowY;
+    if (y < 100) y += 2000;
+    const mm = String(parseInt(m[1], 10)).padStart(2, '0');
+    const dd = String(parseInt(m[2], 10)).padStart(2, '0');
+    const d = new Date(`${y}-${mm}-${dd}T00:00:00`);
+    return isNaN(d.getTime()) ? null : `${y}-${mm}-${dd}`;
+  }
+  m = t.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$/i);
+  if (m) {
+    const months: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+    const y = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+    const mm = String(months[m[1].toLowerCase()]).padStart(2, '0');
+    const dd = String(parseInt(m[2], 10)).padStart(2, '0');
+    const d = new Date(`${y}-${mm}-${dd}T00:00:00`);
+    return isNaN(d.getTime()) ? null : `${y}-${mm}-${dd}`;
+  }
+  return null;
+}
+
+function sniffBulkCell(cell: string): { field: string; value: any } | null {
+  const t = cell.trim();
+  if (!t) return null;
+  const date = normalizeBulkDate(t);
+  if (date) return { field: 'date', value: date };
+  const fundsInline = t.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
+  if (fundsInline && /fund|rais|donat|\$/i.test(t)) {
+    return { field: 'funds_raised', value: parseFloat(fundsInline[1].replace(/,/g, '')) || 0 };
+  }
+  let m = t.match(/^(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours)$/i);
+  if (m) return { field: 'hours', value: parseFloat(m[1]) };
+  m = t.match(/(\d+)\s*(attendees|people|students|kids|participants)/i);
+  if (m) return { field: 'attendees', value: parseInt(m[1], 10) };
+  return { field: 'text', value: t };
+}
+
+export function parseOutreachRows(text: string): any[] {
+  const lines = String(text || '').split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (!lines.length) return [];
+  // Detect delimiter: tabs (spreadsheet paste) win, then pipes, then commas.
+  let delim: string | null = null;
+  const frac = (ch: string) => lines.filter(l => l.includes(ch)).length / lines.length;
+  if (frac('\t') >= 0.5) delim = '\t';
+  else if (frac('|') >= 0.5) delim = '|';
+  else if (lines.length > 1 && frac(',') >= 0.5) delim = ',';
+
+  const rows: any[] = [];
+  let startIdx = 0;
+  let colMap: Record<string, number> | null = null;
+  if (delim) {
+    const header = lines[0].split(delim).map(c => c.trim().toLowerCase());
+    const looksHeader = header.some(c => /^(title|event|name)$/.test(c)) && header.some(c => /date/.test(c));
+    if (looksHeader) {
+      colMap = {};
+      header.forEach((c, i) => {
+        if (/^(title|event|name)$/.test(c)) colMap!['title'] = i;
+        else if (/date/.test(c)) colMap!['date'] = i;
+        else if (/hour/.test(c)) colMap!['hours'] = i;
+        else if (/locat|venue|place/.test(c)) colMap!['location'] = i;
+        else if (/attend/.test(c)) colMap!['attendees'] = i;
+        else if (/fund|rais|donat|amount|\$/.test(c)) colMap!['funds_raised'] = i;
+        else if (/desc|note/.test(c)) colMap!['description'] = i;
+      });
+      startIdx = 1;
+    }
+  }
+
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  for (let li = startIdx; li < lines.length && rows.length < 50; li++) {
+    const cells = delim ? lines[li].split(delim).map(c => c.trim()) : [lines[li]];
+    const row: any = { title: '', description: '', date: todayKey, hours: '', location: '', attendees: '', funds_raised: '' };
+    if (colMap) {
+      const at = (k: string) => (colMap![k] != null ? (cells[colMap![k]] || '') : '');
+      row.title = at('title');
+      const d = normalizeBulkDate(at('date'));
+      if (d) row.date = d;
+      const h = parseFloat(at('hours'));
+      if (isFinite(h) && h >= 0) row.hours = String(h);
+      row.location = at('location');
+      const a = parseInt(at('attendees'), 10);
+      if (isFinite(a) && a >= 0) row.attendees = String(a);
+      const f = parseFloat(String(at('funds_raised')).replace(/[$,]/g, ''));
+      if (isFinite(f) && f >= 0) row.funds_raised = String(f);
+      row.description = at('description');
+    } else {
+      const texts: string[] = [];
+      // Positional hint: in "title | date | hours | ..." layouts the 3rd cell
+      // is often a bare hours number — claim it before text classification.
+      let textCells = cells;
+      if (cells.length >= 3 && /^\d+(\.\d+)?$/.test(cells[2].trim())) {
+        const h = parseFloat(cells[2]);
+        if (h >= 0 && h <= 24) {
+          row.hours = String(h);
+          textCells = cells.filter((_, i) => i !== 2);
+        }
+      }
+      for (const cell of textCells) {
+        const s = sniffBulkCell(cell);
+        if (!s) continue;
+        if (s.field === 'text') texts.push(s.value);
+        else if (s.field === 'date') row.date = s.value;
+        else if (s.field === 'hours' && !row.hours) row.hours = String(s.value);
+        else if (s.field === 'attendees' && !row.attendees) row.attendees = String(s.value);
+        else if (s.field === 'funds_raised' && !row.funds_raised) row.funds_raised = String(s.value);
+      }
+      if (texts.length > 0) row.title = texts[0];
+      if (texts.length > 1) row.location = texts[1];
+      if (texts.length > 2) row.description = texts.slice(2).join(' — ');
+    }
+    if (row.title) rows.push(row);
+  }
+  return rows;
+}
+
 function OutreachField({ label, children }: any) {
   return (
     <label className="block">
@@ -6373,6 +6503,80 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
 
+  // Bulk paste: paste a table/text, parse rows, preview, log them all.
+  // "Parse" is a deterministic local parser; "Parse with Bruno" uses the
+  // same Bruno AI for messy natural language (```outreach proposals).
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkRows, setBulkRows] = useState<any[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkNote, setBulkNote] = useState<string | null>(null);
+
+  const handleBulkParse = () => {
+    const rows = parseOutreachRows(bulkText);
+    setBulkRows(rows);
+    setBulkNote(rows.length
+      ? `Found ${rows.length} event${rows.length === 1 ? '' : 's'} — review and log them all.`
+      : 'No events found — try the AI parse, or format rows as: title | date | hours | location | attendees | funds');
+  };
+
+  const handleBulkAiParse = async () => {
+    const text = bulkText.trim();
+    if (!text || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkNote(null);
+    setBulkRows([]);
+    let agg = '';
+    try {
+      await streamBuildHelper([
+        { role: 'user', text: `You are helping bulk-log outreach events (demos, workshops, volunteering, fundraisers, presentations). The user pasted the text below into the "Bulk paste" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entries proposed. Extract EVERY outreach event mentioned and propose them with the \`\`\`outreach block exactly as your outreach log skill specifies. Resolve relative dates against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
+      ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
+      const proposals = extractActionProposals(agg);
+      const items = proposals.find(p => p.kind === 'outreach')?.items || [];
+      const note = agg.replace(/```outreach[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
+      if (items.length) {
+        setBulkRows(items.map((e: any) => ({
+          title: e.title || '', description: e.description || '', date: e.date || '',
+          hours: e.hours != null && e.hours !== '' ? String(e.hours) : '',
+          location: e.location || '', attendees: e.attendees != null && e.attendees !== '' ? String(e.attendees) : '',
+          funds_raised: e.funds_raised != null && e.funds_raised !== '' ? String(e.funds_raised) : '',
+        })));
+        setBulkNote(`Bruno found ${items.length} event${items.length === 1 ? '' : 's'} — review and log them all.`);
+      } else {
+        setBulkNote(note || 'Bruno could not find any events in that text — try adding dates.');
+      }
+    } catch (e: any) {
+      setBulkNote(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const handleBulkLogAll = async () => {
+    if (!bulkRows.length || bulkSaving) return;
+    setBulkSaving(true);
+    let done = 0;
+    try {
+      for (const r of bulkRows) {
+        const payload = {
+          title: r.title, description: r.description || '', date: r.date,
+          hours: r.hours === '' ? 0 : Number(r.hours) || 0,
+          location: r.location || '',
+          attendees: r.attendees === '' ? 0 : Math.max(0, parseInt(r.attendees, 10) || 0),
+          funds_raised: r.funds_raised === '' ? 0 : Math.max(0, parseFloat(r.funds_raised) || 0),
+        };
+        const res = await apiFetch('/api/outreach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (res.ok) done++;
+      }
+      notify(`Logged ${done} of ${bulkRows.length} outreach events.`, done === bulkRows.length ? 'success' : 'error');
+      setBulkRows([]); setBulkText(''); setBulkNote(null); setBulkOpen(false);
+      onRefresh();
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
   const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
 
   const totals = useMemo(() => {
@@ -6442,8 +6646,56 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Outreach Log</h3>
           <p className="text-sm text-text-muted mt-1">Track community events and service hours.</p>
         </div>
-        <Button onClick={openAdd} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
+        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+          <Button variant="secondary" onClick={() => setBulkOpen(!bulkOpen)} className="w-full sm:w-auto"><ClipboardPaste className="w-4 h-4" /> Bulk paste</Button>
+          <Button onClick={openAdd} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Event</Button>
+        </div>
       </div>
+
+      {bulkOpen && (
+        <Card title="Bulk paste" subtitle="Paste a table or text — parse it and log every event at once" icon={ClipboardPaste}>
+          <div className="space-y-3">
+            <textarea
+              className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-accent/50 transition-colors h-28"
+              placeholder={"Paste rows like:\nRobotics demo | 2026-09-12 | 2 | River Edge Library | 40 attendees\nSTEM workshop | Sep 18 | 3h | NJIT | $250 raised\n\n…or paste straight from a spreadsheet — tabs work too."}
+              value={bulkText}
+              onChange={(e: any) => setBulkText(e.target.value)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" className="!text-xs" onClick={handleBulkParse} disabled={!bulkText.trim()}>Parse rows</Button>
+              <Button variant="secondary" className="!text-xs" onClick={handleBulkAiParse} disabled={bulkBusy || !bulkText.trim()}>
+                <Sparkles className="w-3.5 h-3.5" /> {bulkBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
+              </Button>
+              {bulkNote && <p className="text-xs text-white/70 w-full">{bulkNote}</p>}
+            </div>
+            {bulkRows.length > 0 && (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                {bulkRows.map((r: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-1.5">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{r.title}</p>
+                      <p className="text-[11px] text-text-muted">
+                        {r.date}{r.hours !== '' ? ` • ${r.hours}h` : ''}{r.location ? ` • ${r.location}` : ''}{r.attendees !== '' ? ` • ${r.attendees} attendees` : ''}{r.funds_raised !== '' ? ` • $${r.funds_raised}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setBulkRows(bulkRows.filter((_, j) => j !== i))}
+                      className="text-slate-500 hover:text-rose-400 transition-colors shrink-0"
+                      title="Remove"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <Button className="!text-xs w-full" onClick={handleBulkLogAll} disabled={bulkSaving || !bulkRows.length}>
+                  {bulkSaving ? 'Logging…' : `Log all ${bulkRows.length} events`}
+                </Button>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
       {/* Totals */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
