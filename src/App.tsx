@@ -68,6 +68,10 @@ import {
   Cog,
   Medal,
   Layers,
+  Box,
+  FileBox,
+  ClipboardCheck,
+  Package,
   Hash,
   ChevronUp,
   Music2,
@@ -115,6 +119,7 @@ import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Commun
 import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
 import { apiFetch } from './services/api';
 import { CodeView } from './components/CodeView';
+import { CadView } from './components/CadView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
 import SettingsModal from './components/SettingsModal';
@@ -752,6 +757,16 @@ const navItems = [
   { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory', group: 'Manage' },
   { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe, group: 'Manage' },
   { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code', group: 'Manage' },
+  {
+    id: 'cad', path: 'cad', label: 'CAD', icon: Box, group: 'Manage',
+    children: [
+      { id: 'cad', path: 'cad', label: 'Dashboard', icon: Box },
+      { id: 'cad-docs', path: 'cad-docs', label: 'Onshape Docs', icon: FileBox },
+      { id: 'cad-reviews', path: 'cad-reviews', label: 'Design Reviews', icon: ClipboardCheck },
+      { id: 'cad-snapshots', path: 'cad-snapshots', label: 'Snapshots', icon: Layers },
+      { id: 'cad-parts', path: 'cad-parts', label: 'Parts List', icon: Package },
+    ],
+  },
   { id: 'comm', path: 'comm', label: 'Communication', icon: Mail, group: 'Connect' },
   { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare, group: 'Connect' },
   { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper, group: 'Connect' },
@@ -792,12 +807,14 @@ export default function App() {
   // Teams & Members submenu (Members / Roles), Discord-style settings popup,
   // and the presence status picker live here so the sidebar owns them.
   const [teamsNavOpen, setTeamsNavOpen] = useState(false);
+  const [cadNavOpen, setCadNavOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
 
   // Auto-expand the Teams submenu when we're on one of its pages.
   useEffect(() => {
     if (activeTab === 'teams' || activeTab === 'roles') setTeamsNavOpen(true);
+    if (activeTab === 'cad' || activeTab === 'cad-docs' || activeTab === 'cad-reviews' || activeTab === 'cad-snapshots' || activeTab === 'cad-parts') setCadNavOpen(true);
   }, [activeTab]);
 
   /** Change my presence status (online / idle / dnd / invisible). */
@@ -1698,7 +1715,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat'];
+  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);
@@ -2023,6 +2040,11 @@ export default function App() {
         <Route path="/inventory" element={<InventoryView {...viewProps} />} />
         <Route path="/outreach" element={<OutreachView {...viewProps} />} />
         <Route path="/code" element={<CodeView {...viewProps} />} />
+        <Route path="/cad" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
+        <Route path="/cad-docs" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
+        <Route path="/cad-reviews" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
+        <Route path="/cad-snapshots" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
+        <Route path="/cad-parts" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/comm" element={<CommunicationView {...viewProps} />} />
         <Route path="/chat" element={<ChatView {...viewProps} />} />
         <Route path="/scout" element={<ScoutView {...viewProps} />} />
@@ -2287,12 +2309,12 @@ export default function App() {
               const kids = item.children as any[] | undefined;
               if (kids && kids.length > 0) {
                 const childActive = kids.some((k) => k.id === activeTab);
-                const open = teamsNavOpen || childActive;
+                const open = (item.id === 'cad' ? cadNavOpen : teamsNavOpen) || childActive;
                 return (
                   <div key={item.id}>
                     <button
                       data-onboard={`nav-${item.id}`}
-                      onClick={() => (isSidebarOpen ? setTeamsNavOpen(!teamsNavOpen) : navigate(`/${item.path}`))}
+                      onClick={() => (isSidebarOpen ? (item.id === 'cad' ? setCadNavOpen(!cadNavOpen) : setTeamsNavOpen(!teamsNavOpen)) : navigate(`/${item.path}`))}
                       title={!isSidebarOpen ? item.label : undefined}
                       className={cn(
                         "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
