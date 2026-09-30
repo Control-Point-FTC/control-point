@@ -61,6 +61,14 @@ export const QUOTA_EXHAUSTED_MSG =
   "It refills on its own (usually daily); if this keeps happening, the team owner " +
   "can add billing to the Gemini API key for uninterrupted use.";
 
+/** True when a failed call should be retried once without search grounding.
+ *  A 429 on a grounded call can mean the search-grounding allowance — not the
+ *  model quota — is exhausted, so one ungrounded retry degrades gracefully
+ *  instead of hard-failing. Never retries ungrounded calls (no infinite loop). */
+export function shouldRetryWithoutGrounding(status: number, withGrounding: boolean): boolean {
+  return withGrounding === true && status === 429;
+}
+
 async function fetchWithPolicy(
   url: string,
   init: RequestInit,
@@ -177,7 +185,15 @@ async function callGemini(opts: {
       // Log generously: the body names the exact quota bucket (quotaId) on
       // 429s, which the rate-limit dashboard doesn't always break out.
       const text = await res.text().catch(() => "");
-      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
+      const err = new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
+      // A 429 on a grounded call can mean the search-grounding allowance —
+      // not the model quota — is exhausted. Retry once without grounding so
+      // the call degrades gracefully instead of hard-failing.
+      if (shouldRetryWithoutGrounding(res.status, withGrounding)) {
+        console.warn("[AI] 429 on grounded request; retrying once without google_search");
+        return doFetch(false);
+      }
+      throw err;
     }
     return res;
   };
@@ -638,7 +654,15 @@ export async function buildHelperChat(
       // Log generously: the body names the exact quota bucket (quotaId) on
       // 429s, which the rate-limit dashboard doesn't always break out.
       const text = await res.text().catch(() => "");
-      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
+      const err = new Error(`Gemini API error ${res.status}: ${text.slice(0, 2000)}`);
+      // A 429 on a grounded call can mean the search-grounding allowance —
+      // not the model quota — is exhausted. Retry once without grounding so
+      // the call degrades gracefully instead of hard-failing.
+      if (shouldRetryWithoutGrounding(res.status, withGrounding)) {
+        console.warn("[AI] 429 on grounded request; retrying once without google_search");
+        return doFetch(false);
+      }
+      throw err;
     }
     return res;
   };
