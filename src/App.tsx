@@ -1863,6 +1863,9 @@ export default function App() {
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, socialProfiles, youtubeEnabled, tiktokEnabled, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
+      // ChatView gates channel create/delete UI on this — it was missing, so
+      // the + button never rendered for anyone.
+      isAdmin,
       // setters for optimistic UI (instant-feeling mutations with rollback on error)
       setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
       insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
