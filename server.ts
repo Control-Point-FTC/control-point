@@ -7009,6 +7009,14 @@ Rules:
     }
   });
 
+  // CAD: convert multer fileFilter/size errors into JSON instead of
+  // Express's default HTML error page.
+  const cadUploadJson = (mw: any) => (req: any, res: any, next: any) =>
+    mw(req, res, (err: any) => {
+      if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+      next();
+    });
+
   // ================= CAD =================
   // Every route binds auth.teamId; cross-team access is rejected.
   const cadTeam = (auth: any, res: any) => {
@@ -7074,7 +7082,7 @@ Rules:
     } catch (e) { console.error("CAD reviews list error:", e); res.status(500).json({ error: "Internal server error" }); }
   });
 
-  app.post("/api/cad/reviews", cadUpload.single("screenshot"), async (req, res) => {
+  app.post("/api/cad/reviews", cadUploadJson(cadUpload.single("screenshot")), async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
@@ -7183,7 +7191,7 @@ Rules:
     } catch (e) { console.error("CAD snapshots list error:", e); res.status(500).json({ error: "Internal server error" }); }
   });
 
-  app.post("/api/cad/snapshots", cadUpload.fields([{ name: "model", maxCount: 1 }, { name: "screenshot", maxCount: 1 }]), async (req, res) => {
+  app.post("/api/cad/snapshots", cadUploadJson(cadUpload.fields([{ name: "model", maxCount: 1 }, { name: "screenshot", maxCount: 1 }])), async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
