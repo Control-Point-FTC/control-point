@@ -36,6 +36,8 @@ import {
   EyeOff,
   Eye,
   Edit2,
+  FolderPlus,
+  FolderInput,
   Calendar,
   User,
   UserCircle,
@@ -893,6 +895,7 @@ export default function App() {
   const [messages, setMessages] = useState<any[]>([]);
   // Discord-style text channels (no servers — channels live inside the team)
   const [channels, setChannels] = useState<any[]>([]);
+  const [chatCategories, setChatCategories] = useState<any[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
 
   const fetchJsonStandalone = async (url: string) => {
@@ -918,6 +921,8 @@ export default function App() {
           return general ? general.id : null;
         });
       }
+      const cats = await fetchJsonStandalone('/api/chat/categories').catch(() => null);
+      if (Array.isArray(cats)) setChatCategories(cats);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id, currentUser?.team_id]);
@@ -1181,9 +1186,18 @@ export default function App() {
           setMessages(prev => (cur == null || msg.channel_id === cur || msg.channel_id == null ? [...prev, msg] : prev));
         } else if (msg.type === 'channel_created') {
           setChannels(prev => (prev.some((c: any) => c.id === msg.channel.id) ? prev : [...prev, msg.channel]));
+        } else if (msg.type === 'channel_updated') {
+          setChannels(prev => prev.map((c: any) => (c.id === msg.channel.id ? msg.channel : c)));
         } else if (msg.type === 'channel_deleted') {
           setChannels(prev => prev.filter((c: any) => c.id !== msg.channelId));
           setActiveChannelId(prev => (prev === msg.channelId ? msg.movedTo : prev));
+        } else if (msg.type === 'category_created') {
+          setChatCategories(prev => (prev.some((c: any) => c.id === msg.category.id) ? prev : [...prev, msg.category]));
+        } else if (msg.type === 'category_updated') {
+          setChatCategories(prev => prev.map((c: any) => (c.id === msg.category.id ? msg.category : c)));
+        } else if (msg.type === 'category_deleted') {
+          setChatCategories(prev => prev.filter((c: any) => c.id !== msg.categoryId));
+          setChannels(prev => prev.map((c: any) => (c.category_id === msg.categoryId ? { ...c, category_id: null } : c)));
         } else if (msg.type === 'message_deleted') {
           if (msg.deleted_permanently) {
             // Remove message completely for permanent deletion
@@ -1886,17 +1900,67 @@ export default function App() {
       onDismissChecklist: handleChecklistDismiss,
       // Discord-style chat channels
       channels, activeChannelId, setActiveChannelId,
-      handleCreateChannel: async (name: string, topic: string) => {
+      chatCategories,
+      handleCreateChannel: async (name: string, topic: string, categoryId?: number | null) => {
         const res = await apiFetch('/api/chat/channels', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, topic }),
+          body: JSON.stringify({ name, topic, category_id: categoryId ?? null }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) { notify(data.error || 'Could not create channel.', 'error'); return null; }
         if (data.channel) {
           setChannels((prev) => (prev.some((c: any) => c.id === data.channel.id) ? prev : [...prev, data.channel]));
           setActiveChannelId(data.channel.id);
+        }
+        return data.channel;
+      },
+      handleCreateCategory: async (name: string) => {
+        const res = await apiFetch('/api/chat/categories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(data.error || 'Could not create category.', 'error'); return null; }
+        if (data.category) {
+          setChatCategories((prev) => (prev.some((c: any) => c.id === data.category.id) ? prev : [...prev, data.category]));
+        }
+        return data.category;
+      },
+      handleRenameCategory: async (id: number, name: string) => {
+        const res = await apiFetch(`/api/chat/categories/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(data.error || 'Could not rename category.', 'error'); return null; }
+        if (data.category) {
+          setChatCategories((prev) => prev.map((c: any) => (c.id === data.category.id ? data.category : c)));
+        }
+        return data.category;
+      },
+      handleDeleteCategory: async (id: number, name: string) => {
+        const ok = await confirmDialog({ title: `Delete "${name}"?`, message: "Its channels stay, ungrouped. This can't be undone.", confirmLabel: 'Delete', danger: true });
+        if (!ok) return;
+        const res = await apiFetch(`/api/chat/categories/${id}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(data.error || 'Could not delete category.', 'error'); return; }
+        setChatCategories((prev) => prev.filter((c: any) => c.id !== id));
+        setChannels((prev) => prev.map((c: any) => (c.category_id === id ? { ...c, category_id: null } : c)));
+        notify('Category deleted.', 'success');
+      },
+      handleMoveChannel: async (id: number, categoryId: number | null) => {
+        const res = await apiFetch(`/api/chat/channels/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category_id: categoryId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { notify(data.error || 'Could not move channel.', 'error'); return null; }
+        if (data.channel) {
+          setChannels((prev) => prev.map((c: any) => (c.id === data.channel.id ? data.channel : c)));
         }
         return data.channel;
       },
@@ -6643,7 +6707,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
 // Discord-style messaging: channel list on the left, conversation in the
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
-function ChatView({ messages, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam }: any) {
+function ChatView({ messages, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -6655,8 +6719,28 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const [showMembersMobile, setShowMembersMobile] = useState(false);
   const [showMemberList, setShowMemberList] = useState(true);
   const [creatingChannel, setCreatingChannel] = useState(false);
+  const [creatingIn, setCreatingIn] = useState<number | 'uncat' | null>(null); // category id (or 'uncat') the new-channel form belongs to
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelTopic, setNewChannelTopic] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [renamingCat, setRenamingCat] = useState<number | null>(null);
+  const [renameCatName, setRenameCatName] = useState('');
+  const [moveMenuFor, setMoveMenuFor] = useState<number | null>(null); // channel id with the move-to-category menu open
+  const [collapsedCats, setCollapsedCats] = useState<Set<number>>(() => {
+    try {
+      const raw = localStorage.getItem(`cp-collapsed-cats-${currentUser?.team_id ?? 'x'}`);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+  const toggleCat = (id: number) => {
+    setCollapsedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      try { localStorage.setItem(`cp-collapsed-cats-${currentUser?.team_id ?? 'x'}`, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
   const [showTeamMenu, setShowTeamMenu] = useState(false);
   // reply + forward state
   const [replyTo, setReplyTo] = useState<any | null>(null);
@@ -6829,12 +6913,35 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const handleCreateChannelSubmit = async () => {
     const name = newChannelName.trim();
     if (!name) return;
-    const ch = await handleCreateChannel(name, newChannelTopic.trim());
+    const catId = creatingIn === 'uncat' ? null : creatingIn;
+    const ch = await handleCreateChannel(name, newChannelTopic.trim(), catId);
     if (ch) {
       setNewChannelName('');
       setNewChannelTopic('');
+      setCreatingIn(null);
       setCreatingChannel(false);
       setShowChannelsMobile(false);
+    }
+  };
+
+  const handleCreateCategorySubmit = async () => {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    const cat = await handleCreateCategory(name);
+    if (cat) {
+      setNewCategoryName('');
+      setCreatingCategory(false);
+    }
+  };
+
+  const handleRenameCategorySubmit = async () => {
+    if (renamingCat == null) return;
+    const name = renameCatName.trim();
+    if (!name) return;
+    const cat = await handleRenameCategory(renamingCat, name);
+    if (cat) {
+      setRenamingCat(null);
+      setRenameCatName('');
     }
   };
 
@@ -6918,48 +7025,221 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const onlineMembers = members.filter((m: any) => m.presence === 'online' || m.presence === 'idle' || m.presence === 'dnd');
   const offlineMembers = members.filter((m: any) => !onlineMembers.includes(m));
 
+  // ---- Channel categories (Discord-style groups) ----
+  const sortedCats = [...(chatCategories || [])].sort(
+    (a: any, b: any) => (a.position ?? 0) - (b.position ?? 0) || a.id - b.id
+  );
+  const catIds = new Set(sortedCats.map((c: any) => c.id));
+  const channelsByCat = new Map<number, any[]>();
+  const ungroupedChannels: any[] = [];
+  (channels || []).forEach((c: any) => {
+    if (c.category_id != null && catIds.has(c.category_id)) {
+      if (!channelsByCat.has(c.category_id)) channelsByCat.set(c.category_id, []);
+      channelsByCat.get(c.category_id)!.push(c);
+    } else {
+      ungroupedChannels.push(c);
+    }
+  });
+  // Touch devices have no hover: admin row actions stay visible so the
+  // channel/category controls are tappable on phones.
+  const adminIconVis = isTouchDevice ? 'opacity-100' : 'opacity-0 group-hover/cat:opacity-100';
+
+  const renderCreateChannelForm = () => (
+    <div className="mx-1 mb-2 p-3 rounded-xl bg-primary border border-white/10 space-y-2 flex-shrink-0">
+      <input
+        value={newChannelName}
+        onChange={(e) => setNewChannelName(e.target.value)}
+        placeholder="channel-name"
+        maxLength={40}
+        autoFocus
+        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateChannelSubmit(); }}
+        className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+      />
+      <input
+        value={newChannelTopic}
+        onChange={(e) => setNewChannelTopic(e.target.value)}
+        placeholder="Topic (optional)"
+        maxLength={140}
+        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateChannelSubmit(); }}
+        className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={handleCreateChannelSubmit}
+          disabled={!newChannelName.trim()}
+          className="flex-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink hover:brightness-105 disabled:opacity-40 transition-all"
+        >
+          Create
+        </button>
+        <button
+          onClick={() => { setCreatingIn(null); setCreatingChannel(false); setNewChannelName(''); setNewChannelTopic(''); }}
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderChannelRow = (c: any) => {
+    const isActive = c.id === activeChannelId;
+    return (
+      <div key={c.id} className="group/channel relative">
+        <button
+          onClick={() => { setActiveChannelId(c.id); setReplyTo(null); setShowChannelsMobile(false); }}
+          title={c.topic || `#${c.name}`}
+          className={cn(
+            'w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
+            isActive ? 'bg-white/[0.08] text-white font-semibold' : 'text-text-muted hover:bg-white/[0.04] hover:text-white'
+          )}
+        >
+          <Hash className={cn('w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} />
+          <span className="truncate flex-1">{c.name}</span>
+          {isAdmin && (
+            <span className={cn('flex items-center gap-0.5 flex-shrink-0 transition-opacity', isTouchDevice ? 'opacity-100' : 'opacity-0 group-hover/channel:opacity-100')}>
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); setMoveMenuFor(moveMenuFor === c.id ? null : c.id); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMoveMenuFor(moveMenuFor === c.id ? null : c.id); } }}
+                className="p-1 rounded text-text-muted/60 hover:text-white"
+                title={`Move #${c.name} to another category`}
+              >
+                <FolderInput className="w-3.5 h-3.5" />
+              </span>
+              {c.name !== 'general' && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); handleDeleteChannel(c.id); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleDeleteChannel(c.id); } }}
+                  className="p-1 rounded text-text-muted/60 hover:text-rose-400"
+                  title={`Delete #${c.name}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </span>
+              )}
+            </span>
+          )}
+        </button>
+        {moveMenuFor === c.id && isAdmin && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setMoveMenuFor(null)} />
+            <div className="absolute right-1 top-9 z-50 w-48 rounded-xl border border-white/10 bg-secondary shadow-2xl p-1">
+              <p className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted/60">Move to</p>
+              {sortedCats.map((cat: any) => (
+                <button
+                  key={cat.id}
+                  onClick={async () => { setMoveMenuFor(null); await handleMoveChannel(c.id, cat.id); }}
+                  className={cn(
+                    'w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors',
+                    c.category_id === cat.id ? 'text-accent font-semibold' : 'text-text-muted hover:bg-white/[0.06] hover:text-white'
+                  )}
+                >
+                  {cat.name}
+                </button>
+              ))}
+              <button
+                onClick={async () => { setMoveMenuFor(null); await handleMoveChannel(c.id, null); }}
+                className={cn(
+                  'w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors',
+                  c.category_id == null ? 'text-accent font-semibold' : 'text-text-muted hover:bg-white/[0.06] hover:text-white'
+                )}
+              >
+                Ungrouped
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const renderCategoryHeader = (cat: any, ungrouped: boolean) => (
+    <div className="group/cat flex items-center gap-0.5 px-2.5 pt-3 pb-1">
+      <button
+        onClick={() => { if (!ungrouped) toggleCat(cat.id); }}
+        className="flex items-center gap-1 flex-1 min-w-0 text-left"
+        aria-expanded={ungrouped ? undefined : !collapsedCats.has(cat.id)}
+      >
+        {!ungrouped && (
+          <ChevronDown className={cn('w-3.5 h-3.5 text-text-muted/60 transition-transform flex-shrink-0', collapsedCats.has(cat.id) && '-rotate-90')} />
+        )}
+        <span className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-muted/70 truncate">
+          {ungrouped ? 'Ungrouped' : cat.name}
+        </span>
+      </button>
+      {isAdmin && (
+        <span className={cn('flex items-center flex-shrink-0 transition-opacity', adminIconVis)}>
+          {!ungrouped && (
+            <>
+              <button
+                onClick={() => { setRenameCatName(cat.name); setRenamingCat(renamingCat === cat.id ? null : cat.id); }}
+                className="p-1 rounded text-text-muted/60 hover:text-white"
+                title={`Rename "${cat.name}"`}
+                aria-label={`Rename category ${cat.name}`}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleDeleteCategory(cat.id, cat.name)}
+                className="p-1 rounded text-text-muted/60 hover:text-rose-400"
+                title={`Delete "${cat.name}"`}
+                aria-label={`Delete category ${cat.name}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setCreatingIn(creatingIn === (ungrouped ? 'uncat' : cat.id) ? null : (ungrouped ? 'uncat' : cat.id))}
+            className="p-1 rounded text-text-muted/60 hover:text-white"
+            title={ungrouped ? 'Create channel' : `Create channel in ${cat.name}`}
+            aria-label={ungrouped ? 'Create channel' : `Create channel in ${cat.name}`}
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </span>
+      )}
+    </div>
+  );
+
   const channelList = (
     <div className="flex flex-col h-full">
       <div className="px-4 pt-4 pb-2 flex items-center justify-between flex-shrink-0">
         <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-text-muted/70">Text channels</p>
         {isAdmin && (
           <button
-            onClick={() => setCreatingChannel(!creatingChannel)}
+            onClick={() => { setCreatingCategory(!creatingCategory); setNewCategoryName(''); }}
             className="p-1.5 -mr-1 rounded-md text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors"
-            title="Create channel"
-            aria-label="Create channel"
+            title="New category"
+            aria-label="New category"
           >
-            <Plus className="w-4 h-4" />
+            <FolderPlus className="w-4 h-4" />
           </button>
         )}
       </div>
-      {creatingChannel && isAdmin && (
+      {creatingCategory && isAdmin && (
         <div className="mx-3 mb-2 p-3 rounded-xl bg-primary border border-white/10 space-y-2 flex-shrink-0">
           <input
-            value={newChannelName}
-            onChange={(e) => setNewChannelName(e.target.value)}
-            placeholder="channel-name"
+            value={newCategoryName}
+            onChange={(e) => setNewCategoryName(e.target.value)}
+            placeholder="Category name"
             maxLength={40}
             autoFocus
-            className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
-          />
-          <input
-            value={newChannelTopic}
-            onChange={(e) => setNewChannelTopic(e.target.value)}
-            placeholder="Topic (optional)"
-            maxLength={140}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategorySubmit(); }}
             className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
           />
           <div className="flex gap-2">
             <button
-              onClick={handleCreateChannelSubmit}
-              disabled={!newChannelName.trim()}
+              onClick={handleCreateCategorySubmit}
+              disabled={!newCategoryName.trim()}
               className="flex-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink hover:brightness-105 disabled:opacity-40 transition-all"
             >
-              Create
+              Create category
             </button>
             <button
-              onClick={() => { setCreatingChannel(false); setNewChannelName(''); setNewChannelTopic(''); }}
+              onClick={() => { setCreatingCategory(false); setNewCategoryName(''); }}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors"
             >
               Cancel
@@ -6967,37 +7247,43 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
           </div>
         </div>
       )}
-      <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-4 space-y-0.5">
-        {(channels || []).map((c: any) => {
-          const isActive = c.id === activeChannelId;
-          return (
-            <div key={c.id} className="group/channel relative">
-              <button
-                onClick={() => { setActiveChannelId(c.id); setReplyTo(null); setShowChannelsMobile(false); }}
-                title={c.topic || `#${c.name}`}
-                className={cn(
-                  'w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
-                  isActive ? 'bg-white/[0.08] text-white font-semibold' : 'text-text-muted hover:bg-white/[0.04] hover:text-white'
-                )}
-              >
-                <Hash className={cn('w-4.5 h-4.5 w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} />
-                <span className="truncate flex-1">{c.name}</span>
-                {isAdmin && c.name !== 'general' && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); handleDeleteChannel(c.id); }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleDeleteChannel(c.id); } }}
-                    className="p-1 rounded text-text-muted/60 hover:text-rose-400 opacity-0 group-hover/channel:opacity-100 transition-opacity flex-shrink-0"
-                    title={`Delete #${c.name}`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </span>
-                )}
-              </button>
+      <div className="flex-1 overflow-y-auto custom-scrollbar px-2 pb-4">
+        {sortedCats.map((cat: any) => (
+          <div key={cat.id}>
+            {renderCategoryHeader(cat, false)}
+            {renamingCat === cat.id && isAdmin && (
+              <div className="mx-1 mb-1 flex gap-1.5">
+                <input
+                  value={renameCatName}
+                  onChange={(e) => setRenameCatName(e.target.value)}
+                  maxLength={40}
+                  autoFocus
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleRenameCategorySubmit(); if (e.key === 'Escape') setRenamingCat(null); }}
+                  className="flex-1 min-w-0 bg-secondary border border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-accent/60"
+                />
+                <button onClick={handleRenameCategorySubmit} disabled={!renameCatName.trim()} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink disabled:opacity-40">Save</button>
+              </div>
+            )}
+            {!collapsedCats.has(cat.id) && (
+              <div className="space-y-0.5">
+                {(channelsByCat.get(cat.id) || []).map(renderChannelRow)}
+              </div>
+            )}
+            {creatingIn === cat.id && isAdmin && renderCreateChannelForm()}
+          </div>
+        ))}
+        {ungroupedChannels.length > 0 && (
+          <div>
+            {renderCategoryHeader({ id: 'uncat' }, true)}
+            <div className="space-y-0.5">
+              {ungroupedChannels.map(renderChannelRow)}
             </div>
-          );
-        })}
+            {creatingIn === 'uncat' && isAdmin && renderCreateChannelForm()}
+          </div>
+        )}
+        {sortedCats.length === 0 && ungroupedChannels.length === 0 && (
+          <p className="px-2.5 py-4 text-sm text-text-muted/60">No channels yet.</p>
+        )}
       </div>
     </div>
   );
