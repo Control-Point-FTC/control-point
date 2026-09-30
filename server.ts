@@ -201,6 +201,8 @@ async function ensureChatTemplate(teamId: number): Promise<void> {
       }
     }
   }
+  // Announcements are admin-post-only by default (applies to existing teams too)
+  await dbRun("UPDATE chat_channels SET post_restricted = 1 WHERE team_id = ? AND name = 'announcements'");
 }
 async function backfillMessageChannels(teamId: number): Promise<void> {
   const general = await ensureGeneralChannel(teamId);
@@ -649,6 +651,9 @@ if (!messageReplyColumns.some((c: any) => c.name === 'forwarded_from')) {
 const chatChannelCols = (await dbAll("PRAGMA table_info(chat_channels)"));
 if (!chatChannelCols.some((c: any) => c.name === 'category_id')) {
   (await dbExec("ALTER TABLE chat_channels ADD COLUMN category_id INTEGER"));
+}
+if (!chatChannelCols.some((c: any) => c.name === 'post_restricted')) {
+  (await dbExec("ALTER TABLE chat_channels ADD COLUMN post_restricted INTEGER DEFAULT 0"));
 }
 
 const teamColumns = (await dbAll("PRAGMA table_info(teams)"));
@@ -1530,8 +1535,13 @@ async function startServer() {
           const general = await ensureGeneralChannel(teamId);
           let channelId = parseInt(message.channel_id, 10);
           if (!Number.isFinite(channelId)) channelId = general.id;
-          const chan = (await dbGet("SELECT id FROM chat_channels WHERE id = ? AND team_id = ?", channelId, teamId)) as any;
+          const chan = (await dbGet("SELECT id, name, post_restricted FROM chat_channels WHERE id = ? AND team_id = ?", channelId, teamId)) as any;
           if (!chan) channelId = general.id;
+          const restrictedChan = (await dbGet("SELECT id, name, post_restricted FROM chat_channels WHERE id = ? AND team_id = ?", channelId, teamId)) as any;
+          if (restrictedChan?.post_restricted && !(await hasPerm({ memberId: message.sender_id, teamId }, "manage_members"))) {
+            try { ws.send(JSON.stringify({ type: "chat_denied", client_id: message.client_id || null, error: `Only admins can post in #${restrictedChan.name}` })); } catch {}
+            return;
+          }
           const timestamp = new Date().toISOString();
           // Optional reply target must be a real message in this workspace
           let replyToId: number | null = parseInt(message.reply_to_id, 10);
@@ -1574,6 +1584,7 @@ async function startServer() {
           broadcastToTeam(teamId, {
             type: "chat",
             id: info.lastInsertRowid,
+            client_id: typeof message.client_id === "string" ? message.client_id : null,
             sender_id: message.sender_id,
             sender_name: message.sender_name,
             content: message.content,
@@ -3620,6 +3631,9 @@ async function startServer() {
       if (!cat) return res.status(400).json({ error: "Category not found" });
     }
     await dbRun("UPDATE chat_channels SET category_id = ? WHERE id = ?", categoryId, id);
+    if (req.body?.post_restricted !== undefined) {
+      await dbRun("UPDATE chat_channels SET post_restricted = ? WHERE id = ?", req.body.post_restricted ? 1 : 0, id);
+    }
     const updated = (await dbGet("SELECT * FROM chat_channels WHERE id = ?", id)) as any;
     broadcastToTeam(auth.teamId!, { type: "channel_updated", channel: updated });
     res.json({ channel: updated });
@@ -3732,8 +3746,13 @@ async function startServer() {
     const general = await ensureGeneralChannel(auth.teamId!);
     let channelId = parseInt(req.body.channel_id, 10);
     if (!Number.isFinite(channelId)) channelId = general.id;
-    const chan = (await dbGet("SELECT id FROM chat_channels WHERE id = ? AND team_id = ?", channelId, auth.teamId)) as any;
+    const chan = (await dbGet("SELECT id, post_restricted FROM chat_channels WHERE id = ? AND team_id = ?", channelId, auth.teamId)) as any;
     if (!chan) channelId = general.id;
+    const restrictedUpload = (await dbGet("SELECT post_restricted FROM chat_channels WHERE id = ? AND team_id = ?", channelId, auth.teamId)) as any;
+    if (restrictedUpload?.post_restricted && !(await hasPerm({ memberId: auth.memberId, teamId: auth.teamId }, "manage_members"))) {
+      if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+      return res.status(403).json({ error: "Only admins can post in that channel" });
+    }
     let replyToId: number | null = parseInt(req.body.reply_to_id, 10);
     if (!Number.isFinite(replyToId)) replyToId = null;
     if (replyToId != null) {

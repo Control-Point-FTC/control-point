@@ -1184,6 +1184,8 @@ export default function App() {
           // Only keep it in the visible list if it belongs to the active channel.
           const cur = activeChannelIdRef.current;
           setMessages(prev => (cur == null || msg.channel_id === cur || msg.channel_id == null ? [...prev, msg] : prev));
+        } else if (msg.type === 'chat_denied') {
+          notify(msg.error || 'You cannot post in that channel.', 'error');
         } else if (msg.type === 'channel_created') {
           setChannels(prev => (prev.some((c: any) => c.id === msg.channel.id) ? prev : [...prev, msg.channel]));
         } else if (msg.type === 'channel_updated') {
@@ -6757,6 +6759,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const msgRefs = React.useRef<Map<number, HTMLDivElement>>(new Map());
 
   const activeChannel = (channels || []).find((c: any) => c.id === activeChannelId) || (channels || [])[0];
+  const canPostInChannel = isAdmin || !activeChannel?.post_restricted;
   // Discord shows no tombstones — deleted messages vanish
   const visibleMessages = (messages || []).filter((m: any) => !m.deleted_at);
 
@@ -6799,6 +6802,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
 
   const handleSend = async () => {
     if ((!content.trim() && !pendingFile) || !socket || uploading) return;
+    if (!canPostInChannel) return;
     const finalContent = convertMentions(content);
     const replyToId = replyTo?.id || null;
 
@@ -7095,6 +7099,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
         >
           <Hash className={cn('w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} />
           <span className="truncate flex-1">{c.name}</span>
+          {c.post_restricted ? <Lock className="w-3.5 h-3.5 flex-shrink-0 text-text-muted/50" /> : null}
           {isAdmin && (
             <span className={cn('flex items-center gap-0.5 flex-shrink-0 transition-opacity', isTouchDevice ? 'opacity-100' : 'opacity-0 group-hover/channel:opacity-100')}>
               <span
@@ -7147,6 +7152,25 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
                 )}
               >
                 Ungrouped
+              </button>
+              <div className="my-1 border-t border-white/[0.06]" />
+              <button
+                onClick={async () => {
+                  setMoveMenuFor(null);
+                  try {
+                    const res = await apiFetch(`/api/chat/channels/${c.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ post_restricted: c.post_restricted ? 0 : 1 }),
+                    });
+                    if (!res.ok) throw new Error();
+                    notify(c.post_restricted ? `#${c.name} is open for everyone to post.` : `#${c.name} is now admin-only.`, 'success');
+                  } catch { notify('Could not change that setting.', 'error'); }
+                }}
+                className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-text-muted hover:bg-white/[0.06] hover:text-white transition-colors flex items-center gap-2"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                {c.post_restricted ? 'Open posting to everyone' : 'Admin-only posting'}
               </button>
             </div>
           </>
@@ -7539,6 +7563,13 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
         </div>
 
         <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-1 flex-shrink-0 relative">
+          {!canPostInChannel ? (
+            <div className="flex items-center gap-2.5 bg-secondary/60 border border-white/10 rounded-xl px-4 py-3.5 text-sm text-text-muted">
+              <Lock className="w-4 h-4 flex-shrink-0" />
+              <span>Only admins can post in <span className="font-semibold text-white">#{activeChannel?.name}</span></span>
+            </div>
+          ) : (
+          <>
           {replyTo && (
             <div className="flex items-center gap-2 pl-4 pr-2 py-2 bg-secondary/80 border border-white/10 border-b-0 rounded-t-xl text-xs">
               <Reply className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
@@ -7619,6 +7650,8 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
             />
             <Button onClick={handleSend} disabled={uploading || (!content.trim() && !pendingFile)} className="h-10 w-10 p-0 flex-shrink-0 rounded-lg"><Send className="w-5 h-5" /></Button>
           </div>
+          </>
+          )}
         </div>
       </div>
 
