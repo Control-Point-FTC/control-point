@@ -562,6 +562,17 @@ const messageChannelColumns = (await dbAll("PRAGMA table_info(messages)"));
 if (!messageChannelColumns.some((c: any) => c.name === 'channel_id')) {
   (await dbExec("ALTER TABLE messages ADD COLUMN channel_id INTEGER"));
 }
+// Message replies + forwarding (Discord-style)
+const messageReplyColumns = (await dbAll("PRAGMA table_info(messages)"));
+if (!messageReplyColumns.some((c: any) => c.name === 'reply_to_id')) {
+  (await dbExec("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER"));
+}
+if (!messageReplyColumns.some((c: any) => c.name === 'is_forwarded')) {
+  (await dbExec("ALTER TABLE messages ADD COLUMN is_forwarded INTEGER DEFAULT 0"));
+}
+if (!messageReplyColumns.some((c: any) => c.name === 'forwarded_from')) {
+  (await dbExec("ALTER TABLE messages ADD COLUMN forwarded_from TEXT DEFAULT ''"));
+}
 
 const teamColumns = (await dbAll("PRAGMA table_info(teams)"));
 if (!teamColumns.some((c: any) => c.name === 'accent_color')) {
@@ -1445,7 +1456,31 @@ async function startServer() {
           const chan = (await dbGet("SELECT id FROM chat_channels WHERE id = ? AND team_id = ?", channelId, teamId)) as any;
           if (!chan) channelId = general.id;
           const timestamp = new Date().toISOString();
-          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id, channel_id) VALUES (?, ?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId, channelId);
+          // Optional reply target must be a real message in this workspace
+          let replyToId: number | null = parseInt(message.reply_to_id, 10);
+          if (!Number.isFinite(replyToId)) replyToId = null;
+          if (replyToId != null) {
+            const target = (await dbGet("SELECT id FROM messages WHERE id = ? AND team_id = ?", replyToId, teamId)) as any;
+            if (!target) replyToId = null;
+          }
+          const isForwarded = message.is_forwarded ? 1 : 0;
+          const forwardedFrom = typeof message.forwarded_from === 'string' ? message.forwarded_from.slice(0, 160) : '';
+          // Forwarded attachments reuse the original file URL
+          const fwdFilePath = isForwarded && typeof message.file_path === 'string' ? message.file_path.slice(0, 500) : null;
+          const fwdFileName = isForwarded && typeof message.file_name === 'string' ? message.file_name.slice(0, 200) : null;
+          const fwdFileSize = isForwarded && Number.isFinite(Number(message.file_size)) ? Number(message.file_size) : null;
+          const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id, channel_id, reply_to_id, is_forwarded, forwarded_from, file_path, file_name, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId, channelId, replyToId, isForwarded, forwardedFrom, fwdFilePath, fwdFileName, fwdFileSize);
+
+          // Reply preview for the live broadcast (same shape as GET /api/messages)
+          let replyPreview: any = null;
+          if (replyToId != null) {
+            const rp = (await dbGet(`
+              SELECT r.content as reply_content, r.deleted_at as reply_deleted, rmem.name as reply_sender_name
+              FROM messages r LEFT JOIN members rmem ON rmem.id = r.sender_id
+              WHERE r.id = ?
+            `, replyToId)) as any;
+            if (rp) replyPreview = rp;
+          }
 
           // Handle mentions (scoped to the sender's workspace)
           const mentions = message.content.match(/@\[([^\]]+)\]/g);
@@ -1466,6 +1501,15 @@ async function startServer() {
             sender_name: message.sender_name,
             content: message.content,
             channel_id: channelId,
+            reply_to_id: replyToId,
+            reply_sender_name: replyPreview?.reply_sender_name || null,
+            reply_content: replyPreview?.reply_content || null,
+            reply_deleted: replyPreview?.reply_deleted || null,
+            is_forwarded: isForwarded,
+            forwarded_from: forwardedFrom,
+            file_path: fwdFilePath,
+            file_name: fwdFileName,
+            file_size: fwdFileSize,
             timestamp
           });
         }
@@ -3425,9 +3469,13 @@ async function startServer() {
       : "m.team_id = ?";
     const args = Number.isFinite(channelId) && channelId > 0 ? [auth.teamId, channelId] : [auth.teamId];
     const msgs = (await dbAll(`
-      SELECT m.*, mem.name as sender_name 
-      FROM messages m 
-      JOIN members mem ON m.sender_id = mem.id 
+      SELECT m.*, mem.name as sender_name,
+        rmem.name as reply_sender_name, r.content as reply_content,
+        r.deleted_at as reply_deleted
+      FROM messages m
+      JOIN members mem ON m.sender_id = mem.id
+      LEFT JOIN messages r ON r.id = m.reply_to_id
+      LEFT JOIN members rmem ON rmem.id = r.sender_id
       WHERE ${where}
       ORDER BY timestamp ASC LIMIT 200
     `, ...args));
@@ -3509,10 +3557,25 @@ async function startServer() {
     if (!Number.isFinite(channelId)) channelId = general.id;
     const chan = (await dbGet("SELECT id FROM chat_channels WHERE id = ? AND team_id = ?", channelId, auth.teamId)) as any;
     if (!chan) channelId = general.id;
+    let replyToId: number | null = parseInt(req.body.reply_to_id, 10);
+    if (!Number.isFinite(replyToId)) replyToId = null;
+    if (replyToId != null) {
+      const target = (await dbGet("SELECT id FROM messages WHERE id = ? AND team_id = ?", replyToId, auth.teamId)) as any;
+      if (!target) replyToId = null;
+    }
 
     const info = (await dbRun(
-      "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id, channel_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId, channelId));
+      "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id, channel_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId, channelId, replyToId));
+
+    let replyPreview: any = null;
+    if (replyToId != null) {
+      replyPreview = (await dbGet(`
+        SELECT r.content as reply_content, r.deleted_at as reply_deleted, rmem.name as reply_sender_name
+        FROM messages r LEFT JOIN members rmem ON rmem.id = r.sender_id
+        WHERE r.id = ?
+      `, replyToId)) as any;
+    }
 
     broadcastToTeam(auth.teamId, {
       type: "chat",
@@ -3521,6 +3584,10 @@ async function startServer() {
       sender_name,
       content: content || '',
       channel_id: channelId,
+      reply_to_id: replyToId,
+      reply_sender_name: replyPreview?.reply_sender_name || null,
+      reply_content: replyPreview?.reply_content || null,
+      reply_deleted: replyPreview?.reply_deleted || null,
       file_path: filePath,
       file_name: fileName,
       file_size: fileSize,

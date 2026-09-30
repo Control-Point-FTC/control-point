@@ -57,6 +57,8 @@ import {
   GraduationCap,
   KeyRound,
   Copy,
+  Reply,
+  Forward,
   Sparkles,
   Trophy,
   Flag,
@@ -780,6 +782,8 @@ export default function App() {
   const setActiveTab = (id: string) => navigate(`/${id}`);
   const activeNav = navItems.find((t) => t.id === activeTab)
     || navItems.flatMap((t) => (t as any).children || []).find((c: any) => c.id === activeTab);
+  // Messaging is immersive: no top bar, no footer — the chat fills the whole content area
+  const isChatRoute = activeTab === 'chat';
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const isMobile = useIsMobile();
   // Teams & Members submenu (Members / Roles), Discord-style settings popup,
@@ -2320,6 +2324,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-0 bg-primary relative h-dvh">
+        {!isChatRoute && (
         <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
@@ -2533,8 +2538,12 @@ export default function App() {
             )}
           </div>
         </header>
+        )}
 
-        <div className="px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 flex flex-col flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <div className={cn(
+          "flex flex-col flex-1 min-h-0",
+          isChatRoute ? "overflow-hidden" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto custom-scrollbar"
+        )}>
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -2553,10 +2562,12 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
+        {!isChatRoute && (
         <AppFooter
           links={visibleTabs.filter((t) => ['dashboard', 'stats', 'scout', 'calendar', 'chat', 'tasks'].includes(t.id))}
           teamName={activeTeamName}
         />
+        )}
       </main>
 
       {/* Mobile bottom tab bar — the student-first navigation on phones */}
@@ -6628,7 +6639,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
 // Discord-style messaging: channel list on the left, conversation in the
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
-function ChatView({ messages, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin }: any) {
+function ChatView({ messages, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam }: any) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -6638,14 +6649,46 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const [dragging, setDragging] = useState(false);
   const [showChannelsMobile, setShowChannelsMobile] = useState(false);
   const [showMembersMobile, setShowMembersMobile] = useState(false);
+  const [showMemberList, setShowMemberList] = useState(true);
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelTopic, setNewChannelTopic] = useState('');
+  const [showTeamMenu, setShowTeamMenu] = useState(false);
+  // reply + forward state
+  const [replyTo, setReplyTo] = useState<any | null>(null);
+  const [forwardMsg, setForwardMsg] = useState<any | null>(null);
+  const [flashId, setFlashId] = useState<number | null>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
+  const msgRefs = React.useRef<Map<number, HTMLDivElement>>(new Map());
 
   const activeChannel = (channels || []).find((c: any) => c.id === activeChannelId) || (channels || [])[0];
+  // Discord shows no tombstones — deleted messages vanish
+  const visibleMessages = (messages || []).filter((m: any) => !m.deleted_at);
+
+  const scrollToMessage = (id: number) => {
+    const el = msgRefs.current.get(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFlashId(id);
+      window.setTimeout(() => setFlashId((f) => (f === id ? null : f)), 1600);
+    }
+  };
+
+  const startReply = (msg: any) => {
+    setReplyTo({ id: msg.id, sender_name: msg.sender_name, content: msg.content });
+    composerRef.current?.focus();
+  };
+
+  const copyMessageText = async (msg: any) => {
+    try {
+      await navigator.clipboard.writeText(msg.content || '');
+      notify('Message copied.', 'info');
+    } catch {
+      notify('Could not copy that message.', 'error');
+    }
+  };
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -6664,6 +6707,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   const handleSend = async () => {
     if ((!content.trim() && !pendingFile) || !socket || uploading) return;
     const finalContent = convertMentions(content);
+    const replyToId = replyTo?.id || null;
 
     if (pendingFile) {
       setUploading(true);
@@ -6673,10 +6717,12 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
       formData.append('sender_name', currentUser.name);
       formData.append('content', finalContent);
       if (activeChannelId) formData.append('channel_id', activeChannelId.toString());
+      if (replyToId) formData.append('reply_to_id', replyToId.toString());
       try {
         const response = await apiFetch('/api/messages/upload', { method: 'POST', body: formData });
         if (response.ok) {
           setContent('');
+          setReplyTo(null);
           clearPending();
           if (fileInputRef.current) fileInputRef.current.value = '';
         } else {
@@ -6697,8 +6743,32 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
       sender_name: currentUser.name,
       content: finalContent,
       channel_id: activeChannelId,
+      reply_to_id: replyToId,
     }));
     setContent('');
+    setReplyTo(null);
+  };
+
+  const handleForward = async (targetChannelId: number) => {
+    if (!forwardMsg || !socket) return;
+    const target = (channels || []).find((c: any) => c.id === targetChannelId);
+    socket.send(JSON.stringify({
+      type: 'chat',
+      sender_id: currentUser.id,
+      sender_name: currentUser.name,
+      content: forwardMsg.content || '',
+      channel_id: targetChannelId,
+      is_forwarded: 1,
+      forwarded_from: `${forwardMsg.sender_name || 'Unknown'} · #${activeChannel?.name || 'general'}`,
+      file_path: forwardMsg.file_path || null,
+      file_name: forwardMsg.file_name || null,
+      file_size: forwardMsg.file_size || null,
+    }));
+    setForwardMsg(null);
+    if (targetChannelId !== activeChannelId) {
+      setActiveChannelId(targetChannelId);
+      notify(`Forwarded to #${target?.name || 'channel'}.`, 'info');
+    }
   };
 
   const clearPending = () => {
@@ -6760,6 +6830,11 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape' && replyTo) {
+      e.preventDefault();
+      setReplyTo(null);
+      return;
+    }
     if (e.key === 'Tab' && showMentions && filteredMentions.length > 0) {
       e.preventDefault();
       const m = filteredMentions[0];
@@ -6841,8 +6916,9 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
         {isAdmin && (
           <button
             onClick={() => setCreatingChannel(!creatingChannel)}
-            className="p-1 rounded text-text-muted hover:text-accent transition-colors"
+            className="p-1.5 -mr-1 rounded-md text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors"
             title="Create channel"
+            aria-label="Create channel"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -6888,7 +6964,7 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
           return (
             <div key={c.id} className="group/channel relative">
               <button
-                onClick={() => { setActiveChannelId(c.id); setShowChannelsMobile(false); }}
+                onClick={() => { setActiveChannelId(c.id); setReplyTo(null); setShowChannelsMobile(false); }}
                 title={c.topic || `#${c.name}`}
                 className={cn(
                   'w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
@@ -6955,13 +7031,15 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
   );
 
   let lastDay = '';
-  const messageList = messages.map((msg: any, idx: number) => {
+  const canDelete = (msg: any) => msg.sender_id === currentUser.id || isAdmin;
+  const messageList = visibleMessages.map((msg: any, idx: number) => {
     const day = formatDayDivider(msg.timestamp);
     const showDivider = day !== lastDay;
     lastDay = day;
     const sender = members.find((m: any) => m.id === msg.sender_id);
     const senderName = msg.sender_name || sender?.name || 'Unknown';
-    const isOwn = msg.sender_id === currentUser.id;
+    const flashed = flashId === msg.id;
+    const replyGone = msg.reply_to_id && (msg.reply_deleted || !msg.reply_sender_name);
     return (
       <div key={msg.id ?? idx}>
         {showDivider && (
@@ -6971,121 +7049,184 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
             <div className="flex-1 h-px bg-white/10" />
           </div>
         )}
-        <div className="group flex gap-3 px-4 py-1.5 hover:bg-white/[0.03] transition-colors">
+        <div
+          ref={(el) => { if (el) msgRefs.current.set(msg.id, el); else msgRefs.current.delete(msg.id); }}
+          className={cn(
+            'group relative flex gap-3 px-4 py-1.5 transition-colors',
+            flashed ? 'bg-accent/15' : 'hover:bg-white/[0.03]'
+          )}
+        >
+          {/* hover action bar — Discord style */}
+          <div className="absolute -top-3 right-4 z-10 hidden group-hover:flex items-center rounded-lg border border-white/10 bg-secondary shadow-xl overflow-hidden">
+            <button onClick={() => startReply(msg)} title="Reply (R)" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+              <Reply className="w-4 h-4" />
+            </button>
+            <button onClick={() => setForwardMsg(msg)} title="Forward" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+              <Forward className="w-4 h-4" />
+            </button>
+            <button onClick={() => copyMessageText(msg)} title="Copy text" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+              <Copy className="w-4 h-4" />
+            </button>
+            {canDelete(msg) && (
+              <button onClick={() => handleDeleteMessage(msg.id)} title="Delete" className="p-2 text-text-muted hover:text-rose-400 hover:bg-white/[0.07] transition-colors">
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+          </div>
           <div className="flex-shrink-0 pt-0.5">
             <AvatarWithPresence user={{ name: senderName, avatar_url: sender?.avatar_url }} size="sm" presence={sender?.presence} dotClassName="w-2.5 h-2.5" />
           </div>
           <div className="flex-1 min-w-0">
+            {msg.is_forwarded ? (
+              <p className="text-[11px] font-semibold text-text-muted/80 mb-0.5">Forwarded{msg.forwarded_from ? ` · ${msg.forwarded_from}` : ''}</p>
+            ) : null}
+            {msg.reply_to_id && !replyGone && (
+              <button onClick={() => scrollToMessage(msg.reply_to_id)} className="flex items-center gap-1.5 mb-1 text-xs text-text-muted hover:text-white transition-colors max-w-full" title="Jump to original">
+                <Reply className="w-3 h-3 rotate-180 flex-shrink-0 text-text-muted/60" />
+                <span className="font-bold truncate">{msg.reply_sender_name}</span>
+                <span className="truncate opacity-70">{(msg.reply_content || '').slice(0, 90)}</span>
+              </button>
+            )}
+            {msg.reply_to_id && replyGone && (
+              <p className="text-xs text-text-muted/50 italic mb-1">Original message was deleted</p>
+            )}
             <div className="flex items-baseline gap-2 flex-wrap">
               <span className="text-sm font-bold text-white">{senderName}</span>
               <span className="text-[10px] text-text-muted/60">{format(new Date(msg.timestamp), 'HH:mm')}</span>
-              {isOwn && !msg.deleted_at && (
-                <button
-                  onClick={() => handleDeleteMessage(msg.id)}
-                  className="text-text-muted/60 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Delete message"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              )}
             </div>
-            {msg.deleted_at ? (
-              <p className="text-sm text-text-muted/60 italic">{senderName} unsent a message</p>
-            ) : (
-              <div className="text-[15px] text-white/90 leading-relaxed break-words">
-                {msg.file_path && (
-                  <div className="flex flex-col gap-2 mb-1.5 mt-1">
-                    {isImageFile(msg.file_path) && (
-                      <a href={msg.file_path} target="_blank" rel="noopener noreferrer">
-                        <img
-                          src={msg.file_path}
-                          alt={msg.file_name || 'uploaded'}
-                          className="rounded-lg max-w-xs max-h-64 object-cover border border-white/10 shadow-sm hover:opacity-95 transition-opacity"
-                        />
-                      </a>
-                    )}
-                    {!isImageFile(msg.file_path) && (
-                      <div className="flex flex-col gap-1 p-3 rounded-xl border min-w-[200px] max-w-xs bg-white/5 border-white/10">
-                        <div className="flex items-center gap-2 text-sm font-medium text-white">
-                          <FileText className="w-4 h-4 text-accent shrink-0" />
-                          <span className="truncate">{msg.file_name || msg.file_path.split('/').pop()}</span>
-                        </div>
-                        {(msg.file_size || msg.file_updated) && (
-                          <div className="flex items-center gap-3 text-[10px] text-text-muted">
-                            {msg.file_size && <span>{formatFileSize(msg.file_size)}</span>}
-                            {msg.file_updated && <span>{formatFileDate(msg.file_updated)}</span>}
-                          </div>
-                        )}
-                        <a
-                          href={msg.file_path}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="mt-1.5 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/20 hover:bg-accent/20 transition-colors text-xs text-accent font-medium"
-                        >
-                          <Download className="w-3 h-3" />
-                          Download
-                        </a>
+            <div className="text-[15px] text-white/90 leading-relaxed break-words">
+              {msg.file_path && (
+                <div className="flex flex-col gap-2 mb-1.5 mt-1">
+                  {isImageFile(msg.file_path) && (
+                    <a href={msg.file_path} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={msg.file_path}
+                        alt={msg.file_name || 'uploaded'}
+                        className="rounded-lg max-w-xs max-h-64 object-cover border border-white/10 shadow-sm hover:opacity-95 transition-opacity"
+                      />
+                    </a>
+                  )}
+                  {!isImageFile(msg.file_path) && (
+                    <div className="flex flex-col gap-1 p-3 rounded-xl border min-w-[200px] max-w-xs bg-white/5 border-white/10">
+                      <div className="flex items-center gap-2 text-sm font-medium text-white">
+                        <FileText className="w-4 h-4 text-accent shrink-0" />
+                        <span className="truncate">{msg.file_name || msg.file_path.split('/').pop()}</span>
                       </div>
-                    )}
-                  </div>
-                )}
-                {msg.content && <div>{renderContent(msg.content)}</div>}
-              </div>
-            )}
+                      {(msg.file_size || msg.file_updated) && (
+                        <div className="flex items-center gap-3 text-[10px] text-text-muted">
+                          {msg.file_size && <span>{formatFileSize(msg.file_size)}</span>}
+                          {msg.file_updated && <span>{formatFileDate(msg.file_updated)}</span>}
+                        </div>
+                      )}
+                      <a
+                        href={msg.file_path}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-1.5 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/20 hover:bg-accent/20 transition-colors text-xs text-accent font-medium"
+                      >
+                        <Download className="w-3 h-3" />
+                        Download
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+              {msg.content && <div>{renderContent(msg.content)}</div>}
+            </div>
           </div>
         </div>
       </div>
     );
   });
 
+  const teamHeader = (
+    <div className="relative flex-shrink-0">
+      <button
+        onClick={() => (teams || []).length > 1 && setShowTeamMenu(!showTeamMenu)}
+        className="w-full flex items-center gap-2 px-4 h-12 border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors"
+        title={activeTeamName || 'My team'}
+      >
+        <span className="font-bold text-[15px] text-white truncate flex-1 text-left">{activeTeamName || 'My team'}</span>
+        {(teams || []).length > 1 && <ChevronDown className={cn('w-4 h-4 text-text-muted transition-transform', showTeamMenu && 'rotate-180')} />}
+      </button>
+      {showTeamMenu && (teams || []).length > 1 && (
+        <>
+          <button className="fixed inset-0 z-40 cursor-default" onClick={() => setShowTeamMenu(false)} aria-label="Close team menu" />
+          <div className="absolute left-2 right-2 top-full mt-1 glass rounded-xl border border-white/10 shadow-2xl overflow-hidden z-50">
+            <div className="max-h-64 overflow-y-auto custom-scrollbar py-1.5">
+              {(teams || []).map((t: any) => (
+                <button
+                  key={t.id}
+                  onClick={() => { setShowTeamMenu(false); onSwitchTeam?.(t.id); }}
+                  className={cn(
+                    'w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-white/5',
+                    t.name === activeTeamName ? 'text-white font-bold' : 'text-white/70'
+                  )}
+                >
+                  <Layers className="w-4 h-4 text-accent flex-shrink-0" />
+                  <span className="truncate flex-1">{t.name}</span>
+                  {t.name === activeTeamName && <Check className="w-4 h-4 text-accent flex-shrink-0" />}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div
-      className="flex h-[calc(100dvh-240px)] sm:h-[calc(100dvh-180px)] glass rounded-2xl overflow-hidden relative"
+      className="flex h-full w-full min-h-0 relative bg-primary"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
     >
       {dragging && (
-        <div className="absolute inset-0 z-20 bg-accent/10 border-2 border-dashed border-accent rounded-2xl flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 z-50 bg-accent/10 border-2 border-dashed border-accent flex items-center justify-center pointer-events-none">
           <p className="text-accent font-bold">Drop to attach</p>
         </div>
       )}
 
       {/* Left: channels (drawer on mobile) */}
-      <div className="hidden md:flex w-60 flex-shrink-0 border-r border-white/[0.06] bg-secondary/40 flex-col">
-        {channelList}
+      <div className="hidden md:flex w-60 flex-shrink-0 border-r border-white/[0.06] bg-secondary/40 flex-col min-h-0">
+        {teamHeader}
+        <div className="flex-1 min-h-0 flex flex-col">{channelList}</div>
       </div>
       {showChannelsMobile && (
-        <div className="md:hidden absolute inset-y-0 left-0 w-64 z-30 bg-secondary border-r border-white/10 flex flex-col">
-          <div className="flex items-center justify-between px-4 pt-3">
-            <span className="text-sm font-bold text-white">Channels</span>
-            <button onClick={() => setShowChannelsMobile(false)} className="p-1.5 text-text-muted hover:text-white" aria-label="Close channels">
+        <div className="md:hidden absolute inset-y-0 left-0 w-64 z-30 bg-secondary border-r border-white/10 flex flex-col min-h-0">
+          <div className="flex items-center justify-between pl-4 pr-2 h-12 border-b border-white/[0.06] flex-shrink-0">
+            <span className="text-sm font-bold text-white truncate">{activeTeamName || 'Channels'}</span>
+            <button onClick={() => setShowChannelsMobile(false)} className="p-2 text-text-muted hover:text-white" aria-label="Close channels">
               <X className="w-5 h-5" />
             </button>
           </div>
-          <div className="flex-1 min-h-0">{channelList}</div>
+          <div className="flex-1 min-h-0 flex flex-col">{channelList}</div>
         </div>
       )}
 
       {/* Center: conversation */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="px-4 py-3 border-b border-white/[0.06] flex items-center gap-2 flex-shrink-0">
-          <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-1.5 -ml-1 text-text-muted hover:text-white" aria-label="Open channels">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        <div className="h-12 px-3 sm:px-4 border-b border-white/[0.06] flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-2 -ml-1 text-text-muted hover:text-white" aria-label="Open channels">
             <Hash className="w-5 h-5" />
           </button>
           <Hash className="w-5 h-5 text-text-muted/70 flex-shrink-0" />
-          <h3 className="text-base font-display font-bold text-white truncate">{activeChannel?.name || 'general'}</h3>
+          <h3 className="text-[15px] font-bold text-white truncate">{activeChannel?.name || 'general'}</h3>
           {activeChannel?.topic && (
             <p className="hidden sm:block text-xs text-text-muted truncate border-l border-white/10 pl-2 ml-1">{activeChannel.topic}</p>
           )}
           <div className="flex-1" />
-          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="lg:hidden p-1.5 text-text-muted hover:text-white" aria-label="Toggle members">
+          <button onClick={() => setShowMemberList(!showMemberList)} className="hidden lg:block p-2 text-text-muted hover:text-white transition-colors" aria-label="Toggle member list" title="Toggle member list">
+            <Users className={cn('w-5 h-5', showMemberList && 'text-accent')} />
+          </button>
+          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="lg:hidden p-2 text-text-muted hover:text-white" aria-label="Toggle members">
             <Users className="w-5 h-5" />
           </button>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar py-3">
-          {messages.length === 0 ? (
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar py-3 min-h-0">
+          {visibleMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-6 gap-3">
               <div className="w-16 h-16 rounded-full bg-white/[0.05] flex items-center justify-center">
                 <Hash className="w-8 h-8 text-text-muted/50" />
@@ -7098,7 +7239,17 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
           ) : messageList}
         </div>
 
-        <div className="p-3 sm:p-4 flex-shrink-0 relative">
+        <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-1 flex-shrink-0 relative">
+          {replyTo && (
+            <div className="flex items-center gap-2 pl-4 pr-2 py-2 bg-secondary/80 border border-white/10 border-b-0 rounded-t-xl text-xs">
+              <Reply className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+              <span className="text-text-muted flex-shrink-0">Replying to <span className="font-bold text-white">{replyTo.sender_name}</span></span>
+              <span className="text-text-muted/60 truncate flex-1">{(replyTo.content || '').slice(0, 80)}</span>
+              <button onClick={() => setReplyTo(null)} className="p-1.5 text-text-muted hover:text-white transition-colors" title="Cancel reply (Esc)">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           {pendingFile && (
             <div className="mb-2 flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
               {pendingPreview ? (
@@ -7137,7 +7288,10 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
               ))}
             </div>
           )}
-          <div className="flex gap-2 items-end">
+          <div className={cn(
+            'flex gap-1.5 items-end bg-secondary/60 border border-white/10 px-1.5 py-1.5',
+            replyTo ? 'rounded-b-xl border-t-0' : 'rounded-xl'
+          )}>
             <input
               ref={fileInputRef}
               type="file"
@@ -7148,15 +7302,15 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
-              className="h-11 w-11 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 bg-white/[0.06] text-text-muted hover:text-white hover:bg-white/[0.1] flex-shrink-0"
+              className="h-10 w-10 rounded-lg transition-all active:scale-95 flex items-center justify-center disabled:opacity-50 text-text-muted hover:text-white hover:bg-white/[0.08] flex-shrink-0"
               title="Attach file"
             >
               <FileUp className="w-5 h-5" />
             </button>
             <textarea
               ref={composerRef}
-              className="flex-1 bg-secondary/60 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/50 transition-colors min-h-[44px] max-h-32 resize-none"
-              placeholder={`Message #${activeChannel?.name || 'general'} — @ to mention, paste or drop files`}
+              className="flex-1 bg-transparent px-2 py-2.5 text-sm text-white placeholder:text-text-muted/60 focus:outline-none min-h-[40px] max-h-32 resize-none"
+              placeholder={`Message #${activeChannel?.name || 'general'}`}
               value={content}
               onChange={onContentChange}
               onKeyDown={handleKeyDown}
@@ -7164,15 +7318,18 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
               disabled={uploading}
               rows={1}
             />
-            <Button onClick={handleSend} disabled={uploading || (!content.trim() && !pendingFile)} className="h-11 w-11 p-0 flex-shrink-0 rounded-xl"><Send className="w-5 h-5" /></Button>
+            <Button onClick={handleSend} disabled={uploading || (!content.trim() && !pendingFile)} className="h-10 w-10 p-0 flex-shrink-0 rounded-lg"><Send className="w-5 h-5" /></Button>
           </div>
         </div>
       </div>
 
-      {/* Right: members (toggleable on smaller screens) */}
-      <div className={cn('w-56 flex-shrink-0 border-l border-white/[0.06] bg-secondary/40 flex-col', showMembersMobile ? 'absolute inset-y-0 right-0 z-30 flex bg-secondary' : 'hidden lg:flex')}>
+      {/* Right: members */}
+      <div className={cn(
+        'w-56 flex-shrink-0 border-l border-white/[0.06] bg-secondary/40 flex-col min-h-0',
+        showMembersMobile ? 'absolute inset-y-0 right-0 z-30 flex bg-secondary' : (showMemberList ? 'hidden lg:flex' : 'hidden')
+      )}>
         {showMembersMobile && (
-          <div className="lg:hidden flex items-center justify-between px-4 pt-3 flex-shrink-0">
+          <div className="lg:hidden flex items-center justify-between px-4 h-12 border-b border-white/[0.06] flex-shrink-0">
             <span className="text-sm font-bold text-white">Members</span>
             <button onClick={() => setShowMembersMobile(false)} className="p-1.5 text-text-muted hover:text-white" aria-label="Close members">
               <X className="w-5 h-5" />
@@ -7181,6 +7338,36 @@ function ChatView({ messages, members, currentUser, socket, channels, activeChan
         )}
         <div className="flex-1 min-h-0">{memberList}</div>
       </div>
+
+      {/* Forward modal */}
+      {forwardMsg && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => setForwardMsg(null)}>
+          <div className="w-full max-w-sm glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-white/10">
+              <h3 className="text-base font-bold text-white">Forward message</h3>
+              <p className="text-xs text-text-muted mt-1 truncate">"{(forwardMsg.content || forwardMsg.file_name || 'attachment').slice(0, 80)}"</p>
+            </div>
+            <div className="max-h-64 overflow-y-auto custom-scrollbar py-2">
+              {(channels || []).map((c: any) => (
+                <button
+                  key={c.id}
+                  onClick={() => handleForward(c.id)}
+                  className="w-full flex items-center gap-2.5 px-5 py-2.5 text-left hover:bg-white/[0.05] transition-colors"
+                >
+                  <Hash className="w-4 h-4 text-text-muted/70 flex-shrink-0" />
+                  <span className={cn('text-sm truncate flex-1', c.id === activeChannelId ? 'text-white font-semibold' : 'text-white/80')}>{c.name}</span>
+                  {c.id === activeChannelId && <span className="text-[10px] text-text-muted uppercase tracking-wider">current</span>}
+                </button>
+              ))}
+            </div>
+            <div className="px-4 py-3 border-t border-white/10 flex justify-end">
+              <button onClick={() => setForwardMsg(null)} className="px-4 py-2 rounded-lg text-sm font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
