@@ -2,14 +2,13 @@
 // (fixed bottom); it survives workspace navigation because it lives outside
 // the routed views. Hidden when idle.
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Expand, Mic, MicOff, MonitorUp, PhoneOff, Settings, Video, VideoOff, VolumeX, Headphones } from 'lucide-react';
 import { cn } from '../ui';
 import { useVoice } from '../../voice';
-import { DeviceSettingsModal } from './DeviceSettingsModal';
 import { CallStatusPill, VoiceAvatar, VoiceIconButton } from './shared';
 
-export function CallBar() {
+export function CallBar({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const {
     status,
     session,
@@ -22,7 +21,6 @@ export function CallBar() {
     setExpanded,
     leave,
   } = useVoice();
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (!session || status === 'idle' || status === 'ended') return null;
 
@@ -107,7 +105,7 @@ export function CallBar() {
             >
               <MonitorUp className="w-4 h-4" />
             </VoiceIconButton>
-            <VoiceIconButton label="Call settings" onClick={() => setSettingsOpen(true)} className="p-2 hidden sm:inline-flex">
+            <VoiceIconButton label="Call settings" onClick={() => onOpenSettings?.()} className="p-2 hidden sm:inline-flex">
               <Settings className="w-4 h-4" />
             </VoiceIconButton>
             <VoiceIconButton label="Expand call view" onClick={() => setExpanded(true)} className="p-2">
@@ -119,7 +117,6 @@ export function CallBar() {
           </div>
         </div>
       </div>
-      {settingsOpen && <DeviceSettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

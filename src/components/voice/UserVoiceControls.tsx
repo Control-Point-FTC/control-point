@@ -1,14 +1,13 @@
 // UserVoiceControls — Discord-style bottom-left voice controls.
 // Renders next to / above the existing user profile block: mic toggle with
-// input-device dropdown + level meter, deafen toggle with output dropdown,
-// and a settings gear that opens DeviceSettingsModal.
+// input-device dropdown + level meter, and deafen toggle with output dropdown.
+// Full device settings live in the main Settings overlay ("Voice & Video").
 // Everything is no-op (with a hint) when not in a call.
 
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronUp, Headphones, Mic, MicOff, Settings, TriangleAlert, VolumeX } from 'lucide-react';
 import { cn } from '../ui';
 import { useVoice } from '../../voice';
-import { DeviceSettingsModal } from './DeviceSettingsModal';
 import { MicLevelMeter, VoiceIconButton } from './shared';
 
 function Dropdown({
@@ -37,7 +36,14 @@ function Dropdown({
   );
 }
 
-export function UserVoiceControls({ className }: { className?: string }) {
+export function UserVoiceControls({
+  className,
+  onOpenSettings,
+}: {
+  className?: string;
+  /** Opens the main Settings overlay (voice & video section lives there). */
+  onOpenSettings?: () => void;
+}) {
   const {
     status,
     session,
@@ -51,7 +57,6 @@ export function UserVoiceControls({ className }: { className?: string }) {
   } = useVoice();
   const [micMenuOpen, setMicMenuOpen] = useState(false);
   const [deafenMenuOpen, setDeafenMenuOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const inCall = session != null && (status === 'connected' || status === 'reconnecting' || status === 'joining');
@@ -151,7 +156,7 @@ export function UserVoiceControls({ className }: { className?: string }) {
             type="button"
             onClick={() => {
               setMicMenuOpen(false);
-              setSettingsOpen(true);
+              onOpenSettings?.();
             }}
             className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm font-semibold text-text-muted hover:text-text-base hover:bg-text-base/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
@@ -227,11 +232,6 @@ export function UserVoiceControls({ className }: { className?: string }) {
         </Dropdown>
       </div>
 
-      {/* ------------------------------------------------------- settings */}
-      <VoiceIconButton label="Voice & video settings" onClick={() => setSettingsOpen(true)} className="p-2">
-        <Settings className="w-4 h-4" />
-      </VoiceIconButton>
-
       {/* ------------------------------------------- mic permission warning */}
       {micDenied && (
         <div
@@ -245,8 +245,6 @@ export function UserVoiceControls({ className }: { className?: string }) {
           </span>
         </div>
       )}
-
-      {settingsOpen && <DeviceSettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

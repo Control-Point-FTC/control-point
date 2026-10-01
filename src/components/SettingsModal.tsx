@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2 } from 'lucide-react';
+import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify } from './dialog';
 import { PRESENCE_META, PresencePicker } from './presence';
+import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -18,7 +19,7 @@ export interface SettingsModalProps {
   onStatusPick: (status: string) => void;
 }
 
-type Section = 'account' | 'team' | 'roles';
+type Section = 'account' | 'voice' | 'team' | 'roles';
 
 /**
  * Discord-style settings: full-screen overlay, section nav on the left,
@@ -153,6 +154,7 @@ export default function SettingsModal({
 
   const sections: { id: Section; label: string; icon: any; heading: string }[] = [
     { id: 'account', label: 'My Account', icon: UserCircle, heading: 'USER SETTINGS' },
+    { id: 'voice', label: 'Voice & Video', icon: PhoneCall, heading: 'USER SETTINGS' },
     ...(isAdmin
       ? [
           { id: 'team' as Section, label: 'Team Overview', icon: Users, heading: 'TEAM SETTINGS' },
@@ -297,6 +299,13 @@ export default function SettingsModal({
                   </div>
                 </section>
               </>
+            )}
+
+            {section === 'voice' && (
+              <section className="space-y-6">
+                <h3 className="text-sm font-bold text-text-base">Devices</h3>
+                <DeviceSettingsSection />
+              </section>
             )}
 
             {section === 'team' && isAdmin && (

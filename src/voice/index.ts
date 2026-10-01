@@ -18,6 +18,7 @@ export {
   getCameraStream,
   getScreenStream,
   queryPermission,
+  requestDevicePermissions,
   onDeviceChange,
   stopStream,
   MediaError,

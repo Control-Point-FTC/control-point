@@ -23,7 +23,6 @@ import {
 } from 'lucide-react';
 import { cn } from '../ui';
 import { useVoice, type VoiceParticipant } from '../../voice';
-import { DeviceSettingsModal } from './DeviceSettingsModal';
 import { ParticipantMenu } from './ParticipantMenu';
 import {
   CallStatusPill,
@@ -119,7 +118,7 @@ function ParticipantTile({
 
 // ------------------------------------------------------------------ view
 
-export function CallView() {
+export function CallView({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const {
     status,
     session,
@@ -136,7 +135,6 @@ export function CallView() {
     personalSpotlight,
   } = useVoice();
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<{ p: VoiceParticipant; anchor: { x: number; y: number } } | null>(null);
   const [listOpen, setListOpen] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -234,7 +232,7 @@ export function CallView() {
           <VoiceIconButton label={self.sharingScreen ? 'Stop sharing screen' : 'Share screen'} active={self.sharingScreen} onClick={() => void toggleScreenShare()} className={cn('p-2.5 hidden sm:inline-flex', self.sharingScreen && '!text-emerald-400')}>
             <MonitorUp className="w-5 h-5" />
           </VoiceIconButton>
-          <VoiceIconButton label="Call settings" onClick={() => setSettingsOpen(true)} className="p-2.5 hidden md:inline-flex">
+          <VoiceIconButton label="Call settings" onClick={() => onOpenSettings?.()} className="p-2.5 hidden md:inline-flex">
             <Settings className="w-5 h-5" />
           </VoiceIconButton>
           <VoiceIconButton label={listOpen ? 'Hide participant list' : 'Show participant list'} active={listOpen} onClick={() => setListOpen((v) => !v)} className="p-2.5">
@@ -350,7 +348,6 @@ export function CallView() {
         )}
       </div>
 
-      {settingsOpen && <DeviceSettingsModal onClose={() => setSettingsOpen(false)} />}
       {menuFor && (
         <ParticipantMenu participant={menuFor.p} anchor={menuFor.anchor} onClose={() => setMenuFor(null)} />
       )}

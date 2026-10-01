@@ -129,14 +129,14 @@ export function VoiceSettingsSection() {
           control={<Toggle label="Global spotlight" checked={!!s.global_spotlight_enabled} onChange={(v) => set({ global_spotlight_enabled: v })} />}
         />
         <Row
-          label="DM calls"
-          desc="Allow one-to-one voice/video calls between members"
-          control={<Toggle label="DM calls" checked={!!s.dm_calls_allowed} onChange={(v) => set({ dm_calls_allowed: v })} />}
+          label="Member calls"
+          desc="Allow members to start open calls from the member list (anyone on the team can join)"
+          control={<Toggle label="Member calls" checked={!!s.dm_calls_allowed} onChange={(v) => set({ dm_calls_allowed: v })} />}
         />
         <Row
-          label="Group calls"
-          desc="Allow multi-person calls started from the member list"
-          control={<Toggle label="Group calls" checked={!!s.group_calls_allowed} onChange={(v) => set({ group_calls_allowed: v })} />}
+          label="Group invitations"
+          desc="Allow inviting several members at once when starting an open call"
+          control={<Toggle label="Group invitations" checked={!!s.group_calls_allowed} onChange={(v) => set({ group_calls_allowed: v })} />}
         />
         <Row
           label="Default max participants"

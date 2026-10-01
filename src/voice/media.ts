@@ -136,6 +136,26 @@ export async function queryPermission(kind: 'microphone' | 'camera'): Promise<Pe
 }
 
 /**
+ * Explicitly ask the browser for microphone AND camera access in one gesture.
+ * Call this only from a user gesture (e.g. an "Enable devices" button). The
+ * acquired tracks are stopped immediately — this is purely to trigger the
+ * browser's permission prompt ahead of a call. Throws MediaError on denial.
+ */
+export async function requestDevicePermissions(): Promise<{ microphone: PermissionState | 'unknown'; camera: PermissionState | 'unknown' }> {
+  if (!hasMediaDevices()) throw new MediaError('not-supported', 'Media capture is not supported in this browser.');
+  let stream: MediaStream | null = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+  } catch (err) {
+    throw toMediaError(err);
+  } finally {
+    stopStream(stream);
+  }
+  const [microphone, camera] = await Promise.all([queryPermission('microphone'), queryPermission('camera')]);
+  return { microphone, camera };
+}
+
+/**
  * Attach a `devicechange` listener (hot-plug of headsets etc.). Returns an
  * unsubscribe function. The callback should re-run enumerateDevices().
  */

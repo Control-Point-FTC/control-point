@@ -2479,7 +2479,7 @@ export default function App() {
 
         <div className="p-3 sm:p-4 border-t border-text-base/[0.06] flex-shrink-0 space-y-1.5">
           {/* Voice controls sit with the user card, Discord-style (presence picker untouched) */}
-          <UserVoiceControls className={cn(!isSidebarOpen && 'justify-center')} />
+          <UserVoiceControls className={cn(!isSidebarOpen && 'justify-center')} onOpenSettings={() => setSettingsOpen(true)} />
           {/* Discord-style user card: avatar w/ presence, name, status picker, settings gear */}
           <div className="relative">
             {statusPickerOpen && (
@@ -2821,9 +2821,9 @@ export default function App() {
       {/* Voice calling surfaces — all driven by VoiceProvider context state.
           CallBar is fixed-bottom (above the mobile nav) and survives route
           navigation because it lives outside the routed views. */}
-      <CallBar />
+      <CallBar onOpenSettings={() => setSettingsOpen(true)} />
       <IncomingCallModal />
-      <CallView />
+      <CallView onOpenSettings={() => setSettingsOpen(true)} />
       <CookieConsent />
       <BrunoPanel
         key={currentUser?.team_id ?? 'none'}

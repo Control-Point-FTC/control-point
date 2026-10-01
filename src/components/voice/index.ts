@@ -6,7 +6,7 @@ export { UserVoiceControls } from './UserVoiceControls';
 export { CallBar } from './CallBar';
 export { IncomingCallModal } from './IncomingCallModal';
 export { CallView } from './CallView';
-export { DeviceSettingsModal } from './DeviceSettingsModal';
+export { DeviceSettingsSection } from './DeviceSettingsSection';
 export { ParticipantMenu } from './ParticipantMenu';
 export { VoiceChannelAdmin } from './VoiceChannelAdmin';
 export { CallHeaderButtons } from './CallHeaderButtons';

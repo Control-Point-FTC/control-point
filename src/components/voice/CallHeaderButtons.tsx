@@ -2,7 +2,8 @@
 // headers. Drop into a conversation header with the other participant ids:
 //   <CallHeaderButtons memberIds={[peerId]} />
 //   <CallHeaderButtons memberIds={[a, b, c]} groupName="Build crew" />
-// Single id => DM call, several => group call. Requires an explicit click;
+// Single id => call one member, several => invite several. Requires an explicit click;
+// starting a call opens a public voice channel anyone on the team can join.
 // the engine acquires mic/camera only from that gesture.
 //
 // NOTE: the app has no DM/group messaging UI yet, so this is not mounted
