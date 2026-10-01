@@ -22,6 +22,7 @@ import {
   ChevronRight,
   ChevronDown,
   Plus,
+  AtSign,
   ImagePlus,
   Paperclip,
   TrendingUp,
@@ -3011,6 +3012,79 @@ function CookieConsent() {
 
 // --- View Components ---
 
+/** Discord-style member menu — no friending, no DMs, no private calls.
+ *  "Call" starts a PUBLIC team voice channel anyone can join (the app's
+ *  established call model) and rings the member. Each surface registers its
+ *  own data-cm-type and passes only the callbacks it actually has. */
+function memberMenuItems(opts: {
+  m: any;
+  isSelf: boolean;
+  canCall: boolean;
+  onCall?: (memberId: number, media: 'audio' | 'video') => void;
+  onMention?: () => void;
+  onEdit?: () => void;
+  onEditScopes?: () => void;
+  onToggleBoard?: () => void;
+  onRemove?: () => void;
+}): any[] {
+  const { m, isSelf } = opts;
+  const items: any[] = [];
+  if (opts.canCall && !isSelf && opts.onCall) {
+    const call = opts.onCall;
+    items.push({ label: 'Voice Call', icon: Phone, action: () => call(m.id, 'audio') });
+    items.push({ label: 'Video Call', icon: Video, action: () => call(m.id, 'video') });
+  }
+  if (opts.onMention) {
+    items.push({ label: 'Mention', icon: AtSign, action: opts.onMention });
+  }
+  items.push({
+    label: 'Copy Member ID',
+    icon: Copy,
+    action: async () => {
+      try {
+        await navigator.clipboard.writeText(String(m.id));
+        notify('Member ID copied', 'success');
+      } catch {
+        notify('Could not copy — try again.', 'error');
+      }
+    },
+  });
+  const adminItems: any[] = [];
+  if (opts.onEditScopes) adminItems.push({ label: 'Edit scopes', icon: ShieldCheck, action: opts.onEditScopes });
+  if (opts.onEdit) adminItems.push({ label: 'Edit member', icon: Pencil, action: opts.onEdit });
+  if (opts.onToggleBoard) {
+    adminItems.push({
+      label: m.is_board ? 'Remove board status' : 'Make board member',
+      icon: BadgeCheck,
+      action: opts.onToggleBoard,
+    });
+  }
+  if (opts.onRemove) adminItems.push({ label: 'Remove from team', icon: UserX, danger: true, action: opts.onRemove });
+  if (adminItems.length > 0) {
+    items.push({ separator: true });
+    items.push(...adminItems);
+  }
+  return items;
+}
+
+/** Shared "remove member from team" used by member context menus. */
+async function removeMemberFromTeam(m: any, onRefresh: () => void) {
+  if (!(await confirmDialog({
+    title: 'Remove member',
+    message: `Remove ${m.name} from the team? They'll lose access immediately.`,
+    confirmLabel: 'Remove',
+    danger: true,
+  }))) return;
+  const res = await apiFetch(`/api/members/${m.id}`, { method: 'DELETE' });
+  if (res.ok) {
+    notify('Member removed', 'success');
+    onRefresh();
+  } else {
+    const data = await res.json().catch(() => ({} as any));
+    notify(data.error || 'Could not remove member — try again.', 'error');
+  }
+}
+
 // Personal dashboard for students: my tasks, my attendance, upcoming events
 // Personal dashboard for students: check-in, my tasks, upcoming events, my attendance.
 // Deliberately focused — no budget, access codes, admin AI, team-wide metrics, or FTC details.
@@ -3197,6 +3271,42 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
 
   const isAdmin = hasScope('admin');
   const activeTeamId = currentUser?.team_id;
+  const voice = useVoice();
+
+  const openEditMember = (m: any) => {
+    setEditingMember(m);
+    let scopes = m.scopes;
+    try {
+      if (typeof scopes === 'string') scopes = JSON.parse(scopes);
+    } catch {
+      scopes = [];
+    }
+    setNewMember({
+      team_id: m.team_id || '',
+      name: m.name,
+      role: m.role,
+      email: m.email,
+      is_board: m.is_board === 1,
+      scopes: Array.isArray(scopes) ? scopes : []
+    });
+    setShowAddMember(true);
+  };
+
+  // Right-click a member in the roster: call, copy ID, edit, remove.
+  // (No friending/DMs — calls open a public team voice channel.)
+  useContextMenu('member-team', (el) => {
+    const id = Number(el.dataset.cmId);
+    const m = (members || []).find((x: any) => x.id === id);
+    if (!m) return null;
+    return memberMenuItems({
+      m,
+      isSelf: m.id === currentUser?.id,
+      canCall: true,
+      onCall: (memberId, media) => voice.startCall([memberId], media),
+      onEdit: isAdmin ? () => openEditMember(m) : undefined,
+      onRemove: isAdmin && m.id !== currentUser?.id ? () => { setMemberToRemove(m); setRemoveError(''); } : undefined,
+    });
+  });
 
   const handleResetPassword = async (email: string) => {
     if (!(await confirmDialog({ title: 'Reset password', message: `Reset password for ${email}? They will need to set it up again on next login.`, confirmLabel: 'Reset', danger: true }))) return;
@@ -3422,7 +3532,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
           </thead>
           <tbody className="divide-y divide-text-base/5">
             {members.map((m: any) => (
-              <tr key={m.id} className="hover:bg-text-base/5 transition-colors">
+              <tr key={m.id} data-cm-type="member-team" data-cm-id={m.id} className="hover:bg-text-base/5 transition-colors">
                 <td className="px-6 py-4 text-sm text-text-base font-medium">
                   <span className="flex items-center gap-2.5">
                     <AvatarWithPresence user={m} size="sm" presence={m.presence} />
@@ -3467,24 +3577,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
                   <div className="flex justify-end gap-2">
                     {isAdmin && (
                       <button 
-                        onClick={() => {
-                          setEditingMember(m);
-                          let scopes = m.scopes;
-                          try {
-                            if (typeof scopes === 'string') scopes = JSON.parse(scopes);
-                          } catch {
-                            scopes = [];
-                          }
-                          setNewMember({ 
-                            team_id: m.team_id || '', 
-                            name: m.name, 
-                            role: m.role, 
-                            email: m.email, 
-                            is_board: m.is_board === 1, 
-                            scopes: Array.isArray(scopes) ? scopes : []
-                          });
-                          setShowAddMember(true);
-                        }}
+                        onClick={() => openEditMember(m)}
                         className="p-2 text-text-muted/70 hover:text-accent transition-colors"
                         title="Edit Member"
                       >
@@ -7212,6 +7305,24 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null); // 'cat:<id>' | 'uncat'
   const voice = useVoice();
 
+  // Right-click a member in the member list: call, mention, copy ID.
+  // (No friending/DMs — calls open a public team voice channel.)
+  useContextMenu('member-chat', (el) => {
+    const id = Number(el.dataset.cmId);
+    const m = (members || []).find((x: any) => x.id === id);
+    if (!m) return null;
+    return memberMenuItems({
+      m,
+      isSelf: m.id === currentUser?.id,
+      canCall: true,
+      onCall: (memberId, media) => voice.startCall([memberId], media),
+      onMention: () => {
+        setContent((prev: string) => (prev ? prev + ' ' : '') + `@${m.name} `);
+        composerRef.current?.focus();
+      },
+    });
+  });
+
   // Admin drag-and-drop: drop a channel row onto a category header to move it.
   const handleDropOnCategory = async (e: React.DragEvent, categoryId: number | null) => {
     e.preventDefault();
@@ -7900,7 +8011,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           </p>
         )}
         {onlineMembers.map((m: any) => (
-          <div key={m.id} className="group flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-text-base/[0.04] transition-colors">
+          <div key={m.id} data-cm-type="member-chat" data-cm-id={m.id} className="group flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-text-base/[0.04] transition-colors">
             <AvatarWithPresence user={m} size="sm" presence={m.presence} />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-text-base truncate leading-tight">{m.name}</p>
@@ -7937,7 +8048,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           </p>
         )}
         {offlineMembers.map((m: any) => (
-          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg opacity-60 hover:opacity-90 hover:bg-text-base/[0.04] transition-all">
+          <div key={m.id} data-cm-type="member-chat" data-cm-id={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg opacity-60 hover:opacity-90 hover:bg-text-base/[0.04] transition-all">
             <AvatarWithPresence user={m} size="sm" presence={m.presence} />
             <p className="text-sm font-medium text-text-muted truncate flex-1">{m.name}</p>
           </div>
@@ -9676,6 +9787,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
 }
 
 function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive, isOwner, hasPerm }: any) {
+  const voice = useVoice();
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
   const [maxTokensNews, setMaxTokensNews] = useState(settings.max_tokens_news || '1024');
   const [maxTokensAttendance, setMaxTokensAttendance] = useState(settings.max_tokens_attendance || '1024');
@@ -9883,19 +9995,21 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
     }
   };
 
-  // Right-click on a member row: edit scopes, toggle board status.
+  // Right-click on a member row: call, copy ID, scopes, board status, remove.
+  // (No friending/DMs — calls open a public team voice channel.)
   useContextMenu('member', (el) => {
     const id = Number(el.dataset.cmId);
     const m = (members || []).find((x: any) => x.id === id);
     if (!m) return null;
-    return [
-      { label: 'Edit scopes', icon: ShieldCheck, action: () => setShowMemberEdit(m) },
-      {
-        label: m.is_board ? 'Remove board status' : 'Make board member',
-        icon: BadgeCheck,
-        action: () => updateMember(m.id, { ...m, is_board: m.is_board ? 0 : 1 }),
-      },
-    ];
+    return memberMenuItems({
+      m,
+      isSelf: m.id === currentUser?.id,
+      canCall: true,
+      onCall: (memberId, media) => voice.startCall([memberId], media),
+      onEditScopes: () => setShowMemberEdit(m),
+      onToggleBoard: () => updateMember(m.id, { ...m, is_board: m.is_board ? 0 : 1 }),
+      onRemove: m.id !== currentUser?.id ? () => removeMemberFromTeam(m, onRefresh) : undefined,
+    });
   });
 
   return (
