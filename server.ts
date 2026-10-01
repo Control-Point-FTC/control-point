@@ -1036,6 +1036,13 @@ if (!(await hasColumn('teams', 'navgpt_enabled'))) {
 if (!(await hasColumn('feedback', 'screenshot_url'))) {
   (await dbExec("ALTER TABLE feedback ADD COLUMN screenshot_url TEXT"));
 }
+// Feedback attachments: original filename + mime for images/videos/files
+if (!(await hasColumn('feedback', 'attachment_name'))) {
+  (await dbExec("ALTER TABLE feedback ADD COLUMN attachment_name TEXT"));
+}
+if (!(await hasColumn('feedback', 'attachment_type'))) {
+  (await dbExec("ALTER TABLE feedback ADD COLUMN attachment_type TEXT"));
+}
 
 // QR check-in sessions: an admin starts one (projected on the board), students
 // scan the QR or type the short day-code. Replaces unsupervised self check-in.
@@ -1489,13 +1496,17 @@ async function startServer() {
     }
   });
 
-  // Feedback screenshots: images only, 5MB cap
-  const screenshotUpload = multer({
+  // Feedback attachments: images, videos, and common documents, 25MB cap
+  const feedbackUpload = multer({
     storage,
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: 25 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-      if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
-      else cb(new Error('Only image files are allowed'));
+      const name = (file.originalname || '').toLowerCase();
+      const mime = file.mimetype || '';
+      const ok = mime.startsWith('image/') || mime.startsWith('video/')
+        || /\.(pdf|txt|md|markdown|csv|log|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z)$/.test(name);
+      if (ok) cb(null, true);
+      else cb(new Error('Only images, videos, and common document files are allowed'));
     }
   });
 
@@ -3968,8 +3979,8 @@ async function startServer() {
 
   // --- Feedback: any user can send feedback to the app owner ---
   app.post("/api/feedback", (req, res, next) => {
-    screenshotUpload.single('screenshot')(req, res, (err: any) => {
-      if (err) return res.status(400).json({ error: err.message || "Invalid image" });
+    feedbackUpload.single('attachment')(req, res, (err: any) => {
+      if (err) return res.status(400).json({ error: err.message || "Invalid file" });
       next();
     });
   }, async (req, res) => {
@@ -3982,10 +3993,13 @@ async function startServer() {
       const me = auth.teamless
         ? { name: '', email: auth.email || '' }
         : (await dbGet("SELECT name, email FROM members WHERE id = ?", auth.memberId)) as any;
-      const screenshotUrl = (req as any).file ? `/uploads/${(req as any).file.filename}` : null;
+      const file = (req as any).file;
+      const screenshotUrl = file ? `/uploads/${file.filename}` : null;
+      const attachmentName = file ? file.originalname : null;
+      const attachmentType = file ? file.mimetype : null;
       const info = (await dbRun(
-        "INSERT INTO feedback (team_id, user_id, user_name, user_email, category, message, screenshot_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        auth.teamId, auth.teamless ? null : auth.memberId, me?.name || '', me?.email || '', (category || 'general').toString().slice(0, 40), clean.slice(0, 5000), screenshotUrl
+        "INSERT INTO feedback (team_id, user_id, user_name, user_email, category, message, screenshot_url, attachment_name, attachment_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        auth.teamId, auth.teamless ? null : auth.memberId, me?.name || '', me?.email || '', (category || 'general').toString().slice(0, 40), clean.slice(0, 5000), screenshotUrl, attachmentName, attachmentType
       ));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {

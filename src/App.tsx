@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Plus,
   ImagePlus,
+  Paperclip,
   TrendingUp,
   Clock,
   Award,
@@ -1100,31 +1101,50 @@ export default function App() {
     }
   }, []);
 
-  // Apply custom colors
+  // Apply custom colors. In dark mode the custom primary/text/secondary
+  // overrides own the surfaces; in light mode the html.light design tokens
+  // own them (a dark custom primary would turn the whole light UI grey),
+  // so only the accent override carries over. Re-applies on theme toggles.
   useEffect(() => {
-    if (isLoggedIn && currentUser) {
-      const myTeam = teams.find(t => t.id === currentUser.team_id);
-      
-      const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim() || '#FFC700';
-      const primary = [currentUser.primary_color, myTeam?.primary_color].find(validHex)?.trim() || '#09090B';
-      const text = [currentUser.text_color, myTeam?.text_color].find(validHex)?.trim() || '#F8FAFC'; // slate-100 default
+    const applyColors = () => {
+      const root = document.documentElement;
+      const isLight = root.classList.contains('light');
+      const clearSurfaces = () => {
+        root.style.removeProperty('--color-primary');
+        root.style.removeProperty('--color-text-base');
+        root.style.removeProperty('--color-secondary');
+      };
+      if (isLoggedIn && currentUser) {
+        const myTeam = teams.find(t => t.id === currentUser.team_id);
 
-      const root = document.documentElement;
-      root.style.setProperty('--color-accent', accent);
-      root.style.setProperty('--color-primary', primary);
-      root.style.setProperty('--color-text-base', text);
-      
-      // Secondary color is usually a slightly lighter version of primary
-      // For simplicity, we can just use the same or a slightly transparent version
-      root.style.setProperty('--color-secondary', '#1A1A1A');
-    } else {
-      // Reset to defaults
-      const root = document.documentElement;
-      root.style.setProperty('--color-accent', '#FFC700');
-      root.style.setProperty('--color-primary', '#09090B');
-      root.style.setProperty('--color-text-base', '#F8FAFC');
-      root.style.setProperty('--color-secondary', '#1A1A1A');
-    }
+        const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim() || '#FFC700';
+        const primary = [currentUser.primary_color, myTeam?.primary_color].find(validHex)?.trim() || '#09090B';
+        const text = [currentUser.text_color, myTeam?.text_color].find(validHex)?.trim() || '#F8FAFC'; // slate-100 default
+
+        root.style.setProperty('--color-accent', accent);
+        if (isLight) clearSurfaces();
+        else {
+          root.style.setProperty('--color-primary', primary);
+          root.style.setProperty('--color-text-base', text);
+          // Secondary color is usually a slightly lighter version of primary
+          // For simplicity, we can just use the same or a slightly transparent version
+          root.style.setProperty('--color-secondary', '#1A1A1A');
+        }
+      } else {
+        // Reset to defaults
+        root.style.setProperty('--color-accent', '#FFC700');
+        if (isLight) clearSurfaces();
+        else {
+          root.style.setProperty('--color-primary', '#09090B');
+          root.style.setProperty('--color-text-base', '#F8FAFC');
+          root.style.setProperty('--color-secondary', '#1A1A1A');
+        }
+      }
+    };
+    applyColors();
+    // useTheme() dispatches this whenever the theme toggles.
+    window.addEventListener('cp-theme-change', applyColors);
+    return () => window.removeEventListener('cp-theme-change', applyColors);
   }, [currentUser, teams, isLoggedIn]);
 
   useEffect(() => {
@@ -4341,7 +4361,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     <div className="space-y-4 sm:space-y-6">
       {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
       <Card title="Attendance Trend" subtitle="Present check-ins · last 14 days" icon={TrendingUp} className="p-5 gap-3">
-        <AttendanceTrendChart attendance={attendance} height="h-52" />
+        <AttendanceTrendChart attendance={attendance} className="h-52" />
       </Card>
       <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
@@ -8030,29 +8050,60 @@ function FeedbackModal({ onClose }: any) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
-  const [screenshot, setScreenshot] = useState<File | null>(null);
+  const [attachment, setAttachment] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [attachmentKind, setAttachmentKind] = useState<'image' | 'video' | 'file'>('image');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const pickScreenshot = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (!f.type.startsWith('image/')) {
-      notify('Please choose an image file.', 'error');
-      return;
+  const acceptFile = (f: File): boolean => {
+    const mime = f.type || '';
+    const name = f.name.toLowerCase();
+    const ok = mime.startsWith('image/') || mime.startsWith('video/')
+      || /\.(pdf|txt|md|markdown|csv|log|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z)$/.test(name);
+    if (!ok) {
+      notify('That file type is not supported — use an image, video, or common document.', 'error');
+      return false;
     }
-    if (f.size > 5 * 1024 * 1024) {
-      notify('Screenshots must be under 5MB.', 'error');
-      return;
+    if (f.size > 25 * 1024 * 1024) {
+      notify('Attachments must be under 25MB.', 'error');
+      return false;
     }
-    if (preview) URL.revokeObjectURL(preview);
-    setScreenshot(f);
-    setPreview(URL.createObjectURL(f));
+    return true;
   };
 
-  const clearScreenshot = () => {
+  const setFile = (f: File) => {
     if (preview) URL.revokeObjectURL(preview);
-    setScreenshot(null);
+    setAttachment(f);
+    setPreview(URL.createObjectURL(f));
+    setAttachmentKind(f.type.startsWith('video/') ? 'video' : f.type.startsWith('image/') ? 'image' : 'file');
+  };
+
+  const pickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (acceptFile(f)) setFile(f);
+  };
+
+  // Paste a screenshot / file straight from the clipboard (Ctrl+V / Cmd+V)
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f && acceptFile(f)) {
+          e.preventDefault();
+          setFile(f);
+          notify('Attachment pasted — ready to send.', 'success');
+        }
+        return;
+      }
+    }
+  };
+
+  const clearAttachment = () => {
+    if (preview) URL.revokeObjectURL(preview);
+    setAttachment(null);
     setPreview(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -8065,10 +8116,10 @@ function FeedbackModal({ onClose }: any) {
       const form = new FormData();
       form.append('category', category);
       form.append('message', message.trim());
-      if (screenshot) form.append('screenshot', screenshot);
+      if (attachment) form.append('attachment', attachment);
       const res = await apiFetch('/api/feedback', { method: 'POST', body: form });
       if (res.ok) {
-        clearScreenshot();
+        clearAttachment();
         setSent(true);
       } else {
         const data = await res.json().catch(() => ({}));
@@ -8081,7 +8132,7 @@ function FeedbackModal({ onClose }: any) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="glass rounded-2xl border border-white/10 w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+      <div className="glass rounded-2xl border border-white/10 w-full max-w-md p-6" onClick={(e) => e.stopPropagation()} onPaste={handlePaste}>
         {sent ? (
           <div className="text-center py-6">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/15 flex items-center justify-center mb-4">
@@ -8123,15 +8174,23 @@ function FeedbackModal({ onClose }: any) {
                 />
               </div>
               <div className="space-y-2">
-                <input ref={fileInputRef} type="file" accept="image/*" onChange={pickScreenshot} className="hidden" />
-                {preview ? (
+                <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.md,.csv,.log,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip" onChange={pickFile} className="hidden" />
+                {attachment ? (
                   <div className="flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
-                    <img src={preview} alt="screenshot preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                    {attachmentKind === 'image' && preview ? (
+                      <img src={preview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                    ) : attachmentKind === 'video' && preview ? (
+                      <video src={preview} className="w-14 h-14 rounded-lg object-cover border border-white/10" muted playsInline />
+                    ) : (
+                      <div className="w-14 h-14 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center">
+                        <FileText className="w-6 h-6 text-accent" />
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{screenshot?.name}</p>
+                      <p className="text-xs font-bold text-white truncate">{attachment?.name}</p>
                       <p className="text-[11px] text-text-muted">Will send with your feedback</p>
                     </div>
-                    <button type="button" onClick={clearScreenshot} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove screenshot">
+                    <button type="button" onClick={clearAttachment} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove attachment">
                       <X className="w-4 h-4" />
                     </button>
                   </div>
@@ -8141,11 +8200,11 @@ function FeedbackModal({ onClose }: any) {
                     onClick={() => fileInputRef.current?.click()}
                     className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/5 px-4 py-3 text-sm text-text-muted hover:text-white hover:border-accent/40 transition-colors"
                   >
-                    <ImagePlus className="w-4 h-4" /> Attach a screenshot
+                    <Paperclip className="w-4 h-4" /> Attach a file or video
                   </button>
                 )}
                 <p className="text-[11px] text-text-muted/80">
-                  Reporting a bug or something looks off? Attaching a screenshot is recommended — it shows Sushil exactly what you saw. (Images only, up to 5MB.)
+                  Reporting a bug or something looks off? Attach a screenshot, video, or file — you can also paste one straight from your clipboard (Ctrl+V / ⌘V). (Up to 25MB.)
                 </p>
               </div>
               <Button type="submit" disabled={sending || !message.trim()} className="w-full">
@@ -8516,9 +8575,20 @@ function OwnerView(_props: any) {
                   </div>
                   <p className="text-sm text-white whitespace-pre-wrap">{f.message}</p>
                   {f.screenshot_url && (
-                    <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="block mt-2">
-                      <img src={f.screenshot_url} alt="feedback screenshot" className="max-h-40 rounded-lg border border-white/10 object-contain hover:border-accent/40 transition-colors" />
-                    </a>
+                    <div className="mt-2">
+                      {((f.attachment_type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(f.screenshot_url)) ? (
+                        <video src={f.screenshot_url} controls className="max-h-48 rounded-lg border border-white/10" />
+                      ) : ((f.attachment_type || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f.screenshot_url)) ? (
+                        <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="block">
+                          <img src={f.screenshot_url} alt="feedback attachment" className="max-h-40 rounded-lg border border-white/10 object-contain hover:border-accent/40 transition-colors" />
+                        </a>
+                      ) : (
+                        <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white hover:border-accent/40 transition-colors">
+                          <FileText className="w-4 h-4 text-accent" />
+                          <span className="max-w-48 truncate">{f.attachment_name || 'Download attachment'}</span>
+                        </a>
+                      )}
+                    </div>
                   )}
                   <p className="text-[11px] text-text-muted mt-2">{f.user_name} · {f.user_email}{f.team_name ? ` · ${f.team_name}` : ''} · {f.created_at ? format(new Date(f.created_at), 'MMM d, yyyy h:mm a') : ''}</p>
                 </div>
@@ -8981,16 +9051,19 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
     }
   }, [currentUser]);
 
-  // Apply color changes in real-time to the page
+  // Apply color changes in real-time to the page. Custom surface colors are
+  // a dark-mode feature — in light mode the html.light tokens own the
+  // surfaces, so only the accent override applies there.
   useEffect(() => {
     const root = document.documentElement;
+    const isLight = root.classList.contains('light');
     if (validHex(accentColor)) root.style.setProperty('--color-accent', accentColor.trim());
     else root.style.removeProperty('--color-accent');
-    if (validHex(primaryColor)) root.style.setProperty('--color-primary', primaryColor.trim());
+    if (!isLight && validHex(primaryColor)) root.style.setProperty('--color-primary', primaryColor.trim());
     else root.style.removeProperty('--color-primary');
-    if (validHex(textColor)) root.style.setProperty('--color-text-base', textColor.trim());
+    if (!isLight && validHex(textColor)) root.style.setProperty('--color-text-base', textColor.trim());
     else root.style.removeProperty('--color-text-base');
-    
+
     // Trigger re-render of all components to pick up new CSS variables
     setColorVersion((v) => v + 1);
   }, [accentColor, primaryColor, textColor, setColorVersion]);
