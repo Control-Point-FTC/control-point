@@ -90,6 +90,12 @@ import {
   canTransitionReviewStatus,
   sanitizePartInput,
 } from "./server/cad.js";
+import {
+  registerVoiceRoutes,
+  handleVoiceWSMessage,
+  removeParticipantEverywhere,
+  voiceMaintenance,
+} from "./server/voice.js";
 
 // Last-resort safety net: a single malformed request must never take the
 // whole server down for every team. Log it and keep serving; Render's
@@ -1279,6 +1285,8 @@ const ROLE_PERMISSIONS = [
   { key: "manage_outreach", label: "Manage outreach" },
   { key: "manage_documentation", label: "Manage documentation" },
   { key: "manage_communications", label: "Manage communications" },
+  { key: "manage_voice", label: "Manage voice channels" },
+  { key: "moderate_calls", label: "Moderate calls" },
   { key: "view_ai", label: "Use AI features" },
 ];
 const KNOWN_PERMS = new Set(ROLE_PERMISSIONS.map((p) => p.key));
@@ -1580,6 +1588,39 @@ async function startServer() {
     });
   };
 
+  // Targeted delivery to every open socket of one member (voice signaling, call invites).
+  const sendToMember = (teamId: number | null | undefined, memberId: number, data: any) => {
+    if (teamId == null) return;
+    const payload = JSON.stringify(data);
+    clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN && (client as any).teamId === teamId && (client as any).memberId === memberId) {
+        try { client.send(payload); } catch {}
+      }
+    });
+  };
+
+  const memberSocketCount = (teamId: number | null | undefined, memberId: number): number => {
+    if (teamId == null) return 0;
+    let n = 0;
+    clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN && (client as any).teamId === teamId && (client as any).memberId === memberId) n++;
+    });
+    return n;
+  };
+
+  // Voice/video calling deps — injected into server/voice.ts (no direct
+  // imports) so the voice module stays unit-testable. Declared before the
+  // wss handlers that reference it.
+  const voiceDeps = {
+    dbAll, dbGet, dbRun,
+    requireAuth, requirePerm, hasPerm, getMemberPerms,
+    memberRoleIds: async (memberId: number, teamId: number) =>
+      (await memberRoleList(memberId, teamId)).map((r: any) => r.id),
+    broadcastToTeam, sendToMember, memberSocketCount,
+    env: process.env as Record<string, string | undefined>,
+    nowIso: () => new Date().toISOString(),
+  };
+
   const createNotification = async (userId: number, content: string, type: string) => {
     try {
       const timestamp = new Date().toISOString();
@@ -1604,7 +1645,18 @@ async function startServer() {
 
   wss.on("connection", (ws) => {
     clients.add(ws);
-    ws.on("close", () => clients.delete(ws));
+    ws.on("close", () => {
+      const teamId = (ws as any).teamId;
+      const memberId = (ws as any).memberId;
+      clients.delete(ws);
+      // Voice cleanup: if this was the member's last open socket, drop them
+      // from any live call so stale participants never linger.
+      if (teamId != null && memberId != null && memberSocketCount(teamId, memberId) === 0) {
+        removeParticipantEverywhere(voiceDeps, teamId, memberId, "disconnect").catch((e) =>
+          console.error("voice disconnect cleanup failed:", e)
+        );
+      }
+    });
     ws.on("message", async (data) => {
       try {
         const message = JSON.parse(data.toString());
@@ -1624,6 +1676,13 @@ async function startServer() {
         if (message.type === "viewing") {
           const cid = parseInt(message.channel_id, 10);
           (ws as any).viewingChannelId = Number.isFinite(cid) ? cid : null;
+          return;
+        }
+        // Voice/video signaling (SDP/ICE relay, media state, ring cancel).
+        // SDP and ICE payloads are relayed in-memory between verified
+        // participants of the same live session and never persisted.
+        if (typeof message.type === "string" && message.type.startsWith("voice:")) {
+          await handleVoiceWSMessage(ws, message, voiceDeps);
           return;
         }
         if (message.type === "chat") {
@@ -3776,6 +3835,22 @@ async function startServer() {
     `, ...args, limit)) as any[];
     res.json(msgs.reverse());
   });
+
+  // ---- Voice & video calling ----
+  registerVoiceRoutes(app, voiceDeps);
+
+  // Periodic voice maintenance: expire stale ringing invites, end sessions
+  // whose participants all vanished (crashed tabs, killed apps).
+  setInterval(async () => {
+    try {
+      const teams = (await dbAll(
+        "SELECT DISTINCT team_id FROM call_sessions WHERE ended_at IS NULL"
+      )) as any[];
+      for (const t of teams) await voiceMaintenance(voiceDeps, t.team_id);
+    } catch (e) {
+      console.error("voice maintenance sweep failed:", e);
+    }
+  }, 60 * 1000);
 
   // ---- Chat channels ----
   app.get("/api/chat/channels", async (req, res) => {
