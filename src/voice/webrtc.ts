@@ -56,7 +56,21 @@ export interface VoiceEngineOptions {
   iceServers: RTCIceServer[];
   signaling: VoiceSignaling;
   events?: VoiceEngineEvents;
+  /**
+   * Team's default audio quality (from team_voice_settings.default_audio_quality).
+   * Applied as the Opus maxbitrate on every audio RTCRtpSender via
+   * setParameters: low -> 24000, medium -> 64000, high -> 128000 bps.
+   * No renegotiation needed — setParameters applies live.
+   */
+  audioQuality?: 'low' | 'medium' | 'high';
 }
+
+/** Opus maxbitrate (bps) per audio quality setting. */
+export const AUDIO_QUALITY_BITRATES: Record<'low' | 'medium' | 'high', number> = {
+  low: 24000,
+  medium: 64000,
+  high: 128000,
+};
 
 interface PeerState {
   memberId: number;
@@ -132,12 +146,14 @@ export class VoiceEngine {
 
   private deafened = false;
   private disposed = false;
+  private audioQuality: 'low' | 'medium' | 'high' = 'medium';
 
   constructor(opts: VoiceEngineOptions) {
     this.selfId = opts.selfMemberId;
     this.iceServers = opts.iceServers ?? [];
     this.signaling = opts.signaling;
     this.events = opts.events ?? {};
+    if (opts.audioQuality) this.audioQuality = opts.audioQuality;
     this.unsubscribeSignal = this.signaling.onSignal((from, _sessionId, payload) =>
       this.handleSignal(from, payload),
     );
@@ -192,7 +208,10 @@ export class VoiceEngine {
 
     // Attach current local tracks to the new peer.
     const micTrack = this.micStream?.getAudioTracks()[0];
-    if (micTrack) peer.micSender = pc.addTrack(micTrack, this.micStream!);
+    if (micTrack) {
+      peer.micSender = pc.addTrack(micTrack, this.micStream!);
+      void this.applyAudioBitrate(peer.micSender);
+    }
     const camTrack = this.cameraStream?.getVideoTracks()[0];
     if (camTrack) peer.cameraSender = pc.addTrack(camTrack, this.cameraStream!);
     const screenTrack = this.screenStream?.getVideoTracks()[0];
@@ -410,6 +429,34 @@ export class VoiceEngine {
 
   // ------------------------------------------------------------ local tracks
 
+  /**
+   * Change the team's audio quality mid-call. Applies the matching Opus
+   * maxbitrate to every live audio sender via setParameters (no
+   * renegotiation, no SDP changes, nothing persisted).
+   */
+  async setAudioQuality(quality: 'low' | 'medium' | 'high'): Promise<void> {
+    if (!['low', 'medium', 'high'].includes(quality)) return;
+    this.audioQuality = quality;
+    await Promise.all(
+      [...this.peers.values()].map((peer) =>
+        peer.micSender ? this.applyAudioBitrate(peer.micSender) : Promise.resolve(),
+      ),
+    );
+  }
+
+  /** Apply the current Opus maxbitrate to one audio RTCRtpSender. */
+  private async applyAudioBitrate(sender: RTCRtpSender): Promise<void> {
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+      const bitrate = AUDIO_QUALITY_BITRATES[this.audioQuality] ?? AUDIO_QUALITY_BITRATES.medium;
+      for (const enc of params.encodings) enc.maxBitrate = bitrate;
+      await sender.setParameters(params);
+    } catch {
+      /* sender/encoding API unsupported — the Opus default stands */
+    }
+  }
+
   /** Attach the local mic stream; replaces the mic track on every peer without renegotiation. */
   async setMicStream(stream: MediaStream | null): Promise<void> {
     const old = this.micStream;
@@ -421,9 +468,11 @@ export class VoiceEngine {
           await peer.micSender.replaceTrack(track);
         } catch {
           peer.micSender = peer.pc.addTrack(track, stream!);
+          void this.applyAudioBitrate(peer.micSender);
         }
       } else if (track && !peer.micSender) {
         peer.micSender = peer.pc.addTrack(track, stream!);
+        void this.applyAudioBitrate(peer.micSender);
       } else if (!track && peer.micSender) {
         try {
           peer.pc.removeTrack(peer.micSender);

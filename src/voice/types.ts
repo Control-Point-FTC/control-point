@@ -75,6 +75,8 @@ export interface VoiceChannelSummary {
   description: string;
   maxParticipants: number;
   locked: boolean;
+  /** True when the channel is private (role-gated). Present when the server includes it. */
+  isPrivate?: boolean;
   sessionId: number | null;
   participantCount: number;
   participants: Array<{
@@ -97,6 +99,7 @@ export interface DevicePrefs {
   autoGainControl: boolean;
   micVolume: number; // 0..1
   speakerVolume: number; // 0..1
+  cameraQuality?: 'low' | 'medium' | 'high'; // capture quality; defaults to 'medium'
 }
 
 export interface IncomingCall {
@@ -190,6 +193,9 @@ export function loadDevicePrefs(storage?: Pick<Storage, 'getItem'>): DevicePrefs
       autoGainControl: parsed.autoGainControl !== false,
       micVolume: clamp01(parsed.micVolume, 1),
       speakerVolume: clamp01(parsed.speakerVolume, 1),
+      cameraQuality: ['low', 'medium', 'high'].includes(parsed.cameraQuality as any)
+        ? (parsed.cameraQuality as 'low' | 'medium' | 'high')
+        : undefined,
     };
   } catch {
     return { ...DEFAULT_DEVICE_PREFS };

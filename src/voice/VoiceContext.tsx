@@ -87,6 +87,10 @@ export interface VoiceContextValue {
   devices: DeviceLists;
   selectedDevices: SelectedDevices;
   setDevice: (kind: SetDeviceKind, deviceId: string | undefined) => void;
+  /** Current persisted device/voice prefs (cp-voice-prefs). */
+  devicePrefs: DevicePrefs;
+  /** Merge a patch into the persisted device prefs (used by DeviceSettingsModal). */
+  setDevicePrefs: (patch: Partial<DevicePrefs>) => void;
   canModerate: boolean;
   canManageVoice: boolean;
   /** True when the browser reports mic permission as denied — UI shows a warning, not a silent failure. */
@@ -97,6 +101,8 @@ export interface VoiceContextValue {
   startCall: (inviteeIds: number[], media: 'audio' | 'video') => Promise<void>;
   acceptCall: () => Promise<void>;
   declineCall: () => Promise<void>;
+  /** Hide the incoming-call UI without notifying the caller (the invite stays live). */
+  dismissIncomingCall: () => void;
   endCall: () => Promise<void>;
   toggleMute: () => void;
   toggleDeafen: () => void;
@@ -185,6 +191,17 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
 
   const clearError = useCallback(() => setError(null), []);
 
+  /** Team's default audio quality (team_voice_settings); wired into the engine's Opus bitrate. */
+  const audioQualityRef = useRef<'low' | 'medium' | 'high'>('medium');
+
+  const setDevicePrefs = useCallback((patch: Partial<DevicePrefs>) => {
+    setPrefs((prev) => {
+      const next: DevicePrefs = { ...prev, ...patch };
+      saveDevicePrefs(next);
+      return next;
+    });
+  }, []);
+
   const sendSocket = useCallback((msg: any) => {
     try {
       sendRef.current?.(msg);
@@ -254,6 +271,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         selfMemberId: selfId,
         iceServers,
         signaling,
+        audioQuality: audioQualityRef.current,
         events: {
           onRemoteStreams: (peerId, stream, screenStream) => {
             setParticipants((prev) =>
@@ -359,6 +377,17 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
     } catch {
       /* channels list is best-effort; call UI shows its own empty state */
     }
+    // Keep the engine's Opus bitrate in sync with team_voice_settings.
+    try {
+      const settings = await voiceApi.getSettings();
+      const q = settings?.default_audio_quality;
+      if (q === 'low' || q === 'medium' || q === 'high') {
+        audioQualityRef.current = q;
+        void engineRef.current?.setAudioQuality(q);
+      }
+    } catch {
+      /* settings fetch is best-effort — the engine keeps its current quality */
+    }
   }, []);
 
   const refreshChannels = useCallback(async () => {
@@ -396,7 +425,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         mic = await acquireMicOrThrow();
         if (opts?.video) {
           try {
-            cam = await getCameraStream(prefsRef.current.cameraId, 'medium');
+            cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
           } catch (camErr) {
             // Video is optional — join audio-only rather than failing the join.
             console.warn('[voice] camera unavailable, joining audio-only:', camErr);
@@ -446,7 +475,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         mic = await acquireMicOrThrow();
         if (media === 'video') {
           try {
-            cam = await getCameraStream(prefsRef.current.cameraId, 'medium');
+            cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
           } catch (camErr) {
             console.warn('[voice] camera unavailable, starting audio-only:', camErr);
           }
@@ -486,7 +515,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
       mic = await acquireMicOrThrow();
       if (inv.media === 'video') {
         try {
-          cam = await getCameraStream(prefsRef.current.cameraId, 'medium');
+          cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
         } catch (camErr) {
           console.warn('[voice] camera unavailable, accepting audio-only:', camErr);
         }
@@ -519,6 +548,10 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         /* invite already expired */
       }
     }
+  }, []);
+
+  const dismissIncomingCall = useCallback(() => {
+    setIncomingCall(null);
   }, []);
 
   const endCall = useCallback(async () => {
@@ -605,7 +638,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
     try {
       if (turningOn) {
         // User gesture — acquiring the camera here is allowed.
-        const cam = await getCameraStream(prefsRef.current.cameraId, 'medium');
+        const cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
         await engineRef.current.setCameraStream(cam);
         cameraStreamRef.current = cam;
         const mic = engineRef.current.getLocalMicStream();
@@ -708,7 +741,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         })
         .catch((err) => setError(err instanceof MediaError ? err.message : 'Could not switch microphone.'));
     } else if (kind === 'camera' && selfRef.current.cameraOn) {
-      getCameraStream(deviceId, 'medium')
+      getCameraStream(deviceId, prefsRef.current.cameraQuality ?? 'medium')
         .then((stream) =>
           engine.setCameraStream(stream).then(() => {
             cameraStreamRef.current = stream;
@@ -970,6 +1003,8 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
     devices,
     selectedDevices,
     setDevice,
+    devicePrefs: prefs,
+    setDevicePrefs,
     canModerate,
     canManageVoice,
     micDenied,
@@ -979,6 +1014,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
     startCall,
     acceptCall,
     declineCall,
+    dismissIncomingCall,
     endCall,
     toggleMute,
     toggleDeafen,

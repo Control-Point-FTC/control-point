@@ -54,6 +54,7 @@ function mapChannel(raw: any): VoiceChannelSummary {
     description: String(raw.description ?? ''),
     maxParticipants: Number(raw.max_participants ?? 0),
     locked: raw.locked === 1 || raw.locked === true,
+    isPrivate: raw.is_private === 1 || raw.is_private === true,
     sessionId: raw.session_id != null ? Number(raw.session_id) : null,
     participantCount: Number(raw.participant_count ?? 0),
     participants: Array.isArray(raw.participants) ? raw.participants : [],
@@ -141,6 +142,77 @@ export const voiceApi = {
 
   getSettings(): Promise<any> {
     return apiJson<{ settings: any }>('/api/voice/settings').then((r) => r.settings);
+  },
+
+  /** Update team voice settings (requires manage_voice; server-validated). */
+  putSettings(body: Record<string, any>): Promise<any> {
+    return apiJson<{ settings: any }>('/api/voice/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.settings);
+  },
+};
+
+/** Channel admin REST (all require manage_voice server-side). */
+export interface VoiceChannelAdminPayload {
+  name?: string;
+  description?: string;
+  category_id?: number | null;
+  max_participants?: number;
+  is_private?: boolean;
+  locked?: boolean;
+  allow_video?: boolean;
+  allow_screenshare?: boolean;
+}
+
+export interface RolePermRow {
+  role_id: number;
+  can_view: boolean;
+  can_join: boolean;
+  can_speak: boolean;
+  can_video: boolean;
+  can_screenshare: boolean;
+}
+
+export const voiceAdminApi = {
+  createChannel(body: VoiceChannelAdminPayload): Promise<any> {
+    return apiJson<{ channel: any }>('/api/voice/channels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.channel);
+  },
+  patchChannel(channelId: number, body: VoiceChannelAdminPayload): Promise<any> {
+    return apiJson<{ channel: any }>(`/api/voice/channels/${channelId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then((r) => r.channel);
+  },
+  deleteChannel(channelId: number): Promise<void> {
+    return apiJson<{ ok: boolean }>(`/api/voice/channels/${channelId}`, {
+      method: 'DELETE',
+    }).then(() => {});
+  },
+  reorderChannels(order: number[]): Promise<void> {
+    return apiJson<{ channels: any[] }>('/api/voice/channels/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order }),
+    }).then(() => {});
+  },
+  getRolePerms(channelId: number): Promise<any[]> {
+    return apiJson<{ perms: any[] }>(`/api/voice/channels/${channelId}/role-perms`).then(
+      (r) => r.perms ?? [],
+    );
+  },
+  putRolePerms(channelId: number, perms: RolePermRow[]): Promise<any[]> {
+    return apiJson<{ perms: any[] }>(`/api/voice/channels/${channelId}/role-perms`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ perms }),
+    }).then((r) => r.perms ?? []);
   },
 };
 

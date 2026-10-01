@@ -3,7 +3,15 @@
 // the app needs to reach into the individual modules.
 
 export * from './types';
-export { voiceApi, type ModerationAction, type JoinResult, type StartCallResult } from './api';
+export {
+  voiceApi,
+  voiceAdminApi,
+  type ModerationAction,
+  type JoinResult,
+  type StartCallResult,
+  type VoiceChannelAdminPayload,
+  type RolePermRow,
+} from './api';
 export {
   enumerateDevices,
   getMicStream,
@@ -17,7 +25,7 @@ export {
   type DeviceLists,
   type VideoQuality,
 } from './media';
-export { VoiceEngine, type VoiceSignaling, type VoiceEngineEvents, type VoiceEngineOptions } from './webrtc';
+export { VoiceEngine, AUDIO_QUALITY_BITRATES, type VoiceSignaling, type VoiceEngineEvents, type VoiceEngineOptions } from './webrtc';
 export {
   VoiceProvider,
   useVoice,

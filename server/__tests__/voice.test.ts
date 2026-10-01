@@ -36,6 +36,10 @@ const MIGRATION_SQL = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../migrations/versions/002-voice-calls.sql"),
   "utf8"
 );
+const MIGRATION_003_SQL = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../migrations/versions/003-voice-audio-quality.sql"),
+  "utf8"
+);
 
 // Minimal members table: only the columns voice.ts reads.
 const MEMBERS_STUB_DDL = `
@@ -122,6 +126,7 @@ async function makeFixture(env: Record<string, string | undefined> = {}): Promis
   await client.execute("PRAGMA foreign_keys=OFF");
   await client.executeMultiple(MEMBERS_STUB_DDL);
   await client.executeMultiple(MIGRATION_SQL);
+  await client.executeMultiple(MIGRATION_003_SQL);
 
   const broadcasts: Fixture["broadcasts"] = [];
   const directMessages: Fixture["directMessages"] = [];
@@ -916,5 +921,44 @@ describe("reconnect grace period", () => {
         (b) => b.data.type === "voice:session-ended" && b.data.session_id === sessionId
       )
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/voice/settings — default_audio_quality (migration 003)
+// ---------------------------------------------------------------------------
+
+describe("PUT /api/voice/settings (default_audio_quality)", () => {
+  it("persists a valid audio quality and keeps other fields server-validated", async () => {
+    const res = await callRoute(fx, "PUT", "/api/voice/settings", {
+      auth: fx.authFor(1),
+      body: { default_audio_quality: "high", reconnect_attempts: 99 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.settings.default_audio_quality).toBe("high");
+    // reconnect_attempts is clamped server-side (0..20).
+    expect(res.body.settings.reconnect_attempts).toBe(20);
+    const row = await fx.sqlGet("SELECT default_audio_quality FROM team_voice_settings WHERE team_id = 1");
+    expect(row.default_audio_quality).toBe("high");
+  });
+
+  it("falls back to the current value on invalid audio quality", async () => {
+    const before = await callRoute(fx, "GET", "/api/voice/settings", { auth: fx.authFor(1) });
+    expect(before.statusCode).toBe(200);
+    expect(before.body.settings.default_audio_quality).toBe("medium");
+    const res = await callRoute(fx, "PUT", "/api/voice/settings", {
+      auth: fx.authFor(1),
+      body: { default_audio_quality: "ultra" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.settings.default_audio_quality).toBe("medium");
+  });
+
+  it("requires manage_voice", async () => {
+    const res = await callRoute(fx, "PUT", "/api/voice/settings", {
+      auth: fx.authFor(2),
+      body: { default_audio_quality: "low" },
+    });
+    expect(res.statusCode).toBe(403);
   });
 });

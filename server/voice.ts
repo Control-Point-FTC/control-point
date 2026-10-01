@@ -263,6 +263,7 @@ export async function getVoiceSettings(deps: VoiceDeps, teamId: number): Promise
       group_calls_allowed: 1,
       default_max_participants: 0,
       default_video_quality: "medium",
+      default_audio_quality: "medium",
       call_timeout_minutes: 0,
       reconnect_attempts: 5,
     }
@@ -904,10 +905,11 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
     const bit = (v: any, fallback: number) => (v === undefined ? fallback : v ? 1 : 0);
     const cur = await getVoiceSettings(deps, auth.teamId);
     const quality = ["low", "medium", "high"].includes(req.body?.default_video_quality) ? req.body.default_video_quality : cur.default_video_quality;
+    const audioQuality = ["low", "medium", "high"].includes(req.body?.default_audio_quality) ? req.body.default_audio_quality : cur.default_audio_quality;
     await dbRun(
       `UPDATE team_voice_settings SET video_enabled = ?, screenshare_enabled = ?, global_spotlight_enabled = ?,
        dm_calls_allowed = ?, group_calls_allowed = ?, default_max_participants = ?, default_video_quality = ?,
-       call_timeout_minutes = ?, reconnect_attempts = ? WHERE team_id = ?`,
+       default_audio_quality = ?, call_timeout_minutes = ?, reconnect_attempts = ? WHERE team_id = ?`,
       bit(req.body?.video_enabled, cur.video_enabled),
       bit(req.body?.screenshare_enabled, cur.screenshare_enabled),
       bit(req.body?.global_spotlight_enabled, cur.global_spotlight_enabled),
@@ -915,6 +917,7 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
       bit(req.body?.group_calls_allowed, cur.group_calls_allowed),
       Math.max(0, Math.min(100, parseInt(req.body?.default_max_participants, 10) || 0)),
       quality,
+      audioQuality,
       Math.max(0, Math.min(480, parseInt(req.body?.call_timeout_minutes, 10) || 0)),
       Math.max(0, Math.min(20, parseInt(req.body?.reconnect_attempts, 10) || 5)),
       auth.teamId

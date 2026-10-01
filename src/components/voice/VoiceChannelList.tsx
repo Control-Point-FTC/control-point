@@ -1,0 +1,149 @@
+// VOICE CHANNELS section for the sidebar. Mirrors the text-channel row
+// styling (same padding, hover, active states) so it feels native.
+
+import React, { useState } from 'react';
+import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, VideoOff, Volume2 } from 'lucide-react';
+import { cn } from '../ui';
+import { useVoice, type VoiceChannelSummary } from '../../voice';
+import { VoiceAvatar } from './shared';
+
+function JoinedRow({ p, isSelf }: { p: VoiceChannelSummary['participants'][number]; isSelf: boolean }) {
+  return (
+    <div className="flex items-center gap-2 pl-8 pr-2.5 py-1 rounded-lg group/user" title={p.name}>
+      <VoiceAvatar name={p.name} avatarUrl={p.avatarUrl} size={20} speaking={false} />
+      <span className={cn('flex-1 min-w-0 truncate text-[13px]', isSelf ? 'text-accent font-semibold' : 'text-text-muted')}>
+        {p.name}
+      </span>
+      <span className="flex items-center gap-1 flex-shrink-0" aria-hidden="true">
+        {p.sharingScreen && <MonitorUp className="w-3.5 h-3.5 text-emerald-400" />}
+        {!p.cameraOn && <VideoOff className="w-3.5 h-3.5 text-text-muted/50" />}
+        {p.isDeafened ? (
+          <Headphones className="w-3.5 h-3.5 text-rose-400" />
+        ) : p.isMuted ? (
+          <MicOff className="w-3.5 h-3.5 text-rose-400" />
+        ) : null}
+      </span>
+      <span className="sr-only">
+        {p.isDeafened ? 'deafened' : p.isMuted ? 'muted' : 'unmuted'}
+        {p.sharingScreen ? ', sharing screen' : ''}
+      </span>
+    </div>
+  );
+}
+
+export function VoiceChannelList({ className }: { className?: string }) {
+  const { channels, session, joinChannel, participants, error, clearError } = useVoice();
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [joiningId, setJoiningId] = useState<number | null>(null);
+  const selfId = participants.find((p) => p.isSelf)?.memberId;
+
+  const toggleExpanded = (id: number) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const handleJoin = async (channel: VoiceChannelSummary) => {
+    if (session?.kind === 'voice_channel' && session.channelId === channel.id) return;
+    setJoiningId(channel.id);
+    try {
+      await joinChannel(channel.id);
+    } finally {
+      setJoiningId(null);
+    }
+  };
+
+  return (
+    <div className={className} aria-label="Voice channels">
+      <div className="px-3 pt-3 pb-2 flex items-center justify-between">
+        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">Voice channels</p>
+        {channels.length > 0 && (
+          <span className="text-[10px] font-bold text-text-muted/50" aria-label={`${channels.length} voice channels`}>
+            {channels.length}
+          </span>
+        )}
+      </div>
+      {channels.length === 0 ? (
+        <p className="px-3 pb-3 text-xs text-text-muted/60">No voice channels yet.</p>
+      ) : (
+        <div className="px-2 pb-2 space-y-0.5">
+          {channels.map((c) => {
+            const isActive = session?.kind === 'voice_channel' && session.channelId === c.id;
+            const isExpanded = expandedIds.has(c.id) || isActive;
+            const joining = joiningId === c.id;
+            const liveCount = c.participantCount;
+            return (
+              <div key={c.id} className="group/channel relative">
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleJoin(c)}
+                    disabled={joining}
+                    title={isActive ? `In ${c.name}` : `Join ${c.name}`}
+                    aria-label={isActive ? `In voice channel ${c.name}` : `Join voice channel ${c.name}`}
+                    className={cn(
+                      'flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                      isActive
+                        ? 'bg-text-base/[0.08] text-text-base font-semibold'
+                        : 'text-text-muted hover:bg-text-base/[0.04] hover:text-text-base',
+                    )}
+                  >
+                    <Volume2 className={cn('w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} aria-hidden="true" />
+                    <span className="truncate flex-1">{c.name}</span>
+                    {c.locked && <Lock className="w-3.5 h-3.5 flex-shrink-0 text-amber-400/80" aria-label="Locked" />}
+                    {c.isPrivate && !c.locked && <EyeOff className="w-3.5 h-3.5 flex-shrink-0 text-text-muted/50" aria-label="Private" />}
+                    {/* private channels carry a distinct marker next to the lock */}
+                    {liveCount > 0 && (
+                      <span
+                        className="flex-shrink-0 text-[11px] font-bold text-text-muted/70 tabular-nums"
+                        aria-label={`${liveCount} ${liveCount === 1 ? 'person' : 'people'} in channel`}
+                      >
+                        {liveCount}
+                      </span>
+                    )}
+                    {joining && <span className="text-[11px] text-text-muted flex-shrink-0">Joining…</span>}
+                  </button>
+                  {liveCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(c.id)}
+                      aria-expanded={isExpanded}
+                      aria-label={isExpanded ? `Hide participants in ${c.name}` : `Show participants in ${c.name}`}
+                      title={isExpanded ? 'Hide participants' : 'Show participants'}
+                      className="p-1.5 rounded-lg text-text-muted/60 hover:text-text-base hover:bg-text-base/[0.06] flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                    >
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </button>
+                  )}
+                </div>
+                {isExpanded && c.participants.length > 0 && (
+                  <div className="mt-0.5 space-y-0.5" role="list" aria-label={`Participants in ${c.name}`}>
+                    {c.participants.map((p) => (
+                      <JoinedRow key={p.memberId} p={p} isSelf={p.memberId === selfId} />
+                    ))}
+                  </div>
+                )}
+                {c.locked && (
+                  <span className="sr-only">This channel is locked.</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {error && (
+        <div className="mx-2 mb-2 px-2.5 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-xs text-rose-300 flex items-start gap-2">
+          <span className="flex-1">{error}</span>
+          <button type="button" onClick={clearError} aria-label="Dismiss error" className="text-rose-300/70 hover:text-rose-200">
+            ✕
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default VoiceChannelList;
