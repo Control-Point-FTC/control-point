@@ -33,7 +33,7 @@ export function CallBar() {
     <div
       role="region"
       aria-label={`Active call: ${session.name}`}
-      className="fixed bottom-0 inset-x-0 z-40 pointer-events-none"
+      className="fixed bottom-[calc(62px+env(safe-area-inset-bottom))] md:bottom-0 inset-x-0 z-40 pointer-events-none"
     >
       <div className="mx-auto max-w-3xl px-3 pb-3">
         <div

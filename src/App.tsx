@@ -130,7 +130,14 @@ import { CodeView } from './components/CodeView';
 import { CadView } from './components/CadView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
-import { VoiceSettingsSection } from './components/voice';
+import {
+  VoiceSettingsSection,
+  VoiceChannelList,
+  UserVoiceControls,
+  CallBar,
+  IncomingCallModal,
+  CallView,
+} from './components/voice';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
@@ -2469,6 +2476,8 @@ export default function App() {
         </nav>
 
         <div className="p-3 sm:p-4 border-t border-text-base/[0.06] flex-shrink-0 space-y-1.5">
+          {/* Voice controls sit with the user card, Discord-style (presence picker untouched) */}
+          <UserVoiceControls className={cn(!isSidebarOpen && 'justify-center')} />
           {/* Discord-style user card: avatar w/ presence, name, status picker, settings gear */}
           <div className="relative">
             {statusPickerOpen && (
@@ -2807,6 +2816,12 @@ export default function App() {
       )}
 
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
+      {/* Voice calling surfaces — all driven by VoiceProvider context state.
+          CallBar is fixed-bottom (above the mobile nav) and survives route
+          navigation because it lives outside the routed views. */}
+      <CallBar />
+      <IncomingCallModal />
+      <CallView />
       <CookieConsent />
       <BrunoPanel
         key={currentUser?.team_id ?? 'none'}
@@ -7709,6 +7724,10 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         {sortedCats.length === 0 && ungroupedChannels.length === 0 && (
           <p className="px-2.5 py-4 text-sm text-text-muted/60">No channels yet.</p>
         )}
+      </div>
+      {/* Voice channels — same sidebar section conventions as the text list */}
+      <div className="flex-shrink-0 border-t border-text-base/[0.06] max-h-[42%] overflow-y-auto custom-scrollbar">
+        <VoiceChannelList />
       </div>
     </div>
   );
