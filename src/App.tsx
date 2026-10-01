@@ -131,6 +131,7 @@ import { CadView } from './components/CadView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
 import { VoiceSettingsSection } from './components/voice';
+import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
@@ -207,6 +208,31 @@ const AvatarWithPresence = ({ user, size = 'md', presence, dotClassName }: any) 
     />
   </span>
 );
+
+// --- Voice calling: socket bridge ---
+// The app owns exactly one WebSocket (connectSocket below). The voice engine
+// never opens its own socket — this bridge renders INSIDE <VoiceProvider> and
+// hands the provider's socket API (attach/detach/handleSocketMessage, plus
+// leave for team-switch/logout teardown) to the App-level socket handlers
+// through a stable ref. All four are stable useCallbacks, so reassignment is
+// a no-op after the first mount.
+type VoiceSocketApi = Pick<
+  VoiceContextValue,
+  'attachSocket' | 'detachSocket' | 'handleSocketMessage' | 'leave'
+>;
+
+function VoiceSocketBridge({ voiceRef }: { voiceRef: { current: VoiceSocketApi | null } }) {
+  const voice = useVoice();
+  useEffect(() => {
+    voiceRef.current = {
+      attachSocket: voice.attachSocket,
+      detachSocket: voice.detachSocket,
+      handleSocketMessage: voice.handleSocketMessage,
+      leave: voice.leave,
+    };
+  }, [voice, voiceRef]);
+  return null;
+}
 
 // --- Role choice + signup screens ---
 
@@ -922,6 +948,10 @@ export default function App() {
   // for the (stale-closure) onmessage handler.
   const activeChannelIdRef = useRef<number | null>(null);
   useEffect(() => { activeChannelIdRef.current = activeChannelId; }, [activeChannelId]);
+  // Voice engine socket API (populated by <VoiceSocketBridge> inside
+  // <VoiceProvider>): the one app WebSocket routes voice:* messages here and
+  // attaches the engine's send callback on (re)connect.
+  const voiceApiRef = useRef<VoiceSocketApi | null>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [hiddenDates, setHiddenDates] = useState<string[]>([]);
   const [settings, setSettings] = useState<any>({});
@@ -1179,11 +1209,19 @@ export default function App() {
       console.log("WebSocket connected");
       const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
       if (sid) ws.send(JSON.stringify({ type: 'hello', sessionId: sid }));
+      // Voice signaling rides this socket — attach the engine's send path.
+      // (Re-attached on every reconnect; attachSocket re-announces state.)
+      voiceApiRef.current?.attachSocket((m) => {
+        try { ws.send(JSON.stringify(m)); } catch { /* socket gone */ }
+      });
     };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        // Voice engine first: handleSocketMessage returns true for any
+        // voice:* type so the branches below never see them.
+        if (voiceApiRef.current?.handleSocketMessage(msg)) return;
         if (msg.type === 'chat') {
           const cur = activeChannelIdRef.current;
           setMessages(prev => {
@@ -1238,6 +1276,8 @@ export default function App() {
 
     ws.onclose = () => {
       console.log("WebSocket disconnected, retrying in 3s...");
+      // Detach the voice engine's send path — it re-attaches on the new socket.
+      voiceApiRef.current?.detachSocket();
       setTimeout(connectSocket, 3000);
     };
 
@@ -1448,6 +1488,9 @@ export default function App() {
 
   const handleSwitchTeam = async (teamId: number) => {
     if (teamId === currentUser?.team_id) return;
+    // End any active call cleanly before switching teams — no ghost
+    // participants on the old team's sessions.
+    try { await voiceApiRef.current?.leave(); } catch { /* best effort — the switch must proceed */ }
     setLoading(true);
     try {
       const res = await apiFetch('/api/teams/switch', {
@@ -1642,6 +1685,9 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    // End any active call cleanly — the server's reconnect grace covers
+    // blips, but an explicit logout must not leave a ghost participant.
+    try { await voiceApiRef.current?.leave(); } catch { /* best effort — still sign out locally */ }
     try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch { /* best effort — still sign out locally */ }
     hasLoadedOnce.current = false;
     refreshCount.current = 0;
@@ -2263,7 +2309,14 @@ export default function App() {
   }
 
   return (
-    <ContextMenuProvider>
+    <VoiceProvider
+      memberId={currentUser?.id ?? null}
+      memberName={currentUser?.name}
+      memberAvatar={(currentUser as any)?.avatar_url ?? null}
+      hasPerm={hasPerm}
+    >
+      <VoiceSocketBridge voiceRef={voiceApiRef} />
+      <ContextMenuProvider>
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
       {/* Slim non-blocking refresh indicator (background fetchData after first load). */}
@@ -2809,6 +2862,7 @@ export default function App() {
       )}
     </div>
     </ContextMenuProvider>
+    </VoiceProvider>
   );
 }
 
