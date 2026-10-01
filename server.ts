@@ -6404,7 +6404,7 @@ Rules:
           const lines = upcoming.map((e) => `#${e.id} ${e.title} — ${e.date}${e.start_time ? " " + e.start_time : ""}`);
           upcomingCtx = `UPCOMING TEAM EVENTS (next ${upcoming.length}):\n${lines.join("\n")}`;
         }
-      } catch { /* context is best-effort — never block the reply */ }
+      } catch (err) { console.error("[bruno] upcoming-events context query failed:", err); /* context is best-effort — never block the reply */ }
       const fullContext = [teamContext, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
       // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
