@@ -22,7 +22,7 @@ export const PART_SOURCE_LABELS: Record<string, string> = { printed: '3D Printed
 export const PART_STATUS_LABELS: Record<string, string> = { to_order: 'To Order', ordered: 'Ordered', received: 'Received', printed: 'Printed', installed: 'Installed' };
 
 const STATUS_STYLES: Record<string, string> = {
-  concept: 'bg-white/10 text-text-muted border-white/15',
+  concept: 'bg-text-base/10 text-text-muted border-text-base/15',
   in_review: 'bg-info/15 text-info border-info/30',
   approved: 'bg-success/15 text-success border-success/30',
   changes_requested: 'bg-warning/15 text-warning border-warning/30',
@@ -40,7 +40,7 @@ const Card = ({ children, className, title, subtitle, icon: Icon, action }: any)
     {(title || Icon) && (
       <div className="flex items-center justify-between mb-1 gap-3">
         <div className="min-w-0">
-          {title && <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>}
+          {title && <h3 className="text-lg font-display font-bold text-text-base tracking-tight">{title}</h3>}
           {subtitle && <p className="text-xs text-text-muted mt-0.5">{subtitle}</p>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -55,20 +55,20 @@ const Card = ({ children, className, title, subtitle, icon: Icon, action }: any)
 const Button = ({ children, className, variant = 'primary', ...props }: any) => {
   const variants: any = {
     primary: 'bg-accent text-accent-ink font-bold hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)]',
-    secondary: 'bg-elevated text-white hover:bg-white/10 border border-white/10 font-semibold',
-    ghost: 'text-text-muted hover:text-white hover:bg-white/5 font-semibold',
+    secondary: 'bg-elevated text-text-base hover:bg-text-base/10 border border-text-base/10 font-semibold',
+    ghost: 'text-text-muted hover:text-text-base hover:bg-text-base/5 font-semibold',
     danger: 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30 font-semibold',
   };
   return <button className={cn('px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 text-sm', variants[variant], className)} {...props}>{children}</button>;
 };
 const Input = ({ className, ...props }: any) => (
-  <input className={cn('w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm', className)} {...props} />
+  <input className={cn('w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm', className)} {...props} />
 );
 const TextArea = ({ className, ...props }: any) => (
-  <textarea className={cn('w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm min-h-[90px]', className)} {...props} />
+  <textarea className={cn('w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm min-h-[90px]', className)} {...props} />
 );
 const Select = ({ className, options, ...props }: any) => (
-  <select className={cn('w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm', className)} {...props}>
+  <select className={cn('w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm', className)} {...props}>
     {options.map((opt: any) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
   </select>
 );
@@ -85,8 +85,8 @@ const Modal = ({ title, onClose, children, wide }: any) => (
   <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
     <div className={cn('card-surface p-6 w-full max-h-[90vh] overflow-y-auto', wide ? 'max-w-3xl' : 'max-w-lg')} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-display font-bold text-white">{title}</h3>
-        <button onClick={onClose} className="p-1.5 rounded-lg text-text-muted hover:text-white hover:bg-white/10"><X className="w-5 h-5" /></button>
+        <h3 className="text-lg font-display font-bold text-text-base">{title}</h3>
+        <button onClick={onClose} className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10"><X className="w-5 h-5" /></button>
       </div>
       {children}
     </div>
@@ -95,7 +95,7 @@ const Modal = ({ title, onClose, children, wide }: any) => (
 const Empty = ({ icon: Icon, title, hint }: any) => (
   <div className="text-center py-10 space-y-2">
     <Icon className="w-10 h-10 text-text-muted/50 mx-auto" />
-    <p className="text-white font-semibold">{title}</p>
+    <p className="text-text-base font-semibold">{title}</p>
     {hint && <p className="text-sm text-text-muted">{hint}</p>}
   </div>
 );
@@ -145,7 +145,7 @@ function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
               </div>
               <ArrowRight className="w-4 h-4 text-text-muted/40 group-hover:text-accent group-hover:translate-x-0.5 transition-all" />
             </div>
-            <p className="text-3xl font-display font-bold text-white mt-3">{s.value}</p>
+            <p className="text-3xl font-display font-bold text-text-base mt-3">{s.value}</p>
             <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted mt-1">{s.label}</p>
             {s.sub && <p className="text-xs text-text-muted mt-0.5">{s.sub}</p>}
           </button>
@@ -160,7 +160,7 @@ function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
                 <button key={r.id} onClick={() => onNavigate('/cad-reviews')} className="w-full flex items-center gap-3 p-3 rounded-xl bg-elevated border border-warning/25 hover:border-warning/50 transition-all text-left">
                   <ClipboardCheck className="w-4 h-4 text-warning shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-white truncate">{r.title}</p>
+                    <p className="text-sm font-semibold text-text-base truncate">{r.title}</p>
                     <p className="text-xs text-text-muted">{r.section}{r.author_name ? ` · ${r.author_name}` : ''} · waiting since {fmtDate(r.updated_at)}</p>
                   </div>
                 </button>
@@ -185,9 +185,9 @@ function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
             {data.recent.map((a: any, i: number) => {
               const Icon = kindIcon[a.kind] || Box;
               return (
-                <div key={`${a.kind}-${a.id}-${i}`} className="flex items-center gap-3 py-2 border-b border-white/5 last:border-0">
+                <div key={`${a.kind}-${a.id}-${i}`} className="flex items-center gap-3 py-2 border-b border-text-base/5 last:border-0">
                   <Icon className="w-4 h-4 text-accent/70 shrink-0" />
-                  <p className="text-sm text-white truncate flex-1">{a.title}</p>
+                  <p className="text-sm text-text-base truncate flex-1">{a.title}</p>
                   {a.section ? <span className="text-xs text-text-muted hidden sm:inline">{a.section}</span> : null}
                   <span className="text-xs text-text-muted/70 shrink-0">{fmtDate(a.ts)}</span>
                 </div>
@@ -240,10 +240,10 @@ function CadDocs() {
         {docs.length ? (
           <div className="grid sm:grid-cols-2 gap-3">
             {docs.map((d) => (
-              <div key={d.id} className="flex items-center gap-3 p-4 rounded-xl bg-elevated border border-white/10 hover:border-accent/40 transition-all">
+              <div key={d.id} className="flex items-center gap-3 p-4 rounded-xl bg-elevated border border-text-base/10 hover:border-accent/40 transition-all">
                 <div className="rounded-xl bg-accent/12 p-2.5 shrink-0"><FileBox className="w-5 h-5 text-accent" /></div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-bold text-white truncate">{d.name}</p>
+                  <p className="text-sm font-bold text-text-base truncate">{d.name}</p>
                   <p className="text-xs text-text-muted">Linked {fmtDate(d.created_at)}</p>
                 </div>
                 <a href={d.url} target="_blank" rel="noreferrer" className="p-2 rounded-xl text-accent hover:bg-accent/10" title="Open in Onshape">
@@ -301,7 +301,7 @@ function CadReviews({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bool
         {['all', 'concept', 'in_review', 'approved', 'changes_requested', 'built'].map((s) => (
           <button key={s} onClick={() => setFilter(s)}
             className={cn('px-3 py-1.5 rounded-full text-xs font-bold border transition-all',
-              filter === s ? 'bg-accent text-accent-ink border-accent' : 'border-white/10 text-text-muted hover:text-white hover:bg-white/5')}>
+              filter === s ? 'bg-accent text-accent-ink border-accent' : 'border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5')}>
             {s === 'all' ? 'All' : REVIEW_STATUS_LABELS[s]}
           </button>
         ))}
@@ -316,7 +316,7 @@ function CadReviews({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bool
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="text-white font-bold truncate">{r.title}</h4>
+                    <h4 className="text-text-base font-bold truncate">{r.title}</h4>
                   </div>
                   <p className="text-xs text-text-muted mt-1">
                     <span className={cn('font-semibold', SECTION_COLORS[r.section] || 'text-text-muted')}>{r.section}</span>
@@ -325,7 +325,7 @@ function CadReviews({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bool
                 </div>
                 <Badge className={STATUS_STYLES[r.status]}>{REVIEW_STATUS_LABELS[r.status]}</Badge>
               </div>
-              {r.screenshot_url && <img src={r.screenshot_url} alt="" className="rounded-xl border border-white/10 max-h-48 w-full object-cover" />}
+              {r.screenshot_url && <img src={r.screenshot_url} alt="" className="rounded-xl border border-text-base/10 max-h-48 w-full object-cover" />}
               {r.description && <p className="text-sm text-text-muted line-clamp-3 whitespace-pre-wrap">{r.description}</p>}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {r.onshape_url && <a href={r.onshape_url} target="_blank" rel="noreferrer" className="text-xs font-bold text-accent hover:underline inline-flex items-center gap-1"><ExternalLink className="w-3.5 h-3.5" /> Open in Onshape</a>}
@@ -386,7 +386,7 @@ function ReviewForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
         </div>
         <Field label="Screenshot (optional)">
           <input type="file" accept="image/*" onChange={(e: any) => setShot(e.target.files?.[0] || null)}
-            className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-white file:font-semibold hover:file:bg-white/10" />
+            className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-text-base file:font-semibold hover:file:bg-text-base/10" />
         </Field>
         <Field label="Description"><TextArea placeholder="What changed, what needs eyes on it…" value={description} onChange={(e: any) => setDescription(e.target.value)} /></Field>
         <div className="flex justify-end gap-2">
@@ -418,7 +418,7 @@ function ReviewDetail({ review, isAdmin, canAct, onStatus, onDelete, onChanged }
   if (canAct(review, 'built')) actions.push({ to: 'built', label: 'Mark Built', icon: Hammer });
 
   return (
-    <div className="border-t border-white/10 pt-3 space-y-3">
+    <div className="border-t border-text-base/10 pt-3 space-y-3">
       {actions.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {actions.map((a) => (
@@ -433,9 +433,9 @@ function ReviewDetail({ review, isAdmin, canAct, onStatus, onDelete, onChanged }
       )}
       <div className="space-y-2">
         {comments.map((c) => (
-          <div key={c.id} className="rounded-xl bg-elevated border border-white/10 p-3">
+          <div key={c.id} className="rounded-xl bg-elevated border border-text-base/10 p-3">
             <p className="text-xs font-bold text-accent">{c.author_name || 'Member'} <span className="text-text-muted/60 font-normal">· {fmtDate(c.created_at)}</span></p>
-            <p className="text-sm text-white/90 mt-1 whitespace-pre-wrap">{c.comment}</p>
+            <p className="text-sm text-text-base/90 mt-1 whitespace-pre-wrap">{c.comment}</p>
           </div>
         ))}
         {comments.length === 0 && <p className="text-xs text-text-muted">No comments yet — start the discussion.</p>}
@@ -479,19 +479,19 @@ function CadSnapshots({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bo
         <Card key={section} title={section} subtitle={`${items.length} snapshot${items.length === 1 ? '' : 's'}`} icon={Layers}>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {items.map((s) => (
-              <div key={s.id} className="rounded-2xl bg-elevated border border-white/10 overflow-hidden hover:border-accent/40 transition-all group">
+              <div key={s.id} className="rounded-2xl bg-elevated border border-text-base/10 overflow-hidden hover:border-accent/40 transition-all group">
                 {s.screenshot_url ? (
                   <img src={s.screenshot_url} alt="" className="w-full h-40 object-cover" />
                 ) : (
-                  <button onClick={() => setViewer(s)} className="w-full h-40 flex flex-col items-center justify-center gap-2 bg-white/[0.03] hover:bg-accent/5 transition-all">
+                  <button onClick={() => setViewer(s)} className="w-full h-40 flex flex-col items-center justify-center gap-2 bg-text-base/[0.03] hover:bg-accent/5 transition-all">
                     <Box className="w-10 h-10 text-accent/60 group-hover:text-accent group-hover:scale-110 transition-all" />
                     <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted">Click to view 3D</span>
                   </button>
                 )}
                 <div className="p-4 space-y-2">
-                  <p className="text-sm font-bold text-white truncate">{s.title}</p>
+                  <p className="text-sm font-bold text-text-base truncate">{s.title}</p>
                   <p className="text-xs text-text-muted flex items-center gap-2">
-                    <Badge className="bg-white/10 text-text-muted border-white/15">{s.file_type.toUpperCase()}</Badge>
+                    <Badge className="bg-text-base/10 text-text-muted border-text-base/15">{s.file_type.toUpperCase()}</Badge>
                     {fmtSize(s.file_size)}
                     {s.author_name ? ` · ${s.author_name}` : ''}
                   </p>
@@ -559,12 +559,12 @@ function SnapshotForm({ onClose, onDone }: { onClose: () => void; onDone: () => 
         </div>
         <Field label="3D Model (.step / .stp / .stl)">
           <input type="file" accept=".step,.stp,.stl" onChange={(e: any) => setModel(e.target.files?.[0] || null)}
-            className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-white file:font-semibold hover:file:bg-white/10" />
+            className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-text-base file:font-semibold hover:file:bg-text-base/10" />
           {model && <p className="text-xs text-text-muted">{model.name} · {fmtSize(model.size)}</p>}
         </Field>
         <Field label="Screenshot (optional)">
           <input type="file" accept="image/*" onChange={(e: any) => setShot(e.target.files?.[0] || null)}
-            className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-white file:font-semibold hover:file:bg-white/10" />
+            className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-text-base file:font-semibold hover:file:bg-text-base/10" />
         </Field>
         <Field label="Notes"><TextArea placeholder="What does this snapshot capture?" value={notes} onChange={(e: any) => setNotes(e.target.value)} /></Field>
         <div className="flex justify-end gap-2">
@@ -603,7 +603,7 @@ function CadParts() {
       <div className="flex items-center justify-between">
         <p className="text-sm text-text-muted flex items-center gap-2">
           <CircleDollarSign className="w-4 h-4 text-accent" />
-          <span className="font-bold text-white text-base">${total.toFixed(2)}</span> total BOM cost · {parts.length} parts
+          <span className="font-bold text-text-base text-base">${total.toFixed(2)}</span> total BOM cost · {parts.length} parts
         </p>
         <Button onClick={() => { setEditing(null); setShowForm(true); }}><Plus className="w-4 h-4" /> Add Part</Button>
       </div>
@@ -612,7 +612,7 @@ function CadParts() {
           <div className="overflow-x-auto -mx-6 px-6">
             <table className="w-full text-sm min-w-[720px]">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-widest text-text-muted border-b border-white/10">
+                <tr className="text-left text-[11px] uppercase tracking-widest text-text-muted border-b border-text-base/10">
                   <th className="py-2 pr-3 font-bold">Part</th>
                   <th className="py-2 pr-3 font-bold">Qty</th>
                   <th className="py-2 pr-3 font-bold">Source</th>
@@ -625,16 +625,16 @@ function CadParts() {
               </thead>
               <tbody>
                 {items.map((p) => (
-                  <tr key={p.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02]">
-                    <td className="py-2.5 pr-3 font-semibold text-white">{p.name}</td>
+                  <tr key={p.id} className="border-b border-text-base/5 last:border-0 hover:bg-text-base/[0.02]">
+                    <td className="py-2.5 pr-3 font-semibold text-text-base">{p.name}</td>
                     <td className="py-2.5 pr-3 text-text-muted">{p.quantity}</td>
-                    <td className="py-2.5 pr-3"><Badge className="bg-white/10 text-text-muted border-white/15">{PART_SOURCE_LABELS[p.source] || p.source}</Badge></td>
+                    <td className="py-2.5 pr-3"><Badge className="bg-text-base/10 text-text-muted border-text-base/15">{PART_SOURCE_LABELS[p.source] || p.source}</Badge></td>
                     <td className="py-2.5 pr-3 text-text-muted">${Number(p.unit_cost).toFixed(2)}</td>
-                    <td className="py-2.5 pr-3 text-white font-semibold">${(p.quantity * p.unit_cost).toFixed(2)}</td>
+                    <td className="py-2.5 pr-3 text-text-base font-semibold">${(p.quantity * p.unit_cost).toFixed(2)}</td>
                     <td className="py-2.5 pr-3"><Badge className={cn('border', p.status === 'installed' ? 'bg-success/15 text-success border-success/30' : p.status === 'to_order' ? 'bg-warning/15 text-warning border-warning/30' : 'bg-info/15 text-info border-info/30')}>{PART_STATUS_LABELS[p.status] || p.status}</Badge></td>
                     <td className="py-2.5 pr-3 text-text-muted">{p.assignee || '—'}</td>
                     <td className="py-2.5 text-right whitespace-nowrap">
-                      <button onClick={() => { setEditing(p); setShowForm(true); }} className="p-1.5 rounded-lg text-text-muted hover:text-white hover:bg-white/10" title="Edit"><Wrench className="w-4 h-4" /></button>
+                      <button onClick={() => { setEditing(p); setShowForm(true); }} className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10" title="Edit"><Wrench className="w-4 h-4" /></button>
                       <button onClick={() => remove(p.id)} className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10" title="Delete"><Trash2 className="w-4 h-4" /></button>
                     </td>
                   </tr>
@@ -719,7 +719,7 @@ export function CadView({ activeTab, currentUser, isAdmin }: { activeTab: string
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-display font-bold text-white tracking-tight flex items-center gap-2">
+        <h2 className="text-2xl font-display font-bold text-text-base tracking-tight flex items-center gap-2">
           <Box className="w-6 h-6 text-accent" /> CAD
         </h2>
         <p className="text-sm text-text-muted mt-1">Designs, reviews, 3D snapshots, and the bill of materials — one home for the CAD team.</p>
@@ -728,7 +728,7 @@ export function CadView({ activeTab, currentUser, isAdmin }: { activeTab: string
         {SUBTABS.map((t) => (
           <button key={t.id} onClick={() => navigate(`/${t.id}`)}
             className={cn('flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all whitespace-nowrap',
-              tab === t.id ? 'bg-accent text-accent-ink border-accent' : 'border-white/10 text-text-muted hover:text-white hover:bg-white/5')}>
+              tab === t.id ? 'bg-accent text-accent-ink border-accent' : 'border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5')}>
             <t.icon className="w-4 h-4" /> {t.label}
           </button>
         ))}

@@ -138,6 +138,7 @@ import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import { AttendanceTrendChart } from './components/dashboard/AttendanceTrend';
 import ThemeToggle from './components/ThemeToggle';
+import { useTheme } from './hooks/useTheme';
 
 // Helper to get CSS variable values
 function getCSSVariable(name: string): string {
@@ -158,7 +159,7 @@ function validHex(v: any): v is string {
 const Select = ({ className, options, ...props }: any) => (
   <select 
     className={cn(
-      "w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
+      "w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
       className
     )}
     {...props}
@@ -233,7 +234,7 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEna
   <AuthShell>
     <button
       onClick={onBack}
-      className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+      className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-base transition-colors"
     >
       <ChevronLeft className="w-4 h-4" /> Back to home
     </button>
@@ -242,20 +243,20 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEna
         <div className="w-14 h-14 bg-accent rounded-2xl flex items-center justify-center gold-glow">
           <Bolt className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
         </div>
-        <h1 className="text-2xl font-display font-bold text-white tracking-tight">Create your account</h1>
+        <h1 className="text-2xl font-display font-bold text-text-base tracking-tight">Create your account</h1>
         <p className="text-text-muted text-sm">How will you use Control Point?</p>
       </div>
       <div className="grid gap-3">
         <button
           onClick={() => onSelect('admin')}
-          className="group text-left rounded-2xl border border-white/10 bg-elevated p-5 hover:border-accent/60 hover:bg-white/5 transition-all active:scale-[0.99]"
+          className="group text-left rounded-2xl border border-text-base/10 bg-elevated p-5 hover:border-accent/60 hover:bg-text-base/5 transition-all active:scale-[0.99]"
         >
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-accent/15 p-3 shrink-0">
               <ShieldCheck className="w-6 h-6 text-accent" />
             </div>
             <div>
-              <p className="font-bold text-white text-[15px]">I'm a Team Admin</p>
+              <p className="font-bold text-text-base text-[15px]">I'm a Team Admin</p>
               <p className="text-sm text-text-muted mt-1 leading-relaxed">
                 Create a workspace for your robotics team. You'll get an access code to share with your students.
               </p>
@@ -264,14 +265,14 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEna
         </button>
         <button
           onClick={() => onSelect('student')}
-          className="group text-left rounded-2xl border border-white/10 bg-elevated p-5 hover:border-accent/60 hover:bg-white/5 transition-all active:scale-[0.99]"
+          className="group text-left rounded-2xl border border-text-base/10 bg-elevated p-5 hover:border-accent/60 hover:bg-text-base/5 transition-all active:scale-[0.99]"
         >
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-sky-400/15 p-3 shrink-0">
               <GraduationCap className="w-6 h-6 text-sky-400" />
             </div>
             <div>
-              <p className="font-bold text-white text-[15px]">I'm a Student</p>
+              <p className="font-bold text-text-base text-[15px]">I'm a Student</p>
               <p className="text-sm text-text-muted mt-1 leading-relaxed">
                 Join your team's workspace with the access code from your admin.
               </p>
@@ -282,23 +283,23 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEna
       {(googleEnabled || discordEnabled || githubEnabled) && (
         <>
           <div className="flex items-center gap-3 mt-5">
-            <div className="flex-1 h-px bg-white/10" />
+            <div className="flex-1 h-px bg-text-base/10" />
             <span className="text-xs text-text-muted">or</span>
-            <div className="flex-1 h-px bg-white/10" />
+            <div className="flex-1 h-px bg-text-base/10" />
           </div>
           <div className="mt-4 space-y-2.5">
             {googleEnabled && (
-              <a href="/api/auth/google?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+              <a href="/api/auth/google?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
                 <GoogleIcon /> Continue with Google
               </a>
             )}
             {discordEnabled && (
-              <a href="/api/auth/discord?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+              <a href="/api/auth/discord?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
                 <DiscordIcon /> Continue with Discord
               </a>
             )}
             {githubEnabled && (
-              <a href="/api/auth/github?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-elevated px-3 py-3 text-sm font-semibold text-white hover:border-accent/60 hover:bg-white/5 transition-all">
+              <a href="/api/auth/github?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
                 <GithubIcon /> Continue with GitHub
               </a>
             )}
@@ -387,14 +388,14 @@ const AdminTeamFields = ({ teamNumber, setTeamNumber, teamName, setTeamName, lab
           <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5">
             <BadgeCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <div className="min-w-0">
-              <p className="text-sm font-bold text-white truncate">{foundName}</p>
+              <p className="text-sm font-bold text-text-base truncate">{foundName}</p>
               {foundSchool && <p className="text-xs text-text-muted truncate">{foundSchool}</p>}
               <p className="text-[11px] text-emerald-400 font-semibold mt-0.5">Verified FTC team — you're all set</p>
             </div>
           </div>
         )}
         {(lookup === 'notfound' || lookup === 'error') && !manual && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+          <div className="rounded-xl border border-text-base/10 bg-text-base/[0.03] px-3 py-2.5">
             <p className="text-xs text-text-muted">
               {lookup === 'notfound'
                 ? "Couldn't find that number in the FTC database."
@@ -464,7 +465,7 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
     <AuthShell>
       <button
         onClick={onBack}
-        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-base transition-colors"
       >
         <ChevronLeft className="w-4 h-4" /> Choose a different role
       </button>
@@ -475,7 +476,7 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
               ? <ShieldCheck className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
               : <GraduationCap className="text-sky-400 w-8 h-8" strokeWidth={2.5} />}
           </div>
-          <h1 className="text-2xl font-display font-bold text-white tracking-tight">
+          <h1 className="text-2xl font-display font-bold text-text-base tracking-tight">
             {mode === 'admin' ? 'Create your workspace' : 'Join your team'}
           </h1>
           <p className="text-text-muted text-sm">
@@ -492,7 +493,7 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
             {label('Password')}
             <div className="relative">
               <Input type={showPw ? 'text' : 'password'} required minLength={6} value={password} onChange={(e: any) => setPassword(e.target.value)} placeholder="6+ characters" className="pr-11" />
-              <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-white">
+              <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-base">
                 {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
@@ -561,7 +562,7 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
     <AuthShell>
       <button
         onClick={onBack}
-        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-base transition-colors"
       >
         <ChevronLeft className="w-4 h-4" /> Back to home
       </button>
@@ -572,7 +573,7 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
               ? <ShieldCheck className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
               : <GraduationCap className="text-sky-400 w-8 h-8" strokeWidth={2.5} />}
           </div>
-          <h1 className="text-2xl font-display font-bold text-white tracking-tight">Almost done</h1>
+          <h1 className="text-2xl font-display font-bold text-text-base tracking-tight">Almost done</h1>
           <p className="text-text-muted text-sm flex items-center gap-2">
             {provider === 'discord' ? <DiscordIcon /> : provider === 'github' ? <GithubIcon /> : <GoogleIcon />}
             {' '}Signed in with {provider === 'discord' ? 'Discord' : provider === 'github' ? 'GitHub' : 'Google'} — one more step.
@@ -586,11 +587,11 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
                 onClick={() => setPickedRole('admin')}
                 className={cn(
                   "rounded-xl border p-4 text-left transition-all",
-                  pickedRole === 'admin' ? "border-accent bg-accent/10" : "border-white/10 bg-elevated hover:border-white/25"
+                  pickedRole === 'admin' ? "border-accent bg-accent/10" : "border-text-base/10 bg-elevated hover:border-text-base/25"
                 )}
               >
                 <ShieldCheck className={cn("w-5 h-5 mb-2", pickedRole === 'admin' ? "text-accent" : "text-text-muted")} />
-                <p className="text-sm font-bold text-white">Team Admin</p>
+                <p className="text-sm font-bold text-text-base">Team Admin</p>
                 <p className="text-xs text-text-muted mt-1">Create a workspace</p>
               </button>
               <button
@@ -598,11 +599,11 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
                 onClick={() => setPickedRole('student')}
                 className={cn(
                   "rounded-xl border p-4 text-left transition-all",
-                  pickedRole === 'student' ? "border-accent bg-accent/10" : "border-white/10 bg-elevated hover:border-white/25"
+                  pickedRole === 'student' ? "border-accent bg-accent/10" : "border-text-base/10 bg-elevated hover:border-text-base/25"
                 )}
               >
                 <GraduationCap className={cn("w-5 h-5 mb-2", pickedRole === 'student' ? "text-accent" : "text-text-muted")} />
-                <p className="text-sm font-bold text-white">Student</p>
+                <p className="text-sm font-bold text-text-base">Student</p>
                 <p className="text-xs text-text-muted mt-1">Join with a code</p>
               </button>
             </div>
@@ -644,9 +645,9 @@ const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code
           <div className="mx-auto w-14 h-14 bg-accent rounded-2xl flex items-center justify-center gold-glow mb-5">
             <Sparkles className="text-accent-ink w-8 h-8" strokeWidth={2.5} />
           </div>
-          <h1 className="text-2xl font-display font-bold text-white tracking-tight">Workspace ready</h1>
+          <h1 className="text-2xl font-display font-bold text-text-base tracking-tight">Workspace ready</h1>
           <p className="text-text-muted text-sm mt-2 leading-relaxed">
-            <span className="text-white font-semibold">{team.name}</span> is set up.
+            <span className="text-text-base font-semibold">{team.name}</span> is set up.
             {team.verified && (
               <span className="inline-flex items-center gap-1 ml-1.5 text-emerald-400 font-semibold text-sm align-middle">
                 <BadgeCheck className="w-4 h-4" /> Verified FTC team
@@ -1122,44 +1123,20 @@ export default function App() {
     return () => window.removeEventListener('cp:unauthorized', onUnauthorized);
   }, []);
 
-  // Apply custom colors. In dark mode the custom primary/text/secondary
-  // overrides own the surfaces; in light mode the html.light design tokens
-  // own them (a dark custom primary would turn the whole light UI grey),
-  // so only the accent override carries over. Re-applies on theme toggles.
+  // Apply the custom accent color. Only the accent override is applied —
+  // surfaces and text come from the theme tokens (index.css) so light/dark
+  // mode always stays coherent. Re-applies on theme toggles.
   useEffect(() => {
     const applyColors = () => {
       const root = document.documentElement;
-      const isLight = root.classList.contains('light');
-      const clearSurfaces = () => {
-        root.style.removeProperty('--color-primary');
-        root.style.removeProperty('--color-text-base');
-        root.style.removeProperty('--color-secondary');
-      };
+      const clear = () => root.style.removeProperty('--color-accent');
       if (isLoggedIn && currentUser) {
         const myTeam = teams.find(t => t.id === currentUser.team_id);
-
-        const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim() || '#FFC700';
-        const primary = [currentUser.primary_color, myTeam?.primary_color].find(validHex)?.trim() || '#09090B';
-        const text = [currentUser.text_color, myTeam?.text_color].find(validHex)?.trim() || '#F8FAFC'; // slate-100 default
-
-        root.style.setProperty('--color-accent', accent);
-        if (isLight) clearSurfaces();
-        else {
-          root.style.setProperty('--color-primary', primary);
-          root.style.setProperty('--color-text-base', text);
-          // Secondary color is usually a slightly lighter version of primary
-          // For simplicity, we can just use the same or a slightly transparent version
-          root.style.setProperty('--color-secondary', '#1A1A1A');
-        }
+        const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim();
+        if (accent) root.style.setProperty('--color-accent', accent);
+        else clear();
       } else {
-        // Reset to defaults
-        root.style.setProperty('--color-accent', '#FFC700');
-        if (isLight) clearSurfaces();
-        else {
-          root.style.setProperty('--color-primary', '#09090B');
-          root.style.setProperty('--color-text-base', '#F8FAFC');
-          root.style.setProperty('--color-secondary', '#1A1A1A');
-        }
+        clear();
       }
     };
     applyColors();
@@ -2140,7 +2117,7 @@ export default function App() {
         <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
           <button
             onClick={() => setAuthScreen('landing')}
-            className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+            className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-base transition-colors"
           >
             <ChevronLeft className="w-4 h-4" /> Back to home
           </button>
@@ -2148,7 +2125,7 @@ export default function App() {
             <div className="flex flex-col items-center gap-4 mb-8">
               <BrandLogo className="w-16 h-16 rounded-2xl" />
               <div className="flex items-center gap-2">
-                <h1 className="text-3xl font-display font-bold text-white tracking-tight">Control Point</h1>
+                <h1 className="text-3xl font-display font-bold text-text-base tracking-tight">Control Point</h1>
                 <BetaBadge className="mt-1" />
               </div>
               <p className="text-text-muted text-center text-sm">
@@ -2177,9 +2154,9 @@ export default function App() {
             {(googleEnabled || discordEnabled || githubEnabled) && !needsSetup && (
               <>
                 <div className="flex items-center gap-3 mt-6">
-                  <div className="flex-1 h-px bg-white/10" />
+                  <div className="flex-1 h-px bg-text-base/10" />
                   <span className="text-xs text-text-muted">or</span>
-                  <div className="flex-1 h-px bg-white/10" />
+                  <div className="flex-1 h-px bg-text-base/10" />
                 </div>
                 <div className="mt-6 space-y-2.5">
                   {googleEnabled && (
@@ -2285,7 +2262,7 @@ export default function App() {
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className={cn(
-          "bg-secondary border-r border-white/5 flex flex-col z-40",
+          "bg-secondary border-r border-text-base/5 flex flex-col z-40",
           isMobile ? "fixed inset-y-0 left-0 shadow-xl" : "relative"
         )}
         style={{
@@ -2333,7 +2310,7 @@ export default function App() {
                         "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
                         childActive
                           ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
-                          : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
+                          : "text-text-muted hover:bg-text-base/[0.06] hover:text-text-base font-medium"
                       )}
                     >
                       <item.icon className={cn("w-[18px] h-[18px] shrink-0", childActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
@@ -2345,7 +2322,7 @@ export default function App() {
                       )}
                     </button>
                     {isSidebarOpen && open && (
-                      <div className="ml-5 mt-1 space-y-1 border-l border-white/10 pl-2">
+                      <div className="ml-5 mt-1 space-y-1 border-l border-text-base/10 pl-2">
                         {kids.map((k) => {
                           const kActive = activeTab === k.id;
                           return (
@@ -2357,7 +2334,7 @@ export default function App() {
                                 "w-full flex items-center gap-3 px-3 py-2 rounded-xl transition-all group relative text-[13px]",
                                 kActive
                                   ? "bg-accent/20 text-accent font-bold"
-                                  : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
+                                  : "text-text-muted hover:bg-text-base/[0.06] hover:text-text-base font-medium"
                               )}
                             >
                               <k.icon className={cn("w-4 h-4 shrink-0", kActive ? "text-accent" : "text-accent/70 group-hover:text-accent")} strokeWidth={2.25} />
@@ -2381,7 +2358,7 @@ export default function App() {
                     depth > 0 && "py-2 text-[13px]",
                     isActive
                       ? "bg-accent text-accent-ink font-bold shadow-[0_4px_16px_rgba(255,199,0,0.3)]"
-                      : "text-text-muted hover:bg-white/[0.06] hover:text-white font-medium"
+                      : "text-text-muted hover:bg-text-base/[0.06] hover:text-text-base font-medium"
                   )}
                 >
                   <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
@@ -2406,19 +2383,19 @@ export default function App() {
           })()}
         </nav>
 
-        <div className="p-3 sm:p-4 border-t border-white/[0.06] flex-shrink-0 space-y-1.5">
+        <div className="p-3 sm:p-4 border-t border-text-base/[0.06] flex-shrink-0 space-y-1.5">
           {/* Discord-style user card: avatar w/ presence, name, status picker, settings gear */}
           <div className="relative">
             {statusPickerOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setStatusPickerOpen(false)} />
-                <div className="absolute bottom-full left-0 mb-2 w-64 z-50 bg-elevated border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+                <div className="absolute bottom-full left-0 mb-2 w-64 z-50 bg-elevated border border-text-base/10 rounded-2xl shadow-2xl overflow-hidden">
                   <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-[0.2em] text-text-muted/70">Set status</p>
                   <PresencePicker value={currentUser?.presence_status || 'online'} onPick={handleStatusPick} />
                 </div>
               </>
             )}
-            <div className={cn("flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06]", isSidebarOpen ? "p-2.5" : "p-2 justify-center")}>
+            <div className={cn("flex items-center gap-3 rounded-xl bg-text-base/[0.04] border border-text-base/[0.06]", isSidebarOpen ? "p-2.5" : "p-2 justify-center")}>
               <button
                 onClick={() => setStatusPickerOpen(!statusPickerOpen)}
                 className="hover:ring-2 hover:ring-accent/50 transition-all rounded-full flex-shrink-0"
@@ -2428,13 +2405,13 @@ export default function App() {
               </button>
               {isSidebarOpen && (
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-bold text-white truncate leading-tight">{currentUser?.name}</p>
+                  <p className="text-[13px] font-bold text-text-base truncate leading-tight">{currentUser?.name}</p>
                   <p className="text-[11px] text-text-muted truncate">{PRESENCE_META[currentUser?.presence]?.label || currentUser?.role}</p>
                 </div>
               )}
               {isSidebarOpen && (
                 <>
-                  <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-white transition-colors flex-shrink-0" title="Settings">
+                  <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-text-base transition-colors flex-shrink-0" title="Settings">
                     <Settings className="w-4 h-4" />
                   </button>
                   <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
@@ -2446,7 +2423,7 @@ export default function App() {
           </div>
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="w-full hidden md:flex items-center gap-3 px-3 py-2 text-text-muted hover:text-white rounded-xl hover:bg-white/[0.06] transition-colors text-sm font-medium"
+            className="w-full hidden md:flex items-center gap-3 px-3 py-2 text-text-muted hover:text-text-base rounded-xl hover:bg-text-base/[0.06] transition-colors text-sm font-medium"
             title={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           >
             {isSidebarOpen ? <ChevronLeft className="w-[18px] h-[18px] flex-shrink-0" /> : <ChevronRight className="w-[18px] h-[18px] flex-shrink-0" />}
@@ -2460,13 +2437,13 @@ export default function App() {
         {!isChatRoute && (
         <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-white capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
             <button
               onClick={() => setShowFeedback(true)}
-              className="p-2 text-text-muted hover:text-white transition-colors"
+              className="p-2 text-text-muted hover:text-text-base transition-colors"
               title="Send feedback to Sushil"
             >
               <MessageSquareHeart className="w-5 h-5" />
@@ -2477,7 +2454,7 @@ export default function App() {
                   setShowNotifications(!showNotifications);
                   if (!showNotifications) markNotificationsRead();
                 }}
-                className="relative p-2 text-text-muted hover:text-white transition-colors"
+                className="relative p-2 text-text-muted hover:text-text-base transition-colors"
               >
                 <Bell className="w-5 h-5" />
                 {notifications.some(n => !n.is_read) && (
@@ -2492,20 +2469,20 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
                     className={cn(
-                      "glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50",
+                      "glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
                       isMobile
                         ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
                         : "absolute right-0 mt-2 w-80"
                     )}
                   >
-                    <div className="p-4 border-b border-white/10 bg-white/5">
-                      <h4 className="text-sm font-bold text-white">Notifications</h4>
+                    <div className="p-4 border-b border-text-base/10 bg-text-base/5">
+                      <h4 className="text-sm font-bold text-text-base">Notifications</h4>
                     </div>
                     <div className="max-h-96 overflow-y-auto custom-scrollbar">
                       {notifications.length > 0 ? (
                         notifications.map(n => (
-                          <div key={n.id} className={cn("p-4 border-b border-white/5 hover:bg-white/5 transition-colors", !n.is_read && "bg-accent/5")}>
-                            <p className="text-xs text-white leading-relaxed">{n.content}</p>
+                          <div key={n.id} className={cn("p-4 border-b border-text-base/5 hover:bg-text-base/5 transition-colors", !n.is_read && "bg-accent/5")}>
+                            <p className="text-xs text-text-base leading-relaxed">{n.content}</p>
                             <p className="text-[10px] text-text-muted/70 mt-1">{format(new Date(n.timestamp), 'MMM d, h:mm a')}</p>
                           </div>
                         ))
@@ -2523,12 +2500,12 @@ export default function App() {
               <div className="relative">
                 <button
                   onClick={() => setShowTeamMenu(!showTeamMenu)}
-                  className="flex items-center gap-1.5 px-2.5 py-2 bg-white/5 rounded-full border border-white/10 hover:border-accent/40 hover:bg-white/[0.08] transition-all cursor-pointer max-w-[140px] sm:max-w-[200px]"
+                  className="flex items-center gap-1.5 px-2.5 py-2 bg-text-base/5 rounded-full border border-text-base/10 hover:border-accent/40 hover:bg-text-base/[0.08] transition-all cursor-pointer max-w-[140px] sm:max-w-[200px]"
                   aria-label="Switch team"
                   title="Switch team"
                 >
                   <Layers className="w-4 h-4 text-accent flex-shrink-0" />
-                  <span className="hidden sm:block text-xs font-bold text-white truncate">{activeTeamName}</span>
+                  <span className="hidden sm:block text-xs font-bold text-text-base truncate">{activeTeamName}</span>
                   <ChevronDown className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
                 </button>
                 {showTeamMenu && (
@@ -2544,13 +2521,13 @@ export default function App() {
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
                       className={cn(
-                        "glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50",
+                        "glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
                         isMobile
                           ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
                           : "absolute right-0 mt-2 w-56"
                       )}
                     >
-                      <div className="p-3 border-b border-white/10 bg-white/5">
+                      <div className="p-3 border-b border-text-base/10 bg-text-base/5">
                         <p className="text-[11px] font-bold text-text-muted uppercase tracking-wider">My teams</p>
                       </div>
                       <div className="max-h-64 overflow-y-auto custom-scrollbar">
@@ -2559,7 +2536,7 @@ export default function App() {
                             key={t.id}
                             onClick={() => { setShowTeamMenu(false); handleSwitchTeam(t.id); }}
                             className={cn(
-                              "w-full flex items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-white/5",
+                              "w-full flex items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-text-base/5",
                               t.id === currentTeamId ? "bg-accent/10" : ""
                             )}
                           >
@@ -2567,7 +2544,7 @@ export default function App() {
                               <Layers className="w-4 h-4 text-accent" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-bold text-white truncate flex items-center gap-1.5">
+                              <p className="text-sm font-bold text-text-base truncate flex items-center gap-1.5">
                                 <span className="truncate">{t.name}</span>
                                 {t.ftc_team_number ? (
                                   <BadgeCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -2598,12 +2575,12 @@ export default function App() {
               <div className="relative">
                 <button
                   onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center gap-3 p-1.5 sm:px-4 sm:py-2 bg-white/5 rounded-full border border-white/10 hover:border-accent/40 hover:bg-white/[0.08] transition-all cursor-pointer"
+                  className="flex items-center gap-3 p-1.5 sm:px-4 sm:py-2 bg-text-base/5 rounded-full border border-text-base/10 hover:border-accent/40 hover:bg-text-base/[0.08] transition-all cursor-pointer"
                   aria-label="Account menu"
                 >
                   <Avatar user={currentUser} size="sm" />
                   <div className="hidden sm:block text-left">
-                    <p className="text-xs font-bold text-white">{currentUser.name}</p>
+                    <p className="text-xs font-bold text-text-base">{currentUser.name}</p>
                     <p className="text-[10px] text-text-muted">{currentUser.role}</p>
                   </div>
                   <LogOut className="w-4 h-4 text-text-muted/70" />
@@ -2622,27 +2599,27 @@ export default function App() {
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
                       className={cn(
-                        "glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden z-50",
+                        "glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
                         isMobile
                           ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
                           : "absolute right-0 mt-2 w-52"
                       )}
                     >
-                      <div className="p-3 border-b border-white/10 bg-white/5">
-                        <p className="text-sm font-bold text-white truncate">{currentUser.name}</p>
+                      <div className="p-3 border-b border-text-base/10 bg-text-base/5">
+                        <p className="text-sm font-bold text-text-base truncate">{currentUser.name}</p>
                         <p className="text-[11px] text-text-muted truncate">{currentUser.email || currentUser.role}</p>
                       </div>
                       <div className="p-1.5">
                         <button
                           onClick={() => { setShowUserMenu(false); navigate('/profile'); }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/[0.06] transition-colors"
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
                           <UserCircle className="w-[18px] h-[18px] text-accent" />
                           My Profile
                         </button>
                         <button
                           onClick={() => { setShowUserMenu(false); openSetupGuide(); }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/[0.06] transition-colors"
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
                           <Sparkles className="w-[18px] h-[18px] text-accent" />
                           Setup guide
@@ -2650,13 +2627,13 @@ export default function App() {
                         {(currentUser as any)?.account_type === 'admin' && (
                           <button
                             onClick={() => { setShowUserMenu(false); navigate('/settings'); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-white hover:bg-white/[0.06] transition-colors"
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                           >
                             <Settings className="w-[18px] h-[18px] text-accent" />
                             Settings
                           </button>
                         )}
-                        <div className="my-1.5 border-t border-white/[0.06]" />
+                        <div className="my-1.5 border-t border-text-base/[0.06]" />
                         <button
                           onClick={() => { setShowUserMenu(false); handleLogout(); }}
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
@@ -2708,7 +2685,7 @@ export default function App() {
       {isMobile && (
         <nav
           aria-label="Primary"
-          className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/10 bg-secondary/95 backdrop-blur-lg"
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-text-base/10 bg-secondary/95 backdrop-blur-lg"
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
           <div className="flex">
@@ -2807,14 +2784,14 @@ export default function App() {
 function AppFooter({ links, teamName }: { links: { id: string; path: string; label: string }[]; teamName?: string }) {
   const navigate = useNavigate();
   return (
-    <footer className="hidden md:block flex-shrink-0 border-t border-white/[0.06] bg-secondary/60">
+    <footer className="hidden md:block flex-shrink-0 border-t border-text-base/[0.06] bg-secondary/60">
       <div className="px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-6 h-6 bg-accent rounded-lg flex items-center justify-center flex-shrink-0">
             <Bolt className="text-accent-ink w-3.5 h-3.5" strokeWidth={2.5} />
           </div>
           <p className="text-xs text-text-muted truncate">
-            <span className="font-bold text-white">Control Point</span>
+            <span className="font-bold text-text-base">Control Point</span>
             {teamName ? <span> · {teamName}</span> : null}
           </p>
         </div>
@@ -2876,10 +2853,10 @@ function CookieConsent() {
 
   return (
     <div className="fixed bottom-0 inset-x-0 z-50 p-4 sm:p-6">
-      <div className="glass rounded-2xl border border-white/10 max-w-2xl mx-auto p-5 sm:p-6 shadow-2xl">
+      <div className="glass rounded-2xl border border-text-base/10 max-w-2xl mx-auto p-5 sm:p-6 shadow-2xl">
         {!customizing ? (
           <>
-            <h3 className="text-base font-display font-bold text-white mb-2">How Control Point stores data</h3>
+            <h3 className="text-base font-display font-bold text-text-base mb-2">How Control Point stores data</h3>
             <p className="text-sm text-text-muted mb-4">
               We use only first-party storage on your device: a session token to keep you signed in,
               your theme colors, and this preference. No advertising trackers, no third-party cookies.
@@ -2892,23 +2869,23 @@ function CookieConsent() {
           </>
         ) : (
           <>
-            <h3 className="text-base font-display font-bold text-white mb-4">Storage preferences</h3>
+            <h3 className="text-base font-display font-bold text-text-base mb-4">Storage preferences</h3>
             <div className="space-y-3 mb-5">
-              <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 p-3">
+              <div className="flex items-center justify-between gap-4 rounded-xl border border-text-base/10 p-3">
                 <div>
-                  <p className="text-sm font-bold text-white">Essential</p>
+                  <p className="text-sm font-bold text-text-base">Essential</p>
                   <p className="text-xs text-text-muted">Sign-in session and security. Always on.</p>
                 </div>
                 <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted">Always on</span>
               </div>
-              <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 p-3">
+              <div className="flex items-center justify-between gap-4 rounded-xl border border-text-base/10 p-3">
                 <div>
-                  <p className="text-sm font-bold text-white">Preferences</p>
+                  <p className="text-sm font-bold text-text-base">Preferences</p>
                   <p className="text-xs text-text-muted">Theme colors and UI choices, saved on this device.</p>
                 </div>
                 <button
                   onClick={() => setFunctional(!functional)}
-                  className={cn("w-11 h-6 rounded-full transition-colors relative flex-shrink-0", functional ? "bg-accent" : "bg-white/10")}
+                  className={cn("w-11 h-6 rounded-full transition-colors relative flex-shrink-0", functional ? "bg-accent" : "bg-text-base/10")}
                   aria-label="Toggle preference storage"
                 >
                   <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all", functional ? "left-[22px]" : "left-0.5")} />
@@ -2990,7 +2967,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
       </div>
     )}
     <div className="mb-3 sm:mb-4">
-      <h2 className="text-xl sm:text-2xl font-display font-bold text-white tracking-tight">
+      <h2 className="text-xl sm:text-2xl font-display font-bold text-text-base tracking-tight">
         Welcome back, {currentUser?.name?.split(' ')[0]}
       </h2>
       <p className="text-xs text-text-muted mt-0.5">
@@ -3006,14 +2983,14 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
             <Check className="w-5 h-5 text-emerald-400" />
           </div>
           <div>
-            <p className="text-sm font-bold text-white">You are checked in</p>
+            <p className="text-sm font-bold text-text-base">You are checked in</p>
             <p className="text-xs text-text-muted">{todayRecord.status === 'L' ? 'Marked late' : 'Marked present'}</p>
           </div>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1 min-w-[180px]">
-            <p className="text-sm font-bold text-white">You are not checked in</p>
+            <p className="text-sm font-bold text-text-base">You are not checked in</p>
             <p className="text-xs text-text-muted mt-0.5">Scan the QR code your admin projected, or enter today&apos;s code.</p>
           </div>
           <div className="flex gap-2">
@@ -3038,23 +3015,23 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
               <button
                 key={task.id}
                 onClick={() => toggleTask(task)}
-                className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/5 hover:border-white/15 transition-all text-left"
+                className="w-full flex items-center gap-3 p-3 rounded-xl bg-text-base/[0.03] border border-text-base/5 hover:border-text-base/15 transition-all text-left"
               >
                 <span className={cn(
                   "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all",
-                  task.status === 'done' ? "bg-accent border-accent" : "border-white/25"
+                  task.status === 'done' ? "bg-accent border-accent" : "border-text-base/25"
                 )}>
                   {task.status === 'done' && <Check className="w-3.5 h-3.5 text-accent-ink" strokeWidth={3} />}
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className={cn("block text-sm font-semibold truncate", task.status === 'done' ? "text-text-muted line-through" : "text-white")}>
+                  <span className={cn("block text-sm font-semibold truncate", task.status === 'done' ? "text-text-muted line-through" : "text-text-base")}>
                     {task.title}
                   </span>
                   {task.due_date && <span className="text-[11px] text-text-muted">Due {task.due_date}</span>}
                 </span>
                 <span className={cn(
                   "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md",
-                  task.status === 'done' ? "bg-emerald-400/15 text-emerald-400" : task.status === 'in-progress' ? "bg-blue-400/15 text-blue-400" : "bg-slate-400/15 text-slate-400"
+                  task.status === 'done' ? "bg-emerald-400/15 text-emerald-400" : task.status === 'in-progress' ? "bg-blue-400/15 text-blue-400" : "bg-text-base/10 text-text-muted"
                 )}>
                   {task.status === 'done' ? 'Done' : task.status === 'in-progress' ? 'In progress' : 'To do'}
                 </span>
@@ -3073,11 +3050,11 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
               <button key={e.id} onClick={() => navigate('/calendar')} className="w-full flex gap-3 text-left group">
                 <div className="w-11 shrink-0 rounded-xl bg-accent/10 border border-accent/20 flex flex-col items-center justify-center py-1.5">
                   <span className="text-[10px] font-bold text-accent uppercase">{format(new Date(e.date + 'T12:00:00'), 'MMM')}</span>
-                  <span className="text-lg font-display font-bold text-white leading-none">{format(new Date(e.date + 'T12:00:00'), 'd')}</span>
+                  <span className="text-lg font-display font-bold text-text-base leading-none">{format(new Date(e.date + 'T12:00:00'), 'd')}</span>
                 </div>
                 <div className="min-w-0">
                   <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted group-hover:text-accent transition-colors">{dayLabel(e.date)}</p>
-                  <p className="text-sm font-semibold text-white truncate">{e.title}</p>
+                  <p className="text-sm font-semibold text-text-base truncate">{e.title}</p>
                   <p className="text-xs text-text-muted truncate">{[e.time, e.location].filter(Boolean).join(' \u00b7 ')}</p>
                 </div>
               </button>
@@ -3088,7 +3065,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
     </div>
 
     <Card className="mt-3 sm:mt-4" title="My attendance" icon={UserCheck}>
-      <p className="text-2xl font-display font-bold text-white">
+      <p className="text-2xl font-display font-bold text-text-base">
         {attendanceRate === null ? '\u2014' : `${attendanceRate}%`}
         <span className="text-sm font-normal text-text-muted ml-2">
           \u00b7 {presentCount} present \u00b7 {lateCount} late
@@ -3130,10 +3107,11 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
     setSavingTeam(true);
     try {
       if (editingTeam) {
+        const { name, number, accent_color } = newTeam;
         const res = await apiFetch(`/api/teams/${editingTeam.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newTeam)
+          body: JSON.stringify({ name, number, accent_color })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Could not save team');
@@ -3205,7 +3183,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
     <div className="space-y-4 sm:space-y-8">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Teams</h3>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Teams</h3>
           <p className="text-sm text-text-muted mt-1">Your workspaces — create teams, tweak their look, and share access codes so students can join.</p>
         </div>
         {isAdmin && (
@@ -3225,13 +3203,13 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
                   {team.id === activeTeamId && (
                     <span className="px-2 py-0.5 bg-accent/15 text-accent text-[10px] font-bold rounded-md uppercase tracking-wider border border-accent/30">Active</span>
                   )}
-                  <span className="text-[11px] text-text-muted font-mono">Code: <span className="font-bold text-white">{team.access_code}</span></span>
+                  <span className="text-[11px] text-text-muted font-mono">Code: <span className="font-bold text-text-base">{team.access_code}</span></span>
                 </div>
                 <p className="text-xs text-text-muted uppercase font-bold">Members ({team.member_count ?? 0})</p>
                 {team.id === activeTeamId ? (
                   <div className="flex flex-wrap gap-2">
                     {members.filter((m: any) => m.team_id === team.id).map((m: any) => (
-                      <div key={m.id} className="px-3 py-1 bg-white/5 rounded-full border border-white/10 text-xs text-white">
+                      <div key={m.id} className="px-3 py-1 bg-text-base/5 rounded-full border border-text-base/10 text-xs text-text-base">
                         {m.name}
                       </div>
                     ))}
@@ -3239,19 +3217,17 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
                 ) : (
                   <p className="text-xs text-text-muted/70">Switch to this team to manage its members.</p>
                 )}
-                {(team.accent_color || team.primary_color) && (
+                {team.accent_color && (
                   <div className="pt-2">
                     <p className="text-[10px] text-text-muted/70 uppercase font-bold mb-1">Team Branding</p>
                     <div className="flex gap-2">
-                      {team.accent_color && <div className="w-4 h-4 rounded-full border border-white/10" style={{ backgroundColor: team.accent_color }} title="Accent" />}
-                      {team.primary_color && <div className="w-4 h-4 rounded-full border border-white/10" style={{ backgroundColor: team.primary_color }} title="Primary" />}
-                      {team.text_color && <div className="w-4 h-4 rounded-full border border-white/10" style={{ backgroundColor: team.text_color }} title="Text" />}
+                      <div className="w-4 h-4 rounded-full border border-text-base/10" style={{ backgroundColor: team.accent_color }} title="Accent" />
                     </div>
                   </div>
                 )}
               </div>
               {isAdmin ? (
-                <div className="flex gap-2 pt-4 border-t border-white/5">
+                <div className="flex gap-2 pt-4 border-t border-text-base/5">
                   <Button
                     variant="secondary"
                     size="sm"
@@ -3290,7 +3266,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
                   </Button>
                 </div>
               ) : (
-                <div className="flex gap-2 pt-4 border-t border-white/5">
+                <div className="flex gap-2 pt-4 border-t border-text-base/5">
                   {team.id !== activeTeamId && (
                     <Button
                       variant="secondary"
@@ -3319,7 +3295,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
 
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between mt-12">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">All Members</h3>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">All Members</h3>
           <p className="text-sm text-text-muted mt-1">Everyone on this team — manage the roster, roles, and permissions.</p>
         </div>
         <Button onClick={() => setShowAddMember(true)}><Plus className="w-4 h-4" /> Add Member</Button>
@@ -3327,7 +3303,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
 
       <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm">
-          <thead className="bg-white/5 border-b border-white/10">
+          <thead className="bg-text-base/5 border-b border-text-base/10">
             <tr>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Name</th>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Status</th>
@@ -3338,10 +3314,10 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-y divide-text-base/5">
             {members.map((m: any) => (
-              <tr key={m.id} className="hover:bg-white/5 transition-colors">
-                <td className="px-6 py-4 text-sm text-white font-medium">
+              <tr key={m.id} className="hover:bg-text-base/5 transition-colors">
+                <td className="px-6 py-4 text-sm text-text-base font-medium">
                   <span className="flex items-center gap-2.5">
                     <AvatarWithPresence user={m} size="sm" presence={m.presence} />
                     <span>
@@ -3368,7 +3344,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
                   {m.is_board ? (
                     <span className="px-2 py-1 bg-accent/20 text-accent text-[10px] font-bold rounded-md uppercase">Yes</span>
                   ) : (
-                    <span className="px-2 py-1 bg-slate-800 text-text-muted/70 text-[10px] font-bold rounded-md uppercase">No</span>
+                    <span className="px-2 py-1 bg-elevated text-text-muted/70 text-[10px] font-bold rounded-md uppercase">No</span>
                   )}
                 </td>
                 <td className="px-6 py-4 text-xs text-text-muted/70">
@@ -3443,14 +3419,14 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
               <div className="flex items-center gap-3">
                 <Avatar user={memberToRemove} size="md" />
                 <div className="min-w-0">
-                  <p className="text-white font-bold truncate">{memberToRemove.name}</p>
+                  <p className="text-text-base font-bold truncate">{memberToRemove.name}</p>
                   <p className="text-xs text-text-muted truncate">
                     {[memberToRemove.email, teams.find((t: any) => t.id === memberToRemove.team_id)?.name].filter(Boolean).join(' • ')}
                   </p>
                 </div>
               </div>
               <p className="text-sm text-text-muted leading-relaxed">
-                Remove <span className="text-white font-semibold">{memberToRemove.name}</span> from the team?
+                Remove <span className="text-text-base font-semibold">{memberToRemove.name}</span> from the team?
                 They'll lose access immediately, but their messages, tasks, attendance history, and other work will be kept.
               </p>
               {removeError && <p className="text-sm text-rose-400">{removeError}</p>}
@@ -3473,19 +3449,9 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
               
               <div className="pt-2">
                 <p className="text-xs font-bold text-text-muted uppercase mb-3">Team Branding (Default for members)</p>
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#FFC700'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
-                    <Input placeholder="Accent Color (Yellow)" value={newTeam.accent_color} onChange={(e: any) => setNewTeam({...newTeam, accent_color: e.target.value})} />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.primary_color || '#09090B'} onChange={(e) => setNewTeam({...newTeam, primary_color: e.target.value})} />
-                    <Input placeholder="Interface Color (Navy)" value={newTeam.primary_color} onChange={(e: any) => setNewTeam({...newTeam, primary_color: e.target.value})} />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.text_color || '#F8FAFC'} onChange={(e) => setNewTeam({...newTeam, text_color: e.target.value})} />
-                    <Input placeholder="Text Color" value={newTeam.text_color} onChange={(e: any) => setNewTeam({...newTeam, text_color: e.target.value})} />
-                  </div>
+                <div className="flex items-center gap-3">
+                  <input type="color" className="w-8 h-8 rounded bg-transparent border-none cursor-pointer" value={newTeam.accent_color || '#FFC700'} onChange={(e) => setNewTeam({...newTeam, accent_color: e.target.value})} />
+                  <Input placeholder="Accent Color (Yellow)" value={newTeam.accent_color} onChange={(e: any) => setNewTeam({...newTeam, accent_color: e.target.value})} />
                 </div>
               </div>
 
@@ -3513,7 +3479,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
               <Input placeholder="Full Name" value={newMember.name} onChange={(e: any) => setNewMember({...newMember, name: e.target.value})} />
               <Input placeholder="Role (e.g. Lead Programmer)" value={newMember.role} onChange={(e: any) => setNewMember({...newMember, role: e.target.value})} />
               <Input placeholder="Email" value={newMember.email} onChange={(e: any) => setNewMember({...newMember, email: e.target.value})} />
-              <label className="flex items-center gap-2 text-sm text-white/80">
+              <label className="flex items-center gap-2 text-sm text-text-base/80">
                 <input type="checkbox" checked={newMember.is_board} onChange={(e) => setNewMember({...newMember, is_board: e.target.checked})} />
                 Board Member (Admin)
               </label>
@@ -3533,7 +3499,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
                         }}
                         className={cn(
                           "px-3 py-1 rounded-full text-[10px] font-bold uppercase border transition-all",
-                          newMember.scopes.includes(s as never) ? "bg-accent border-accent text-primary" : "border-white/10 text-text-muted"
+                          newMember.scopes.includes(s as never) ? "bg-accent border-accent text-accent-ink" : "border-text-base/10 text-text-muted"
                         )}
                       >
                         {s}
@@ -3606,8 +3572,8 @@ function QrScannerModal({ onClose, onToken }: { onClose: () => void; onToken: (t
   return (
     <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col">
       <div className="flex items-center justify-between px-4 py-4">
-        <p className="text-white font-bold">Scan the check-in QR</p>
-        <button onClick={onClose} className="p-2 rounded-full bg-white/10 text-white" aria-label="Close scanner">
+        <p className="text-text-base font-bold">Scan the check-in QR</p>
+        <button onClick={onClose} className="p-2 rounded-full bg-text-base/10 text-text-base" aria-label="Close scanner">
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -3615,7 +3581,7 @@ function QrScannerModal({ onClose, onToken }: { onClose: () => void; onToken: (t
         {error ? (
           <div className="text-center">
             <Camera className="w-12 h-12 text-text-muted mx-auto mb-4" />
-            <p className="text-white text-sm mb-6">{error}</p>
+            <p className="text-text-base text-sm mb-6">{error}</p>
             <Button onClick={onClose}>Go back</Button>
           </div>
         ) : (
@@ -3712,7 +3678,7 @@ function QrSessionPanel({ teamName }: { teamName: string }) {
                     'px-3 py-2 rounded-xl text-sm font-bold border transition-all',
                     duration === d.value
                       ? 'bg-accent text-accent-ink border-accent'
-                      : 'bg-white/5 text-text-muted border-white/10 hover:text-white'
+                      : 'bg-text-base/5 text-text-muted border-text-base/10 hover:text-text-base'
                   )}
                 >
                   {d.label}
@@ -3731,11 +3697,11 @@ function QrSessionPanel({ teamName }: { teamName: string }) {
             <div className="flex-1 w-full text-center sm:text-left space-y-3">
               <div>
                 <p className="text-xs text-text-muted uppercase font-bold tracking-widest mb-1">Day code (camera not working? type this)</p>
-                <p className="text-4xl font-display font-bold tracking-[0.2em] text-white">{session.code}</p>
+                <p className="text-4xl font-display font-bold tracking-[0.2em] text-text-base">{session.code}</p>
               </div>
               <p className="text-sm text-text-muted flex items-center justify-center sm:justify-start gap-2">
                 <Timer className="w-4 h-4 text-accent" />
-                Session ends in <span className="text-white font-bold tabular-nums">{formatCountdown(remaining)}</span>
+                Session ends in <span className="text-text-base font-bold tabular-nums">{formatCountdown(remaining)}</span>
               </p>
               <div className="flex flex-col sm:flex-row gap-2">
                 <Button onClick={() => setPresenting(true)} variant="secondary">
@@ -3751,22 +3717,22 @@ function QrSessionPanel({ teamName }: { teamName: string }) {
       </Card>
 
       {presenting && session && (
-        <div className="fixed inset-0 z-[90] bg-black flex flex-col items-center justify-center p-6 text-center">
+        <div className="theme-dark fixed inset-0 z-[90] bg-black flex flex-col items-center justify-center p-6 text-center">
           <button
             onClick={() => setPresenting(false)}
-            className="absolute top-4 right-4 p-3 rounded-full bg-white/10 text-white hover:bg-white/20"
+            className="absolute top-4 right-4 p-3 rounded-full bg-text-base/10 text-text-base hover:bg-text-base/20"
             aria-label="Exit fullscreen"
           >
             <X className="w-6 h-6" />
           </button>
-          <p className="text-white/60 text-sm font-bold uppercase tracking-[0.25em] mb-2">{teamName}</p>
-          <h2 className="text-white text-2xl sm:text-4xl font-display font-bold mb-6">Scan to check in</h2>
+          <p className="text-text-base/60 text-sm font-bold uppercase tracking-[0.25em] mb-2">{teamName}</p>
+          <h2 className="text-text-base text-2xl sm:text-4xl font-display font-bold mb-6">Scan to check in</h2>
           <div className="bg-white p-5 sm:p-8 rounded-3xl">
             <QRCodeSVG value={session.url} size={Math.min(420, typeof window !== 'undefined' ? window.innerWidth - 120 : 300)} level="M" />
           </div>
-          <p className="text-white/60 text-sm mt-6 mb-1 uppercase tracking-widest font-bold">No camera? Enter code</p>
-          <p className="text-white text-5xl sm:text-6xl font-display font-bold tracking-[0.25em]">{session.code}</p>
-          <p className="text-white/50 text-sm mt-6 tabular-nums">Ends in {formatCountdown(remaining)}</p>
+          <p className="text-text-base/60 text-sm mt-6 mb-1 uppercase tracking-widest font-bold">No camera? Enter code</p>
+          <p className="text-text-base text-5xl sm:text-6xl font-display font-bold tracking-[0.25em]">{session.code}</p>
+          <p className="text-text-base/50 text-sm mt-6 tabular-nums">Ends in {formatCountdown(remaining)}</p>
         </div>
       )}
     </>
@@ -3826,13 +3792,13 @@ function QrCheckinPage({ currentUser, onRefresh }: any) {
           </div>
           {error ? (
             <>
-              <h3 className="text-xl font-display font-bold text-white mb-2">Can't check in</h3>
+              <h3 className="text-xl font-display font-bold text-text-base mb-2">Can't check in</h3>
               <p className="text-sm text-text-muted mb-6">{error}</p>
               <Button onClick={() => navigate('/dashboard')} variant="secondary">Back to dashboard</Button>
             </>
           ) : done ? (
             <>
-              <h3 className="text-xl font-display font-bold text-white mb-2">You're checked in</h3>
+              <h3 className="text-xl font-display font-bold text-text-base mb-2">You're checked in</h3>
               <p className="text-sm text-text-muted mb-6">{info?.teamName} · {format(new Date(), 'EEEE, MMMM d')}</p>
               <Button onClick={() => navigate('/dashboard')}>Back to dashboard</Button>
             </>
@@ -3840,14 +3806,14 @@ function QrCheckinPage({ currentUser, onRefresh }: any) {
             <p className="text-sm text-text-muted">Loading session…</p>
           ) : !info.isMember ? (
             <>
-              <h3 className="text-xl font-display font-bold text-white mb-2">Wrong team</h3>
+              <h3 className="text-xl font-display font-bold text-text-base mb-2">Wrong team</h3>
               <p className="text-sm text-text-muted mb-6">You're signed in as {currentUser?.name}, who isn't on {info.teamName}.</p>
               <Button onClick={() => navigate('/dashboard')} variant="secondary">Back to dashboard</Button>
             </>
           ) : (
             <>
               <p className="text-xs text-text-muted uppercase font-bold tracking-widest mb-1">{info.teamName}</p>
-              <h3 className="text-xl font-display font-bold text-white mb-2">Check in{info.memberName ? ` as ${info.memberName}` : ''}?</h3>
+              <h3 className="text-xl font-display font-bold text-text-base mb-2">Check in{info.memberName ? ` as ${info.memberName}` : ''}?</h3>
               <p className="text-sm text-text-muted mb-6">Session ends {format(new Date(info.expiresAt), 'h:mm a')}</p>
               <Button onClick={confirm} disabled={busy} className="px-8 py-3 text-base w-full">
                 <CalendarCheck className="w-5 h-5" /> {busy ? 'Checking in…' : "Yes, I'm here"}
@@ -3919,7 +3885,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
   return (
     <div className="space-y-4 sm:space-y-6 max-w-2xl">
       <div>
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Attendance</h3>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Attendance</h3>
         <p className="text-sm text-text-muted mt-1">Check in when you arrive, and review your own attendance history.</p>
       </div>
       <Card className="text-center py-8">
@@ -3934,12 +3900,12 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
         </p>
         {checkedIn ? (
           <>
-            <h4 className="text-xl font-display font-bold text-white mb-2">You are checked in</h4>
+            <h4 className="text-xl font-display font-bold text-text-base mb-2">You are checked in</h4>
             <p className="text-sm text-text-muted">Status: {statusMeta[todayRecord.status]?.label || todayRecord.status}</p>
           </>
         ) : (
           <>
-            <h4 className="text-xl font-display font-bold text-white mb-2">Not checked in yet</h4>
+            <h4 className="text-xl font-display font-bold text-text-base mb-2">Not checked in yet</h4>
             <p className="text-sm text-text-muted mb-5">Scan the QR code your admin has projected,<br />or enter today's code.</p>
             <Button onClick={() => setScanOpen(true)} className="px-8 py-3 text-base w-full sm:w-auto">
               <ScanLine className="w-5 h-5" /> Scan QR code
@@ -3947,7 +3913,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
             <div className="mt-3">
               <button
                 onClick={() => setCodeMode(!codeMode)}
-                className="text-sm text-text-muted hover:text-white underline underline-offset-4"
+                className="text-sm text-text-muted hover:text-text-base underline underline-offset-4"
               >
                 {codeMode ? 'Hide code entry' : 'Camera not working? Enter the code'}
               </button>
@@ -3959,7 +3925,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
                   onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
                   placeholder="Day code"
                   autoComplete="off"
-                  className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-center text-lg font-bold tracking-[0.2em] text-white placeholder:text-text-muted/50 uppercase focus:outline-none focus:border-accent/60"
+                  className="flex-1 min-w-0 bg-text-base/5 border border-text-base/10 rounded-xl px-4 py-3 text-center text-lg font-bold tracking-[0.2em] text-text-base placeholder:text-text-muted/50 uppercase focus:outline-none focus:border-accent/60"
                 />
                 <Button type="submit" disabled={codeBusy || !code.trim()}>
                   {codeBusy ? '…' : 'Go'}
@@ -3971,15 +3937,15 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
       </Card>
       {scanOpen && <QrScannerModal onClose={() => setScanOpen(false)} onToken={checkinWithToken} />}
       <div>
-        <h4 className="text-sm font-bold text-white uppercase tracking-widest mb-3">My history</h4>
+        <h4 className="text-sm font-bold text-text-base uppercase tracking-widest mb-3">My history</h4>
         {myRecords.length === 0 ? (
           <Card><p className="text-sm text-text-muted text-center py-6">No attendance records yet.</p></Card>
         ) : (
           <div className="space-y-2">
             {myRecords.slice(0, 30).map((r: any) => (
               <div key={r.date} className="glass rounded-xl px-4 py-3 flex items-center justify-between">
-                <span className="text-sm text-white font-medium">{format(new Date(r.date + 'T12:00:00'), 'EEE, MMM d, yyyy')}</span>
-                <span className={cn("text-xs font-bold px-2.5 py-1 rounded-full border", statusMeta[r.status]?.cls || 'bg-white/5 text-text-muted border-white/10')}>
+                <span className="text-sm text-text-base font-medium">{format(new Date(r.date + 'T12:00:00'), 'EEE, MMM d, yyyy')}</span>
+                <span className={cn("text-xs font-bold px-2.5 py-1 rounded-full border", statusMeta[r.status]?.cls || 'bg-text-base/5 text-text-muted border-text-base/10')}>
                   {statusMeta[r.status]?.label || r.status}
                 </span>
               </div>
@@ -4227,7 +4193,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     'E': 'bg-blue-500 text-blue-950',
     'U': 'bg-rose-500 text-rose-950',
     'S': 'bg-purple-500 text-purple-950',
-    '-': 'bg-white/5 text-text-muted/70'
+    '-': 'bg-text-base/5 text-text-muted/70'
   };
 
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -4240,14 +4206,14 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   const renderGrid = () => (
     <div className="space-y-4">
       <div>
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Attendance</h3>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Attendance</h3>
         <p className="text-sm text-text-muted mt-1">Mark who's here each day — click a cell to cycle status. Students check in by scanning the QR code above.</p>
       </div>
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div className="flex gaps-2 sm:gap-3 items-center">
           <button 
             onClick={() => setCalendarStart(Math.max(0, calendarStart - 1))}
-            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-white/80"
+            className="px-3 py-2 bg-text-base/5 hover:bg-text-base/10 rounded-lg text-sm font-bold text-text-base/80"
             disabled={calendarStart === 0}
           >
             ← Previous
@@ -4258,7 +4224,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           {hasMoreDates && (
             <button 
               onClick={() => setCalendarStart(calendarStart + 1)}
-              className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-white/80"
+              className="px-3 py-2 bg-text-base/5 hover:bg-text-base/10 rounded-lg text-sm font-bold text-text-base/80"
             >
               Next →
             </button>
@@ -4267,15 +4233,15 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
         
         <div className="flex gap-2 items-center">
           {savingStatus !== 'idle' && (
-            <div className="flex items-center gap-1 text-xs px-3 py-1 rounded-lg bg-white/5">
+            <div className="flex items-center gap-1 text-xs px-3 py-1 rounded-lg bg-text-base/5">
               {savingStatus === 'saving' && <Clock className="w-3 h-3 text-amber-400 animate-spin" />}
               {savingStatus === 'saved' && <Check className="w-3 h-3 text-emerald-400" />}
-              <span className="text-white/80">{savingStatus === 'saving' ? 'Saving...' : 'Saved'}</span>
+              <span className="text-text-base/80">{savingStatus === 'saving' ? 'Saving...' : 'Saved'}</span>
             </div>
           )}
           <button 
             onClick={() => setShowHideMenu(!showHideMenu)}
-            className="px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-bold text-white/80 flex items-center gap-2"
+            className="px-3 py-2 bg-text-base/5 hover:bg-text-base/10 rounded-lg text-sm font-bold text-text-base/80 flex items-center gap-2"
             title="Show/hide dates"
           >
             {showHideMenu ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -4285,8 +4251,8 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
       </div>
 
       {showHideMenu && (
-        <div className="glass rounded-2xl p-4 border border-white/10 space-y-4">
-          <h4 className="text-sm font-bold text-white">Hide/Show Meeting Dates</h4>
+        <div className="glass rounded-2xl p-4 border border-text-base/10 space-y-4">
+          <h4 className="text-sm font-bold text-text-base">Hide/Show Meeting Dates</h4>
           
           <div className="space-y-3">
             <div>
@@ -4346,13 +4312,13 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
-              <tr className="bg-white/5 border-b border-white/10">
+              <tr className="bg-text-base/5 border-b border-text-base/10">
                 <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase sticky left-0 bg-[#111111] z-10 min-w-[150px]">Member</th>
                 {visibleDates.map(date => (
                   <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative">
                     <div className="text-center">
                       {format(parseLocalDate(date), 'MMM dd')}
-                      <div className="text-[8px] text-slate-600">{format(parseLocalDate(date), 'EEE')}</div>
+                      <div className="text-[8px] text-text-muted">{format(parseLocalDate(date), 'EEE')}</div>
                     </div>
                     {isAdmin && (
                       <button
@@ -4367,10 +4333,10 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-text-base/5">
               {members.map((m: any) => (
-                <tr key={m.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-4 py-3 text-sm text-white font-medium sticky left-0 bg-[#111111]/90 backdrop-blur-md z-10 border-r border-white/5">
+                <tr key={m.id} className="hover:bg-text-base/5 transition-colors">
+                  <td className="px-4 py-3 text-sm text-text-base font-medium sticky left-0 bg-[#111111]/90 backdrop-blur-md z-10 border-r border-text-base/5">
                     {m.name}
                   </td>
                   {visibleDates.map(date => {
@@ -4397,7 +4363,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           </table>
         </div>
       </div>
-      <div className="p-4 bg-white/5 border-t border-white/10 flex flex-wrap gap-4 text-[10px] font-bold uppercase rounded-b-2xl">
+      <div className="p-4 bg-text-base/5 border-t border-text-base/10 flex flex-wrap gap-4 text-[10px] font-bold uppercase rounded-b-2xl">
         <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-emerald-500" /> Present (P)</div>
         <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-amber-500" /> Late (L)</div>
         <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /> Excused (E)</div>
@@ -4413,22 +4379,22 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
       <Card title="Attendance Trend" subtitle="Present check-ins · last 14 days" icon={TrendingUp} className="p-5 gap-3">
         <AttendanceTrendChart attendance={attendance} className="h-52" />
       </Card>
-      <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
+      <div className="flex gap-1 sm:gap-2 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
           onClick={() => setActiveSubTab('grid')}
-          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'grid' ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
+          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'grid' ? "bg-accent text-accent-ink shadow-lg" : "text-text-muted hover:text-text-base")}
         >
           Attendance Grid
         </button>
         <button 
           onClick={() => setActiveSubTab('history')}
-          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'history' ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
+          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'history' ? "bg-accent text-accent-ink shadow-lg" : "text-text-muted hover:text-text-base")}
         >
           History
         </button>
         <button 
           onClick={() => setActiveSubTab('summary')}
-          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'summary' ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
+          className={cn("px-2 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap", activeSubTab === 'summary' ? "bg-accent text-accent-ink shadow-lg" : "text-text-muted hover:text-text-base")}
         >
           Insights
         </button>
@@ -4439,8 +4405,8 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
       {activeSubTab === 'history' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           {sessions.length === 0 ? (
-            <div className="col-span-full py-20 text-center glass rounded-2xl border border-white/5">
-              <Calendar className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+            <div className="col-span-full py-20 text-center glass rounded-2xl border border-text-base/5">
+              <Calendar className="w-12 h-12 text-text-muted mx-auto mb-4" />
               <p className="text-text-muted">No attendance history found yet.</p>
             </div>
           ) : (
@@ -4453,15 +4419,15 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                   onClick={() => {
                     // Navigate to grid or just view info
                   }}
-                  className="glass p-4 rounded-2xl border border-white/10 text-left hover:border-accent/50 transition-all group cursor-default"
+                  className="glass p-4 rounded-2xl border border-text-base/10 text-left hover:border-accent/50 transition-all group cursor-default"
                 >
                   <div className="flex justify-between items-start mb-3">
-                    <div className="p-2 bg-white/5 rounded-lg text-accent group-hover:bg-accent group-hover:text-primary transition-colors">
+                    <div className="p-2 bg-text-base/5 rounded-lg text-accent group-hover:bg-accent group-hover:text-accent-ink transition-colors">
                       <Calendar className="w-4 h-4" />
                     </div>
                     <span className="text-[10px] font-bold text-text-muted/70 uppercase">{format(new Date(date), 'EEE')}</span>
                   </div>
-                  <p className="font-bold text-white mb-1">{format(new Date(date), 'MMM dd, yyyy')}</p>
+                  <p className="font-bold text-text-base mb-1">{format(new Date(date), 'MMM dd, yyyy')}</p>
                   <p className="text-xs text-text-muted">{presentCount} members present</p>
                 </button>
               );
@@ -4480,7 +4446,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
               </Button>
             </div>
             {(isAiLoading || insights) && (
-              <div className="p-6 bg-white/5 rounded-2xl border border-white/10 prose prose-invert max-w-none">
+              <div className="p-6 bg-text-base/5 rounded-2xl border border-text-base/10 prose prose-invert max-w-none">
                 {isAiLoading && !insights ? <ThinkingIndicator /> : <Markdown>{insights}</Markdown>}
               </div>
             )}
@@ -4490,14 +4456,14 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
           <div className="overflow-x-auto custom-scrollbar">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="bg-white/5 border-b border-white/10">
+                <tr className="bg-text-base/5 border-b border-text-base/10">
                   <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Member</th>
                   <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Rate</th>
                   <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">P / A / L / E</th>
                   <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">History (Last 5)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
+              <tbody className="divide-y divide-text-base/5">
                 {summary.map((m: any) => {
                   const rate = m.total > 0 ? Math.round((m.present / m.total) * 100) : 0;
                   const last5 = attendance
@@ -4507,17 +4473,17 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                     .reverse();
 
                   return (
-                    <tr key={m.member_id} className="hover:bg-white/[0.02] transition-colors">
+                    <tr key={m.member_id} className="hover:bg-text-base/[0.02] transition-colors">
                       <td className="px-6 py-4">
-                        <p className="font-bold text-white">{m.name}</p>
+                        <p className="font-bold text-text-base">{m.name}</p>
                         <p className="text-[10px] text-text-muted/70 uppercase">{members.find((mem: any) => mem.id === m.member_id)?.role}</p>
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-12 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                          <div className="w-12 h-1.5 bg-text-base/5 rounded-full overflow-hidden">
                             <div className="h-full bg-accent" style={{ width: `${rate}%` }} />
                           </div>
-                          <span className="text-sm font-bold text-white">{rate}%</span>
+                          <span className="text-sm font-bold text-text-base">{rate}%</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -4535,12 +4501,12 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
                               key={i} 
                               className={cn(
                                 "w-2 h-2 rounded-full",
-                                statusColors[r.status] || 'bg-slate-700'
+                                statusColors[r.status] || 'bg-secondary'
                               )}
                               title={`${r.date}: ${r.status}`}
                             />
                           ))}
-                          {last5.length === 0 && <span className="text-[10px] text-slate-600">No data</span>}
+                          {last5.length === 0 && <span className="text-[10px] text-text-muted">No data</span>}
                         </div>
                       </td>
                     </tr>
@@ -4674,7 +4640,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
     competition: 'bg-accent/15 text-accent border-accent/30',
     deadline: 'bg-warning/15 text-warning border-warning/30',
     social: 'bg-success/15 text-success border-success/30',
-    other: 'bg-white/10 text-white/80 border-white/10',
+    other: 'bg-text-base/10 text-text-base/80 border-text-base/10',
   };
 
   const typeLabel: Record<string, string> = {
@@ -4744,13 +4710,13 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-display font-bold text-white">Team Calendar</h2>
+          <h2 className="text-2xl font-display font-bold text-text-base">Team Calendar</h2>
           <p className="text-sm text-text-muted">Meetings, competitions, and deadlines</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button variant="secondary" onClick={() => setCursor(new Date())}>Today</Button>
           <Button variant="secondary" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
-          <span className="text-white font-semibold min-w-[150px] text-center">{monthLabel}</span>
+          <span className="text-text-base font-semibold min-w-[150px] text-center">{monthLabel}</span>
           <Button variant="secondary" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
           {canManageCalendar && <Button onClick={() => openNew(todayKey)}><Plus className="w-4 h-4" /> New Event</Button>}
         </div>
@@ -4774,12 +4740,12 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
                   className={cn(
                     'min-h-[92px] rounded-xl border p-1.5 transition-colors',
                     canManageCalendar ? 'cursor-pointer' : 'cursor-default',
-                    isToday ? 'border-accent/60 bg-accent/5' : 'border-white/5 bg-white/[0.02] hover:border-white/20'
+                    isToday ? 'border-accent/60 bg-accent/5' : 'border-text-base/5 bg-text-base/[0.02] hover:border-text-base/20'
                   )}
                 >
                   <div className={cn(
                     'text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full',
-                    isToday ? 'bg-accent text-primary' : 'text-white/80'
+                    isToday ? 'bg-accent text-accent-ink' : 'text-text-base/80'
                   )}>{day}</div>
                   <div className="space-y-1">
                     {dayEvents.slice(0, 3).map((e: any) => (
@@ -4807,10 +4773,10 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
           ) : (
             <div className="space-y-3">
               {upcoming.map((e: any) => (
-                <button key={e.id} onClick={() => openEdit(e)} className="w-full text-left flex gap-3 p-3 rounded-xl border border-white/5 bg-white/[0.02] hover:border-white/20 transition-colors">
+                <button key={e.id} onClick={() => openEdit(e)} className="w-full text-left flex gap-3 p-3 rounded-xl border border-text-base/5 bg-text-base/[0.02] hover:border-text-base/20 transition-colors">
                   <div className={cn('w-1.5 rounded-full', (typeStyle[e.event_type] || typeStyle.other).split(' ')[0].replace('bg-', 'bg-').replace('/15', ''))} style={{ backgroundColor: 'currentColor' }} />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-white truncate">{e.title}</div>
+                    <div className="text-sm font-semibold text-text-base truncate">{e.title}</div>
                     <div className="text-xs text-text-muted mt-0.5">
                       {fmtDate(e.date)}{e.start_time && ` · ${fmtTime(e.start_time)}${e.end_time ? '–' + fmtTime(e.end_time) : ''}`}
                     </div>
@@ -4838,14 +4804,14 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
                     className="w-full flex items-center gap-2 px-4 py-2.5 text-left"
                   >
                     <Sparkles className="w-4 h-4 text-accent shrink-0" />
-                    <span className="text-sm font-bold text-white flex-1">AI quick-add</span>
+                    <span className="text-sm font-bold text-text-base flex-1">AI quick-add</span>
                     <span className="text-[11px] text-text-muted">Describe it, Bruno fills the form</span>
                     {aiOpen ? <ChevronUp className="w-4 h-4 text-text-muted" /> : <ChevronDown className="w-4 h-4 text-text-muted" />}
                   </button>
                   {aiOpen && (
                     <div className="px-4 pb-4 space-y-2.5">
                       <textarea
-                        className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-accent/50 transition-colors h-20"
+                        className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base text-sm focus:outline-none focus:border-accent/50 transition-colors h-20"
                         placeholder="e.g. Parent meeting tomorrow at 6pm in Room 101 — or paste several events at once"
                         value={aiText}
                         onChange={(e: any) => setAiText(e.target.value)}
@@ -4856,19 +4822,19 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
                           {aiBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
                         </Button>
                       </div>
-                      {aiNote && <p className="text-xs text-white/80">{aiNote}</p>}
+                      {aiNote && <p className="text-xs text-text-base/80">{aiNote}</p>}
                       {aiProposals.length > 1 && (
                         <div className="space-y-1.5 max-h-44 overflow-y-auto">
                           {aiProposals.map((e: any, i: number) => (
-                            <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-1.5">
+                            <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-text-base/[0.04] border border-text-base/10 px-3 py-1.5">
                               <div className="min-w-0">
-                                <p className="text-xs font-bold text-white truncate">{e.title}</p>
+                                <p className="text-xs font-bold text-text-base truncate">{e.title}</p>
                                 <p className="text-[11px] text-text-muted">{e.date}{e.time ? ` • ${e.time}` : ''}</p>
                               </div>
                               <button
                                 type="button"
                                 onClick={() => setAiProposals(aiProposals.filter((_, j) => j !== i))}
-                                className="text-slate-500 hover:text-rose-400 transition-colors shrink-0"
+                                className="text-text-muted hover:text-rose-400 transition-colors shrink-0"
                                 title="Remove"
                               >
                                 <X className="w-3.5 h-3.5" />
@@ -4886,7 +4852,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
               )}
               <Input placeholder="Event title" value={form.title} onChange={(e: any) => setForm({ ...form, title: e.target.value })} />
               <textarea
-                className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-20"
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-20"
                 placeholder="Description (optional)"
                 value={form.description}
                 onChange={(e: any) => setForm({ ...form, description: e.target.value })}
@@ -5107,11 +5073,15 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
 
   // Get dynamic colors for charts
   const secondaryColor = getCSSVariable('--color-secondary') || '#1A1A1A';
+  const { theme: chartTheme } = useTheme();
+  const chartGrid = chartTheme === 'light' ? 'rgba(9,9,11,0.1)' : 'rgba(255,255,255,0.1)';
+  const chartAxis = chartTheme === 'light' ? '#71717a' : '#94a3b8';
+  const chartTooltipText = chartTheme === 'light' ? '#09090B' : '#fff';
 
   return (
     <div className="space-y-4 sm:space-y-6">
       <div>
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Tasks</h3>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Tasks</h3>
         <p className="text-sm text-text-muted mt-1">Everything the team needs to get done — assign it, track it, finish it.</p>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:gap-4 sm:items-center sm:justify-between">
@@ -5141,11 +5111,11 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             <div className="h-64 min-h-[250px] w-full mt-4">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={completionTrends}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                  <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
-                  <YAxis stroke="#94a3b8" fontSize={12} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                  <XAxis dataKey="date" stroke={chartAxis} fontSize={12} />
+                  <YAxis stroke={chartAxis} fontSize={12} />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: '#1A1A1A', border: 'none', borderRadius: '8px', color: '#fff' }}
+                    contentStyle={{ backgroundColor: secondaryColor, border: 'none', borderRadius: '8px', color: chartTooltipText }}
                     itemStyle={{ color: '#10b981' }}
                   />
                   <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981' }} />
@@ -5158,11 +5128,11 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             <div className="h-64 min-h-[250px] w-full mt-4">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={memberCapacity} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                  <XAxis type="number" stroke="#94a3b8" fontSize={12} />
-                  <YAxis dataKey="name" type="category" stroke="#94a3b8" fontSize={10} width={80} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
+                  <XAxis type="number" stroke={chartAxis} fontSize={12} />
+                  <YAxis dataKey="name" type="category" stroke={chartAxis} fontSize={10} width={80} />
                   <Tooltip 
-                    contentStyle={{ backgroundColor: secondaryColor, border: 'none', borderRadius: '8px', color: '#fff' }}
+                    contentStyle={{ backgroundColor: secondaryColor, border: 'none', borderRadius: '8px', color: chartTooltipText }}
                   />
                   <Bar dataKey="todo" stackId="a" fill="#64748b" />
                   <Bar dataKey="inProgress" stackId="a" fill="#60a5fa" />
@@ -5176,7 +5146,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
               <div>
                 <p className="text-xs text-text-muted uppercase font-bold mb-1">Avg. Completion Time</p>
-                <p className="text-4xl font-display font-bold text-white">{avgCompletionTime} <span className="text-sm font-normal text-text-muted/70">days</span></p>
+                <p className="text-4xl font-display font-bold text-text-base">{avgCompletionTime} <span className="text-sm font-normal text-text-muted/70">days</span></p>
               </div>
               <div>
                 <p className="text-xs text-text-muted uppercase font-bold mb-1">Active Tasks</p>
@@ -5194,10 +5164,10 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 h-auto min-h-[600px] md:h-[calc(100vh-250px)]">
         {columns.map(col => (
-          <div key={col.id} className="bg-secondary/30 rounded-2xl p-4 flex flex-col gap-4 border border-white/5">
+          <div key={col.id} className="bg-secondary/30 rounded-2xl p-4 flex flex-col gap-4 border border-text-base/5">
             <div className="flex items-center gap-2 mb-2">
               <div className={cn("w-2 h-2 rounded-full", col.color)} />
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider">{col.label}</h4>
+              <h4 className="text-sm font-bold text-text-base uppercase tracking-wider">{col.label}</h4>
               <span className="ml-auto text-xs text-text-muted/70">{tasks.filter((t: any) => t.status === col.id).length}</span>
             </div>
             
@@ -5208,14 +5178,14 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
                   data-cm-id={task.id}
                   className={cn(
                   "glass p-4 rounded-xl border group",
-                  task.is_board ? "border-accent/30 bg-accent/5" : "border-white/10"
+                  task.is_board ? "border-accent/30 bg-accent/5" : "border-text-base/10"
                 )}>
                   <div className="flex items-center justify-between mb-1">
-                    <h5 className="text-sm font-bold text-white">{task.title}</h5>
+                    <h5 className="text-sm font-bold text-text-base">{task.title}</h5>
                     <div className="flex items-center gap-2">
                       {task.is_board && <Lock className="w-3 h-3 text-accent" />}
                       {canManageTasks && (
-                        <button onClick={() => handleDeleteTask(task.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
+                        <button onClick={() => handleDeleteTask(task.id)} className="text-text-muted hover:text-rose-400 transition-colors">
                           <Trash2 className="w-3 h-3" />
                         </button>
                       )}
@@ -5224,7 +5194,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
                   <p className="text-xs text-text-muted line-clamp-2 mb-3">{task.description}</p>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-primary">
+                      <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-accent-ink">
                         {members.find((m: any) => m.id === task.assigned_to)?.name.charAt(0) || '?'}
                       </div>
                       <span className="text-[10px] text-text-muted/70">{task.due_date}</span>
@@ -5256,7 +5226,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
               />
               <Input placeholder="Task Title" value={newTask.title} onChange={(e: any) => setNewTask({...newTask, title: e.target.value})} />
               <textarea 
-                className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-24"
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-24"
                 placeholder="Description"
                 value={newTask.description}
                 onChange={(e: any) => setNewTask({...newTask, description: e.target.value})}
@@ -5272,7 +5242,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
               <Input type="date" value={newTask.due_date} onChange={(e: any) => setNewTask({...newTask, due_date: e.target.value})} />
               
               {isAdmin && (
-                <label className="flex items-center gap-2 text-sm text-white/80">
+                <label className="flex items-center gap-2 text-sm text-text-base/80">
                   <input type="checkbox" checked={isBoardTask} onChange={(e) => setIsBoardTask(e.target.checked)} />
                   Private Board Task
                 </label>
@@ -5336,27 +5306,27 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div>
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white">Budget</h3>
+        <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Budget</h3>
         <p className="text-sm text-text-muted mt-1">Team money at a glance — income, expenses, and every transaction. Everyone can view; only members with the budget permission (via their role) can add or edit entries.</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
         <Card className="bg-emerald-500/10 border-emerald-500/20">
           <p className="text-xs text-emerald-400 uppercase font-bold">Total Income</p>
-          <p className="text-3xl font-display font-bold text-white">${totalIncome.toLocaleString()}</p>
+          <p className="text-3xl font-display font-bold text-text-base">${totalIncome.toLocaleString()}</p>
         </Card>
         <Card className="bg-rose-500/10 border-rose-500/20">
           <p className="text-xs text-rose-400 uppercase font-bold">Total Expenses</p>
-          <p className="text-3xl font-display font-bold text-white">${totalExpense.toLocaleString()}</p>
+          <p className="text-3xl font-display font-bold text-text-base">${totalExpense.toLocaleString()}</p>
         </Card>
         <Card className="bg-accent/10 border-accent/20">
           <p className="text-xs text-accent uppercase font-bold">Net Balance</p>
-          <p className="text-3xl font-display font-bold text-white">${(totalIncome - totalExpense).toLocaleString()}</p>
+          <p className="text-3xl font-display font-bold text-text-base">${(totalIncome - totalExpense).toLocaleString()}</p>
         </Card>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Transaction History</h3>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Transaction History</h3>
           <p className="text-sm text-text-muted mt-1">A line-by-line record of money in and out.</p>
         </div>
         {isAdmin && <Button onClick={() => { setNewItem({ team_id: defaultTeamId(teams, currentUser), type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
@@ -5364,7 +5334,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
 
       <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm">
-          <thead className="bg-white/5 border-b border-white/10">
+          <thead className="bg-text-base/5 border-b border-text-base/10">
             <tr>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Date</th>
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase">Description</th>
@@ -5373,11 +5343,11 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
               <th className="px-6 py-4 text-xs font-bold text-text-muted uppercase text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-white/5">
+          <tbody className="divide-y divide-text-base/5">
             {budget.map((item: any) => (
-              <tr key={item.id} className="hover:bg-white/5 transition-colors">
+              <tr key={item.id} className="hover:bg-text-base/5 transition-colors">
                 <td className="px-6 py-4 text-sm text-text-muted">{item.date}</td>
-                <td className="px-6 py-4 text-sm text-white font-medium">{item.description}</td>
+                <td className="px-6 py-4 text-sm text-text-base font-medium">{item.description}</td>
                 <td className="px-6 py-4 text-sm text-text-muted">{item.category}</td>
                 <td className={cn(
                   "px-6 py-4 text-sm font-bold",
@@ -5387,7 +5357,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
                 </td>
                 <td className="px-6 py-4 text-right">
                   {isAdmin && (
-                    <button onClick={() => handleDelete(item.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
+                    <button onClick={() => handleDelete(item.id)} className="text-text-muted hover:text-rose-400 transition-colors">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}
@@ -5690,11 +5660,11 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         <Card className="bg-accent/10 border-accent/20">
           <p className="text-xs text-accent uppercase font-bold">Total Parts</p>
-          <p className="text-3xl font-display font-bold text-white">{inventory.length}</p>
+          <p className="text-3xl font-display font-bold text-text-base">{inventory.length}</p>
         </Card>
         <Card className="bg-blue-500/10 border-blue-500/20">
           <p className="text-xs text-blue-400 uppercase font-bold">Inventory Value</p>
-          <p className="text-3xl font-display font-bold text-white">${totalValue.toLocaleString(undefined, {maximumFractionDigits: 2})}</p>
+          <p className="text-3xl font-display font-bold text-text-base">${totalValue.toLocaleString(undefined, {maximumFractionDigits: 2})}</p>
         </Card>
       </div>
 
@@ -5734,7 +5704,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
 
           <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
             <table className="w-full text-left text-sm">
-              <thead className="bg-white/5 border-b border-white/10 sticky top-0">
+              <thead className="bg-text-base/5 border-b border-text-base/10 sticky top-0">
                 <tr>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Name</th>
                   <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">SKU</th>
@@ -5745,26 +5715,26 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
                   {canManage && <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Actions</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
+              <tbody className="divide-y divide-text-base/5">
                 {filteredParts.length === 0 ? (
                   <tr>
                     <td colSpan={canManage ? 7 : 6} className="px-4 py-8 text-center text-text-muted/70">No parts found</td>
                   </tr>
                 ) : (
                   filteredParts.map((part: any) => (
-                    <tr key={part.id} className="hover:bg-white/5 transition-colors">
-                      <td className="px-4 py-3 text-sm text-white font-medium">{part.name}</td>
+                    <tr key={part.id} className="hover:bg-text-base/5 transition-colors">
+                      <td className="px-4 py-3 text-sm text-text-base font-medium">{part.name}</td>
                       <td className="px-4 py-3 text-sm text-accent font-mono">{part.sku}</td>
                       <td className="px-4 py-3 text-sm text-text-muted">{part.part_number || '—'}</td>
-                      <td className="px-4 py-3 text-sm text-white"><span className="bg-white/10 px-2 py-1 rounded">{part.quantity}</span></td>
+                      <td className="px-4 py-3 text-sm text-text-base"><span className="bg-text-base/10 px-2 py-1 rounded">{part.quantity}</span></td>
                       <td className="px-4 py-3 text-sm text-text-muted">{part.category || '—'}</td>
                       <td className="px-4 py-3 text-sm text-blue-400">${(part.cost * part.quantity).toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
                       {canManage && (
                         <td className="px-4 py-3 text-right flex gap-2 justify-end">
-                          <button onClick={() => setShowEdit(part)} className="text-slate-600 hover:text-accent transition-colors">
+                          <button onClick={() => setShowEdit(part)} className="text-text-muted hover:text-accent transition-colors">
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          <button onClick={() => handleDelete(part.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
+                          <button onClick={() => handleDelete(part.id)} className="text-text-muted hover:text-rose-400 transition-colors">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </td>
@@ -5782,7 +5752,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
           <Card title="Add New Part" className="w-full max-w-2xl my-8">
             <div className="space-y-4">
-              <div className="space-y-2 pb-4 border-b border-white/10">
+              <div className="space-y-2 pb-4 border-b border-text-base/10">
                 <p className="text-xs font-bold text-text-muted uppercase">Import from REV Robotics</p>
                 <div className="flex gap-2">
                   <Input 
@@ -5843,7 +5813,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
               </p>
               <div className="glass rounded-2xl overflow-x-auto custom-scrollbar max-h-96">
                 <table className="w-full text-left text-sm">
-                  <thead className="bg-white/5 border-b border-white/10 sticky top-0">
+                  <thead className="bg-text-base/5 border-b border-text-base/10 sticky top-0">
                     <tr>
                       <th className="px-3 py-3 w-10"></th>
                       <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase">Item</th>
@@ -5853,7 +5823,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
                       <th className="px-3 py-3 text-xs font-bold text-text-muted uppercase w-36">Category</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-text-base/5">
                     {invoiceItems.map((it: any, i: number) => (
                       <tr key={i} className={it.selected ? '' : 'opacity-40'}>
                         <td className="px-3 py-2">
@@ -5967,14 +5937,14 @@ function YouTubeChannelDetails({ p }: { p: any }) {
     <div className="space-y-2">
       <div className="grid grid-cols-3 gap-2">
         {tiles.map(t => (
-          <div key={t.label} className="rounded-lg bg-white/[0.03] border border-white/5 px-2 py-1.5">
-            <p className="text-sm font-bold text-white leading-tight">{t.value}</p>
+          <div key={t.label} className="rounded-lg bg-text-base/[0.03] border border-text-base/5 px-2 py-1.5">
+            <p className="text-sm font-bold text-text-base leading-tight">{t.value}</p>
             <p className="text-[9px] text-text-muted uppercase font-bold leading-tight mt-0.5">{t.label}</p>
           </div>
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
-        {p.custom_url && <span className="text-white/70 font-semibold">{p.custom_url}</span>}
+        {p.custom_url && <span className="text-text-base/70 font-semibold">{p.custom_url}</span>}
         {p.country && <span>{p.country}</span>}
         {joined && <span>Joined {joined}</span>}
         {channelUrl && (
@@ -6409,7 +6379,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Outreach Log</h3>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Outreach Log</h3>
           <p className="text-sm text-text-muted mt-1">Track community events and service hours.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
@@ -6422,7 +6392,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
         <Card title="Bruno AI" subtitle="Paste rows or describe events in plain words — Bruno turns them into log entries in one go" icon={ClipboardPaste}>
           <div className="space-y-3">
             <textarea
-              className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-accent/50 transition-colors h-28"
+              className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base text-sm focus:outline-none focus:border-accent/50 transition-colors h-28"
               placeholder={"Paste rows like:\nRobotics demo | 2026-09-12 | 2 | Community center | 40 attendees\nSTEM workshop | Sep 18 | 3h | Local high school | $250 raised\n\n…or paste straight from a spreadsheet — tabs work too."}
               value={bulkText}
               onChange={(e: any) => setBulkText(e.target.value)}
@@ -6432,14 +6402,14 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
               <Button variant="secondary" className="!text-xs" onClick={handleBulkAiParse} disabled={bulkBusy || !bulkText.trim()}>
                 <Sparkles className="w-3.5 h-3.5" /> {bulkBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
               </Button>
-              {bulkNote && <p className="text-xs text-white/70 w-full">{bulkNote}</p>}
+              {bulkNote && <p className="text-xs text-text-base/70 w-full">{bulkNote}</p>}
             </div>
             {bulkRows.length > 0 && (
               <div className="space-y-1.5 max-h-64 overflow-y-auto">
                 {bulkRows.map((r: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-white/[0.04] border border-white/10 px-3 py-1.5">
+                  <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-text-base/[0.04] border border-text-base/10 px-3 py-1.5">
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{r.title}</p>
+                      <p className="text-xs font-bold text-text-base truncate">{r.title}</p>
                       <p className="text-[11px] text-text-muted">
                         {r.date}{r.hours !== '' ? ` • ${r.hours}h` : ''}{r.location ? ` • ${r.location}` : ''}{r.attendees !== '' ? ` • ${r.attendees} attendees` : ''}{r.funds_raised !== '' ? ` • $${r.funds_raised}` : ''}
                       </p>
@@ -6447,7 +6417,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                     <button
                       type="button"
                       onClick={() => setBulkRows(bulkRows.filter((_, j) => j !== i))}
-                      className="text-slate-500 hover:text-rose-400 transition-colors shrink-0"
+                      className="text-text-muted hover:text-rose-400 transition-colors shrink-0"
                       title="Remove"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -6476,7 +6446,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
               <Icon className="w-4 h-4 text-accent" />
             </div>
             <div>
-              <p className="text-xl font-display font-bold text-white leading-none">{value}</p>
+              <p className="text-xl font-display font-bold text-text-base leading-none">{value}</p>
               <p className="text-[10px] text-text-muted uppercase font-bold mt-1">{label}</p>
             </div>
           </div>
@@ -6504,7 +6474,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
               const PIcon = meta.Icon;
               const g = p.growth;
               return (
-                <div key={p.id} className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3">
+                <div key={p.id} className="rounded-xl border border-text-base/10 bg-elevated p-4 space-y-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2.5">
                       {p.avatar_url ? (
@@ -6515,22 +6485,22 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                         </div>
                       )}
                       <div>
-                        <p className="text-sm font-bold text-white">{p.display_name || p.handle}</p>
+                        <p className="text-sm font-bold text-text-base">{p.display_name || p.handle}</p>
                         <p className="text-[11px] text-text-muted">{meta.label}{p.handle ? ` • ${p.handle}` : ''}</p>
                       </div>
                     </div>
                     {isAdminSocial && (
                       <div className="flex items-center gap-1">
-                        <button onClick={() => handlePinProfile(p.id, !!p.is_pinned)} className={`${p.is_pinned ? 'text-volt' : 'text-slate-600'} hover:text-volt transition-colors`} title={p.is_pinned ? 'Unpin from top' : 'Pin to top'}>
+                        <button onClick={() => handlePinProfile(p.id, !!p.is_pinned)} className={`${p.is_pinned ? 'text-volt' : 'text-text-muted'} hover:text-volt transition-colors`} title={p.is_pinned ? 'Unpin from top' : 'Pin to top'}>
                           <Pin className="w-4 h-4" />
                         </button>
-                        <button onClick={() => handleMoveProfile(p.id, -1)} className="text-slate-600 hover:text-white transition-colors" title="Move up">
+                        <button onClick={() => handleMoveProfile(p.id, -1)} className="text-text-muted hover:text-text-base transition-colors" title="Move up">
                           <ChevronUp className="w-4 h-4" />
                         </button>
-                        <button onClick={() => handleMoveProfile(p.id, 1)} className="text-slate-600 hover:text-white transition-colors" title="Move down">
+                        <button onClick={() => handleMoveProfile(p.id, 1)} className="text-text-muted hover:text-text-base transition-colors" title="Move down">
                           <ChevronDown className="w-4 h-4" />
                         </button>
-                        <button onClick={() => handleUnlinkProfile(p.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Unlink profile">
+                        <button onClick={() => handleUnlinkProfile(p.id)} className="text-text-muted hover:text-rose-400 transition-colors" title="Unlink profile">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -6539,7 +6509,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                   <div className="space-y-3">
                     <div className="flex items-end justify-between gap-2">
                         <div>
-                          <p className="text-2xl font-display font-bold text-white">{fmtCompact(p.latest?.followers)}</p>
+                          <p className="text-2xl font-display font-bold text-text-base">{fmtCompact(p.latest?.followers)}</p>
                           <p className="text-[10px] text-text-muted uppercase font-bold">{meta.metric}</p>
                           {g && (
                             <p className={`text-xs font-semibold mt-1 ${g.delta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -6554,9 +6524,9 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                           ? <YouTubeChannelDetails p={p} />
                           : (
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-text-muted">
-                          {p.platform === 'tiktok' && p.latest?.likes != null && <span><b className="text-white/80">{fmtCompact(p.latest.likes)}</b> likes</span>}
-                          {p.latest?.posts != null && <span><b className="text-white/80">{fmtCompact(p.latest.posts)}</b> {p.platform === 'youtube' ? 'videos' : 'posts'}</span>}
-                          {p.platform === 'youtube' && p.latest?.views != null && <span><b className="text-white/80">{fmtCompact(p.latest.views)}</b> views</span>}
+                          {p.platform === 'tiktok' && p.latest?.likes != null && <span><b className="text-text-base/80">{fmtCompact(p.latest.likes)}</b> likes</span>}
+                          {p.latest?.posts != null && <span><b className="text-text-base/80">{fmtCompact(p.latest.posts)}</b> {p.platform === 'youtube' ? 'videos' : 'posts'}</span>}
+                          {p.platform === 'youtube' && p.latest?.views != null && <span><b className="text-text-base/80">{fmtCompact(p.latest.views)}</b> views</span>}
                         </div>
                           )
                       )}
@@ -6575,7 +6545,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
           </div>
         )}
         {showLinkYT && (
-          <div className="rounded-xl border border-white/10 bg-elevated p-4 space-y-3 mt-4">
+          <div className="rounded-xl border border-text-base/10 bg-elevated p-4 space-y-3 mt-4">
             <OutreachField label="YouTube channel">
               <Input placeholder="@handle, channel URL, channel ID, or analyzer link" value={ytInput} onChange={(e: any) => setYtInput(e.target.value)} />
             </OutreachField>
@@ -6601,11 +6571,11 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
             <div className="flex justify-between items-start gap-3">
               <div className="min-w-0">
                 <p className="text-xs text-text-muted">{event.location} • {event.date}</p>
-                <p className="text-sm text-white/80 mt-2">{event.description}</p>
+                <p className="text-sm text-text-base/80 mt-2">{event.description}</p>
                 {(event.attendees > 0 || event.funds_raised > 0) && (
                   <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-text-muted">
-                    {event.attendees > 0 && <span><b className="text-white/80">{event.attendees}</b> attendees</span>}
-                    {event.funds_raised > 0 && <span><b className="text-white/80">${fmtCompact(event.funds_raised)}</b> raised</span>}
+                    {event.attendees > 0 && <span><b className="text-text-base/80">{event.attendees}</b> attendees</span>}
+                    {event.funds_raised > 0 && <span><b className="text-text-base/80">${fmtCompact(event.funds_raised)}</b> raised</span>}
                   </div>
                 )}
               </div>
@@ -6613,10 +6583,10 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                 <p className="text-2xl font-display font-bold text-accent">{event.hours}h</p>
                 <p className="text-[10px] text-text-muted uppercase font-bold">Logged</p>
                 <div className="flex gap-2 mt-2">
-                  <button onClick={() => openEdit(event)} className="text-slate-600 hover:text-accent transition-colors" title="Edit event">
+                  <button onClick={() => openEdit(event)} className="text-text-muted hover:text-accent transition-colors" title="Edit event">
                     <Pencil className="w-4 h-4" />
                   </button>
-                  <button onClick={() => handleDelete(event.id)} className="text-slate-600 hover:text-rose-400 transition-colors" title="Delete event">
+                  <button onClick={() => handleDelete(event.id)} className="text-text-muted hover:text-rose-400 transition-colors" title="Delete event">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -6648,7 +6618,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                           'px-3 py-1.5 rounded-full text-xs font-semibold border transition-all',
                           form.title === preset
                             ? 'border-accent text-accent bg-accent/10'
-                            : 'border-white/10 text-text-muted hover:text-white hover:border-white/25'
+                            : 'border-text-base/10 text-text-muted hover:text-text-base hover:border-text-base/25'
                         )}
                       >
                         {preset}
@@ -6662,7 +6632,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
               </OutreachField>
               <OutreachField label="Description">
                 <textarea
-                  className="w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all h-20"
+                  className="w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all h-20"
                   placeholder="What did the team do?"
                   value={form.description}
                   onChange={set('description')}
@@ -6736,7 +6706,7 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
       case 'Community': return { Icon: Users, badge: 'text-violet-300 bg-violet-400/10 border-violet-400/30' };
       case 'Competitions': return { Icon: Medal, badge: 'text-amber-300 bg-amber-400/10 border-amber-400/30' };
       case 'Videos': return { Icon: Play, badge: 'text-rose-300 bg-rose-400/10 border-rose-400/30' };
-      default: return { Icon: Newspaper, badge: 'text-text-muted bg-white/5 border-white/10' };
+      default: return { Icon: Newspaper, badge: 'text-text-muted bg-text-base/5 border-text-base/10' };
     }
   };
 
@@ -6744,7 +6714,7 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">AI Scout: FTC BIOBUZZ</h3>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">AI Scout: FTC BIOBUZZ</h3>
           <p className="text-sm text-text-muted mt-1">Competitive FTC news, rules, parts, and events — scoped to the 2026–27 BIOBUZZ season.</p>
         </div>
         <div className="flex items-center gap-3">
@@ -6763,8 +6733,8 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
             onClick={() => setFilter(f)}
             className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all active:scale-95 ${
               filter === f
-                ? 'bg-accent text-primary border-accent shadow-[0_4px_16px_rgba(255,199,0,0.25)]'
-                : 'bg-white/[0.03] text-text-muted border-white/10 hover:text-white hover:border-white/25'
+                ? 'bg-accent text-accent-ink border-accent shadow-[0_4px_16px_rgba(255,199,0,0.25)]'
+                : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:text-text-base hover:border-text-base/25'
             }`}
           >
             {f}{counts[f] > 0 ? <span className="opacity-70"> · {counts[f]}</span> : null}
@@ -6782,11 +6752,11 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
       {loading && items.length === 0 ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 space-y-3 animate-pulse">
-              <div className="h-6 w-32 rounded-full bg-white/10" />
-              <div className="h-5 w-4/5 rounded bg-white/10" />
-              <div className="h-4 w-full rounded bg-white/5" />
-              <div className="h-4 w-2/3 rounded bg-white/5" />
+            <div key={i} className="rounded-2xl border border-text-base/10 bg-text-base/[0.02] p-5 space-y-3 animate-pulse">
+              <div className="h-6 w-32 rounded-full bg-text-base/10" />
+              <div className="h-5 w-4/5 rounded bg-text-base/10" />
+              <div className="h-4 w-full rounded bg-text-base/5" />
+              <div className="h-4 w-2/3 rounded bg-text-base/5" />
             </div>
           ))}
         </div>
@@ -6801,21 +6771,21 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
                 href={it.url}
                 target="_blank"
                 rel="noreferrer"
-                className="group rounded-2xl border border-white/10 bg-white/[0.03] p-4 sm:p-5 flex flex-col gap-3 hover:border-accent/40 hover:bg-white/[0.05] transition-all active:scale-[0.99]"
+                className="group rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4 sm:p-5 flex flex-col gap-3 hover:border-accent/40 hover:bg-text-base/[0.05] transition-all active:scale-[0.99]"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${badge}`}>
                     <Icon className="w-3 h-3" /> {it.category}
                   </span>
                   {isVideo ? (
-                    <span className="w-8 h-8 rounded-full bg-accent text-primary flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(255,199,0,0.25)]">
+                    <span className="w-8 h-8 rounded-full bg-accent text-accent-ink flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(255,199,0,0.25)]">
                       <Play className="w-4 h-4 ml-0.5" />
                     </span>
                   ) : (
                     <ExternalLink className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors shrink-0" />
                   )}
                 </div>
-                <h4 className="text-white font-bold leading-snug">{it.title}</h4>
+                <h4 className="text-text-base font-bold leading-snug">{it.title}</h4>
                 <p className="text-sm text-text-muted leading-relaxed line-clamp-3 flex-1">{it.summary}</p>
                 <p className="text-xs text-text-muted/70 truncate">{it.source}</p>
               </a>
@@ -6824,7 +6794,7 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
         </div>
       ) : scoutError ? (
         <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4 text-center px-6">
-          <p className="text-white font-bold">Couldn't load the scout feed</p>
+          <p className="text-text-base font-bold">Couldn't load the scout feed</p>
           <p className="text-sm text-text-muted">{scoutError}</p>
           <Button onClick={refreshNews} variant="outline">Try again</Button>
         </Card>
@@ -6875,7 +6845,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-white">Communication Log</h3>
+          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Communication Log</h3>
           <p className="text-sm text-text-muted mt-1">A shared record of emails and messages sent on the team's behalf.</p>
         </div>
         {canManage && (
@@ -6911,12 +6881,12 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
                   )}>{comm.type}</span>
                   <p className="text-xs text-text-muted">{comm.date}</p>
                 </div>
-                <h4 className="text-white font-bold text-lg">{comm.subject}</h4>
+                <h4 className="text-text-base font-bold text-lg">{comm.subject}</h4>
                 <p className="text-sm text-text-muted mb-3">To: {comm.recipient}</p>
-                <p className="text-sm text-white/80 whitespace-pre-wrap">{comm.body}</p>
+                <p className="text-sm text-text-base/80 whitespace-pre-wrap">{comm.body}</p>
               </div>
               {canManage && (
-                <button onClick={() => handleDelete(comm.id)} className="text-slate-600 hover:text-rose-400 transition-colors">
+                <button onClick={() => handleDelete(comm.id)} className="text-text-muted hover:text-rose-400 transition-colors">
                   <Trash2 className="w-4 h-4" />
                 </button>
               )}
@@ -6944,7 +6914,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
               <Input placeholder="Recipient (e.g. Team Parents, Sponsor Name)" value={newComm.recipient} onChange={(e: any) => setNewComm({...newComm, recipient: e.target.value})} />
               <Input placeholder="Subject" value={newComm.subject} onChange={(e: any) => setNewComm({...newComm, subject: e.target.value})} />
               <textarea 
-                className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-48"
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-48"
                 placeholder="Message Body"
                 value={newComm.body}
                 onChange={(e: any) => setNewComm({...newComm, body: e.target.value})}
@@ -7375,7 +7345,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   const adminIconVis = isTouchDevice ? 'opacity-100' : 'opacity-0 group-hover/cat:opacity-100';
 
   const renderCreateChannelForm = () => (
-    <div className="mx-1 mb-2 p-3 rounded-xl bg-primary border border-white/10 space-y-2 flex-shrink-0">
+    <div className="mx-1 mb-2 p-3 rounded-xl bg-primary border border-text-base/10 space-y-2 flex-shrink-0">
       <input
         value={newChannelName}
         onChange={(e) => setNewChannelName(e.target.value)}
@@ -7383,7 +7353,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         maxLength={40}
         autoFocus
         onKeyDown={(e) => { if (e.key === 'Enter') handleCreateChannelSubmit(); }}
-        className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+        className="w-full bg-secondary border border-text-base/10 rounded-lg px-3 py-2 text-sm text-text-base placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
       />
       <input
         value={newChannelTopic}
@@ -7391,7 +7361,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         placeholder="Topic (optional)"
         maxLength={140}
         onKeyDown={(e) => { if (e.key === 'Enter') handleCreateChannelSubmit(); }}
-        className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+        className="w-full bg-secondary border border-text-base/10 rounded-lg px-3 py-2 text-sm text-text-base placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
       />
       <div className="flex gap-2">
         <button
@@ -7403,7 +7373,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         </button>
         <button
           onClick={() => { setCreatingIn(null); setCreatingChannel(false); setNewChannelName(''); setNewChannelTopic(''); }}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors"
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-text-base hover:bg-text-base/[0.06] transition-colors"
         >
           Cancel
         </button>
@@ -7428,7 +7398,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           onDragEnd={() => { setDragChannelId(null); setDragOverTarget(null); }}
           className={cn(
             'w-full flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-[15px] transition-all text-left',
-            isActive ? 'bg-white/[0.08] text-white font-semibold' : 'text-text-muted hover:bg-white/[0.04] hover:text-white',
+            isActive ? 'bg-text-base/[0.08] text-text-base font-semibold' : 'text-text-muted hover:bg-text-base/[0.04] hover:text-text-base',
             dragChannelId === c.id && 'opacity-40',
             isAdmin && !isTouchDevice && 'cursor-grab active:cursor-grabbing'
           )}
@@ -7443,7 +7413,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                 tabIndex={0}
                 onClick={(e) => { e.stopPropagation(); setMoveMenuFor(moveMenuFor === c.id ? null : c.id); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMoveMenuFor(moveMenuFor === c.id ? null : c.id); } }}
-                className="p-1 rounded text-text-muted/60 hover:text-white"
+                className="p-1 rounded text-text-muted/60 hover:text-text-base"
                 title={`Move #${c.name} to another category`}
               >
                 <FolderInput className="w-3.5 h-3.5" />
@@ -7466,7 +7436,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         {moveMenuFor === c.id && isAdmin && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setMoveMenuFor(null)} />
-            <div className="absolute right-1 top-9 z-50 w-48 rounded-xl border border-white/10 bg-secondary shadow-2xl p-1">
+            <div className="absolute right-1 top-9 z-50 w-48 rounded-xl border border-text-base/10 bg-secondary shadow-2xl p-1">
               <p className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted/60">Move to</p>
               {sortedCats.map((cat: any) => (
                 <button
@@ -7474,7 +7444,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                   onClick={async () => { setMoveMenuFor(null); await handleMoveChannel(c.id, cat.id); }}
                   className={cn(
                     'w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors',
-                    c.category_id === cat.id ? 'text-accent font-semibold' : 'text-text-muted hover:bg-white/[0.06] hover:text-white'
+                    c.category_id === cat.id ? 'text-accent font-semibold' : 'text-text-muted hover:bg-text-base/[0.06] hover:text-text-base'
                   )}
                 >
                   {cat.name}
@@ -7484,12 +7454,12 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                 onClick={async () => { setMoveMenuFor(null); await handleMoveChannel(c.id, null); }}
                 className={cn(
                   'w-full text-left px-2.5 py-2 rounded-lg text-sm transition-colors',
-                  c.category_id == null ? 'text-accent font-semibold' : 'text-text-muted hover:bg-white/[0.06] hover:text-white'
+                  c.category_id == null ? 'text-accent font-semibold' : 'text-text-muted hover:bg-text-base/[0.06] hover:text-text-base'
                 )}
               >
                 Ungrouped
               </button>
-              <div className="my-1 border-t border-white/[0.06]" />
+              <div className="my-1 border-t border-text-base/[0.06]" />
               <button
                 onClick={async () => {
                   setMoveMenuFor(null);
@@ -7503,7 +7473,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                     notify(c.post_restricted ? `#${c.name} is open for everyone to post.` : `#${c.name} is now admin-only.`, 'success');
                   } catch { notify('Could not change that setting.', 'error'); }
                 }}
-                className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-text-muted hover:bg-white/[0.06] hover:text-white transition-colors flex items-center gap-2"
+                className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-text-muted hover:bg-text-base/[0.06] hover:text-text-base transition-colors flex items-center gap-2"
               >
                 <Lock className="w-3.5 h-3.5" />
                 {c.post_restricted ? 'Open posting to everyone' : 'Admin-only posting'}
@@ -7543,7 +7513,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             <>
               <button
                 onClick={() => { setRenameCatName(cat.name); setRenamingCat(renamingCat === cat.id ? null : cat.id); }}
-                className="p-1 rounded text-text-muted/60 hover:text-white"
+                className="p-1 rounded text-text-muted/60 hover:text-text-base"
                 title={`Rename "${cat.name}"`}
                 aria-label={`Rename category ${cat.name}`}
               >
@@ -7561,7 +7531,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           )}
           <button
             onClick={() => setCreatingIn(creatingIn === (ungrouped ? 'uncat' : cat.id) ? null : (ungrouped ? 'uncat' : cat.id))}
-            className="p-1 rounded text-text-muted/60 hover:text-white"
+            className="p-1 rounded text-text-muted/60 hover:text-text-base"
             title={ungrouped ? 'Create channel' : `Create channel in ${cat.name}`}
             aria-label={ungrouped ? 'Create channel' : `Create channel in ${cat.name}`}
           >
@@ -7580,7 +7550,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         {isAdmin && (
           <button
             onClick={() => { setCreatingCategory(!creatingCategory); setNewCategoryName(''); }}
-            className="p-1.5 -mr-1 rounded-md text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors"
+            className="p-1.5 -mr-1 rounded-md text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors"
             title="New category"
             aria-label="New category"
           >
@@ -7589,7 +7559,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         )}
       </div>
       {creatingCategory && isAdmin && (
-        <div className="mx-3 mb-2 p-3 rounded-xl bg-primary border border-white/10 space-y-2 flex-shrink-0">
+        <div className="mx-3 mb-2 p-3 rounded-xl bg-primary border border-text-base/10 space-y-2 flex-shrink-0">
           <input
             value={newCategoryName}
             onChange={(e) => setNewCategoryName(e.target.value)}
@@ -7597,7 +7567,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             maxLength={40}
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCategorySubmit(); }}
-            className="w-full bg-secondary border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+            className="w-full bg-secondary border border-text-base/10 rounded-lg px-3 py-2 text-sm text-text-base placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
           />
           <div className="flex gap-2">
             <button
@@ -7609,7 +7579,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             </button>
             <button
               onClick={() => { setCreatingCategory(false); setNewCategoryName(''); }}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-text-muted hover:text-text-base hover:bg-text-base/[0.06] transition-colors"
             >
               Cancel
             </button>
@@ -7628,7 +7598,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                   maxLength={40}
                   autoFocus
                   onKeyDown={(e) => { if (e.key === 'Enter') handleRenameCategorySubmit(); if (e.key === 'Escape') setRenamingCat(null); }}
-                  className="flex-1 min-w-0 bg-secondary border border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-white focus:outline-none focus:border-accent/60"
+                  className="flex-1 min-w-0 bg-secondary border border-text-base/10 rounded-lg px-2.5 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
                 />
                 <button onClick={handleRenameCategorySubmit} disabled={!renameCatName.trim()} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink disabled:opacity-40">Save</button>
               </div>
@@ -7671,10 +7641,10 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           </p>
         )}
         {onlineMembers.map((m: any) => (
-          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors">
+          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-text-base/[0.04] transition-colors">
             <AvatarWithPresence user={m} size="sm" presence={m.presence} />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-white truncate leading-tight">{m.name}</p>
+              <p className="text-sm font-semibold text-text-base truncate leading-tight">{m.name}</p>
               <p className="text-[11px] text-text-muted truncate">{PRESENCE_META[m.presence]?.label || 'Offline'}</p>
             </div>
           </div>
@@ -7685,7 +7655,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           </p>
         )}
         {offlineMembers.map((m: any) => (
-          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg opacity-60 hover:opacity-90 hover:bg-white/[0.04] transition-all">
+          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg opacity-60 hover:opacity-90 hover:bg-text-base/[0.04] transition-all">
             <AvatarWithPresence user={m} size="sm" presence={m.presence} />
             <p className="text-sm font-medium text-text-muted truncate flex-1">{m.name}</p>
           </div>
@@ -7723,9 +7693,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
       <div key={msg.id ?? idx}>
         {showDivider && (
           <div className="flex items-center gap-3 my-4 px-4">
-            <div className="flex-1 h-px bg-white/10" />
+            <div className="flex-1 h-px bg-text-base/10" />
             <span className="text-[11px] font-bold uppercase tracking-widest text-text-muted/70">{day}</span>
-            <div className="flex-1 h-px bg-white/10" />
+            <div className="flex-1 h-px bg-text-base/10" />
           </div>
         )}
         <div
@@ -7735,25 +7705,25 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           data-cm-id={msg.id}
           className={cn(
             'group relative flex gap-3 px-4 py-1.5 transition-colors',
-            flashed ? 'bg-accent/15' : 'hover:bg-white/[0.03]'
+            flashed ? 'bg-accent/15' : 'hover:bg-text-base/[0.03]'
           )}
         >
           {/* action bar — hover on desktop, tap-to-toggle on touch devices */}
           <div className={cn(
-            'absolute -top-3 right-4 z-10 items-center rounded-lg border border-white/10 bg-secondary shadow-xl overflow-hidden',
+            'absolute -top-3 right-4 z-10 items-center rounded-lg border border-text-base/10 bg-secondary shadow-xl overflow-hidden',
             activeMsgId === msg.id ? 'flex' : 'hidden group-hover:flex'
           )}>
-            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); startReply(msg); }} title="Reply (R)" aria-label="Reply to message" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); startReply(msg); }} title="Reply (R)" aria-label="Reply to message" className="p-2 text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors">
               <Reply className="w-4 h-4" />
             </button>
-            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); setForwardMsg(msg); }} title="Forward" aria-label="Forward message" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); setForwardMsg(msg); }} title="Forward" aria-label="Forward message" className="p-2 text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors">
               <Forward className="w-4 h-4" />
             </button>
-            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); copyMessageText(msg); }} title="Copy text" aria-label="Copy message text" className="p-2 text-text-muted hover:text-white hover:bg-white/[0.07] transition-colors">
+            <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); copyMessageText(msg); }} title="Copy text" aria-label="Copy message text" className="p-2 text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors">
               <Copy className="w-4 h-4" />
             </button>
             {canDelete(msg) && (
-              <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); handleDeleteMessage(msg.id); }} title="Delete" aria-label="Delete message" className="p-2 text-text-muted hover:text-rose-400 hover:bg-white/[0.07] transition-colors">
+              <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); handleDeleteMessage(msg.id); }} title="Delete" aria-label="Delete message" className="p-2 text-text-muted hover:text-rose-400 hover:bg-text-base/[0.07] transition-colors">
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
@@ -7766,7 +7736,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               <p className="text-[11px] font-semibold text-text-muted/80 mb-0.5">Forwarded{msg.forwarded_from ? ` · ${msg.forwarded_from}` : ''}</p>
             ) : null}
             {msg.reply_to_id && !replyGone && (
-              <button onClick={(e) => { e.stopPropagation(); scrollToMessage(msg.reply_to_id); }} className="flex items-center gap-1.5 mb-1 text-xs text-text-muted hover:text-white transition-colors max-w-full" title="Jump to original">
+              <button onClick={(e) => { e.stopPropagation(); scrollToMessage(msg.reply_to_id); }} className="flex items-center gap-1.5 mb-1 text-xs text-text-muted hover:text-text-base transition-colors max-w-full" title="Jump to original">
                 <Reply className="w-3 h-3 rotate-180 flex-shrink-0 text-text-muted/60" />
                 <span className="font-bold truncate">{msg.reply_sender_name}</span>
                 <span className="truncate opacity-70">{(msg.reply_content || '').slice(0, 90)}</span>
@@ -7776,10 +7746,10 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               <p className="text-xs text-text-muted/50 italic mb-1">Original message was deleted</p>
             )}
             <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-sm font-bold text-white">{senderName}</span>
+              <span className="text-sm font-bold text-text-base">{senderName}</span>
               <span className="text-[10px] text-text-muted/60">{format(new Date(msg.timestamp), 'HH:mm')}</span>
             </div>
-            <div className="text-[15px] text-white/90 leading-relaxed break-words">
+            <div className="text-[15px] text-text-base/90 leading-relaxed break-words">
               {msg.file_path && (
                 <div className="flex flex-col gap-2 mb-1.5 mt-1">
                   {isImageFile(msg.file_path) && (
@@ -7787,13 +7757,13 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                       <img
                         src={msg.file_path}
                         alt={msg.file_name || 'uploaded'}
-                        className="rounded-lg max-w-xs max-h-64 object-cover border border-white/10 shadow-sm hover:opacity-95 transition-opacity"
+                        className="rounded-lg max-w-xs max-h-64 object-cover border border-text-base/10 shadow-sm hover:opacity-95 transition-opacity"
                       />
                     </a>
                   )}
                   {!isImageFile(msg.file_path) && (
-                    <div className="flex flex-col gap-1 p-3 rounded-xl border min-w-[200px] max-w-xs bg-white/5 border-white/10">
-                      <div className="flex items-center gap-2 text-sm font-medium text-white">
+                    <div className="flex flex-col gap-1 p-3 rounded-xl border min-w-[200px] max-w-xs bg-text-base/5 border-text-base/10">
+                      <div className="flex items-center gap-2 text-sm font-medium text-text-base">
                         <FileText className="w-4 h-4 text-accent shrink-0" />
                         <span className="truncate">{msg.file_name || msg.file_path.split('/').pop()}</span>
                       </div>
@@ -7828,24 +7798,24 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
     <div className="relative flex-shrink-0">
       <button
         onClick={() => (teams || []).length > 1 && setShowTeamMenu(!showTeamMenu)}
-        className="w-full flex items-center gap-2 px-4 h-12 border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors"
+        className="w-full flex items-center gap-2 px-4 h-12 border-b border-text-base/[0.06] hover:bg-text-base/[0.03] transition-colors"
         title={activeTeamName || 'My team'}
       >
-        <span className="font-bold text-[15px] text-white truncate flex-1 text-left">{activeTeamName || 'My team'}</span>
+        <span className="font-bold text-[15px] text-text-base truncate flex-1 text-left">{activeTeamName || 'My team'}</span>
         {(teams || []).length > 1 && <ChevronDown className={cn('w-4 h-4 text-text-muted transition-transform', showTeamMenu && 'rotate-180')} />}
       </button>
       {showTeamMenu && (teams || []).length > 1 && (
         <>
           <button className="fixed inset-0 z-40 cursor-default" onClick={() => setShowTeamMenu(false)} aria-label="Close team menu" />
-          <div className="absolute left-2 right-2 top-full mt-1 glass rounded-xl border border-white/10 shadow-2xl overflow-hidden z-50">
+          <div className="absolute left-2 right-2 top-full mt-1 glass rounded-xl border border-text-base/10 shadow-2xl overflow-hidden z-50">
             <div className="max-h-64 overflow-y-auto custom-scrollbar py-1.5">
               {(teams || []).map((t: any) => (
                 <button
                   key={t.id}
                   onClick={() => { setShowTeamMenu(false); onSwitchTeam?.(t.id); }}
                   className={cn(
-                    'w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-white/5',
-                    t.name === activeTeamName ? 'text-white font-bold' : 'text-white/70'
+                    'w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left text-sm transition-colors hover:bg-text-base/5',
+                    t.name === activeTeamName ? 'text-text-base font-bold' : 'text-text-base/70'
                   )}
                 >
                   <Layers className="w-4 h-4 text-accent flex-shrink-0" />
@@ -7874,15 +7844,15 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
       )}
 
       {/* Left: channels (drawer on mobile) */}
-      <div className="hidden md:flex w-60 flex-shrink-0 border-r border-white/[0.06] bg-secondary/40 flex-col min-h-0">
+      <div className="hidden md:flex w-60 flex-shrink-0 border-r border-text-base/[0.06] bg-secondary/40 flex-col min-h-0">
         {teamHeader}
         <div className="flex-1 min-h-0 flex flex-col">{channelList}</div>
       </div>
       {showChannelsMobile && (
-        <div className="md:hidden absolute inset-y-0 left-0 w-64 z-30 bg-secondary border-r border-white/10 flex flex-col min-h-0">
-          <div className="flex items-center justify-between pl-4 pr-2 h-12 border-b border-white/[0.06] flex-shrink-0">
-            <span className="text-sm font-bold text-white truncate">{activeTeamName || 'Channels'}</span>
-            <button onClick={() => setShowChannelsMobile(false)} className="p-2 text-text-muted hover:text-white" aria-label="Close channels">
+        <div className="md:hidden absolute inset-y-0 left-0 w-64 z-30 bg-secondary border-r border-text-base/10 flex flex-col min-h-0">
+          <div className="flex items-center justify-between pl-4 pr-2 h-12 border-b border-text-base/[0.06] flex-shrink-0">
+            <span className="text-sm font-bold text-text-base truncate">{activeTeamName || 'Channels'}</span>
+            <button onClick={() => setShowChannelsMobile(false)} className="p-2 text-text-muted hover:text-text-base" aria-label="Close channels">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -7892,20 +7862,20 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
 
       {/* Center: conversation */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <div className="h-12 px-3 sm:px-4 border-b border-white/[0.06] flex items-center gap-2 flex-shrink-0">
-          <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-2 -ml-1 text-text-muted hover:text-white" aria-label="Open channels">
+        <div className="h-12 px-3 sm:px-4 border-b border-text-base/[0.06] flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-2 -ml-1 text-text-muted hover:text-text-base" aria-label="Open channels">
             <Hash className="w-5 h-5" />
           </button>
           <Hash className="w-5 h-5 text-text-muted/70 flex-shrink-0" />
-          <h3 className="text-[15px] font-bold text-white truncate">{activeChannel?.name || 'general'}</h3>
+          <h3 className="text-[15px] font-bold text-text-base truncate">{activeChannel?.name || 'general'}</h3>
           {activeChannel?.topic && (
-            <p className="hidden sm:block text-xs text-text-muted truncate border-l border-white/10 pl-2 ml-1">{activeChannel.topic}</p>
+            <p className="hidden sm:block text-xs text-text-muted truncate border-l border-text-base/10 pl-2 ml-1">{activeChannel.topic}</p>
           )}
           <div className="flex-1" />
-          <button onClick={() => setShowMemberList(!showMemberList)} className="hidden lg:block p-2 text-text-muted hover:text-white transition-colors" aria-label="Toggle member list" title="Toggle member list">
+          <button onClick={() => setShowMemberList(!showMemberList)} className="hidden lg:block p-2 text-text-muted hover:text-text-base transition-colors" aria-label="Toggle member list" title="Toggle member list">
             <Users className={cn('w-5 h-5', showMemberList && 'text-accent')} />
           </button>
-          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="lg:hidden p-2 text-text-muted hover:text-white" aria-label="Toggle members">
+          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="lg:hidden p-2 text-text-muted hover:text-text-base" aria-label="Toggle members">
             <Users className="w-5 h-5" />
           </button>
         </div>
@@ -7913,11 +7883,11 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar py-3 min-h-0">
           {visibleMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-6 gap-3">
-              <div className="w-16 h-16 rounded-full bg-white/[0.05] flex items-center justify-center">
+              <div className="w-16 h-16 rounded-full bg-text-base/[0.05] flex items-center justify-center">
                 <Hash className="w-8 h-8 text-text-muted/50" />
               </div>
               <div>
-                <p className="text-white font-bold">Welcome to #{activeChannel?.name || 'general'}!</p>
+                <p className="text-text-base font-bold">Welcome to #{activeChannel?.name || 'general'}!</p>
                 <p className="text-sm text-text-muted mt-1">This is the start of the conversation.</p>
               </div>
             </div>
@@ -7928,7 +7898,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                   <button
                     onClick={loadOlderMessages}
                     disabled={loadingOlder}
-                    className="text-xs font-semibold text-text-muted hover:text-white border border-white/10 hover:border-white/25 rounded-full px-4 py-1.5 transition-colors disabled:opacity-50"
+                    className="text-xs font-semibold text-text-muted hover:text-text-base border border-text-base/10 hover:border-text-base/25 rounded-full px-4 py-1.5 transition-colors disabled:opacity-50"
                   >
                     {loadingOlder ? 'Loading…' : 'Load older messages'}
                   </button>
@@ -7941,18 +7911,18 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
 
         <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-1 flex-shrink-0 relative">
           {!canPostInChannel ? (
-            <div className="flex items-center gap-2.5 bg-secondary/60 border border-white/10 rounded-xl px-4 py-3.5 text-sm text-text-muted">
+            <div className="flex items-center gap-2.5 bg-secondary/60 border border-text-base/10 rounded-xl px-4 py-3.5 text-sm text-text-muted">
               <Lock className="w-4 h-4 flex-shrink-0" />
-              <span>Only admins can post in <span className="font-semibold text-white">#{activeChannel?.name}</span></span>
+              <span>Only admins can post in <span className="font-semibold text-text-base">#{activeChannel?.name}</span></span>
             </div>
           ) : (
           <>
           {replyTo && (
-            <div className="flex items-center gap-2 pl-4 pr-2 py-2 bg-secondary/80 border border-white/10 border-b-0 rounded-t-xl text-xs">
+            <div className="flex items-center gap-2 pl-4 pr-2 py-2 bg-secondary/80 border border-text-base/10 border-b-0 rounded-t-xl text-xs">
               <Reply className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-              <span className="text-text-muted flex-shrink-0">Replying to <span className="font-bold text-white">{replyTo.sender_name}</span></span>
+              <span className="text-text-muted flex-shrink-0">Replying to <span className="font-bold text-text-base">{replyTo.sender_name}</span></span>
               <span className="text-text-muted/60 truncate flex-1">{(replyTo.content || '').slice(0, 80)}</span>
-              <button onClick={() => setReplyTo(null)} className="p-1.5 text-text-muted hover:text-white transition-colors" title="Cancel reply (Esc)">
+              <button onClick={() => setReplyTo(null)} className="p-1.5 text-text-muted hover:text-text-base transition-colors" title="Cancel reply (Esc)">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -7960,14 +7930,14 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           {pendingFile && (
             <div className="mb-2 flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
               {pendingPreview ? (
-                <img src={pendingPreview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                <img src={pendingPreview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-text-base/10" />
               ) : (
-                <div className="w-14 h-14 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                <div className="w-14 h-14 rounded-lg bg-text-base/5 border border-text-base/10 flex items-center justify-center">
                   <FileText className="w-6 h-6 text-accent" />
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-white truncate">{pendingFile.name}</p>
+                <p className="text-xs font-bold text-text-base truncate">{pendingFile.name}</p>
                 <p className="text-[11px] text-text-muted">{formatFileSize(pendingFile.size)} — will send with your message</p>
               </div>
               <button onClick={clearPending} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove attachment">
@@ -7976,7 +7946,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             </div>
           )}
           {showMentions && filteredMentions.length > 0 && (
-            <div className="absolute bottom-full left-4 mb-2 glass rounded-xl border border-white/10 overflow-hidden w-56 shadow-2xl z-10">
+            <div className="absolute bottom-full left-4 mb-2 glass rounded-xl border border-text-base/10 overflow-hidden w-56 shadow-2xl z-10">
               {filteredMentions.slice(0, 5).map((m: any) => (
                 <button
                   key={m.id}
@@ -7987,7 +7957,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                     setShowMentions(false);
                     composerRef.current?.focus();
                   }}
-                  className="w-full text-left px-4 py-2.5 text-sm text-white/80 hover:bg-accent hover:text-primary transition-colors flex items-center gap-2.5"
+                  className="w-full text-left px-4 py-2.5 text-sm text-text-base/80 hover:bg-accent hover:text-accent-ink transition-colors flex items-center gap-2.5"
                 >
                   {m.special ? (
                     <span className="w-6 h-6 rounded-full bg-accent/15 flex items-center justify-center flex-shrink-0">
@@ -8003,7 +7973,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             </div>
           )}
           <div className={cn(
-            'flex gap-1.5 items-end bg-secondary/60 border border-white/10 px-1.5 py-1.5',
+            'flex gap-1.5 items-end bg-secondary/60 border border-text-base/10 px-1.5 py-1.5',
             replyTo ? 'rounded-b-xl border-t-0' : 'rounded-xl'
           )}>
             <input
@@ -8016,14 +7986,14 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
-              className="h-10 w-10 rounded-lg transition-all active:scale-95 flex items-center justify-center disabled:opacity-50 text-text-muted hover:text-white hover:bg-white/[0.08] flex-shrink-0"
+              className="h-10 w-10 rounded-lg transition-all active:scale-95 flex items-center justify-center disabled:opacity-50 text-text-muted hover:text-text-base hover:bg-text-base/[0.08] flex-shrink-0"
               title="Attach file"
             >
               <FileUp className="w-5 h-5" />
             </button>
             <textarea
               ref={composerRef}
-              className="flex-1 bg-transparent px-2 py-2.5 text-sm text-white placeholder:text-text-muted/60 focus:outline-none min-h-[40px] max-h-32 resize-none"
+              className="flex-1 bg-transparent px-2 py-2.5 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none min-h-[40px] max-h-32 resize-none"
               placeholder={`Message #${activeChannel?.name || 'general'}`}
               value={content}
               onChange={onContentChange}
@@ -8041,13 +8011,13 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
 
       {/* Right: members */}
       <div className={cn(
-        'w-56 flex-shrink-0 border-l border-white/[0.06] bg-secondary/40 flex-col min-h-0',
+        'w-56 flex-shrink-0 border-l border-text-base/[0.06] bg-secondary/40 flex-col min-h-0',
         showMembersMobile ? 'absolute inset-y-0 right-0 z-30 flex bg-secondary' : (showMemberList ? 'hidden lg:flex' : 'hidden')
       )}>
         {showMembersMobile && (
-          <div className="lg:hidden flex items-center justify-between px-4 h-12 border-b border-white/[0.06] flex-shrink-0">
-            <span className="text-sm font-bold text-white">Members</span>
-            <button onClick={() => setShowMembersMobile(false)} className="p-1.5 text-text-muted hover:text-white" aria-label="Close members">
+          <div className="lg:hidden flex items-center justify-between px-4 h-12 border-b border-text-base/[0.06] flex-shrink-0">
+            <span className="text-sm font-bold text-text-base">Members</span>
+            <button onClick={() => setShowMembersMobile(false)} className="p-1.5 text-text-muted hover:text-text-base" aria-label="Close members">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -8058,9 +8028,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
       {/* Forward modal */}
       {forwardMsg && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => setForwardMsg(null)}>
-          <div className="w-full max-w-sm glass rounded-2xl border border-white/10 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-white/10">
-              <h3 className="text-base font-bold text-white">Forward message</h3>
+          <div className="w-full max-w-sm glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-text-base/10">
+              <h3 className="text-base font-bold text-text-base">Forward message</h3>
               <p className="text-xs text-text-muted mt-1 truncate">"{(forwardMsg.content || forwardMsg.file_name || 'attachment').slice(0, 80)}"</p>
             </div>
             <div className="max-h-64 overflow-y-auto custom-scrollbar py-2">
@@ -8068,16 +8038,16 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                 <button
                   key={c.id}
                   onClick={() => handleForward(c.id)}
-                  className="w-full flex items-center gap-2.5 px-5 py-2.5 text-left hover:bg-white/[0.05] transition-colors"
+                  className="w-full flex items-center gap-2.5 px-5 py-2.5 text-left hover:bg-text-base/[0.05] transition-colors"
                 >
                   <Hash className="w-4 h-4 text-text-muted/70 flex-shrink-0" />
-                  <span className={cn('text-sm truncate flex-1', c.id === activeChannelId ? 'text-white font-semibold' : 'text-white/80')}>{c.name}</span>
+                  <span className={cn('text-sm truncate flex-1', c.id === activeChannelId ? 'text-text-base font-semibold' : 'text-text-base/80')}>{c.name}</span>
                   {c.id === activeChannelId && <span className="text-[10px] text-text-muted uppercase tracking-wider">current</span>}
                 </button>
               ))}
             </div>
-            <div className="px-4 py-3 border-t border-white/10 flex justify-end">
-              <button onClick={() => setForwardMsg(null)} className="px-4 py-2 rounded-lg text-sm font-semibold text-text-muted hover:text-white hover:bg-white/[0.06] transition-colors">
+            <div className="px-4 py-3 border-t border-text-base/10 flex justify-end">
+              <button onClick={() => setForwardMsg(null)} className="px-4 py-2 rounded-lg text-sm font-semibold text-text-muted hover:text-text-base hover:bg-text-base/[0.06] transition-colors">
                 Cancel
               </button>
             </div>
@@ -8149,7 +8119,7 @@ function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSig
           <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center gold-glow">
             <Bolt className="text-accent-ink w-9 h-9" strokeWidth={2.5} />
           </div>
-          <h1 className="text-2xl font-display font-bold text-white tracking-tight text-center">You're not on any teams</h1>
+          <h1 className="text-2xl font-display font-bold text-text-base tracking-tight text-center">You're not on any teams</h1>
           <p className="text-text-muted text-center text-sm">
             {user?.email ? `Signed in as ${user.email}. ` : ''}Create a new workspace, join one with an access code, or delete your account.
           </p>
@@ -8167,7 +8137,7 @@ function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSig
               <button onClick={() => setMode('delete')} className="w-full text-center text-xs text-text-muted hover:text-rose-400 transition-colors pt-2">
                 Delete my account
               </button>
-              <button onClick={onSignOut} className="w-full text-center text-xs text-text-muted hover:text-white transition-colors">
+              <button onClick={onSignOut} className="w-full text-center text-xs text-text-muted hover:text-text-base transition-colors">
                 Sign out
               </button>
             </div>
@@ -8206,7 +8176,7 @@ function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSig
           {mode === 'delete' && (
             <div className="space-y-4">
               <p className="text-sm text-rose-300 font-semibold">
-                This cannot be undone. Type your email (<span className="text-white">{user?.email}</span>) to confirm.
+                This cannot be undone. Type your email (<span className="text-text-base">{user?.email}</span>) to confirm.
               </p>
               <Input value={confirmEmail} onChange={(e: any) => setConfirmEmail(e.target.value)} placeholder="your@email.com" />
               <div className="flex gap-3">
@@ -8214,7 +8184,7 @@ function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSig
                 <Button
                   onClick={doDelete}
                   disabled={busy || confirmEmail.trim().toLowerCase() !== (user?.email || '').toLowerCase()}
-                  className="flex-1 bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
+                  className="flex-1 bg-rose-600 text-text-base hover:bg-rose-500 disabled:opacity-40"
                 >
                   {busy ? 'Deleting…' : 'Yes, delete everything'}
                 </Button>
@@ -8314,21 +8284,21 @@ function FeedbackModal({ onClose }: any) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div className="glass rounded-2xl border border-white/10 w-full max-w-md p-6" onClick={(e) => e.stopPropagation()} onPaste={handlePaste}>
+      <div className="glass rounded-2xl border border-text-base/10 w-full max-w-md p-6" onClick={(e) => e.stopPropagation()} onPaste={handlePaste}>
         {sent ? (
           <div className="text-center py-6">
             <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/15 flex items-center justify-center mb-4">
               <Check className="w-7 h-7 text-emerald-400" />
             </div>
-            <h3 className="text-lg font-display font-bold text-white mb-2">Feedback sent</h3>
+            <h3 className="text-lg font-display font-bold text-text-base mb-2">Feedback sent</h3>
             <p className="text-sm text-text-muted mb-6">Thanks — Sushil reads every note personally.</p>
             <Button onClick={onClose} className="w-full">Done</Button>
           </div>
         ) : (
           <>
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-lg font-display font-bold text-white">Send feedback</h3>
-              <button onClick={onClose} className="p-1.5 text-text-muted hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+              <h3 className="text-lg font-display font-bold text-text-base">Send feedback</h3>
+              <button onClick={onClose} className="p-1.5 text-text-muted hover:text-text-base transition-colors"><X className="w-5 h-5" /></button>
             </div>
             <p className="text-sm text-text-muted mb-4">Found a bug, have an idea, or just want to say hi? This goes directly to Sushil.</p>
             <form onSubmit={submit} className="space-y-4">
@@ -8352,7 +8322,7 @@ function FeedbackModal({ onClose }: any) {
                   onChange={(e: any) => setMessage(e.target.value)}
                   rows={5}
                   placeholder="Tell Sushil what's on your mind…"
-                  className="w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-none"
+                  className="w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-none"
                 />
               </div>
               <div className="space-y-2">
@@ -8360,16 +8330,16 @@ function FeedbackModal({ onClose }: any) {
                 {attachment ? (
                   <div className="flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
                     {attachmentKind === 'image' && preview ? (
-                      <img src={preview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-white/10" />
+                      <img src={preview} alt="attachment preview" className="w-14 h-14 rounded-lg object-cover border border-text-base/10" />
                     ) : attachmentKind === 'video' && preview ? (
-                      <video src={preview} className="w-14 h-14 rounded-lg object-cover border border-white/10" muted playsInline />
+                      <video src={preview} className="w-14 h-14 rounded-lg object-cover border border-text-base/10" muted playsInline />
                     ) : (
-                      <div className="w-14 h-14 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center">
+                      <div className="w-14 h-14 rounded-lg border border-text-base/10 bg-text-base/5 flex items-center justify-center">
                         <FileText className="w-6 h-6 text-accent" />
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-bold text-white truncate">{attachment?.name}</p>
+                      <p className="text-xs font-bold text-text-base truncate">{attachment?.name}</p>
                       <p className="text-[11px] text-text-muted">Will send with your feedback</p>
                     </div>
                     <button type="button" onClick={clearAttachment} className="p-2 text-text-muted hover:text-rose-400 transition-colors" title="Remove attachment">
@@ -8380,7 +8350,7 @@ function FeedbackModal({ onClose }: any) {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/5 px-4 py-3 text-sm text-text-muted hover:text-white hover:border-accent/40 transition-colors"
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-text-base/15 bg-text-base/5 px-4 py-3 text-sm text-text-muted hover:text-text-base hover:border-accent/40 transition-colors"
                   >
                     <Paperclip className="w-4 h-4" /> Attach a file or video
                   </button>
@@ -8409,7 +8379,7 @@ function fmtTokens(n: any): string {
 }
 
 function aiStatusOf(u: any) {
-  if (!u) return { label: '—', cls: 'bg-white/5 text-text-muted' };
+  if (!u) return { label: '—', cls: 'bg-text-base/5 text-text-muted' };
   if (u.ai_disabled === 1) return { label: 'AI disabled', cls: 'bg-rose-500/15 text-rose-400' };
   if (u.ai_timeout_until && new Date(String(u.ai_timeout_until).replace(' ', 'T') + 'Z').getTime() > Date.now())
     return { label: 'Timed out', cls: 'bg-amber-500/15 text-amber-400' };
@@ -8433,7 +8403,7 @@ const FLAG_REASONS: Record<string, { label: string; cls: string }> = {
 
 const FLAG_STATUSES: Record<string, { label: string; cls: string }> = {
   'open': { label: 'Open', cls: 'bg-rose-500/15 text-rose-400' },
-  'dismissed': { label: 'Dismissed', cls: 'bg-white/5 text-text-muted' },
+  'dismissed': { label: 'Dismissed', cls: 'bg-text-base/5 text-text-muted' },
   'warned': { label: 'Warned', cls: 'bg-amber-500/15 text-amber-400' },
   'timed_out': { label: 'Timed out', cls: 'bg-orange-500/15 text-orange-400' },
   'ai_disabled': { label: 'AI disabled', cls: 'bg-rose-500/20 text-rose-300' },
@@ -8551,18 +8521,18 @@ function OwnerView(_props: any) {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div>
-        <h3 className="text-lg sm:text-xl font-display font-bold text-white flex items-center gap-2">
+        <h3 className="text-lg sm:text-xl font-display font-bold text-text-base flex items-center gap-2">
           <Crown className="w-5 h-5 text-accent" /> Owner Portal
         </h3>
         <p className="text-sm text-text-muted mt-1">Your private command center — every workspace, user, AI flag, and feedback note in one place.</p>
       </div>
 
-      <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
+      <div className="flex gap-1 sm:gap-2 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id as any)}
-            className={cn("px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap capitalize", tab === t.id ? "bg-accent text-primary shadow-lg" : "text-text-muted hover:text-white")}
+            className={cn("px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap capitalize", tab === t.id ? "bg-accent text-accent-ink shadow-lg" : "text-text-muted hover:text-text-base")}
           >
             {t.label}
           </button>
@@ -8577,7 +8547,7 @@ function OwnerView(_props: any) {
             {statCards.map((c) => (
               <Card key={c.label} className="!p-4 !gap-2">
                 <c.icon className="w-5 h-5 text-accent" />
-                <p className="text-2xl font-display font-bold text-white">{c.value}</p>
+                <p className="text-2xl font-display font-bold text-text-base">{c.value}</p>
                 <p className="text-xs text-text-muted">{c.label}</p>
               </Card>
             ))}
@@ -8587,14 +8557,14 @@ function OwnerView(_props: any) {
               {(overview?.teams || []).map((t: any) => (
                 <div key={t.id} className="glass rounded-xl px-4 py-3 flex flex-wrap items-center gap-x-6 gap-y-1">
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                    <p className="text-sm font-bold text-text-base truncate">{t.name}</p>
                     <p className="text-[11px] text-text-muted">Code {t.access_code}{t.number ? ` · #${t.number}` : ''}</p>
                   </div>
                   <div className="flex gap-4 text-xs text-text-muted ml-auto">
-                    <span><b className="text-white">{t.member_count}</b> members</span>
-                    <span><b className="text-white">{t.message_count}</b> messages</span>
-                    <span><b className="text-white">{t.task_count}</b> tasks</span>
-                    <span><b className="text-white">{t.feedback_count}</b> feedback</span>
+                    <span><b className="text-text-base">{t.member_count}</b> members</span>
+                    <span><b className="text-text-base">{t.message_count}</b> messages</span>
+                    <span><b className="text-text-base">{t.task_count}</b> tasks</span>
+                    <span><b className="text-text-base">{t.feedback_count}</b> feedback</span>
                   </div>
                 </div>
               ))}
@@ -8613,13 +8583,13 @@ function OwnerView(_props: any) {
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
                 placeholder="Search name or email…"
-                className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-3 py-2 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                className="w-full bg-text-base/5 border border-text-base/10 rounded-xl pl-9 pr-3 py-2 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
               />
             </div>
             <select
               value={teamFilter}
               onChange={(e) => setTeamFilter(e.target.value)}
-              className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none"
+              className="bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base focus:outline-none"
             >
               <option value="all">All teams</option>
               {teams.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -8629,10 +8599,10 @@ function OwnerView(_props: any) {
             {filteredUsers.map((u: any) => {
               const st = aiStatusOf(u);
               return (
-                <div key={u.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                <div key={u.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-text-base/5">
                   <Avatar user={u} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-white truncate flex items-center gap-2">
+                    <p className="text-sm font-bold text-text-base truncate flex items-center gap-2">
                       {u.name}
                       {u.flags_open > 0 && (
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-rose-500/15 text-rose-400">{u.flags_open} flag{u.flags_open > 1 ? 's' : ''}</span>
@@ -8668,22 +8638,22 @@ function OwnerView(_props: any) {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             <Card className="!p-4 !gap-2">
               <Zap className="w-5 h-5 text-accent" />
-              <p className="text-2xl font-display font-bold text-white">{aiOverview?.today?.messages || 0}</p>
+              <p className="text-2xl font-display font-bold text-text-base">{aiOverview?.today?.messages || 0}</p>
               <p className="text-xs text-text-muted">AI messages today</p>
             </Card>
             <Card className="!p-4 !gap-2">
               <MessageSquare className="w-5 h-5 text-accent" />
-              <p className="text-2xl font-display font-bold text-white">{fmtTokens(aiOverview?.today?.tokens || 0)}</p>
+              <p className="text-2xl font-display font-bold text-text-base">{fmtTokens(aiOverview?.today?.tokens || 0)}</p>
               <p className="text-xs text-text-muted">Tokens today</p>
             </Card>
             <Card className="!p-4 !gap-2">
               <Users className="w-5 h-5 text-accent" />
-              <p className="text-2xl font-display font-bold text-white">{aiOverview?.today?.users || 0}</p>
+              <p className="text-2xl font-display font-bold text-text-base">{aiOverview?.today?.users || 0}</p>
               <p className="text-xs text-text-muted">People used AI today</p>
             </Card>
             <Card className="!p-4 !gap-2">
               <Flag className="w-5 h-5 text-rose-400" />
-              <p className="text-2xl font-display font-bold text-white">{openFlagCount}</p>
+              <p className="text-2xl font-display font-bold text-text-base">{openFlagCount}</p>
               <p className="text-xs text-text-muted">Open misuse flags</p>
             </Card>
           </div>
@@ -8696,15 +8666,15 @@ function OwnerView(_props: any) {
           <Card title="Heaviest AI users" subtitle="Last 7 days by tokens — spot runaway usage at a glance">
             <div className="space-y-1">
               {(aiOverview?.top || []).map((t: any, i: number) => (
-                <div key={t.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-white/5">
+                <div key={t.id} className="flex items-center gap-3 px-2 py-2 rounded-xl hover:bg-text-base/5">
                   <span className="text-xs font-bold text-text-muted w-5 text-center">{i + 1}</span>
                   <Avatar user={t} size="sm" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-bold text-white truncate">{t.name}</p>
+                    <p className="text-sm font-bold text-text-base truncate">{t.name}</p>
                     <p className="text-[11px] text-text-muted truncate">{t.email}{t.team_name ? ` · ${t.team_name}` : ''}</p>
                   </div>
                   <div className="text-right text-xs text-text-muted flex-shrink-0">
-                    <p><b className="text-white">{fmtTokens(t.tokens)}</b> tokens</p>
+                    <p><b className="text-text-base">{fmtTokens(t.tokens)}</b> tokens</p>
                     <p>{t.messages} messages</p>
                   </div>
                   <Button variant="secondary" size="sm" className="!text-xs" onClick={() => setSelectedId(t.id)}>Manage</Button>
@@ -8717,21 +8687,21 @@ function OwnerView(_props: any) {
           </Card>
           <Card title="How flagging works" subtitle="Automatic misuse detection">
             <ul className="text-sm text-text-muted space-y-1.5 list-disc pl-5">
-              <li><b className="text-white">Homework-like</b> — messages matching homework/essay/quiz patterns get flagged for your review.</li>
-              <li><b className="text-white">Spam burst</b> — 12+ AI messages within 10 minutes.</li>
-              <li><b className="text-white">Excessive use</b> — 80+ AI messages in a day.</li>
+              <li><b className="text-text-base">Homework-like</b> — messages matching homework/essay/quiz patterns get flagged for your review.</li>
+              <li><b className="text-text-base">Spam burst</b> — 12+ AI messages within 10 minutes.</li>
+              <li><b className="text-text-base">Excessive use</b> — 80+ AI messages in a day.</li>
               <li>Flags never block anyone by themselves — you decide: dismiss, warn, time out, or disable AI.</li>
             </ul>
           </Card>
         </>
       ) : tab === 'flags' ? (
         <div className="space-y-3">
-          <div className="flex gap-1 p-1 bg-white/5 rounded-xl border border-white/10 w-fit">
+          <div className="flex gap-1 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-fit">
             {(['open', 'all'] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => { setFlagFilter(f); reloadFlags(f); }}
-                className={cn("px-4 py-1.5 rounded-lg text-xs font-bold capitalize transition-all", flagFilter === f ? "bg-accent text-primary" : "text-text-muted hover:text-white")}
+                className={cn("px-4 py-1.5 rounded-lg text-xs font-bold capitalize transition-all", flagFilter === f ? "bg-accent text-accent-ink" : "text-text-muted hover:text-text-base")}
               >
                 {f}
               </button>
@@ -8753,19 +8723,19 @@ function OwnerView(_props: any) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
                     <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-accent/15 text-accent">{f.category}</span>
-                    <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full", f.status === 'new' ? "bg-emerald-500/15 text-emerald-400" : "bg-white/5 text-text-muted")}>{f.status}</span>
+                    <span className={cn("text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full", f.status === 'new' ? "bg-emerald-500/15 text-emerald-400" : "bg-text-base/5 text-text-muted")}>{f.status}</span>
                   </div>
-                  <p className="text-sm text-white whitespace-pre-wrap">{f.message}</p>
+                  <p className="text-sm text-text-base whitespace-pre-wrap">{f.message}</p>
                   {f.screenshot_url && (
                     <div className="mt-2">
                       {((f.attachment_type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(f.screenshot_url)) ? (
-                        <video src={f.screenshot_url} controls className="max-h-48 rounded-lg border border-white/10" />
+                        <video src={f.screenshot_url} controls className="max-h-48 rounded-lg border border-text-base/10" />
                       ) : ((f.attachment_type || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(f.screenshot_url)) ? (
                         <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="block">
-                          <img src={f.screenshot_url} alt="feedback attachment" className="max-h-40 rounded-lg border border-white/10 object-contain hover:border-accent/40 transition-colors" />
+                          <img src={f.screenshot_url} alt="feedback attachment" className="max-h-40 rounded-lg border border-text-base/10 object-contain hover:border-accent/40 transition-colors" />
                         </a>
                       ) : (
-                        <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white hover:border-accent/40 transition-colors">
+                        <a href={f.screenshot_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-text-base/10 bg-text-base/5 px-3 py-2 text-xs text-text-base hover:border-accent/40 transition-colors">
                           <FileText className="w-4 h-4 text-accent" />
                           <span className="max-w-48 truncate">{f.attachment_name || 'Download attachment'}</span>
                         </a>
@@ -8801,8 +8771,8 @@ function OwnerView(_props: any) {
 function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: number, action: string, note: string, timeoutHours?: number) => Promise<void>; onManageUser: (id: number) => void }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const reason = FLAG_REASONS[flag.reason] || { label: flag.reason, cls: 'bg-white/5 text-text-muted' };
-  const status = FLAG_STATUSES[flag.status] || { label: flag.status, cls: 'bg-white/5 text-text-muted' };
+  const reason = FLAG_REASONS[flag.reason] || { label: flag.reason, cls: 'bg-text-base/5 text-text-muted' };
+  const status = FLAG_STATUSES[flag.status] || { label: flag.status, cls: 'bg-text-base/5 text-text-muted' };
 
   const run = async (action: string, timeoutHours?: number) => {
     setBusy(true);
@@ -8820,13 +8790,13 @@ function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: 
       <div className="flex items-center gap-2">
         <Avatar user={{ name: flag.user_name, email: flag.user_email }} size="sm" />
         <div className="min-w-0">
-          <button onClick={() => flag.member_id && onManageUser(flag.member_id)} className="text-sm font-bold text-white truncate hover:text-accent transition-colors text-left">
+          <button onClick={() => flag.member_id && onManageUser(flag.member_id)} className="text-sm font-bold text-text-base truncate hover:text-accent transition-colors text-left">
             {flag.user_name || 'Unknown user'}
           </button>
           <p className="text-[11px] text-text-muted truncate">{flag.user_email}{flag.team_name ? ` · ${flag.team_name}` : ''}</p>
         </div>
       </div>
-      <p className="text-sm text-white/90 bg-white/5 border border-white/10 rounded-xl px-3 py-2 whitespace-pre-wrap">“{flag.excerpt}”</p>
+      <p className="text-sm text-text-base/90 bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 whitespace-pre-wrap">“{flag.excerpt}”</p>
       {flag.reviewer_note && (
         <p className="text-[11px] text-text-muted">Your note: {flag.reviewer_note}</p>
       )}
@@ -8836,7 +8806,7 @@ function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: 
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="Note (optional — recorded with warn/timeout/disable)…"
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+            className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
           />
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" size="sm" className="!text-xs" disabled={busy} onClick={() => run('dismiss')}>Dismiss</Button>
@@ -8945,10 +8915,10 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative w-full max-w-md h-full bg-[#0b0b0d] border-l border-white/10 overflow-y-auto custom-scrollbar p-5 space-y-5">
+      <div className="relative w-full max-w-md h-full bg-[#0b0b0d] border-l border-text-base/10 overflow-y-auto custom-scrollbar p-5 space-y-5">
         <div className="flex items-center justify-between">
-          <h4 className="text-base font-display font-bold text-white">Manage user</h4>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 text-text-muted hover:text-white transition-colors">
+          <h4 className="text-base font-display font-bold text-text-base">Manage user</h4>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-text-base/10 text-text-muted hover:text-text-base transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -8960,7 +8930,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
             <div className="flex items-center gap-3">
               <Avatar user={u} size="md" />
               <div className="min-w-0 flex-1">
-                <p className="text-base font-bold text-white truncate">{u.name}</p>
+                <p className="text-base font-bold text-text-base truncate">{u.name}</p>
                 <p className="text-xs text-text-muted truncate">{u.email}</p>
                 <p className="text-xs text-text-muted">{u.team_name || 'No team'} · {u.role} · {u.account_type}</p>
               </div>
@@ -8970,10 +8940,10 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
             {chips.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {chips.map((c) => (
-                  <span key={c} className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/5 text-text-muted">via {c}</span>
+                  <span key={c} className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-text-base/5 text-text-muted">via {c}</span>
                 ))}
                 {(data?.siblings?.length || 0) > 0 && (
-                  <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-white/5 text-text-muted">
+                  <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full bg-text-base/5 text-text-muted">
                     {data.siblings.length + 1} teams total
                   </span>
                 )}
@@ -8983,20 +8953,20 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
             <Card title="AI access" subtitle="Kill switch, timeouts, and token budgets" className="!gap-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-bold text-white">AI enabled</p>
+                  <p className="text-sm font-bold text-text-base">AI enabled</p>
                   <p className="text-[11px] text-text-muted">Turn off to block all Bruno / NavGPT replies</p>
                 </div>
                 <button
                   disabled={busy}
                   onClick={() => patchAi({ ai_disabled: u.ai_disabled !== 1 }, u.ai_disabled === 1 ? 'AI re-enabled' : 'AI disabled for user')}
-                  className={cn("relative w-11 h-6 rounded-full transition-colors flex-shrink-0", u.ai_disabled === 1 ? "bg-white/10" : "bg-emerald-500")}
+                  className={cn("relative w-11 h-6 rounded-full transition-colors flex-shrink-0", u.ai_disabled === 1 ? "bg-text-base/10" : "bg-emerald-500")}
                 >
                   <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all", u.ai_disabled === 1 ? "left-0.5" : "left-[22px]")} />
                 </button>
               </div>
 
               <div>
-                <p className="text-sm font-bold text-white mb-1.5">Timeout AI</p>
+                <p className="text-sm font-bold text-text-base mb-1.5">Timeout AI</p>
                 <div className="flex flex-wrap gap-2">
                   {[{ l: '1 hour', h: 1 }, { l: '24 hours', h: 24 }, { l: '7 days', h: 168 }].map((t) => (
                     <Button key={t.l} variant="secondary" size="sm" className="!text-xs" disabled={busy} onClick={() => patchAi({ timeoutHours: t.h }, `AI paused for ${t.l}`)}>
@@ -9016,27 +8986,27 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <p className="text-xs font-bold text-white mb-1">Daily token limit</p>
+                  <p className="text-xs font-bold text-text-base mb-1">Daily token limit</p>
                   <div className="flex gap-1.5">
                     <input
                       value={dailyLimit}
                       onChange={(e) => setDailyLimit(e.target.value.replace(/[^0-9]/g, ''))}
                       placeholder="Unlimited"
                       inputMode="numeric"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                      className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                     />
                     <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_daily_token_limit: dailyLimit || null }, 'Daily limit saved')}>Set</Button>
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-white mb-1">Max tokens / reply</p>
+                  <p className="text-xs font-bold text-text-base mb-1">Max tokens / reply</p>
                   <div className="flex gap-1.5">
                     <input
                       value={replyMax}
                       onChange={(e) => setReplyMax(e.target.value.replace(/[^0-9]/g, ''))}
                       placeholder="Default"
                       inputMode="numeric"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                      className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                     />
                     <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_max_tokens_reply: replyMax || null }, 'Reply cap saved')}>Set</Button>
                   </div>
@@ -9051,7 +9021,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
                   value={warnNote}
                   onChange={(e) => setWarnNote(e.target.value)}
                   placeholder="Reason for the warning…"
-                  className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                  className="flex-1 bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                 />
                 <Button variant="secondary" size="sm" disabled={busy} onClick={doWarn}>
                   <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Warn
@@ -9087,16 +9057,16 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
             {(data?.flags || []).length > 0 && (
               <Card title="Flag history" subtitle="Misuse flags for this user" className="!gap-2">
                 {(data.flags as any[]).map((f: any) => {
-                  const rs = FLAG_STATUSES[f.status] || { label: f.status, cls: 'bg-white/5 text-text-muted' };
-                  const rr = FLAG_REASONS[f.reason] || { label: f.reason, cls: 'bg-white/5 text-text-muted' };
+                  const rs = FLAG_STATUSES[f.status] || { label: f.status, cls: 'bg-text-base/5 text-text-muted' };
+                  const rr = FLAG_REASONS[f.reason] || { label: f.reason, cls: 'bg-text-base/5 text-text-muted' };
                   return (
-                    <div key={f.id} className="text-xs bg-white/5 border border-white/10 rounded-xl px-3 py-2">
+                    <div key={f.id} className="text-xs bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className={cn("text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full", rr.cls)}>{rr.label}</span>
                         <span className={cn("text-[9px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded-full", rs.cls)}>{rs.label}</span>
                         <span className="text-[10px] text-text-muted ml-auto">{f.created_at ? format(new Date(f.created_at), 'MMM d') : ''}</span>
                       </div>
-                      <p className="text-white/80 line-clamp-2">“{f.excerpt}”</p>
+                      <p className="text-text-base/80 line-clamp-2">“{f.excerpt}”</p>
                     </div>
                   );
                 })}
@@ -9220,35 +9190,25 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   const [name, setName] = useState(currentUser?.name || '');
   const [role, setRole] = useState(currentUser?.role || '');
   const [accentColor, setAccentColor] = useState(currentUser?.accent_color || '');
-  const [primaryColor, setPrimaryColor] = useState(currentUser?.primary_color || '');
-  const [textColor, setTextColor] = useState(currentUser?.text_color || '');
 
   useEffect(() => {
     if (currentUser) {
       setName(currentUser.name || '');
       setRole(currentUser.role || '');
       setAccentColor(currentUser.accent_color || '');
-      setPrimaryColor(currentUser.primary_color || '');
-      setTextColor(currentUser.text_color || '');
     }
   }, [currentUser]);
 
-  // Apply color changes in real-time to the page. Custom surface colors are
-  // a dark-mode feature — in light mode the html.light tokens own the
-  // surfaces, so only the accent override applies there.
+  // Apply the accent change in real-time to the page. Branding is
+  // accent-only — surfaces and text always follow the theme tokens.
   useEffect(() => {
     const root = document.documentElement;
-    const isLight = root.classList.contains('light');
     if (validHex(accentColor)) root.style.setProperty('--color-accent', accentColor.trim());
     else root.style.removeProperty('--color-accent');
-    if (!isLight && validHex(primaryColor)) root.style.setProperty('--color-primary', primaryColor.trim());
-    else root.style.removeProperty('--color-primary');
-    if (!isLight && validHex(textColor)) root.style.setProperty('--color-text-base', textColor.trim());
-    else root.style.removeProperty('--color-text-base');
 
     // Trigger re-render of all components to pick up new CSS variables
     setColorVersion((v) => v + 1);
-  }, [accentColor, primaryColor, textColor, setColorVersion]);
+  }, [accentColor, setColorVersion]);
 
   const [avatarUploading, setAvatarUploading] = useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -9301,8 +9261,6 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
           name: name.trim(),
           role: role,
           accent_color: accentColor || null,
-          primary_color: primaryColor || null,
-          text_color: textColor || null
         })
       });
       if (res.ok) {
@@ -9318,8 +9276,6 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
 
   const resetColors = () => {
     setAccentColor('');
-    setPrimaryColor('');
-    setTextColor('');
   };
 
   const isAdmin = hasScope('admin');
@@ -9327,7 +9283,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h3 className="text-xl font-display font-bold text-white">My Profile</h3>
+        <h3 className="text-xl font-display font-bold text-text-base">My Profile</h3>
         <p className="text-sm text-text-muted mt-1">Your name and picture show up everywhere — chat, tasks, the team roster. Changes are visible to your whole team instantly.</p>
       </div>
       <Card title="Personal Information" icon={UserCircle}>
@@ -9370,20 +9326,6 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
                 <Input value={accentColor} onChange={(e: any) => setAccentColor(e.target.value)} placeholder="#FFC700" />
               </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-text-muted uppercase">Interface (Navy)</label>
-              <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={primaryColor || '#09090B'} onChange={(e) => setPrimaryColor(e.target.value)} />
-                <Input value={primaryColor} onChange={(e: any) => setPrimaryColor(e.target.value)} placeholder="#09090B" />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-text-muted uppercase">Text Color</label>
-              <div className="flex gap-2">
-                <input type="color" className="w-10 h-10 rounded-lg bg-transparent border-none cursor-pointer" value={textColor || '#F8FAFC'} onChange={(e) => setTextColor(e.target.value)} />
-                <Input value={textColor} onChange={(e: any) => setTextColor(e.target.value)} placeholder="#F8FAFC" />
-              </div>
-            </div>
           </div>
           <button
             onClick={async () => {
@@ -9391,7 +9333,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
                 const res = await apiFetch('/api/theme/reset', { method: 'POST' });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error || 'Could not reset theme');
-                setAccentColor(''); setPrimaryColor(''); setTextColor('');
+                setAccentColor('');
                 const root = document.documentElement;
                 root.style.removeProperty('--color-accent');
                 root.style.removeProperty('--color-primary');
@@ -9426,9 +9368,9 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
 
       <Card title="Account Details" className="opacity-70">
         <div className="space-y-2">
-          <p className="text-sm text-text-muted">Email: <span className="text-white">{currentUser?.email}</span></p>
+          <p className="text-sm text-text-muted">Email: <span className="text-text-base">{currentUser?.email}</span></p>
           <p className="text-sm text-text-muted">Account Type: <span className="text-accent">{currentUser?.is_board ? 'Board Member' : 'Team Member'}</span></p>
-          <p className="text-sm text-text-muted">Administrative Scopes: <span className="text-white">
+          <p className="text-sm text-text-muted">Administrative Scopes: <span className="text-text-base">
             {(() => {
               try {
                 let scopes = currentUser?.scopes;
@@ -9681,7 +9623,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
           {myTeam?.ftc_team_number ? (
             <div className="flex flex-wrap items-center gap-3 p-4 bg-accent/10 border border-accent/30 rounded-2xl">
               <span className="bg-accent text-accent-ink font-display font-bold px-3 py-1 rounded-xl">#{myTeam.ftc_team_number}</span>
-              <p className="text-sm text-white/80 flex-1">Connected — stats appear on the dashboard and Team Stats page.</p>
+              <p className="text-sm text-text-base/80 flex-1">Connected — stats appear on the dashboard and Team Stats page.</p>
               <Button variant="danger" size="sm" onClick={async () => { if (await confirmDialog({ title: 'Disconnect FTC team', message: 'Disconnect the FTC team? Stats will be hidden.', confirmLabel: 'Disconnect', danger: true })) saveFtcNumber(null); }} disabled={ftcSaving}>
                 Disconnect
               </Button>
@@ -9703,8 +9645,8 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
           </div>
           {ftcError && <p className="text-sm text-rose-400">{ftcError}</p>}
           {ftcVerified && (
-            <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
-              <p className="text-white font-bold">Team {ftcVerified.number} — {ftcVerified.name}</p>
+            <div className="p-4 bg-text-base/5 border border-text-base/10 rounded-2xl space-y-2">
+              <p className="text-text-base font-bold">Team {ftcVerified.number} — {ftcVerified.name}</p>
               <p className="text-xs text-text-muted">
                 {[ftcVerified.schoolName, [ftcVerified.location?.city, ftcVerified.location?.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
                 {ftcVerified.rookieYear ? ` · Rookie ${ftcVerified.rookieYear}` : ''}
@@ -9757,7 +9699,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
               }}
               className={cn(
                 'relative w-12 h-7 rounded-full transition-colors flex-shrink-0',
-                navGptActive ? 'bg-accent' : 'bg-white/15 hover:bg-white/20'
+                navGptActive ? 'bg-accent' : 'bg-text-base/15 hover:bg-text-base/20'
               )}
             >
               <span
@@ -9768,7 +9710,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
               />
             </button>
             <div className="min-w-0">
-              <p className="text-sm font-bold text-white">NavGPT ❤️</p>
+              <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
               <p className="text-xs text-text-muted leading-relaxed">
                 {navGptActive
                   ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
@@ -9799,7 +9741,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
           <div className="max-h-96 overflow-y-auto glass p-2 rounded-xl">
             {loadingMessages ? <p>Loading messages...</p> : (
               allMessages.map((msg: any) => (
-                <div key={msg.id} className="p-2 border-b border-white/10">
+                <div key={msg.id} className="p-2 border-b border-text-base/10">
                   <p className="text-xs text-text-muted">{new Date(msg.timestamp).toLocaleString()} - {msg.sender_name}</p>
                   {editingMessage?.id === msg.id ? (
                     <textarea 
@@ -9830,7 +9772,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
         <div className="space-y-4">
           <p className="text-sm text-text-muted">Define the criteria the AI should use to determine if an absence is excused.</p>
           <textarea 
-            className="w-full bg-primary border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-accent/50 transition-colors h-48 text-sm"
+            className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-3 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-48 text-sm"
             placeholder="e.g. Excused if: sick with doctor note, family emergency, school event. Unexcused if: forgot, overslept, gaming..."
             value={criteria}
             onChange={(e) => setCriteria(e.target.value)}
@@ -9875,7 +9817,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
             <p className="text-sm text-text-muted">Grant administrative scopes to board members.</p>
             <div className="glass rounded-xl overflow-hidden">
               <table className="w-full text-left text-sm">
-                <thead className="bg-white/5 border-b border-white/10">
+                <thead className="bg-text-base/5 border-b border-text-base/10">
                   <tr>
                     <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Name</th>
                     <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase">Board</th>
@@ -9883,16 +9825,16 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
                     <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase text-right">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-text-base/5">
                   {members.map((m: any) => (
                     <tr key={m.id} data-cm-type="member" data-cm-id={m.id}>
-                      <td className="px-4 py-3 text-white">{m.name}</td>
+                      <td className="px-4 py-3 text-text-base">{m.name}</td>
                       <td className="px-4 py-3">
                         <button 
                           onClick={() => updateMember(m.id, { ...m, is_board: m.is_board ? 0 : 1 })}
                           className={cn(
                             "px-2 py-1 rounded text-[10px] font-bold uppercase",
-                            m.is_board ? "bg-accent/20 text-accent" : "bg-slate-800 text-text-muted/70"
+                            m.is_board ? "bg-accent/20 text-accent" : "bg-elevated text-text-muted/70"
                           )}
                         >
                           {m.is_board ? 'Yes' : 'No'}
@@ -9944,7 +9886,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
                       }}
                       className={cn(
                         "px-3 py-1 rounded-full text-[10px] font-bold uppercase border transition-all",
-                        active ? "bg-accent border-accent text-primary" : "border-white/10 text-text-muted"
+                        active ? "bg-accent border-accent text-accent-ink" : "border-text-base/10 text-text-muted"
                       )}
                     >
                       {s}
@@ -9990,7 +9932,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
         ) : (
           <div className="space-y-3 max-w-sm">
             <p className="text-sm text-rose-300 font-semibold">
-              This cannot be undone. Type your email (<span className="text-white">{currentUser?.email}</span>) to confirm.
+              This cannot be undone. Type your email (<span className="text-text-base">{currentUser?.email}</span>) to confirm.
             </p>
             <Input
               value={confirmEmail}
@@ -10004,7 +9946,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
               <Button
                 onClick={deleteAccount}
                 disabled={delBusy || confirmEmail.trim().toLowerCase() !== (currentUser?.email || '').toLowerCase()}
-                className="bg-rose-600 text-white hover:bg-rose-500 disabled:opacity-40"
+                className="bg-rose-600 text-text-base hover:bg-rose-500 disabled:opacity-40"
               >
                 {delBusy ? 'Deleting…' : 'Yes, delete everything'}
               </Button>

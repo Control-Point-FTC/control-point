@@ -6,17 +6,17 @@ function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: a
   return (
     <button
       onClick={onClick}
-      className="text-left rounded-2xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.07] hover:border-accent/40 active:scale-[0.98] transition-all p-3 sm:p-4 group cursor-pointer"
+      className="text-left rounded-2xl border border-text-base/10 bg-text-base/[0.04] hover:bg-text-base/[0.07] hover:border-accent/40 active:scale-[0.98] transition-all p-3 sm:p-4 group cursor-pointer"
     >
       <div className="flex items-center gap-2 mb-1.5">
         <Icon className="w-4 h-4 text-accent shrink-0" />
-        <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted group-hover:text-white transition-colors truncate">
+        <p className="text-[11px] font-bold uppercase tracking-widest text-text-muted group-hover:text-text-base transition-colors truncate">
           {label}
         </p>
       </div>
       <p className={cn(
         "text-xl sm:text-2xl font-display font-bold tracking-tight truncate",
-        tone === 'warn' ? 'text-rose-400' : tone === 'ok' ? 'text-emerald-400' : 'text-white'
+        tone === 'warn' ? 'text-rose-400' : tone === 'ok' ? 'text-emerald-400' : 'text-text-base'
       )}>
         {value}
       </p>

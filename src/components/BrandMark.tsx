@@ -66,7 +66,7 @@ export function BrandMark({
       <div className="flex items-center gap-3">
         <LogoImage className="w-11 h-11 rounded-2xl" />
         <div className="flex items-center gap-2">
-          <span className="text-2xl font-display font-bold text-white tracking-tight">Control Point</span>
+          <span className="text-2xl font-display font-bold text-text-base tracking-tight">Control Point</span>
           <BetaBadge className="mt-0.5" />
         </div>
       </div>
@@ -77,7 +77,7 @@ export function BrandMark({
       <LogoImage className="w-10 h-10 rounded-2xl" />
       <div className="whitespace-nowrap">
         <div className="flex items-center gap-1.5">
-          <h1 className="text-[17px] font-display font-bold text-white leading-none tracking-tight">Control Point</h1>
+          <h1 className="text-[17px] font-display font-bold text-text-base leading-none tracking-tight">Control Point</h1>
           <BetaBadge />
         </div>
         {showSubtitle && (

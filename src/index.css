@@ -91,35 +91,34 @@
 }
 
 /* ---------- light mode ---------- */
-/* The app is dark-first; flipping the design tokens plus Tailwind's
-   white/black utilities under `html.light` makes the whole UI follow the
-   theme without touching every component. Opacity modifiers (bg-white/10
-   etc.) resolve through the same vars via color-mix, so they flip too. */
+/* Token-based theming: every surface/text/border in the app reads these
+   tokens (bg-primary, text-text-base, border-line, …), so flipping them here
+   flips the whole UI. No per-component overrides, no white/black remapping. */
 :root {
   color-scheme: dark;
 }
 html.light {
   color-scheme: light;
 
-  --color-primary: #f4f4f2;      /* light page background */
-  --color-secondary: #ffffff;    /* raised surface */
+  --color-primary: #ffffff;       /* white page background */
+  --color-secondary: #f4f4f5;    /* zinc-100 — sidebar, wells */
   --color-elevated: #ffffff;     /* cards, popovers */
-  --color-accent: #ffc700;       /* volt yellow — kept for brand */
-  --color-accent-hover: #eab308; /* slightly deepened for light surfaces */
+  --color-accent: #eab308;       /* volt, deepened a notch so it holds on white */
+  --color-accent-hover: #ca8a04;
   --color-accent-ink: #231a00;   /* text on volt */
-  --color-accent-soft: #ffc70030;/* volt tint fills */
-  --color-line: #00000014;       /* hairline borders */
+  --color-accent-soft: #eab3081f;/* volt tint fills */
+  --color-line: #09090b14;       /* hairline borders */
   --color-info: #0284c7;
   --color-success: #059669;
   --color-warning: #ea580c;
-  --color-text-base: #09090b;
+  --color-text-base: #18181b;
   --color-text-muted: #52525b;
+}
 
-  /* KEY TRICK: remap Tailwind's white/black so hardcoded dark-first
-     utilities (text-white, bg-white/5, border-white/10, bg-black/70, …)
-     automatically invert in light mode. */
-  --color-white: #18181b;
-  --color-black: #fafaf9;
+/* Cards sit on a white page in light mode — give them real depth. */
+html.light .card-surface {
+  background: var(--color-elevated);
+  box-shadow: 0 1px 2px rgb(9 9 11 / 0.05), 0 12px 32px -16px rgb(9 9 11 / 0.18);
 }
 
 html.light .custom-scrollbar::-webkit-scrollbar-thumb {
@@ -129,9 +128,8 @@ html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #a1a1aa;
 }
 
-/* Destructive palette buttons (App.tsx, ActionProposalCard) pair
-   bg-rose-600/bg-red-500 with text-white — keep true white text there so
-   the label stays crisp in light mode. */
+/* Destructive/solid fills keep true white labels in light mode even though
+   the app's primary text token goes dark. */
 html.light :is(.bg-rose-600, .bg-rose-500, .bg-red-600, .bg-red-500) {
   color: #ffffff;
 }
@@ -154,8 +152,10 @@ html.light .theme-dark {
   --color-warning: #fb923c;
   --color-text-base: #fafaf8;
   --color-text-muted: #a1a1aa;
-  --color-white: #ffffff;
-  --color-black: #000000;
+}
+html.light .theme-dark .card-surface {
+  background: linear-gradient(180deg, var(--color-elevated), var(--color-secondary));
+  box-shadow: 0 8px 30px rgba(0,0,0,0.35);
 }
 
 /* ---------- scrollbars ---------- */

@@ -22,7 +22,7 @@ function DashboardHeader({ userName, teamName, teamNumber }: DashboardHeaderProp
 
   return (
     <div className="mb-1">
-      <h2 className="text-lg font-display font-bold text-white tracking-tight">
+      <h2 className="text-lg font-display font-bold text-text-base tracking-tight">
         {first ? `${greet}, ${first}` : greet}
       </h2>
       <p className="text-xs text-text-muted mt-0.5">

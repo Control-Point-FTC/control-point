@@ -70,7 +70,7 @@ export default function VerifyEmailScreen({ email, onBack, onVerified }: {
     <AuthShell>
       <button
         onClick={onBack}
-        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-white transition-colors"
+        className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-base transition-colors"
       >
         <ChevronLeft className="w-4 h-4" /> Back
       </button>
@@ -79,9 +79,9 @@ export default function VerifyEmailScreen({ email, onBack, onVerified }: {
           <div className="w-14 h-14 rounded-2xl bg-accent/15 flex items-center justify-center">
             <Mail className="text-accent w-8 h-8" strokeWidth={2.5} />
           </div>
-          <h1 className="text-2xl font-display font-bold text-white tracking-tight">Check your inbox</h1>
+          <h1 className="text-2xl font-display font-bold text-text-base tracking-tight">Check your inbox</h1>
           <p className="text-text-muted text-sm">
-            We sent a 6-digit code to <span className="text-white font-semibold">{email}</span>.
+            We sent a 6-digit code to <span className="text-text-base font-semibold">{email}</span>.
             Enter it below to verify your account.
           </p>
         </div>

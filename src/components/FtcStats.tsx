@@ -92,7 +92,7 @@ function SeasonPills({ seasons, active, onPick, small }: { seasons: number[]; ac
             `rounded-full font-bold transition-all ${small ? 'px-3 py-1 text-xs' : 'px-4 py-1.5 text-sm'} ` +
             (s === active
               ? 'bg-accent text-accent-ink shadow-[0_4px_16px_rgba(255,199,0,0.25)]'
-              : 'bg-white/5 text-text-muted hover:text-white hover:bg-white/10 border border-white/10')
+              : 'bg-text-base/5 text-text-muted hover:text-text-base hover:bg-text-base/10 border border-text-base/10')
           }
         >
           {s}–{String(s + 1).slice(2)}
@@ -104,16 +104,16 @@ function SeasonPills({ seasons, active, onPick, small }: { seasons: number[]; ac
 
 function OprTile({ label, stat, icon: Icon, accent }: { label: string; stat: FtcOprStat | null; icon: any; accent?: boolean }) {
   return (
-    <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1">
+    <div className="p-4 bg-text-base/5 rounded-2xl border border-text-base/5 flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
         <Icon className={`w-3.5 h-3.5 ${accent ? 'text-accent' : 'text-text-muted'}`} />
         <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">{label}</p>
       </div>
-      <p className={`text-2xl font-display font-bold ${accent ? 'text-accent' : 'text-white'}`}>
+      <p className={`text-2xl font-display font-bold ${accent ? 'text-accent' : 'text-text-base'}`}>
         {stat?.value != null ? stat.value : '—'}
       </p>
       <p className="text-[11px] text-text-muted">
-        {stat?.rank != null ? <span className="text-white/80 font-semibold">Rank #{stat.rank.toLocaleString()}</span> : 'Unranked'}
+        {stat?.rank != null ? <span className="text-text-base/80 font-semibold">Rank #{stat.rank.toLocaleString()}</span> : 'Unranked'}
       </p>
     </div>
   );
@@ -145,7 +145,7 @@ export function FtcTeamCard() {
           <Trophy className="w-6 h-6 text-accent" />
         </div>
         <div className="flex-1">
-          <h3 className="text-lg font-display font-bold text-white">Connect your FTC team</h3>
+          <h3 className="text-lg font-display font-bold text-text-base">Connect your FTC team</h3>
           <p className="text-sm text-text-muted mt-0.5">Link your team number to pull live stats, rankings, and event history from FTC Scout.</p>
         </div>
         <button
@@ -180,7 +180,7 @@ export function FtcTeamCard() {
         <div>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="bg-accent text-accent-ink font-display font-bold text-lg px-3 py-1 rounded-xl">#{data.number}</span>
-            <h3 className="text-xl font-display font-bold text-white tracking-tight">{data.name}</h3>
+            <h3 className="text-xl font-display font-bold text-text-base tracking-tight">{data.name}</h3>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-text-muted">
             {data.school && <span className="flex items-center gap-1"><GraduationCap className="w-3.5 h-3.5" />{data.school}</span>}
@@ -198,9 +198,9 @@ export function FtcTeamCard() {
         <OprTile label="Endgame" stat={data.opr.eg} icon={Flag} />
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-white/5 mt-1">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-text-base/5 mt-1">
         <p className="text-xs text-text-muted pt-3">
-          {best ? <>Best finish: <span className="text-white font-bold">#{best.rank} — {best.name}</span></> : 'No ranked events this season.'}
+          {best ? <>Best finish: <span className="text-text-base font-bold">#{best.rank} — {best.name}</span></> : 'No ranked events this season.'}
           <span className="ml-2 text-text-muted/60">Match data: ftc-scout.org</span>
         </p>
         <button
@@ -234,7 +234,7 @@ export function TeamStatsView() {
         <div className="rounded-2xl bg-accent/12 p-4">
           <Trophy className="w-10 h-10 text-accent" />
         </div>
-        <h3 className="text-xl font-display font-bold text-white">No FTC team connected yet</h3>
+        <h3 className="text-xl font-display font-bold text-text-base">No FTC team connected yet</h3>
         <p className="text-sm text-text-muted">Connect your FTC team number in Settings to see live stats, OPR rankings, and event history from FTC Scout.</p>
         <button
           onClick={() => navigate('/settings')}
@@ -250,7 +250,7 @@ export function TeamStatsView() {
     return (
       <div className="card-surface p-10 flex flex-col items-center text-center gap-4 max-w-xl mx-auto">
         <CircleAlert className="w-10 h-10 text-rose-400" />
-        <h3 className="text-xl font-display font-bold text-white">Couldn't load stats</h3>
+        <h3 className="text-xl font-display font-bold text-text-base">Couldn't load stats</h3>
         <p className="text-sm text-text-muted">{error || 'Something went wrong.'}</p>
         <button onClick={refresh} className="flex items-center gap-2 bg-accent text-accent-ink font-bold px-6 py-3 rounded-xl hover:brightness-105">
           <RefreshCw className="w-4 h-4" /> Try again
@@ -272,10 +272,10 @@ export function TeamStatsView() {
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-2xl font-display font-bold text-white tracking-tight">Team {data.number}</h2>
+                <h2 className="text-2xl font-display font-bold text-text-base tracking-tight">Team {data.number}</h2>
                 <span className="text-[10px] font-bold uppercase tracking-widest bg-accent/15 text-accent px-2 py-1 rounded-full">{seasonLabel(season)}</span>
               </div>
-              <p className="text-lg text-white/80 font-semibold mt-0.5">{data.name}</p>
+              <p className="text-lg text-text-base/80 font-semibold mt-0.5">{data.name}</p>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-text-muted">
                 {data.school && <span className="flex items-center gap-1"><GraduationCap className="w-3.5 h-3.5" />{data.school}</span>}
                 {(data.city || data.state) && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{[data.city, data.state, data.country].filter(Boolean).join(', ')}</span>}
@@ -298,7 +298,7 @@ export function TeamStatsView() {
 
       {/* OPR cards */}
       <div>
-        <h3 className="text-sm font-bold text-white uppercase tracking-widest mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-bold text-text-base uppercase tracking-widest mb-3 flex items-center gap-2">
           <Target className="w-4 h-4 text-accent" /> Offensive Power Rating
         </h3>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -312,7 +312,7 @@ export function TeamStatsView() {
 
       {/* Event history */}
       <div>
-        <h3 className="text-sm font-bold text-white uppercase tracking-widest mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-bold text-text-base uppercase tracking-widest mb-3 flex items-center gap-2">
           <CalendarDays className="w-4 h-4 text-accent" /> Event History
         </h3>
         {sortedEvents.length === 0 ? (
@@ -321,15 +321,15 @@ export function TeamStatsView() {
           <div className="space-y-3">
             {sortedEvents.map((e, i) => (
               <div key={e.code || i} className="card-surface p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 font-display font-bold text-lg ${e.rank === 1 ? 'bg-accent text-accent-ink' : 'bg-white/5 text-white'}`}>
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 font-display font-bold text-lg ${e.rank === 1 ? 'bg-accent text-accent-ink' : 'bg-text-base/5 text-text-base'}`}>
                   {e.rank ?? '–'}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold truncate">{e.name}</p>
+                  <p className="text-text-base font-bold truncate">{e.name}</p>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-text-muted">
                     {e.date && <span>{e.date}</span>}
                     {e.type && <span className="uppercase tracking-wide">{e.type}</span>}
-                    {recordLine(e) && <span className="text-white/70 font-semibold">{recordLine(e)}</span>}
+                    {recordLine(e) && <span className="text-text-base/70 font-semibold">{recordLine(e)}</span>}
                   </div>
                   {e.awards.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
@@ -342,7 +342,7 @@ export function TeamStatsView() {
                   )}
                 </div>
                 {e.rank != null && (
-                  <span className="text-xs text-text-muted whitespace-nowrap">Rank <span className="text-white font-bold">#{e.rank}</span></span>
+                  <span className="text-xs text-text-muted whitespace-nowrap">Rank <span className="text-text-base font-bold">#{e.rank}</span></span>
                 )}
               </div>
             ))}

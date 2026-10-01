@@ -36,17 +36,20 @@ export function AttendanceTrendChart({ attendance, className = 'h-44' }: { atten
   const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count)), [chartData]);
   const accentColor = cssVar('--color-accent', '#FFC700');
   const secondaryColor = cssVar('--color-secondary', '#1A1A1A');
+  const gridColor = theme === 'light' ? '#09090b14' : '#ffffff10';
+  const axisColor = theme === 'light' ? '#71717a' : '#94a3b8';
+  const tooltipBorder = theme === 'light' ? '#09090b20' : '#ffffff20';
 
   return (
     <div className={`${className} w-full min-h-44`}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-          <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} interval={2} />
-          <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28}
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
+          <XAxis dataKey="date" stroke={axisColor} fontSize={10} axisLine={false} tickLine={false} interval={2} />
+          <YAxis stroke={axisColor} fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28}
             domain={[0, Math.max(2, dataMax + 1)]} />
           <Tooltip
-            contentStyle={{ backgroundColor: secondaryColor, border: '1px solid #ffffff20', borderRadius: '12px' }}
+            contentStyle={{ backgroundColor: secondaryColor, border: `1px solid ${tooltipBorder}`, borderRadius: '12px' }}
             itemStyle={{ color: accentColor }}
           />
           <Line type="monotone" dataKey="count" stroke={accentColor} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />

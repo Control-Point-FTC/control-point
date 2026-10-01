@@ -104,7 +104,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
   const streamingText = stream.active ? stream.text : null;
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden mt-3 sm:mt-4">
+    <div className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] overflow-hidden mt-3 sm:mt-4">
       {/* The bar itself */}
       <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5">
         <span className="shrink-0 w-8 h-8 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center">
@@ -118,7 +118,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
           }}
           placeholder={`Ask ${name} to do something\u2026`}
           aria-label={`Ask ${name}`}
-          className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-white/35 focus:outline-none"
+          className="flex-1 min-w-0 bg-transparent text-sm text-text-base placeholder:text-text-base/35 focus:outline-none"
         />
         {busy ? (
           <Loader2 className="w-4 h-4 text-accent animate-spin shrink-0" />
@@ -127,7 +127,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
             onClick={() => send()}
             disabled={!input.trim()}
             aria-label="Send"
-            className="shrink-0 w-8 h-8 rounded-xl bg-accent text-black flex items-center justify-center hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100 transition"
+            className="shrink-0 w-8 h-8 rounded-xl bg-accent text-accent-ink flex items-center justify-center hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100 transition"
           >
             <Send className="w-4 h-4" />
           </button>
@@ -136,7 +136,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
           <button
             onClick={collapse}
             aria-label="Collapse"
-            className="shrink-0 p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition"
+            className="shrink-0 p-1.5 rounded-lg text-text-base/40 hover:text-text-base hover:bg-text-base/10 transition"
           >
             <ChevronUp className="w-4 h-4" />
           </button>
@@ -150,7 +150,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
             <button
               key={s}
               onClick={() => send(s)}
-              className="text-xs text-white/55 border border-white/10 rounded-full px-3 py-1 hover:border-accent/50 hover:text-accent transition flex items-center gap-1"
+              className="text-xs text-text-base/55 border border-text-base/10 rounded-full px-3 py-1 hover:border-accent/50 hover:text-accent transition flex items-center gap-1"
             >
               <Sparkles className="w-3 h-3" />
               {s}
@@ -161,15 +161,15 @@ export default function BrunoBar({ botName }: { botName?: string }) {
 
       {/* Immersive reply area */}
       {expanded && (
-        <div className="border-t border-white/10 px-3 sm:px-4 py-3 max-h-[420px] overflow-y-auto">
+        <div className="border-t border-text-base/10 px-3 sm:px-4 py-3 max-h-[420px] overflow-y-auto">
           {streamingText !== null && (
-            <div className="prose prose-sm prose-invert max-w-none text-white/85 [&_p]:my-1.5">
+            <div className="prose prose-sm prose-invert max-w-none text-text-base/85 [&_p]:my-1.5">
               <Markdown>{stripEventBlocks(streamingText)}</Markdown>
               <span className="inline-block w-2 h-4 bg-accent/70 animate-pulse rounded-[2px] ml-0.5 align-middle" />
             </div>
           )}
           {streamingText === null && lastReply && (
-            <div className="prose prose-sm prose-invert max-w-none text-white/85 [&_p]:my-1.5">
+            <div className="prose prose-sm prose-invert max-w-none text-text-base/85 [&_p]:my-1.5">
               <Markdown>{stripEventBlocks(lastReply.text)}</Markdown>
             </div>
           )}
@@ -183,7 +183,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
             />
           )}
           {!busy && streamingText === null && !lastReply && (
-            <p className="text-sm text-white/40">Type above and hit enter \u2014 {name} answers right here.</p>
+            <p className="text-sm text-text-base/40">Type above and hit enter \u2014 {name} answers right here.</p>
           )}
         </div>
       )}

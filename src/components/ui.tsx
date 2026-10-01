@@ -20,7 +20,7 @@ export const Card = ({ children, className, title, subtitle, icon: Icon, ...rest
     {(title || Icon) && (
       <div className="flex items-center justify-between mb-1">
         <div>
-          {title && <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>}
+          {title && <h3 className="text-lg font-display font-bold text-text-base tracking-tight">{title}</h3>}
           {subtitle && <p className="text-xs text-text-muted mt-0.5">{subtitle}</p>}
         </div>
         {Icon && (
@@ -43,11 +43,11 @@ export const Button = ({ children, className, variant = 'primary', ...props }: a
       className: 'font-bold hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)]',
       style: { backgroundColor: accentColor || '#FFC700', color: '#231A00' }
     },
-    secondary: 'bg-elevated text-white hover:bg-white/10 border border-white/10 font-semibold',
+    secondary: 'bg-elevated text-text-base hover:bg-text-base/10 border border-text-base/10 font-semibold',
     outline: {
       className: 'text-accent hover:opacity-80 border border-current font-bold',
     },
-    ghost: 'text-text-muted hover:text-white hover:bg-white/5 font-semibold',
+    ghost: 'text-text-muted hover:text-text-base hover:bg-text-base/5 font-semibold',
     danger: 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30 font-semibold'
   };
 
@@ -72,7 +72,7 @@ export const Button = ({ children, className, variant = 'primary', ...props }: a
 export const Input = ({ className, ...props }: any) => (
   <input
     className={cn(
-      "w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
+      "w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
       className
     )}
     {...props}

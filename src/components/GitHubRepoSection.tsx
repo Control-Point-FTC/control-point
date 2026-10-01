@@ -222,10 +222,10 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
         <div key={node.path}>
           <button
             onClick={() => toggleDir(node.path)}
-            className="flex items-center gap-1.5 w-full px-2 py-1 text-sm text-slate-300 hover:bg-slate-700/50 rounded text-left"
+            className="flex items-center gap-1.5 w-full px-2 py-1 text-sm text-text-muted hover:bg-secondary rounded text-left"
             style={{ paddingLeft: `${depth * 14 + 8}px` }}
           >
-            {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+            {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-text-muted" /> : <ChevronRight className="w-3.5 h-3.5 text-text-muted" />}
             <Folder className="w-4 h-4 text-accent/80 flex-shrink-0" />
             <span className="truncate font-medium">{node.name}</span>
           </button>
@@ -239,12 +239,12 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
         key={node.path}
         onClick={() => openFile(node.path)}
         className={`flex items-center gap-1.5 w-full px-2 py-1 text-sm rounded text-left ${
-          isSelected ? 'bg-accent/15 text-white' : 'text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+          isSelected ? 'bg-accent/15 text-text-base' : 'text-text-muted hover:bg-secondary hover:text-text-base'
         }`}
         style={{ paddingLeft: `${depth * 14 + 26}px` }}
         title={node.path}
       >
-        <FileText className="w-4 h-4 text-slate-500 flex-shrink-0" />
+        <FileText className="w-4 h-4 text-text-muted flex-shrink-0" />
         <span className="truncate font-mono text-xs">{node.name}</span>
       </button>
     );
@@ -253,11 +253,11 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
   if (!teamId) return null;
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4 flex-shrink-0">
+    <div className="bg-elevated border border-line rounded-lg p-4 flex-shrink-0">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Github className="w-5 h-5 text-accent" />
-          <h3 className="text-base font-bold text-white">GitHub Repo</h3>
+          <h3 className="text-base font-bold text-text-base">GitHub Repo</h3>
           {repo && (
             <span className="flex items-center gap-1 px-2 py-0.5 bg-accent/15 text-accent text-xs font-bold rounded-full border border-accent/30">
               <span className="w-1.5 h-1.5 bg-accent rounded-full" />
@@ -270,14 +270,14 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
             <button
               onClick={handleSync}
               disabled={syncing}
-              className="flex items-center gap-1 px-3 py-1 bg-slate-700 text-slate-200 rounded text-sm hover:bg-slate-600 transition-all disabled:opacity-50"
+              className="flex items-center gap-1 px-3 py-1 bg-secondary text-text-base rounded text-sm hover:bg-text-base/10 transition-all disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
               {syncing ? 'Syncing...' : 'Sync'}
             </button>
             <button
               onClick={handleUnlink}
-              className="flex items-center gap-1 px-3 py-1 bg-slate-700 text-slate-200 rounded text-sm hover:bg-red-700 hover:text-red-100 transition-all"
+              className="flex items-center gap-1 px-3 py-1 bg-secondary text-text-base rounded text-sm hover:bg-red-700 hover:text-red-100 transition-all"
             >
               <Unlink className="w-4 h-4" />
               Unlink
@@ -297,13 +297,13 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
       )}
 
       {loading ? (
-        <div className="mt-3 flex items-center gap-2 text-slate-400 text-sm">
+        <div className="mt-3 flex items-center gap-2 text-text-muted text-sm">
           <Loader className="w-4 h-4 animate-spin" /> Loading repo...
         </div>
       ) : !repo ? (
         isAdmin ? (
           <div className="mt-3">
-            <p className="text-xs text-slate-400 mb-2">
+            <p className="text-xs text-text-muted mb-2">
               Link the team's robot code repo — Bruno will see the file tree and can answer questions about your code. Public repos only.
             </p>
             <div className="flex gap-2 flex-wrap">
@@ -312,12 +312,12 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
                 onChange={(e) => setUrl(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleConnect()}
                 placeholder="https://github.com/owner/repo"
-                className="flex-1 min-w-[220px] px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-700 focus:border-accent focus:outline-none text-sm font-mono"
+                className="flex-1 min-w-[220px] px-3 py-2 bg-primary text-text-base rounded-lg border border-line focus:border-accent focus:outline-none text-sm font-mono"
               />
               <button
                 onClick={handleConnect}
                 disabled={connecting || !url.trim()}
-                className="flex items-center gap-2 px-4 py-2 bg-accent text-primary font-bold rounded-lg hover:brightness-90 transition-all disabled:opacity-50 text-sm"
+                className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-ink font-bold rounded-lg hover:brightness-90 transition-all disabled:opacity-50 text-sm"
               >
                 {connecting ? <Loader className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
                 {connecting ? 'Connecting...' : 'Connect repo'}
@@ -325,11 +325,11 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
             </div>
           </div>
         ) : (
-          <p className="mt-3 text-xs text-slate-400">No GitHub repo linked yet — ask an admin to connect one.</p>
+          <p className="mt-3 text-xs text-text-muted">No GitHub repo linked yet — ask an admin to connect one.</p>
         )
       ) : (
         <div className="mt-3">
-          <div className="flex items-center gap-3 flex-wrap text-xs text-slate-400 mb-3">
+          <div className="flex items-center gap-3 flex-wrap text-xs text-text-muted mb-3">
             <a href={repo.repoUrl} target="_blank" rel="noreferrer" className="text-accent font-mono font-bold hover:underline">
               {repo.owner}/{repo.repo}
             </a>
@@ -338,33 +338,33 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
           </div>
           <div className="grid md:grid-cols-2 gap-3">
             {/* File tree */}
-            <div className="bg-slate-900 rounded-lg border border-slate-700 max-h-80 overflow-y-auto p-2">
+            <div className="bg-primary rounded-lg border border-line max-h-80 overflow-y-auto p-2">
               {tree.length === 0 ? (
-                <p className="text-xs text-slate-500 p-2">No files found in this repo.</p>
+                <p className="text-xs text-text-muted p-2">No files found in this repo.</p>
               ) : (
                 tree.map((n) => renderNode(n, 0))
               )}
             </div>
             {/* File viewer */}
-            <div className="bg-slate-900 rounded-lg border border-slate-700 max-h-80 overflow-hidden flex flex-col min-h-[160px]">
+            <div className="bg-primary rounded-lg border border-line max-h-80 overflow-hidden flex flex-col min-h-[160px]">
               {selectedPath ? (
                 <>
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700 flex-shrink-0">
-                    <span className="text-xs font-mono text-slate-300 truncate">{selectedPath}</span>
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-line flex-shrink-0">
+                    <span className="text-xs font-mono text-text-muted truncate">{selectedPath}</span>
                     <span className="text-[10px] font-bold text-accent uppercase ml-2 flex-shrink-0">{guessLanguage(selectedPath)}</span>
                   </div>
                   <div className="flex-1 overflow-auto p-3">
                     {fileLoading ? (
-                      <div className="flex items-center gap-2 text-slate-400 text-sm">
+                      <div className="flex items-center gap-2 text-text-muted text-sm">
                         <Loader className="w-4 h-4 animate-spin" /> Loading file...
                       </div>
                     ) : (
-                      <pre className="text-xs font-mono text-slate-200 whitespace-pre-wrap break-words">{fileContent}</pre>
+                      <pre className="text-xs font-mono text-text-base whitespace-pre-wrap break-words">{fileContent}</pre>
                     )}
                   </div>
                 </>
               ) : (
-                <p className="text-xs text-slate-500 p-4">Click a file to preview it here.</p>
+                <p className="text-xs text-text-muted p-4">Click a file to preview it here.</p>
               )}
             </div>
           </div>

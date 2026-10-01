@@ -162,13 +162,13 @@ export default function SettingsModal({
   ];
 
   const inputClass =
-    'w-full bg-primary border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm';
+    'w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm';
 
   return (
     <div className="fixed inset-0 z-[70] flex bg-primary" role="dialog" aria-modal="true" aria-label="Settings">
       {/* Left nav — full-screen list on phones, sidebar on desktop */}
       <div className={cn(
-        'w-full md:w-60 lg:w-72 flex-shrink-0 bg-secondary md:border-r border-white/[0.06] flex-col',
+        'w-full md:w-60 lg:w-72 flex-shrink-0 bg-secondary md:border-r border-text-base/[0.06] flex-col',
         mobileNav ? 'flex' : 'hidden md:flex'
       )}>
         <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-6">
@@ -186,8 +186,8 @@ export default function SettingsModal({
                       className={cn(
                         'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all',
                         section === s.id
-                          ? 'bg-white/[0.08] text-white font-bold'
-                          : 'text-text-muted hover:bg-white/[0.04] hover:text-white font-medium'
+                          ? 'bg-text-base/[0.08] text-text-base font-bold'
+                          : 'text-text-muted hover:bg-text-base/[0.04] hover:text-text-base font-medium'
                       )}
                     >
                       <s.icon className={cn('w-[18px] h-[18px] shrink-0', section === s.id ? 'text-accent' : 'text-accent/70')} strokeWidth={2.25} />
@@ -199,7 +199,7 @@ export default function SettingsModal({
             );
           })}
         </div>
-        <div className="p-4 border-t border-white/[0.06]">
+        <div className="p-4 border-t border-text-base/[0.06]">
           <p className="text-[11px] text-text-muted/60 text-center">Control Point settings</p>
         </div>
       </div>
@@ -211,18 +211,18 @@ export default function SettingsModal({
             <button
               onClick={() => setMobileNav(true)}
               aria-label="Back to settings list"
-              className="md:hidden p-2 -ml-2 rounded-xl text-text-muted hover:text-white hover:bg-white/10 transition-colors"
+              className="md:hidden p-2 -ml-2 rounded-xl text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
-            <h2 className="text-xl font-display font-bold text-white truncate">
+            <h2 className="text-xl font-display font-bold text-text-base truncate">
               {sections.find((s) => s.id === section)?.label}
             </h2>
           </div>
           <button
             onClick={onClose}
             aria-label="Close settings"
-            className="p-2.5 rounded-full border border-white/10 text-text-muted hover:text-white hover:border-white/25 hover:rotate-90 transition-all"
+            className="p-2.5 rounded-full border border-text-base/10 text-text-muted hover:text-text-base hover:border-text-base/25 hover:rotate-90 transition-all"
           >
             <X className="w-5 h-5" />
           </button>
@@ -233,7 +233,7 @@ export default function SettingsModal({
             {section === 'account' && (
               <>
                 <section>
-                  <h3 className="text-sm font-bold text-white mb-3">Profile picture</h3>
+                  <h3 className="text-sm font-bold text-text-base mb-3">Profile picture</h3>
                   <div className="flex items-center gap-4">
                     <div className="w-20 h-20 rounded-full overflow-hidden bg-accent text-accent-ink flex items-center justify-center text-2xl font-bold flex-shrink-0">
                       {user?.avatar_url ? (
@@ -255,7 +255,7 @@ export default function SettingsModal({
                         <button
                           onClick={() => void removeAvatar()}
                           disabled={saving}
-                          className="px-4 py-2 rounded-xl text-sm font-semibold text-text-muted hover:text-rose-400 hover:bg-white/[0.06] disabled:opacity-50 transition-all flex items-center gap-2"
+                          className="px-4 py-2 rounded-xl text-sm font-semibold text-text-muted hover:text-rose-400 hover:bg-text-base/[0.06] disabled:opacity-50 transition-all flex items-center gap-2"
                         >
                           <Trash2 className="w-4 h-4" /> Remove
                         </button>
@@ -265,7 +265,7 @@ export default function SettingsModal({
                 </section>
 
                 <section className="space-y-4">
-                  <h3 className="text-sm font-bold text-white">Details</h3>
+                  <h3 className="text-sm font-bold text-text-base">Details</h3>
                   <div>
                     <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Display name</label>
                     <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={inputClass} />
@@ -288,11 +288,11 @@ export default function SettingsModal({
                 </section>
 
                 <section>
-                  <h3 className="text-sm font-bold text-white mb-1">Status</h3>
+                  <h3 className="text-sm font-bold text-text-base mb-1">Status</h3>
                   <p className="text-xs text-text-muted mb-2">
-                    Currently: <span className="text-white font-semibold">{PRESENCE_META[user?.presence]?.label || 'Offline'}</span>
+                    Currently: <span className="text-text-base font-semibold">{PRESENCE_META[user?.presence]?.label || 'Offline'}</span>
                   </p>
-                  <div className="bg-secondary border border-white/10 rounded-2xl overflow-hidden">
+                  <div className="bg-secondary border border-text-base/10 rounded-2xl overflow-hidden">
                     <PresencePicker value={user?.presence_status || 'online'} onPick={onStatusPick} />
                   </div>
                 </section>
@@ -302,7 +302,7 @@ export default function SettingsModal({
             {section === 'team' && isAdmin && (
               <>
                 <section className="space-y-4">
-                  <h3 className="text-sm font-bold text-white">Workspace</h3>
+                  <h3 className="text-sm font-bold text-text-base">Workspace</h3>
                   <div>
                     <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Team name</label>
                     <input value={teamName} onChange={(e) => setTeamName(e.target.value)} maxLength={80} className={inputClass} />
@@ -327,15 +327,15 @@ export default function SettingsModal({
                 </section>
 
                 <section>
-                  <h3 className="text-sm font-bold text-white mb-1">Invite code</h3>
+                  <h3 className="text-sm font-bold text-text-base mb-1">Invite code</h3>
                   <p className="text-xs text-text-muted mb-3">Share this code so new members can join the workspace at signup.</p>
                   <div className="flex items-center gap-3">
-                    <code className="flex-1 bg-secondary border border-white/10 rounded-xl px-4 py-3 font-mono text-lg font-bold text-accent tracking-[0.15em] text-center">
+                    <code className="flex-1 bg-secondary border border-text-base/10 rounded-xl px-4 py-3 font-mono text-lg font-bold text-accent tracking-[0.15em] text-center">
                       {team?.access_code || '—'}
                     </code>
                     <button
                       onClick={() => void copyAccessCode()}
-                      className="p-3 rounded-xl bg-white/[0.06] text-text-muted hover:text-white transition-colors"
+                      className="p-3 rounded-xl bg-text-base/[0.06] text-text-muted hover:text-text-base transition-colors"
                       title="Copy invite code"
                     >
                       {copied ? <Check className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
@@ -347,10 +347,10 @@ export default function SettingsModal({
 
             {section === 'roles' && isAdmin && (
               <section>
-                <h3 className="text-sm font-bold text-white mb-1">Roles & permissions</h3>
+                <h3 className="text-sm font-bold text-text-base mb-1">Roles & permissions</h3>
                 <p className="text-sm text-text-muted leading-relaxed mb-4">
-                  Create roles like <span className="text-white font-semibold">Build Captain</span> or{' '}
-                  <span className="text-white font-semibold">Treasurer</span> and choose exactly what each role can
+                  Create roles like <span className="text-text-base font-semibold">Build Captain</span> or{' '}
+                  <span className="text-text-base font-semibold">Treasurer</span> and choose exactly what each role can
                   touch — attendance, budget, tasks, inventory, code, and more.
                 </p>
                 <button

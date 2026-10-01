@@ -74,14 +74,14 @@ function TeamActivity({ items, onNavigate }: { items: ActivityItem[]; onNavigate
               <div
                 key={`${a.kind}-${i}`}
                 onClick={() => onNavigate(kindRoutes[a.kind])}
-                className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-white/[0.04] hover:border-accent/20 border border-transparent transition-all cursor-pointer"
+                className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-text-base/[0.04] hover:border-accent/20 border border-transparent transition-all cursor-pointer"
                 title={`Open ${kindRoutes[a.kind].replace('/', '')}`}
               >
-                <div className="w-7 h-7 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-7 h-7 rounded-lg bg-text-base/5 border border-text-base/10 flex items-center justify-center shrink-0 mt-0.5">
                   <Icon className="w-3.5 h-3.5 text-accent" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-semibold text-white leading-snug">{a.title}</p>
+                  <p className="text-[13px] font-semibold text-text-base leading-snug">{a.title}</p>
                   {a.detail && <p className="text-xs text-text-muted leading-snug mt-0.5">{a.detail}</p>}
                   {when && <p className="text-[11px] text-text-muted/70 mt-1">{when}</p>}
                 </div>

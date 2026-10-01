@@ -61,18 +61,18 @@ function UpcomingTimeline({ events, onNavigate }: UpcomingTimelineProps) {
                   <button
                     key={e.id}
                     onClick={() => onNavigate('/calendar')}
-                    className="w-full flex items-center gap-2.5 p-2 rounded-xl bg-white/[0.03] border border-white/10 hover:border-accent/40 hover:bg-white/[0.06] transition-all text-left group"
+                    className="w-full flex items-center gap-2.5 p-2 rounded-xl bg-text-base/[0.03] border border-text-base/10 hover:border-accent/40 hover:bg-text-base/[0.06] transition-all text-left group"
                   >
                     <div className="w-10 shrink-0 rounded-lg bg-accent/10 border border-accent/20 flex flex-col items-center justify-center py-1">
                       <span className="text-[9px] font-bold text-accent uppercase">
                         {format(new Date(e.date + 'T12:00:00'), 'MMM')}
                       </span>
-                      <span className="text-base font-display font-bold text-white leading-none">
+                      <span className="text-base font-display font-bold text-text-base leading-none">
                         {format(new Date(e.date + 'T12:00:00'), 'd')}
                       </span>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-white truncate group-hover:text-accent transition-colors">
+                      <p className="text-sm font-semibold text-text-base truncate group-hover:text-accent transition-colors">
                         {e.title}
                       </p>
                       <p className="text-[11px] text-text-muted truncate">

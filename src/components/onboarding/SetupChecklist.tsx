@@ -28,7 +28,7 @@ export default function SetupChecklist({ state, onContinue, onDismiss }: SetupCh
             <Sparkles className="w-[18px] h-[18px] text-accent" strokeWidth={2.25} />
           </span>
           <div>
-            <h2 id="setup-checklist-title" className="font-display text-base font-bold text-white">
+            <h2 id="setup-checklist-title" className="font-display text-base font-bold text-text-base">
               Complete your setup
             </h2>
             <p className="text-xs text-text-muted mt-0.5">
@@ -39,7 +39,7 @@ export default function SetupChecklist({ state, onContinue, onDismiss }: SetupCh
         <button
           onClick={onDismiss}
           aria-label="Dismiss setup reminder"
-          className="p-1.5 -m-1 rounded-lg text-text-muted hover:text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          className="p-1.5 -m-1 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         >
           <X className="w-[18px] h-[18px]" />
         </button>
@@ -49,7 +49,7 @@ export default function SetupChecklist({ state, onContinue, onDismiss }: SetupCh
         {items.map((item) => (
           <li
             key={item.id}
-            className="flex items-start gap-3 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3.5 py-2.5"
+            className="flex items-start gap-3 bg-text-base/[0.03] border border-text-base/[0.06] rounded-xl px-3.5 py-2.5"
           >
             {item.status === 'done' ? (
               <Check className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" strokeWidth={2.75} aria-label="Done" />
@@ -57,7 +57,7 @@ export default function SetupChecklist({ state, onContinue, onDismiss }: SetupCh
               <Circle className="w-5 h-5 text-text-muted/50 flex-shrink-0 mt-0.5" aria-label="Not done" />
             )}
             <span>
-              <span className={cn('block text-sm font-semibold', item.status === 'done' ? 'text-text-muted line-through' : 'text-white')}>
+              <span className={cn('block text-sm font-semibold', item.status === 'done' ? 'text-text-muted line-through' : 'text-text-base')}>
                 {item.title}
               </span>
               <span className="block text-xs text-text-muted mt-0.5">{item.description}</span>

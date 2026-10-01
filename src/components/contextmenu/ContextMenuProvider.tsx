@@ -131,7 +131,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
           aria-label="Context menu"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
-          className="fixed z-[100] w-[230px] rounded-xl border border-white/10 bg-[#141419]/95 backdrop-blur-md shadow-2xl p-1.5"
+          className="fixed z-[100] w-[230px] rounded-xl border border-text-base/10 bg-[#141419]/95 backdrop-blur-md shadow-2xl p-1.5"
           style={{ left: menu.x, top: menu.y }}
         >
           {menu.items.map((it, i) => {
@@ -148,7 +148,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
                   'w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-left transition-colors',
                   it.danger
                     ? 'text-rose-300 hover:bg-rose-500/15'
-                    : 'text-white/85 hover:bg-white/[0.07] hover:text-white',
+                    : 'text-text-base/85 hover:bg-text-base/[0.07] hover:text-text-base',
                 )}
               >
                 {Icon && <Icon className="w-4 h-4 shrink-0 opacity-70" />}

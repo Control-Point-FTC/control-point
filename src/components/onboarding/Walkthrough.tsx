@@ -197,13 +197,13 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
         style={tooltipStyle}
         className={cn(tooltipClass, 'focus-visible:outline-none')}
       >
-        <div className="bg-secondary border border-white/10 rounded-2xl shadow-2xl shadow-black/60 p-5 sm:p-6">
+        <div className="bg-secondary border border-text-base/10 rounded-2xl shadow-2xl shadow-black/60 p-5 sm:p-6">
           {isComplete ? (
             <div className="text-center">
               <div className="mx-auto w-12 h-12 rounded-2xl bg-accent flex items-center justify-center mb-4">
                 <PartyPopper className="w-6 h-6 text-accent-ink" strokeWidth={2.25} />
               </div>
-              <h2 id="tour-title" className="font-display text-xl font-bold text-white">
+              <h2 id="tour-title" className="font-display text-xl font-bold text-text-base">
                 You&apos;re ready!
               </h2>
               <p className="mt-2 text-sm leading-relaxed text-text-muted">
@@ -219,7 +219,7 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
                 </button>
                 <button
                   onClick={() => onFinish('explore')}
-                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                  className="w-full py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                 >
                   Explore on my own
                 </button>
@@ -235,13 +235,13 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
                   <button
                     onClick={onExit}
                     aria-label="Exit tour"
-                    className="p-1.5 -m-1.5 rounded-lg text-text-muted hover:text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                    className="p-1.5 -m-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
                 <div
-                  className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden"
+                  className="mt-2 h-1.5 rounded-full bg-text-base/10 overflow-hidden"
                   role="progressbar"
                   aria-valuemin={1}
                   aria-valuemax={steps.length}
@@ -253,7 +253,7 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
                     style={{ width: `${Math.max(((index + 1) / steps.length) * 100, 8)}%` }}
                   />
                 </div>
-                <h2 id="tour-title" className="mt-3 font-display text-lg font-bold text-white">
+                <h2 id="tour-title" className="mt-3 font-display text-lg font-bold text-text-base">
                   {step.title}
                 </h2>
                 <p className="mt-1.5 text-sm leading-relaxed text-text-muted">{step.body}</p>
@@ -261,13 +261,13 @@ export default function Walkthrough({ steps, initialStep = 0, onStepChange, onFi
                   <button
                     onClick={() => goTo(index - 1)}
                     disabled={index === 0}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-white disabled:opacity-30 disabled:pointer-events-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-text-base disabled:opacity-30 disabled:pointer-events-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                   >
                     <ArrowLeft className="w-4 h-4" /> Back
                   </button>
                   <button
                     onClick={onExit}
-                    className="px-3 py-2.5 rounded-xl text-sm font-medium text-text-muted/80 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                    className="px-3 py-2.5 rounded-xl text-sm font-medium text-text-muted/80 hover:text-text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                   >
                     Skip tour
                   </button>

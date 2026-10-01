@@ -67,7 +67,7 @@ function MyStatusStrip({
           <div className="rounded-lg bg-accent/12 p-1.5">
             <User className="w-4 h-4 text-accent" />
           </div>
-          <span className="text-sm font-bold text-white">My status</span>
+          <span className="text-sm font-bold text-text-base">My status</span>
           <span className="text-[11px] text-text-muted">today's check-in</span>
         </div>
         <div className="flex-1" />
@@ -106,7 +106,7 @@ function MyStatusStrip({
             <div className="space-y-4">
               <p className="text-sm text-text-muted">Let the team know why you'll be missing today's session.</p>
               <textarea
-                className="w-full bg-primary border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-accent/50 transition-colors h-24 disabled:opacity-50"
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-24 disabled:opacity-50"
                 placeholder="Reason for absence..."
                 value={outReason}
                 onChange={(e) => setOutReason(e.target.value)}

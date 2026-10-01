@@ -29,13 +29,13 @@ function TeamSummary({
   return (
     <Card title="AI team summary" subtitle="Today's operational overview" icon={Zap} className="xl:col-span-7 p-5 gap-3">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
+        <div className="flex gap-1 bg-text-base/5 rounded-lg p-0.5">
           {(['summary', 'insights'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setAiTab(t)}
               className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all ${
-                aiTab === t ? 'bg-accent text-accent-ink' : 'text-text-muted hover:text-white'
+                aiTab === t ? 'bg-accent text-accent-ink' : 'text-text-muted hover:text-text-base'
               }`}
             >
               {t === 'summary' ? 'Summary' : 'Insights'}
@@ -52,7 +52,7 @@ function TeamSummary({
           </Button>
         )}
       </div>
-      <div className="max-h-72 min-h-[120px] overflow-y-auto custom-scrollbar pr-1 text-sm text-white/80 leading-relaxed prose prose-invert max-w-none">
+      <div className="max-h-72 min-h-[120px] overflow-y-auto custom-scrollbar pr-1 text-sm text-text-base/80 leading-relaxed prose prose-invert max-w-none">
         {aiTab === 'summary' ? (
           isAiLoading && !summary ? <ThinkingIndicator /> : <Markdown>{summary || 'No summary available yet.'}</Markdown>
         ) : (

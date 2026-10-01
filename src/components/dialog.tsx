@@ -116,7 +116,7 @@ function settlePrompt(value: boolean) {
 
 const btnBase =
   'px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 font-semibold';
-const btnSecondary = 'bg-elevated text-white hover:bg-white/10 border border-white/10';
+const btnSecondary = 'bg-elevated text-text-base hover:bg-text-base/10 border border-text-base/10';
 const btnDanger = 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30';
 const btnPrimary = 'bg-accent text-accent-ink hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)]';
 
@@ -147,7 +147,7 @@ function ConfirmModal({ pending }: { pending: PendingConfirm }) {
         onClick={(e) => e.stopPropagation()}
       >
         {title && (
-          <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>
+          <h3 className="text-lg font-display font-bold text-text-base tracking-tight">{title}</h3>
         )}
         <p className="text-sm text-text-muted leading-relaxed">{opts.message}</p>
         <div className="flex gap-3 justify-end">
@@ -197,7 +197,7 @@ function PromptModal({ pending }: { pending: PendingPrompt }) {
         onClick={(e) => e.stopPropagation()}
       >
         {title && (
-          <h3 className="text-lg font-display font-bold text-white tracking-tight">{title}</h3>
+          <h3 className="text-lg font-display font-bold text-text-base tracking-tight">{title}</h3>
         )}
         <p className="text-sm text-text-muted leading-relaxed">{opts.message}</p>
         <div>
@@ -207,11 +207,11 @@ function PromptModal({ pending }: { pending: PendingPrompt }) {
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder={opts.placeholder || `Type "${opts.expected}" to confirm`}
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
+            className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-4 py-2.5 text-sm text-text-base placeholder:text-text-muted/50 focus:outline-none focus:border-accent/60"
             onKeyDown={(e) => { if (e.key === 'Enter' && matches) settlePrompt(true); }}
           />
           <p className="text-[11px] text-text-muted/70 mt-1.5">
-            Type <span className="font-mono font-bold text-white/90">{opts.expected}</span> exactly to confirm.
+            Type <span className="font-mono font-bold text-text-base/90">{opts.expected}</span> exactly to confirm.
           </p>
         </div>
         <div className="flex gap-3 justify-end">
@@ -233,7 +233,7 @@ function PromptModal({ pending }: { pending: PendingPrompt }) {
 }
 
 const toastStyles: Record<ToastKind, { wrap: string; icon: typeof Info; iconClass: string }> = {  info: {
-    wrap: 'border-white/10',
+    wrap: 'border-text-base/10',
     icon: Info,
     iconClass: 'text-accent',
   },
@@ -263,11 +263,11 @@ function ToastStack({ items }: { items: Toast[] }) {
             role="status"
           >
             <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${s.iconClass}`} />
-            <p className="text-sm text-white/90 leading-relaxed flex-1">{t.message}</p>
+            <p className="text-sm text-text-base/90 leading-relaxed flex-1">{t.message}</p>
             <button
               type="button"
               aria-label="Dismiss"
-              className="text-text-muted hover:text-white transition-colors shrink-0"
+              className="text-text-muted hover:text-text-base transition-colors shrink-0"
               onClick={() => dismissToast(t.id)}
             >
               <X className="w-4 h-4" />

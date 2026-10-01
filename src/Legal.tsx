@@ -9,7 +9,7 @@ const CONTACT_EMAIL = 'Sushil.m@icloud.com';
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mb-8">
-      <h2 className="font-display text-lg font-bold text-white mb-2.5">{title}</h2>
+      <h2 className="font-display text-lg font-bold text-text-base mb-2.5">{title}</h2>
       <div className="text-[15px] leading-relaxed text-text-muted space-y-2.5">{children}</div>
     </section>
   );
@@ -25,9 +25,9 @@ function PrivacyBody() {
         </p>
       </Section>
       <Section title="Information we collect">
-        <p><strong className="text-white/90">Account information.</strong> When you sign up, we collect your name, email address, and password (stored as a secure hash), or basic profile information from Google, Discord, or GitHub if you sign in with one of those providers.</p>
-        <p><strong className="text-white/90">Team content.</strong> Information you and your team create in the app: members, attendance records, tasks, events, messages, budget entries, inventory, and outreach activity.</p>
-        <p><strong className="text-white/90">Connected social accounts.</strong> If a team admin links a YouTube channel or connects a TikTok account in the Outreach section, we store the channel/account identifiers and the public metrics we sync (such as subscriber and follower counts). YouTube data comes from public YouTube Data API responses. TikTok data comes through TikTok Login Kit — see below.</p>
+        <p><strong className="text-text-base/90">Account information.</strong> When you sign up, we collect your name, email address, and password (stored as a secure hash), or basic profile information from Google, Discord, or GitHub if you sign in with one of those providers.</p>
+        <p><strong className="text-text-base/90">Team content.</strong> Information you and your team create in the app: members, attendance records, tasks, events, messages, budget entries, inventory, and outreach activity.</p>
+        <p><strong className="text-text-base/90">Connected social accounts.</strong> If a team admin links a YouTube channel or connects a TikTok account in the Outreach section, we store the channel/account identifiers and the public metrics we sync (such as subscriber and follower counts). YouTube data comes from public YouTube Data API responses. TikTok data comes through TikTok Login Kit — see below.</p>
       </Section>
       <Section title="TikTok data">
         <p>
@@ -35,8 +35,8 @@ function PrivacyBody() {
           profile information with Control Point. We request two scopes:
         </p>
         <ul className="list-disc pl-5 space-y-1.5">
-          <li><strong className="text-white/90">user.info.basic</strong> — your TikTok display name, avatar, and Open ID, used to identify which account is connected.</li>
-          <li><strong className="text-white/90">user.info.stats</strong> — aggregate counts such as followers and videos, used only to display your team's social growth in the Outreach dashboard.</li>
+          <li><strong className="text-text-base/90">user.info.basic</strong> — your TikTok display name, avatar, and Open ID, used to identify which account is connected.</li>
+          <li><strong className="text-text-base/90">user.info.stats</strong> — aggregate counts such as followers and videos, used only to display your team's social growth in the Outreach dashboard.</li>
         </ul>
         <p>
           We do not request access to your TikTok videos, drafts, messages, or the ability to post on your
@@ -145,8 +145,8 @@ function TermsBody() {
 export default function LegalPage({ page }: { page: LegalKind }) {
   const isPrivacy = page === 'privacy';
   return (
-    <div className="min-h-screen bg-primary text-white">
-      <header className="border-b border-white/[0.06]">
+    <div className="min-h-screen bg-primary text-text-base">
+      <header className="border-b border-text-base/[0.06]">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 sm:px-6 py-4">
           <Link to="/" className="flex items-center gap-2.5">
             <span className="w-9 h-9 rounded-xl bg-accent flex items-center justify-center shrink-0">
@@ -156,7 +156,7 @@ export default function LegalPage({ page }: { page: LegalKind }) {
           </Link>
           <Link
             to="/"
-            className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-white transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-base transition-colors"
           >
             <ArrowLeft className="w-4 h-4" /> Back to home
           </Link>
@@ -168,11 +168,11 @@ export default function LegalPage({ page }: { page: LegalKind }) {
         </h1>
         <p className="text-sm text-text-muted mb-10">Effective {EFFECTIVE_DATE}</p>
         {isPrivacy ? <PrivacyBody /> : <TermsBody />}
-        <footer className="mt-12 border-t border-white/[0.06] pt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-          <Link to="/privacy" className={`hover:text-white transition-colors ${isPrivacy ? 'text-white font-semibold' : 'text-text-muted'}`}>
+        <footer className="mt-12 border-t border-text-base/[0.06] pt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <Link to="/privacy" className={`hover:text-text-base transition-colors ${isPrivacy ? 'text-text-base font-semibold' : 'text-text-muted'}`}>
             Privacy Policy
           </Link>
-          <Link to="/terms" className={`hover:text-white transition-colors ${!isPrivacy ? 'text-white font-semibold' : 'text-text-muted'}`}>
+          <Link to="/terms" className={`hover:text-text-base transition-colors ${!isPrivacy ? 'text-text-base font-semibold' : 'text-text-muted'}`}>
             Terms of Service
           </Link>
         </footer>

@@ -28,7 +28,7 @@ export interface SetupWizardProps {
 const STEP_LABELS = ['Your profile', 'Appearance', 'Take the tour', 'All set'];
 
 const inputClass =
-  'w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all';
+  'w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all';
 
 export default function SetupWizard({
   user,
@@ -158,21 +158,21 @@ export default function SetupWizard({
         aria-modal="true"
         aria-labelledby="wizard-title"
         tabIndex={-1}
-        className="relative w-full sm:max-w-md bg-secondary border border-white/10 rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/60 max-h-[92dvh] overflow-y-auto focus-visible:outline-none"
+        className="relative w-full sm:max-w-md bg-secondary border border-text-base/10 rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/60 max-h-[92dvh] overflow-y-auto focus-visible:outline-none"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">
               Setup · Step {step + 1} of 4
             </p>
-            <h2 id="wizard-title" className="mt-1 font-display text-xl font-bold text-white">
+            <h2 id="wizard-title" className="mt-1 font-display text-xl font-bold text-text-base">
               {STEP_LABELS[step]}
             </h2>
           </div>
           <button
             onClick={() => void handleClose()}
             aria-label="Close setup"
-            className="p-1.5 -m-1.5 rounded-lg text-text-muted hover:text-white hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="p-1.5 -m-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             <X className="w-5 h-5" />
           </button>
@@ -183,7 +183,7 @@ export default function SetupWizard({
           {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
-              className={cn('h-1.5 flex-1 rounded-full transition-colors', i <= step ? 'bg-accent' : 'bg-white/10')}
+              className={cn('h-1.5 flex-1 rounded-full transition-colors', i <= step ? 'bg-accent' : 'bg-text-base/10')}
             />
           ))}
         </div>
@@ -198,7 +198,7 @@ export default function SetupWizard({
               <p className="text-sm text-rose-200">{error}</p>
               <button
                 onClick={() => setError(null)}
-                className="mt-1 text-xs font-bold text-rose-300 hover:text-white"
+                className="mt-1 text-xs font-bold text-rose-300 hover:text-text-base"
               >
                 Dismiss — you can retry
               </button>
@@ -209,7 +209,7 @@ export default function SetupWizard({
         {step === 0 && (
           <div className="mt-5">
             <p className="text-sm text-text-muted leading-relaxed">
-              How should teammates see you? <span className="text-white/70 font-medium">Recommended</span> —
+              How should teammates see you? <span className="text-text-base/70 font-medium">Recommended</span> —
               you can change this anytime in My Profile.
             </p>
             <div className="mt-4 space-y-3.5">
@@ -251,7 +251,7 @@ export default function SetupWizard({
               <button
                 onClick={() => void saveProfile(true)}
                 disabled={busy}
-                className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-white disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                className="px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text-base disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               >
                 Skip
               </button>
@@ -288,17 +288,17 @@ export default function SetupWizard({
                   'relative rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
                   theme === 'dark'
                     ? 'border-accent/70 ring-2 ring-accent/25 bg-accent/[0.06]'
-                    : 'border-white/10 bg-white/[0.03] hover:border-white/25'
+                    : 'border-text-base/10 bg-text-base/[0.03] hover:border-text-base/25'
                 )}
               >
-                <span className="block rounded-xl overflow-hidden border border-white/10" aria-hidden="true">
+                <span className="block rounded-xl overflow-hidden border border-text-base/10" aria-hidden="true">
                   <span className="block h-16 p-2" style={{ backgroundColor: '#09090b' }}>
                     <span className="block h-2 w-2/3 rounded-full mb-1.5" style={{ backgroundColor: '#ffc700' }} />
                     <span className="block h-1.5 w-full rounded-full mb-1" style={{ backgroundColor: '#26262c' }} />
                     <span className="block h-1.5 w-4/5 rounded-full" style={{ backgroundColor: '#26262c' }} />
                   </span>
                 </span>
-                <span className="mt-2.5 flex items-center gap-1.5 text-sm font-bold text-white">
+                <span className="mt-2.5 flex items-center gap-1.5 text-sm font-bold text-text-base">
                   <Moon className="w-4 h-4" /> Dark
                 </span>
                 <span className="block text-xs text-text-muted mt-0.5">Carbon black · default</span>
@@ -318,7 +318,7 @@ export default function SetupWizard({
                   'relative rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
                   theme === 'light'
                     ? 'border-accent/70 ring-2 ring-accent/25 bg-accent/[0.06]'
-                    : 'border-white/10 bg-white/[0.03] hover:border-white/25'
+                    : 'border-text-base/10 bg-text-base/[0.03] hover:border-text-base/25'
                 )}
               >
                 <span className="block rounded-xl overflow-hidden border border-black/10" aria-hidden="true">
@@ -328,7 +328,7 @@ export default function SetupWizard({
                     <span className="block h-1.5 w-4/5 rounded-full" style={{ backgroundColor: '#d8d8d4' }} />
                   </span>
                 </span>
-                <span className="mt-2.5 flex items-center gap-1.5 text-sm font-bold text-white">
+                <span className="mt-2.5 flex items-center gap-1.5 text-sm font-bold text-text-base">
                   <Sun className="w-4 h-4" /> Light
                 </span>
                 <span className="block text-xs text-text-muted mt-0.5">Bright &amp; airy</span>
@@ -342,7 +342,7 @@ export default function SetupWizard({
             <div className="mt-6 flex items-center justify-between gap-2">
               <button
                 onClick={() => setStep(0)}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-medium text-text-muted hover:text-text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               >
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
@@ -376,7 +376,7 @@ export default function SetupWizard({
                   </button>
                   <button
                     onClick={() => setStep(3)}
-                    className="w-full py-3 rounded-xl font-bold text-[15px] text-text-muted hover:text-white hover:bg-white/[0.06] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                    className="w-full py-3 rounded-xl font-bold text-[15px] text-text-muted hover:text-text-base hover:bg-text-base/[0.06] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                   >
                     Continue
                   </button>
@@ -399,14 +399,14 @@ export default function SetupWizard({
               <button
                 onClick={() => void skipTour()}
                 disabled={busy}
-                className="w-full py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-white disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                className="w-full py-2.5 rounded-xl text-sm font-semibold text-text-muted hover:text-text-base disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               >
                 {busy ? 'Saving…' : 'Maybe later'}
               </button>
             </div>
             <button
               onClick={() => setStep(1)}
-              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-white transition-colors"
+              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text-base transition-colors"
             >
               <ArrowLeft className="w-3.5 h-3.5" /> Back to appearance
             </button>
@@ -420,18 +420,18 @@ export default function SetupWizard({
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent flex items-center justify-center mb-3">
               <Check className="w-6 h-6 text-accent-ink" strokeWidth={2.75} />
             </div>
-            <h3 className="font-display text-lg font-bold text-white">Setup complete</h3>
+            <h3 className="font-display text-lg font-bold text-text-base">Setup complete</h3>
             <ul className="mt-4 space-y-2 text-left">
-              <li className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3.5 py-2.5">
+              <li className="flex items-center gap-3 bg-text-base/[0.03] border border-text-base/[0.06] rounded-xl px-3.5 py-2.5">
                 <UserCircle className="w-5 h-5 text-accent flex-shrink-0" />
-                <span className="text-sm text-white font-medium flex-1">Profile</span>
+                <span className="text-sm text-text-base font-medium flex-1">Profile</span>
                 <span className="text-xs font-bold text-text-muted uppercase tracking-wide">
                   {summary.profile === 'skipped' ? 'Skipped' : summary.profile === 'done' ? 'Done' : 'Pending'}
                 </span>
               </li>
-              <li className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.06] rounded-xl px-3.5 py-2.5">
+              <li className="flex items-center gap-3 bg-text-base/[0.03] border border-text-base/[0.06] rounded-xl px-3.5 py-2.5">
                 <Compass className="w-5 h-5 text-accent flex-shrink-0" />
-                <span className="text-sm text-white font-medium flex-1">Tour</span>
+                <span className="text-sm text-text-base font-medium flex-1">Tour</span>
                 <span className="text-xs font-bold text-text-muted uppercase tracking-wide">
                   {summary.tour === 'skipped' ? 'Skipped' : summary.tour === 'done' ? 'Done' : 'Pending'}
                 </span>

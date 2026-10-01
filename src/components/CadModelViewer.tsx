@@ -218,12 +218,12 @@ export default function CadModelViewer({ fileUrl, fileType, fileName, onClose }:
   return (
     <div className="fixed inset-0 z-[80] bg-black/90 backdrop-blur-sm flex flex-col" role="dialog" aria-modal="true">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 sm:px-6 py-3 border-b border-white/10">
+      <div className="flex items-center gap-3 px-4 sm:px-6 py-3 border-b border-text-base/10">
         <div className="rounded-xl bg-accent/12 p-2">
           <Box className="w-5 h-5 text-accent" />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-white font-bold truncate">{fileName}</h3>
+          <h3 className="text-text-base font-bold truncate">{fileName}</h3>
           <p className="text-[11px] text-text-muted uppercase tracking-widest">
             {fileType === 'step' ? 'STEP model' : 'STL model'}
             {meshCount > 0 && ` · ${meshCount} part${meshCount === 1 ? '' : 's'} · ${triCount.toLocaleString()} triangles`}
@@ -232,28 +232,28 @@ export default function CadModelViewer({ fileUrl, fileType, fileName, onClose }:
         <button
           onClick={() => setAutoRotate((v) => !v)}
           title="Auto-rotate"
-          className={`p-2 rounded-xl border transition-all ${autoRotate ? 'bg-accent text-accent-ink border-accent' : 'border-white/10 text-text-muted hover:text-white hover:bg-white/5'}`}
+          className={`p-2 rounded-xl border transition-all ${autoRotate ? 'bg-accent text-accent-ink border-accent' : 'border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5'}`}
         >
           <RotateCw className="w-4 h-4" />
         </button>
         <button
           onClick={() => setWireframe((v) => !v)}
           title="Wireframe"
-          className={`p-2 rounded-xl border transition-all ${wireframe ? 'bg-accent text-accent-ink border-accent' : 'border-white/10 text-text-muted hover:text-white hover:bg-white/5'}`}
+          className={`p-2 rounded-xl border transition-all ${wireframe ? 'bg-accent text-accent-ink border-accent' : 'border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5'}`}
         >
           <Grid3X3 className="w-4 h-4" />
         </button>
         <button
           onClick={resetView}
           title="Reset view"
-          className="p-2 rounded-xl border border-white/10 text-text-muted hover:text-white hover:bg-white/5 transition-all"
+          className="p-2 rounded-xl border border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all"
         >
           <Maximize2 className="w-4 h-4" />
         </button>
         <button
           onClick={onClose}
           title="Close (Esc)"
-          className="p-2 rounded-xl border border-white/10 text-text-muted hover:text-white hover:bg-white/5 transition-all"
+          className="p-2 rounded-xl border border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all"
         >
           <X className="w-4 h-4" />
         </button>
@@ -264,7 +264,7 @@ export default function CadModelViewer({ fileUrl, fileType, fileName, onClose }:
         <div ref={mountRef} className="absolute inset-0 [&>canvas]:w-full [&>canvas]:h-full [&>canvas]:block" />
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-text-muted">
-            <div className="w-10 h-10 rounded-full border-2 border-white/10 border-t-accent animate-spin" />
+            <div className="w-10 h-10 rounded-full border-2 border-text-base/10 border-t-accent animate-spin" />
             <p className="text-sm">Loading 3D model…</p>
             {fileType === 'step' && <p className="text-xs text-text-muted/70">Parsing STEP geometry in your browser</p>}
           </div>
@@ -273,14 +273,14 @@ export default function CadModelViewer({ fileUrl, fileType, fileName, onClose }:
           <div className="absolute inset-0 flex items-center justify-center p-6">
             <div className="max-w-md text-center space-y-3">
               <AlertTriangle className="w-10 h-10 text-warning mx-auto" />
-              <p className="text-white font-bold">Couldn't load this model</p>
+              <p className="text-text-base font-bold">Couldn't load this model</p>
               <p className="text-sm text-text-muted">{loadError}</p>
             </div>
           </div>
         )}
         {!loading && !loadError && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 pointer-events-none">
-            <p className="text-[11px] text-text-muted/80 bg-black/50 border border-white/10 rounded-full px-4 py-1.5 whitespace-nowrap">
+            <p className="text-[11px] text-text-muted/80 bg-black/50 border border-text-base/10 rounded-full px-4 py-1.5 whitespace-nowrap">
               Drag to orbit · Scroll to zoom · Right-drag to pan
             </p>
           </div>

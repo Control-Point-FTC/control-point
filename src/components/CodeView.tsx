@@ -21,6 +21,7 @@ import Editor, { DiffEditor } from '@monaco-editor/react';
 import { useRef } from 'react';
 import { format } from 'date-fns';
 import { confirmDialog } from './dialog';
+import { useTheme } from '../hooks/useTheme';
 import { CodeFile, CodeCommit, Member, Team, CodeContent } from '../types';
 import { GitHubRepoSection } from './GitHubRepoSection';
 import {
@@ -47,6 +48,8 @@ interface CodeViewProps {
 
 export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading, hasScope, activeTeamId }) => {
   const canManageCode = hasScope ? hasScope('code') : false;
+  const { theme } = useTheme();
+  const monacoTheme = theme === 'light' ? 'light' : 'vs-dark';
   const [files, setFiles] = useState<CodeFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<CodeFile | null>(null);
   const [currentBranch, setCurrentBranch] = useState<'main' | 'drafts'>('drafts');
@@ -329,7 +332,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
     };
 
     return (
-      <div className="flex items-center gap-2 text-xs text-slate-300 px-3 py-1 bg-slate-700/50 rounded-lg">
+      <div className="flex items-center gap-2 text-xs text-text-muted px-3 py-1 bg-secondary rounded-lg">
         {icons[autoSaveStatus]}
         {labels[autoSaveStatus]}
       </div>
@@ -342,12 +345,12 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
       <div className="flex items-center justify-between gap-4 flex-shrink-0">
         <div className="flex items-center gap-3">
           <Code2 className="w-6 h-6 text-accent" />
-          <h2 className="text-2xl font-bold text-white">Code Management</h2>
+          <h2 className="text-2xl font-bold text-text-base">Code Management</h2>
         </div>
         {canManageCode && (
           <button
             onClick={() => setShowNewFileModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-accent text-primary font-bold rounded-lg hover:brightness-90 transition-all"
+            className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-ink font-bold rounded-lg hover:brightness-90 transition-all"
           >
             <Plus className="w-4 h-4" />
             New File
@@ -374,22 +377,22 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
       {/* Team & File Selection — scoped to the active team */}
       <div className="flex gap-4 flex-wrap flex-shrink-0">
         <div className="flex-1 min-w-[200px]">
-          <label className="text-xs font-bold text-slate-300 mb-2 block">TEAM</label>
-          <div className="w-full px-3 py-2 bg-slate-800/60 text-white rounded-lg border border-slate-700 font-semibold">
+          <label className="text-xs font-bold text-text-muted mb-2 block">TEAM</label>
+          <div className="w-full px-3 py-2 bg-elevated text-text-base rounded-lg border border-line font-semibold">
             {currentTeam?.name || 'Loading…'}
           </div>
         </div>
 
         {selectedTeamId && (
           <div className="flex-1 min-w-[200px]">
-            <label className="text-xs font-bold text-slate-300 mb-2 block">SELECT FILE</label>
+            <label className="text-xs font-bold text-text-muted mb-2 block">SELECT FILE</label>
             <select
               value={selectedFile?.id || ''}
               onChange={(e) => {
                 const file = files.find(f => f.id === parseInt(e.target.value));
                 setSelectedFile(file || null);
               }}
-              className="w-full px-3 py-2 bg-slate-800 text-white rounded-lg border border-slate-700 focus:border-accent focus:outline-none"
+              className="w-full px-3 py-2 bg-elevated text-text-base rounded-lg border border-line focus:border-accent focus:outline-none"
             >
               <option value="">Choose a file...</option>
               {files.map(f => (
@@ -404,7 +407,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
       {selectedFile ? (
         <div className="flex flex-col gap-4 flex-1 min-h-0 overflow-hidden" style={{ minHeight: '60vh' }}>
           {/* Toolbar */}
-          <div className="flex items-center justify-between gap-3 flex-wrap bg-slate-800/50 p-3 rounded-lg flex-shrink-0">
+          <div className="flex items-center justify-between gap-3 flex-wrap bg-elevated p-3 rounded-lg flex-shrink-0">
             <div className="flex items-center gap-2">
               <GitBranch className="w-4 h-4 text-accent" />
               <div className="flex gap-2">
@@ -415,8 +418,8 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                   }}
                   className={`px-3 py-1 rounded text-sm font-bold transition-all ${
                     currentBranch === 'drafts'
-                      ? 'bg-accent text-primary'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      ? 'bg-accent text-accent-ink'
+                      : 'bg-secondary text-text-muted hover:bg-text-base/10'
                   }`}
                 >
                   Drafts
@@ -428,8 +431,8 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                   }}
                   className={`px-3 py-1 rounded text-sm font-bold transition-all ${
                     currentBranch === 'main'
-                      ? 'bg-accent text-primary'
-                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      ? 'bg-accent text-accent-ink'
+                      : 'bg-secondary text-text-muted hover:bg-text-base/10'
                   }`}
                 >
                   Main
@@ -442,14 +445,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
             <div className="flex items-center gap-2">
               <button
                 onClick={formatDocument}
-                className="flex items-center gap-1 px-3 py-1 bg-slate-700 text-slate-200 rounded text-sm hover:bg-slate-600 transition-all"
+                className="flex items-center gap-1 px-3 py-1 bg-secondary text-text-base rounded text-sm hover:bg-text-base/10 transition-all"
               >
                 Format
               </button>
               <button
                 onClick={() => setCompareMode(!compareMode)}
                 className={`flex items-center gap-1 px-3 py-1 rounded text-sm font-bold transition-all ${
-                  compareMode ? 'bg-accent text-primary' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                  compareMode ? 'bg-accent text-accent-ink' : 'bg-secondary text-text-base hover:bg-text-base/10'
                 }`}
               >
                 Compare
@@ -459,7 +462,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
             <div className="flex items-center gap-2 flex-wrap justify-end">
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center gap-1 px-3 py-1 bg-slate-700 text-slate-200 rounded text-sm hover:bg-slate-600 transition-all"
+                className="flex items-center gap-1 px-3 py-1 bg-secondary text-text-base rounded text-sm hover:bg-text-base/10 transition-all"
               >
                 <History className="w-4 h-4" />
                 History
@@ -499,10 +502,10 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
           <div className="flex gap-4 flex-1 min-h-0">
             {/* Editor */}
             <div className="flex-1 min-w-0 flex flex-col">
-              <div className="text-xs font-bold text-slate-400 mb-2 px-3">
+              <div className="text-xs font-bold text-text-muted mb-2 px-3">
                 {selectedFile.file_name} ({selectedFile.language})
               </div>
-              <div className="flex-1 bg-slate-900 rounded-lg border border-slate-700 min-h-0 flex flex-col">
+              <div className="flex-1 bg-primary rounded-lg border border-line min-h-0 flex flex-col">
                 <div className="flex-1 min-h-0 overflow-auto">
                     {compareMode && comparePair.base && comparePair.head ? (
                       <DiffEditor
@@ -511,7 +514,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                         original={history.find(h => h.id === comparePair.base)?.content || ''}
                         modified={history.find(h => h.id === comparePair.head)?.content || ''}
                         onMount={(editor, monaco) => { diffEditorRef.current = editor; monacoRef.current = monaco; }}
-                        theme="vs-dark"
+                        theme={monacoTheme}
                         options={{ automaticLayout: true }}
                       />
                     ) : (
@@ -527,7 +530,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                             setAutoSaveStatus('unsaved');
                           }
                         }}
-                        theme="vs-dark"
+                        theme={monacoTheme}
                         options={{
                           minimap: { enabled: true },
                           wordWrap: 'on',
@@ -545,9 +548,9 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
 
             {/* History Sidebar */}
             {showHistory && (
-              <div className="w-80 flex flex-col bg-slate-800/50 rounded-lg border border-slate-700 overflow-hidden">
-                <div className="px-3 py-2 border-b border-slate-700 bg-slate-700/50">
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+              <div className="w-80 flex flex-col bg-elevated rounded-lg border border-line overflow-hidden">
+                <div className="px-3 py-2 border-b border-line bg-secondary">
+                  <h4 className="text-sm font-bold text-text-base flex items-center gap-2">
                     <Clock className="w-4 h-4" />
                     Commit History
                   </h4>
@@ -555,13 +558,13 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                 <div className="flex-1 overflow-y-auto">
                     {history.length > 0 ? (
                       history.map(commit => (
-                        <div key={commit.id} className="w-full border-b border-slate-700">
-                          <div className={`w-full text-left px-3 py-2 hover:bg-slate-700/50 transition-all ${selectedCommit?.id === commit.id ? 'bg-accent/20' : ''}`}>
+                        <div key={commit.id} className="w-full border-b border-line">
+                          <div className={`w-full text-left px-3 py-2 hover:bg-secondary transition-all ${selectedCommit?.id === commit.id ? 'bg-accent/20' : ''}`}>
                             <div className="flex items-start gap-2">
                               <div className="flex-1 cursor-pointer" onClick={() => handleViewCommit(commit)}>
                                 <div className="text-xs font-bold text-accent">{commit.hash.substring(0, 8)}</div>
-                                <div className="text-xs text-slate-200">{commit.message}</div>
-                                <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                                <div className="text-xs text-text-base">{commit.message}</div>
+                                <div className="flex items-center gap-1 text-[10px] text-text-muted">
                                   <User className="w-3 h-3" />
                                   {commit.author_name || 'Unknown'} • {format(new Date(commit.created_at), 'MMM dd, HH:mm')}
                                 </div>
@@ -571,14 +574,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                                   <button
                                     title="Use as base for compare"
                                     onClick={() => setComparePair(p => ({ ...p, base: commit.id }))}
-                                    className={`px-2 py-1 text-[11px] rounded ${comparePair.base === commit.id ? 'bg-accent text-primary' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'}`}
+                                    className={`px-2 py-1 text-[11px] rounded ${comparePair.base === commit.id ? 'bg-accent text-accent-ink' : 'bg-secondary text-text-base hover:bg-text-base/10'}`}
                                   >
                                     Base
                                   </button>
                                   <button
                                     title="Use as head for compare"
                                     onClick={() => setComparePair(p => ({ ...p, head: commit.id }))}
-                                    className={`px-2 py-1 text-[11px] rounded ${comparePair.head === commit.id ? 'bg-accent text-primary' : 'bg-slate-700 text-slate-200 hover:bg-slate-600'}`}
+                                    className={`px-2 py-1 text-[11px] rounded ${comparePair.head === commit.id ? 'bg-accent text-accent-ink' : 'bg-secondary text-text-base hover:bg-text-base/10'}`}
                                   >
                                     Head
                                   </button>
@@ -599,14 +602,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                         </div>
                       ))
                     ) : (
-                      <div className="p-3 text-xs text-slate-400 text-center">
+                      <div className="p-3 text-xs text-text-muted text-center">
                         No commits yet
                       </div>
                     )}
                     {historyHasMore && history.length > 0 && (
                       <button
                         onClick={() => loadHistory(true)}
-                        className="w-full mt-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded-lg py-2 transition-colors"
+                        className="w-full mt-1 text-[11px] font-semibold text-text-muted hover:text-text-base border border-line hover:border-text-base/30 rounded-lg py-2 transition-colors"
                       >
                         Load more commits
                       </button>
@@ -619,8 +622,8 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
       ) : (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
-            <FileText className="w-16 h-16 text-slate-600 mx-auto mb-4" />
-            <p className="text-slate-400 mb-2">Select a file to view code</p>
+            <FileText className="w-16 h-16 text-text-muted mx-auto mb-4" />
+            <p className="text-text-muted mb-2">Select a file to view code</p>
             {canManageCode && (
               <button
                 onClick={() => setShowNewFileModal(true)}
@@ -636,25 +639,25 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
       {/* New File Modal */}
       {showNewFileModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-6 max-w-md w-full border border-slate-700">
-            <h3 className="text-lg font-bold text-white mb-4">Create New File</h3>
+          <div className="bg-elevated rounded-lg p-6 max-w-md w-full border border-line">
+            <h3 className="text-lg font-bold text-text-base mb-4">Create New File</h3>
             <div className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-2">FILE NAME</label>
+                <label className="text-xs font-bold text-text-muted block mb-2">FILE NAME</label>
                 <input
                   type="text"
                   placeholder="Example.java"
                   value={newFileName}
                   onChange={(e) => setNewFileName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-700 focus:border-accent focus:outline-none"
+                  className="w-full px-3 py-2 bg-primary text-text-base rounded-lg border border-line focus:border-accent focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-2">LANGUAGE</label>
+                <label className="text-xs font-bold text-text-muted block mb-2">LANGUAGE</label>
                 <select
                   value={newFileLanguage}
                   onChange={(e) => setNewFileLanguage(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-700 focus:border-accent focus:outline-none"
+                  className="w-full px-3 py-2 bg-primary text-text-base rounded-lg border border-line focus:border-accent focus:outline-none"
                 >
                   <option value="java">Java</option>
                   <option value="cpp">C++</option>
@@ -669,14 +672,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                   setShowNewFileModal(false);
                   setNewFileName('');
                 }}
-                className="flex-1 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-all font-bold"
+                className="flex-1 px-4 py-2 bg-secondary text-text-base rounded-lg hover:bg-text-base/10 transition-all font-bold"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateFile}
                 disabled={loading || !newFileName || !selectedTeamId}
-                className="flex-1 px-4 py-2 bg-accent text-primary rounded-lg hover:brightness-90 transition-all font-bold disabled:opacity-50"
+                className="flex-1 px-4 py-2 bg-accent text-accent-ink rounded-lg hover:brightness-90 transition-all font-bold disabled:opacity-50"
               >
                 Create
               </button>
@@ -688,20 +691,20 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
       {/* Commit Modal */}
       {showCommitModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-lg p-6 max-w-md w-full border border-slate-700">
-            <h3 className="text-lg font-bold text-white mb-4">Commit to Main</h3>
+          <div className="bg-elevated rounded-lg p-6 max-w-md w-full border border-line">
+            <h3 className="text-lg font-bold text-text-base mb-4">Commit to Main</h3>
             <div className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-2">COMMIT MESSAGE</label>
+                <label className="text-xs font-bold text-text-muted block mb-2">COMMIT MESSAGE</label>
                 <textarea
                   value={commitMessage}
                   onChange={(e) => setCommitMessage(e.target.value)}
                   placeholder="Describe your changes..."
                   rows={4}
-                  className="w-full px-3 py-2 bg-slate-900 text-white rounded-lg border border-slate-700 focus:border-accent focus:outline-none resize-none"
+                  className="w-full px-3 py-2 bg-primary text-text-base rounded-lg border border-line focus:border-accent focus:outline-none resize-none"
                 />
               </div>
-              <div className="text-xs text-slate-400">
+              <div className="text-xs text-text-muted">
                 You will be committing {code.length} characters from the drafts branch to main.
               </div>
             </div>
@@ -711,7 +714,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                   setShowCommitModal(false);
                   setCommitMessage('');
                 }}
-                className="flex-1 px-4 py-2 bg-slate-700 text-slate-200 rounded-lg hover:bg-slate-600 transition-all font-bold"
+                className="flex-1 px-4 py-2 bg-secondary text-text-base rounded-lg hover:bg-text-base/10 transition-all font-bold"
               >
                 Cancel
               </button>

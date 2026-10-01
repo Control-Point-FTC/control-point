@@ -58,13 +58,13 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   return (
     <div className={frameCls}>
       <div className="px-3.5 pt-3 pb-1 flex items-center justify-between gap-2">
-        <p className="text-[13px] font-bold text-white">
+        <p className="text-[13px] font-bold text-text-base">
           {isDestructive ? `Delete ${total} ${total === 1 ? 'item' : 'items'}?` : `Add ${total} ${total === 1 ? 'item' : 'items'}?`}
         </p>
         <button
           onClick={onDismiss}
           aria-label="Dismiss"
-          className="p-1 text-text-muted hover:text-white transition-colors"
+          className="p-1 text-text-muted hover:text-text-base transition-colors"
         >
           <X className="w-4 h-4" />
         </button>
@@ -81,7 +81,7 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
               </p>
               <ul className="space-y-1">
                 {p.items.map((it, i) => (
-                  <li key={i} className="text-[13px] text-white/80 leading-snug flex gap-2">
+                  <li key={i} className="text-[13px] text-text-base/80 leading-snug flex gap-2">
                     <span className="text-accent mt-0.5 shrink-0">•</span>
                     <span className="min-w-0">{itemSummary(p.kind, it)}</span>
                   </li>
@@ -99,8 +99,8 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
           onClick={onConfirm}
           disabled={status === 'confirming'}
           className={isDestructive
-            ? "w-full rounded-xl bg-red-500 text-white font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"
-            : "w-full rounded-xl bg-accent text-primary font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"}
+            ? "w-full rounded-xl bg-red-500 text-text-base font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"
+            : "w-full rounded-xl bg-accent text-accent-ink font-bold text-[13px] py-2 hover:brightness-110 active:scale-[0.99] transition disabled:opacity-60 flex items-center justify-center gap-2"}
         >
           {status === 'confirming' ? (
             <>

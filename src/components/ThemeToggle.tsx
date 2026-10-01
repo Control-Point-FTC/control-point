@@ -18,7 +18,7 @@ export default function ThemeToggle({ className }: { className?: string }) {
       title="Toggle light/dark mode"
       data-onboard="header-theme-toggle"
       className={cn(
-        'p-2 rounded-xl text-text-muted hover:text-white hover:bg-white/10 active:scale-95 transition-all flex-shrink-0',
+        'p-2 rounded-xl text-text-muted hover:text-text-base hover:bg-text-base/10 active:scale-95 transition-all flex-shrink-0',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
         className
       )}

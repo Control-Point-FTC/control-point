@@ -39,12 +39,12 @@ export const PresencePicker = ({ value, onPick }: { value?: string; onPick: (s: 
           onClick={() => onPick(s)}
           className={cn(
             'w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors',
-            active ? 'bg-accent/15' : 'hover:bg-white/[0.06]'
+            active ? 'bg-accent/15' : 'hover:bg-text-base/[0.06]'
           )}
         >
           <span className={cn('w-3.5 h-3.5 rounded-full flex-shrink-0', meta.dot)} />
           <span className="flex-1 min-w-0">
-            <span className={cn('block text-sm font-semibold', active ? 'text-accent' : 'text-white')}>{meta.label}</span>
+            <span className={cn('block text-sm font-semibold', active ? 'text-accent' : 'text-text-base')}>{meta.label}</span>
             <span className="block text-xs text-text-muted truncate">{meta.desc}</span>
           </span>
           {active && <Check className="w-4 h-4 text-accent flex-shrink-0" />}

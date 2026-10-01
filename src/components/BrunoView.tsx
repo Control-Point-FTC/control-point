@@ -279,12 +279,12 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
         className={`group w-full text-left rounded-xl border px-3 py-2.5 cursor-pointer transition-colors ${
           chat.id === activeId
             ? 'bg-accent/10 border-accent/40'
-            : 'bg-white/[0.03] border-white/[0.07] hover:border-white/20'
+            : 'bg-text-base/[0.03] border-text-base/[0.07] hover:border-text-base/20'
         }`}
       >
         <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
-            <p className="text-[13px] font-semibold text-white truncate">{chat.title || 'Untitled chat'}</p>
+            <p className="text-[13px] font-semibold text-text-base truncate">{chat.title || 'Untitled chat'}</p>
             <div className="flex items-center gap-1.5 mt-1">
               {chat.is_public ? (
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-300"><Globe className="w-3 h-3" />Team</span>
@@ -317,7 +317,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       <div className={`${activeId ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 flex-col gap-3 overflow-y-auto custom-scrollbar pr-1`}>
         <button
           onClick={() => { setActiveId(null); setMessages([]); }}
-          className="flex items-center justify-center gap-2 w-full rounded-xl bg-accent text-primary font-bold text-sm px-4 py-2.5 hover:brightness-110 active:scale-[0.98] transition shadow-[0_4px_16px_rgba(255,199,0,0.25)]"
+          className="flex items-center justify-center gap-2 w-full rounded-xl bg-accent text-accent-ink font-bold text-sm px-4 py-2.5 hover:brightness-110 active:scale-[0.98] transition shadow-[0_4px_16px_rgba(255,199,0,0.25)]"
         >
           <Plus className="w-4 h-4" /> New chat
         </button>
@@ -342,7 +342,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
             {chatsHasMore && (
               <button
                 onClick={() => fetchChats(undefined, true)}
-                className="w-full mt-2 text-xs font-semibold text-text-muted hover:text-white border border-white/10 hover:border-white/25 rounded-lg py-2 transition-colors"
+                className="w-full mt-2 text-xs font-semibold text-text-muted hover:text-text-base border border-text-base/10 hover:border-text-base/25 rounded-lg py-2 transition-colors"
               >
                 Show older chats
               </button>
@@ -352,14 +352,14 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       </div>
 
       {/* Active chat */}
-      <div className={`${activeId || messages.length ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden`}>
+      <div className={`${activeId || messages.length ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col rounded-2xl border border-text-base/10 bg-text-base/[0.02] overflow-hidden`}>
         {/* Header */}
-        <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03] flex items-center gap-3">
-          <button onClick={() => setActiveId(null)} aria-label="Back to chats" className="md:hidden text-text-muted hover:text-white">
+        <div className="px-4 py-3 border-b border-text-base/10 bg-text-base/[0.03] flex items-center gap-3">
+          <button onClick={() => setActiveId(null)} aria-label="Back to chats" className="md:hidden text-text-muted hover:text-text-base">
             <ChevronLeft className="w-5 h-5" />
           </button>
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shrink-0">
-            <BrunoIcon className="w-5 h-5 text-primary" />
+            <BrunoIcon className="w-5 h-5 text-accent-ink" />
           </div>
           <div className="flex-1 min-w-0">
             {editingTitle ? (
@@ -369,14 +369,14 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                   onChange={(e) => setTitleDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') setEditingTitle(false); }}
                   autoFocus
-                  className="flex-1 min-w-0 bg-primary border border-accent/40 rounded-lg px-2 py-1 text-sm text-white focus:outline-none"
+                  className="flex-1 min-w-0 bg-primary border border-accent/40 rounded-lg px-2 py-1 text-sm text-text-base focus:outline-none"
                 />
                 <button onClick={saveTitle} aria-label="Save title" className="text-accent hover:brightness-110"><Check className="w-4 h-4" /></button>
-                <button onClick={() => setEditingTitle(false)} aria-label="Cancel" className="text-text-muted hover:text-white"><X className="w-4 h-4" /></button>
+                <button onClick={() => setEditingTitle(false)} aria-label="Cancel" className="text-text-muted hover:text-text-base"><X className="w-4 h-4" /></button>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 min-w-0">
-                <p className="text-white font-bold text-sm truncate">{activeChat?.title || 'New chat'}</p>
+                <p className="text-text-base font-bold text-sm truncate">{activeChat?.title || 'New chat'}</p>
                 {isOwner && (
                   <button
                     onClick={() => { setTitleDraft(activeChat?.title || ''); setEditingTitle(true); }}
@@ -401,7 +401,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
               className={`flex items-center gap-1.5 text-xs font-bold rounded-full px-3 py-1.5 border transition-colors ${
                 activeChat?.is_public
                   ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
-                  : 'bg-white/[0.04] text-text-muted border-white/10 hover:text-white hover:border-white/25'
+                  : 'bg-text-base/[0.04] text-text-muted border-text-base/10 hover:text-text-base hover:border-text-base/25'
               }`}
             >
               <Globe className="w-3.5 h-3.5" />
@@ -414,11 +414,11 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
         <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 py-4 space-y-3">
           {messages.length === 0 && (
             <div className="space-y-4 max-w-lg mx-auto pt-6">
-              <div className="rounded-2xl bg-white/[0.04] border border-white/[0.07] p-4 text-center">
+              <div className="rounded-2xl bg-text-base/[0.04] border border-text-base/[0.07] p-4 text-center">
                 <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] flex items-center justify-center mb-3">
-                  <BrunoIcon className="w-6 h-6 text-primary" />
+                  <BrunoIcon className="w-6 h-6 text-accent-ink" />
                 </div>
-                <p className="text-sm text-white/85 leading-relaxed">
+                <p className="text-sm text-text-base/85 leading-relaxed">
                   Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
                   your FTC robot: mechanisms, code, strategy, or troubleshooting.
                 </p>
@@ -430,7 +430,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                     key={s}
                     onClick={() => send(s)}
                     disabled={busy}
-                    className="text-left text-[13px] text-white/75 hover:text-accent bg-white/[0.03] hover:bg-accent/10 border border-white/[0.07] hover:border-accent/30 rounded-xl px-3.5 py-2.5 transition-colors disabled:opacity-50"
+                    className="text-left text-[13px] text-text-base/75 hover:text-accent bg-text-base/[0.03] hover:bg-accent/10 border border-text-base/[0.07] hover:border-accent/30 rounded-xl px-3.5 py-2.5 transition-colors disabled:opacity-50"
                   >
                     {s}
                   </button>
@@ -442,7 +442,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
           {messages.map((m, i) =>
             m.role === 'user' ? (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-primary text-sm font-medium px-4 py-2.5 leading-relaxed">
+                <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink text-sm font-medium px-4 py-2.5 leading-relaxed">
                   {m.text}
                 </div>
               </div>
@@ -466,7 +466,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
               40ms, so streaming never re-renders the memoized rows above. */}
           {stream.active && (
             <div className="flex justify-start">
-              <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.05] border border-white/[0.07] px-4 py-2.5 text-sm text-white/85 leading-relaxed">
+              <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-4 py-2.5 text-sm text-text-base/85 leading-relaxed">
                 {stream.text ? (
                   <Markdown>{stripEventBlocks(stream.text)}</Markdown>
                 ) : (
@@ -484,7 +484,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
         {/* Input */}
         <form
           onSubmit={(e) => { e.preventDefault(); send(); }}
-          className="p-3 border-t border-white/10 bg-white/[0.02]"
+          className="p-3 border-t border-text-base/10 bg-text-base/[0.02]"
         >
           <ChatInput
             value={input}

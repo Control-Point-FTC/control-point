@@ -144,18 +144,18 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 420, opacity: 0.6 }}
             transition={{ type: 'spring', stiffness: 380, damping: 40 }}
-            className="fixed right-0 top-0 z-50 h-full w-[400px] max-w-[94vw] flex flex-col bg-[#101014]/98 backdrop-blur-xl border-l border-white/10 shadow-2xl"
+            className="fixed right-0 top-0 z-50 h-full w-[400px] max-w-[94vw] flex flex-col bg-[#101014]/98 backdrop-blur-xl border-l border-text-base/10 shadow-2xl"
             role="complementary"
             aria-label={`${name} quick chat`}
           >
             {/* Header */}
-            <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03] flex-shrink-0">
+            <div className="px-4 py-3 border-b border-text-base/10 bg-text-base/[0.03] flex-shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shadow-[0_2px_10px_rgba(255,199,0,0.25)]">
-                  <BrunoIcon className="w-5 h-5 text-primary" />
+                  <BrunoIcon className="w-5 h-5 text-accent-ink" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold text-sm leading-tight">{name}</p>
+                  <p className="text-text-base font-bold text-sm leading-tight">{name}</p>
                   <p className="text-text-muted text-[11px] leading-tight">FTC build mentor · BIOBUZZ season</p>
                 </div>
                 <button
@@ -166,7 +166,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 >
                   <Maximize2 className="w-4 h-4" />
                 </button>
-                <button onClick={onClose} aria-label="Close" className="p-1.5 text-text-muted hover:text-white transition-colors">
+                <button onClick={onClose} aria-label="Close" className="p-1.5 text-text-muted hover:text-text-base transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -177,7 +177,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                     href={r.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted hover:text-accent border border-white/10 hover:border-accent/40 rounded-full px-2 py-0.5 transition-colors"
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-text-muted hover:text-accent border border-text-base/10 hover:border-accent/40 rounded-full px-2 py-0.5 transition-colors"
                   >
                     {r.label}
                     <ExternalLink className="w-2.5 h-2.5" />
@@ -190,8 +190,8 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
             <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 space-y-3 min-h-0">
               {messages.length === 0 && (
                 <div className="space-y-3">
-                  <div className="rounded-xl bg-white/[0.04] border border-white/[0.07] p-3">
-                    <p className="text-[13px] text-white/85 leading-relaxed flex gap-2">
+                  <div className="rounded-xl bg-text-base/[0.04] border border-text-base/[0.07] p-3">
+                    <p className="text-[13px] text-text-base/85 leading-relaxed flex gap-2">
                       <Sparkles className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                       <span>
                         Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
@@ -206,7 +206,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                         key={s}
                         onClick={() => send(s)}
                         disabled={busy}
-                        className="text-left text-[12px] text-white/75 hover:text-accent bg-white/[0.03] hover:bg-accent/10 border border-white/[0.07] hover:border-accent/30 rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
+                        className="text-left text-[12px] text-text-base/75 hover:text-accent bg-text-base/[0.03] hover:bg-accent/10 border border-text-base/[0.07] hover:border-accent/30 rounded-lg px-3 py-2 transition-colors disabled:opacity-50"
                       >
                         {s}
                       </button>
@@ -218,13 +218,13 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
               {messages.map((m, i) =>
                 m.role === 'user' ? (
                   <div key={i} className="flex justify-end">
-                    <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-primary text-[13px] font-medium px-3.5 py-2.5 leading-relaxed">
+                    <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink text-[13px] font-medium px-3.5 py-2.5 leading-relaxed">
                       {m.text}
                     </div>
                   </div>
                 ) : (
                   <div key={i} className="flex justify-start">
-                    <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.05] border border-white/[0.07] px-3.5 py-2.5 text-[13px] text-white/85 leading-relaxed prose-sm">
+                    <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-3.5 py-2.5 text-[13px] text-text-base/85 leading-relaxed prose-sm">
                       {m.text ? (
                         <Markdown>{stripEventBlocks(m.text)}</Markdown>
                       ) : (
@@ -263,7 +263,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 e.preventDefault();
                 send();
               }}
-              className="p-3 border-t border-white/10 bg-white/[0.02] flex-shrink-0"
+              className="p-3 border-t border-text-base/10 bg-text-base/[0.02] flex-shrink-0"
             >
               <ChatInput
                 value={input}

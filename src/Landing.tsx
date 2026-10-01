@@ -110,15 +110,15 @@ function HeroMock() {
   return (
     <div className="relative mx-auto mt-16 max-w-4xl animate-float-slow">
       <div className="absolute -inset-8 bg-accent/10 blur-3xl rounded-full pointer-events-none" />
-      <div className="relative rounded-2xl border border-white/10 bg-secondary/90 shadow-2xl shadow-black/60 overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
-          <span className="w-3 h-3 rounded-full bg-white/15" />
-          <span className="w-3 h-3 rounded-full bg-white/15" />
+      <div className="relative rounded-2xl border border-text-base/10 bg-secondary/90 shadow-2xl shadow-black/60 overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-text-base/10 px-4 py-3">
+          <span className="w-3 h-3 rounded-full bg-text-base/15" />
+          <span className="w-3 h-3 rounded-full bg-text-base/15" />
           <span className="w-3 h-3 rounded-full bg-accent/80" />
           <span className="ml-3 text-xs text-text-muted font-mono">control-point — dashboard</span>
         </div>
         <div className="flex">
-          <div className="hidden sm:flex w-44 shrink-0 flex-col gap-1 border-r border-white/10 p-3">
+          <div className="hidden sm:flex w-44 shrink-0 flex-col gap-1 border-r border-text-base/10 p-3">
             {["Dashboard", "Teams & Members", "Attendance", "Tasks", "Calendar", "Budget"].map((t, i) => (
               <div
                 key={t}
@@ -137,13 +137,13 @@ function HeroMock() {
                 { k: "Attendance", v: "92%" },
                 { k: "Open tasks", v: "18" },
               ].map((s) => (
-                <div key={s.k} className="rounded-xl border border-white/10 bg-elevated p-3 sm:p-4">
+                <div key={s.k} className="rounded-xl border border-text-base/10 bg-elevated p-3 sm:p-4">
                   <div className="text-[10px] uppercase tracking-widest text-text-muted font-semibold">{s.k}</div>
                   <div className="font-display text-xl sm:text-2xl font-bold text-accent">{s.v}</div>
                 </div>
               ))}
             </div>
-            <div className="mt-3 rounded-xl border border-white/10 bg-elevated p-4">
+            <div className="mt-3 rounded-xl border border-text-base/10 bg-elevated p-4">
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-widest text-text-muted">This week</span>
                 <span className="rounded-full bg-accent/15 px-2.5 py-1 text-[10px] font-bold text-accent">3 events</span>
@@ -154,8 +154,8 @@ function HeroMock() {
                   ["Qualifier @ Newark", "Sat 8 AM"],
                   ["Sponsor call", "Sun 2 PM"],
                 ].map(([t, d]) => (
-                  <div key={t} className="flex items-center justify-between rounded-lg bg-white/[0.03] px-3 py-2">
-                    <span className="text-xs font-semibold text-white">{t}</span>
+                  <div key={t} className="flex items-center justify-between rounded-lg bg-text-base/[0.03] px-3 py-2">
+                    <span className="text-xs font-semibold text-text-base">{t}</span>
                     <span className="text-[11px] text-text-muted font-mono">{d}</span>
                   </div>
                 ))}
@@ -173,18 +173,18 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
   return (
     <div className="theme-dark min-h-screen bg-primary text-text-base overflow-x-clip">
       {/* nav */}
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.06] bg-primary/80 backdrop-blur-xl">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-text-base/[0.06] bg-primary/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-2.5">
             <Logo />
             <span className="font-display text-lg font-bold tracking-tight">Control Point</span>
           </div>
           <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-text-muted">
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#how" className="hover:text-white transition-colors">How it works</a>
+            <a href="#features" className="hover:text-text-base transition-colors">Features</a>
+            <a href="#how" className="hover:text-text-base transition-colors">How it works</a>
           </nav>
           <div className="hidden md:flex items-center gap-2.5">
-            <button onClick={onSignIn} className="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:text-white hover:bg-white/5 transition-all">
+            <button onClick={onSignIn} className="rounded-xl px-4 py-2 text-sm font-semibold text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all">
               Sign in
             </button>
             <button
@@ -195,7 +195,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
             </button>
           </div>
           <button
-            className="md:hidden rounded-xl p-2 text-text-muted hover:text-white hover:bg-white/5 transition-all"
+            className="md:hidden rounded-xl p-2 text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all"
             onClick={() => setMenuOpen((v) => !v)}
             aria-label="Toggle menu"
           >
@@ -203,15 +203,15 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
           </button>
         </div>
         {menuOpen && (
-          <div className="md:hidden border-t border-white/[0.06] bg-primary/95 backdrop-blur-xl px-4 py-4 space-y-1">
-            <a href="#features" onClick={() => setMenuOpen(false)} className="block rounded-xl px-4 py-3 text-sm font-medium text-text-muted hover:text-white hover:bg-white/5 transition-all">
+          <div className="md:hidden border-t border-text-base/[0.06] bg-primary/95 backdrop-blur-xl px-4 py-4 space-y-1">
+            <a href="#features" onClick={() => setMenuOpen(false)} className="block rounded-xl px-4 py-3 text-sm font-medium text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all">
               Features
             </a>
-            <a href="#how" onClick={() => setMenuOpen(false)} className="block rounded-xl px-4 py-3 text-sm font-medium text-text-muted hover:text-white hover:bg-white/5 transition-all">
+            <a href="#how" onClick={() => setMenuOpen(false)} className="block rounded-xl px-4 py-3 text-sm font-medium text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all">
               How it works
             </a>
             <div className="flex gap-2.5 pt-2">
-              <button onClick={onSignIn} className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-text-muted hover:text-white hover:bg-white/5 transition-all border border-white/10">
+              <button onClick={onSignIn} className="flex-1 rounded-xl px-4 py-3 text-sm font-semibold text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all border border-text-base/10">
                 Sign in
               </button>
               <button
@@ -276,7 +276,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
       </section>
 
       {/* trust strip */}
-      <section className="border-y border-white/[0.06] bg-secondary/40">
+      <section className="border-y border-text-base/[0.06] bg-secondary/40">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-10 gap-y-4 px-4 sm:px-6 py-6 text-[13px] font-semibold text-text-muted">
           <span className="flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-accent" /> Role-based access</span>
           <span className="flex items-center gap-2"><Zap className="w-4 h-4 text-accent" /> Real-time updates</span>
@@ -326,7 +326,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
       </section>
 
       {/* how it works */}
-      <section id="how" className="relative border-y border-white/[0.06] bg-secondary/40 py-24 sm:py-32 overflow-hidden">
+      <section id="how" className="relative border-y border-text-base/[0.06] bg-secondary/40 py-24 sm:py-32 overflow-hidden">
         <div className="hero-glow absolute inset-0 opacity-60" />
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6">
           <motion.div {...fadeUp} className="text-center max-w-2xl mx-auto">
@@ -338,7 +338,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
           <div className="mt-14 grid gap-5 md:grid-cols-3">
             {steps.map((s, i) => (
               <motion.div key={s.n} {...fadeUp} transition={{ ...fadeUp.transition, delay: i * 0.1 }}>
-                <div className="relative h-full rounded-3xl border border-white/10 bg-primary/60 p-8">
+                <div className="relative h-full rounded-3xl border border-text-base/10 bg-primary/60 p-8">
                   <div className="font-display text-5xl font-bold text-accent/25">{s.n}</div>
                   <h3 className="mt-4 font-display text-xl font-bold">{s.title}</h3>
                   <p className="mt-2.5 text-sm leading-relaxed text-text-muted">{s.body}</p>
@@ -373,7 +373,7 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
       </section>
 
       {/* footer */}
-      <footer className="border-t border-white/[0.06]">
+      <footer className="border-t border-text-base/[0.06]">
         <div className="mx-auto flex max-w-6xl flex-col sm:flex-row items-center justify-between gap-4 px-4 sm:px-6 py-8">
           <div className="flex items-center gap-2.5">
             <Logo />
@@ -381,8 +381,8 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
           </div>
           <p className="text-xs text-text-muted">Mission control for robotics teams.</p>
           <div className="flex items-center gap-5 text-xs text-text-muted">
-            <a href="/privacy" className="hover:text-white transition-colors">Privacy Policy</a>
-            <a href="/terms" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="/privacy" className="hover:text-text-base transition-colors">Privacy Policy</a>
+            <a href="/terms" className="hover:text-text-base transition-colors">Terms of Service</a>
           </div>
         </div>
       </footer>
