@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
   Bot, Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
-import { streamBuildHelper, stripEventBlocks, stripSwitchBlock, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
-import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
+import { streamBuildHelper, stripEventBlocks, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
+import { type ProposalStatus } from './ActionProposalCard';
+import { BrunoMessageRow } from './BrunoMessageRow';
+import { useBatchedStream } from './useBatchedStream';
 import { confirmDialog } from './dialog';
 
 const STARTERS = [
@@ -50,8 +52,12 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   // Data-action proposals (```event/```outreach/```tasks/```budget blocks):
   // pending until the user taps the confirm card's "Add all" button.
   const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
+  // Batched streaming: chunks accumulate in a ref and flush to state at most
+  // every 40ms, so per-token setState calls don't re-render the whole chat.
+  // The in-flight reply renders separately from `messages` below.
+  const stream = useBatchedStream(40);
 
-  const confirmProposals = async (idx: number, proposals: ActionProposal[]) => {
+  const confirmProposals = useCallback(async (idx: number, proposals: ActionProposal[]) => {
     setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
     try {
       const applied = await applyActionProposals(proposals);
@@ -62,7 +68,15 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
     } catch (e: any) {
       setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
     }
-  };
+  }, []);
+
+  const dismissProposal = useCallback((idx: number) => {
+    setProposalState((s) => ({ ...s, [idx]: { status: 'dismissed' } }));
+  }, []);
+
+  const dismissSwitch = useCallback((idx: number) => {
+    setDismissedSwitch((d) => (d.includes(idx) ? d : [...d, idx]));
+  }, []);
 
   const isAdmin = hasScope ? hasScope('admin') : false;
   const activeChat = chats.find((c) => c.id === activeId) || null;
@@ -113,7 +127,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, activeId]);
+  }, [messages, activeId, stream.text, stream.active]);
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
@@ -136,25 +150,31 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       setMessages(next);
       setBusy(true);
       busyRef.current = true;
+      // The in-flight reply renders in its own bubble (batched); it only
+      // joins `messages` once complete, so memoized rows never re-render
+      // per chunk.
+      stream.start();
       let agg = '';
-      setMessages([...next, { role: 'model', text: '' }]);
       const persona = chatId ? personaByChat[chatId] : undefined;
-      await streamBuildHelper(next, (chunk) => {
-        agg += chunk;
-        setMessages([...next, { role: 'model', text: agg }]);
-      }, chatId || undefined, persona ? { persona } : undefined);
-      if (!agg.trim()) {
-        setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
+      try {
+        await streamBuildHelper(next, (chunk) => {
+          agg += chunk;
+          stream.push(chunk);
+        }, chatId || undefined, persona ? { persona } : undefined);
+        setMessages([...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
+      } finally {
+        stream.finish();
       }
       // Note: data-action proposal blocks (```event etc.) are NOT auto-inserted
       // anymore — the confirm card calls applyActionProposals + notify on tap.
       fetchChats(chatId);
     } catch (e: any) {
       const blockedMsg = e?.serverError;
-      setMessages((prev) => {
-        const base = prev.filter((m) => !(m.role === 'model' && !m.text));
-        return [...base, { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` }];
-      });
+      stream.finish();
+      setMessages((prev) => [
+        ...prev,
+        { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` },
+      ]);
     } finally {
       setBusy(false);
       busyRef.current = false;
@@ -164,7 +184,9 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   // NavGPT coding handoff: the user accepted the switch. Drop NavGPT's offer
   // message, pin this chat to the plain Bruno persona, and have Bruno answer
   // the pending coding question directly — one fluid switch, no re-asking.
-  const switchToBruno = async () => {
+  // Stable identity so the memoized last message row doesn't re-render
+  // just because the parent did.
+  const switchToBruno = useCallback(async () => {
     const cid = activeId;
     if (!cid || busyRef.current) return;
     const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user');
@@ -174,24 +196,24 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
     setPersonaByChat((m) => ({ ...m, [cid]: 'bruno' }));
     setBusy(true);
     busyRef.current = true;
+    stream.start();
     let agg = '';
-    setMessages([...base, { role: 'model', text: '' }]);
     try {
       await streamBuildHelper(base, (chunk) => {
         agg += chunk;
-        setMessages([...base, { role: 'model', text: agg }]);
+        stream.push(chunk);
       }, cid, { persona: 'bruno' });
-      if (!agg.trim()) {
-        setMessages([...base, { role: 'model', text: `Bruno hit a snag — please try again in a moment.` }]);
-      }
+      setMessages([...base, { role: 'model', text: agg.trim() ? agg : `Bruno hit a snag — please try again in a moment.` }]);
     } catch {
       setMessages([...base, { role: 'model', text: `Bruno isn't reachable right now. Check your connection and try again.` }]);
     } finally {
+      stream.finish();
       setBusy(false);
       busyRef.current = false;
     }
     fetchChats(cid);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, messages, personaByChat]);
 
   const saveTitle = async () => {
     if (!activeChat || !isOwner) return;
@@ -410,54 +432,37 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                 </div>
               </div>
             ) : (
-              <div key={i} className="flex justify-start">
-                <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.05] border border-white/[0.07] px-4 py-2.5 text-sm text-white/85 leading-relaxed">
-                  {m.text ? (
-                    <Markdown>{stripEventBlocks(m.text)}</Markdown>
-                  ) : (
-                    <span className="flex gap-1 items-center text-text-muted py-1">
-                      {[0, 1, 2].map((d) => (
-                        <span key={d} className="w-1.5 h-1.5 rounded-full bg-accent/70 animate-bounce" style={{ animationDelay: `${d * 0.15}s` }} />
-                      ))}
-                    </span>
-                  )}
-                  {(() => {
-                    // Data-action proposals: show the confirm card once the reply
-                    // is complete (not while this message is still streaming).
-                    if (!m.text || (busy && i === messages.length - 1)) return null;
-                    const proposals = extractActionProposals(m.text);
-                    if (!proposals.length) return null;
-                    const st = proposalState[i]?.status || 'pending';
-                    if (st === 'dismissed') return null;
-                    return (
-                      <ActionProposalCard
-                        proposals={proposals}
-                        status={st}
-                        error={proposalState[i]?.error}
-                        onConfirm={() => confirmProposals(i, proposals)}
-                        onDismiss={() => setProposalState((s) => ({ ...s, [i]: { status: 'dismissed' } }))}
-                      />
-                    );
-                  })()}
-                  {i === lastModelIdx && stripSwitchBlock(m.text).switchTo === 'bruno' && !dismissedSwitch.includes(i) && !busy && (
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={switchToBruno}
-                        className="rounded-xl bg-accent text-primary text-[13px] font-bold px-4 py-2 hover:brightness-110 active:scale-[0.98] transition"
-                      >
-                        Yes, switch to Bruno
-                      </button>
-                      <button
-                        onClick={() => setDismissedSwitch((d) => [...d, i])}
-                        className="rounded-xl border border-white/15 text-text-muted hover:text-white text-[13px] font-semibold px-4 py-2 transition-colors"
-                      >
-                        Nah, stay here
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <BrunoMessageRow
+                key={i}
+                text={m.text}
+                index={i}
+                isLastModel={i === lastModelIdx}
+                busy={busy}
+                proposal={proposalState[i]}
+                switchDismissed={dismissedSwitch.includes(i)}
+                onConfirmProposals={confirmProposals}
+                onDismissProposal={dismissProposal}
+                onSwitchToBruno={switchToBruno}
+                onDismissSwitch={dismissSwitch}
+              />
             )
+          )}
+          {/* In-flight reply: rendered separately and updated at most every
+              40ms, so streaming never re-renders the memoized rows above. */}
+          {stream.active && (
+            <div className="flex justify-start">
+              <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white/[0.05] border border-white/[0.07] px-4 py-2.5 text-sm text-white/85 leading-relaxed">
+                {stream.text ? (
+                  <Markdown>{stripEventBlocks(stream.text)}</Markdown>
+                ) : (
+                  <span className="flex gap-1 items-center text-text-muted py-1">
+                    {[0, 1, 2].map((d) => (
+                      <span key={d} className="w-1.5 h-1.5 rounded-full bg-accent/70 animate-bounce" style={{ animationDelay: `${d * 0.15}s` }} />
+                    ))}
+                  </span>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
