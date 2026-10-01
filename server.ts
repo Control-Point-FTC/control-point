@@ -4647,11 +4647,16 @@ async function startServer() {
       if (!task || task.team_id !== auth.teamId) {
         return res.status(404).json({ error: "Task not found" });
       }
-      // Students may only move their own assigned tasks; admins may edit anything
-      if (auth.accountType !== 'admin' && task.assigned_to !== auth.memberId) {
+      // Managers may edit anything; assignees without the permission may only move status.
+      const canManage = await hasPerm(auth, 'manage_tasks');
+      const isAssignee = task.assigned_to === auth.memberId;
+      if (!canManage && !isAssignee) {
         return res.status(403).json({ error: "You can only update tasks assigned to you" });
       }
-      const { status, title, description, assigned_to, due_date } = req.body;
+      const { status, title, description, assigned_to, due_date, is_board } = req.body;
+      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || due_date !== undefined || is_board !== undefined)) {
+        return res.status(403).json({ error: "Only team managers can edit task details" });
+      }
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
       // Status-only moves keep the old path; field edits update the rest.
@@ -4664,6 +4669,7 @@ async function startServer() {
       if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (due_date !== undefined) { sets.push('due_date = ?'); vals.push(due_date || null); }
+      if (is_board !== undefined) { sets.push('is_board = ?'); vals.push(is_board ? 1 : 0); }
       if (assigned_to !== undefined) {
         const targetAssignedTo = assigned_to || null;
         if (targetAssignedTo) {

@@ -5213,6 +5213,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             description: newTask.description,
             assigned_to: newTask.assigned_to ? Number(newTask.assigned_to) : null,
             due_date: newTask.due_date || null,
+            is_board: isBoardTask ? 1 : 0,
           })
         });
         if (res.ok) {
