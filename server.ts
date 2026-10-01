@@ -2077,11 +2077,40 @@ async function startServer() {
   // Pending OAuth signups: token -> {provider, providerSub, email, name, intent, expiry}. Single-use, 10 min.
   const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; avatarUrl: string | null; intent: string; expiry: number }>();
 
+  // First-party web origins that may start AND finish OAuth on the same host,
+  // so each domain keeps the user on the domain they started from instead of
+  // silently bouncing them to APP_URL. Both callback URIs are registered in
+  // the Google/Discord/GitHub provider apps.
+  function firstPartyOrigins(): string[] {
+    const out = new Set<string>(["https://control-point.onrender.com"]);
+    const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
+    if (appUrl) {
+      try { out.add(new URL(appUrl).origin); } catch { /* ignore bad APP_URL */ }
+    }
+    return [...out];
+  }
+
   function getOAuthRedirectUri(req: any, provider: string): string {
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+    const host = req.get("host") || "";
+    const reqOrigin = host ? `${proto}://${host}` : "";
+    // Stay on the request's own domain when it's one of ours — never trust a
+    // raw Host header beyond this allowlist.
+    if (reqOrigin && firstPartyOrigins().includes(reqOrigin)) {
+      return `${reqOrigin}/api/auth/${provider}/callback`;
+    }
     const base = (process.env.APP_URL || "").replace(/\/$/, "");
     if (base) return `${base}/api/auth/${provider}/callback`;
-    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "http";
-    return `${proto}://${req.get("host")}/api/auth/${provider}/callback`;
+    return `${reqOrigin}/api/auth/${provider}/callback`;
+  }
+
+  // OAuth completion may return to a mirror origin or to either first-party
+  // domain (so a login started on control-point.onrender.com finishes there).
+  function isAllowedOAuthReturnOrigin(origin: string): boolean {
+    if (isAllowedMirrorOrigin(origin)) return true;
+    try {
+      return firstPartyOrigins().includes(new URL(origin).origin);
+    } catch { return false; }
   }
 
   app.get("/api/auth/config", async (req, res) => {
@@ -2146,7 +2175,7 @@ async function startServer() {
     // OAuth completion lands on the mirror's app root. Origin must be allowlisted.
     let returnTo: string | undefined;
     try {
-      if (rt && isAllowedMirrorOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
+      if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
     oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google', returnTo });
     const params = new URLSearchParams({
@@ -2291,7 +2320,7 @@ async function startServer() {
     // OAuth completion lands on the mirror's app root. Origin must be allowlisted.
     let returnTo: string | undefined;
     try {
-      if (rt && isAllowedMirrorOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
+      if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
     oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord', returnTo });
     const params = new URLSearchParams({
@@ -2360,7 +2389,7 @@ async function startServer() {
     // OAuth completion lands on the mirror's app root. Origin must be allowlisted.
     let returnTo: string | undefined;
     try {
-      if (rt && isAllowedMirrorOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
+      if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
     oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github', returnTo });
     const params = new URLSearchParams({
