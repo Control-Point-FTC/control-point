@@ -58,8 +58,8 @@ export const commitToMain = async (
   return response.json();
 };
 
-export const getCommitHistory = async (fileId: number, branch: 'main' | 'drafts' = 'main'): Promise<CodeCommit[]> => {
-  const response = await apiFetch(`/api/code/files/${fileId}/history?branch=${branch}`);
+export const getCommitHistory = async (fileId: number, branch: 'main' | 'drafts' = 'main', limit = 50, offset = 0): Promise<CodeCommit[]> => {
+  const response = await apiFetch(`/api/code/files/${fileId}/history?branch=${branch}&limit=${limit}&offset=${offset}`);
   if (!response.ok) throw new Error('Failed to fetch commit history');
   return response.json();
 };

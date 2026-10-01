@@ -161,11 +161,15 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
     }
   };
 
-  const loadHistory = async () => {
+  const HISTORY_PAGE = 50;
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+
+  const loadHistory = async (append = false) => {
     if (!selectedFile) return;
     try {
-      const commits = await getCommitHistory(selectedFile.id, currentBranch);
-      setHistory(commits);
+      const commits = await getCommitHistory(selectedFile.id, currentBranch, HISTORY_PAGE, append ? history.length : 0);
+      setHistory((prev) => (append ? [...prev, ...commits] : commits));
+      setHistoryHasMore(commits.length === HISTORY_PAGE);
     } catch (err) {
       setError(`Failed to load history: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -598,6 +602,14 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                       <div className="p-3 text-xs text-slate-400 text-center">
                         No commits yet
                       </div>
+                    )}
+                    {historyHasMore && history.length > 0 && (
+                      <button
+                        onClick={() => loadHistory(true)}
+                        className="w-full mt-1 text-[11px] font-semibold text-slate-400 hover:text-slate-200 border border-slate-700 hover:border-slate-500 rounded-lg py-2 transition-colors"
+                      >
+                        Load more commits
+                      </button>
                     )}
                 </div>
               </div>

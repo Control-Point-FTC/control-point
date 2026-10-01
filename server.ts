@@ -3668,10 +3668,17 @@ async function startServer() {
     if (!auth) return;
     await backfillMessageChannels(auth.teamId!);
     const channelId = parseInt(String(req.query.channel_id || ''), 10);
-    const where = Number.isFinite(channelId) && channelId > 0
+    // Cursor pagination: newest page first. `before` is a message id; the
+    // response is always in ascending display order (oldest -> newest).
+    // Clients infer hasMore from items.length === limit.
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || "100"), 10) || 100, 1), 200);
+    const before = parseInt(String(req.query.before || ''), 10);
+    const whereBase = Number.isFinite(channelId) && channelId > 0
       ? "m.team_id = ? AND m.channel_id = ?"
       : "m.team_id = ?";
-    const args = Number.isFinite(channelId) && channelId > 0 ? [auth.teamId, channelId] : [auth.teamId];
+    const where = Number.isFinite(before) && before > 0 ? `${whereBase} AND m.id < ?` : whereBase;
+    const baseArgs = Number.isFinite(channelId) && channelId > 0 ? [auth.teamId, channelId] : [auth.teamId];
+    const args = Number.isFinite(before) && before > 0 ? [...baseArgs, before] : baseArgs;
     const msgs = (await dbAll(`
       SELECT m.*, mem.name as sender_name,
         rmem.name as reply_sender_name, r.content as reply_content,
@@ -3681,9 +3688,9 @@ async function startServer() {
       LEFT JOIN messages r ON r.id = m.reply_to_id
       LEFT JOIN members rmem ON rmem.id = r.sender_id
       WHERE ${where}
-      ORDER BY timestamp ASC LIMIT 200
-    `, ...args));
-    res.json(msgs);
+      ORDER BY m.id DESC LIMIT ?
+    `, ...args, limit)) as any[];
+    res.json(msgs.reverse());
   });
 
   // ---- Chat channels ----
@@ -6365,6 +6372,9 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     if (!auth.teamId) return res.json([]);
+    // Paginated: newest first. Clients infer hasMore from items.length === limit.
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || "30"), 10) || 30, 1), 100);
+    const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
     const chats = (await dbAll(`
       SELECT c.*, m.name AS owner_name,
         (SELECT COUNT(*) FROM bruno_messages WHERE chat_id = c.id) AS message_count
@@ -6372,7 +6382,8 @@ Rules:
       LEFT JOIN members m ON c.member_id = m.id
       WHERE c.team_id = ? AND (c.member_id = ? OR c.is_public = 1)
       ORDER BY c.updated_at DESC
-    `, auth.teamId, auth.memberId)) as any[];
+      LIMIT ? OFFSET ?
+    `, auth.teamId, auth.memberId, limit, offset)) as any[];
     res.json(chats);
   });
 
@@ -6802,13 +6813,17 @@ Rules:
       const fcheck = (await dbGet("SELECT id FROM code_files WHERE id = ? AND team_id = ?", fileId, auth.teamId)) as any;
       if (!fcheck) return res.status(404).json({ error: "File not found" });
 
+      // Paginated newest-first history; clients infer hasMore from items.length === limit.
+      const limit = Math.min(Math.max(parseInt(String(req.query.limit || "50"), 10) || 50, 1), 200);
+      const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
       const commits = (await dbAll(`
         SELECT cc.*, m.name as author_name 
         FROM code_commits cc
         LEFT JOIN members m ON cc.author_id = m.id
         WHERE cc.file_id = ? AND cc.branch = ?
         ORDER BY cc.created_at DESC
-      `, fileId, branch));
+        LIMIT ? OFFSET ?
+      `, fileId, branch, limit, offset));
 
       res.json(commits);
     } catch (error) {

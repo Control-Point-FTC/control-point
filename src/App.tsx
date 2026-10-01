@@ -867,7 +867,8 @@ export default function App() {
   // Per-channel message cache so switching channels feels instant: show the
   // cached list immediately, then revalidate in the background.
   const msgCache = useRef(new Map<number, any[]>());
-  // Discord-style text channels (no servers — channels live inside the team)
+  // Per-channel flag: true once we've fetched the oldest messages (no more to load).
+  const msgExhausted = useRef(new Map<number, boolean>());  // Discord-style text channels (no servers — channels live inside the team)
   const [channels, setChannels] = useState<any[]>([]);
   const [chatCategories, setChatCategories] = useState<any[]>([]);
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
@@ -910,6 +911,9 @@ export default function App() {
       const msgs = await fetchJsonStandalone(`/api/messages?channel_id=${activeChannelId}`);
       if (Array.isArray(msgs)) {
         msgCache.current.set(activeChannelId, msgs);
+        // A short first page means we've already got the oldest message.
+        if (msgs.length < 100) msgExhausted.current.set(activeChannelId, true);
+        else msgExhausted.current.delete(activeChannelId);
         if (activeChannelIdRef.current === activeChannelId) setMessages(msgs);
       }
     })();
@@ -1936,6 +1940,7 @@ export default function App() {
       onDismissChecklist: handleChecklistDismiss,
       // Discord-style chat channels
       channels, activeChannelId, setActiveChannelId,
+      msgExhausted,
       chatCategories,
       handleCreateChannel: async (name: string, topic: string, categoryId?: number | null) => {
         const res = await apiFetch('/api/chat/channels', {
@@ -6863,7 +6868,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
 // Discord-style messaging: channel list on the left, conversation in the
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
-function ChatView({ messages, setMessages, msgCache, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
+function ChatView({ messages, setMessages, msgCache, msgExhausted, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -6926,6 +6931,31 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
   const msgRefs = React.useRef<Map<number, HTMLDivElement>>(new Map());
+  // Cursor pagination: per-channel "no more older messages" flags (shared ref from parent).
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadOlderMessages = async () => {
+    if (!activeChannelId || loadingOlder || (messages || []).length === 0) return;
+    if (msgExhausted.current.get(activeChannelId)) return;
+    setLoadingOlder(true);
+    try {
+      const oldestId = (messages as any[])[0]?.id;
+      if (!oldestId) return;
+      const res = await apiFetch(`/api/messages?channel_id=${activeChannelId}&limit=100&before=${oldestId}`);
+      const older: any[] = res.ok ? await res.json() : [];
+      if (older.length < 100) msgExhausted.current.set(activeChannelId, true);
+      if (older.length > 0) {
+        setMessages((prev: any[]) => {
+          const seen = new Set((prev || []).map((m: any) => m.id));
+          const fresh = older.filter((m: any) => !seen.has(m.id));
+          const next = [...fresh, ...(prev || [])];
+          msgCache.current.set(activeChannelId, next);
+          return next;
+        });
+      }
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const activeChannel = (channels || []).find((c: any) => c.id === activeChannelId) || (channels || [])[0];
   const canPostInChannel = isAdmin || !activeChannel?.post_restricted;
@@ -7778,7 +7808,22 @@ function ChatView({ messages, setMessages, msgCache, members, currentUser, socke
                 <p className="text-sm text-text-muted mt-1">This is the start of the conversation.</p>
               </div>
             </div>
-          ) : messageList}
+          ) : (
+            <>
+              {!msgExhausted.current.get(activeChannelId) && visibleMessages.length >= 100 && (
+                <div className="flex justify-center pb-2">
+                  <button
+                    onClick={loadOlderMessages}
+                    disabled={loadingOlder}
+                    className="text-xs font-semibold text-text-muted hover:text-white border border-white/10 hover:border-white/25 rounded-full px-4 py-1.5 transition-colors disabled:opacity-50"
+                  >
+                    {loadingOlder ? 'Loading…' : 'Load older messages'}
+                  </button>
+                </div>
+              )}
+              {messageList}
+            </>
+          )}
         </div>
 
         <div className="px-3 sm:px-4 pb-3 sm:pb-4 pt-1 flex-shrink-0 relative">

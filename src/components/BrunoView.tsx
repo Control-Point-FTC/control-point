@@ -83,14 +83,19 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const activeChat = chats.find((c) => c.id === activeId) || null;
   const isOwner = activeChat && currentUser && activeChat.member_id === currentUser.id;
 
-  const fetchChats = async (selectId?: number | null) => {
+  const CHAT_PAGE = 30;
+  const [chatsHasMore, setChatsHasMore] = useState(false);
+
+  const fetchChats = async (selectId?: number | null, append = false) => {
     try {
-      const res = await apiFetch('/api/bruno/chats');
+      const offset = append ? chats.length : 0;
+      const res = await apiFetch(`/api/bruno/chats?limit=${CHAT_PAGE}&offset=${offset}`);
       const list: BrunoChat[] = res.ok ? await res.json() : [];
-      setChats(list);
+      setChats((prev) => (append ? [...prev, ...list] : list));
+      setChatsHasMore(list.length === CHAT_PAGE);
       if (selectId !== undefined) {
         setActiveId(selectId);
-      } else if (activeId === null && list.length > 0) {
+      } else if (activeId === null && list.length > 0 && !append) {
         setActiveId(list[0].id);
       }
     } catch {
@@ -333,6 +338,14 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                 {teamChats.map(renderRow)}
               </div>
             </div>
+            {chatsHasMore && (
+              <button
+                onClick={() => fetchChats(undefined, true)}
+                className="w-full mt-2 text-xs font-semibold text-text-muted hover:text-white border border-white/10 hover:border-white/25 rounded-lg py-2 transition-colors"
+              >
+                Show older chats
+              </button>
+            )}
           </>
         )}
       </div>
