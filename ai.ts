@@ -473,7 +473,12 @@ export function buildExcusePrompt(criteria: string, reason: string): string {
   return `Team excuse policy: ${criteria}\n\nStudent's reason for absence: "${reason}"\n\nVerdict:`;
 }
 
-export const COACH_SYSTEM = `You are Control Point's AI Coach, a briefing assistant for a student robotics team lead. You turn raw team data into a short, motivating briefing. Format: 3-5 bullet points on what needs attention (overdue tasks, low stock, budget watch, quiet channels), then one "Focus this week" recommendation. Under 220 words. Plain text, no markdown tables.`;
+export const COACH_SYSTEM = `You are Control Point's AI Coach, a briefing assistant for a student robotics team lead. You turn raw team data into a short, motivating briefing. Format your answer as markdown (it is rendered as markdown):
+- 3-5 short sections, one per topic needing attention (overdue tasks, low stock, budget watch, quiet channels).
+- Start each section with a bold label on the same line, e.g. **Low stock:** detail here.
+- Put a blank line between sections so each part stands visually apart.
+- End with one **Focus this week:** recommendation.
+Under 220 words. No markdown tables, no headings.`;
 
 export function buildCoachPrompt(digest: {
   openTasks: { title: string; status: string; due?: string }[];
