@@ -5404,6 +5404,16 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
     }
   };
 
+  useContextMenu('budget-tx', (el) => {
+    if (!hasScope('budget')) return null;
+    const id = Number(el.dataset.cmId);
+    const item = budget.find((b: any) => b.id === id);
+    if (!item) return null;
+    return [
+      { label: 'Delete transaction', icon: Trash2, danger: true, action: () => handleDelete(id) },
+    ];
+  });
+
   const totalIncome = budget.filter((i: any) => i.type === 'income').reduce((acc: number, i: any) => acc + i.amount, 0);
   const totalExpense = budget.filter((i: any) => i.type === 'expense').reduce((acc: number, i: any) => acc + i.amount, 0);
 
@@ -5451,7 +5461,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
           </thead>
           <tbody className="divide-y divide-text-base/5">
             {budget.map((item: any) => (
-              <tr key={item.id} className="hover:bg-text-base/5 transition-colors">
+              <tr key={item.id} className="hover:bg-text-base/5 transition-colors" data-cm-type="budget-tx" data-cm-id={item.id}>
                 <td className="px-6 py-4 text-sm text-text-muted">{item.date}</td>
                 <td className="px-6 py-4 text-sm text-text-base font-medium">{item.description}</td>
                 <td className="px-6 py-4 text-sm text-text-muted">{item.category}</td>
@@ -5613,6 +5623,17 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
       setBusy(false);
     }
   };
+
+  useContextMenu('inventory-part', (el) => {
+    if (!canManage) return null;
+    const id = Number(el.dataset.cmId);
+    const part = inventory.find((p: any) => p.id === id);
+    if (!part) return null;
+    return [
+      { label: 'Edit part', icon: Edit2, action: () => setShowEdit(part) },
+      { label: 'Delete part', icon: Trash2, danger: true, action: () => handleDelete(id) },
+    ];
+  });
 
   const handleImportRev = async () => {
     if (!revLink.trim()) {
@@ -5828,7 +5849,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
                   </tr>
                 ) : (
                   filteredParts.map((part: any) => (
-                    <tr key={part.id} className="hover:bg-text-base/5 transition-colors">
+                    <tr key={part.id} className="hover:bg-text-base/5 transition-colors" data-cm-type="inventory-part" data-cm-id={part.id}>
                       <td className="px-4 py-3 text-sm text-text-base font-medium">{part.name}</td>
                       <td className="px-4 py-3 text-sm text-accent font-mono">{part.sku}</td>
                       <td className="px-4 py-3 text-sm text-text-muted">{part.part_number || '—'}</td>

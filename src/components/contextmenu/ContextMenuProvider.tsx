@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -11,10 +12,16 @@ import type { LucideIcon } from 'lucide-react';
 import { cn } from '../ui';
 
 export interface CtxMenuItem {
-  label: string;
+  label?: string;
   icon?: LucideIcon;
   danger?: boolean;
-  action: () => void | Promise<void>;
+  /** Rendered dimmed, skipped by keyboard nav, and not activatable. */
+  disabled?: boolean;
+  /** Right-aligned hint text (e.g. a shortcut). Never the only indicator. */
+  hint?: string;
+  /** When true, renders a divider instead of an item. */
+  separator?: boolean;
+  action?: () => void | Promise<void>;
 }
 
 /**
@@ -59,15 +66,30 @@ function nativeMenuPreferred(target: EventTarget | null): boolean {
   return false;
 }
 
+function isActionable(it: CtxMenuItem): boolean {
+  return !it.separator && !it.disabled && typeof it.action === 'function';
+}
+
 interface OpenMenu {
   x: number;
   y: number;
   items: CtxMenuItem[];
+  /** Element that had focus when the menu opened — focus returns here. */
+  opener: HTMLElement | null;
+  label: string;
 }
+
+const MENU_PAD = 8;
+const MENU_EST_W = 240;
 
 export function ContextMenuProvider({ children }: { children: ReactNode }) {
   const handlers = useRef(new Map<string, Set<CtxMenuHandler>>());
   const [menu, setMenu] = useState<OpenMenu | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [focusIdx, setFocusIdx] = useState(0);
+  const menuState = useRef<OpenMenu | null>(null);
+  const menuEl = useRef<HTMLDivElement | null>(null);
+  const itemEls = useRef<(HTMLButtonElement | null)[]>([]);
 
   const register = useCallback((type: string, handler: CtxMenuHandler) => {
     let set = handlers.current.get(type);
@@ -81,78 +103,237 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    const m = menuState.current;
+    if (!m) return;
+    menuState.current = null;
+    setMenu(null);
+    setPos(null);
+    if (restoreFocus && m.opener && document.contains(m.opener)) {
+      const opener = m.opener;
+      requestAnimationFrame(() => opener.focus({ preventScroll: true }));
+    }
+  }, []);
+
+  const openMenu = useCallback((anchor: HTMLElement, x: number, y: number) => {
+    const set = handlers.current.get(anchor.dataset.cmType || '');
+    if (!set) return false;
+    let items: CtxMenuItem[] | null = null;
+    for (const h of set) {
+      items = h(anchor);
+      if (items && items.length) break;
+    }
+    // Never open a menu with nothing actionable — leave the native menu alone.
+    if (!items || !items.some(isActionable)) return false;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const m: OpenMenu = {
+      x: Math.max(MENU_PAD, Math.min(x, window.innerWidth - MENU_EST_W - MENU_PAD)),
+      y: Math.max(MENU_PAD, Math.min(y, window.innerHeight - 120)),
+      items,
+      opener,
+      label: anchor.getAttribute('aria-label') || anchor.dataset.cmType || 'Actions',
+    };
+    menuState.current = m;
+    setMenu(m);
+    return true;
+  }, []);
+
+  // Correct the position against the real measured size so the menu never
+  // overflows any viewport edge.
+  useLayoutEffect(() => {
+    if (!menu || !menuEl.current) return;
+    const r = menuEl.current.getBoundingClientRect();
+    const x = Math.max(MENU_PAD, Math.min(menu.x, window.innerWidth - r.width - MENU_PAD));
+    const y = Math.max(MENU_PAD, Math.min(menu.y, window.innerHeight - r.height - MENU_PAD));
+    setPos({ x, y });
+  }, [menu]);
+
+  // Move focus into the menu when it opens (first actionable item).
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const idx = menu.items.findIndex(isActionable);
+    const safe = idx >= 0 ? idx : 0;
+    setFocusIdx(safe);
+    const t = window.setTimeout(() => {
+      itemEls.current[safe]?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [menu]);
+
+  const activate = useCallback(
+    (item: CtxMenuItem) => {
+      if (!isActionable(item)) return;
+      closeMenu(true);
+      item.action!();
+    },
+    [closeMenu],
+  );
+
+  const enabledIndices = useCallback((items: CtxMenuItem[]) => {
+    const out: number[] = [];
+    items.forEach((it, i) => {
+      if (isActionable(it)) out.push(i);
+    });
+    return out;
+  }, []);
+
+  const onMenuKeyDown = (e: React.KeyboardEvent) => {
+    if (!menu) return;
+    const enabled = enabledIndices(menu.items);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu(true);
+      return;
+    }
+    if (e.key === 'Tab') {
+      // Close and hand focus back to the opener synchronously, so the
+      // browser's default Tab then continues the tab order from there.
+      const opener = menu.opener;
+      closeMenu(false);
+      if (opener && document.contains(opener)) opener.focus({ preventScroll: true });
+      return;
+    }
+    if (!enabled.length) return;
+    const cur = enabled.indexOf(focusIdx);
+    const move = (at: number) => {
+      const ni = enabled[at];
+      setFocusIdx(ni);
+      itemEls.current[ni]?.focus({ preventScroll: true });
+    };
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        move((cur + 1) % enabled.length);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        move((cur - 1 + enabled.length) % enabled.length);
+        break;
+      case 'Home':
+        e.preventDefault();
+        move(0);
+        break;
+      case 'End':
+        e.preventDefault();
+        move(enabled.length - 1);
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (cur >= 0) activate(menu.items[enabled[cur]]);
+        break;
+      default:
+        break;
+    }
+  };
+
   useEffect(() => {
-    const close = () => setMenu(null);
     const onContextMenu = (e: MouseEvent) => {
+      // Right-clicking the open menu itself keeps it open (native behavior).
+      if (menuEl.current?.contains(e.target as Node)) return;
+      // Opening another menu replaces the current one.
+      closeMenu(false);
       if (nativeMenuPreferred(e.target)) return;
       const el = (e.target as HTMLElement).closest?.('[data-cm-type]') as HTMLElement | null;
       if (!el) return; // nothing custom here — leave the native menu alone
-      const set = handlers.current.get(el.dataset.cmType || '');
-      if (!set) return;
-      let items: CtxMenuItem[] | null = null;
-      for (const h of set) {
-        items = h(el);
-        if (items && items.length) break;
-      }
-      if (!items || !items.length) return;
+      if (!openMenu(el, e.clientX, e.clientY)) return;
       e.preventDefault();
-      const pad = 8;
-      const w = 230;
-      const h = items.length * 38 + 12;
-      setMenu({
-        x: Math.max(pad, Math.min(e.clientX, window.innerWidth - w - pad)),
-        y: Math.max(pad, Math.min(e.clientY, window.innerHeight - h - pad)),
-        items,
-      });
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+    const onPointerDown = (e: PointerEvent) => {
+      if (!menuState.current) return;
+      if (menuEl.current?.contains(e.target as Node)) return;
+      // Clicking anywhere else dismisses without yanking focus back.
+      closeMenu(false);
     };
+    const onKeyDown = (e: KeyboardEvent) => {
+      const menuKey = e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10');
+      if (menuKey) {
+        if (menuState.current) {
+          // Toggle: menu key while open closes it.
+          e.preventDefault();
+          closeMenu(true);
+          return;
+        }
+        if (nativeMenuPreferred(e.target)) return;
+        const el = (e.target as HTMLElement).closest?.('[data-cm-type]') as HTMLElement | null;
+        if (!el) return;
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        openMenu(el, r.left, r.bottom + 4);
+        return;
+      }
+      // Escape outside the menu container (focus may be elsewhere) still closes.
+      if (e.key === 'Escape' && menuState.current) closeMenu(true);
+    };
+    const onScrollResize = () => closeMenu(false);
     document.addEventListener('contextmenu', onContextMenu);
-    document.addEventListener('keydown', onKey);
-    document.addEventListener('click', close);
-    window.addEventListener('blur', close);
-    window.addEventListener('resize', close);
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('scroll', onScrollResize, true);
+    window.addEventListener('resize', onScrollResize);
+    window.addEventListener('blur', onScrollResize);
     return () => {
       document.removeEventListener('contextmenu', onContextMenu);
-      document.removeEventListener('keydown', onKey);
-      document.removeEventListener('click', close);
-      window.removeEventListener('blur', close);
-      window.removeEventListener('resize', close);
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('scroll', onScrollResize, true);
+      window.removeEventListener('resize', onScrollResize);
+      window.removeEventListener('blur', onScrollResize);
     };
-  }, []);
+  }, [openMenu, closeMenu]);
+
+  const renderPos = pos ?? (menu ? { x: menu.x, y: menu.y } : { x: 0, y: 0 });
 
   return (
     <RegistryCtx.Provider value={{ register }}>
       {children}
       {menu && (
         <div
+          ref={menuEl}
           role="menu"
-          aria-label="Context menu"
+          aria-label={menu.label}
+          aria-orientation="vertical"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
-          className="fixed z-[100] w-[230px] rounded-xl border border-text-base/10 bg-[#141419]/95 backdrop-blur-md shadow-2xl p-1.5"
-          style={{ left: menu.x, top: menu.y }}
+          onKeyDown={onMenuKeyDown}
+          className="fixed z-[100] min-w-[220px] max-w-[calc(100vw-16px)] max-h-[min(70vh,26rem)] overflow-y-auto custom-scrollbar rounded-xl border border-line bg-elevated/95 backdrop-blur-md shadow-2xl p-1.5"
+          style={{ left: renderPos.x, top: renderPos.y }}
         >
           {menu.items.map((it, i) => {
+            if (it.separator) {
+              return <div key={i} role="separator" className="my-1 h-px bg-text-base/10" />;
+            }
             const Icon = it.icon;
+            const actionable = isActionable(it);
             return (
               <button
                 key={i}
-                role="menuitem"
-                onClick={() => {
-                  setMenu(null);
-                  it.action();
+                ref={(el) => {
+                  itemEls.current[i] = el;
                 }}
+                type="button"
+                role="menuitem"
+                aria-disabled={it.disabled || undefined}
+                disabled={it.disabled}
+                tabIndex={i === focusIdx ? 0 : -1}
+                onFocus={() => setFocusIdx(i)}
+                onClick={() => activate(it)}
                 className={cn(
-                  'w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-left transition-colors',
+                  'w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-[13px] font-medium text-left transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 focus-visible:ring-inset',
                   it.danger
-                    ? 'text-rose-300 hover:bg-rose-500/15'
-                    : 'text-text-base/85 hover:bg-text-base/[0.07] hover:text-text-base',
+                    ? 'text-rose-400 hover:bg-rose-500/15 focus-visible:bg-rose-500/15'
+                    : 'text-text-base/85 hover:bg-text-base/[0.07] hover:text-text-base focus-visible:bg-text-base/[0.07]',
+                  'disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-transparent',
                 )}
               >
-                {Icon && <Icon className="w-4 h-4 shrink-0 opacity-70" />}
-                <span className="truncate">{it.label}</span>
+                {Icon && <Icon className="w-4 h-4 shrink-0 opacity-70" aria-hidden="true" />}
+                <span className="truncate flex-1">{it.label}</span>
+                {it.hint && (
+                  <span className="text-[11px] text-text-muted shrink-0" aria-hidden="true">
+                    {it.hint}
+                  </span>
+                )}
               </button>
             );
           })}
