@@ -68,3 +68,13 @@ export const Button = ({ children, className, variant = 'primary', ...props }: a
     </button>
   );
 };
+
+export const Input = ({ className, ...props }: any) => (
+  <input
+    className={cn(
+      "w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
+      className
+    )}
+    {...props}
+  />
+);

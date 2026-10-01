@@ -31,3 +31,12 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      # Email verification (Resend): required for email+password signups to
+      # receive their 6-digit code. Free tier at https://resend.com. Without
+      # these, new email signups can't verify — OAuth signups still work.
+      - key: RESEND_API_KEY
+        sync: false
+      # Verified sender, e.g. "Control Point <verify@yourdomain.com>"
+      # (must be a domain you've verified in Resend).
+      - key: EMAIL_FROM
+        sync: false

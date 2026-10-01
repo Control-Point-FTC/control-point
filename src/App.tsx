@@ -131,7 +131,9 @@ import RolesView, { RoleBadge } from './components/RolesView';
 import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
-import { cn, Card, Button } from './components/ui';
+import { cn, Card, Button, Input } from './components/ui';
+import { AuthShell } from './components/auth/AuthShell';
+import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import { AttendanceTrendChart } from './components/dashboard/AttendanceTrend';
@@ -151,16 +153,7 @@ function validHex(v: any): v is string {
 }
 
 // --- Components ---
-
-const Input = ({ className, ...props }: any) => (
-  <input 
-    className={cn(
-      "w-full bg-elevated border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
-      className
-    )}
-    {...props}
-  />
-);
+// (Input lives in ./components/ui — shared with standalone auth screens.)
 
 const Select = ({ className, options, ...props }: any) => (
   <select 
@@ -213,15 +206,7 @@ const AvatarWithPresence = ({ user, size = 'md', presence, dotClassName }: any) 
 
 // --- Role choice + signup screens ---
 
-const AuthShell = ({ children }: any) => (
-  <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
-    <div className="hero-grid absolute inset-0" />
-    <div className="hero-glow absolute inset-0" />
-    <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
-      {children}
-    </motion.div>
-  </div>
-);
+// (AuthShell lives in ./components/auth/AuthShell so auth screens can be tested standalone.)
 
 const GoogleIcon = () => (
   <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -852,6 +837,8 @@ export default function App() {
   // marketing homepage before the app shell appears.
   const [authReady, setAuthReady] = useState(false);
   const [authScreen, setAuthScreen] = useState<'landing' | 'login' | 'role' | 'signup-admin' | 'signup-student' | 'code-reveal'>('landing');
+  // Email+password signups must verify ownership before getting a session.
+  const [verifyState, setVerifyState] = useState<{ email: string; mode: 'admin' | 'student' | 'login' | 'setup' } | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -1601,6 +1588,10 @@ export default function App() {
       body: JSON.stringify({ email: loginEmail, password: loginPassword })
     });
     const data = await res.json();
+    if (data.needsVerification) {
+      setVerifyState({ email: data.email, mode: 'login' });
+      return;
+    }
     if (data.needsSetup) {
       setNeedsSetup(true);
       setCurrentUser(data.user);
@@ -1624,6 +1615,10 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Signup failed");
+    if (data.needsVerification) {
+      setVerifyState({ email: data.email, mode: payload.accountType === 'admin' ? 'admin' : 'student' });
+      return data;
+    }
     persistSession(data.sessionId, data.user);
     return data;
   };
@@ -1636,6 +1631,10 @@ export default function App() {
       body: JSON.stringify({ email: currentUser?.email, password: loginPassword })
     });
     const data = await res.json();
+    if (data.needsVerification) {
+      setVerifyState({ email: data.email || currentUser?.email, mode: 'setup' });
+      return;
+    }
     if (data.user) {
       persistSession(data.sessionId, data.user);
       setNeedsSetup(false);
@@ -2084,6 +2083,21 @@ export default function App() {
     // A brand-new OAuth user just finished sign-in — collect their last signup
     // step first. This must come before the landing screen or the callback
     // bounces them back to the homepage.
+    // Unverified email+password account: prove ownership before any session.
+    if (verifyState) {
+      return (
+        <VerifyEmailScreen
+          email={verifyState.email}
+          onBack={() => setVerifyState(null)}
+          onVerified={(data) => {
+            persistSession(data.sessionId, data.user);
+            setVerifyState(null);
+            if (verifyState.mode === 'admin' && data?.team) setSignupTeam(data.team);
+            if (verifyState.mode === 'setup') setNeedsSetup(false);
+          }}
+        />
+      );
+    }
     if (oauthSignup) {
       return (
         <OAuthSignupScreen

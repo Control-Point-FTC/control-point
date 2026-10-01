@@ -28,6 +28,12 @@ import * as cheerio from "cheerio";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
 import { runMigrations } from "./migrations/runner.js";
 import {
+  isEmailVerified,
+  markEmailVerified,
+  issueVerificationCode,
+  checkVerificationCode,
+} from "./email-verify.js";
+import {
   ONBOARDING_DDL,
   defaultOnboardingState,
   mergeOnboardingState,
@@ -1748,6 +1754,11 @@ async function startServer() {
       }
       return res.status(401).json({ error: "Invalid password" });
     }
+    // Email ownership check: unverified addresses get a code, not a session.
+    if (!(await isEmailVerified(email))) {
+      try { await issueVerificationCode(email); } catch (e) { console.error("verify code issue failed:", e); }
+      return res.json({ needsVerification: true, email });
+    }
     const sessionId = await createSession(picked.id);
     res.json({ user: sanitizeMember(picked), sessionId });
   });
@@ -1764,6 +1775,10 @@ async function startServer() {
     // The password is account-wide: set it on every membership row for this email.
     (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id));
+    if (!(await isEmailVerified(email))) {
+      try { await issueVerificationCode(email); } catch (e) { console.error("verify code issue failed:", e); }
+      return res.json({ needsVerification: true, email });
+    }
     const sessionId = await createSession(existing.id);
     res.json({ user: sanitizeMember(user), sessionId });
   });
@@ -1826,6 +1841,12 @@ async function startServer() {
           "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 1, 'admin', ?)",
           teamId, cleanName, 'Admin', cleanEmail, hashedPassword, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
         )) as any;
+        // Unverified emails get a code, not a session — the team row already
+        // exists, so verifying later lands them right back here.
+        if (!(await isEmailVerified(cleanEmail))) {
+          try { await issueVerificationCode(cleanEmail); } catch (e) { console.error("verify code issue failed:", e); }
+          return res.json({ needsVerification: true, email: cleanEmail });
+        }
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
@@ -1854,6 +1875,12 @@ async function startServer() {
           )) as any;
           memberId = mInfo.lastInsertRowid;
         }
+        // Unverified emails get a code, not a session — the membership row
+        // already exists, so verifying later lands them right back here.
+        if (!(await isEmailVerified(cleanEmail))) {
+          try { await issueVerificationCode(cleanEmail); } catch (e) { console.error("verify code issue failed:", e); }
+          return res.json({ needsVerification: true, email: cleanEmail });
+        }
         const sessionId = await createSession(memberId);
         await assignSystemRole(team.id, memberId, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
@@ -1865,6 +1892,59 @@ async function startServer() {
     } catch (e: any) {
       console.error("Signup error:", e);
       return res.status(500).json({ error: "Signup failed — try again" });
+    }
+  });
+
+  // ---- Email verification (OTP) ----
+  // The code is checked, the address is marked verified account-wide, and the
+  // caller finally gets a session — identical shape to a login response, plus
+  // the team for the admin code-reveal screen.
+  app.post("/api/auth/verify-email", async (req, res) => {
+    const email = (((req.body || {}).email) || "").trim();
+    const code = String((req.body || {}).code || "");
+    if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
+    const check = await checkVerificationCode(email, code);
+    if (check.ok === false) {
+      const msg = check.reason === "expired"
+        ? "That code expired — request a new one"
+        : check.reason === "locked"
+          ? "Too many wrong attempts — request a new code"
+          : "That code doesn't match — try again";
+      return res.status(400).json({ error: msg, reason: check.reason });
+    }
+    await markEmailVerified(email);
+    await ensureOnboardingRow(email);
+    const rows = await activeMemberRows(email);
+    if (!rows.length) return res.status(400).json({ error: "No account found for that email" });
+    const picked = (await pickMemberRow(rows)) as any;
+    const sessionId = await createSession(picked.id);
+    const teamRow = (await dbGet(
+      "SELECT t.id, t.name, t.access_code FROM teams t JOIN members m ON m.team_id = t.id WHERE m.email = ? ORDER BY m.id DESC LIMIT 1",
+      email
+    )) as any;
+    res.json({
+      user: sanitizeMember(picked),
+      sessionId,
+      team: teamRow ? { id: teamRow.id, name: teamRow.name, access_code: teamRow.access_code } : undefined,
+    });
+  });
+
+  app.post("/api/auth/resend-code", async (req, res) => {
+    const email = (((req.body || {}).email) || "").trim();
+    if (!email) return res.status(400).json({ error: "Email is required" });
+    if (await isEmailVerified(email)) return res.json({ alreadyVerified: true });
+    try {
+      const result = await issueVerificationCode(email);
+      if (result.sent === false) {
+        return res.status(429).json({
+          error: `Wait ${result.cooldownSeconds}s before requesting a new code`,
+          cooldownSeconds: result.cooldownSeconds,
+        });
+      }
+      return res.json({ sent: true });
+    } catch (e: any) {
+      console.error("resend code failed:", e);
+      return res.status(500).json({ error: "Couldn't send the code — try again" });
     }
   });
 
@@ -2020,6 +2100,8 @@ async function startServer() {
       rows = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
     }
     const member = await pickMemberRow(rows);
+    // OAuth providers verify email ownership — no OTP needed.
+    await markEmailVerified(email);
     const sessionId = await createSession(member.id);
     res.redirect(`/?oauth_session=${sessionId}`);
   }
@@ -2038,6 +2120,8 @@ async function startServer() {
       const cleanEmail = (pending.email || '').trim();
       const cleanName = (pending.name || '').trim() || cleanEmail.split('@')[0];
       if (!cleanEmail) return res.status(400).json({ error: "Signup expired — please try again" });
+      // The OAuth provider verified this address — no OTP needed.
+      await markEmailVerified(cleanEmail);
       // Multi-team accounts: a provider-verified email may already exist — it
       // simply gains a membership row in the new/joined team. (Duplicate
       // membership in the SAME team is still rejected below.)
