@@ -54,7 +54,7 @@ export default function DashboardMetricRow({
       <KpiCard
         icon={CalendarCheck}
         label="Today's attendance"
-        value={hasSessionToday ? `${presentCount} / ${memberCount}` : `${memberCount} members`}
+        value={hasSessionToday ? `${presentCount} / ${memberCount}` : `${memberCount} member${memberCount === 1 ? '' : 's'}`}
         sub={hasSessionToday ? 'checked in so far' : 'no session today'}
         onClick={() => onNavigate('/attendance')}
       />
