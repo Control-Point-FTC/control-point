@@ -102,6 +102,7 @@ import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
 import BrunoIcon from './components/BrunoIcon';
+import FeedbackIcon from './components/FeedbackIcon';
 import EmailImportModal from './components/EmailImport';
 import {
   WelcomeScreen,
@@ -487,7 +488,7 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
         </div>
 
         <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-1.5">{label('Full name')}<Input required value={name} onChange={(e: any) => setName(e.target.value)} placeholder="Ada Lovelace" /></div>
+          <div className="space-y-1.5">{label('Full name')}<Input required value={name} onChange={(e: any) => setName(e.target.value)} placeholder="John Smith" /></div>
           <div className="space-y-1.5">{label('Email')}<Input type="email" required value={email} onChange={(e: any) => setEmail(e.target.value)} placeholder="you@team.org" /></div>
           <div className="space-y-1.5">
             {label('Password')}
@@ -2446,7 +2447,7 @@ export default function App() {
               className="p-2 text-text-muted hover:text-text-base transition-colors"
               title="Send feedback to Sushil"
             >
-              <MessageSquareHeart className="w-5 h-5" />
+              <FeedbackIcon className="w-5 h-5" />
             </button>
             <div className="relative">
               <button 
