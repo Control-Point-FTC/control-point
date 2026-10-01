@@ -26,6 +26,7 @@ import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
+import { runMigrations } from "./migrations/runner.js";
 import {
   ONBOARDING_DDL,
   defaultOnboardingState,
@@ -1467,6 +1468,8 @@ setInterval(async () => {
 }, 60 * 60 * 1000); // Every hour
 
 async function startServer() {
+  // Versioned migrations run after the inline baseline DDL above.
+  await runMigrations();
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });

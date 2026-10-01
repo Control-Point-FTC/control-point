@@ -10,6 +10,7 @@ import { type ProposalStatus } from './ActionProposalCard';
 import { BrunoMessageRow } from './BrunoMessageRow';
 import { useBatchedStream } from './useBatchedStream';
 import { confirmDialog } from './dialog';
+import type { BrunoChat, BrunoChatMessage } from '../types/bruno';
 
 const STARTERS = [
   'How should we design an intake for BIOBUZZ pollen?',
@@ -34,7 +35,7 @@ function timeAgo(iso?: string) {
 
 export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const name = botName || 'Bruno';
-  const [chats, setChats] = useState<any[]>([]);
+  const [chats, setChats] = useState<BrunoChat[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [input, setInput] = useState('');
@@ -85,7 +86,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const fetchChats = async (selectId?: number | null) => {
     try {
       const res = await apiFetch('/api/bruno/chats');
-      const list = res.ok ? await res.json() : [];
+      const list: BrunoChat[] = res.ok ? await res.json() : [];
       setChats(list);
       if (selectId !== undefined) {
         setActiveId(selectId);
@@ -116,7 +117,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
         const res = await apiFetch(`/api/bruno/chats/${activeId}`);
         if (res.ok) {
           const data = await res.json();
-          setMessages((data.messages || []).map((m: any) => ({ role: m.role, text: m.text })));
+          setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
         }
       } catch {
         /* keep previous */
