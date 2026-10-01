@@ -79,6 +79,7 @@ import {
   Youtube,
   Pin,
   Bot,
+  PhoneCall,
   QrCode,
   ScanLine,
   Maximize2,
@@ -129,6 +130,7 @@ import { CodeView } from './components/CodeView';
 import { CadView } from './components/CadView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
+import { VoiceSettingsSection } from './components/voice';
 import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
@@ -2050,7 +2052,7 @@ export default function App() {
         <Route path="/scout" element={<ScoutView {...viewProps} />} />
         <Route path="/bruno" element={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />
         <Route path="/profile" element={<ProfileView {...viewProps} />} />
-        <Route path="/settings" element={<SettingsView {...viewProps} />} />
+        <Route path="/settings" element={<SettingsView {...viewProps} hasPerm={hasPerm} />} />
         <Route path="/owner" element={<OwnerView {...viewProps} />} />
         <Route path="/checkin/:token" element={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -9423,7 +9425,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   );
 }
 
-function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive, isOwner }: any) {
+function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive, isOwner, hasPerm }: any) {
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
   const [maxTokensNews, setMaxTokensNews] = useState(settings.max_tokens_news || '1024');
   const [maxTokensAttendance, setMaxTokensAttendance] = useState(settings.max_tokens_attendance || '1024');
@@ -9688,6 +9690,12 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
           )}
         </div>
       </Card>
+
+      {typeof hasPerm === 'function' && hasPerm('manage_voice') && (
+        <Card title="Voice & Calls" icon={PhoneCall} subtitle="Channel defaults, call features, and audio/video quality">
+          <VoiceSettingsSection />
+        </Card>
+      )}
 
       {navGptQualified && (
         <Card title="Chatbot Persona" icon={Bot} subtitle="Who answers in the team chatbot">
