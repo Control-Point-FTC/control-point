@@ -7,7 +7,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: false,
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}', 'migrations/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'migrations/**/*.test.ts', 'server/**/*.test.ts'],
     css: false,
   },
 });

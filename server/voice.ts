@@ -174,6 +174,59 @@ export function inviteTtlSeconds(env: Record<string, string | undefined>): numbe
   return Number.isFinite(v) && v > 0 ? Math.min(v, 300) : 60;
 }
 
+/** Grace window after a member's last socket closes before they're dropped
+ *  from their calls. Env VOICE_RECONNECT_GRACE_SECONDS, default 45, clamped
+ *  to 5–300 so a misconfigured value can't wedge calls open forever (or make
+ *  the grace useless). */
+export function reconnectGraceSeconds(env: Record<string, string | undefined>): number {
+  const v = parseInt(env.VOICE_RECONNECT_GRACE_SECONDS || "45", 10);
+  if (!Number.isFinite(v)) return 45;
+  return Math.min(300, Math.max(5, v));
+}
+
+// ---------------------------------------------------------------------------
+// Reconnection grace period — in-memory pending disconnect cleanups.
+//
+// When a member's last socket closes we don't drop them from the call
+// immediately: a brief network blip would kill every call they're in.
+// Instead a cleanup is scheduled after the grace window. If the member
+// reconnects (new hello), rejoins (REST join), or accepts an invite inside
+// the window, the pending cleanup is cancelled and their participant row
+// (left_at IS NULL) survives untouched, so the session and presence carry on.
+// ---------------------------------------------------------------------------
+
+const pendingDisconnectCleanups = new Map<string, ReturnType<typeof setTimeout>>();
+
+function disconnectCleanupKey(teamId: number, memberId: number): string {
+  return `${teamId}:${memberId}`;
+}
+
+/** Schedule dropping a member from their calls after the grace window.
+ *  Replaces any pending timer for the same member (re-scheduling is safe). */
+export function scheduleVoiceDisconnectCleanup(deps: VoiceDeps, teamId: number, memberId: number): void {
+  const key = disconnectCleanupKey(teamId, memberId);
+  cancelVoiceDisconnectCleanup(teamId, memberId);
+  const timer = setTimeout(() => {
+    pendingDisconnectCleanups.delete(key);
+    removeParticipantEverywhere(deps, teamId, memberId, "disconnect").catch((e) =>
+      console.error("voice disconnect cleanup failed:", e)
+    );
+  }, reconnectGraceSeconds(deps.env) * 1000);
+  // A pending cleanup alone must not keep the process alive.
+  (timer as unknown as { unref?: () => void }).unref?.();
+  pendingDisconnectCleanups.set(key, timer);
+}
+
+/** Cancel a pending disconnect cleanup — the member reconnected or rejoined. */
+export function cancelVoiceDisconnectCleanup(teamId: number, memberId: number): void {
+  const key = disconnectCleanupKey(teamId, memberId);
+  const timer = pendingDisconnectCleanups.get(key);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    pendingDisconnectCleanups.delete(key);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // DB helpers (depend on injected db fns)
 // ---------------------------------------------------------------------------
@@ -560,6 +613,10 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   app.post("/api/voice/channels/:id/join", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
     if (!auth || auth.teamId == null) return;
+    // Rejoin inside the reconnect grace window: cancel the pending
+    // disconnect cleanup so the scheduled timer can't yank the member
+    // out after they just rejoined.
+    cancelVoiceDisconnectCleanup(auth.teamId, auth.memberId);
     await ensureVoiceSeeded(deps, auth.teamId);
     const id = parseInt(req.params.id, 10);
     const channel = (await dbGet("SELECT * FROM voice_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
@@ -769,6 +826,9 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   app.post("/api/voice/calls/:id/accept", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
     if (!auth || auth.teamId == null) return;
+    // Same as join: accepting inside the grace window cancels the pending
+    // disconnect cleanup for this member.
+    cancelVoiceDisconnectCleanup(auth.teamId, auth.memberId);
     await expireStaleInvites(deps, auth.teamId);
     const sessionId = parseInt(req.params.id, 10);
     const invite = (await dbGet(

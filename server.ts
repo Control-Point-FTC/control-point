@@ -93,8 +93,9 @@ import {
 import {
   registerVoiceRoutes,
   handleVoiceWSMessage,
-  removeParticipantEverywhere,
   voiceMaintenance,
+  scheduleVoiceDisconnectCleanup,
+  cancelVoiceDisconnectCleanup,
 } from "./server/voice.js";
 
 // Last-resort safety net: a single malformed request must never take the
@@ -1649,12 +1650,13 @@ async function startServer() {
       const teamId = (ws as any).teamId;
       const memberId = (ws as any).memberId;
       clients.delete(ws);
-      // Voice cleanup: if this was the member's last open socket, drop them
-      // from any live call so stale participants never linger.
+      // Voice grace period: if this was the member's last open socket,
+      // schedule dropping them from any live call after the reconnect grace
+      // window instead of yanking them immediately — a brief network blip
+      // shouldn't kill a call. A reconnect (hello) or rejoin inside the
+      // window cancels the pending cleanup.
       if (teamId != null && memberId != null && memberSocketCount(teamId, memberId) === 0) {
-        removeParticipantEverywhere(voiceDeps, teamId, memberId, "disconnect").catch((e) =>
-          console.error("voice disconnect cleanup failed:", e)
-        );
+        scheduleVoiceDisconnectCleanup(voiceDeps, teamId, memberId);
       }
     });
     ws.on("message", async (data) => {
@@ -1668,6 +1670,9 @@ async function startServer() {
             if (member) {
               (ws as any).teamId = member.team_id;
               (ws as any).memberId = member.id;
+              // Socket reconnect inside the grace window: cancel the pending
+              // disconnect cleanup so the member stays in their call.
+              cancelVoiceDisconnectCleanup(member.team_id, member.id);
             }
           }
           return;
