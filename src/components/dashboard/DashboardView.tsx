@@ -5,6 +5,7 @@ import { SetupChecklist, shouldShowChecklist } from '../onboarding';
 import DashboardHeader from './DashboardHeader';
 import DashboardMetricRow from './DashboardMetricRow';
 import MyStatusStrip from './MyStatusStrip';
+import BrunoBar from './BrunoBar';
 import AttendanceTrend from './AttendanceTrend';
 import TeamActivity from './TeamActivity';
 import UpcomingTimeline from './UpcomingTimeline';
@@ -139,6 +140,8 @@ export default function DashboardView({
         ThinkingIndicator={ThinkingIndicator}
         onRefresh={onRefresh}
       />
+
+      <BrunoBar />
 
       {/* Natural page flow — the page scrolls, every card shows its data. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
