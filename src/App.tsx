@@ -126,6 +126,7 @@ import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
 import { cn, Card, Button } from './components/ui';
+import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import { AttendanceTrendChart } from './components/dashboard/AttendanceTrend';
 import ThemeToggle from './components/ThemeToggle';
@@ -2125,10 +2126,11 @@ export default function App() {
           </button>
           <Card className="p-8">
             <div className="flex flex-col items-center gap-4 mb-8">
-              <div className="w-16 h-16 bg-accent rounded-2xl flex items-center justify-center gold-glow">
-                <Bolt className="text-accent-ink w-9 h-9" strokeWidth={2.5} />
+              <BrandLogo className="w-16 h-16 rounded-2xl" />
+              <div className="flex items-center gap-2">
+                <h1 className="text-3xl font-display font-bold text-white tracking-tight">Control Point</h1>
+                <BetaBadge className="mt-1" />
               </div>
-              <h1 className="text-3xl font-display font-bold text-white tracking-tight">Control Point</h1>
               <p className="text-text-muted text-center text-sm">
                 {needsSetup ? "Set your new password to continue" : "Welcome back. Sign in to your workspace."}
               </p>
@@ -2271,19 +2273,16 @@ export default function App() {
         }}
       >
         <div className="px-4 sm:px-5 pt-5 pb-4 flex items-center gap-3 flex-shrink-0">
-          <div className="w-10 h-10 bg-accent rounded-2xl flex items-center justify-center gold-glow flex-shrink-0">
-            <Bolt className="text-accent-ink w-6 h-6" strokeWidth={2.5} />
-          </div>
-          {isSidebarOpen && (
+          {isSidebarOpen ? (
             <motion.div
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.08 }}
-              className="whitespace-nowrap"
             >
-              <h1 className="text-[17px] font-display font-bold text-white leading-none tracking-tight">Control Point</h1>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted mt-1">Team workspace</p>
+              <BrandMark variant="sidebar" />
             </motion.div>
+          ) : (
+            <BrandMark variant="compact" />
           )}
         </div>
 

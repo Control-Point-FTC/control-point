@@ -63,8 +63,10 @@ describe('dashboard selector performance', () => {
     expect(performance.now() - t0).toBeLessThan(1500);
     expect(feed.length).toBeLessThanOrEqual(12);
     // newest first
+    const tsOf = (it: { ts?: string; dateOnly?: string }) =>
+      it.ts ? new Date(it.ts).getTime() : it.dateOnly ? new Date(it.dateOnly).getTime() : 0;
     for (let i = 1; i < feed.length; i++) {
-      expect(new Date(feed[i - 1].at).getTime()).toBeGreaterThanOrEqual(new Date(feed[i].at).getTime());
+      expect(tsOf(feed[i - 1])).toBeGreaterThanOrEqual(tsOf(feed[i]));
     }
   });
 
