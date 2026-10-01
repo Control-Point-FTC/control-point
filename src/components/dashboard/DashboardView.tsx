@@ -30,6 +30,7 @@ interface DashboardViewProps {
   onDismissChecklist: () => void;
   inventory: any[];
   setTasks?: (fn: any) => void;
+  hiddenDates?: string[];
 }
 
 /** Stable empty refs so memoized children don't see a fresh `[]` each render. */
@@ -77,6 +78,7 @@ export default function DashboardView({
   onboardingState,
   onContinueSetup,
   onDismissChecklist,
+  hiddenDates,
 }: DashboardViewProps) {
   const navigate = useNavigate();
   // Stable string dep for the memo below; the feed window uses Date.now()
@@ -145,7 +147,7 @@ export default function DashboardView({
 
       {/* Natural page flow — the page scrolls, every card shows its data. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
-        <AttendanceTrend attendance={attendance} onNavigate={navigate} />
+        <AttendanceTrend attendance={attendance} onNavigate={navigate} hiddenDates={hiddenDates} />
         <UpcomingTimeline events={events} onNavigate={navigate} />
       </div>
 

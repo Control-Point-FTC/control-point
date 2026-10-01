@@ -13,25 +13,45 @@ function cssVar(name: string, fallback: string): string {
 interface AttendanceTrendProps {
   attendance: any[];
   onNavigate: (path: string) => void;
+  hiddenDates?: string[];
 }
 
 /** The 14-day present-check-ins line chart, reusable outside the dashboard.
  *  `className` controls the wrapper sizing — pass `flex-1 min-h-44` to let
- *  the chart fill a stretched card instead of leaving empty space. */
-export function AttendanceTrendChart({ attendance, className = 'h-44' }: { attendance: any[]; className?: string }) {
+ *  the chart fill a stretched card instead of leaving empty space.
+ *  When `hiddenDates` is provided, dates hidden via Manage Dates are skipped
+ *  and the chart shows the last 14 *meeting* days instead of the last 14
+ *  calendar days, so non-meeting days never drag the line to zero. */
+export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDates }: { attendance: any[]; className?: string; hiddenDates?: string[] }) {
   const { theme } = useTheme();
 
   const chartData = useMemo(() => {
-    const last14Days = Array.from({ length: 14 }, (_, i) => {
+    const last14CalendarDays = () => Array.from({ length: 14 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (13 - i));
       return format(d, 'yyyy-MM-dd');
     });
-    return last14Days.map((date) => ({
+    let dates: string[];
+    if (hiddenDates) {
+      const hidden = new Set(hiddenDates);
+      const meetingDays: string[] = [];
+      const d = new Date();
+      for (let i = 0; i < 120 && meetingDays.length < 14; i++) {
+        const ds = format(d, 'yyyy-MM-dd');
+        if (!hidden.has(ds)) meetingDays.unshift(ds);
+        d.setDate(d.getDate() - 1);
+      }
+      // Degenerate case (e.g. every weekday hidden): fall back to plain
+      // calendar days so the chart still renders something.
+      dates = meetingDays.length > 0 ? meetingDays : last14CalendarDays();
+    } else {
+      dates = last14CalendarDays();
+    }
+    return dates.map((date) => ({
       date: format(new Date(date + 'T12:00:00'), 'MMM dd'),
       count: attendance?.filter((r: any) => r.date === date && (r.status === 'P' || r.status === 'L')).length || 0,
     }));
-  }, [attendance, theme]);
+  }, [attendance, hiddenDates, theme]);
 
   const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count)), [chartData]);
   const accentColor = cssVar('--color-accent', '#FFC700');
@@ -64,16 +84,19 @@ export function AttendanceTrendChart({ attendance, className = 'h-44' }: { atten
  * clickable into the Attendance view. Re-renders on theme toggle so the
  * line follows the current accent color.
  */
-function AttendanceTrend({ attendance, onNavigate }: AttendanceTrendProps) {
+function AttendanceTrend({ attendance, onNavigate, hiddenDates }: AttendanceTrendProps) {
+  const subtitle = hiddenDates && hiddenDates.length > 0
+    ? 'Present check-ins · last 14 meeting days'
+    : 'Present check-ins · last 14 days';
   return (
     <Card
       title="Attendance Trend"
-      subtitle="Present check-ins · last 14 days"
+      subtitle={subtitle}
       icon={TrendingUp}
       className="md:col-span-2 xl:col-span-7 p-5 gap-3 cursor-pointer hover:border-accent/30 transition-colors"
       onClick={() => onNavigate('/attendance')}
     >
-      <AttendanceTrendChart attendance={attendance} className="flex-1" />
+      <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="flex-1" />
     </Card>
   );
 }

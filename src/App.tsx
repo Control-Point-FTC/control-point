@@ -4482,8 +4482,8 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   return (
     <div className="space-y-4 sm:space-y-6">
       {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
-      <Card title="Attendance Trend" subtitle="Present check-ins · last 14 days" icon={TrendingUp} className="p-5 gap-3">
-        <AttendanceTrendChart attendance={attendance} className="h-52" />
+      <Card title="Attendance Trend" subtitle={hiddenDates.length > 0 ? "Present check-ins · last 14 meeting days" : "Present check-ins · last 14 days"} icon={TrendingUp} className="p-5 gap-3">
+        <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="h-52" />
       </Card>
       <div className="flex gap-1 sm:gap-2 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
