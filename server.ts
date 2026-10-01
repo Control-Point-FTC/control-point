@@ -4651,17 +4651,38 @@ async function startServer() {
       if (auth.accountType !== 'admin' && task.assigned_to !== auth.memberId) {
         return res.status(403).json({ error: "You can only update tasks assigned to you" });
       }
-      const { status } = req.body;
+      const { status, title, description, assigned_to, due_date } = req.body;
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
-      if (status === 'done') {
-        (await dbRun("UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?", status, completedAt, req.params.id));
-      } else {
-        (await dbRun("UPDATE tasks SET status = ?, completed_at = NULL WHERE id = ?", status, req.params.id));
+      // Status-only moves keep the old path; field edits update the rest.
+      const sets: string[] = [];
+      const vals: any[] = [];
+      if (status !== undefined) {
+        sets.push('status = ?', 'completed_at = ?');
+        vals.push(status, status === 'done' ? completedAt : null);
+      }
+      if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
+      if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
+      if (due_date !== undefined) { sets.push('due_date = ?'); vals.push(due_date || null); }
+      if (assigned_to !== undefined) {
+        const targetAssignedTo = assigned_to || null;
+        if (targetAssignedTo) {
+          const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", targetAssignedTo)) as any;
+          if (!m || m.team_id !== auth.teamId) {
+            return res.status(403).json({ error: "Not your workspace" });
+          }
+        }
+        sets.push('assigned_to = ?'); vals.push(targetAssignedTo);
+      }
+      if (sets.length > 0) {
+        (await dbRun(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, ...vals, req.params.id));
       }
 
       if (task.assigned_to) {
-        createNotification(task.assigned_to, `Task status updated to ${status}: ${task.title}`, 'task');
+        const note = status !== undefined && title === undefined
+          ? `Task status updated to ${status}: ${task.title}`
+          : `Task updated: ${title ?? task.title}`;
+        createNotification(task.assigned_to, note, 'task');
       }
 
       res.json({ success: true });

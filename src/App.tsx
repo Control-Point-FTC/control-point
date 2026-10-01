@@ -4639,6 +4639,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
     if (!ev) return null;
     return [
       { label: 'Edit event', icon: Pencil, action: () => openEdit(ev) },
+      { label: 'Add event on this day', icon: Plus, action: () => openNew(ev.date) },
       {
         label: 'Delete event', icon: Trash2, danger: true, action: async () => {
           if (!(await confirmDialog({ title: 'Delete event', message: `Delete "${ev.title}"?`, confirmLabel: 'Delete', danger: true }))) return;
@@ -4646,6 +4647,16 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
           onRefresh();
         },
       },
+    ];
+  });
+  // Right-click a day cell (the day number or empty space): add an event on
+  // that date. Events nested inside still resolve to the cal-event menu.
+  useContextMenu('cal-day', (el) => {
+    if (!canManageCalendar) return null;
+    const date = el.dataset.cmDate;
+    if (!date) return null;
+    return [
+      { label: `Add event · ${fmtDate(date)}`, icon: Plus, action: () => openNew(date) },
     ];
   });
   const [cursor, setCursor] = useState(() => new Date());
@@ -4842,6 +4853,8 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
               return (
                 <div
                   key={key}
+                  data-cm-type="cal-day"
+                  data-cm-date={key}
                   onClick={() => canManageCalendar && openNew(key)}
                   className={cn(
                     'min-h-[92px] rounded-xl border p-1.5 transition-colors',
@@ -5033,7 +5046,8 @@ function defaultTeamId(teams: any[], currentUser: any): any {
 function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, hasScope }: any) {  const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
-  const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assigned_to: '', due_date: '' });
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assigned_to: '', due_date: '', status: 'todo' });
   const [filterTeam, setFilterTeam] = useState('all');
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
   const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
@@ -5045,32 +5059,84 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
   const isAdmin = hasScope('admin');
   const canManageTasks = hasScope('tasks');
 
-  // Right-click menu on task cards: quick status moves + delete.
+  // Right-click menu on task cards: edit, quick status moves, add, delete.
   useContextMenu('task', (el) => {
     if (!canManageTasks) return null;
     const id = Number(el.dataset.cmId);
     const task = tasks.find((t: any) => t.id === id);
     if (!task) return null;
-    const items: { label: string; icon?: any; danger?: boolean; action: () => void }[] = [];
+    const items: { label?: string; icon?: any; danger?: boolean; separator?: boolean; action?: () => void }[] = [];
+    items.push({ label: 'Edit task', icon: Pencil, action: () => openEditTask(task) });
     if (task.status !== 'done') items.push({ label: 'Mark done', icon: CheckCircle2, action: () => updateStatus(id, 'done') });
     if (task.status !== 'in-progress') items.push({ label: 'Mark in progress', icon: Clock3, action: () => updateStatus(id, 'in-progress') });
     if (task.status !== 'todo') items.push({ label: 'Move to To-Do', icon: ListTodo, action: () => updateStatus(id, 'todo') });
+    items.push({ label: 'Add task', icon: Plus, action: () => openNewTask('todo') });
+    items.push({ separator: true });
     items.push({ label: 'Delete task', icon: Trash2, danger: true, action: () => handleDeleteTask(id) });
     return items;
   });
+
+  // Right-click a column's blank area: add a task straight into that status.
+  useContextMenu('task-column', (el) => {
+    if (!canManageTasks) return null;
+    const status = el.dataset.cmStatus || 'todo';
+    const label = status === 'todo' ? 'To-Do' : status === 'in-progress' ? 'In Progress' : 'Done';
+    return [
+      { label: `Add task to ${label}`, icon: Plus, action: () => openNewTask(status) },
+    ];
+  });
+
+  const openNewTask = (status = 'todo') => {
+    setEditingTaskId(null);
+    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assigned_to: '', due_date: '', status });
+    setIsBoardTask(false);
+    setShowAddTask(true);
+  };
+
+  const openEditTask = (task: any) => {
+    setEditingTaskId(task.id);
+    setNewTask({
+      team_id: task.team_id?.toString() || '',
+      title: task.title || '',
+      description: task.description || '',
+      assigned_to: task.assigned_to?.toString() || '',
+      due_date: task.due_date || '',
+      status: task.status || 'todo',
+    });
+    setIsBoardTask(!!task.is_board);
+    setShowAddTask(true);
+  };
 
   const handleAddTask = async () => {
     if (pendingIds.has(-1)) return;
     markPending(-1, true);
     try {
+      if (editingTaskId) {
+        const res = await apiFetch(`/api/tasks/${editingTaskId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: newTask.title,
+            description: newTask.description,
+            assigned_to: newTask.assigned_to ? Number(newTask.assigned_to) : null,
+            due_date: newTask.due_date || null,
+          })
+        });
+        if (res.ok) {
+          closeTaskModal();
+          onRefresh();
+        } else {
+          notify('Could not save task — try again.', 'error');
+        }
+        return;
+      }
       const res = await apiFetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 })
       });
       if (res.ok) {
-        setShowAddTask(false);
-        setNewTask({ team_id: '', title: '', description: '', assigned_to: '', due_date: '' });
+        closeTaskModal();
         onRefresh();
       } else {
         notify('Could not create task — try again.', 'error');
@@ -5078,6 +5144,11 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
     } finally {
       markPending(-1, false);
     }
+  };
+
+  const closeTaskModal = () => {
+    setShowAddTask(false);
+    setEditingTaskId(null);
   };
 
   const filteredTasks = tasks.filter((t: any) => {
@@ -5207,7 +5278,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
           </Button>
         </div>
         {canManageTasks && (
-          <Button onClick={() => { setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assigned_to: '', due_date: '' }); setShowAddTask(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
+          <Button onClick={() => openNewTask('todo')} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
         )}
       </div>
 
@@ -5270,7 +5341,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 h-auto min-h-[600px] md:h-[calc(100vh-250px)]">
         {columns.map(col => (
-          <div key={col.id} className="bg-secondary/30 rounded-2xl p-4 flex flex-col gap-4 border border-text-base/5">
+          <div key={col.id} data-cm-type="task-column" data-cm-status={col.id} className="bg-secondary/30 rounded-2xl p-4 flex flex-col gap-4 border border-text-base/5">
             <div className="flex items-center gap-2 mb-2">
               <div className={cn("w-2 h-2 rounded-full", col.color)} />
               <h4 className="text-sm font-bold text-text-base uppercase tracking-wider">{col.label}</h4>
@@ -5320,7 +5391,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
 
       {showAddTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title="New Task" className="w-full max-w-md">
+          <Card title={editingTaskId ? 'Edit Task' : 'New Task'} className="w-full max-w-md">
             <div className="space-y-4">
               <Select 
                 options={[
@@ -5355,8 +5426,8 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
               )}
 
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => setShowAddTask(false)}>Cancel</Button>
-                <Button onClick={handleAddTask} disabled={pendingIds.has(-1)}>{pendingIds.has(-1) ? 'Creating…' : 'Create Task'}</Button>
+                <Button variant="secondary" onClick={closeTaskModal}>Cancel</Button>
+                <Button onClick={handleAddTask} disabled={pendingIds.has(-1)}>{pendingIds.has(-1) ? (editingTaskId ? 'Saving…' : 'Creating…') : (editingTaskId ? 'Save Changes' : 'Create Task')}</Button>
               </div>
             </div>
           </Card>
