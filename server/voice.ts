@@ -362,6 +362,21 @@ export async function broadcastPresence(deps: VoiceDeps, session: any): Promise<
   deps.broadcastToTeam(session.team_id, presencePayload(session, participants));
 }
 
+/**
+ * Delete a temporary ad-hoc call channel once its session is over. Temp
+ * channels are ordinary public voice channels while the call is live (anyone
+ * can see and join them); they are removed when the call ends so the channel
+ * list doesn't fill up with dead "Call with …" entries.
+ */
+export async function cleanupTempChannelForSession(deps: VoiceDeps, session: any): Promise<void> {
+  const channelId = session?.channel_id;
+  if (channelId == null) return;
+  const ch = (await deps.dbGet("SELECT id, team_id, is_temporary FROM voice_channels WHERE id = ?", channelId)) as any;
+  if (!ch || ch.is_temporary !== 1) return;
+  await deps.dbRun("DELETE FROM voice_channels WHERE id = ?", channelId);
+  deps.broadcastToTeam(ch.team_id, { type: "voice:channel-deleted", channel_id: channelId });
+}
+
 /** Close a member's open participant rows; end sessions left empty. Returns ended sessions. */
 export async function removeParticipantEverywhere(
   deps: VoiceDeps,
@@ -383,6 +398,7 @@ export async function removeParticipantEverywhere(
     if (remaining === 0) {
       await deps.dbRun("UPDATE call_sessions SET ended_at = ? WHERE id = ?", deps.nowIso(), row.session_id);
       ended.push(row);
+      await cleanupTempChannelForSession(deps, row);
       deps.broadcastToTeam(teamId, { type: "voice:session-ended", session_id: row.session_id, reason });
     } else {
       const session = (await deps.dbGet("SELECT * FROM call_sessions WHERE id = ?", row.session_id)) as any;
@@ -773,7 +789,10 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
     return res.status(400).json({ error: "Unhandled action" });
   });
 
-  // ---- DM / group calls ----
+  // ---- Ad-hoc calls ("call a member") ----
+  // There are no private 1:1 call sessions. Calling members creates a PUBLIC
+  // temporary voice channel: the callees get a ringing invite, and anyone on
+  // the team can see the channel in the sidebar and join while it's live.
   app.post("/api/voice/calls", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
     if (!auth || auth.teamId == null) return;
@@ -798,9 +817,22 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
     const alreadyIn = await activeSessionForMember(deps, auth.teamId, auth.memberId);
     if (alreadyIn) return res.status(409).json({ error: "You're already in another call", session_id: alreadyIn.id });
     const inviterName = ((await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any)?.name || "Someone";
+    const callName = kind === "dm" ? `Call with ${members[0].name}` : "Group call";
+    // Temporary public channel: visible + joinable by the whole team.
+    const posRow = (await dbGet("SELECT COALESCE(MAX(position), -1) + 1 AS p FROM voice_channels WHERE team_id = ?", auth.teamId)) as any;
+    const chInfo = await dbRun(
+      "INSERT INTO voice_channels (team_id, name, description, position, is_private, is_temporary, allow_video, allow_screenshare, created_by) VALUES (?, ?, ?, ?, 0, 1, 1, 1, ?)",
+      auth.teamId,
+      callName,
+      `${inviterName} started an open call — anyone can join`,
+      posRow?.p ?? 0,
+      auth.memberId
+    );
+    const channelId = chInfo.lastInsertRowid;
+    const channel = await dbGet("SELECT * FROM voice_channels WHERE id = ?", channelId);
     const info = await dbRun(
-      "INSERT INTO call_sessions (team_id, kind, name, created_by) VALUES (?, ?, ?, ?)",
-      auth.teamId, kind, kind === "dm" ? `Call with ${members[0].name}` : `Group call`, auth.memberId
+      "INSERT INTO call_sessions (team_id, kind, channel_id, name, created_by) VALUES (?, 'voice_channel', ?, ?, ?)",
+      auth.teamId, channelId, callName, auth.memberId
     );
     const session = await dbGet("SELECT * FROM call_sessions WHERE id = ?", info.lastInsertRowid);
     await dbRun("INSERT INTO call_participants (session_id, member_id) VALUES (?, ?)", session.id, auth.memberId);
@@ -817,11 +849,14 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
         session_id: session.id,
         kind,
         media,
+        channel_id: Number(channelId),
+        channel_name: callName,
         inviter: { id: auth.memberId, name: inviterName },
       });
     }
+    deps.broadcastToTeam(auth.teamId, { type: "voice:channel-created", channel });
     await broadcastPresence(deps, session);
-    res.json({ session_id: session.id, invites, ice: iceServersFromEnv(deps.env) });
+    res.json({ session_id: Number(session.id), channel_id: Number(channelId), channel_name: callName, invites, ice: iceServersFromEnv(deps.env) });
   });
 
   app.post("/api/voice/calls/:id/accept", async (req: any, res: any) => {
@@ -848,7 +883,11 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
     deps.sendToMember(auth.teamId, invite.inviter_id, { type: "voice:invite-accepted", session_id: sessionId, member_id: auth.memberId });
     const session = await dbGet("SELECT * FROM call_sessions WHERE id = ?", sessionId);
     await broadcastPresence(deps, session);
-    res.json({ ok: true, ice: iceServersFromEnv(deps.env) });
+    res.json({
+      ok: true,
+      ice: iceServersFromEnv(deps.env),
+      session: { id: session.id, kind: session.kind, channel_id: session.channel_id, name: session.name },
+    });
   });
 
   app.post("/api/voice/calls/:id/decline", async (req: any, res: any) => {
@@ -859,11 +898,13 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
     if (!invite) return res.status(404).json({ error: "Invite not found" });
     await dbRun("UPDATE call_invites SET status = 'declined', responded_at = ? WHERE id = ?", deps.nowIso(), invite.id);
     deps.sendToMember(auth.teamId, invite.inviter_id, { type: "voice:invite-declined", session_id: sessionId, member_id: auth.memberId });
-    // If nobody ever joined, end the stillborn session.
+    // If nobody ever joined, end the stillborn session (and drop its temp channel).
     const count = await sessionParticipantCount(deps, sessionId);
     if (count <= 1) {
       await dbRun("UPDATE call_participants SET left_at = ? WHERE session_id = ? AND left_at IS NULL", deps.nowIso(), sessionId);
       await dbRun("UPDATE call_sessions SET ended_at = ? WHERE id = ?", deps.nowIso(), sessionId);
+      const dead = await dbGet("SELECT * FROM call_sessions WHERE id = ?", sessionId);
+      await cleanupTempChannelForSession(deps, dead);
       deps.broadcastToTeam(auth.teamId, { type: "voice:session-ended", session_id: sessionId, reason: "declined" });
     }
     res.json({ ok: true });
@@ -879,13 +920,22 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
     const canModerate = (await deps.hasPerm(auth, "moderate_calls")) || (await deps.hasPerm(auth, "manage_voice"));
     if (!isParticipant && !canModerate) return res.status(403).json({ error: "You're not in this call" });
     await dbRun("UPDATE call_invites SET status = 'cancelled' WHERE session_id = ? AND status = 'ringing'", sessionId);
-    await removeParticipantEverywhere(deps, auth.teamId, auth.memberId, "leave");
-    // Ending a DM/group call ends it for everyone still in it.
-    if (session.kind !== "voice_channel") {
+    const channel = session.channel_id
+      ? ((await dbGet("SELECT id, is_temporary FROM voice_channels WHERE id = ?", session.channel_id)) as any)
+      : null;
+    const isTempCall = channel?.is_temporary === 1;
+    const ended = await removeParticipantEverywhere(deps, auth.teamId, auth.memberId, "leave");
+    const alreadyEnded = ended.some((e: any) => e.session_id === sessionId);
+    // Ending an ad-hoc (temporary channel) call ends it for everyone still in
+    // it and removes the temporary channel. Same for legacy dm/group kinds.
+    // (If the caller was the last one out, removeParticipantEverywhere already
+    // ended the session and cleaned up the temp channel above.)
+    if ((isTempCall || session.kind !== "voice_channel") && !alreadyEnded) {
       const rest = (await dbAll("SELECT member_id FROM call_participants WHERE session_id = ? AND left_at IS NULL", sessionId)) as any[];
       for (const r of rest) deps.sendToMember(auth.teamId, r.member_id, { type: "voice:kicked", reason: "call_ended", session_id: sessionId });
       await dbRun("UPDATE call_participants SET left_at = ? WHERE session_id = ? AND left_at IS NULL", deps.nowIso(), sessionId);
       await dbRun("UPDATE call_sessions SET ended_at = ? WHERE id = ?", deps.nowIso(), sessionId);
+      if (isTempCall) await cleanupTempChannelForSession(deps, session);
       deps.broadcastToTeam(auth.teamId, { type: "voice:session-ended", session_id: sessionId, reason: "ended" });
     }
     res.json({ ok: true });

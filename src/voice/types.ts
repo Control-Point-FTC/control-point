@@ -77,6 +77,8 @@ export interface VoiceChannelSummary {
   locked: boolean;
   /** True when the channel is private (role-gated). Present when the server includes it. */
   isPrivate?: boolean;
+  /** True for ad-hoc "call a member" channels: public, and removed when the call ends. */
+  isTemporary?: boolean;
   sessionId: number | null;
   participantCount: number;
   participants: Array<{
@@ -107,6 +109,9 @@ export interface IncomingCall {
   sessionId: number;
   kind: 'dm' | 'group';
   media: 'audio' | 'video';
+  /** Public temp channel backing this call — anyone on the team can join it. */
+  channelId: number | null;
+  channelName: string | null;
   inviter: { id: number; name: string };
 }
 

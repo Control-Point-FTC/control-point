@@ -1,7 +1,7 @@
 # Voice & Video Calling
 
 Discord-style voice/video calling for Control Point: persistent voice channels,
-DM/group calls with ringing invites, and full moderation. Media is **peer-to-peer
+ad-hoc public calls with ringing invites, and full moderation. Media is **peer-to-peer
 WebRTC (full mesh)** — no media server. Signaling rides the app's existing WebSocket.
 
 > **Privacy invariant:** no audio/video is ever recorded or stored. SDP offers/answers
@@ -34,7 +34,7 @@ it is called from the main `wss` message handler in `server.ts`.
 | `voice:moderated` | server → team | A moderator action was applied (mute/deafen/remove/move/lock/...). Clients enforce self-targeted actions locally (e.g. actually disable the mic). |
 | `voice:kicked` | server → member | Your client must tear down (reasons: `removed`, `call_ended`, `channel_deleted`, `disconnect`, `ended`). |
 | `voice:session-ended` | server → team | Session fully ended (empty / ended by moderator / channel deleted). |
-| `voice:incoming` | server → member | Ringing DM/group invite (`invite_id`, `session_id`, kind, media, inviter). Client shows accept/decline. |
+| `voice:incoming` | server → member | Ringing call invite (`invite_id`, `session_id`, kind, media, `channel_id`, `channel_name`, inviter). Client shows accept/decline. |
 | `voice:ring-cancelled` | server → member | Caller hung up before you answered — clear the ringing UI. |
 | `voice:invite-accepted` / `voice:invite-declined` | server → member | Caller-side notices. |
 | `voice:spotlight` | server → team | Global spotlight set/cleared by a moderator. |
@@ -88,16 +88,18 @@ management — **no UI changes**. See §4 for the SFU path.
 | `POST /api/voice/channels/:id/join` | auth + channel ACL | Join (creates the session if needed). Returns `{ session, ice }`. 403 if locked/full/no-permission; **409 if already in another call**. |
 | `POST /api/voice/leave` | auth | Leave current call (idempotent). |
 | `POST /api/voice/moderate` | `moderate_calls` or `manage_voice` | mute/deafen/remove/move/stop_screen/disable_video/lock/unlock/end/spotlight/unspotlight. |
-| `POST /api/voice/calls` | auth | Start DM (`invitee_ids` length 1) or group call; sends `voice:incoming` to each invitee. |
-| `POST /api/voice/calls/:id/accept` | auth | Accept a ringing invite. Returns ICE servers. |
-| `POST /api/voice/calls/:id/decline` | auth | Decline. |
-| `POST /api/voice/calls/:id/end` | auth (participant or moderator) | End; for DM/group calls this ends it for everyone. |
+| `POST /api/voice/calls` | auth | **Call a member(s):** creates a PUBLIC temporary voice channel (`is_temporary=1`) + `voice_channel` session, rings invitees with `voice:incoming`. Anyone on the team can see and join the channel while it's live. |
+| `POST /api/voice/calls/:id/accept` | auth | Accept a ringing invite — joins the call's public channel. Returns ICE servers + session info. |
+| `POST /api/voice/calls/:id/decline` | auth | Decline. If nobody joined, the session ends and the temp channel is deleted. |
+| `POST /api/voice/calls/:id/end` | auth (participant or moderator) | End; for ad-hoc calls this ends it for everyone and deletes the temp channel. |
 | `GET /api/voice/settings` | auth | Team voice settings. |
 | `PUT /api/voice/settings` | `manage_voice` | Update settings. |
 | `GET /api/voice/ice` | auth | **ICE server list** — use this to verify STUN/TURN config (§3). |
 
-DM/group calls are scoped to the team: every invitee must be an active member of
-the inviter's team. Default seed channels (created once per team): "Team Meeting",
+Ad-hoc calls ("call a member") are scoped to the team: every invitee must be an active member of
+the inviter's team. They are **public, not private** — the call lives in a temporary
+voice channel (`voice_channels.is_temporary=1`) that the whole team can see and join
+anytime; the channel is deleted when the call ends. Default seed channels (created once per team): "Team Meeting",
 "Strategy", "Drive Practice", "Build Room".
 
 ## 2. Environment variables
@@ -222,18 +224,18 @@ exists — verify before assuming newer schema).
 
 | Table | Stores |
 |---|---|
-| `voice_channels` | Team voice channels: name, description, category, position, `max_participants` (0 = unlimited), `is_private`, `locked`, `allow_video`, `allow_screenshare`. |
+| `voice_channels` | Team voice channels: name, description, category, position, `max_participants` (0 = unlimited), `is_private`, `is_temporary` (ad-hoc call channels, deleted when the call ends), `locked`, `allow_video`, `allow_screenshare`. |
 | `voice_channel_role_perms` | Per-role overrides per channel (`can_view/join/speak/video/screenshare`), unique on (channel, role). |
 | `call_sessions` | One row per call: `kind` (`voice_channel` / `dm` / `group`), `channel_id`, name, `started_at`, `ended_at` (NULL = active), `locked`, `global_spotlight_member_id`, `max_participants`. |
 | `call_participants` | Join/leave **history** — `left_at IS NULL` means "currently in the call". Also carries the live flags: `is_muted`, `is_deafened`, `camera_on`, `sharing_screen`, `connection_state`. |
-| `call_invites` | Ringing DM/group invites: inviter, invitee, `media` (audio/video), `status` (ringing/accepted/declined/expired/cancelled). |
+| `call_invites` | Ringing call invites: inviter, invitee, `media` (audio/video), `status` (ringing/accepted/declined/expired/cancelled). |
 | `call_moderation_log` | Audit trail: session, team, actor, target, action, detail, timestamp. |
 | `team_voice_settings` | Per-team flags: video/screenshare/global-spotlight/DM/group enabled, `default_max_participants`, `default_video_quality` (low/medium/high), `call_timeout_minutes` (0 = none), `reconnect_attempts`. |
 
 **Privacy invariant (enforced by design, not policy):** no table stores media,
 SDP, or ICE candidates. The moderation log records *actions* (who muted whom,
-when) — never content. Voice-channel sessions are ephemeral rows; DM/group
-invites expire.
+when) — never content. Voice-channel sessions are ephemeral rows; ad-hoc call
+invites expire, and temp call channels are deleted when the call ends.
 
 ## 7. Permissions model
 

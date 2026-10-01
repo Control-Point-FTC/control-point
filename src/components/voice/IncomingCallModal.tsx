@@ -82,8 +82,14 @@ export function IncomingCallModal() {
               {isVideo ? <Video className="w-3 h-3" aria-hidden="true" /> : <Phone className="w-3 h-3" aria-hidden="true" />}
               {isVideo ? 'Video call' : 'Voice call'}
             </span>
-            <span>{incomingCall.kind === 'group' ? '· group call' : '· incoming'}</span>
+            <span>· open call — anyone on the team can join</span>
           </p>
+          {incomingCall.channelName && (
+            <p className="text-xs text-text-muted mt-1">
+              Joining opens <span className="font-semibold text-text-base">#{incomingCall.channelName}</span> in
+              the voice channels
+            </p>
+          )}
         </div>
 
         {inAnotherCall && (

@@ -471,7 +471,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
       let mic: MediaStream | null = null;
       let cam: MediaStream | null = null;
       try {
-        const { sessionId, ice } = await voiceApi.startCall(inviteeIds, media, kind);
+        const { sessionId, channelId, channelName, ice } = await voiceApi.startCall(inviteeIds, media, kind);
         mic = await acquireMicOrThrow();
         if (media === 'video') {
           try {
@@ -480,11 +480,12 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
             console.warn('[voice] camera unavailable, starting audio-only:', camErr);
           }
         }
+        // Ad-hoc calls are public temp voice channels — anyone can join.
         const info: VoiceSessionInfo = {
           id: sessionId,
-          kind,
-          channelId: null,
-          name: kind === 'dm' ? 'Direct call' : 'Group call',
+          kind: 'voice_channel',
+          channelId,
+          name: channelName,
           locked: false,
           globalSpotlightMemberId: null,
         };
@@ -511,7 +512,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
     let mic: MediaStream | null = null;
     let cam: MediaStream | null = null;
     try {
-      const ice = await voiceApi.acceptCall(inv.sessionId);
+      const { ice, session: accepted } = await voiceApi.acceptCall(inv.sessionId);
       mic = await acquireMicOrThrow();
       if (inv.media === 'video') {
         try {
@@ -520,11 +521,12 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
           console.warn('[voice] camera unavailable, accepting audio-only:', camErr);
         }
       }
+      // Ad-hoc calls are public temp voice channels — accepting joins the channel.
       const info: VoiceSessionInfo = {
-        id: inv.sessionId,
-        kind: inv.kind,
-        channelId: null,
-        name: inv.kind === 'dm' ? `Call with ${inv.inviter.name}` : 'Group call',
+        id: accepted.id,
+        kind: 'voice_channel',
+        channelId: accepted.channel_id,
+        name: accepted.name,
         locked: false,
         globalSpotlightMemberId: null,
       };
@@ -932,6 +934,12 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
           void refreshChannelsSafe();
           return true;
         }
+        case 'voice:channel-created':
+        case 'voice:channel-deleted': {
+          // Temp call channels appear/disappear live; refresh the sidebar list.
+          void refreshChannelsSafe();
+          return true;
+        }
         case 'voice:incoming': {
           // Even when already in a call we keep it — the UI offers stay/switch. Never auto-switch.
           setIncomingCall({
@@ -939,6 +947,8 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
             sessionId: Number(msg.session_id),
             kind: msg.kind === 'group' ? 'group' : 'dm',
             media: msg.media === 'video' ? 'video' : 'audio',
+            channelId: msg.channel_id != null ? Number(msg.channel_id) : null,
+            channelName: msg.channel_name != null ? String(msg.channel_name) : null,
             inviter: { id: Number(msg.inviter?.id), name: String(msg.inviter?.name ?? 'Someone') },
           });
           return true;

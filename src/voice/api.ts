@@ -31,6 +31,9 @@ export interface JoinResult {
 
 export interface StartCallResult {
   sessionId: number;
+  /** Public temp channel backing the call — anyone on the team can join it. */
+  channelId: number;
+  channelName: string;
   invites: Array<{ id: number; invitee_id: number }>;
   ice: Array<{ urls: string | string[]; username?: string; credential?: string }>;
 }
@@ -55,6 +58,7 @@ function mapChannel(raw: any): VoiceChannelSummary {
     maxParticipants: Number(raw.max_participants ?? 0),
     locked: raw.locked === 1 || raw.locked === true,
     isPrivate: raw.is_private === 1 || raw.is_private === true,
+    isTemporary: raw.is_temporary === 1 || raw.is_temporary === true,
     sessionId: raw.session_id != null ? Number(raw.session_id) : null,
     participantCount: Number(raw.participant_count ?? 0),
     participants: Array.isArray(raw.participants) ? raw.participants : [],
@@ -104,24 +108,37 @@ export const voiceApi = {
     }).then(() => {});
   },
 
-  /** Start a DM or group call; sends voice:incoming to each invitee. */
+  /** Start an ad-hoc call: creates a public temp voice channel and rings the invitees. */
   startCall(inviteeIds: number[], media: 'audio' | 'video', kind: 'dm' | 'group'): Promise<StartCallResult> {
-    return apiJson<{ session_id: number; invites: any[]; ice: any[] }>('/api/voice/calls', {
+    return apiJson<{ session_id: number; channel_id: number; channel_name: string; invites: any[]; ice: any[] }>('/api/voice/calls', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind, media, invitee_ids: inviteeIds }),
     }).then((r) => ({
       sessionId: Number(r.session_id),
+      channelId: Number(r.channel_id),
+      channelName: String(r.channel_name ?? 'Call'),
       invites: r.invites ?? [],
       ice: r.ice ?? [],
     }));
   },
 
   /** Accept a ringing invite (the invite_id lives in `voice:incoming`; the URL takes the session id). */
-  acceptCall(sessionId: number): Promise<Array<{ urls: string | string[]; username?: string; credential?: string }>> {
-    return apiJson<{ ok: boolean; ice: any[] }>(`/api/voice/calls/${sessionId}/accept`, {
+  acceptCall(sessionId: number): Promise<{
+    ice: Array<{ urls: string | string[]; username?: string; credential?: string }>;
+    session: { id: number; kind: string; channel_id: number | null; name: string };
+  }> {
+    return apiJson<{ ok: boolean; ice: any[]; session: any }>(`/api/voice/calls/${sessionId}/accept`, {
       method: 'POST',
-    }).then((r) => r.ice ?? []);
+    }).then((r) => ({
+      ice: r.ice ?? [],
+      session: {
+        id: Number(r.session?.id ?? sessionId),
+        kind: String(r.session?.kind ?? 'voice_channel'),
+        channel_id: r.session?.channel_id != null ? Number(r.session.channel_id) : null,
+        name: String(r.session?.name ?? 'Call'),
+      },
+    }));
   },
 
   declineCall(sessionId: number): Promise<void> {

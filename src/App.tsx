@@ -79,7 +79,9 @@ import {
   Youtube,
   Pin,
   Bot,
+  Phone,
   PhoneCall,
+  Video,
   QrCode,
   ScanLine,
   Maximize2,
@@ -7057,6 +7059,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   const [moveMenuFor, setMoveMenuFor] = useState<number | null>(null); // channel id with the move-to-category menu open
   const [dragChannelId, setDragChannelId] = useState<number | null>(null); // admin drag-and-drop between categories
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null); // 'cat:<id>' | 'uncat'
+  const voice = useVoice();
 
   // Admin drag-and-drop: drop a channel row onto a category header to move it.
   const handleDropOnCategory = async (e: React.DragEvent, categoryId: number | null) => {
@@ -7746,12 +7749,35 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           </p>
         )}
         {onlineMembers.map((m: any) => (
-          <div key={m.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-text-base/[0.04] transition-colors">
+          <div key={m.id} className="group flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-text-base/[0.04] transition-colors">
             <AvatarWithPresence user={m} size="sm" presence={m.presence} />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-text-base truncate leading-tight">{m.name}</p>
               <p className="text-[11px] text-text-muted truncate">{PRESENCE_META[m.presence]?.label || 'Offline'}</p>
             </div>
+            {/* Call a member: starts a PUBLIC voice-channel call anyone can join, and rings them. */}
+            {m.id !== currentUser?.id && (
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  title={`Voice call ${m.name}`}
+                  aria-label={`Voice call ${m.name}`}
+                  onClick={() => voice.startCall([m.id], 'audio')}
+                  className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  <Phone className="w-4 h-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  title={`Video call ${m.name}`}
+                  aria-label={`Video call ${m.name}`}
+                  onClick={() => voice.startCall([m.id], 'video')}
+                  className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  <Video className="w-4 h-4" aria-hidden="true" />
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {offlineMembers.length > 0 && (

@@ -93,6 +93,14 @@ export function VoiceChannelList({ className }: { className?: string }) {
                   >
                     <Volume2 className={cn('w-[18px] h-[18px] flex-shrink-0', isActive ? 'text-accent' : 'text-text-muted/60')} aria-hidden="true" />
                     <span className="truncate flex-1">{c.name}</span>
+                    {c.isTemporary && (
+                      <span
+                        className="flex-shrink-0 rounded-full bg-accent/15 text-accent px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+                        title="Ad-hoc call — anyone can join while it's live"
+                      >
+                        Live call
+                      </span>
+                    )}
                     {c.locked && <Lock className="w-3.5 h-3.5 flex-shrink-0 text-amber-400/80" aria-label="Locked" />}
                     {c.isPrivate && !c.locked && <EyeOff className="w-3.5 h-3.5 flex-shrink-0 text-text-muted/50" aria-label="Private" />}
                     {/* private channels carry a distinct marker next to the lock */}

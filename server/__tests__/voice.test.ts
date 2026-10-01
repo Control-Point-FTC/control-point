@@ -40,6 +40,10 @@ const MIGRATION_003_SQL = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../migrations/versions/003-voice-audio-quality.sql"),
   "utf8"
 );
+const MIGRATION_004_SQL = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../migrations/versions/004-voice-temp-channels.sql"),
+  "utf8"
+);
 
 // Minimal members table: only the columns voice.ts reads.
 const MEMBERS_STUB_DDL = `
@@ -127,6 +131,7 @@ async function makeFixture(env: Record<string, string | undefined> = {}): Promis
   await client.executeMultiple(MEMBERS_STUB_DDL);
   await client.executeMultiple(MIGRATION_SQL);
   await client.executeMultiple(MIGRATION_003_SQL);
+  await client.executeMultiple(MIGRATION_004_SQL);
 
   const broadcasts: Fixture["broadcasts"] = [];
   const directMessages: Fixture["directMessages"] = [];
@@ -626,31 +631,99 @@ describe("POST /api/voice/moderate", () => {
   });
 });
 
-describe("POST /api/voice/calls (DM create + accept)", () => {
-  it("creates a DM call, invites the member, and accept joins them", async () => {
+describe("POST /api/voice/calls (ad-hoc public calls)", () => {
+  it("creates a PUBLIC temp voice channel, invites the member, and accept joins them", async () => {
     const created = await callRoute(fx, "POST", "/api/voice/calls", {
       auth: fx.authFor(1),
       body: { kind: "dm", invitee_ids: [2] },
     });
     expect(created.statusCode).toBe(200);
     const sessionId = created.body.session_id;
+    const channelId = created.body.channel_id;
     expect(typeof sessionId).toBe("number");
-    expect(
-      fx.directMessages.some(
-        (m) => m.memberId === 2 && m.data.type === "voice:incoming" && m.data.session_id === sessionId
-      )
-    ).toBe(true);
+    expect(typeof channelId).toBe("number");
+
+    // The channel is public and temporary — anyone on the team can join it.
+    const ch = await fx.sqlGet("SELECT * FROM voice_channels WHERE id = ?", channelId);
+    expect(ch.is_private).toBe(0);
+    expect(ch.is_temporary).toBe(1);
+
+    // The session is an ordinary voice_channel session on that channel.
+    const sess = await fx.sqlGet("SELECT * FROM call_sessions WHERE id = ?", sessionId);
+    expect(sess.kind).toBe("voice_channel");
+    expect(sess.channel_id).toBe(channelId);
+
+    // The invitee is rung with the channel info.
+    const ring = fx.directMessages.find(
+      (m) => m.memberId === 2 && m.data.type === "voice:incoming" && m.data.session_id === sessionId
+    );
+    expect(ring).toBeTruthy();
+    expect(ring!.data.channel_id).toBe(channelId);
 
     const accepted = await callRoute(fx, "POST", `/api/voice/calls/${sessionId}/accept`, {
       auth: fx.authFor(2),
     });
     expect(accepted.statusCode).toBe(200);
     expect(Array.isArray(accepted.body.ice)).toBe(true);
+    expect(accepted.body.session.channel_id).toBe(channelId);
     const row = await fx.sqlGet(
       "SELECT id FROM call_participants WHERE session_id = ? AND member_id = ? AND left_at IS NULL",
       sessionId, 2
     );
     expect(row).toBeTruthy();
+  });
+
+  it("a third team member can join the ad-hoc call channel directly (it's public)", async () => {
+    const created = await callRoute(fx, "POST", "/api/voice/calls", {
+      auth: fx.authFor(1),
+      body: { kind: "dm", invitee_ids: [2] },
+    });
+    expect(created.statusCode).toBe(200);
+    const channelId = created.body.channel_id as number;
+    // Member 3 was never invited, but the channel is public — join works.
+    const sessionId = await joinChannel(fx, 3, channelId);
+    expect(sessionId).toBe(created.body.session_id);
+  });
+
+  it("declining a stillborn call deletes the temp channel", async () => {
+    const created = await callRoute(fx, "POST", "/api/voice/calls", {
+      auth: fx.authFor(1),
+      body: { kind: "dm", invitee_ids: [2] },
+    });
+    const sessionId = created.body.session_id as number;
+    const channelId = created.body.channel_id as number;
+    const declined = await callRoute(fx, "POST", `/api/voice/calls/${sessionId}/decline`, {
+      auth: fx.authFor(2),
+    });
+    expect(declined.statusCode).toBe(200);
+    const ch = await fx.sqlGet("SELECT id FROM voice_channels WHERE id = ?", channelId);
+    expect(ch).toBeFalsy();
+    const sess = await fx.sqlGet("SELECT ended_at FROM call_sessions WHERE id = ?", sessionId);
+    expect(sess.ended_at).not.toBeNull();
+  });
+
+  it("ending an ad-hoc call ends it for everyone and deletes the temp channel", async () => {
+    const created = await callRoute(fx, "POST", "/api/voice/calls", {
+      auth: fx.authFor(1),
+      body: { kind: "dm", invitee_ids: [2] },
+    });
+    const sessionId = created.body.session_id as number;
+    const channelId = created.body.channel_id as number;
+    await callRoute(fx, "POST", `/api/voice/calls/${sessionId}/accept`, { auth: fx.authFor(2) });
+    const ended = await callRoute(fx, "POST", `/api/voice/calls/${sessionId}/end`, {
+      auth: fx.authFor(1),
+    });
+    expect(ended.statusCode).toBe(200);
+    const sess = await fx.sqlGet("SELECT ended_at FROM call_sessions WHERE id = ?", sessionId);
+    expect(sess.ended_at).not.toBeNull();
+    const ch = await fx.sqlGet("SELECT id FROM voice_channels WHERE id = ?", channelId);
+    expect(ch).toBeFalsy();
+    // The other participant was told the call ended.
+    expect(
+      fx.directMessages.some(
+        (m) => m.memberId === 2 && m.data.type === "voice:kicked" && m.data.session_id === sessionId
+      )
+    ).toBe(true);
   });
 
   it("400: invitees must be real members of the team (client IDs re-validated)", async () => {
