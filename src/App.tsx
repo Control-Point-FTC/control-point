@@ -112,6 +112,7 @@ import {
   type OnboardingState,
 } from './components/onboarding';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
+import { clearFtcCache } from './components/ftcCache';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
@@ -1424,6 +1425,7 @@ export default function App() {
   // Team-scoped client caches (AI scout feed + summary) live in localStorage under
   // fixed keys; drop them so the newly active team's data is fetched fresh.
   const clearTeamCaches = () => {
+    clearFtcCache();
     if (typeof localStorage === 'undefined') return;
     [
       'ftcScoutFeedCache', 'ftcScoutFeedTimestamp',

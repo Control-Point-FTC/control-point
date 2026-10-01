@@ -1,13 +1,13 @@
 // FTC team statistics: shared hook + dashboard card + dedicated stats page.
 // Match data comes from the backend's FTC Scout proxy (credited to ftc-scout.org).
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Trophy, MapPin, GraduationCap, CalendarDays, Target, Bot,
   Cog, Flag, Medal, ChevronRight, RefreshCw, Settings as SettingsIcon,
   ExternalLink, CircleAlert,
 } from 'lucide-react';
-import { apiFetch } from '../services/api';
+import { fetchFtcTeam, invalidateFtcSeason, FtcNotConnectedError } from './ftcCache';
 
 export interface FtcOprStat { value: number | null; rank: number | null }
 export interface FtcEvent {
@@ -39,34 +39,45 @@ export function useFtcTeam() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notConnected, setNotConnected] = useState(false);
+  // Guards against out-of-order responses when the season changes quickly:
+  // only the latest load may write state.
+  const requestIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async (s: number) => {
+  const load = useCallback(async (s: number, opts?: { refresh?: boolean }) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const requestId = ++requestIdRef.current;
+    if (opts?.refresh) invalidateFtcSeason(s);
     setLoading(true);
     setError(null);
     setNotConnected(false);
     try {
-      const res = await apiFetch(`/api/ftc/team?season=${s}`);
-      const body = await res.json().catch(() => ({}));
-      if (res.status === 404 && /no ftc team connected/i.test(body?.error || '')) {
+      const payload = await fetchFtcTeam(s, controller.signal);
+      if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+      setData(payload);
+    } catch (e: any) {
+      if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+      if (e instanceof FtcNotConnectedError) {
         setNotConnected(true);
         setData(null);
-      } else if (!res.ok) {
-        setError(body?.error || 'Could not load team statistics');
-        setData(null);
       } else {
-        setData(body as FtcTeamPayload);
+        setError(e?.message || 'Could not load team statistics');
+        setData(null);
       }
-    } catch {
-      setError('Could not reach the stats service — try again in a moment');
-      setData(null);
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current && !controller.signal.aborted) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(season); }, [season, load]);
+  useEffect(() => {
+    load(season);
+    return () => abortRef.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season]);
 
-  return { season, setSeason, data, loading, error, notConnected, refresh: () => load(season) };
+  return { season, setSeason, data, loading, error, notConnected, refresh: () => load(season, { refresh: true }) };
 }
 
 function SeasonPills({ seasons, active, onPick, small }: { seasons: number[]; active: number; onPick: (s: number) => void; small?: boolean }) {
