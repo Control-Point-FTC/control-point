@@ -275,6 +275,20 @@ html.light .theme-dark .card-surface {
   animation: pulse-volt 2.4s ease-in-out infinite;
 }
 
+/* Slim top progress bar for background data refreshes (non-blocking). */
+@keyframes cp-refresh-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.cp-refresh-bar {
+  width: 25%;
+  animation: cp-refresh-slide 1.1s ease-in-out infinite;
+  box-shadow: 0 0 12px rgba(255, 199, 0, 0.8);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cp-refresh-bar { animation: none; width: 100%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-float-slow, .animate-pulse-volt {
     animation: none;

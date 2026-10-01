@@ -929,6 +929,12 @@ export default function App() {
   const [insights, setInsights] = useState<string>("");
   const [summary, setSummary] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  // Background refresh indicator: after the first full load, fetchData()
+  // refreshes silently so everyday actions never blank the screen with the
+  // full "Synchronizing club data..." overlay.
+  const [refreshing, setRefreshing] = useState(false);
+  const hasLoadedOnce = useRef(false);
+  const refreshCount = useRef(0);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiLoadingTarget, setAiLoadingTarget] = useState<string | null>(null);
   const [colorVersion, setColorVersion] = useState(0);
@@ -1318,7 +1324,15 @@ export default function App() {
   };
 
   const fetchData = async () => {
-    setLoading(true);
+    // First load blocks with the full-screen spinner; every later refresh
+    // runs in the background with a slim top progress bar instead.
+    const silent = hasLoadedOnce.current;
+    if (silent) {
+      refreshCount.current += 1;
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const fetchJson = async (url: string) => {
         const res = await apiFetch(url, { cache: 'no-store' });
@@ -1391,7 +1405,13 @@ export default function App() {
     } catch (err) {
       console.error("Error in fetchData:", err);
     } finally {
-      setLoading(false);
+      if (silent) {
+        refreshCount.current = Math.max(0, refreshCount.current - 1);
+        if (refreshCount.current === 0) setRefreshing(false);
+      } else {
+        setLoading(false);
+        hasLoadedOnce.current = true;
+      }
       setTeamsLoaded(true);
     }
   };
@@ -1621,6 +1641,9 @@ export default function App() {
 
   const handleLogout = async () => {
     try { await apiFetch('/api/auth/logout', { method: 'POST' }); } catch { /* best effort — still sign out locally */ }
+    hasLoadedOnce.current = false;
+    refreshCount.current = 0;
+    setRefreshing(false);
     setIsLoggedIn(false);
     setCurrentUser(null);
     setSessionId(null);
@@ -2241,6 +2264,12 @@ export default function App() {
     <ContextMenuProvider>
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
+      {/* Slim non-blocking refresh indicator (background fetchData after first load). */}
+      {refreshing && !loading && (
+        <div className="fixed top-0 left-0 right-0 z-[120] h-[3px] pointer-events-none" aria-hidden="true">
+          <div className="cp-refresh-bar h-full bg-accent" />
+        </div>
+      )}
       {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
       {/* Sidebar Overlay for Mobile */}
       <AnimatePresence>
