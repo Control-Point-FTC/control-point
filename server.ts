@@ -6332,12 +6332,13 @@ Rules:
       const teamContext = await buildChatContext(auth.teamId);
       const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
       // Compact upcoming-events context so Bruno can answer "what's coming up"
-      // and propose deletions by event id (```delete-event). Capped at 15 rows
-      // to keep the token cost negligible.
+      // and propose deletions by matching titles to event ids (```delete-event).
+      // Capped at 60 rows so title matching works across a full season of
+      // events while keeping the token cost negligible (~10 tokens/row).
       let upcomingCtx = "";
       try {
         const upcoming = (await dbAll(
-          "SELECT id, title, date, time FROM events WHERE team_id = ? AND date >= date('now', '-1 day') ORDER BY date ASC, time ASC LIMIT 15",
+          "SELECT id, title, date, time FROM events WHERE team_id = ? AND date >= date('now', '-1 day') ORDER BY date ASC, time ASC LIMIT 60",
           auth.teamId
         )) as any[];
         if (upcoming.length) {
