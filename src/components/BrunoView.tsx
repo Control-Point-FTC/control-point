@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import {
-  Bot, Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
+  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
 import { streamBuildHelper, stripEventBlocks, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { type ProposalStatus } from './ActionProposalCard';
 import { BrunoMessageRow } from './BrunoMessageRow';
+import BrunoIcon from './BrunoIcon';
 import { useBatchedStream } from './useBatchedStream';
 import { confirmDialog } from './dialog';
 import type { BrunoChat, BrunoChatMessage } from '../types/bruno';
@@ -358,7 +359,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
             <ChevronLeft className="w-5 h-5" />
           </button>
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shrink-0">
-            <Bot className="w-5 h-5 text-primary" />
+            <BrunoIcon className="w-5 h-5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
             {editingTitle ? (
@@ -415,7 +416,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
             <div className="space-y-4 max-w-lg mx-auto pt-6">
               <div className="rounded-2xl bg-white/[0.04] border border-white/[0.07] p-4 text-center">
                 <div className="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] flex items-center justify-center mb-3">
-                  <Bot className="w-6 h-6 text-primary" />
+                  <BrunoIcon className="w-6 h-6 text-primary" />
                 </div>
                 <p className="text-sm text-white/85 leading-relaxed">
                   Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building

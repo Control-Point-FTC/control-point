@@ -97,6 +97,7 @@ import {
 import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
+import BrunoIcon from './components/BrunoIcon';
 import {
   WelcomeScreen,
   Walkthrough,
@@ -2571,7 +2572,7 @@ export default function App() {
               aria-label={`Open ${botName}`}
               className="w-10 h-10 rounded-full bg-accent/15 border border-accent/40 hover:bg-accent/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
             >
-              <span className="text-[20px] leading-none" role="img" aria-label="Bruno the robot">🤖</span>
+              <BrunoIcon className="w-6 h-6 text-accent" />
             </button>
             {currentUser && (
               <div className="relative">

@@ -5,6 +5,7 @@ import { X, ExternalLink, Sparkles, Maximize2 } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
+import BrunoIcon from './BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 
 const RESOURCES = [
@@ -151,7 +152,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
             <div className="px-4 py-3 border-b border-white/10 bg-white/[0.03] flex-shrink-0">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 flex items-center justify-center shadow-[0_2px_10px_rgba(255,199,0,0.25)]">
-                  <span className="text-[22px] leading-none" role="img" aria-label={`${name} the robot`}>🤖</span>
+                  <BrunoIcon className="w-5 h-5 text-primary" />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-white font-bold text-sm leading-tight">{name}</p>
