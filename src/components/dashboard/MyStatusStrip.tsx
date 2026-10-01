@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { format } from 'date-fns';
 import { CalendarCheck, CheckSquare, Clock, LogOut, User } from 'lucide-react';
 import { apiFetch } from '../../services/api';
@@ -20,7 +20,7 @@ interface MyStatusStripProps {
  * Present / Late / Out. Out opens a modal to log the reason (saved as
  * unexcused; an admin can flip it to excused from the Attendance view).
  */
-export default function MyStatusStrip({
+function MyStatusStrip({
   currentUser,
   attendance,
   isLoading,
@@ -124,3 +124,5 @@ export default function MyStatusStrip({
     </>
   );
 }
+
+export default memo(MyStatusStrip);

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { CalendarCheck, CheckSquare, Calendar, Wallet } from 'lucide-react';
 import { cn } from '../ui';
 
@@ -39,7 +40,7 @@ interface DashboardMetricRowProps {
  * The four top-line numbers: today's attendance, open tasks, what's up next,
  * and the budget balance. Every card navigates somewhere useful.
  */
-export default function DashboardMetricRow({
+function DashboardMetricRow({
   presentCount,
   memberCount,
   hasSessionToday,
@@ -84,3 +85,5 @@ export default function DashboardMetricRow({
     </div>
   );
 }
+
+export default memo(DashboardMetricRow);

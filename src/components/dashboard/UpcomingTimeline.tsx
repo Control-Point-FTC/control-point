@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { format } from 'date-fns';
 import { Calendar, MapPin, ArrowRight } from 'lucide-react';
 import { Card } from '../ui';
@@ -23,7 +24,7 @@ function bucketFor(dateStr: string): string {
  * What's coming up, grouped the way people think about it:
  * Today, Tomorrow, then by weekday. Every row opens the calendar.
  */
-export default function UpcomingTimeline({ events, onNavigate }: UpcomingTimelineProps) {
+function UpcomingTimeline({ events, onNavigate }: UpcomingTimelineProps) {
   const upcoming = (events || [])
     .filter((e: any) => e.date >= format(new Date(), 'yyyy-MM-dd'))
     .sort((a: any, b: any) => a.date.localeCompare(b.date) || String(a.time || '').localeCompare(String(b.time || '')))
@@ -89,3 +90,5 @@ export default function UpcomingTimeline({ events, onNavigate }: UpcomingTimelin
     </Card>
   );
 }
+
+export default memo(UpcomingTimeline);

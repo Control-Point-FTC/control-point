@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, memo } from 'react';
 import { format } from 'date-fns';
 import { TrendingUp } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
@@ -15,8 +15,10 @@ interface AttendanceTrendProps {
   onNavigate: (path: string) => void;
 }
 
-/** The 14-day present-check-ins line chart, reusable outside the dashboard. */
-export function AttendanceTrendChart({ attendance, height = 'h-44' }: { attendance: any[]; height?: string }) {
+/** The 14-day present-check-ins line chart, reusable outside the dashboard.
+ *  `className` controls the wrapper sizing — pass `flex-1 min-h-44` to let
+ *  the chart fill a stretched card instead of leaving empty space. */
+export function AttendanceTrendChart({ attendance, className = 'h-44' }: { attendance: any[]; className?: string }) {
   const { theme } = useTheme();
 
   const chartData = useMemo(() => {
@@ -31,16 +33,18 @@ export function AttendanceTrendChart({ attendance, height = 'h-44' }: { attendan
     }));
   }, [attendance, theme]);
 
+  const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count)), [chartData]);
   const accentColor = cssVar('--color-accent', '#FFC700');
   const secondaryColor = cssVar('--color-secondary', '#1A1A1A');
 
   return (
-    <div className={`${height} w-full`}>
+    <div className={`${className} w-full min-h-44`}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
           <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} interval={2} />
-          <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
+          <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28}
+            domain={[0, Math.max(2, dataMax + 1)]} />
           <Tooltip
             contentStyle={{ backgroundColor: secondaryColor, border: '1px solid #ffffff20', borderRadius: '12px' }}
             itemStyle={{ color: accentColor }}
@@ -57,7 +61,7 @@ export function AttendanceTrendChart({ attendance, height = 'h-44' }: { attendan
  * clickable into the Attendance view. Re-renders on theme toggle so the
  * line follows the current accent color.
  */
-export default function AttendanceTrend({ attendance, onNavigate }: AttendanceTrendProps) {
+function AttendanceTrend({ attendance, onNavigate }: AttendanceTrendProps) {
   return (
     <Card
       title="Attendance Trend"
@@ -66,7 +70,9 @@ export default function AttendanceTrend({ attendance, onNavigate }: AttendanceTr
       className="md:col-span-2 xl:col-span-7 p-5 gap-3 cursor-pointer hover:border-accent/30 transition-colors"
       onClick={() => onNavigate('/attendance')}
     >
-      <AttendanceTrendChart attendance={attendance} />
+      <AttendanceTrendChart attendance={attendance} className="flex-1" />
     </Card>
   );
 }
+
+export default memo(AttendanceTrend);

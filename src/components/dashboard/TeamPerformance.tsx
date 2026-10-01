@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Trophy } from 'lucide-react';
 import { useFtcTeam, seasonLabel } from '../FtcStats';
 import { Card, Button } from '../ui';
@@ -11,7 +12,7 @@ interface TeamPerformanceProps {
  * breakdown grid (Total / Auto / TeleOp / Endgame with world ranks).
  * Links out to the full Team Stats view.
  */
-export default function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
+function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
   const ftc = useFtcTeam();
 
   return (
@@ -80,3 +81,5 @@ export default function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
     </Card>
   );
 }
+
+export default memo(TeamPerformance);

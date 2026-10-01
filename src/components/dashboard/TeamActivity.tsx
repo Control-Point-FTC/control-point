@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { format } from 'date-fns';
 import { Activity, CheckSquare, UserPlus, Calendar, CalendarCheck, Wallet } from 'lucide-react';
 import { Card } from '../ui';
@@ -52,7 +53,7 @@ export function activityWhen(item: ActivityItem): string {
  * new members, and budget transactions — each with a human timestamp.
  * Every row is clickable and leads to the relevant section.
  */
-export default function TeamActivity({ items, onNavigate }: { items: ActivityItem[]; onNavigate: (path: string) => void }) {
+function TeamActivity({ items, onNavigate }: { items: ActivityItem[]; onNavigate: (path: string) => void }) {
   return (
     <Card
       title="Team Activity"
@@ -92,3 +93,5 @@ export default function TeamActivity({ items, onNavigate }: { items: ActivityIte
     </Card>
   );
 }
+
+export default memo(TeamActivity);

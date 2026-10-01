@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { KeyRound, Copy, Check } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog } from '../dialog';
@@ -14,7 +14,7 @@ interface AccessCodeCardProps {
  * The team's join code: one-tap copy, plus regenerate behind a confirm
  * (the old code stops working immediately).
  */
-export default function AccessCodeCard({ team, setLoading, onRefresh }: AccessCodeCardProps) {
+function AccessCodeCard({ team, setLoading, onRefresh }: AccessCodeCardProps) {
   const [copiedCode, setCopiedCode] = useState(false);
 
   const copyAccessCode = async () => {
@@ -73,3 +73,5 @@ export default function AccessCodeCard({ team, setLoading, onRefresh }: AccessCo
     </Card>
   );
 }
+
+export default memo(AccessCodeCard);

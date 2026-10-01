@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { format } from 'date-fns';
 
 interface DashboardHeaderProps {
@@ -10,7 +11,7 @@ interface DashboardHeaderProps {
  * Personalized greeting header. Answers "what is happening today?" at a glance:
  * who you are, which team you're looking at, and what day it is.
  */
-export default function DashboardHeader({ userName, teamName, teamNumber }: DashboardHeaderProps) {
+function DashboardHeader({ userName, teamName, teamNumber }: DashboardHeaderProps) {
   const h = new Date().getHours();
   const greet =
     h >= 5 && h < 12 ? 'Good morning'
@@ -33,3 +34,5 @@ export default function DashboardHeader({ userName, teamName, teamNumber }: Dash
     </div>
   );
 }
+
+export default memo(DashboardHeader);

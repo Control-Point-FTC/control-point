@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { Zap, Clock } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { Card, Button } from '../ui';
@@ -16,7 +16,7 @@ interface TeamSummaryProps {
  * Bruno's operational overview: a generated team summary plus
  * optional AI insights from attendance data. Refresh/generate on demand.
  */
-export default function TeamSummary({
+function TeamSummary({
   summary,
   insights,
   isAiLoading,
@@ -68,3 +68,5 @@ export default function TeamSummary({
     </Card>
   );
 }
+
+export default memo(TeamSummary);
