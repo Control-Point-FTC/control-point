@@ -762,10 +762,15 @@ export default function App() {
     if (activeTab === 'cad' || activeTab === 'cad-docs' || activeTab === 'cad-reviews' || activeTab === 'cad-snapshots' || activeTab === 'cad-parts') setCadNavOpen(true);
   }, [activeTab]);
 
-  /** Change my presence status (online / idle / dnd / invisible). */
+  /** Change my presence status (online / idle / dnd / invisible).
+   *  Optimistic: the dot updates instantly; the server PATCH runs in the
+   *  background and we roll back only if it fails. */
   const handleStatusPick = async (status: string) => {
     if (!currentUser) return;
     setStatusPickerOpen(false);
+    const prev = currentUser.presence_status;
+    if (prev === status) return;
+    setCurrentUser({ ...currentUser, presence_status: status });
     try {
       const res = await apiFetch('/api/profile', {
         method: 'PATCH',
@@ -774,11 +779,13 @@ export default function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.user) {
-        setCurrentUser({ ...currentUser, ...data.user });
+        setCurrentUser((u: any) => (u ? { ...u, ...data.user, presence_status: data.user.presence_status || status } : u));
       } else {
+        setCurrentUser((u: any) => (u ? { ...u, presence_status: prev } : u));
         notify(data.error || 'Could not update status.', 'error');
       }
     } catch {
+      setCurrentUser((u: any) => (u ? { ...u, presence_status: prev } : u));
       notify('Could not update status.', 'error');
     }
   };
