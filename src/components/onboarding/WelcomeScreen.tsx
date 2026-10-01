@@ -16,7 +16,7 @@ const HIGHLIGHTS = [
 export default function WelcomeScreen({ userName, onGetStarted, onSkip }: WelcomeScreenProps) {
   const firstName = (userName || '').split(' ')[0];
   return (
-    <div className="min-h-dvh bg-primary flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+    <div className="fixed inset-0 z-[100] min-h-dvh bg-primary flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
       <div className="w-full max-w-lg">
         <div
           role="dialog"

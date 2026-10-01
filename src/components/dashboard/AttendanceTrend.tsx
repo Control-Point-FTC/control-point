@@ -15,12 +15,8 @@ interface AttendanceTrendProps {
   onNavigate: (path: string) => void;
 }
 
-/**
- * Present check-ins per day over the last 14 days. The whole card is
- * clickable into the Attendance view. Re-renders on theme toggle so the
- * line follows the current accent color.
- */
-export default function AttendanceTrend({ attendance, onNavigate }: AttendanceTrendProps) {
+/** The 14-day present-check-ins line chart, reusable outside the dashboard. */
+export function AttendanceTrendChart({ attendance, height = 'h-44' }: { attendance: any[]; height?: string }) {
   const { theme } = useTheme();
 
   const chartData = useMemo(() => {
@@ -39,27 +35,38 @@ export default function AttendanceTrend({ attendance, onNavigate }: AttendanceTr
   const secondaryColor = cssVar('--color-secondary', '#1A1A1A');
 
   return (
+    <div className={`${height} w-full`}>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={chartData}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+          <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} interval={2} />
+          <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
+          <Tooltip
+            contentStyle={{ backgroundColor: secondaryColor, border: '1px solid #ffffff20', borderRadius: '12px' }}
+            itemStyle={{ color: accentColor }}
+          />
+          <Line type="monotone" dataKey="count" stroke={accentColor} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * Present check-ins per day over the last 14 days. The whole card is
+ * clickable into the Attendance view. Re-renders on theme toggle so the
+ * line follows the current accent color.
+ */
+export default function AttendanceTrend({ attendance, onNavigate }: AttendanceTrendProps) {
+  return (
     <Card
       title="Attendance Trend"
       subtitle="Present check-ins · last 14 days"
       icon={TrendingUp}
-      className="md:col-span-2 xl:col-span-7 p-4 gap-2 xl:min-h-0 xl:overflow-hidden cursor-pointer hover:border-accent/30 transition-colors"
+      className="md:col-span-2 xl:col-span-7 p-5 gap-3 cursor-pointer hover:border-accent/30 transition-colors"
       onClick={() => onNavigate('/attendance')}
     >
-      <div className="flex-1 min-h-[110px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
-            <XAxis dataKey="date" stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} interval={2} />
-            <YAxis stroke="#94a3b8" fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28} />
-            <Tooltip
-              contentStyle={{ backgroundColor: secondaryColor, border: '1px solid #ffffff20', borderRadius: '12px' }}
-              itemStyle={{ color: accentColor }}
-            />
-            <Line type="monotone" dataKey="count" stroke={accentColor} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <AttendanceTrendChart attendance={attendance} />
     </Card>
   );
 }

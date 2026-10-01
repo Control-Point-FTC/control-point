@@ -27,7 +27,7 @@ export default function TeamSummary({
   const [aiTab, setAiTab] = useState<'summary' | 'insights'>('summary');
 
   return (
-    <Card title="AI team summary" subtitle="Today's operational overview" icon={Zap} className="xl:col-span-7 p-4 gap-2 xl:min-h-0 xl:overflow-hidden">
+    <Card title="AI team summary" subtitle="Today's operational overview" icon={Zap} className="xl:col-span-7 p-5 gap-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex gap-1 bg-white/5 rounded-lg p-0.5">
           {(['summary', 'insights'] as const).map((t) => (
@@ -52,7 +52,7 @@ export default function TeamSummary({
           </Button>
         )}
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 text-[13px] text-white/80 leading-relaxed prose prose-invert max-w-none">
+      <div className="max-h-72 min-h-[120px] overflow-y-auto custom-scrollbar pr-1 text-sm text-white/80 leading-relaxed prose prose-invert max-w-none">
         {aiTab === 'summary' ? (
           isAiLoading && !summary ? <ThinkingIndicator /> : <Markdown>{summary || 'No summary available yet.'}</Markdown>
         ) : (

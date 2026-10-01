@@ -50,7 +50,7 @@ export default function DashboardMetricRow({
   onNavigate,
 }: DashboardMetricRowProps) {
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
       <KpiCard
         icon={CalendarCheck}
         label="Today's attendance"

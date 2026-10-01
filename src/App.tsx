@@ -125,6 +125,7 @@ import Landing from './Landing';
 import LegalPage from './Legal';
 import { cn, Card, Button } from './components/ui';
 import DashboardView from './components/dashboard/DashboardView';
+import { AttendanceTrendChart } from './components/dashboard/AttendanceTrend';
 import ThemeToggle from './components/ThemeToggle';
 
 // Helper to get CSS variable values
@@ -2606,7 +2607,7 @@ export default function App() {
 
         <div className={cn(
           "flex flex-col flex-1 min-h-0",
-          isChatRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto custom-scrollbar" + (location.pathname === '/dashboard' && isAdmin ? " xl:overflow-hidden" : "")
+          isChatRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto custom-scrollbar"
         )}>
           <AnimatePresence mode="wait">
             <motion.div
@@ -4339,6 +4340,9 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   return (
     <div className="space-y-4 sm:space-y-6">
       {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
+      <Card title="Attendance Trend" subtitle="Present check-ins · last 14 days" icon={TrendingUp} className="p-5 gap-3">
+        <AttendanceTrendChart attendance={attendance} height="h-52" />
+      </Card>
       <div className="flex gap-1 sm:gap-2 p-1 bg-white/5 rounded-xl border border-white/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
           onClick={() => setActiveSubTab('grid')}

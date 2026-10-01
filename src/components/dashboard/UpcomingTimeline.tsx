@@ -42,14 +42,14 @@ export default function UpcomingTimeline({ events, onNavigate }: UpcomingTimelin
       title="Up next"
       subtitle={upcoming.length === 0 ? 'Nothing on the calendar' : `${upcoming.length} upcoming ${upcoming.length === 1 ? 'event' : 'events'}`}
       icon={Calendar}
-      className="xl:col-span-5 p-4 gap-2 xl:min-h-0 xl:overflow-hidden"
+      className="xl:col-span-5 p-5 gap-3"
     >
       {upcoming.length === 0 ? (
         <p className="text-sm text-text-muted py-6 text-center">
           No events scheduled. Add one from the calendar.
         </p>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-3 pr-1">
+        <div className="space-y-3 max-h-[26rem] overflow-y-auto custom-scrollbar pr-1">
           {groups.map((g) => (
             <div key={g.label}>
               <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5">

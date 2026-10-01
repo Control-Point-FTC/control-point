@@ -50,9 +50,9 @@ export default function AccessCodeCard({ team, setLoading, onRefresh }: AccessCo
   if (!team) return null;
 
   return (
-    <Card title="Team Access Code" subtitle="Students join with this code" icon={KeyRound} className="xl:col-span-5 p-5 gap-3 xl:min-h-0 xl:overflow-hidden">
-      <div className="flex-1 flex flex-col justify-center gap-3 min-h-0">
-        <p className="text-3xl font-mono font-bold text-accent tracking-[0.12em] break-all">{team.access_code}</p>
+    <Card title="Team Access Code" subtitle="Students join with this code" icon={KeyRound} className="xl:col-span-5 p-5 gap-3">
+      <div className="flex flex-col gap-3">
+        <p className="text-2xl font-mono font-bold text-accent tracking-[0.12em] whitespace-nowrap">{team.access_code}</p>
         <div className="flex gap-2.5">
           <Button variant="secondary" onClick={copyAccessCode} className="text-sm flex-1 !py-2.5">
             {copiedCode ? (

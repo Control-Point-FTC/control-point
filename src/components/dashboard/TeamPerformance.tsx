@@ -19,7 +19,7 @@ export default function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
       title="Team Performance"
       subtitle={ftc.data ? `${ftc.data.name} · ftc-scout.org` : 'FTC Scout integration'}
       icon={Trophy}
-      className="md:col-span-2 xl:col-span-5 p-4 gap-2 xl:min-h-0 xl:overflow-hidden"
+      className="md:col-span-2 xl:col-span-5 p-5 gap-3"
     >
       {ftc.loading ? (
         <div className="flex items-center gap-3 py-6">
@@ -32,7 +32,7 @@ export default function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
           <Button onClick={() => onNavigate('/settings')} className="text-sm w-fit">Connect team</Button>
         </div>
       ) : ftc.data ? (
-        <div className="flex-1 min-h-0 flex flex-col justify-center gap-3">
+        <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <button onClick={() => onNavigate('/stats')} className="flex items-center gap-3 min-w-0 text-left group">
               <span className="bg-accent text-accent-ink font-display font-bold px-3 py-1 rounded-lg text-base shrink-0">#{ftc.data.number}</span>

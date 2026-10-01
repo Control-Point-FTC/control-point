@@ -58,14 +58,14 @@ export default function TeamActivity({ items, onNavigate }: { items: ActivityIte
       title="Team Activity"
       subtitle={items.length === 0 ? 'Quiet week so far' : 'What the team has been up to'}
       icon={Activity}
-      className="xl:col-span-7 p-4 gap-2 xl:min-h-0 xl:overflow-hidden"
+      className="xl:col-span-7 p-5 gap-3"
     >
       {items.length === 0 ? (
         <p className="text-sm text-text-muted py-6 text-center">
           Nothing logged in the last 7 days. Once tasks move and events get added, they'll show up here.
         </p>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 space-y-1">
+        <div className="max-h-[26rem] overflow-y-auto custom-scrollbar pr-1 space-y-1">
           {items.map((a, i) => {
             const Icon = icons[a.kind] || Activity;
             const when = activityWhen(a);
