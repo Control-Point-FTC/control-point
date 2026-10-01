@@ -5439,20 +5439,73 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
 
 function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
   const [busy, setBusy] = useState(false);
+
+  const openNewEntry = () => {
+    setEditingId(null);
+    setNewItem({ team_id: defaultTeamId(teams, currentUser), type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
+    setShowAdd(true);
+  };
+
+  const openEditEntry = (item: any) => {
+    setEditingId(item.id);
+    setNewItem({
+      team_id: item.team_id?.toString() || '',
+      type: item.type || 'expense',
+      amount: item.amount?.toString() || '',
+      category: item.category || '',
+      description: item.description || '',
+      date: item.date || format(new Date(), 'yyyy-MM-dd'),
+    });
+    setShowAdd(true);
+  };
+
+  const openDuplicateEntry = (item: any) => {
+    setEditingId(null);
+    setNewItem({
+      team_id: defaultTeamId(teams, currentUser),
+      type: item.type || 'expense',
+      amount: item.amount?.toString() || '',
+      category: item.category || '',
+      description: item.description || '',
+      date: format(new Date(), 'yyyy-MM-dd'),
+    });
+    setShowAdd(true);
+  };
+
+  const closeEntryModal = () => {
+    setShowAdd(false);
+    setEditingId(null);
+  };
 
   const handleAdd = async () => {
     if (busy) return;
     setBusy(true);
     try {
+      const payload = { ...newItem, amount: parseFloat(newItem.amount) };
+      if (editingId) {
+        const res = await apiFetch(`/api/budget/${editingId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          closeEntryModal();
+          onRefresh();
+        } else {
+          notify('Could not save entry — try again.', 'error');
+        }
+        return;
+      }
       const res = await apiFetch('/api/budget', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({...newItem, amount: parseFloat(newItem.amount)})
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
-        setShowAdd(false);
+        closeEntryModal();
         onRefresh();
       } else {
         notify('Could not log entry — try again.', 'error');
@@ -5481,6 +5534,9 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
     const item = budget.find((b: any) => b.id === id);
     if (!item) return null;
     return [
+      { label: 'Edit transaction', icon: Pencil, action: () => openEditEntry(item) },
+      { label: 'Duplicate transaction', icon: Copy, action: () => openDuplicateEntry(item) },
+      { separator: true },
       { label: 'Delete transaction', icon: Trash2, danger: true, action: () => handleDelete(id) },
     ];
   });
@@ -5516,7 +5572,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
           <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">Transaction History</h3>
           <p className="text-sm text-text-muted mt-1">A line-by-line record of money in and out.</p>
         </div>
-        {isAdmin && <Button onClick={() => { setNewItem({ team_id: defaultTeamId(teams, currentUser), type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
+        {isAdmin && <Button onClick={openNewEntry} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
       </div>
 
       <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
@@ -5557,7 +5613,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title="Log Transaction" className="w-full max-w-md">
+          <Card title={editingId ? 'Edit Transaction' : 'Log Transaction'} className="w-full max-w-md">
             <div className="space-y-4">
               <div className="flex gap-2">
                 <Button 
@@ -5584,8 +5640,8 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
               <Input placeholder="Description" value={newItem.description} onChange={(e: any) => setNewItem({...newItem, description: e.target.value})} />
               <Input type="date" value={newItem.date} onChange={(e: any) => setNewItem({...newItem, date: e.target.value})} />
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
-                <Button onClick={handleAdd} disabled={busy}>{busy ? 'Saving…' : 'Log Entry'}</Button>
+                <Button variant="secondary" onClick={closeEntryModal}>Cancel</Button>
+                <Button onClick={handleAdd} disabled={busy}>{busy ? 'Saving…' : (editingId ? 'Save Changes' : 'Log Entry')}</Button>
               </div>
             </div>
           </Card>

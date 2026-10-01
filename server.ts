@@ -4822,6 +4822,28 @@ async function startServer() {
     }
   });
 
+  app.patch("/api/budget/:id", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_budget");
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT * FROM budget WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const { type, amount, category, description, date } = req.body;
+      (await dbRun(
+        "UPDATE budget SET type = ?, amount = ?, category = ?, description = ?, date = ? WHERE id = ?",
+        type ?? existing.type,
+        amount ?? existing.amount,
+        category ?? existing.category,
+        description ?? existing.description,
+        date ?? existing.date,
+        req.params.id));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating budget item:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.delete("/api/budget/:id", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_budget");
