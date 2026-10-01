@@ -137,17 +137,22 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     <AnimatePresence>
       {open && (
         <>
-          {/* Transparent click-catcher over the rest of the screen (no dimming, Copilot-style) */}
-          <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+          {/* Click-catcher only on mobile, where the panel is still an overlay.
+              On desktop the panel docks into the layout and the page resizes. */}
+          <div className="fixed inset-0 z-40 md:hidden" onClick={onClose} aria-hidden="true" />
           <motion.aside
-            initial={{ x: 420, opacity: 0.6 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 420, opacity: 0.6 }}
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 400, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 380, damping: 40 }}
-            className="fixed right-0 top-0 z-50 h-full w-[400px] max-w-[94vw] flex flex-col bg-[#101014]/98 backdrop-blur-xl border-l border-text-base/10 shadow-2xl"
+            className="flex flex-col overflow-hidden bg-[#101014]/98 backdrop-blur-xl border-text-base/10 shadow-2xl
+              max-md:fixed max-md:right-0 max-md:top-0 max-md:z-50 max-md:h-full max-md:w-[400px] max-md:max-w-[94vw] max-md:border-l
+              md:relative md:z-30 md:h-full md:shrink-0 md:border-l"
             role="complementary"
             aria-label={`${name} quick chat`}
           >
+            {/* Fixed-width inner so the docked width animation clips instead of squashing content. */}
+            <div className="w-[400px] max-w-[94vw] h-full flex flex-col min-h-0">
             {/* Header */}
             <div className="px-4 py-3 border-b border-text-base/10 bg-text-base/[0.03] flex-shrink-0">
               <div className="flex items-center gap-2.5">
@@ -276,6 +281,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 Grounded in GM0, FTC docs &amp; REV resources. Verify rules in the official manual.
               </p>
             </form>
+            </div>
           </motion.aside>
         </>
       )}
