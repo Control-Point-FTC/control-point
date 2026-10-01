@@ -306,17 +306,32 @@ Engine behaviors worth knowing:
   on), mic + speaker volume. Device switches apply live mid-call without
   renegotiation.
 
-## 9. UI components — ⚠️ being built, verify against `src/components/voice/`
+## 9. UI components (`src/components/voice/`)
 
-Another agent is currently building the call UI in `src/components/voice/`
-(it does not exist yet at the time of writing). Intended surfaces: the voice
-channel list with live participant rows, a persistent call bar (mute/deafen/
-camera/screen/leave) while in a call, an expanded call view (participant grid,
-spotlight/pin), device settings (mic/camera/speaker pickers + audio toggles),
-and admin UI (channel management, per-channel role overrides, moderation
-controls, a Settings-area voice section). All of it should be built on
-`useVoice()` from `src/voice/` only — do not invent component APIs here; verify
-against the actual files once they land.
+All components consume the engine via `useVoice()` from `src/voice/` only.
+Mount points in `src/App.tsx` are noted per component.
+
+| Component | Purpose | Mounted |
+|---|---|---|
+| `VoiceChannelList.tsx` | `VOICE CHANNELS` sidebar section: channel rows (lock/private badges, live participant counts), expandable participant rows, click-to-join. Mirrors the text-channel row styling. | `ChatView` channel list, below the text channels (`App.tsx` `channelList`). |
+| `UserVoiceControls.tsx` | Discord-style bottom-left controls: mic toggle + input-device dropdown + level meter, deafen toggle + output dropdown, settings gear. No-op with a hint when idle. | Sidebar footer, above the user/presence card (`App.tsx`). Owns a `DeviceSettingsModal` instance. |
+| `CallBar.tsx` | Compact persistent call bar (session name, status pill, participant count, mute/deafen/camera/screen/expand/leave). Fixed bottom, above the mobile nav; hidden when idle. Lives outside the routed views so it survives navigation. | App root (`App.tsx`), next to `BrunoPanel`. Owns a `DeviceSettingsModal` instance. |
+| `IncomingCallModal.tsx` | Ringing invite: accept / decline / dismiss (dismiss hides without notifying the caller); warns and requires an explicit "Leave & join" choice when already in a call. | App root (`App.tsx`); driven by `incomingCall`. |
+| `CallView.tsx` | Expanded full-screen call view: adaptive participant grid, spotlight/pin, per-participant menus. | App root (`App.tsx`); driven by `expanded` + `session`. |
+| `DeviceSettingsModal.tsx` | Mic/camera/speaker pickers, permission states, audio-processing toggles (persisted to `cp-voice-prefs`). | Owned internally by `UserVoiceControls` / `CallBar` (needs their open state); no separate app-root mount. |
+| `ParticipantMenu.tsx` | Per-participant context menu: pin/spotlight (local-only), volume, moderator actions (mute/deafen/disable-video/stop-screen/remove/move) gated on `canModerate`. | Used by `CallView` tiles. |
+| `VoiceChannelAdmin.tsx` | Admin channel management: create/rename/reorder/delete, lock/unlock, end call, private-channel role permission matrix. | Settings → "Voice & Calls" card (`App.tsx` `SettingsView`), gated on `hasPerm('manage_voice')`. |
+| `VoiceSettingsSection.tsx` | Team voice defaults: audio quality, max participants, invite TTL, reconnect grace, ringing, etc. (every `team_voice_settings` field; no fake controls). | Settings → "Voice & Calls" card, same gate. |
+| `CallHeaderButtons.tsx` | Audio/video call buttons for DM/group conversation headers (`startCall`). | **Not mounted** — the app has channel-based chat only, no DM/group message headers; ready for when that UI lands. |
+| `shared.tsx` | Shared primitives: `VoiceAvatar`, `CallStatusPill`, `QualityBadge`, `MicLevelMeter`, `VoiceIconButton`, `StreamVideo`, `ParticipantAudio`, per-peer volume persistence. | — |
+| `index.ts` | Component barrel. | — |
+
+Wiring summary: `<VoiceProvider>` wraps the authenticated app in `App.tsx`;
+`VoiceSocketBridge` (inside the provider) exposes the engine's socket API to
+App through a ref — `ws.onmessage` routes `voice:*` to `handleSocketMessage`
+first, `ws.onopen` calls `attachSocket` after the hello, `ws.onclose` calls
+`detachSocket` before the 3 s reconnect. Team switch and logout call `leave()`
+first so no ghost participants remain. The app keeps exactly one WebSocket.
 
 ## 10. Local testing
 
