@@ -87,8 +87,12 @@ import {
   Camera,
   LayoutGrid,
   BadgeCheck,
-  Loader2
+  Loader2,
+  CheckCircle2,
+  Clock3,
+  ListTodo
 } from 'lucide-react';
+import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -2242,6 +2246,7 @@ export default function App() {
   }
 
   return (
+    <ContextMenuProvider>
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
       {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
@@ -2780,6 +2785,7 @@ export default function App() {
         />
       )}
     </div>
+    </ContextMenuProvider>
   );
 }
 
@@ -4538,6 +4544,24 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
 
 function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) {
   const canManageCalendar = hasScope ? hasScope('calendar') : false;
+
+  // Right-click on a calendar event: edit or delete without opening the card.
+  useContextMenu('cal-event', (el) => {
+    if (!canManageCalendar) return null;
+    const id = Number(el.dataset.cmId);
+    const ev = (events || []).find((x: any) => x.id === id);
+    if (!ev) return null;
+    return [
+      { label: 'Edit event', icon: Pencil, action: () => openEdit(ev) },
+      {
+        label: 'Delete event', icon: Trash2, danger: true, action: async () => {
+          if (!(await confirmDialog({ title: 'Delete event', message: `Delete "${ev.title}"?`, confirmLabel: 'Delete', danger: true }))) return;
+          await apiFetch(`/api/events/${id}`, { method: 'DELETE' });
+          onRefresh();
+        },
+      },
+    ];
+  });
   const [cursor, setCursor] = useState(() => new Date());
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -4747,6 +4771,8 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
                     {dayEvents.slice(0, 3).map((e: any) => (
                       <button
                         key={e.id}
+                        data-cm-type="cal-event"
+                        data-cm-id={e.id}
                         onClick={(ev) => { ev.stopPropagation(); if (canManageCalendar) openEdit(e); }}
                         className={cn('w-full text-left text-[11px] px-1.5 py-0.5 rounded-md border truncate', canManageCalendar ? 'cursor-pointer' : 'cursor-default', typeStyle[e.event_type] || typeStyle.other)}
                       >
@@ -4932,6 +4958,20 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
 
   const isAdmin = hasScope('admin');
   const canManageTasks = hasScope('tasks');
+
+  // Right-click menu on task cards: quick status moves + delete.
+  useContextMenu('task', (el) => {
+    if (!canManageTasks) return null;
+    const id = Number(el.dataset.cmId);
+    const task = tasks.find((t: any) => t.id === id);
+    if (!task) return null;
+    const items: { label: string; icon?: any; danger?: boolean; action: () => void }[] = [];
+    if (task.status !== 'done') items.push({ label: 'Mark done', icon: CheckCircle2, action: () => updateStatus(id, 'done') });
+    if (task.status !== 'in-progress') items.push({ label: 'Mark in progress', icon: Clock3, action: () => updateStatus(id, 'in-progress') });
+    if (task.status !== 'todo') items.push({ label: 'Move to To-Do', icon: ListTodo, action: () => updateStatus(id, 'todo') });
+    items.push({ label: 'Delete task', icon: Trash2, danger: true, action: () => handleDeleteTask(id) });
+    return items;
+  });
 
   const handleAddTask = async () => {
     if (pendingIds.has(-1)) return;
@@ -5149,7 +5189,10 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
             
             <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2">
               {filteredTasks.filter((t: any) => t.status === col.id).map((task: any) => (
-                <div key={task.id} className={cn(
+                <div key={task.id}
+                  data-cm-type="task"
+                  data-cm-id={task.id}
+                  className={cn(
                   "glass p-4 rounded-xl border group",
                   task.is_board ? "border-accent/30 bg-accent/5" : "border-white/10"
                 )}>
@@ -6117,6 +6160,18 @@ function timeAgoSocial(ts: number) {
 
 function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, hasScope }: any) {
   const isAdminSocial = hasScope ? hasScope('outreach') : (currentUser as any)?.account_type === 'admin';
+
+  // Right-click on an outreach event card: edit or delete.
+  useContextMenu('outreach', (el) => {
+    if (!isAdminSocial) return null;
+    const id = Number(el.dataset.cmId);
+    const event = (outreach || []).find((x: any) => x.id === id);
+    if (!event) return null;
+    return [
+      { label: 'Edit event', icon: Pencil, action: () => openEdit(event) },
+      { label: 'Delete event', icon: Trash2, danger: true, action: () => handleDelete(event.id) },
+    ];
+  });
   const [showLinkYT, setShowLinkYT] = useState(false);
   const [ytInput, setYtInput] = useState('');
   const [linkingYT, setLinkingYT] = useState(false);
@@ -6528,7 +6583,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
       {/* Event cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
         {(outreach || []).map((event: any) => (
-          <Card key={event.id} title={event.title} icon={Globe}>
+          <Card key={event.id} title={event.title} icon={Globe} data-cm-type="outreach" data-cm-id={event.id}>
             <div className="flex justify-between items-start gap-3">
               <div className="min-w-0">
                 <p className="text-xs text-text-muted">{event.location} • {event.date}</p>
@@ -6775,6 +6830,17 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
   const [showImport, setShowImport] = useState(false);
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
 
+  // Right-click on a log entry: delete.
+  useContextMenu('comm', (el) => {
+    if (!canManage) return null;
+    const id = Number(el.dataset.cmId);
+    const comm = (communications || []).find((x: any) => x.id === id);
+    if (!comm) return null;
+    return [
+      { label: 'Delete entry', icon: Trash2, danger: true, action: () => handleDelete(comm.id) },
+    ];
+  });
+
   const handleAdd = async () => {
     await apiFetch('/api/communications', {
       method: 'POST',
@@ -6817,7 +6883,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
 
       <div className="space-y-3 sm:space-y-4">
         {communications.map((comm: any) => (
-          <Card key={comm.id} className="relative overflow-hidden">
+          <Card key={comm.id} className="relative overflow-hidden" data-cm-type="comm" data-cm-id={comm.id}>
             <div className={cn(
               "absolute top-0 left-0 w-1 h-full",
               comm.type === 'email' ? 'bg-blue-500' : 'bg-accent'
@@ -7616,6 +7682,21 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
 
   let lastDay = '';
   const canDelete = (msg: any) => msg.sender_id === currentUser.id || isAdmin;
+
+  // Right-click on a message: reply, copy, delete (same rules as the hover bar).
+  useContextMenu('message', (el) => {
+    const id = Number(el.dataset.cmId);
+    const msg = (messages || []).find((m: any) => m.id === id);
+    if (!msg) return null;
+    const items: { label: string; icon?: any; danger?: boolean; action: () => void }[] = [
+      { label: 'Reply', icon: Reply, action: () => startReply(msg) },
+      { label: 'Copy text', icon: Copy, action: () => copyMessageText(msg) },
+    ];
+    if (canDelete(msg)) {
+      items.push({ label: 'Delete message', icon: Trash2, danger: true, action: () => handleDeleteMessage(msg.id) });
+    }
+    return items;
+  });
   const messageList = visibleMessages.map((msg: any, idx: number) => {
     const day = formatDayDivider(msg.timestamp);
     const showDivider = day !== lastDay;
@@ -7636,6 +7717,8 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         <div
           ref={(el) => { if (el) msgRefs.current.set(msg.id, el); else msgRefs.current.delete(msg.id); }}
           onClick={() => { if (isTouchDevice) setActiveMsgId((id) => (id === msg.id ? null : msg.id)); }}
+          data-cm-type="message"
+          data-cm-id={msg.id}
           className={cn(
             'group relative flex gap-3 px-4 py-1.5 transition-colors',
             flashed ? 'bg-accent/15' : 'hover:bg-white/[0.03]'
@@ -9549,14 +9632,33 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
   };
 
   const updateMember = async (id: number, data: any) => {
-    await apiFetch(`/api/members/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    onRefresh();
-    setShowMemberEdit(null);
+    try {
+      await apiFetch(`/api/members/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      onRefresh();
+      setShowMemberEdit(null);
+    } catch {
+      notify('Could not update member — try again.', 'error');
+    }
   };
+
+  // Right-click on a member row: edit scopes, toggle board status.
+  useContextMenu('member', (el) => {
+    const id = Number(el.dataset.cmId);
+    const m = (members || []).find((x: any) => x.id === id);
+    if (!m) return null;
+    return [
+      { label: 'Edit scopes', icon: ShieldCheck, action: () => setShowMemberEdit(m) },
+      {
+        label: m.is_board ? 'Remove board status' : 'Make board member',
+        icon: BadgeCheck,
+        action: () => updateMember(m.id, { ...m, is_board: m.is_board ? 0 : 1 }),
+      },
+    ];
+  });
 
   return (
     <div className="max-w-4xl space-y-8">
@@ -9769,7 +9871,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {members.map((m: any) => (
-                    <tr key={m.id}>
+                    <tr key={m.id} data-cm-type="member" data-cm-id={m.id}>
                       <td className="px-4 py-3 text-white">{m.name}</td>
                       <td className="px-4 py-3">
                         <button 
