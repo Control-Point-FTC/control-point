@@ -98,6 +98,7 @@ import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
 import BrunoIcon from './components/BrunoIcon';
+import EmailImportModal from './components/EmailImport';
 import {
   WelcomeScreen,
   Walkthrough,
@@ -6771,6 +6772,7 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
 function CommunicationView({ communications, onRefresh, hasScope }: any) {
   const canManage = hasScope ? hasScope('communications') : false;
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
 
   const handleAdd = async () => {
@@ -6796,8 +6798,22 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
           <h3 className="text-lg sm:text-xl font-display font-bold text-white">Communication Log</h3>
           <p className="text-sm text-text-muted mt-1">A shared record of emails and messages sent on the team's behalf.</p>
         </div>
-        {canManage && <Button onClick={() => setShowAdd(true)} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log New Message</Button>}
+        {canManage && (
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Button variant="secondary" onClick={() => setShowImport(true)} className="flex-1 sm:flex-none">
+              <Mail className="w-4 h-4" /> Import email
+            </Button>
+            <Button onClick={() => setShowAdd(true)} className="flex-1 sm:flex-none"><Plus className="w-4 h-4" /> Log New Message</Button>
+          </div>
+        )}
       </div>
+
+      {showImport && (
+        <EmailImportModal
+          onClose={() => setShowImport(false)}
+          onLogged={() => { setShowImport(false); onRefresh(); }}
+        />
+      )}
 
       <div className="space-y-3 sm:space-y-4">
         {communications.map((comm: any) => (

@@ -1,4 +1,4 @@
-import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Check, X, Loader2 } from 'lucide-react';
+import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
 import type { ActionProposal } from '../services/aiService';
 
 const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; destructive?: boolean }> = {
@@ -7,6 +7,7 @@ const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; dest
   outreach: { label: 'Outreach log', icon: Megaphone },
   task: { label: 'Tasks', icon: ListTodo },
   budget: { label: 'Budget', icon: Wallet },
+  communication: { label: 'Communication log', icon: Mail },
 };
 
 function itemSummary(kind: ActionProposal['kind'], it: any): string {
@@ -19,6 +20,11 @@ function itemSummary(kind: ActionProposal['kind'], it: any): string {
     return `${title}${it.date ? ` — ${it.date}` : ''}`;
   }
   if (kind === 'outreach') return `${title}${it.date ? ` — ${it.date}` : ''}`;
+  if (kind === 'communication') {
+    const subj = String(it.subject || 'No subject').slice(0, 60);
+    const to = String(it.recipient || '').slice(0, 40);
+    return `${subj}${to ? ` → ${to}` : ''}${it.date ? ` — ${it.date}` : ''}`;
+  }
   if (kind === 'task') return `${title}${it.due_date ? ` — due ${it.due_date}` : ''}`;
   const amt = !isNaN(parseFloat(it.amount)) ? `$${parseFloat(it.amount).toFixed(2)}` : '';
   const dir = it.type === 'income' ? 'in' : 'out';

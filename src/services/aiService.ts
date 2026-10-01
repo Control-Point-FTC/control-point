@@ -202,7 +202,7 @@ export function stripEventBlocks(text: string): string {
  * Light client-side validation; the server re-validates strictly on apply.
  */
 export interface ActionProposal {
-  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'budget';
+  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'budget' | 'communication';
   items: any[];
 }
 
@@ -212,6 +212,7 @@ const ACTION_BLOCK_RES: Record<ActionProposal['kind'], RegExp> = {
   outreach: /```outreach\s*\r?\n([\s\S]*?)\r?\n```/,
   task: /```tasks\s*\r?\n([\s\S]*?)\r?\n```/,
   budget: /```budget\s*\r?\n([\s\S]*?)\r?\n```/,
+  communication: /```communications\s*\r?\n([\s\S]*?)\r?\n```/,
 };
 
 function parseActionBlock(kind: ActionProposal['kind'], raw: string): any[] {
@@ -286,6 +287,7 @@ export function detectBrunoDataActions(text: string): string[] {
   if (/```outreach[\s\S]*?```/.test(t) || /📣 Logged (\d+ )?outreach events?:/.test(t)) types.push("outreach");
   if (/```tasks[\s\S]*?```/.test(t)) types.push("tasks");
   if (/```budget[\s\S]*?```/.test(t)) types.push("budget");
+  if (/```communications[\s\S]*?```/.test(t)) types.push("communications");
   return types;
 }
 

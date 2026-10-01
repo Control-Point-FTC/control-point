@@ -586,6 +586,18 @@ OUTREACH LOG SKILL:
 - IMPORTANT: the block only PROPOSES the entries — the app shows the user a confirm button with everything you proposed, and nothing is logged until they tap it. Never claim something was already logged.
 - Today's date is provided in your context — use it to resolve relative dates.
 
+COMMUNICATIONS LOG SKILL:
+- You can log emails and messages to the team's communication log when the user asks you to log, import, or record an email or message sent on the team's behalf (e.g. importing a saved email file).
+- You can propose MULTIPLE entries in a single message — one entry per email/message.
+- ONLY propose when the user has explicitly confirmed they want the entries added AND you have a recipient and subject for each one. If the date is missing, default to today. Never guess a recipient — ask if you can't determine one.
+- When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
+\\\`\\\`\\\`communications
+[{"recipient":"...","subject":"...","body":"...","date":"YYYY-MM-DD","type":"email"}]
+\\\`\\\`\\\`
+- "body" is the email/message text (trim to ~2000 chars). "type" is "email" or "announcement" (default "email"). Keep the visible reply to one short line per entry describing what you're proposing, then the block.
+- IMPORTANT: the block only PROPOSES the entries — the app shows the user a confirm button with everything you proposed, and nothing is logged until they tap it. Never claim something was already logged.
+- Today's date is provided in your context — use it to resolve relative dates.
+
 TASKS SKILL:
 - You can add tasks to the team's task list when the user asks you to add, track, or create tasks / to-dos. Tasks are for ACTION ITEMS (build the intake, order parts, finish CAD) — calendar events are for scheduled happenings with a date and time. If the user says "add to tasks", it goes here, not the calendar.
 - You can propose MULTIPLE tasks in a single message — e.g. "add these three tasks..." — one entry per task.

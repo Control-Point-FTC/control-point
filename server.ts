@@ -5974,6 +5974,43 @@ Rules:
     return { text: src.replace(OUTREACH_BLOCK_RE, "").trim(), entries };
   }
 
+  // Bruno communications skill: the model ends its reply with a fenced
+  // ```communications block (a JSON array) when the user confirms communication
+  // log entries (e.g. importing a saved email). Parse, validate, strip.
+  // Entries are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
+  const COMMUNICATIONS_BLOCK_RE = /```communications\s*\r?\n([\s\S]*?)\r?\n```/;
+  function extractCommunicationsBlock(fullText: string): { text: string; entries: any[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(COMMUNICATIONS_BLOCK_RE);
+    if (!m) return { text: src, entries: null };
+    let entries: any[] | null = null;
+    try {
+      const p = JSON.parse(m[1]);
+      if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        const valid = p.map((c: any) => {
+          if (!c || typeof c.recipient !== "string" || !c.recipient.trim()) return null;
+          if (typeof c.subject !== "string" || !c.subject.trim()) return null;
+          let date = todayStr;
+          if (typeof c.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(c.date) && !isNaN(new Date(c.date + "T00:00:00").getTime())) {
+            date = c.date;
+          }
+          const type = c.type === "announcement" ? "announcement" : "email";
+          return {
+            recipient: c.recipient.trim().slice(0, 200),
+            subject: c.subject.trim().slice(0, 200),
+            body: typeof c.body === "string" ? c.body.trim().slice(0, 2000) : "",
+            date,
+            type,
+          };
+        }).filter(Boolean);
+        if (valid.length) entries = valid;
+      }
+    } catch { /* malformed JSON — treat as no entries */ }
+    return { text: src.replace(COMMUNICATIONS_BLOCK_RE, "").trim(), entries };
+  }
+
   // Bruno tasks skill: the model ends its reply with a fenced ```tasks block
   // (a JSON array) when the user confirms task entries. Parse, validate, strip.
   // Tasks are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
@@ -6151,8 +6188,8 @@ Rules:
       const personaOverride = req.body?.persona === "bruno" ? "bruno" : null;
       const navGptOn = !personaOverride && (await navGptActiveForTeam(auth.teamId));
       const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", fullContext].filter(Boolean).join("\n\n");
-      // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget) are
-      // PROPOSALS only: strip them from the reply text here. Nothing is
+      // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
+      // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls
       // POST /api/ai/apply-actions with the parsed items.
       const stripActionBlocks = (rawText: string): string => {
@@ -6160,6 +6197,7 @@ Rules:
         t = extractEventBlock(t).text;
         t = extractDeleteEventBlock(t).text;
         t = extractOutreachBlock(t).text;
+        t = extractCommunicationsBlock(t).text;
         t = extractTasksBlock(t).text;
         t = extractBudgetBlock(t).text;
         return t;
@@ -6269,7 +6307,7 @@ Rules:
   });
 
   // Confirm + apply Bruno/NavGPT data-action proposals (```event, ```outreach,
-  // ```tasks, ```budget blocks). The AI only proposes; nothing is inserted
+  // ```tasks, ```budget, ```communications blocks). The AI only proposes; nothing is inserted
   // until the user taps the confirm button, which calls this endpoint with the
   // parsed items. Server re-validates everything before inserting.
   // Permissions mirror the direct APIs: events/outreach any team member (same
@@ -6324,6 +6362,21 @@ Rules:
             ));
           }
           applied.outreach = (applied.outreach || 0) + entries.length;
+        } else if (kind === "communication") {
+          // Logging to the communication log requires the same permission
+          // as POST /api/communications.
+          if (!(await hasPerm(auth, "manage_communications"))) {
+            return res.status(403).json({ error: "Only members with communication access can log messages" });
+          }
+          const { entries } = extractCommunicationsBlock("```communications\n" + JSON.stringify(items) + "\n```");
+          if (!entries?.length) continue;
+          for (const c of entries) {
+            (await dbRun(
+              "INSERT INTO communications (recipient, subject, body, date, type, team_id) VALUES (?, ?, ?, ?, ?, ?)",
+              c.recipient, c.subject, c.body, c.date, c.type, auth.teamId
+            ));
+          }
+          applied.communication = (applied.communication || 0) + entries.length;
         } else if (kind === "task") {
           if (!isAdmin) return res.status(403).json({ error: "Only admins can add tasks" });
           const { tasks } = extractTasksBlock("```tasks\n" + JSON.stringify(items) + "\n```");
