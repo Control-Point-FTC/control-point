@@ -77,6 +77,66 @@
   background: radial-gradient(ellipse 60% 45% at 50% 0%, rgba(255, 199, 0, 0.16), transparent 70%);
 }
 
+/* ---------- reactive hero (mouse-driven) ---------- */
+/* The hero section sets --mx/--my (cursor px), --rx/--ry (tilt deg) and
+   --p1x/--p1y/--p2x/--p2y (parallax px) via rAF. Everything below is pure
+   CSS so the effect stays at 60fps with no React re-renders. */
+.reactive-hero {
+  --mx: 50%;
+  --my: 28%;
+  --rx: 0deg;
+  --ry: 0deg;
+  --p1x: 0px; --p1y: 0px;
+  --p2x: 0px; --p2y: 0px;
+}
+
+/* Bright volt grid that ignites around the cursor, slightly enlarged so the
+   lit patch feels raised off the page. */
+.hero-grid-spot {
+  background-image:
+    linear-gradient(rgba(255, 199, 0, 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 199, 0, 0.4) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(300px circle at var(--mx) var(--my), black 15%, transparent 68%);
+  mask-image: radial-gradient(300px circle at var(--mx) var(--my), black 15%, transparent 68%);
+  opacity: 0;
+  transform: scale(1.035);
+  transition: opacity 0.45s ease;
+  pointer-events: none;
+}
+.reactive-hero.hero-hot .hero-grid-spot { opacity: 1; }
+
+/* Soft volt aura that trails the cursor. */
+.hero-mouse-glow {
+  background: radial-gradient(440px circle at var(--mx) var(--my), rgba(255, 199, 0, 0.13), transparent 65%);
+  opacity: 0;
+  transition: opacity 0.45s ease;
+  pointer-events: none;
+}
+.reactive-hero.hero-hot .hero-mouse-glow { opacity: 1; }
+
+/* 3D tilt for the dashboard mock — leans toward the cursor. */
+.hero-tilt {
+  transform: perspective(1500px) rotateX(var(--rx)) rotateY(var(--ry));
+  transform-style: preserve-3d;
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+/* Inner card lifts toward the viewer for extra depth. */
+.hero-tilt-inner {
+  transform: translateZ(46px);
+  transform-style: preserve-3d;
+}
+
+/* Depth orbs drifting at different parallax rates. */
+.hero-orb-1 { transform: translate(var(--p1x), var(--p1y)); transition: transform 0.35s ease-out; }
+.hero-orb-2 { transform: translate(var(--p2x), var(--p2y)); transition: transform 0.35s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-tilt, .hero-tilt-inner, .hero-orb-1, .hero-orb-2 { transform: none !important; transition: none !important; }
+  .hero-grid-spot, .hero-mouse-glow { display: none !important; }
+}
+
 .eyebrow {
   @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted;
 }

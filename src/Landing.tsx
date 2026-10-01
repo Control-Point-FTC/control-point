@@ -106,8 +106,60 @@ function Logo({ size = "md" }: { size?: "md" | "lg" }) {
   );
 }
 
-function HeroMock() {
-  return (
+/* Mouse-reactive hero: tracks the cursor over the hero section and drives
+   CSS vars (--mx/--my cursor px, --rx/--ry tilt, --p1/--p2 parallax) via rAF.
+   Pure CSS consumes them, so there are no React re-renders per mousemove.
+   Disabled for touch devices and prefers-reduced-motion. */
+function useHeroMouse() {
+  const ref = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof window === "undefined") return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(hover: none), (pointer: coarse)").matches) return;
+    let raf = 0;
+    const reset = () => {
+      el.style.setProperty("--rx", "0deg");
+      el.style.setProperty("--ry", "0deg");
+      el.style.setProperty("--p1x", "0px"); el.style.setProperty("--p1y", "0px");
+      el.style.setProperty("--p2x", "0px"); el.style.setProperty("--p2y", "0px");
+    };
+    const onMove = (e: MouseEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const r = el.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        const nx = x / r.width - 0.5;
+        const ny = y / r.height - 0.5;
+        el.style.setProperty("--mx", `${x.toFixed(1)}px`);
+        el.style.setProperty("--my", `${y.toFixed(1)}px`);
+        el.style.setProperty("--ry", `${(nx * 8).toFixed(2)}deg`);
+        el.style.setProperty("--rx", `${(-ny * 8).toFixed(2)}deg`);
+        el.style.setProperty("--p1x", `${(nx * -24).toFixed(1)}px`);
+        el.style.setProperty("--p1y", `${(ny * -24).toFixed(1)}px`);
+        el.style.setProperty("--p2x", `${(nx * 36).toFixed(1)}px`);
+        el.style.setProperty("--p2y", `${(ny * 36).toFixed(1)}px`);
+        el.classList.add("hero-hot");
+      });
+    };
+    const onLeave = () => {
+      cancelAnimationFrame(raf);
+      el.classList.remove("hero-hot");
+      reset();
+    };
+    el.addEventListener("mousemove", onMove, { passive: true });
+    el.addEventListener("mouseleave", onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener("mousemove", onMove);
+      el.removeEventListener("mouseleave", onLeave);
+    };
+  }, []);
+  return ref;
+}
+
+function HeroMock() {  return (
     <div className="relative mx-auto mt-16 max-w-4xl animate-float-slow">
       <div className="absolute -inset-8 bg-accent/10 blur-3xl rounded-full pointer-events-none" />
       <div className="relative rounded-2xl border border-text-base/10 bg-secondary/90 shadow-2xl shadow-black/60 overflow-hidden">
@@ -170,6 +222,7 @@ function HeroMock() {
 
 export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => void; onGetStarted: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const heroRef = useHeroMouse();
   return (
     <div className="theme-dark min-h-screen bg-primary text-text-base overflow-x-clip">
       {/* nav */}
@@ -226,9 +279,14 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
       </header>
 
       {/* hero */}
-      <section className="relative pt-36 pb-20 sm:pt-44">
+      <section ref={heroRef} className="reactive-hero relative pt-36 pb-20 sm:pt-44">
         <div className="hero-grid absolute inset-0" />
+        <div className="hero-grid-spot absolute inset-0" aria-hidden="true" />
         <div className="hero-glow absolute inset-0" />
+        <div className="hero-mouse-glow absolute inset-0" aria-hidden="true" />
+        {/* depth orbs — drift at different parallax rates */}
+        <div className="hero-orb-1 pointer-events-none absolute -left-24 top-1/3 h-72 w-72 rounded-full bg-accent/[0.07] blur-3xl" aria-hidden="true" />
+        <div className="hero-orb-2 pointer-events-none absolute -right-20 top-24 h-80 w-80 rounded-full bg-accent/[0.05] blur-3xl" aria-hidden="true" />
         <div className="relative mx-auto max-w-6xl px-4 sm:px-6 text-center">
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55 }}>
             <span className="eyebrow">
@@ -269,8 +327,11 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
           </motion.div>
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8, delay: 0.4 }}
+            className="hero-tilt"
           >
-            <HeroMock />
+            <div className="hero-tilt-inner">
+              <HeroMock />
+            </div>
           </motion.div>
         </div>
       </section>
