@@ -655,6 +655,12 @@ if (!aiUsageColumns.some((c: any) => c.name === 'provider')) {
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_social_stats_profile ON social_stats(profile_id, recorded_at)`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_bruno_chats_team ON bruno_chats(team_id)`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_bruno_messages_chat ON bruno_messages(chat_id)`));
+// Added 2026-10-01 after EXPLAIN QUERY PLAN showed full table scans on the
+// dashboard's hot queries (tasks/events/budget per team, channel messages).
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_tasks_team ON tasks(team_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_tasks_team_status_due ON tasks(team_id, status, due_date)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_events_team_date ON events(team_id, date, start_time)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_budget_team ON budget(team_id)`));
 
 const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {
@@ -670,6 +676,10 @@ const messageChannelColumns = (await dbAll("PRAGMA table_info(messages)"));
 if (!messageChannelColumns.some((c: any) => c.name === 'channel_id')) {
   (await dbExec("ALTER TABLE messages ADD COLUMN channel_id INTEGER"));
 }
+// Index for the hot channel-messages query (team + channel + time order).
+// Created here — after the channel_id migration above — not with the other
+// indexes, because the column may not exist yet on older databases.
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(team_id, channel_id, timestamp)`));
 // YouTube rich channel details on social_profiles (link + sync populate them)
 const socialProfileColumns = (await dbAll("PRAGMA table_info(social_profiles)"));
 for (const [col, type] of [['country', 'TEXT'], ['published_at', 'TEXT'], ['description', 'TEXT'], ['custom_url', 'TEXT']] as const) {
