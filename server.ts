@@ -6397,11 +6397,11 @@ Rules:
       let upcomingCtx = "";
       try {
         const upcoming = (await dbAll(
-          "SELECT id, title, date, time FROM events WHERE team_id = ? AND date >= date('now', '-1 day') ORDER BY date ASC, time ASC LIMIT 60",
+          "SELECT id, title, date, start_time FROM events WHERE team_id = ? AND date >= date('now', '-1 day') ORDER BY date ASC, start_time ASC LIMIT 60",
           auth.teamId
         )) as any[];
         if (upcoming.length) {
-          const lines = upcoming.map((e) => `#${e.id} ${e.title} — ${e.date}${e.time ? " " + e.time : ""}`);
+          const lines = upcoming.map((e) => `#${e.id} ${e.title} — ${e.date}${e.start_time ? " " + e.start_time : ""}`);
           upcomingCtx = `UPCOMING TEAM EVENTS (next ${upcoming.length}):\n${lines.join("\n")}`;
         }
       } catch { /* context is best-effort — never block the reply */ }
