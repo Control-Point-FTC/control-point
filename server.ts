@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import express from "express";
+// Patches Express 4 so errors thrown in async route handlers are forwarded
+// to the centralized error middleware instead of hanging the request.
+import "express-async-errors";
 import "dotenv/config";
 import path from "path";
 import fs from "fs";
@@ -7459,6 +7462,12 @@ Rules:
     } catch (e) { console.error("CAD dashboard error:", e); res.status(500).json({ error: "Internal server error" }); }
   });
 
+  // Unknown API routes: JSON 404 (not the SPA html) so clients can tell
+  // a missing endpoint apart from a page load.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Not found" });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -7472,6 +7481,18 @@ Rules:
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }
+
+  // Centralized error handler (reached via express-async-errors for async
+  // throws, or next(err)). Always JSON; never leaks stacks to clients.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    const status = typeof err?.status === "number" ? err.status : 500;
+    console.error(`[API error] ${status}:`, err?.message || err);
+    if (res.headersSent) return;
+    res.status(status).json({
+      error: status >= 500 ? "Internal server error" : (err?.message || "Request failed"),
+    });
+  });
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);

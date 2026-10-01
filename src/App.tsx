@@ -1109,6 +1109,21 @@ export default function App() {
     }
   }, []);
 
+  // If any API call gets a 401 (expired/revoked session), the api layer
+  // clears the stored session and fires this — return to signed-out state.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setIsLoggedIn(false);
+      setCurrentUser(null);
+      setSessionId(null);
+      setTeams([]);
+      setTeamsLoaded(false);
+      setSocket(null);
+    };
+    window.addEventListener('cp:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('cp:unauthorized', onUnauthorized);
+  }, []);
+
   // Apply custom colors. In dark mode the custom primary/text/secondary
   // overrides own the surfaces; in light mode the html.light design tokens
   // own them (a dark custom primary would turn the whole light UI grey),
