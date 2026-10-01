@@ -23,6 +23,51 @@ function getStoredSessionId(): string | null {
   }
 }
 
+/**
+ * GitHub Pages mirror support: when the frontend is built with VITE_API_BASE
+ * set, every API call, asset URL, and the WebSocket connection targets that
+ * API origin instead of the page's own origin. Normal builds leave it unset
+ * and everything stays same-origin.
+ */
+export function apiBase(): string {
+  try {
+    const b = (import.meta as any)?.env?.VITE_API_BASE as string | undefined;
+    return (b || '').replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+/** Prefix a root-relative API path with the API base when configured. Absolute URLs pass through. */
+export function apiUrl(path: string): string {
+  const base = apiBase();
+  if (!base || /^https?:\/\//i.test(path)) return path;
+  return base + (path.startsWith('/') ? path : `/${path}`);
+}
+
+/** Asset URLs (avatars, uploads) are served by the API origin. */
+export function assetUrl(url: string | null | undefined): string | null | undefined {
+  if (typeof url !== 'string' || !url) return url;
+  return apiUrl(url);
+}
+
+/**
+ * OAuth start URL. In mirror builds the API completion must redirect back to
+ * the mirror's app root, so the mirror origin+base-path rides along as
+ * return_to (validated server-side against MIRROR_ORIGINS).
+ */
+export function oauthUrl(path: string): string {
+  const base = apiBase();
+  if (!base) return apiUrl(path);
+  let returnTo = '';
+  try {
+    returnTo = new URL((import.meta as any).env.BASE_URL || '/', window.location.origin).href.replace(/\/$/, '');
+  } catch { /* fall through without return_to */ }
+  if (!returnTo) return apiUrl(path);
+  const sep = path.includes('?') ? '&' : '?';
+  return apiUrl(`${path}${sep}return_to=${encodeURIComponent(returnTo)}`);
+}
+
 export interface ApiFetchOptions extends RequestInit {
   /** Abort the request after this many ms. Opt-in; no default. */
   timeoutMs?: number;
@@ -42,7 +87,7 @@ export function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Respo
       /* older runtimes without AbortSignal.timeout — skip */
     }
   }
-  return fetch(url, { ...rest, headers, signal: signal ?? undefined });
+  return fetch(apiUrl(url), { ...rest, headers, signal: signal ?? undefined });
 }
 
 function handleUnauthorized() {

@@ -5,6 +5,7 @@ import { apiFetch } from '../services/api';
 import { notify } from './dialog';
 import { PRESENCE_META, PresencePicker } from './presence';
 import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
+import { assetUrl } from '../services/api';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -239,7 +240,7 @@ export default function SettingsModal({
                   <div className="flex items-center gap-4">
                     <div className="w-20 h-20 rounded-full overflow-hidden bg-accent text-accent-ink flex items-center justify-center text-2xl font-bold flex-shrink-0">
                       {user?.avatar_url ? (
-                        <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
+                        <img src={assetUrl(user.avatar_url)} alt="" className="w-full h-full object-cover" />
                       ) : (
                         (user?.name || '?').charAt(0).toUpperCase()
                       )}

@@ -127,7 +127,7 @@ import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
-import { apiFetch } from './services/api';
+import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
 import { CodeView } from './components/CodeView';
 import { CadView } from './components/CadView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
@@ -199,7 +199,7 @@ const Avatar = ({ user, size = 'md', className }: any) => {
     className
   );
   if (user?.avatar_url) {
-    return <img src={user.avatar_url} alt={user?.name || 'avatar'} className={cn(cls, 'object-cover')} />;
+    return <img src={assetUrl(user.avatar_url)} alt={user?.name || 'avatar'} className={cn(cls, 'object-cover')} />;
   }
   return <div className={cls}>{(user?.name || '?').charAt(0).toUpperCase()}</div>;
 };
@@ -327,17 +327,17 @@ const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEna
           </div>
           <div className="mt-4 space-y-2.5">
             {googleEnabled && (
-              <a href="/api/auth/google?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
+              <a href={oauthUrl('/api/auth/google?intent=signup')} className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
                 <GoogleIcon /> Continue with Google
               </a>
             )}
             {discordEnabled && (
-              <a href="/api/auth/discord?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
+              <a href={oauthUrl('/api/auth/discord?intent=signup')} className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
                 <DiscordIcon /> Continue with Discord
               </a>
             )}
             {githubEnabled && (
-              <a href="/api/auth/github?intent=signup" className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
+              <a href={oauthUrl('/api/auth/github?intent=signup')} className="flex items-center justify-center gap-2 rounded-xl border border-text-base/10 bg-elevated px-3 py-3 text-sm font-semibold text-text-base hover:border-accent/60 hover:bg-text-base/5 transition-all">
                 <GithubIcon /> Continue with GitHub
               </a>
             )}
@@ -375,7 +375,7 @@ const AdminTeamFields = ({ teamNumber, setTeamNumber, teamName, setTeamName, lab
     }
     setLookup('loading');
     try {
-      const res = await fetch(`/api/ftc/lookup-public?number=${encodeURIComponent(n)}`);
+      const res = await fetch(apiUrl(`/api/ftc/lookup-public?number=${encodeURIComponent(n)}`));
       if (res.ok) {
         const data = await res.json();
         setFoundName(data.name || '');
@@ -1118,7 +1118,7 @@ export default function App() {
     if (gs) {
       localStorage.setItem('sessionId', gs);
       setSessionId(gs);
-      fetch(`/api/auth/me?sessionId=${encodeURIComponent(gs)}`)
+      fetch(apiUrl(`/api/auth/me?sessionId=${encodeURIComponent(gs)}`))
         .then(r => r.json())
         .then(data => {
           if (data.user) {
@@ -1137,7 +1137,7 @@ export default function App() {
       // Restore a saved password-login session, if any
       const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
       if (saved) {
-        fetch(`/api/auth/me?sessionId=${encodeURIComponent(saved)}`)
+        fetch(apiUrl(`/api/auth/me?sessionId=${encodeURIComponent(saved)}`))
           .then(r => r.json())
           .then(data => {
             if (data.user) {
@@ -1211,8 +1211,11 @@ export default function App() {
 
 
   const connectSocket = () => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
+    const api = apiBase();
+    const wsUrl = api
+      ? api.replace(/^http/, 'ws') // mirror build: socket lives on the API origin
+      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    const ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
       console.log("WebSocket connected");
@@ -2241,7 +2244,7 @@ export default function App() {
                 </div>
                 <div className="mt-6 space-y-2.5">
                   {googleEnabled && (
-                    <a href="/api/auth/google?intent=login" className="block">
+                    <a href={oauthUrl('/api/auth/google?intent=login')} className="block">
                       <Button variant="secondary" className="w-full py-3" type="button">
                         <GoogleIcon />
                         Continue with Google
@@ -2249,7 +2252,7 @@ export default function App() {
                     </a>
                   )}
                   {discordEnabled && (
-                    <a href="/api/auth/discord?intent=login" className="block">
+                    <a href={oauthUrl('/api/auth/discord?intent=login')} className="block">
                       <Button variant="secondary" className="w-full py-3" type="button">
                         <DiscordIcon />
                         Continue with Discord
@@ -2257,7 +2260,7 @@ export default function App() {
                     </a>
                   )}
                   {githubEnabled && (
-                    <a href="/api/auth/github?intent=login" className="block">
+                    <a href={oauthUrl('/api/auth/github?intent=login')} className="block">
                       <Button variant="secondary" className="w-full py-3" type="button">
                         <GithubIcon />
                         Continue with GitHub
@@ -6581,7 +6584,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-2.5">
                       {p.avatar_url ? (
-                        <img src={p.avatar_url} alt="" className="w-9 h-9 rounded-lg object-cover" />
+                        <img src={assetUrl(p.avatar_url)} alt="" className="w-9 h-9 rounded-lg object-cover" />
                       ) : (
                         <div className="rounded-lg p-2" style={{ backgroundColor: meta.color + '22' }}>
                           <PIcon className="w-4 h-4" style={{ color: meta.color }} />
@@ -7884,9 +7887,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               {msg.file_path && (
                 <div className="flex flex-col gap-2 mb-1.5 mt-1">
                   {isImageFile(msg.file_path) && (
-                    <a href={msg.file_path} target="_blank" rel="noopener noreferrer">
+                    <a href={assetUrl(msg.file_path)} target="_blank" rel="noopener noreferrer">
                       <img
-                        src={msg.file_path}
+                        src={assetUrl(msg.file_path)}
                         alt={msg.file_name || 'uploaded'}
                         className="rounded-lg max-w-xs max-h-64 object-cover border border-text-base/10 shadow-sm hover:opacity-95 transition-opacity"
                       />
@@ -7905,7 +7908,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                         </div>
                       )}
                       <a
-                        href={msg.file_path}
+                        href={assetUrl(msg.file_path)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mt-1.5 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-accent/10 border border-accent/20 hover:bg-accent/20 transition-colors text-xs text-accent font-medium"
@@ -9353,7 +9356,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
       const fd = new FormData();
       fd.append('avatar', file);
       const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
-      const res = await fetch(`/api/profile/avatar${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`, {
+      const res = await fetch(apiUrl(`/api/profile/avatar${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`), {
         method: 'POST',
         body: fd
       });

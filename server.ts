@@ -1491,6 +1491,21 @@ async function startServer() {
 
   app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
 
+  // CORS for the GitHub Pages mirror (MIRROR_ORIGINS). Header-based sessions
+  // mean no credentials flag is needed; the X-Session-ID header is allowlisted
+  // for preflight. No origins configured = same-origin only, as before.
+  app.use((req, res, next) => {
+    const origin = req.headers.origin as string | undefined;
+    if (origin && isAllowedMirrorOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'X-Session-ID, Content-Type');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+      if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
+    }
+    next();
+  });
+
   // Health check for Render/uptime monitors. Cheap, unauthenticated, no AI/DB writes.
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, time: new Date().toISOString(), uptimeSec: Math.round(process.uptime()) });
@@ -2043,7 +2058,22 @@ async function startServer() {
     return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
   }
 
-  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string }>(); // state -> {expiry, intent, provider}
+  // GitHub Pages mirror support: extra frontend origins (comma-separated) that
+  // may call the API cross-origin and receive OAuth completions. Set
+  // MIRROR_ORIGINS="https://sushilm20.github.io" on Render. Sessions travel in
+  // the X-Session-ID header, so no cross-site cookies are involved.
+  function mirrorOrigins(): string[] {
+    return String(process.env.MIRROR_ORIGINS || '').split(',')
+      .map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  }
+  function isAllowedMirrorOrigin(origin: string): boolean {
+    try {
+      const u = new URL(origin);
+      if (u.protocol !== 'https:') return false;
+      return mirrorOrigins().includes(u.origin);
+    } catch { return false; }
+  }
+  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string }>(); // state -> {expiry, intent, provider}
   // Pending OAuth signups: token -> {provider, providerSub, email, name, intent, expiry}. Single-use, 10 min.
   const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; avatarUrl: string | null; intent: string; expiry: number }>();
 
@@ -2109,7 +2139,16 @@ async function startServer() {
     const rawIntent = (req.query.intent as string) || 'login';
     const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
     const state = randomHex(16);
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google' });
+    // Mirror login: the frontend passes ?return_to=<mirror origin> so the
+    // OAuth completion can redirect back to the mirror instead of the API host.
+    const rt = req.query.return_to as string | undefined;
+    // Keep the full mirror URL (origin + base path, e.g. /control-point) so the
+    // OAuth completion lands on the mirror's app root. Origin must be allowlisted.
+    let returnTo: string | undefined;
+    try {
+      if (rt && isAllowedMirrorOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
+    } catch { /* invalid URL — fall back to API host */ }
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google', returnTo });
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'google'),
@@ -2141,9 +2180,11 @@ async function startServer() {
     }
   }
 
-  async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, avatarUrl: string | null, intent: string, res: any) {
+  async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, avatarUrl: string | null, intent: string, res: any, returnTo?: string) {
     const idColumn = OAUTH_PROVIDERS[provider].idColumn;
     let rows: any[] = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
+    // Redirect target: the mirror origin when this login started there, else the API host.
+    const base = returnTo || '';
     if (!rows.length) {
       rows = (await dbAll("SELECT * FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email)) as any[];
       if (rows.length) {
@@ -2155,9 +2196,9 @@ async function startServer() {
       } else if (intent === 'admin_signup' || intent === 'student_signup' || intent === 'signup') {
         const token = randomHex(32);
         pendingOAuthSignups.set(token, { provider, providerSub, email, name, avatarUrl, intent, expiry: Date.now() + 10 * 60 * 1000 });
-        return res.redirect(`/?oauth_signup=${token}&intent=${intent}&provider=${provider}`);
+        return res.redirect(`${base}/?oauth_signup=${token}&intent=${intent}&provider=${provider}`);
       } else {
-        return res.redirect("/?oauth_error=not_invited");
+        return res.redirect(`${base}/?oauth_error=not_invited`);
       }
     } else {
       await fillOAuthProfile(email, name, avatarUrl);
@@ -2167,7 +2208,7 @@ async function startServer() {
     // OAuth providers verify email ownership — no OTP needed.
     await markEmailVerified(email);
     const sessionId = await createSession(member.id);
-    res.redirect(`/?oauth_session=${sessionId}`);
+    res.redirect(`${base}/?oauth_session=${sessionId}`);
   }
 
   // Shared completion step for every OAuth provider: the identity is verified,
@@ -2243,7 +2284,16 @@ async function startServer() {
     const rawIntent = (req.query.intent as string) || 'login';
     const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
     const state = randomHex(16);
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord' });
+    // Mirror login: the frontend passes ?return_to=<mirror origin> so the
+    // OAuth completion can redirect back to the mirror instead of the API host.
+    const rt = req.query.return_to as string | undefined;
+    // Keep the full mirror URL (origin + base path, e.g. /control-point) so the
+    // OAuth completion lands on the mirror's app root. Origin must be allowlisted.
+    let returnTo: string | undefined;
+    try {
+      if (rt && isAllowedMirrorOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
+    } catch { /* invalid URL — fall back to API host */ }
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord', returnTo });
     const params = new URLSearchParams({
       client_id: DISCORD_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'discord'),
@@ -2288,7 +2338,7 @@ async function startServer() {
       const avatarUrl = profile.avatar
         ? `https://cdn.discordapp.com/avatars/${profile.id}/${profile.avatar}.png`
         : null;
-      await finishOAuthLogin('discord', String(profile.id), profile.email, name, avatarUrl, pending.intent || 'login', res);
+      await finishOAuthLogin('discord', String(profile.id), profile.email, name, avatarUrl, pending.intent || 'login', res, pending.returnTo);
     } catch (error) {
       console.error("Discord OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -2303,7 +2353,16 @@ async function startServer() {
     const rawIntent = (req.query.intent as string) || 'login';
     const intent = ['login', 'admin_signup', 'student_signup', 'signup'].includes(rawIntent) ? rawIntent : 'login';
     const state = randomHex(16);
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github' });
+    // Mirror login: the frontend passes ?return_to=<mirror origin> so the
+    // OAuth completion can redirect back to the mirror instead of the API host.
+    const rt = req.query.return_to as string | undefined;
+    // Keep the full mirror URL (origin + base path, e.g. /control-point) so the
+    // OAuth completion lands on the mirror's app root. Origin must be allowlisted.
+    let returnTo: string | undefined;
+    try {
+      if (rt && isAllowedMirrorOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
+    } catch { /* invalid URL — fall back to API host */ }
+    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github', returnTo });
     const params = new URLSearchParams({
       client_id: GITHUB_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'github'),
@@ -2349,7 +2408,7 @@ async function startServer() {
       }
       const name = ghUser.name || ghUser.login || "";
       const avatarUrl = ghUser.avatar_url || null;
-      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, avatarUrl, pending.intent || 'login', res);
+      await finishOAuthLogin('github', String(ghUser.id), primary.email, name, avatarUrl, pending.intent || 'login', res, pending.returnTo);
     } catch (error) {
       console.error("GitHub OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");
@@ -2394,7 +2453,7 @@ async function startServer() {
       const profile = (await profileRes.json()) as any;
       if (!profile.email) throw new Error("No email in Google profile");
 
-      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', profile.picture || null, intent, res);
+      await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', profile.picture || null, intent, res, pending.returnTo);
     } catch (error) {
       console.error("Google OAuth error:", error);
       res.redirect("/?oauth_error=oauth_failed");

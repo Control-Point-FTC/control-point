@@ -10,6 +10,7 @@ import React, { useEffect, useRef } from 'react';
 import { Signal, SignalHigh, SignalLow, SignalMedium } from 'lucide-react';
 import { cn } from '../ui';
 import type { ConnectionQuality, ConnectionStatus, VoiceParticipant } from '../../voice';
+import { assetUrl } from '../../services/api';
 
 // ------------------------------------------------------------------ avatars
 
@@ -46,7 +47,7 @@ export function VoiceAvatar({
       aria-hidden="true"
     >
       {avatarUrl ? (
-        <img src={avatarUrl} alt="" className="w-full h-full object-cover" draggable={false} />
+        <img src={assetUrl(avatarUrl)} alt="" className="w-full h-full object-cover" draggable={false} />
       ) : (
         <span
           className="font-bold text-text-base"

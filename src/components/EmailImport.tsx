@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Upload, FileText, Sparkles, Check, X, Loader2, Mail } from 'lucide-react';
 import { format } from 'date-fns';
 import { streamBuildHelper, extractActionProposals } from '../services/aiService';
+import { apiUrl } from '../services/api';
 
 export interface ParsedEmail {
   recipient: string;
@@ -240,7 +241,7 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/communications', {
+      const res = await fetch(apiUrl('/api/communications'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Session-ID': localStorage.getItem('cp_session') || '' },
         body: JSON.stringify({ recipient: recipient.trim(), subject: subject.trim(), body: body.trim(), date, type }),
