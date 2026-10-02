@@ -776,6 +776,12 @@ if (!taskColumns.some((c: any) => c.name === 'completed_by')) {
 if (!taskColumns.some((c: any) => c.name === 'completion_images')) {
   (await dbExec("ALTER TABLE tasks ADD COLUMN completion_images TEXT"));
 }
+// Notifications: optional JSON metadata (e.g. mention → channel_id/message_id)
+// so clients can deep-link and clear per-channel.
+const notificationColumns = (await dbAll("PRAGMA table_info(notifications)"));
+if (!notificationColumns.some((c: any) => c.name === 'meta')) {
+  (await dbExec("ALTER TABLE notifications ADD COLUMN meta TEXT"));
+}
 // Presence: user-chosen status mode (online = automatic from activity)
 const memberPresenceColumns = (await dbAll("PRAGMA table_info(members)"));
 if (!memberPresenceColumns.some((c: any) => c.name === 'presence_status')) {
@@ -1811,10 +1817,11 @@ async function startServer() {
     nowIso: () => new Date().toISOString(),
   };
 
-  const createNotification = async (userId: number, content: string, type: string) => {
+  const createNotification = async (userId: number, content: string, type: string, meta?: Record<string, any>) => {
     try {
       const timestamp = new Date().toISOString();
-      const info = await dbRun("INSERT INTO notifications (user_id, content, type, timestamp) VALUES (?, ?, ?, ?)", userId, content, type, timestamp);
+      const metaJson = meta ? JSON.stringify(meta) : null;
+      const info = await dbRun("INSERT INTO notifications (user_id, content, type, timestamp, meta) VALUES (?, ?, ?, ?, ?)", userId, content, type, timestamp, metaJson);
       const target = (await dbGet("SELECT team_id FROM members WHERE id = ?", userId)) as any;
 
       broadcastToTeam(target?.team_id, {
@@ -1825,7 +1832,8 @@ async function startServer() {
           content,
           type,
           timestamp,
-          is_read: 0
+          is_read: 0,
+          meta: metaJson
         }
       });
     } catch (e) {
@@ -1930,7 +1938,7 @@ async function startServer() {
             // Notify every active member of the team (except the sender)
             const all = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 AND id != ?", teamId, message.sender_id)) as any[];
             for (const u of all) {
-              createNotification(u.id, `${message.sender_name} pinged @everyone in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention');
+              createNotification(u.id, `${message.sender_name} pinged @everyone in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention', { channel_id: channelId, channel_name: chanName, message_id: info.lastInsertRowid });
             }
           } else if (plainContent.includes('@here')) {
             // Notify members currently viewing this channel (except the sender)
@@ -1942,7 +1950,7 @@ async function startServer() {
               }
             }
             for (const id of viewers) {
-              createNotification(id, `${message.sender_name} pinged @here in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention');
+              createNotification(id, `${message.sender_name} pinged @here in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention', { channel_id: channelId, channel_name: chanName, message_id: info.lastInsertRowid });
             }
           }
           const mentions = message.content.match(/@\[([^\]]+)\]/g);
@@ -1951,7 +1959,7 @@ async function startServer() {
               const name = m.slice(2, -1);
               const user = (await dbGet("SELECT id FROM members WHERE name = ? AND team_id = ?", name, teamId)) as any;
               if (user) {
-                createNotification(user.id, `You were mentioned by ${message.sender_name}: "${message.content}"`, 'mention');
+                createNotification(user.id, `You were mentioned by ${message.sender_name}: "${message.content}"`, 'mention', { channel_id: channelId, channel_name: chanName, message_id: info.lastInsertRowid });
               }
             }
           }

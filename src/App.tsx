@@ -1068,6 +1068,28 @@ export default function App() {
   // while disconnected — refresh the roster on reconnect).
   const socketWasConnected = useRef(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  // Slide-in mention toast: { notification } | null. Shown when a mention
+  // arrives for a channel the user isn't currently viewing.
+  const [mentionToast, setMentionToast] = useState<any | null>(null);
+  const mentionToastTimer = useRef<any>(null);
+  /** Parsed JSON metadata on a notification (channel_id / message_id for mentions). */
+  const notifMeta = (n: any): any => {
+    try { return n?.meta ? JSON.parse(n.meta) : {}; }
+    catch { return {}; }
+  };
+  const unreadMentions = useMemo(
+    () => notifications.filter((n: any) => !n.is_read && n.type === 'mention').length,
+    [notifications]
+  );
+  const dismissMentionToast = () => {
+    setMentionToast(null);
+    if (mentionToastTimer.current) { clearTimeout(mentionToastTimer.current); mentionToastTimer.current = null; }
+  };
+  const showMentionToast = (notification: any) => {
+    dismissMentionToast();
+    setMentionToast(notification);
+    mentionToastTimer.current = setTimeout(() => setMentionToast(null), 7000);
+  };
   const [hiddenDates, setHiddenDates] = useState<string[]>([]);
   const [settings, setSettings] = useState<any>({});
   const [insights, setInsights] = useState<string>("");
@@ -1361,6 +1383,15 @@ export default function App() {
         } else if (msg.type === 'notification') {
           if (currentUser && msg.notification.user_id === currentUser.id) {
             setNotifications(prev => [msg.notification, ...prev]);
+            // Slide-in mention toast — only when the user isn't already
+            // looking at the mentioned channel.
+            if (msg.notification.type === 'mention') {
+              let meta: any = {};
+              try { meta = msg.notification.meta ? JSON.parse(msg.notification.meta) : {}; } catch {}
+              const onChatRoute = window.location.pathname.split('/')[1] === 'chat';
+              const viewingIt = onChatRoute && meta.channel_id != null && Number(activeChannelIdRef.current) === Number(meta.channel_id);
+              if (!viewingIt) showMentionToast(msg.notification);
+            }
           }
         } else if (msg.type === 'message:reaction') {
           // Live reaction update: swap in the server's canonical reaction list.
@@ -1916,6 +1947,32 @@ export default function App() {
     });
     setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
   };
+
+  /** Jump to a mention's channel from the slide-in toast. */
+  const jumpToMention = (n: any) => {
+    const meta = notifMeta(n);
+    dismissMentionToast();
+    if (meta.channel_id != null) {
+      navigate('/chat');
+      setActiveChannelId(Number(meta.channel_id));
+    }
+  };
+
+  // Mention clearing: opening a channel marks its unread mentions read.
+  // (The bell still marks everything read — this just clears what you've seen.)
+  useEffect(() => {
+    if (!isLoggedIn || activeChannelId == null) return;
+    const ids = notifications
+      .filter((n: any) => !n.is_read && n.type === 'mention' && Number(notifMeta(n).channel_id) === Number(activeChannelId))
+      .map((n: any) => n.id);
+    if (!ids.length) return;
+    apiFetch('/api/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }).catch(() => {});
+    setNotifications((prev: any[]) => prev.map((n: any) => (ids.includes(n.id) ? { ...n, is_read: 1 } : n)));
+  }, [isLoggedIn, activeChannelId, notifications]);
 
   const isAdmin = (currentUser as any)?.account_type === 'admin';
 
@@ -2534,6 +2591,41 @@ export default function App() {
           onClose={closeCompleteDialog}
         />
       )}
+      {/* Slide-in mention toast: appears when someone pings you in a channel
+          you aren't viewing. Click jumps to the channel. */}
+      <AnimatePresence>
+        {mentionToast && (
+          <motion.div
+            initial={{ opacity: 0, x: 80 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 80 }}
+            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+            className="fixed bottom-5 right-5 z-[90] w-[320px] max-w-[calc(100vw-2.5rem)] glass rounded-2xl border border-accent/30 shadow-2xl overflow-hidden"
+          >
+            <div className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-accent/15 flex items-center justify-center shrink-0">
+                  <AtSign className="w-4 h-4 text-accent" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-text-base">
+                    Mentioned{notifMeta(mentionToast).channel_name ? ` in #${notifMeta(mentionToast).channel_name}` : ''}
+                  </p>
+                  <p className="text-xs text-text-muted leading-relaxed mt-0.5 line-clamp-3">{mentionToast.content}</p>
+                </div>
+                <button onClick={dismissMentionToast} className="p-1 text-text-muted hover:text-text-base shrink-0" aria-label="Dismiss">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {notifMeta(mentionToast).channel_id != null && (
+                <Button className="w-full mt-3 !py-2 text-xs" onClick={() => jumpToMention(mentionToast)}>
+                  Jump to #{notifMeta(mentionToast).channel_name || 'chat'}
+                </Button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Slim non-blocking refresh indicator (background fetchData after first load). */}
       {refreshing && !loading && (
         <div className="fixed top-0 left-0 right-0 z-[120] h-[3px] pointer-events-none" aria-hidden="true">
@@ -2663,6 +2755,17 @@ export default function App() {
                 >
                   <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
                   {isSidebarOpen && <span className="truncate">{item.label}</span>}
+                  {item.id === 'chat' && unreadMentions > 0 && (
+                    <span
+                      className={cn(
+                        "flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold leading-none",
+                        isSidebarOpen ? "ml-auto" : "absolute -top-1 -right-1"
+                      )}
+                      title={`${unreadMentions} unread mention${unreadMentions === 1 ? '' : 's'}`}
+                    >
+                      {unreadMentions > 99 ? '99+' : unreadMentions}
+                    </span>
+                  )}
                 </button>
               );
             };
