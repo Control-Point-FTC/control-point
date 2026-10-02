@@ -1176,6 +1176,32 @@ try {
   console.error('[DB Migration] default-scope cleanup failed:', e);
 }
 
+// Default Member role now includes calendar, communications, tasks and
+// outreach access. Upgrade existing system "Member" roles that still carry
+// the untouched old default (exactly ["view_ai"]) — roles Sushil customized
+// are left alone. Idempotent.
+try {
+  const newDefault = JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach"]);
+  const oldDefault = JSON.stringify(["view_ai"]);
+  const roles = (await dbAll(
+    "SELECT id, permissions FROM roles WHERE name = 'Member' AND is_system = 1"
+  )) as any[];
+  let upgraded = 0;
+  for (const r of roles) {
+    let perms: any = r.permissions;
+    try {
+      perms = typeof perms === 'string' ? JSON.parse(perms) : perms;
+    } catch { continue; }
+    if (Array.isArray(perms) && JSON.stringify(perms) === oldDefault) {
+      await dbRun("UPDATE roles SET permissions = ? WHERE id = ?", newDefault, r.id);
+      upgraded++;
+    }
+  }
+  if (upgraded) console.log(`[DB Migration] upgraded default Member role permissions on ${upgraded} team(s)`);
+} catch (e) {
+  console.error('[DB Migration] member-role permission upgrade failed:', e);
+}
+
 // Repair social_profiles with unrecognized platform values (shows "Unknown
 // platform" on sync and renders with the wrong branding). Normalizes
 // case/whitespace variants; profiles carrying a YouTube channel ID
@@ -1363,6 +1389,29 @@ async function validateSession(sessionId: string): Promise<{ valid: boolean; mem
 function getSessionId(req: any): string | null {
   return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string) || null;
 }
+
+/**
+ * Validate screenshot payloads for Bruno chat. Returns clean
+ * { mimeType, data } pairs (base64, no data: prefix), capped at 2 images and
+ * ~4MB each so the request stays under the 5MB JSON body limit. Anything
+ * malformed is dropped rather than failing the whole message.
+ */
+function sanitizeBrunoImages(input: any): { mimeType: string; data: string }[] {
+  if (!Array.isArray(input)) return [];
+  const out: { mimeType: string; data: string }[] = [];
+  for (const im of input.slice(0, 2)) {
+    try {
+      const mimeType = String(im?.mimeType || "");
+      let data = String(im?.data || "").replace(/^data:image\/\w+;base64,/, "");
+      if (!mimeType.startsWith("image/")) continue;
+      if (!/^[A-Za-z0-9+/=]+$/.test(data)) continue;
+      if (data.length > 4 * 1024 * 1024) continue;
+      if (data.length < 100) continue;
+      out.push({ mimeType: mimeType.slice(0, 64), data });
+    } catch { /* skip malformed entries */ }
+  }
+  return out;
+}
 async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string; email?: string; teamless?: boolean } | null> {
   const sessionId = getSessionId(req);
   if (!sessionId) return null;
@@ -1482,7 +1531,7 @@ async function ensureRolesSeeded(teamId: number) {
   )) as any;
   const memberRole = (await dbRun(
     "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-    teamId, "Member", "#71717A", JSON.stringify(["view_ai"]), 1
+    teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach"]), 1
   )) as any;
   const members = (await dbAll(
     "SELECT id, account_type FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId
@@ -7182,6 +7231,12 @@ Rules:
       if (!messages.length || messages[messages.length - 1].role !== "user") {
         return res.status(400).json({ error: "A user message is required" });
       }
+      // Screenshots attached to the latest user message. Validated and used
+      // in-memory for this one request only: they are never written to disk
+      // and never persisted to the database (the stored chat row gets a
+      // "[screenshot attached]" marker instead). This keeps screenshots from
+      // accumulating and eating server space.
+      const images = sanitizeBrunoImages(req.body?.images);
       // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue.
       // The owner's own testing is never flagged — reviewing your own flags is noise.
       const reqChatId = parseInt(req.body?.chatId, 10) || null;
@@ -7195,6 +7250,7 @@ Rules:
       const maxTokens = Number.isFinite(perUserMax) && perUserMax > 0 ? Math.min(globalMax, perUserMax) : globalMax;
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
+      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId);
       const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
       // Compact upcoming-events context so Bruno can answer "what's coming up"
       // and propose deletions by matching titles to event ids (```delete-event).
@@ -7211,7 +7267,7 @@ Rules:
           upcomingCtx = `UPCOMING TEAM EVENTS (next ${upcoming.length}):\n${lines.join("\n")}`;
         }
       } catch (err) { console.error("[bruno] upcoming-events context query failed:", err); /* context is best-effort — never block the reply */ }
-      const fullContext = [teamContext, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
+      const fullContext = [teamContext, snapshotCtx, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
       // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
       // unless the client explicitly asked for Bruno (the coding-handoff switch).
@@ -7240,7 +7296,7 @@ Rules:
         if (!chat || !canViewBrunoChat(chat, auth.memberId)) {
           return res.status(403).json({ error: "Chat not found" });
         }
-        const userText = messages[messages.length - 1].text;
+        const userText = messages[messages.length - 1].text + (images.length ? " 📷 [screenshot attached]" : "");
         const msgCount = (await dbGet("SELECT COUNT(*) AS n FROM bruno_messages WHERE chat_id = ?", chat.id)) as any;
         // The NavGPT -> Bruno handoff re-sends the same coding question under the
         // Bruno persona — don't persist a duplicate user message for it.
@@ -7273,6 +7329,7 @@ Rules:
             maxTokens,
             stream: true,
             webSearch: req.body?.webSearch === true,
+            images: images.length ? images : undefined,
             onChunk: (chunk) => res.write(chunk),
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
@@ -7309,6 +7366,7 @@ Rules:
         maxTokens,
         stream: false,
         webSearch: req.body?.webSearch === true,
+        images: images.length ? images : undefined,
         onUsage: (u) => { nonStreamUsage = u; },
         signal: nonStreamAbort.signal,
       });
@@ -8113,6 +8171,72 @@ Rules:
     let listing = sorted.join("\n");
     if (listing.length > 4000) listing = listing.slice(0, 4000) + "\n…(truncated)";
     return `TEAM CODE REPO\nLinked GitHub repo: ${row.owner}/${row.repo} (branch: ${row.branch}, ${row.file_count} files, synced ${row.synced_at})\nFile tree (paths only):\n${listing}`;
+  }
+
+  // Compact snapshot of everything the team has done in Control Point, so
+  // Bruno actually knows the workspace: tasks, outreach, linked accounts.
+  // Best-effort and capped — context is informative, never blocks the reply.
+  async function buildTeamSnapshotContext(teamId: number | null): Promise<string> {
+    if (!teamId) return "";
+    try {
+      const parts: string[] = [];
+      const team = (await dbGet("SELECT name, number FROM teams WHERE id = ?", teamId)) as any;
+      const memCount = (await dbGet("SELECT COUNT(*) AS n FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId)) as any;
+      if (team) parts.push(`TEAM: ${team.name}${team.number ? ` (#${team.number})` : ""} — ${memCount?.n || 0} members`);
+
+      const open = (await dbAll(
+        `SELECT t.id, t.title, t.status, t.due_date, m.name AS assignee
+         FROM tasks t LEFT JOIN members m ON m.id = t.assigned_to
+         WHERE t.team_id = ? AND t.status != 'done'
+         ORDER BY CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END, t.due_date ASC LIMIT 15`,
+        teamId
+      )) as any[];
+      if (open.length) {
+        const lines = open.map((t) => `#${t.id} ${t.title} — ${t.status}${t.assignee ? `, assignee: ${t.assignee}` : ", unassigned"}${t.due_date ? `, due ${t.due_date}` : ""}`);
+        parts.push(`OPEN TASKS (${open.length}):\n${lines.join("\n")}`);
+      }
+      const done = (await dbAll(
+        `SELECT t.id, t.title, t.completed_at, m.name AS completer
+         FROM tasks t LEFT JOIN members m ON m.id = t.completed_by
+         WHERE t.team_id = ? AND t.status = 'done'
+         ORDER BY t.completed_at DESC LIMIT 5`,
+        teamId
+      )) as any[];
+      if (done.length) {
+        const lines = done.map((t) => `#${t.id} ${t.title}${t.completer ? ` — done by ${t.completer}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
+        parts.push(`RECENTLY COMPLETED TASKS:\n${lines.join("\n")}`);
+      }
+
+      const outreach = (await dbAll(
+        "SELECT title, date, hours, location FROM outreach WHERE team_id = ? ORDER BY date DESC LIMIT 5",
+        teamId
+      )) as any[];
+      if (outreach.length) {
+        const lines = outreach.map((o) => `${o.title} — ${o.date}${o.hours ? `, ${o.hours}h` : ""}${o.location ? ` @ ${o.location}` : ""}`);
+        parts.push(`RECENT OUTREACH:\n${lines.join("\n")}`);
+      }
+
+      const links: string[] = [];
+      const socials = (await dbAll(
+        "SELECT platform, display_name, handle, url FROM social_profiles WHERE team_id = ? ORDER BY sort_order ASC LIMIT 6",
+        teamId
+      )) as any[];
+      for (const s of socials) {
+        const label = s.display_name || s.handle || s.platform;
+        links.push(`${s.platform}: ${label}${s.url ? ` (${s.url})` : ""}`);
+      }
+      const repo = (await dbGet("SELECT owner, repo, branch FROM code_repos WHERE team_id = ?", teamId)) as any;
+      if (repo) links.push(`GitHub: ${repo.owner}/${repo.repo} (branch ${repo.branch})`);
+      const docsCount = (await dbGet("SELECT COUNT(*) AS n FROM cad_docs WHERE team_id = ?", teamId)) as any;
+      if (docsCount?.n) links.push(`Onshape: ${docsCount.n} doc(s) linked`);
+      if (links.length) parts.push(`LINKED ACCOUNTS:\n${links.join("\n")}`);
+
+      const snap = parts.join("\n\n");
+      return snap.length > 2500 ? snap.slice(0, 2500) + "\n…(truncated)" : snap;
+    } catch (err) {
+      console.error("[bruno] team snapshot context query failed:", err);
+      return "";
+    }
   }
 
   // Link a GitHub repo (admin only)
