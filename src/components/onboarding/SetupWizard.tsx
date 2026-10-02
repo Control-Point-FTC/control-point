@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, ArrowLeft, ArrowRight, Check, Compass, UserCircle, AlertTriangle, Sun, Moon, Palette } from 'lucide-react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import {
   cn,
   buildProfilePatch,
@@ -30,6 +31,15 @@ const STEP_LABELS = ['Your profile', 'Appearance', 'Take the tour', 'All set'];
 const inputClass =
   'w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all';
 
+/** Direction-aware step choreography: forward slides in from the right and
+ *  out to the left; back does the mirror. easeOutExpo for the glide. */
+const wizardStepVariants = {
+  enter: (dir: number) => ({ opacity: 0, x: 56 * dir }),
+  center: { opacity: 1, x: 0 },
+  exit: (dir: number) => ({ opacity: 0, x: -56 * dir }),
+};
+const STEP_GLIDE = { duration: 0.32, ease: [0.22, 1, 0.36, 1] as const };
+
 export default function SetupWizard({
   user,
   initialStep = 0,
@@ -53,6 +63,15 @@ export default function SetupWizard({
   const { theme, setTheme } = useTheme();
   const dialogRef = useRef<HTMLDivElement>(null);
   const dirtyRef = useRef(false);
+
+  // Direction-aware transitions, derived from step changes so every
+  // navigation path (save, skip, back buttons) glides the right way.
+  const stepRef = useRef(step);
+  const [dir, setDir] = useState(1);
+  useEffect(() => {
+    setDir(step >= stepRef.current ? 1 : -1);
+    stepRef.current = step;
+  }, [step]);
 
   useEffect(() => {
     dirtyRef.current = name.trim() !== (user.name || '').trim() || role.trim() !== (user.role || '').trim();
@@ -146,29 +165,44 @@ export default function SetupWizard({
   };
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="fixed inset-0 z-[85] flex items-end sm:items-center justify-center p-0 sm:p-6">
-      <button
+      <motion.button
         aria-label="Close setup"
         onClick={() => void handleClose()}
         className="absolute inset-0 bg-black/70 backdrop-blur-sm cursor-default"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.25 }}
       />
-      <div
+      <motion.div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="wizard-title"
         tabIndex={-1}
         className="relative w-full sm:max-w-md bg-secondary border border-text-base/10 rounded-t-3xl sm:rounded-3xl p-6 sm:p-8 shadow-2xl shadow-black/60 max-h-[92dvh] overflow-y-auto focus-visible:outline-none"
+        initial={{ opacity: 0, y: 40, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ type: 'spring', stiffness: 300, damping: 30 }}
       >
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">
-              Setup · Step {step + 1} of 4
-            </p>
-            <h2 id="wizard-title" className="mt-1 font-display text-xl font-bold text-text-base">
-              {STEP_LABELS[step]}
-            </h2>
-          </div>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={step}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.22, ease: 'easeOut' }}
+            >
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-accent">
+                Setup · Step {step + 1} of 4
+              </p>
+              <h2 id="wizard-title" className="mt-1 font-display text-xl font-bold text-text-base">
+                {STEP_LABELS[step]}
+              </h2>
+            </motion.div>
+          </AnimatePresence>
           <button
             onClick={() => void handleClose()}
             aria-label="Close setup"
@@ -183,7 +217,7 @@ export default function SetupWizard({
           {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
-              className={cn('h-1.5 flex-1 rounded-full transition-colors', i <= step ? 'bg-accent' : 'bg-text-base/10')}
+              className={cn('h-1.5 flex-1 rounded-full transition-all duration-500 ease-out', i <= step ? 'bg-accent' : 'bg-text-base/10')}
             />
           ))}
         </div>
@@ -206,8 +240,19 @@ export default function SetupWizard({
           </div>
         )}
 
+        <AnimatePresence mode="wait" custom={dir} initial={false}>
+          <motion.div
+            key={step}
+            custom={dir}
+            variants={wizardStepVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={STEP_GLIDE}
+            className="mt-5"
+          >
         {step === 0 && (
-          <div key={step} className="mt-5 animate-wizard-step">
+          <div>
             <p className="text-sm text-text-muted leading-relaxed">
               How should teammates see you? <span className="text-text-base/70 font-medium">Recommended</span> —
               you can change this anytime in My Profile.
@@ -269,7 +314,7 @@ export default function SetupWizard({
         )}
 
         {step === 1 && (
-          <div key={step} className="mt-5 animate-wizard-step">
+          <div>
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
               <Palette className="w-6 h-6 text-accent" strokeWidth={2.25} />
             </div>
@@ -357,7 +402,7 @@ export default function SetupWizard({
         )}
 
         {step === 2 && (
-          <div key={step} className="mt-5 text-center animate-wizard-step">
+          <div className="text-center">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
               <Compass className="w-6 h-6 text-accent" strokeWidth={2.25} />
             </div>
@@ -416,7 +461,7 @@ export default function SetupWizard({
         )}
 
         {step === 3 && (
-          <div key={step} className="mt-5 text-center animate-wizard-step">
+          <div className="text-center">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent flex items-center justify-center mb-3">
               <Check className="w-6 h-6 text-accent-ink" strokeWidth={2.75} />
             </div>
@@ -451,7 +496,10 @@ export default function SetupWizard({
             </button>
           </div>
         )}
-      </div>
+          </motion.div>
+        </AnimatePresence>
+      </motion.div>
     </div>
+    </MotionConfig>
   );
 }
