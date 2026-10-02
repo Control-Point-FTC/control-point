@@ -207,7 +207,7 @@ export default function SetupWizard({
         )}
 
         {step === 0 && (
-          <div className="mt-5">
+          <div key={step} className="mt-5 animate-wizard-step">
             <p className="text-sm text-text-muted leading-relaxed">
               How should teammates see you? <span className="text-text-base/70 font-medium">Recommended</span> —
               you can change this anytime in My Profile.
@@ -269,7 +269,7 @@ export default function SetupWizard({
         )}
 
         {step === 1 && (
-          <div className="mt-5">
+          <div key={step} className="mt-5 animate-wizard-step">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
               <Palette className="w-6 h-6 text-accent" strokeWidth={2.25} />
             </div>
@@ -357,7 +357,7 @@ export default function SetupWizard({
         )}
 
         {step === 2 && (
-          <div className="mt-5 text-center">
+          <div key={step} className="mt-5 text-center animate-wizard-step">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent/15 border border-accent/30 flex items-center justify-center mb-3">
               <Compass className="w-6 h-6 text-accent" strokeWidth={2.25} />
             </div>
@@ -416,7 +416,7 @@ export default function SetupWizard({
         )}
 
         {step === 3 && (
-          <div className="mt-5 text-center">
+          <div key={step} className="mt-5 text-center animate-wizard-step">
             <div className="mx-auto w-12 h-12 rounded-2xl bg-accent flex items-center justify-center mb-3">
               <Check className="w-6 h-6 text-accent-ink" strokeWidth={2.75} />
             </div>

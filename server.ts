@@ -747,6 +747,11 @@ if (!aiUsageColumns.some((c: any) => c.name === 'provider')) {
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_tasks_team_status_due ON tasks(team_id, status, due_date)`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_events_team_date ON events(team_id, date, start_time)`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_budget_team ON budget(team_id)`));
+// Reactions, custom emoji, resources (2026-10-02).
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_reactions_message ON message_reactions(message_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_reactions_member ON message_reactions(member_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_custom_emoji_member ON custom_emoji(member_id, team_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_resources_team ON resources(team_id, created_at)`));
 
 const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {

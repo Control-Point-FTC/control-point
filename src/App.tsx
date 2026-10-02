@@ -138,7 +138,7 @@ import { clearFtcCache } from './components/ftcCache';
 import { format } from 'date-fns';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
-import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
+import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
 import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
 import { CadView } from './components/CadView';
 import ResourcesView from './components/ResourcesView';
@@ -970,9 +970,6 @@ export default function App() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [hiddenDates, setHiddenDates] = useState<string[]>([]);
   const [settings, setSettings] = useState<any>({});
-  const [scoutFeed, setScoutFeed] = useState<any[]>([]);
-  const [scoutUpdatedAt, setScoutUpdatedAt] = useState<number | null>(null);
-  const [scoutError, setScoutError] = useState<string>("");
   const [insights, setInsights] = useState<string>("");
   const [summary, setSummary] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -1021,52 +1018,6 @@ export default function App() {
         ))}
       </div>
     );
-  };
-
-  // AI Scout visual feed: JSON cards cached in localStorage (24h), refreshed on demand
-  const updateNews = async (force: boolean = false) => {
-    const CACHE_KEY = 'ftcScoutFeedCache';
-    const TS_KEY = 'ftcScoutFeedTimestamp';
-
-    // check local cache first
-    if (!force && typeof localStorage !== 'undefined') {
-      try {
-        const cached = localStorage.getItem(CACHE_KEY);
-        const ts = localStorage.getItem(TS_KEY);
-        if (cached && ts) {
-          const age = Date.now() - parseInt(ts, 10);
-          const items = JSON.parse(cached);
-          if (Array.isArray(items) && age < 24 * 60 * 60 * 1000) {
-            setScoutFeed(items);
-            setScoutUpdatedAt(parseInt(ts, 10));
-            return;
-          }
-        }
-      } catch { /* fall through to network */ }
-    }
-
-    setIsAiLoading(true);
-    setAiLoadingTarget('news');
-    setScoutError('');
-    try {
-      const { items } = await fetchScoutFeed(force);
-      setScoutFeed(items);
-      const now = Date.now();
-      setScoutUpdatedAt(now);
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify(items));
-          localStorage.setItem(TS_KEY, now.toString());
-        } catch { /* storage full — ignore */ }
-      }
-    } catch (err) {
-      console.error('Error updating news:', err);
-      // keep any previously loaded feed visible; the view shows a retry banner
-      setScoutError('Failed to fetch latest news. Please check your connection.');
-    } finally {
-      setIsAiLoading(false);
-      setAiLoadingTarget(null);
-    }
   };
 
   // WebSocket
@@ -1527,7 +1478,6 @@ export default function App() {
       await refreshNotifications();
 
       // Background updates
-      updateNews();
       // Insights and Summary are now manual or context-specific
       if (currentUser) {
         updateSummary();
@@ -1563,13 +1513,12 @@ export default function App() {
   };
 
   // ——— Multi-team management ———
-  // Team-scoped client caches (AI scout feed + summary) live in localStorage under
-  // fixed keys; drop them so the newly active team's data is fetched fresh.
+  // Team-scoped client caches live in localStorage under fixed keys; drop them
+  // so the newly active team's data is fetched fresh.
   const clearTeamCaches = () => {
     clearFtcCache();
     if (typeof localStorage === 'undefined') return;
     [
-      'ftcScoutFeedCache', 'ftcScoutFeedTimestamp',
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',
     ].forEach((k) => localStorage.removeItem(k));
   };
@@ -2065,7 +2014,7 @@ export default function App() {
       // setters for optimistic UI (instant-feeling mutations with rollback on error)
       setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
       setMessages, msgCache, setSocialProfiles, setCommunications,
-      insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
+      insights, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
       colorVersion, setColorVersion,
       // multi-team: switcher, add/delete/leave, active team name
@@ -2073,8 +2022,6 @@ export default function App() {
       activeTeamName, activeTeamId: currentTeamId, botName, navGptQualified, navGptActive,
       // app owner (OWNER_EMAILS) — gates owner-only UI like AI limit config
       isOwner,
-      // give child views a way to explicitly refresh the AI news cache
-      refreshNews: () => updateNews(true),
       updateInsights,
       updateSummary: () => updateSummary(true),
       // onboarding: dashboard checklist + resume entry points
@@ -2160,7 +2107,7 @@ export default function App() {
       },
     };
     const dashboardEl = isAdmin
-      ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, scoutFeed, summary, members, events }} />
+      ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, summary, members, events }} />
       : <StudentDashboardView {...viewProps} />;
     return (
       <Routes>
@@ -2850,7 +2797,7 @@ export default function App() {
         </div>
         {!isChatRoute && (
         <AppFooter
-          links={visibleTabs.filter((t) => ['dashboard', 'stats', 'scout', 'calendar', 'chat', 'tasks'].includes(t.id))}
+          links={visibleTabs.filter((t) => ['dashboard', 'stats', 'resources', 'calendar', 'chat', 'tasks'].includes(t.id))}
           teamName={activeTeamName}
         />
         )}
@@ -7148,140 +7095,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
 
 const SCOUT_FILTERS = ['All', 'Game Updates', 'Parts & Suppliers', 'Community', 'Competitions', 'Videos'];
 
-function scoutTimeAgo(ts: number | null): string {
-  if (!ts) return '';
-  const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.round(hrs / 24)}d ago`;
-}
 
-function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoading, aiLoadingTarget, ThinkingIndicator }: any) {
-  const [filter, setFilter] = useState('All');
-  const loading = isAiLoading && aiLoadingTarget === 'news';
-
-  const items = useMemo(() => {
-    const list = Array.isArray(scoutFeed) ? scoutFeed : [];
-    return filter === 'All' ? list : list.filter((it: any) => it.category === filter);
-  }, [scoutFeed, filter]);
-
-  const counts = useMemo(() => {
-    const list = Array.isArray(scoutFeed) ? scoutFeed : [];
-    const c: any = { All: list.length };
-    for (const f of SCOUT_FILTERS.slice(1)) c[f] = list.filter((it: any) => it.category === f).length;
-    return c;
-  }, [scoutFeed]);
-
-  const catMeta = (cat: string) => {
-    switch (cat) {
-      case 'Game Updates': return { Icon: Flag, badge: 'text-sky-300 bg-sky-400/10 border-sky-400/30' };
-      case 'Parts & Suppliers': return { Icon: Cog, badge: 'text-accent bg-accent/10 border-accent/30' };
-      case 'Community': return { Icon: Users, badge: 'text-violet-300 bg-violet-400/10 border-violet-400/30' };
-      case 'Competitions': return { Icon: Medal, badge: 'text-amber-300 bg-amber-400/10 border-amber-400/30' };
-      case 'Videos': return { Icon: Play, badge: 'text-rose-300 bg-rose-400/10 border-rose-400/30' };
-      default: return { Icon: Newspaper, badge: 'text-text-muted bg-text-base/5 border-text-base/10' };
-    }
-  };
-
-  return (
-    <div className="space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">AI Scout: FTC BIOBUZZ</h3>
-          <p className="text-sm text-text-muted mt-1">Competitive FTC news, rules, parts, and events — scoped to the 2026–27 BIOBUZZ season.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {scoutUpdatedAt ? <span className="text-xs text-text-muted whitespace-nowrap">Updated {scoutTimeAgo(scoutUpdatedAt)}</span> : null}
-          <Button onClick={refreshNews} variant="outline" disabled={loading} className="w-full sm:w-auto">
-            <Clock className={`w-4 h-4 mr-1 ${loading ? 'animate-spin' : ''}`} /> {loading ? 'Scouting...' : 'Refresh News'}
-          </Button>
-        </div>
-      </div>
-
-      {/* category filter chips */}
-      <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-1 -mx-1 px-1">
-        {SCOUT_FILTERS.map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all active:scale-95 ${
-              filter === f
-                ? 'bg-accent text-accent-ink border-accent shadow-[0_4px_16px_rgba(255,199,0,0.25)]'
-                : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:text-text-base hover:border-text-base/25'
-            }`}
-          >
-            {f}{counts[f] > 0 ? <span className="opacity-70"> · {counts[f]}</span> : null}
-          </button>
-        ))}
-      </div>
-
-      {/* stale-data warning */}
-      {scoutError && items.length > 0 ? (
-        <div className="rounded-2xl border border-amber-400/30 bg-amber-400/5 px-4 py-3 text-sm text-amber-200/90">
-          Couldn't refresh the feed — showing the last saved stories.
-        </div>
-      ) : null}
-
-      {loading && items.length === 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-text-base/10 bg-text-base/[0.02] p-5 space-y-3 animate-pulse">
-              <div className="h-6 w-32 rounded-full bg-text-base/10" />
-              <div className="h-5 w-4/5 rounded bg-text-base/10" />
-              <div className="h-4 w-full rounded bg-text-base/5" />
-              <div className="h-4 w-2/3 rounded bg-text-base/5" />
-            </div>
-          ))}
-        </div>
-      ) : items.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {items.map((it: any, i: number) => {
-            const { Icon, badge } = catMeta(it.category);
-            const isVideo = it.category === 'Videos';
-            return (
-              <a
-                key={i}
-                href={it.url}
-                target="_blank"
-                rel="noreferrer"
-                className="group rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4 sm:p-5 flex flex-col gap-3 hover:border-accent/40 hover:bg-text-base/[0.05] transition-all active:scale-[0.99]"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full border ${badge}`}>
-                    <Icon className="w-3 h-3" /> {it.category}
-                  </span>
-                  {isVideo ? (
-                    <span className="w-8 h-8 rounded-full bg-accent text-accent-ink flex items-center justify-center shrink-0 shadow-[0_4px_16px_rgba(255,199,0,0.25)]">
-                      <Play className="w-4 h-4 ml-0.5" />
-                    </span>
-                  ) : (
-                    <ExternalLink className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors shrink-0" />
-                  )}
-                </div>
-                <h4 className="text-text-base font-bold leading-snug">{it.title}</h4>
-                <p className="text-sm text-text-muted leading-relaxed line-clamp-3 flex-1">{it.summary}</p>
-                <p className="text-xs text-text-muted/70 truncate">{it.source}</p>
-              </a>
-            );
-          })}
-        </div>
-      ) : scoutError ? (
-        <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4 text-center px-6">
-          <p className="text-text-base font-bold">Couldn't load the scout feed</p>
-          <p className="text-sm text-text-muted">{scoutError}</p>
-          <Button onClick={refreshNews} variant="outline">Try again</Button>
-        </Card>
-      ) : (
-        <Card className="min-h-[300px] flex flex-col items-center justify-center gap-4">
-          <ThinkingIndicator />
-          <p className="text-text-muted">Scouting the FTC world for you...</p>
-        </Card>
-      )}
-    </div>
-  );
-}
 
 function CommunicationView({ communications, setCommunications, onRefresh, refresh, hasScope }: any) {
   const canManage = hasScope ? hasScope('communications') : false;

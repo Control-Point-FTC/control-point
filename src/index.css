@@ -344,6 +344,18 @@ html.light .theme-dark .card-surface {
   animation: float-slow 7s ease-in-out infinite;
 }
 
+/* Fluid wizard step transitions — content glides in instead of popping. */
+@keyframes wizard-step-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-wizard-step {
+  animation: wizard-step-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-wizard-step { animation: none; }
+}
+
 @keyframes pulse-volt {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
