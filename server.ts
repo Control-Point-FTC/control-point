@@ -678,6 +678,11 @@ if (!memberColumns.some((c: any) => c.name === 'github_id')) {
 if (!memberColumns.some((c: any) => c.name === 'ai_disabled')) {
   (await dbExec("ALTER TABLE members ADD COLUMN ai_disabled INTEGER DEFAULT 0"));
 }
+// Bruno teaching mode: member prefers to be taught step-by-step instead of
+// just receiving finished code. Surfaced as a toggle in Settings → Bruno AI.
+if (!memberColumns.some((c: any) => c.name === 'bruno_teach_mode')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN bruno_teach_mode INTEGER DEFAULT 0"));
+}
 if (!memberColumns.some((c: any) => c.name === 'ai_timeout_until')) {
   (await dbExec("ALTER TABLE members ADD COLUMN ai_timeout_until TEXT"));
 }
@@ -3440,10 +3445,11 @@ async function startServer() {
   app.patch("/api/profile", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status } = req.body || {};
+    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode } = req.body || {};
     const cleanName = (name || '').trim();
     if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
     const updates: any = { name: cleanName, role: (role || '').trim() };
+    if (bruno_teach_mode !== undefined) updates.bruno_teach_mode = bruno_teach_mode ? 1 : 0;
     if (presence_status !== undefined) {
       if (!(PRESENCE_STATUSES as readonly string[]).includes(presence_status)) {
         return res.status(400).json({ error: "Invalid status — choose online, idle, dnd, or invisible" });
@@ -7273,7 +7279,17 @@ Rules:
       // unless the client explicitly asked for Bruno (the coding-handoff switch).
       const personaOverride = req.body?.persona === "bruno" ? "bruno" : null;
       const navGptOn = !personaOverride && (await navGptActiveForTeam(auth.teamId));
-      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", fullContext].filter(Boolean).join("\n\n");
+      // Teaching mode (member preference, Settings → Bruno AI): the member
+      // wants to LEARN, not just receive finished code. Bruno-only — NavGPT's
+      // navigation persona is unaffected.
+      let teachCtx = "";
+      try {
+        const pref = (await dbGet("SELECT bruno_teach_mode FROM members WHERE id = ?", auth.memberId)) as any;
+        if (!navGptOn && pref?.bruno_teach_mode === 1) {
+          teachCtx = "TEACHING MODE (this member's saved preference): they want to learn, not just receive finished code. Explain the concepts first, walk through the logic step by step, and guide them to write it themselves. Only write out full code when they explicitly ask you to.";
+        }
+      } catch (err) { console.error("[bruno] teach-mode pref lookup failed:", err); /* best-effort — never block the reply */ }
+      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls

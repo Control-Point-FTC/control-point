@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall } from 'lucide-react';
+import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify, confirmDialog } from './dialog';
@@ -20,7 +20,7 @@ export interface SettingsModalProps {
   onStatusPick: (status: string) => void;
 }
 
-type Section = 'account' | 'voice' | 'team' | 'roles';
+type Section = 'account' | 'voice' | 'bruno' | 'team' | 'roles';
 
 /** The secret NavGPT ❤️ persona only exists for 4215 Hypnotic Robotics. */
 function navGptQualifies(teamName: any): boolean {
@@ -47,6 +47,9 @@ export default function SettingsModal({
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [savingPersona, setSavingPersona] = useState(false);
+  // Bruno teaching mode: member prefers to be taught, not just handed code.
+  const [teachMode, setTeachMode] = useState(false);
+  const [savingTeach, setSavingTeach] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Seed the forms every time the modal opens.
@@ -55,6 +58,7 @@ export default function SettingsModal({
     setSection('account');
     setName(user?.name || '');
     setRole(user?.role || '');
+    setTeachMode(user?.bruno_teach_mode === 1);
     setTeamName(team?.name || '');
     setTeamNumber(team?.number || '');
     setFtcNumber(team?.ftc_team_number ? String(team.ftc_team_number) : '');
@@ -164,6 +168,35 @@ export default function SettingsModal({
   // (name contains "hypnotic" or "4215"). Every other team never sees it —
   // the toggle, the name, and the persona are invisible to them.
   const navGptOn = navGptQualifies(team?.name) && (team?.navgpt_enabled ?? 1) === 1;
+
+  /** Teaching-mode toggle: saved on the member row so Bruno remembers it on
+   *  every device. Optimistic UI with revert on failure. */
+  const toggleTeachMode = async () => {
+    if (savingTeach) return;
+    const next = !teachMode;
+    setTeachMode(next);
+    setSavingTeach(true);
+    try {
+      const res = await apiFetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: user?.name || '', role: user?.role || '', bruno_teach_mode: next ? 1 : 0 }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.user) {
+        onUserSaved(data.user);
+        notify(next ? 'Teaching mode on — Bruno will walk you through it.' : 'Teaching mode off — Bruno will write the code for you.', 'success');
+      } else {
+        setTeachMode(!next);
+        notify(data.error || 'Could not save.', 'error');
+      }
+    } catch {
+      setTeachMode(!next);
+      notify('Could not save.', 'error');
+    } finally {
+      setSavingTeach(false);
+    }
+  };
   const togglePersona = async () => {
     if (savingPersona) return;
     if (navGptOn && !(await confirmDialog({
@@ -194,6 +227,7 @@ export default function SettingsModal({
   const sections: { id: Section; label: string; icon: any; heading: string }[] = [
     { id: 'account', label: 'My Account', icon: UserCircle, heading: 'USER SETTINGS' },
     { id: 'voice', label: 'Voice & Video', icon: PhoneCall, heading: 'USER SETTINGS' },
+    { id: 'bruno', label: 'Bruno AI', icon: Bot, heading: 'USER SETTINGS' },
     ...(isAdmin
       ? [
           { id: 'team' as Section, label: 'Team Overview', icon: Users, heading: 'TEAM SETTINGS' },
@@ -344,6 +378,54 @@ export default function SettingsModal({
               <section className="space-y-6">
                 <h3 className="text-sm font-bold text-text-base">Devices</h3>
                 <DeviceSettingsSection />
+              </section>
+            )}
+
+            {section === 'bruno' && (
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-bold text-text-base">Bruno AI</h3>
+                  <p className="text-xs text-text-muted leading-relaxed mt-1">
+                    How Bruno helps you with code. Saved to your account, so it follows you on every device.
+                  </p>
+                </div>
+                <button
+                  onClick={() => void toggleTeachMode()}
+                  role="switch"
+                  aria-checked={teachMode}
+                  aria-label="Teaching mode"
+                  disabled={savingTeach}
+                  className="w-full min-h-[72px] flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4 text-left hover:border-text-base/25 active:scale-[0.99] disabled:opacity-60 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                >
+                  <span className="w-11 h-11 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+                    <GraduationCap className="w-5 h-5 text-accent" strokeWidth={2.25} />
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-[15px] font-bold text-text-base">Teaching mode</span>
+                    <span className="block text-xs text-text-muted mt-0.5 leading-relaxed">
+                      {teachMode
+                        ? 'On — Bruno explains the concepts and guides you step by step.'
+                        : 'Off — Bruno writes the full code for you.'}
+                    </span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'relative w-12 h-7 rounded-full transition-colors duration-300 flex-shrink-0',
+                      teachMode ? 'bg-accent' : 'bg-text-base/20'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all duration-300',
+                        teachMode ? 'left-6' : 'left-1'
+                      )}
+                    />
+                  </span>
+                </button>
+                <p className="text-xs text-text-muted leading-relaxed">
+                  You can always override it in the moment — just tell Bruno “write it for me” or “teach me” in chat.
+                </p>
               </section>
             )}
 
