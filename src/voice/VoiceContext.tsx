@@ -441,8 +441,10 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         if (camSettled.status === 'fulfilled' && camSettled.value) {
           cam = camSettled.value;
         } else if (opts?.video && camSettled.status === 'rejected') {
-          // Video is optional — join audio-only rather than failing the join.
+          // Video is optional — join audio-only rather than failing the join,
+          // but SAY so: silent audio-only joins read as "video is broken".
           console.warn('[voice] camera unavailable, joining audio-only:', camSettled.reason);
+          setError('Camera unavailable — you joined with audio only. Check permissions and toggle the camera to retry.');
         }
         const info: VoiceSessionInfo = {
           id: rawSession.id,
@@ -491,6 +493,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
             cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
           } catch (camErr) {
             console.warn('[voice] camera unavailable, starting audio-only:', camErr);
+            setError('Camera unavailable — the call started with audio only. Check permissions and toggle the camera to retry.');
           }
         }
         // Ad-hoc calls are public temp voice channels — anyone can join.
@@ -532,6 +535,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
           cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
         } catch (camErr) {
           console.warn('[voice] camera unavailable, accepting audio-only:', camErr);
+          setError('Camera unavailable — you joined with audio only. Check permissions and toggle the camera to retry.');
         }
       }
       // Ad-hoc calls are public temp voice channels — accepting joins the channel.

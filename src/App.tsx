@@ -1109,6 +1109,11 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const hasLoadedOnce = useRef(false);
   const refreshCount = useRef(0);
+  // First-load failure: show a retry panel instead of spinning forever.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // First load must never hang the "Synchronizing club data..." overlay
+  // forever (flaky mobile networks, server restarts mid-load).
+  const FIRST_LOAD_TIMEOUT_MS = 45000;
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiLoadingTarget, setAiLoadingTarget] = useState<string | null>(null);
   const [colorVersion, setColorVersion] = useState(0);
@@ -1663,33 +1668,49 @@ export default function App() {
       setRefreshing(true);
     } else {
       setLoading(true);
+      setLoadError(null);
     }
     try {
-      await Promise.all([
-        refreshTeams(),
-        refreshMembers(),
-        refreshAttendance(),
-        refreshTasks(),
-        refreshBudget(),
-        refreshOutreach(),
-        refreshSocialProfiles(),
-        refreshInventory(),
-        refreshCommunications(),
-        refreshMessages(),
-        refreshSettings(),
-        refreshHiddenDates(),
-        refreshDocumentation(),
-        refreshEvents(),
-      ]);
-      await refreshNotifications();
+      const work = (async () => {
+        await Promise.all([
+          refreshTeams(),
+          refreshMembers(),
+          refreshAttendance(),
+          refreshTasks(),
+          refreshBudget(),
+          refreshOutreach(),
+          refreshSocialProfiles(),
+          refreshInventory(),
+          refreshCommunications(),
+          refreshMessages(),
+          refreshSettings(),
+          refreshHiddenDates(),
+          refreshDocumentation(),
+          refreshEvents(),
+        ]);
+        await refreshNotifications();
 
-      // Background updates
-      // Insights and Summary are now manual or context-specific
-      if (currentUser) {
-        updateSummary();
+        // Background updates
+        // Insights and Summary are now manual or context-specific
+        if (currentUser) {
+          updateSummary();
+        }
+      })();
+      if (silent) {
+        await work;
+      } else {
+        // Never leave the first-load spinner up forever: if the initial sync
+        // hangs (dead network, server restarting), surface a retry panel.
+        await Promise.race([
+          work,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timed out while syncing — check your connection and try again.")), FIRST_LOAD_TIMEOUT_MS)
+          ),
+        ]);
       }
     } catch (err) {
       console.error("Error in fetchData:", err);
+      if (!silent) setLoadError(err instanceof Error ? err.message : "Couldn't load your data.");
     } finally {
       if (silent) {
         refreshCount.current = Math.max(0, refreshCount.current - 1);
@@ -3084,10 +3105,23 @@ export default function App() {
               className="flex flex-col flex-1 min-h-0 min-w-0"
             >
               {loading ? (
-                <div className="flex flex-col items-center justify-center h-64 gap-4">
-                  <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-                  <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
-                </div>
+                loadError ? (
+                  <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
+                    <p className="text-text-base font-bold">Couldn't sync your data</p>
+                    <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
+                    <button
+                      onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
+                      className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-64 gap-4">
+                    <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+                    <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
+                  </div>
+                )
               ) : renderContent()}
             </motion.div>
           </AnimatePresence>
