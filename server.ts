@@ -750,6 +750,94 @@ if (!(await hasColumn('ai_flags', 'message_id'))) {
   created_at TEXT DEFAULT (datetime('now'))
 )`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_message_images_message ON message_images(message_id)`));
+// Durable file store: Render's filesystem is ephemeral, so EVERY user upload
+// (avatars, feedback attachments, task proof, custom emoji, CAD models) is
+// persisted as a BLOB in the database. Served via /api/files/:id.
+// message_images (chat images) predates this and stays as its legacy store.
+(await dbExec(`CREATE TABLE IF NOT EXISTS stored_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team_id INTEGER,
+  member_id INTEGER,
+  kind TEXT NOT NULL,
+  filename TEXT,
+  mime_type TEXT,
+  size INTEGER,
+  data BLOB NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_stored_files_team ON stored_files(team_id)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_stored_files_member ON stored_files(member_id)`));
+// One-time rescue: import any user-uploaded files still sitting on ephemeral
+// disk into stored_files and rewrite their DB URLs to /api/files/:id.
+// Idempotent — a file already imported no longer has any /uploads/ references.
+try {
+  const rescueDir = path.join(process.cwd(), "uploads");
+  if (fs.existsSync(rescueDir)) {
+    const rescueCols: { table: string; col: string; kind: string; teamCol: string | null; memberCol: string | null }[] = [
+      { table: "members", col: "avatar_url", kind: "avatar", teamCol: null, memberCol: "id" },
+      { table: "feedback", col: "screenshot_url", kind: "feedback", teamCol: "team_id", memberCol: "user_id" },
+      { table: "custom_emoji", col: "image_url", kind: "emoji", teamCol: "team_id", memberCol: "member_id" },
+      { table: "cad_snapshots", col: "file_url", kind: "cad", teamCol: "team_id", memberCol: "created_by" },
+      { table: "cad_snapshots", col: "screenshot_url", kind: "cad", teamCol: "team_id", memberCol: "created_by" },
+      { table: "cad_reviews", col: "screenshot_url", kind: "cad", teamCol: "team_id", memberCol: "created_by" },
+      { table: "messages", col: "file_path", kind: "chat", teamCol: "team_id", memberCol: "sender_id" },
+    ];
+    for (const f of fs.readdirSync(rescueDir)) {
+      const diskPath = path.join(rescueDir, f);
+      let stat: any = null;
+      try { stat = fs.statSync(diskPath); } catch { continue; }
+      if (!stat.isFile()) continue;
+      const url = `/uploads/${f}`;
+      const bytes = fs.readFileSync(diskPath);
+      for (const c of rescueCols) {
+        let rows: any[] = [];
+        try {
+          rows = await dbAll(
+            `SELECT id, ${c.col} AS u, ${c.teamCol ?? "NULL"} AS t, ${c.memberCol ?? "NULL"} AS m FROM ${c.table} WHERE ${c.col} = ?`, url
+          ) as any[];
+        } catch { continue; }
+        for (const row of rows) {
+          try {
+            const info = await dbRun(
+              `INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, size, data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              row.t ?? null, row.m ?? null, c.kind, f, null, bytes.length, bytes
+            );
+            await dbRun(`UPDATE ${c.table} SET ${c.col} = ? WHERE id = ?`, `/api/files/${info.lastInsertRowid}`, row.id);
+          } catch (e) { console.error(`[rescue] ${c.table}.${c.col} id ${row.id}:`, (e as any)?.message || e); }
+        }
+      }
+      // tasks.completion_images is a JSON array of URLs.
+      try {
+        const tasks = await dbAll(`SELECT id, completion_images FROM tasks WHERE completion_images LIKE ?`, `%${url}%`) as any[];
+        for (const t of tasks) {
+          try {
+            const arr = JSON.parse(t.completion_images || "[]");
+            if (!Array.isArray(arr) || !arr.includes(url)) continue;
+            const info = await dbRun(
+              `INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, size, data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              null, null, "proof", f, null, bytes.length, bytes
+            );
+            const next = arr.map((u: string) => (u === url ? `/api/files/${info.lastInsertRowid}` : u));
+            await dbRun(`UPDATE tasks SET completion_images = ? WHERE id = ?`, JSON.stringify(next), t.id);
+          } catch (e) { console.error(`[rescue] tasks.completion_images id ${t.id}:`, (e as any)?.message || e); }
+        }
+      } catch { /* table may not exist yet */ }
+      // Remove the disk copy once every reference was rewritten.
+      try {
+        let refs = 0;
+        for (const c of rescueCols) {
+          try {
+            const r = await dbGet(`SELECT COUNT(*) AS n FROM ${c.table} WHERE ${c.col} = ?`, url) as any;
+            refs += r?.n || 0;
+          } catch { /* ignore */ }
+        }
+        const rt = await dbAll(`SELECT id, completion_images FROM tasks WHERE completion_images LIKE ?`, `%${url}%`).catch(() => []) as any[];
+        refs += rt.length;
+        if (refs === 0) fs.unlinkSync(diskPath);
+      } catch { /* best effort */ }
+    }
+  }
+} catch (e) { console.error("[rescue] upload rescue failed:", (e as any)?.message || e); }
 // AI warnings issued by the app owner
 (await dbExec(`CREATE TABLE IF NOT EXISTS ai_warnings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1760,15 +1848,10 @@ async function startServer() {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
   
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-  });
+  // Uploads are received into memory and persisted as BLOBs in the
+  // stored_files table — Render's disk is ephemeral, so nothing
+  // user-uploaded may live only on the filesystem.
+  const storage = multer.memoryStorage();
   
   const upload = multer({
     storage,
@@ -2450,7 +2533,7 @@ async function startServer() {
   // either start a session (existing member) or stash a single-use signup token.
   // Fill in a missing name/avatar from the OAuth provider profile for every
   // membership row on this account. Never clobbers a name the user chose or an
-  // avatar they uploaded themselves (uploads live under /uploads/).
+  // avatar they uploaded themselves.
   async function fillOAuthProfile(email: string, name: string, avatarUrl: string | null) {
     const rows = (await dbAll("SELECT id, name, avatar_url FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email)) as any[];
     const cleanName = (name || '').trim();
@@ -2833,12 +2916,7 @@ async function startServer() {
     const ids = rows.map((r) => r.id);
     // Remove avatar files (best effort, async — never block the event loop)
     await Promise.all(rows.map(async (r) => {
-      try {
-        if (r.avatar_url?.startsWith('/uploads/')) {
-          const p = path.join(uploadDir, r.avatar_url.slice('/uploads/'.length));
-          await fs.promises.unlink(p).catch(() => {});
-        }
-      } catch { /* best effort */ }
+      await deleteStoredFileByUrl(r.avatar_url);
     }));
     if (ids.length) {
       const ph = ids.map(() => "?").join(",");
@@ -3583,14 +3661,16 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const avatarUrl = `/uploads/${req.file.filename}`;
-    // Remove the previous avatar file so uploads don't pile up
+    // Persist to the database so the avatar survives restarts/redeploys.
+    const fileId = await storeFile({
+      teamId: null, memberId: auth.memberId, kind: "avatar",
+      filename: req.file.originalname, mimeType: req.file.mimetype, buffer: req.file.buffer,
+    });
+    const avatarUrl = fileUrl(fileId);
+    // Remove the previous avatar's stored file so uploads don't pile up
     try {
       const prev = (await dbGet("SELECT avatar_url FROM members WHERE id = ?", auth.memberId)) as any;
-      if (prev?.avatar_url?.startsWith('/uploads/')) {
-        const prevPath = path.join(uploadDir, prev.avatar_url.slice('/uploads/'.length));
-        if (fs.existsSync(prevPath)) fs.unlinkSync(prevPath);
-      }
+      await deleteStoredFileByUrl(prev?.avatar_url);
     } catch { /* best effort */ }
     (await dbRun("UPDATE members SET avatar_url = ? WHERE id = ?", avatarUrl, auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
@@ -4417,6 +4497,75 @@ async function startServer() {
   });
 
   // File upload for messages
+  // ---- Durable file store (survives Render restarts/redeploys) ----
+  // Every user upload is persisted as a BLOB in stored_files and served from
+  // /api/files/:id. Nothing user-uploaded may live only on ephemeral disk.
+  async function storeFile(opts: {
+    teamId?: number | null; memberId?: number | null; kind: string;
+    filename?: string | null; mimeType?: string | null; buffer: Buffer;
+  }): Promise<number> {
+    const info = await dbRun(
+      `INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, size, data)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      opts.teamId ?? null, opts.memberId ?? null, opts.kind,
+      opts.filename ?? null, opts.mimeType ?? null, opts.buffer.length, opts.buffer
+    );
+    return Number(info.lastInsertRowid);
+  }
+  const fileUrl = (id: number): string => `/api/files/${id}`;
+  /** Delete the stored_files row behind a /api/files/:id URL (best effort).
+   *  Also removes legacy /uploads/ disk files when they still exist. */
+  async function deleteStoredFileByUrl(url: string | null | undefined): Promise<void> {
+    try {
+      const m = /^\/api\/files\/(\d+)$/.exec(String(url || ""));
+      if (m) {
+        await dbRun(`DELETE FROM stored_files WHERE id = ?`, Number(m[1]));
+        return;
+      }
+      const d = /^\/uploads\/(.+)$/.exec(String(url || ""));
+      if (d) {
+        const p = path.join(uploadDir, path.basename(d[1]));
+        if (fs.existsSync(p)) fs.unlinkSync(p);
+      }
+    } catch { /* best effort */ }
+  }
+
+  // File serving. Team files require active-team membership (owner bypasses);
+  // avatars are visible to any signed-in user, like member names are.
+  app.get("/api/files/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(404).end();
+      const f = (await dbGet(
+        `SELECT id, team_id, kind, filename, mime_type, data FROM stored_files WHERE id = ?`, id
+      )) as any;
+      if (!f || !f.data) return res.status(404).end();
+      let email = String((auth as any).email || "");
+      if (!email) {
+        const me = (await dbGet(`SELECT email FROM members WHERE id = ?`, auth.memberId)) as any;
+        email = String(me?.email || "");
+      }
+      const isOwner = ownerEmails().includes(email.toLowerCase());
+      if (!isOwner && f.kind !== "avatar") {
+        if (!f.team_id || f.team_id !== auth.teamId) return res.status(403).end();
+      }
+      const buf = Buffer.from(f.data as ArrayBuffer);
+      res.setHeader("Content-Type", f.mime_type || "application/octet-stream");
+      res.setHeader("Content-Length", buf.length);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      if (f.filename) {
+        const safe = String(f.filename).replace(/["\r\n]/g, "").slice(0, 120) || "file";
+        res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
+      }
+      res.send(buf);
+    } catch (e) {
+      console.error("file serve error:", (e as any)?.message || e);
+      res.status(500).end();
+    }
+  });
+
   // Chat images, served from the database so they survive restarts and
   // redeploys (Render's disk is ephemeral). Team-scoped: you can only load
   // images from messages in your active workspace.
@@ -4450,7 +4599,6 @@ async function startServer() {
       return res.status(403).json({ error: "Not your workspace" });
     }
     const timestamp = new Date().toISOString();
-    const filePath = `/uploads/${req.file.filename}`;
     const fileName = req.file.originalname;
     const fileSize = req.file.size;
     const fileUpdated = new Date().toISOString();
@@ -4462,7 +4610,6 @@ async function startServer() {
     if (!chan) channelId = general.id;
     const restrictedUpload = (await dbGet("SELECT post_restricted FROM chat_channels WHERE id = ? AND team_id = ?", channelId, auth.teamId)) as any;
     if (restrictedUpload?.post_restricted && !(await hasPerm({ memberId: auth.memberId, teamId: auth.teamId }, "manage_members"))) {
-      if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
       return res.status(403).json({ error: "Only admins can post in that channel" });
     }
     let replyToId: number | null = parseInt(req.body.reply_to_id, 10);
@@ -4474,22 +4621,22 @@ async function startServer() {
 
     const info = (await dbRun(
       "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id, channel_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId, channelId, replyToId));
+    , sender_id, content || '', timestamp, null, fileName, fileSize, fileUpdated, auth.teamId, channelId, replyToId));
 
-    // Persist a DB copy of images so they survive restarts/redeploys (the
-    // disk file is ephemeral). Clients are served the DB URL from here on.
-    let servedPath = filePath;
+    // Persist the upload in the database so it survives restarts/redeploys
+    // (disk is ephemeral). The message row carries the DB-backed URL.
+    let servedPath: string | null = null;
     try {
-      if (req.file && String(req.file.mimetype || '').startsWith('image/')) {
-        const bytes = fs.readFileSync(req.file.path);
-        const img = await dbRun(
-          "INSERT INTO message_images (message_id, mime_type, data) VALUES (?, ?, ?)",
-          info.lastInsertRowid, req.file.mimetype, bytes
-        );
-        servedPath = `/api/message-images/${img.lastInsertRowid}`;
+      if (req.file?.buffer?.length) {
+        const fid = await storeFile({
+          teamId: auth.teamId, memberId: Number(sender_id) || auth.memberId, kind: "chat",
+          filename: req.file.originalname, mimeType: req.file.mimetype, buffer: req.file.buffer,
+        });
+        servedPath = fileUrl(fid);
+        await dbRun("UPDATE messages SET file_path = ? WHERE id = ?", servedPath, info.lastInsertRowid);
       }
     } catch (e) {
-      console.error("[chat] image DB persist failed:", (e as any)?.message || e);
+      console.error("[chat] file DB persist failed:", (e as any)?.message || e);
     }
 
     let replyPreview: any = null;
@@ -4662,7 +4809,6 @@ async function startServer() {
         if (!file) return res.status(400).json({ error: "No image uploaded" });
         if (!name) return res.status(400).json({ error: "Give your reaction a name" });
         if (!String(file.mimetype || "").startsWith("image/")) {
-          try { fs.unlinkSync(file.path); } catch {}
           return res.status(400).json({ error: "Upload an image file" });
         }
         const count: any = await dbGet(
@@ -4670,14 +4816,17 @@ async function startServer() {
           auth.memberId, auth.teamId
         );
         if ((count?.n || 0) >= 25) {
-          try { fs.unlinkSync(file.path); } catch {}
           return res.status(400).json({ error: "You have 25 custom reactions — delete one to add another" });
         }
+        const fid = await storeFile({
+          teamId: auth.teamId, memberId: auth.memberId, kind: "emoji",
+          filename: file.originalname, mimeType: file.mimetype, buffer: file.buffer,
+        });
         const info = await dbRun(
           "INSERT INTO custom_emoji (member_id, team_id, name, image_url) VALUES (?, ?, ?, ?)",
-          auth.memberId, auth.teamId, name, `/uploads/${file.filename}`
+          auth.memberId, auth.teamId, name, fileUrl(fid)
         );
-        res.json({ ok: true, id: info.lastInsertRowid, name, image_url: `/uploads/${file.filename}` });
+        res.json({ ok: true, id: info.lastInsertRowid, name, image_url: fileUrl(fid) });
       } catch (e: any) {
         console.error("custom emoji upload error:", e?.message);
         res.status(500).json({ error: "Could not save that reaction" });
@@ -4697,6 +4846,7 @@ async function startServer() {
     }
     await dbRun("DELETE FROM message_reactions WHERE emoji = ?", `custom:${row.id}`);
     await dbRun("DELETE FROM custom_emoji WHERE id = ?", row.id);
+    await deleteStoredFileByUrl(row.image_url);
     res.json({ ok: true });
   });
 
@@ -4840,7 +4990,15 @@ Rules:
         ? { name: '', email: auth.email || '' }
         : (await dbGet("SELECT name, email FROM members WHERE id = ?", auth.memberId)) as any;
       const file = (req as any).file;
-      const screenshotUrl = file ? `/uploads/${file.filename}` : null;
+      // Persist the attachment in the database so it survives restarts.
+      let screenshotUrl: string | null = null;
+      if (file?.buffer?.length) {
+        const fid = await storeFile({
+          teamId: auth.teamId, memberId: auth.teamless ? null : auth.memberId, kind: "feedback",
+          filename: file.originalname, mimeType: file.mimetype, buffer: file.buffer,
+        });
+        screenshotUrl = fileUrl(fid);
+      }
       const attachmentName = file ? file.originalname : null;
       const attachmentType = file ? file.mimetype : null;
       const info = (await dbRun(
@@ -5496,7 +5654,16 @@ Rules:
         return res.status(403).json({ error: "Only the assignee or a manager can complete this task" });
       }
       const notes = String(req.body?.notes || "").trim().slice(0, 2000);
-      const images = (req.files || []).map((f: any) => `/uploads/${f.filename}`);
+      // Proof images are persisted in the database so they survive restarts.
+      const images: string[] = [];
+      for (const f of (req.files || []) as any[]) {
+        if (!f?.buffer?.length) continue;
+        const fid = await storeFile({
+          teamId: auth.teamId, memberId: auth.memberId, kind: "proof",
+          filename: f.originalname, mimeType: f.mimetype, buffer: f.buffer,
+        });
+        images.push(fileUrl(fid));
+      }
       // Proof is required: a description, screenshots, or both.
       if (!notes && images.length === 0) {
         return res.status(400).json({ error: "Add a description or at least one screenshot as proof of completion." });
@@ -8593,7 +8760,16 @@ Rules:
       const onshape_url = String(req.body?.onshape_url ?? "").trim().slice(0, 500);
       if (onshape_url && !isValidHttpUrl(onshape_url)) return res.status(400).json({ error: "Onshape link must be a valid http(s) URL" });
       const description = String(req.body?.description ?? "").trim().slice(0, 4000);
-      const screenshot_url = (req as any).file ? `/uploads/${(req as any).file.filename}` : null;
+      // Review screenshots are persisted in the database (disk is ephemeral).
+      let screenshot_url: string | null = null;
+      const shotFile = (req as any).file;
+      if (shotFile?.buffer?.length) {
+        const fid = await storeFile({
+          teamId, memberId: auth.memberId, kind: "cad",
+          filename: shotFile.originalname, mimeType: shotFile.mimetype, buffer: shotFile.buffer,
+        });
+        screenshot_url = fileUrl(fid);
+      }
       const now = new Date().toISOString();
       const r = await dbRun(
         `INSERT INTO cad_reviews (team_id, title, section, onshape_url, screenshot_url, description, status, created_by, created_at, updated_at)
@@ -8706,11 +8882,23 @@ Rules:
       const notes = String(req.body?.notes ?? "").trim().slice(0, 4000);
       const screenshot = files.screenshot?.[0];
       const now = new Date().toISOString();
+      // Model + screenshot are persisted in the database (disk is ephemeral).
+      const modelId = await storeFile({
+        teamId, memberId: auth.memberId, kind: "cad",
+        filename: model.originalname, mimeType: model.mimetype, buffer: model.buffer,
+      });
+      let screenshotId: number | null = null;
+      if (screenshot?.buffer?.length) {
+        screenshotId = await storeFile({
+          teamId, memberId: auth.memberId, kind: "cad",
+          filename: screenshot.originalname, mimeType: screenshot.mimetype, buffer: screenshot.buffer,
+        });
+      }
       const r = await dbRun(
         `INSERT INTO cad_snapshots (team_id, title, section, file_url, file_name, file_size, file_type, screenshot_url, notes, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        teamId, title, section, `/uploads/${model.filename}`, model.originalname, model.size, file_type,
-        screenshot ? `/uploads/${screenshot.filename}` : null, notes, auth.memberId, now);
+        teamId, title, section, fileUrl(modelId), model.originalname, model.size, file_type,
+        screenshotId ? fileUrl(screenshotId) : null, notes, auth.memberId, now);
       res.json({ id: r.lastInsertRowid });
     } catch (e) { console.error("CAD snapshot upload error:", e); res.status(500).json({ error: "Internal server error" }); }
   });
@@ -8728,9 +8916,7 @@ Rules:
       if (snap.created_by !== auth.memberId && !isAdmin) return res.status(403).json({ error: "You don't have permission for that" });
       await dbRun("DELETE FROM cad_snapshots WHERE id = ?", id);
       for (const u of [snap.file_url, snap.screenshot_url]) {
-        try {
-          if (u && u.startsWith("/uploads/")) fs.unlinkSync(path.join(process.cwd(), "uploads", u.slice(9)));
-        } catch { /* best effort */ }
+        await deleteStoredFileByUrl(u);
       }
       res.json({ success: true });
     } catch (e) { console.error("CAD snapshot delete error:", e); res.status(500).json({ error: "Internal server error" }); }

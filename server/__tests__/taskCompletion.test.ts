@@ -236,6 +236,6 @@ describe("task completion proof", () => {
     expect(body?.task?.status).toBe("done");
     const images = JSON.parse(body?.task?.completion_images || "[]");
     expect(images.length).toBeGreaterThan(0);
-    expect(String(images[0])).toMatch(/^\/uploads\//);
+    expect(String(images[0])).toMatch(/^\/api\/files\//);
   });
 });
