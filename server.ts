@@ -1687,6 +1687,16 @@ async function startServer() {
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
   });
 
+  // Task-completion proof: screenshots only, 10MB each, max 5 files.
+  const proofUpload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
+      else cb(new Error('Only image files are allowed as proof'));
+    }
+  });
+
   // Avatars: images only, 2MB cap
   const avatarUpload = multer({
     storage,
@@ -3077,7 +3087,7 @@ async function startServer() {
     res.json({ access_code: code });
   });
 
-  // --- FTC integration (ftc-scout.org, community mirror of official FIRST data) ---
+  // --- FTC integration (ftcscout.org, community mirror of official FIRST data) ---
   const FTC_SCOUT_URL = "https://api.ftcscout.org/graphql";
   const ftcCache = new Map<string, { at: number; data: any }>();
   const FTC_CACHE_TTL = 10 * 60 * 1000;
@@ -3747,6 +3757,7 @@ async function startServer() {
          ON CONFLICT(member_id, date) DO UPDATE SET status = 'P'`,
         auth.memberId, today, auth.teamId
       ));
+      broadcastToTeam(auth.teamId, { type: "attendance_changed", date: today });
       res.json({ success: true, date: today });
     } catch (error) {
       console.error("Error in attendance checkin:", error);
@@ -3838,6 +3849,7 @@ async function startServer() {
        ON CONFLICT(member_id, date) DO UPDATE SET status = 'P'`,
       member.id, today, session.team_id
     );
+    broadcastToTeam(session.team_id, { type: "attendance_changed", date: today });
     return { success: true, date: today, memberName: member.name };
   }
   // SQLite stores UTC "YYYY-MM-DD HH:MM:SS"; parse it back as UTC.
@@ -4747,11 +4759,52 @@ Rules:
   });
 
   // --- Owner: AI governance (usage, flags, per-user controls, deletion) ---
+  // ---- Owner AI overview: timezone-aware day boundaries ----
+  // ai_usage.created_at is stored in UTC ('YYYY-MM-DD HH:MM:SS'). The owner
+  // thinks in their own timezone, so "today" and the daily history are
+  // computed against the ?tz= IANA zone (default America/New_York).
+  function resolveTz(tz: unknown): string {
+    const s = String(tz || "").trim();
+    if (!s) return "America/New_York";
+    try { new Intl.DateTimeFormat("en-US", { timeZone: s }); return s; }
+    catch { return "America/New_York"; }
+  }
+  function tzParts(tz: string, ms: number) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }).formatToParts(new Date(ms));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+    let h = get("hour"); if (h === "24") h = "00"; // hour12:false can emit 24 at midnight
+    return { y: get("year"), mo: get("month"), d: get("day"), h, mi: get("minute"), s: get("second") };
+  }
+  // UTC ms of 00:00:00 in `tz` on the tz-calendar day containing refMs.
+  function zonedMidnightUtcMs(tz: string, refMs: number): number {
+    const p = tzParts(tz, refMs);
+    const datePart = `${p.y}-${p.mo}-${p.d}`;
+    const target = Date.parse(datePart + "T00:00:00Z");
+    let guess = Date.parse(datePart + "T12:00:00Z");
+    for (let i = 0; i < 4; i++) {
+      const q = tzParts(tz, guess);
+      const asUtc = Date.parse(`${q.y}-${q.mo}-${q.d}T${q.h}:${q.mi}:${q.s}Z`);
+      if (!Number.isFinite(asUtc)) break;
+      const next = guess + (target - asUtc);
+      if (next === guess) break;
+      guess = next;
+    }
+    return guess;
+  }
+  const utcStamp = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+
   app.get("/api/owner/ai-overview", async (req, res) => {
     const auth = await requireOwner(req, res);
     if (!auth) return;
+    const tz = resolveTz(req.query.tz);
+    const nowMs = Date.now();
+    const todayStart = utcStamp(zonedMidnightUtcMs(tz, nowMs));
     const today = (await dbGet(
-      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT member_id) AS users FROM ai_usage WHERE created_at >= datetime('now', 'start of day')"
+      "SELECT COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens, COUNT(DISTINCT member_id) AS users FROM ai_usage WHERE created_at >= ?",
+      todayStart
     )) as any;
     const top = (await dbAll(`
       SELECT u.member_id AS id, m.name, m.email, t.name AS team_name,
@@ -4768,9 +4821,42 @@ Rules:
     // Provider split (Groq vs Gemini) for today's traffic — shows the hybrid
     // router working. Older rows default to 'gemini' via the column default.
     const providers = (await dbAll(
-      "SELECT provider, COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage WHERE created_at >= datetime('now', 'start of day') GROUP BY provider"
+      "SELECT provider, COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage WHERE created_at >= ? GROUP BY provider",
+      todayStart
     )) as any[];
-    res.json({ today, top, flags, providers });
+    // Daily history: last 14 tz-calendar days, zero-filled, oldest first.
+    // (Loop guards against DST duplicates where two 24h-apart instants share
+    // a calendar date.)
+    const days: { date: string; startMs: number }[] = [];
+    const seen = new Set<string>();
+    for (let back = 0; days.length < 14 && back < 40; back++) {
+      const startMs = zonedMidnightUtcMs(tz, nowMs - back * 86400000);
+      const p = tzParts(tz, startMs + 1000);
+      const date = `${p.y}-${p.mo}-${p.d}`;
+      if (!seen.has(date)) { seen.add(date); days.unshift({ date, startMs }); }
+    }
+    const buckets = new Map<string, { messages: number; tokens: number; users: Set<number> }>();
+    for (const d of days) buckets.set(d.date, { messages: 0, tokens: 0, users: new Set() });
+    const windowStart = days.length ? utcStamp(days[0].startMs) : todayStart;
+    const rows = (await dbAll(
+      "SELECT created_at, total_tokens, member_id FROM ai_usage WHERE created_at >= ?",
+      windowStart
+    )) as any[];
+    for (const r of rows) {
+      const ms = Date.parse(String(r.created_at).replace(" ", "T") + "Z");
+      if (!Number.isFinite(ms)) continue;
+      const p = tzParts(tz, ms);
+      const bucket = buckets.get(`${p.y}-${p.mo}-${p.d}`);
+      if (!bucket) continue;
+      bucket.messages += 1;
+      bucket.tokens += Number(r.total_tokens) || 0;
+      if (r.member_id != null) bucket.users.add(r.member_id);
+    }
+    const daily = days.map((d) => {
+      const b = buckets.get(d.date)!;
+      return { date: d.date, messages: b.messages, tokens: b.tokens, users: b.users.size };
+    });
+    res.json({ today, top, flags, providers, daily, tz });
   });
 
   // Richer users list: AI status, 7-day usage, open flags, warnings
@@ -5177,6 +5263,11 @@ Rules:
       if (!canManage && !isAssignee) {
         return res.status(403).json({ error: "You can only update tasks assigned to you" });
       }
+      // Completing a task requires proof (notes and/or screenshots). PATCH may
+      // move a task back to todo/in-progress, but only POST /:id/complete sets done.
+      if (req.body?.status === 'done' && task.status !== 'done') {
+        return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
+      }
       const { status, title, description, assigned_to, due_date, is_board } = req.body;
       if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || due_date !== undefined || is_board !== undefined)) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
@@ -5243,7 +5334,9 @@ Rules:
 
   // Mark a task done WITH proof: completion notes + optional screenshots.
   // If the task is unassigned, the completer becomes the assignee.
-  app.post("/api/tasks/:id/complete", upload.array("images", 5), async (req: any, res) => {
+  app.post("/api/tasks/:id/complete", (req: any, res: any) => {
+    proofUpload.array("images", 5)(req, res, async (err: any) => {
+      if (err) return res.status(400).json({ error: err.message || "Invalid proof images" });
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
@@ -5258,6 +5351,10 @@ Rules:
       }
       const notes = String(req.body?.notes || "").trim().slice(0, 2000);
       const images = (req.files || []).map((f: any) => `/uploads/${f.filename}`);
+      // Proof is required: a description, screenshots, or both.
+      if (!notes && images.length === 0) {
+        return res.status(400).json({ error: "Add a description or at least one screenshot as proof of completion." });
+      }
       const prevImages = (() => { try { return JSON.parse(task.completion_images || "[]"); } catch { return []; } })();
       const allImages = [...prevImages, ...images].slice(0, 10);
       const now = new Date().toISOString();
@@ -5268,7 +5365,8 @@ Rules:
         now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, req.params.id
       );
       if (task.assigned_to && task.assigned_to !== auth.memberId) {
-        createNotification(task.assigned_to, `Task completed by ${auth.memberId}: ${task.title}`, 'task');
+        const completer = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
+        createNotification(task.assigned_to, `Task completed by ${completer?.name || "a teammate"}: ${task.title}`, 'task');
       }
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
@@ -5277,6 +5375,7 @@ Rules:
       console.error("Error completing task:", error);
       res.status(500).json({ error: "Internal server error" });
     }
+    });
   });
 
   // Budget
@@ -6421,14 +6520,14 @@ Rules:
     return { blocked: false };
   }
 
-  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number, status: string = 'ok', provider: string = 'gemini') {
+  async function logAiUsage(memberId: number, teamId: number | null, usage: any, promptChars: number, responseChars: number, status: string = 'ok', provider: string = 'gemini', endpoint: string = 'bruno-chat') {
     try {
       const prompt = usage?.promptTokens || Math.ceil(promptChars / 4);
       const response = usage?.responseTokens || Math.ceil(responseChars / 4);
       const total = usage?.totalTokens || prompt + response;
       await dbRun(
-        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens, status, provider) VALUES (?, ?, 'build-helper', ?, ?, ?, ?, ?)",
-        memberId, teamId, prompt, response, total, status, provider
+        "INSERT INTO ai_usage (member_id, team_id, endpoint, prompt_tokens, response_tokens, total_tokens, status, provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        memberId, teamId, endpoint, prompt, response, total, status, provider
       );
     } catch (e) {
       console.error("[AI] usage log failed:", (e as any)?.message || e);
@@ -6504,8 +6603,10 @@ Rules:
   }
 
   app.post("/api/ai/fetch-news", async (req, res) => {
+    // Hoisted so the catch block can attribute failed attempts to the caller.
+    let auth: Awaited<ReturnType<typeof requireAuth>> = null;
     try {
-      const auth = await requireAuth(req, res);
+      auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "AI features are not configured yet. The team owner needs to add a Gemini API key." });
@@ -6538,18 +6639,22 @@ Rules:
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          await scoutNews(teamCtx, maxTokens, (chunk) => res.write(chunk));
+          const streamedNews = await scoutNews(teamCtx, maxTokens, (chunk) => res.write(chunk));
+          logAiUsage(auth.memberId, auth.teamId, null, 0, String(streamedNews || "").length, "ok", "gemini", "fetch-news");
           res.end();
         } catch (err) {
           console.error("AI news stream error:", err);
+          logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(err) ? "quota" : "error", "gemini", "fetch-news");
           res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Failed to finish the news roundup.)");
         }
         return;
       }
       const result = await scoutNews(teamCtx, maxTokens);
+      logAiUsage(auth.memberId, auth.teamId, null, 0, String(result || "").length, "ok", "gemini", "fetch-news");
       res.json({ result });
     } catch (error) {
       console.error("AI news error:", error);
+      if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(error) ? "quota" : "error", "gemini", "fetch-news");
       if (isQuotaError(error)) {
         res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
       } else {
@@ -6664,8 +6769,13 @@ Rules:
   }
 
   app.post("/api/ai/scout-feed", async (req, res) => {
+    // Hoisted so the catch block can attribute failed attempts to the caller.
+    let auth: Awaited<ReturnType<typeof requireAuth>> = null;
+    // Hoisted alongside auth: only the request that starts a shared
+    // generation logs its usage; waiters share that one Gemini call.
+    let isOwner = false;
     try {
-      const auth = await requireAuth(req, res);
+      auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", items: [] });
@@ -6682,7 +6792,10 @@ Rules:
       // Dedupe: if another request is already generating this team's feed,
       // wait for it instead of firing a second Gemini call. The check-and-set
       // is synchronous so concurrent requests can't slip past each other.
+      // Only the request that *starts* the generation logs usage — waiters
+      // share the same single Gemini call and must not each log a row.
       if (force || !scoutFeedInflight.get(teamKey)) {
+        isOwner = true;
         const gen: Promise<any[]> = (async () => {
           const maxTokens = await getMaxTokens("max_tokens_news", 2048);
           return buildAndValidateScoutFeed(maxTokens);
@@ -6695,11 +6808,16 @@ Rules:
       }
       const validItems = await scoutFeedInflight.get(teamKey)!;
       if (!validItems.length) {
+        if (isOwner && auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, "error", "gemini", "scout-feed");
         return res.status(502).json({ error: "The scout feed came back empty — please try refreshing.", items: [] });
       }
+      if (isOwner) logAiUsage(auth.memberId, auth.teamId, null, 0, JSON.stringify(validItems).length, "ok", "gemini", "scout-feed");
       res.json({ items: validItems });
     } catch (error) {
       console.error("AI scout feed error:", error);
+      // Owner-only: every waiter lands here when the shared generation
+      // rejects, but it was still just one Gemini call.
+      if (isOwner && auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(error) ? "quota" : "error", "gemini", "scout-feed");
       if (isQuotaError(error)) {
         res.status(429).json({ error: "AI quota exhausted", items: [] });
       } else {
@@ -6709,8 +6827,10 @@ Rules:
   });
 
   app.post("/api/ai/attendance", async (req, res) => {
+    // Hoisted so the catch block can attribute failed attempts to the caller.
+    let auth: Awaited<ReturnType<typeof requireAuth>> = null;
     try {
-      const auth = await requireAuth(req, res);
+      auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Insights unavailable." });
@@ -6732,18 +6852,22 @@ Rules:
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          await aiStream(ATTENDANCE_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          const streamedInsights = await aiStream(ATTENDANCE_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          logAiUsage(auth.memberId, auth.teamId, null, prompt.length, String(streamedInsights || "").length, "ok", "gemini", "attendance");
           res.end();
         } catch (err) {
           console.error("AI attendance stream error:", err);
+          logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(err) ? "quota" : "error", "gemini", "attendance");
           res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Failed to finish insights.)");
         }
         return;
       }
       const result = await aiGenerate(ATTENDANCE_SYSTEM, prompt, maxTokens);
+      logAiUsage(auth.memberId, auth.teamId, null, prompt.length, String(result || "").length, "ok", "gemini", "attendance");
       res.json({ result });
     } catch (error) {
       console.error("AI attendance error:", error);
+      if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(error) ? "quota" : "error", "gemini", "attendance");
       if (isQuotaError(error)) {
         res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
       } else {
@@ -7386,8 +7510,10 @@ Rules:
   });
 
   app.post("/api/ai/activity-summary", async (req, res) => {
+    // Hoisted so the catch block can attribute failed attempts to the caller.
+    let auth: Awaited<ReturnType<typeof requireAuth>> = null;
     try {
-      const auth = await requireAuth(req, res);
+      auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isGeminiConfigured()) {
         return res.status(501).json({ error: "AI not configured", result: "Failed to generate summary." });
@@ -7433,18 +7559,22 @@ Rules:
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache");
         try {
-          await aiStream(COACH_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          const streamedSummary = await aiStream(COACH_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
+          logAiUsage(auth.memberId, auth.teamId, null, String(prompt || "").length, String(streamedSummary || "").length, "ok", "gemini", "activity-summary");
           res.end();
         } catch (err) {
           console.error("AI summary stream error:", err);
+          logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(err) ? "quota" : "error", "gemini", "activity-summary");
           res.end(isQuotaError(err) ? `\n\n(${QUOTA_EXHAUSTED_MSG})` : "\n\n(Failed to finish the summary.)");
         }
         return;
       }
       const result = await aiGenerate(COACH_SYSTEM, prompt, maxTokens);
+      logAiUsage(auth.memberId, auth.teamId, null, String(prompt || "").length, String(result || "").length, "ok", "gemini", "activity-summary");
       res.json({ result });
     } catch (error) {
       console.error("AI summary error:", error);
+      if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, isQuotaError(error) ? "quota" : "error", "gemini", "activity-summary");
       if (isQuotaError(error)) {
         res.status(429).json({ error: "AI quota exhausted", result: QUOTA_EXHAUSTED_MSG });
       } else {
