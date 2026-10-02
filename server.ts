@@ -7707,6 +7707,12 @@ Rules:
       const data = await fetchRepoTreeFromGitHub(parsed.owner, parsed.repo);
       const repoUrl = `https://github.com/${data.owner}/${data.repo}`;
       const result = await saveRepoForTeam(auth.teamId!, repoUrl, data);
+      // Verify the write persisted — if not, surface it instead of fake success.
+      const verify: any = await dbGet("SELECT id FROM code_repos WHERE team_id = ?", auth.teamId);
+      if (!verify) {
+        console.error("code_repos write verification failed for team", auth.teamId);
+        return res.status(500).json({ error: "Could not save the repo link — please try again" });
+      }
       res.json(result);
     } catch (error) {
       handleRepoError(res, error);
