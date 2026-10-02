@@ -2942,6 +2942,11 @@ async function startServer() {
       { sql: "DELETE FROM voice_channel_role_perms WHERE channel_id IN (SELECT id FROM voice_channels WHERE team_id = ?)", args: [teamId] },
       { sql: "DELETE FROM voice_channels WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_voice_settings WHERE team_id = ?", args: [teamId] },
+      // Messaging + newer tables missing from the original batch
+      { sql: "DELETE FROM chat_channels WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM channel_categories WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM custom_emoji WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM resources WHERE team_id = ?", args: [teamId] },
       { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
       // Keep the caller's session alive so they stay signed in (teamless when
       // this was their last team); every other session on the team is dropped.
