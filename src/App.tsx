@@ -845,7 +845,6 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTeamMenu, setShowTeamMenu] = useState(false);
   const [brunoPanelOpen, setBrunoPanelOpen] = useState(false);
-  const brunoClickTimer = useRef<number | null>(null);
 
   // ---- Onboarding (welcome, tour, setup wizard, dashboard checklist) ----
   // Persisted per account (email-keyed) on the server so progress survives
@@ -860,19 +859,10 @@ export default function App() {
   const tourSaveTimer = useRef<number | null>(null);
   const tourStepRef = useRef(0);
 
-  // Single click → Copilot-style side panel; double-click → full /bruno view
+  // Single click → Copilot-style side panel, instantly. (The panel's own
+  // expand button reaches the full /bruno view, so no double-click wait.)
   const handleBrunoButton = () => {
-    if (brunoClickTimer.current) {
-      window.clearTimeout(brunoClickTimer.current);
-      brunoClickTimer.current = null;
-      setBrunoPanelOpen(false);
-      navigate('/bruno');
-      return;
-    }
-    brunoClickTimer.current = window.setTimeout(() => {
-      brunoClickTimer.current = null;
-      setBrunoPanelOpen(true);
-    }, 260);
+    setBrunoPanelOpen(true);
   };
   
   // Auth State
@@ -2059,7 +2049,7 @@ export default function App() {
       isAdmin,
       // setters for optimistic UI (instant-feeling mutations with rollback on error)
       setTasks, setEvents, setOutreach, setInventory, setBudget, setAttendance, setMembers,
-      setMessages, msgCache,
+      setMessages, msgCache, setSocialProfiles, setCommunications,
       insights, scoutFeed, scoutUpdatedAt, scoutError, summary, socket, hasScope,
       isAiLoading, setIsAiLoading, ThinkingIndicator, aiLoadingTarget,
       colorVersion, setColorVersion,
@@ -4793,7 +4783,7 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
   );
 }
 
-function CalendarView({ events, teams, onRefresh, refresh, currentUser, hasScope }: any) {
+function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUser, hasScope }: any) {
   const canManageCalendar = hasScope ? hasScope('calendar') : false;
 
   // Right-click on a calendar event: edit or delete without opening the card.
@@ -4965,9 +4955,22 @@ function CalendarView({ events, teams, onRefresh, refresh, currentUser, hasScope
   const handleDelete = async () => {
     if (!editingId) return;
     if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/events/${editingId}`, { method: 'DELETE' });
+    const id = editingId;
     setShowModal(false);
-    refresh.events();
+    // Optimistic: remove instantly, restore on failure.
+    const prev = events;
+    setEvents((es: any[]) => es.filter((e: any) => e.id !== id));
+    try {
+      const res = await apiFetch(`/api/events/${id}`, { method: 'DELETE' });
+      if (res.ok) refresh.events();
+      else {
+        setEvents(prev);
+        notify('Could not delete event — try again.', 'error');
+      }
+    } catch {
+      setEvents(prev);
+      notify('Could not delete event — try again.', 'error');
+    }
   };
 
   const fmtTime = (t: string) => {
@@ -5549,7 +5552,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   );
 }
 
-function BudgetView({ budget, teams, onRefresh, refresh, hasScope, currentUser }: any) {
+function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, currentUser }: any) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
@@ -5631,10 +5634,19 @@ function BudgetView({ budget, teams, onRefresh, refresh, hasScope, currentUser }
     if (!(await confirmDialog({ title: 'Delete transaction', message: 'Delete this transaction?', confirmLabel: 'Delete', danger: true }))) return;
     if (busy) return;
     setBusy(true);
+    // Optimistic: drop the row instantly, restore on failure.
+    const prev = budget;
+    setBudget((bs: any[]) => bs.filter((b: any) => b.id !== id));
     try {
       const res = await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
       if (res.ok) refresh.budget();
-      else notify('Could not delete entry — try again.', 'error');
+      else {
+        setBudget(prev);
+        notify('Could not delete entry — try again.', 'error');
+      }
+    } catch {
+      setBudget(prev);
+      notify('Could not delete entry — try again.', 'error');
     } finally {
       setBusy(false);
     }
@@ -5712,9 +5724,14 @@ function BudgetView({ budget, teams, onRefresh, refresh, hasScope, currentUser }
                 </td>
                 <td className="px-6 py-4 text-right">
                   {isAdmin && (
-                    <button onClick={() => handleDelete(item.id)} className="text-text-muted hover:text-rose-400 transition-colors">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <span className="inline-flex items-center gap-1">
+                      <button onClick={() => openEditEntry(item)} title="Edit transaction" aria-label="Edit transaction" className="text-text-muted hover:text-accent transition-colors p-1">
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(item.id)} title="Delete transaction" aria-label="Delete transaction" className="text-text-muted hover:text-rose-400 transition-colors p-1">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </span>
                   )}
                 </td>
               </tr>
@@ -5763,7 +5780,7 @@ function BudgetView({ budget, teams, onRefresh, refresh, hasScope, currentUser }
   );
 }
 
-function InventoryView({ inventory, members, teams, onRefresh, refresh, currentUser, hasScope }: any) {
+function InventoryView({ inventory, setInventory, members, teams, onRefresh, refresh, currentUser, hasScope }: any) {
   const canManage = hasScope ? hasScope('inventory') : false;
   const INVENTORY_CATEGORIES = [
     "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
@@ -5854,10 +5871,19 @@ function InventoryView({ inventory, members, teams, onRefresh, refresh, currentU
     if (!(await confirmDialog({ title: 'Delete part', message: 'Delete this part?', confirmLabel: 'Delete', danger: true }))) return;
     if (busy) return;
     setBusy(true);
+    // Optimistic: drop the row instantly, restore on failure.
+    const prev = inventory;
+    setInventory((ps: any[]) => ps.filter((p: any) => p.id !== id));
     try {
       const res = await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
       if (res.ok) refresh.inventory();
-      else notify('Could not delete part — try again.', 'error');
+      else {
+        setInventory(prev);
+        notify('Could not delete part — try again.', 'error');
+      }
+    } catch {
+      setInventory(prev);
+      notify('Could not delete part — try again.', 'error');
     } finally {
       setBusy(false);
     }
@@ -6508,7 +6534,7 @@ function timeAgoSocial(ts: number) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, refresh, hasScope }: any) {
+function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, refresh, hasScope }: any) {
   const isAdminSocial = hasScope ? hasScope('outreach') : (currentUser as any)?.account_type === 'admin';
 
   // Right-click on an outreach event card: edit or delete.
@@ -6562,13 +6588,37 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
 
   const handleUnlinkProfile = async (id: number) => {
     if (!window.confirm('Unlink this profile? Its sync history will be removed.')) return;
-    await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
-    refresh.socialProfiles();
+    // Optimistic: drop instantly, restore on failure.
+    const prev = socialProfiles;
+    setSocialProfiles((ps: any[]) => (ps || []).filter((p: any) => p.id !== id));
+    try {
+      const res = await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
+      if (res.ok) refresh.socialProfiles();
+      else {
+        setSocialProfiles(prev);
+        notify('Could not unlink profile — try again.', 'error');
+      }
+    } catch {
+      setSocialProfiles(prev);
+      notify('Could not unlink profile — try again.', 'error');
+    }
   };
 
   const handlePinProfile = async (id: number, pinned: boolean) => {
-    await apiFetch(`/api/outreach/social/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned: !pinned }) });
-    refresh.socialProfiles();
+    // Optimistic: flip instantly, revert on failure.
+    const prev = socialProfiles;
+    setSocialProfiles((ps: any[]) => (ps || []).map((p: any) => p.id === id ? { ...p, pinned: !pinned } : p));
+    try {
+      const res = await apiFetch(`/api/outreach/social/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned: !pinned }) });
+      if (res.ok) refresh.socialProfiles();
+      else {
+        setSocialProfiles(prev);
+        notify('Could not update pin — try again.', 'error');
+      }
+    } catch {
+      setSocialProfiles(prev);
+      notify('Could not update pin — try again.', 'error');
+    }
   };
 
   const handleMoveProfile = async (id: number, dir: -1 | 1) => {
@@ -6577,8 +6627,21 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
     const j = i + dir;
     if (i < 0 || j < 0 || j >= ids.length) return;
     [ids[i], ids[j]] = [ids[j], ids[i]];
-    await apiFetch('/api/outreach/social/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
-    refresh.socialProfiles();
+    // Optimistic: reorder instantly (the id order is already computed above).
+    const prev = socialProfiles;
+    const order = new Map<number, number>(ids.map((pid: number, idx: number) => [pid, idx]));
+    setSocialProfiles((ps: any[]) => [...(ps || [])].sort((a: any, b: any) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)));
+    try {
+      const res = await apiFetch('/api/outreach/social/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
+      if (res.ok) refresh.socialProfiles();
+      else {
+        setSocialProfiles(prev);
+        notify('Could not reorder — try again.', 'error');
+      }
+    } catch {
+      setSocialProfiles(prev);
+      notify('Could not reorder — try again.', 'error');
+    }
   };
 
   const handleSyncNow = async (id: number) => {
@@ -6737,8 +6800,20 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
 
   const handleDelete = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this outreach event?', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
-    refresh.outreach();
+    // Optimistic: remove instantly, restore on failure.
+    const prev = outreach;
+    setOutreach((es: any[]) => es.filter((e: any) => e.id !== id));
+    try {
+      const res = await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
+      if (res.ok) refresh.outreach();
+      else {
+        setOutreach(prev);
+        notify('Could not delete event — try again.', 'error');
+      }
+    } catch {
+      setOutreach(prev);
+      notify('Could not delete event — try again.', 'error');
+    }
   };
 
   return (
@@ -7174,7 +7249,7 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
   );
 }
 
-function CommunicationView({ communications, onRefresh, refresh, hasScope }: any) {
+function CommunicationView({ communications, setCommunications, onRefresh, refresh, hasScope }: any) {
   const canManage = hasScope ? hasScope('communications') : false;
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -7203,8 +7278,20 @@ function CommunicationView({ communications, onRefresh, refresh, hasScope }: any
 
   const handleDelete = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete log', message: 'Delete this log?', confirmLabel: 'Delete', danger: true }))) return;
-    await apiFetch(`/api/communications/${id}`, { method: 'DELETE' });
-    refresh.communications();
+    // Optimistic: remove instantly, restore on failure.
+    const prev = communications;
+    setCommunications((cs: any[]) => cs.filter((c: any) => c.id !== id));
+    try {
+      const res = await apiFetch(`/api/communications/${id}`, { method: 'DELETE' });
+      if (res.ok) refresh.communications();
+      else {
+        setCommunications(prev);
+        notify('Could not delete log — try again.', 'error');
+      }
+    } catch {
+      setCommunications(prev);
+      notify('Could not delete log — try again.', 'error');
+    }
   };
 
   return (

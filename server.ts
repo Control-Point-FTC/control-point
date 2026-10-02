@@ -2042,7 +2042,7 @@ async function startServer() {
   // client hides all TikTok UI, /api/auth/config reports tiktokEnabled: false,
   // connect/callback refuse, and sync skips TikTok profiles (rows stay in the
   // DB so re-enabling loses nothing).
-  const TIKTOK_ENABLED = false;
+  const TIKTOK_ENABLED = true;
   const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
   const TIKTOK_CLIENT_SECRET = process.env.TIKTOK_CLIENT_SECRET || "";
 
