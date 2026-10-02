@@ -825,6 +825,10 @@ export default function App() {
     || navItems.flatMap((t) => (t as any).children || []).find((c: any) => c.id === activeTab);
   // Messaging is immersive: no top bar, no footer — the chat fills the whole content area
   const isChatRoute = activeTab === 'chat';
+  // Bruno gets the same immersive full-height treatment as chat: no app
+  // header/footer, no outer scroll — the conversation fills the viewport.
+  const isBrunoRoute = activeTab === 'bruno';
+  const isImmersiveRoute = isChatRoute || isBrunoRoute;
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const isMobile = useIsMobile();
   // Teams & Members submenu (Members / Roles), Discord-style settings popup,
@@ -2658,8 +2662,10 @@ export default function App() {
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className={cn(
-          "bg-secondary border-r border-text-base/5 flex flex-col z-40",
-          isMobile ? "fixed inset-y-0 left-0 shadow-xl" : "relative"
+          "bg-secondary border-r border-text-base/5 flex flex-col",
+          // On phones the drawer must sit ABOVE the bottom tab bar (z-40),
+          // otherwise the user card + settings gear hide underneath it.
+          isMobile ? "fixed inset-y-0 left-0 shadow-xl z-50" : "relative z-40"
         )}
         style={{
           transform: isMobile && !isSidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
@@ -2790,7 +2796,11 @@ export default function App() {
           })()}
         </nav>
 
-        <div className="p-3 sm:p-4 border-t border-text-base/[0.06] flex-shrink-0 space-y-1.5">
+        <div
+          className="p-3 sm:p-4 border-t border-text-base/[0.06] flex-shrink-0 space-y-1.5"
+          // Clear the iPhone home indicator so the user card is fully tappable.
+          style={isMobile ? { paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' } : undefined}
+        >
           {/* Voice controls sit with the user card, Discord-style (presence picker untouched) */}
           <UserVoiceControls className={cn(!isSidebarOpen && 'justify-center')} onOpenSettings={() => setSettingsOpen(true)} />
           {/* Discord-style user card: avatar w/ presence, name, status picker, settings gear */}
@@ -2843,7 +2853,7 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh">
-        {!isChatRoute && (
+        {!isImmersiveRoute && (
         <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
@@ -3062,7 +3072,7 @@ export default function App() {
 
         <div className={cn(
           "flex flex-col flex-1 min-h-0 min-w-0",
-          isChatRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto overflow-x-clip custom-scrollbar"
+          isImmersiveRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto overflow-x-clip custom-scrollbar"
         )}>
           <AnimatePresence mode="wait">
             <motion.div
@@ -3082,7 +3092,7 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
-        {!isChatRoute && (
+        {!isImmersiveRoute && (
         <AppFooter
           links={visibleTabs.filter((t) => ['dashboard', 'stats', 'resources', 'calendar', 'chat', 'tasks'].includes(t.id))}
           teamName={activeTeamName}
@@ -3146,6 +3156,7 @@ export default function App() {
         onActiveChatId={(id) => { brunoPanelChatRef.current = id; }}
         currentUser={currentUser}
         botName={botName}
+        onUserSaved={(u: any) => setCurrentUser((prev: any) => (prev ? { ...prev, ...u } : u))}
       />
 
       {/* ---- Onboarding overlays ---- */}
@@ -10316,6 +10327,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
   const [maxTokensExcuse, setMaxTokensExcuse] = useState(settings.max_tokens_excuse || '512');
   const [maxTokensSummary, setMaxTokensSummary] = useState(settings.max_tokens_summary || '1024');
   const [maxTokensChat, setMaxTokensChat] = useState(settings.max_tokens_chat || '1024');
+  const [chatProvider, setChatProvider] = useState(settings.chat_provider || 'hybrid');
   const [showMemberEdit, setShowMemberEdit] = useState<any>(null);
 
   const [storageUsage, setStorageUsage] = useState<number | null>(null);
@@ -10493,6 +10505,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
         { key: 'max_tokens_excuse', value: maxTokensExcuse },
         { key: 'max_tokens_summary', value: maxTokensSummary },
         { key: 'max_tokens_chat', value: maxTokensChat },
+        { key: 'chat_provider', value: chatProvider },
       ] : []),
     ];
 
@@ -10711,6 +10724,32 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
 
       {isOwner && (
       <Card title="AI Configuration (Max Tokens)" icon={Bolt}>
+        <div className="space-y-1 mb-4">
+          <label className="text-xs font-bold text-text-muted uppercase">Chat provider</label>
+          <div className="grid grid-cols-2 gap-1.5 max-w-md" role="radiogroup" aria-label="Chat provider">
+            {([
+              { id: 'hybrid', label: 'Hybrid', hint: 'Groq free tier + Gemini for research' },
+              { id: 'gemini', label: 'Gemini only', hint: 'All chat via Gemini (paid)' },
+            ] as const).map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={chatProvider === p.id}
+                onClick={() => setChatProvider(p.id)}
+                className={cn(
+                  'rounded-xl border px-3 py-2.5 text-left transition-all',
+                  chatProvider === p.id
+                    ? 'bg-accent text-accent-ink border-accent'
+                    : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+                )}
+              >
+                <span className="block text-[13px] font-bold">{p.label}</span>
+                <span className={cn('block text-[11px] mt-0.5', chatProvider === p.id ? 'opacity-80' : 'text-text-muted/70')}>{p.hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1">
             <label className="text-xs font-bold text-text-muted uppercase">News Scout</label>

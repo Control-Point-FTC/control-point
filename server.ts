@@ -683,6 +683,10 @@ if (!memberColumns.some((c: any) => c.name === 'ai_disabled')) {
 if (!memberColumns.some((c: any) => c.name === 'bruno_teach_mode')) {
   (await dbExec("ALTER TABLE members ADD COLUMN bruno_teach_mode INTEGER DEFAULT 0"));
 }
+// Bruno output level: low | medium | high | max — caps reply length per member.
+if (!memberColumns.some((c: any) => c.name === 'bruno_output_level')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN bruno_output_level TEXT DEFAULT 'medium'"));
+}
 if (!memberColumns.some((c: any) => c.name === 'ai_timeout_until')) {
   (await dbExec("ALTER TABLE members ADD COLUMN ai_timeout_until TEXT"));
 }
@@ -731,6 +735,21 @@ if (!aiUsageColumns.some((c: any) => c.name === 'provider')) {
   reviewed_at TEXT
 )`));
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_ai_flags_status ON ai_flags(status, created_at)`));
+// Link a flag to the exact team-chat message that triggered it (NULL for Bruno-chat flags).
+if (!(await hasColumn('ai_flags', 'message_id'))) {
+  (await dbExec("ALTER TABLE ai_flags ADD COLUMN message_id INTEGER"));
+}
+// Chat image persistence: Render's filesystem is ephemeral, so uploaded
+// images vanish on every restart/redeploy. A DB copy survives — served via
+// /api/message-images/:id with the disk file as a fallback.
+(await dbExec(`CREATE TABLE IF NOT EXISTS message_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_id INTEGER NOT NULL,
+  mime_type TEXT NOT NULL,
+  data BLOB NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+)`));
+(await dbExec(`CREATE INDEX IF NOT EXISTS idx_message_images_message ON message_images(message_id)`));
 // AI warnings issued by the app owner
 (await dbExec(`CREATE TABLE IF NOT EXISTS ai_warnings (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1973,6 +1992,8 @@ async function startServer() {
           const fwdFileName = isForwarded && typeof message.file_name === 'string' ? message.file_name.slice(0, 200) : null;
           const fwdFileSize = isForwarded && Number.isFinite(Number(message.file_size)) ? Number(message.file_size) : null;
           const info = await dbRun("INSERT INTO messages (sender_id, content, timestamp, team_id, channel_id, reply_to_id, is_forwarded, forwarded_from, file_path, file_name, file_size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", message.sender_id, message.content, timestamp, teamId, channelId, replyToId, isForwarded, forwardedFrom, fwdFilePath, fwdFileName, fwdFileSize);
+          // Inappropriate-content flag (review-only, never blocks the send).
+          flagChatMessage(message.sender_id, teamId, Number(info.lastInsertRowid), String(message.content || ""));
 
           // Reply preview for the live broadcast (same shape as GET /api/messages)
           let replyPreview: any = null;
@@ -3445,11 +3466,15 @@ async function startServer() {
   app.patch("/api/profile", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode } = req.body || {};
+    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level } = req.body || {};
     const cleanName = (name || '').trim();
     if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
     const updates: any = { name: cleanName, role: (role || '').trim() };
     if (bruno_teach_mode !== undefined) updates.bruno_teach_mode = bruno_teach_mode ? 1 : 0;
+    if (bruno_output_level !== undefined) {
+      const lvl = String(bruno_output_level);
+      if (['low', 'medium', 'high', 'max'].includes(lvl)) updates.bruno_output_level = lvl;
+    }
     if (presence_status !== undefined) {
       if (!(PRESENCE_STATUSES as readonly string[]).includes(presence_status)) {
         return res.status(400).json({ error: "Invalid status — choose online, idle, dnd, or invisible" });
@@ -4392,6 +4417,26 @@ async function startServer() {
   });
 
   // File upload for messages
+  // Chat images, served from the database so they survive restarts and
+  // redeploys (Render's disk is ephemeral). Team-scoped: you can only load
+  // images from messages in your active workspace.
+  app.get("/api/message-images/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(404).end();
+    const row = (await dbGet(
+      `SELECT mi.mime_type AS mime_type, mi.data AS data FROM message_images mi
+       JOIN messages m ON m.id = mi.message_id
+       WHERE mi.id = ? AND m.team_id = ?`,
+      id, auth.teamId
+    )) as any;
+    if (!row || !row.data) return res.status(404).end();
+    res.setHeader("Content-Type", row.mime_type || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.send(row.data);
+  });
+
   app.post("/api/messages/upload", upload.single('file'), async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -4431,6 +4476,22 @@ async function startServer() {
       "INSERT INTO messages (sender_id, content, timestamp, file_path, file_name, file_size, file_updated, team_id, channel_id, reply_to_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     , sender_id, content || '', timestamp, filePath, fileName, fileSize, fileUpdated, auth.teamId, channelId, replyToId));
 
+    // Persist a DB copy of images so they survive restarts/redeploys (the
+    // disk file is ephemeral). Clients are served the DB URL from here on.
+    let servedPath = filePath;
+    try {
+      if (req.file && String(req.file.mimetype || '').startsWith('image/')) {
+        const bytes = fs.readFileSync(req.file.path);
+        const img = await dbRun(
+          "INSERT INTO message_images (message_id, mime_type, data) VALUES (?, ?, ?)",
+          info.lastInsertRowid, req.file.mimetype, bytes
+        );
+        servedPath = `/api/message-images/${img.lastInsertRowid}`;
+      }
+    } catch (e) {
+      console.error("[chat] image DB persist failed:", (e as any)?.message || e);
+    }
+
     let replyPreview: any = null;
     if (replyToId != null) {
       replyPreview = (await dbGet(`
@@ -4451,7 +4512,7 @@ async function startServer() {
       reply_sender_name: replyPreview?.reply_sender_name || null,
       reply_content: replyPreview?.reply_content || null,
       reply_deleted: replyPreview?.reply_deleted || null,
-      file_path: filePath,
+      file_path: servedPath,
       file_name: fileName,
       file_size: fileSize,
       file_updated: fileUpdated,
@@ -4460,7 +4521,7 @@ async function startServer() {
     
     res.json({ 
       id: info.lastInsertRowid, 
-      file_path: filePath,
+      file_path: servedPath,
       file_name: fileName,
       file_size: fileSize,
       file_updated: fileUpdated,
@@ -5166,9 +5227,9 @@ Rules:
       const auth = await requireAdmin(req, res);
       if (!auth) return;
       const { key, value } = req.body;
-      // AI token limits are global and affect every team + API usage:
-      // only the app owner may change them.
-      if (typeof key === "string" && key.startsWith("max_tokens_")) {
+      // AI token limits and the chat provider are global and affect every
+      // team + API usage: only the app owner may change them.
+      if (typeof key === "string" && (key.startsWith("max_tokens_") || key === "chat_provider")) {
         const member = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
         if (!ownerEmails().includes((member?.email || "").toLowerCase())) {
           return res.status(403).json({ error: "Only the app owner can change AI limits." });
@@ -6687,6 +6748,43 @@ Rules:
     }
   }
 
+  // Heuristic signals for inappropriate team-chat content. Flags are
+  // review-only — nothing is blocked, edited, or deleted automatically.
+  // Scored like the AI-misuse heuristics; mild words need company, slurs
+  // and threats flag on their own. One open flag per member per 6 hours.
+  const CHAT_INAPPROPRIATE_SIGNALS: [RegExp, number][] = [
+    [/\bnigg[ae]rs?\b/i, 6], [/\bfaggots?\b/i, 6], [/\btranny\b/i, 5], [/\bkike\b/i, 6],
+    [/\bchink\b/i, 6], [/\bspic\b/i, 6],
+    [/\bporn\w*/i, 4], [/\bsex\b/i, 3], [/\bsexy\b/i, 2], [/\bdicks?\b/i, 3],
+    [/\bpussy\b/i, 4], [/\bcum\b/i, 3], [/\borgasm/i, 4], [/\bmasturbat\w*/i, 4],
+    [/\bnudes?\b/i, 4], [/\bhorny\b/i, 3],
+    [/\bkill yourself\b/i, 6], [/\bkys\b/i, 6],
+    [/\bi('ll| will) (kill|hurt|beat) you/i, 5], [/\bshut the fuck up/i, 3],
+    [/\bfuck\w*/i, 3], [/\bshit\w*/i, 2], [/\bbitch/i, 2], [/\basshole/i, 2],
+    [/\bcunt\b/i, 4], [/\bdamn\b/i, 1], [/\bhell\b/i, 1], [/\bcrap\b/i, 1],
+  ];
+  const CHAT_FLAG_THRESHOLD = 4;
+
+  async function flagChatMessage(memberId: number, teamId: number | null, messageId: number, text: string) {
+    try {
+      const excerpt = String(text || "").slice(0, 400);
+      let score = 0;
+      for (const [re, pts] of CHAT_INAPPROPRIATE_SIGNALS) if (re.test(text)) score += pts;
+      if (score < CHAT_FLAG_THRESHOLD) return;
+      const dup = (await dbGet(
+        "SELECT id FROM ai_flags WHERE member_id = ? AND reason = 'inappropriate-chat' AND status = 'open' AND created_at >= datetime('now', '-6 hours')",
+        memberId
+      )) as any;
+      if (dup) return;
+      await dbRun(
+        "INSERT INTO ai_flags (member_id, team_id, message_id, excerpt, reason, score) VALUES (?, ?, ?, ?, 'inappropriate-chat', ?)",
+        memberId, teamId, messageId, excerpt, score
+      );
+    } catch (e) {
+      console.error("[chat] flagging failed:", (e as any)?.message || e);
+    }
+  }
+
   app.post("/api/ai/fetch-news", async (req, res) => {
     // Hoisted so the catch block can attribute failed attempts to the caller.
     let auth: Awaited<ReturnType<typeof requireAuth>> = null;
@@ -7251,9 +7349,17 @@ Rules:
         flagMisuse(auth.memberId, auth.teamId, reqChatId, messages[messages.length - 1].text);
       }
       const globalMax = await getMaxTokens("max_tokens_chat", 1024);
-      const memberCap = (await dbGet("SELECT ai_max_tokens_reply FROM members WHERE id = ?", auth.memberId)) as any;
+      const memberCap = (await dbGet("SELECT ai_max_tokens_reply, bruno_output_level FROM members WHERE id = ?", auth.memberId)) as any;
       const perUserMax = parseInt(memberCap?.ai_max_tokens_reply, 10);
-      const maxTokens = Number.isFinite(perUserMax) && perUserMax > 0 ? Math.min(globalMax, perUserMax) : globalMax;
+      // Member's output-level preference (Settings → Bruno AI): low 512 /
+      // medium 1024 / high 2048 / max 4096. Admin caps still apply as ceilings.
+      const OUTPUT_LEVEL_TOKENS: Record<string, number> = { low: 512, medium: 1024, high: 2048, max: 4096 };
+      const levelCap = OUTPUT_LEVEL_TOKENS[String(memberCap?.bruno_output_level || "medium")] ?? 1024;
+      const maxTokens = Math.min(
+        globalMax,
+        Number.isFinite(perUserMax) && perUserMax > 0 ? perUserMax : globalMax,
+        levelCap
+      );
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
       const snapshotCtx = await buildTeamSnapshotContext(auth.teamId);

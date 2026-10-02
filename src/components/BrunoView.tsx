@@ -343,9 +343,9 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   };
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-12rem)] min-h-[480px]">
+    <div className="flex gap-4 md:gap-6 h-full min-h-0 flex-1 p-4 md:p-6">
       {/* Chat list */}
-      <div className={`${activeId ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 flex-col gap-3 overflow-y-auto custom-scrollbar pr-1`}>
+      <div className={`${activeId ? 'hidden md:flex' : 'flex'} w-full md:w-80 shrink-0 flex-col gap-3 overflow-y-auto custom-scrollbar pr-1`} style={{ minHeight: 0 }}>
         <button
           onClick={() => { setActiveId(null); setMessages([]); }}
           className="flex items-center justify-center gap-2 w-full rounded-xl bg-accent text-accent-ink font-bold text-sm px-4 py-2.5 hover:brightness-110 active:scale-[0.98] transition shadow-[0_4px_16px_rgba(255,199,0,0.25)]"
@@ -382,8 +382,8 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
         )}
       </div>
 
-      {/* Active chat */}
-      <div className={`${activeId || messages.length ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col rounded-2xl border border-text-base/10 bg-text-base/[0.02] overflow-hidden`}>
+      {/* Active chat — immersive: fills the whole right side */}
+      <div className={`${activeId || messages.length ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 min-h-0 flex-col rounded-2xl border border-text-base/10 bg-text-base/[0.02] overflow-hidden`}>
         {/* Header */}
         <div className="px-4 py-3 border-b border-text-base/10 bg-text-base/[0.03] flex items-center gap-3">
           <button onClick={() => setActiveId(null)} aria-label="Back to chats" className="md:hidden text-text-muted hover:text-text-base">

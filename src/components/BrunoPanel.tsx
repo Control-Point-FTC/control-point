@@ -23,7 +23,7 @@ const STARTERS = [
   'How do I tune PID for our lift?',
 ];
 
-export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId }: {
+export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId, onUserSaved }: {
   open: boolean;
   onClose: () => void;
   onExpand: () => void;
@@ -31,6 +31,8 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   botName?: string;
   /** Reports the panel's current chat id upward so "expand" can land on the same conversation. */
   onActiveChatId?: (id: number | null) => void;
+  /** Persisted user after a settings save — parent refreshes its own state. */
+  onUserSaved?: (user: any) => void;
 }) {
   const name = botName || 'Bruno';
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
@@ -60,6 +62,29 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   const addAttached = (imgs: AttachedImage[]) => {
     if (!imgs.length) return;
     setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
+  };
+
+  // Output length — the same member preference as Settings → Bruno AI,
+  // adjustable right here in the sidebar too.
+  const [outputLevel, setOutputLevel] = useState('medium');
+  useEffect(() => {
+    setOutputLevel(currentUser?.bruno_output_level || 'medium');
+  }, [currentUser?.bruno_output_level, open]);
+  const changeOutputLevel = async (lvl: string) => {
+    const prev = outputLevel;
+    setOutputLevel(lvl);
+    try {
+      const res = await apiFetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: currentUser?.name || '', role: currentUser?.role || '', bruno_output_level: lvl }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.user) onUserSaved?.(data.user);
+      else setOutputLevel(prev);
+    } catch {
+      setOutputLevel(prev);
+    }
   };
 
   useEffect(() => {
@@ -219,6 +244,23 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                     <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 ))}
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <label htmlFor="bruno-panel-output" className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">
+                  Output
+                </label>
+                <select
+                  id="bruno-panel-output"
+                  value={outputLevel}
+                  onChange={(e) => void changeOutputLevel(e.target.value)}
+                  aria-label="Bruno output length"
+                  className="text-[11px] font-semibold bg-text-base/[0.04] border border-text-base/10 rounded-lg px-2 py-1 text-text-muted focus:text-text-base focus:border-accent/50 focus:outline-none cursor-pointer"
+                >
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="max">Max</option>
+                </select>
               </div>
             </div>
 

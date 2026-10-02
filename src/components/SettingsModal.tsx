@@ -50,6 +50,9 @@ export default function SettingsModal({
   // Bruno teaching mode: member prefers to be taught, not just handed code.
   const [teachMode, setTeachMode] = useState(false);
   const [savingTeach, setSavingTeach] = useState(false);
+  // Bruno output level: low | medium | high | max — caps reply length.
+  const [outputLevel, setOutputLevel] = useState('medium');
+  const [savingLevel, setSavingLevel] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Seed the forms every time the modal opens.
@@ -59,6 +62,7 @@ export default function SettingsModal({
     setName(user?.name || '');
     setRole(user?.role || '');
     setTeachMode(user?.bruno_teach_mode === 1);
+    setOutputLevel(user?.bruno_output_level || 'medium');
     setTeamName(team?.name || '');
     setTeamNumber(team?.number || '');
     setFtcNumber(team?.ftc_team_number ? String(team.ftc_team_number) : '');
@@ -195,6 +199,34 @@ export default function SettingsModal({
       notify('Could not save.', 'error');
     } finally {
       setSavingTeach(false);
+    }
+  };
+
+  /** Output-level picker: saved on the member row, caps Bruno's reply length. */
+  const changeOutputLevel = async (level: string) => {
+    if (savingLevel || level === outputLevel) return;
+    const prev = outputLevel;
+    setOutputLevel(level);
+    setSavingLevel(true);
+    try {
+      const res = await apiFetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: user?.name || '', role: user?.role || '', bruno_output_level: level }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.user) {
+        onUserSaved(data.user);
+        notify(`Output length: ${level}.`, 'success');
+      } else {
+        setOutputLevel(prev);
+        notify(data.error || 'Could not save.', 'error');
+      }
+    } catch {
+      setOutputLevel(prev);
+      notify('Could not save.', 'error');
+    } finally {
+      setSavingLevel(false);
     }
   };
   const togglePersona = async () => {
@@ -426,6 +458,35 @@ export default function SettingsModal({
                 <p className="text-xs text-text-muted leading-relaxed">
                   You can always override it in the moment — just tell Bruno “write it for me” or “teach me” in chat.
                 </p>
+                <div>
+                  <h4 className="text-sm font-bold text-text-base mb-1">Output length</h4>
+                  <p className="text-xs text-text-muted leading-relaxed mb-2">
+                    How long Bruno&apos;s replies can run. Higher levels fix cut-off answers.
+                  </p>
+                  <div className="grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="Output length">
+                    {(['low', 'medium', 'high', 'max'] as const).map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        role="radio"
+                        aria-checked={outputLevel === lvl}
+                        onClick={() => void changeOutputLevel(lvl)}
+                        disabled={savingLevel}
+                        className={cn(
+                          'rounded-xl border px-2 py-2.5 text-[13px] font-bold capitalize transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-60',
+                          outputLevel === lvl
+                            ? 'bg-accent text-accent-ink border-accent'
+                            : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+                        )}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-text-muted/80 leading-relaxed mt-2">
+                    Longer answers use more AI tokens, but at typical team use that&apos;s only a few dollars a month.
+                  </p>
+                </div>
               </section>
             )}
 

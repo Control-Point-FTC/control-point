@@ -24,6 +24,7 @@ import {
   fetchWithPolicy,
   BUILD_HELPER_SYSTEM,
   buildHelperChat,
+  getAISetting,
   type AiUsage,
   type ChatMessage,
 } from "./ai.js";
@@ -100,6 +101,8 @@ export function routeChatRequest(opts: {
   text: string;
   webSearch?: boolean;
   hasImages?: boolean;
+  /** Owner override (settings → chat_provider): skip Groq entirely. */
+  forceGemini?: boolean;
 }): RouteDecision {
   // Vision requests stay on Gemini — that path is tested and working.
   if (opts.hasImages) {
@@ -111,6 +114,11 @@ export function routeChatRequest(opts: {
   }
   if (needsWebSearch(opts.text)) {
     return { provider: "gemini", grounded: true, reason: "message needs current web information" };
+  }
+  // Complete Gemini rollover: the owner decided Groq's free tier isn't worth
+  // its failure modes. Everything goes to Gemini (ungrounded here).
+  if (opts.forceGemini) {
+    return { provider: "gemini", grounded: false, reason: "owner setting: Gemini only" };
   }
   if (isGroqConfigured()) {
     return { provider: "groq", grounded: false, reason: "ordinary chat: Groq default" };
@@ -307,10 +315,12 @@ export async function aiChat(opts: {
     throw new Error("AI not configured: set GROQ_API_KEY or GEMINI_API_KEY");
   }
   const latestUser = [...opts.messages].reverse().find((m) => m.role === "user")?.text || "";
+  const forceGemini = (await getAISetting("chat_provider", "hybrid")) === "gemini";
   const route = routeChatRequest({
     text: latestUser,
     webSearch: opts.webSearch,
     hasImages: (opts.images?.length || 0) > 0,
+    forceGemini,
   });
   const system = opts.extraSystem
     ? BUILD_HELPER_SYSTEM + "\n\n" + opts.extraSystem
