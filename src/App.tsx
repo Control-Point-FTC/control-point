@@ -632,7 +632,7 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
         </div>
         <form onSubmit={submit} className="space-y-4">
           {needsRole && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setPickedRole('admin')}
@@ -5125,7 +5125,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                 value={form.description}
                 onChange={(e: any) => setForm({ ...form, description: e.target.value })}
               />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-text-muted block mb-1">Date</label>
                   <Input type="date" value={form.date} onChange={(e: any) => setForm({ ...form, date: e.target.value })} />
@@ -5135,7 +5135,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                   <Input placeholder="Where?" value={form.location} onChange={(e: any) => setForm({ ...form, location: e.target.value })} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-text-muted block mb-1">Start time</label>
                   <Input type="time" value={form.start_time} onChange={(e: any) => setForm({ ...form, start_time: e.target.value })} />
@@ -5145,7 +5145,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                   <Input type="time" value={form.end_time} onChange={(e: any) => setForm({ ...form, end_time: e.target.value })} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Select
                   options={[
                     { label: 'Meeting', value: 'meeting' },
@@ -6856,7 +6856,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
       )}
 
       {/* Totals */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4">
         {[
           { label: 'Events', value: String(totals.events), Icon: Flag },
           { label: 'Hours', value: `${totals.hours}h`, Icon: Clock },
@@ -7060,7 +7060,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
                   onChange={set('description')}
                 />
               </OutreachField>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <OutreachField label="Date *">
                   <Input type="date" value={form.date} onChange={set('date')} />
                 </OutreachField>
@@ -8947,7 +8947,7 @@ function OwnerView(_props: any) {
         <Card><p className="text-sm text-text-muted text-center py-8">Loading…</p></Card>
       ) : tab === 'overview' ? (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {statCards.map((c) => (
               <Card key={c.label} className="!p-4 !gap-2">
                 <c.icon className="w-5 h-5 text-accent" />
@@ -9039,7 +9039,7 @@ function OwnerView(_props: any) {
         </Card>
       ) : tab === 'ai' ? (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             <Card className="!p-4 !gap-2">
               <Zap className="w-5 h-5 text-accent" />
               <p className="text-2xl font-display font-bold text-text-base">{aiOverview?.today?.messages || 0}</p>
@@ -9388,7 +9388,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <p className="text-xs font-bold text-text-base mb-1">Daily token limit</p>
                   <div className="flex gap-1.5">

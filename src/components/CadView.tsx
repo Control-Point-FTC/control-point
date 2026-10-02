@@ -136,7 +136,7 @@ function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {stats.map((s) => (
           <button key={s.label} onClick={() => onNavigate(s.path)} className="card-surface p-5 text-left hover:border-accent/40 transition-all group">
             <div className="flex items-center justify-between">
@@ -170,7 +170,7 @@ function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
         </Card>
 
         <Card title="Quick Actions" subtitle="Jump straight into CAD work" icon={Sparkles}>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => onNavigate('/cad-docs')}><FileBox className="w-4 h-4" /> Link a doc</Button>
             <Button variant="secondary" onClick={() => onNavigate('/cad-reviews')}><ClipboardCheck className="w-4 h-4" /> Submit review</Button>
             <Button variant="secondary" onClick={() => onNavigate('/cad-snapshots')}><Upload className="w-4 h-4" /> Upload snapshot</Button>
@@ -231,9 +231,9 @@ function CadDocs() {
     <div className="space-y-4">
       <Card title="Link Onshape Document" subtitle="One shared home for every CAD document the team uses" icon={FileBox}>
         <div className="grid sm:grid-cols-[1fr_2fr_auto] gap-3">
-          <Input placeholder="Document name (e.g. 2026 Robot Assembly)" value={name} onChange={(e: any) => setName(e.target.value)} />
-          <Input placeholder="https://cad.onshape.com/documents/…" value={url} onChange={(e: any) => setUrl(e.target.value)} />
-          <Button onClick={add} disabled={busy}><Plus className="w-4 h-4" /> Link</Button>
+          <Input placeholder="Document name (e.g. 2026 Robot Assembly)" value={name} onChange={(e: any) => setName(e.target.value)} className="min-w-0" />
+          <Input placeholder="https://cad.onshape.com/documents/…" value={url} onChange={(e: any) => setUrl(e.target.value)} className="min-w-0" />
+          <Button onClick={add} disabled={busy} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Link</Button>
         </div>
       </Card>
       <Card title="Team Documents" subtitle={`${docs.length} linked`} icon={FileBox}>
@@ -909,7 +909,7 @@ export function CadView({ activeTab, currentUser, isAdmin }: { activeTab: string
         </h2>
         <p className="text-sm text-text-muted mt-1">Designs, reviews, 3D snapshots, and the bill of materials — one home for the CAD team.</p>
       </div>
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 min-w-0">
         {SUBTABS.map((t) => (
           <button key={t.id} onClick={() => navigate(`/${t.id}`)}
             className={cn('flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all whitespace-nowrap',

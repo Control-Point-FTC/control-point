@@ -191,7 +191,7 @@ export function FtcTeamCard() {
         <SeasonPills seasons={data.seasons} active={season} onPick={setSeason} small />
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <OprTile label="Total OPR" stat={data.opr.tot} icon={Target} accent />
         <OprTile label="Auto" stat={data.opr.auto} icon={Bot} />
         <OprTile label="TeleOp" stat={data.opr.dc} icon={Cog} />
@@ -301,7 +301,7 @@ export function TeamStatsView() {
         <h3 className="text-sm font-bold text-text-base uppercase tracking-widest mb-3 flex items-center gap-2">
           <Target className="w-4 h-4 text-accent" /> Offensive Power Rating
         </h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <OprTile label="Total OPR" stat={data.opr.tot} icon={Target} accent />
           <OprTile label="Autonomous" stat={data.opr.auto} icon={Bot} />
           <OprTile label="TeleOp" stat={data.opr.dc} icon={Cog} />

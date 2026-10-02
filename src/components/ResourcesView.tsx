@@ -242,13 +242,13 @@ export default function ResourcesView() {
           onChange={(e) => setPasteText(e.target.value)}
           rows={4}
           placeholder="Paste text with links… (Discord messages, chat logs, notes — Bruno pulls out every link, writes titles, and sorts them into categories)"
-          className="w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[96px]"
+          className="w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[96px]"
         />
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between mt-3">
           <p className="text-[11px] text-text-muted">
             Tip: dump a whole Discord thread in here — Bruno extracts each URL and files it under the right category.
           </p>
-          <Button onClick={handleParse} disabled={!pasteText.trim() || parsing} className="shrink-0">
+          <Button onClick={handleParse} disabled={!pasteText.trim() || parsing} className="shrink-0 w-full sm:w-auto">
             {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             {parsing ? 'Bruno is reading…' : 'Extract links with Bruno'}
           </Button>
