@@ -1386,6 +1386,112 @@ export default function App() {
     }
   };
 
+  // Per-resource refreshers: mutations refetch only what they changed instead
+  // of re-pulling all ~14 endpoints. fetchData() (full refresh) is kept for
+  // initial load, team switch, and socket reconnect.
+  const fetchJson = async (url: string) => {
+    const res = await apiFetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      console.warn(`Fetch failed for ${url}: ${res.status}`);
+      return null;
+    }
+    try {
+      return await res.json();
+    } catch (e) {
+      console.warn(`Failed to parse JSON for ${url}`);
+      return null;
+    }
+  };
+
+  const refreshTeams = async () => {
+    const t = await fetchJson('/api/teams');
+    if (Array.isArray(t)) setTeams(t);
+  };
+  const refreshMembers = async () => {
+    const m = await fetchJson('/api/members');
+    if (Array.isArray(m)) {
+      setMembers(m);
+      if (currentUser) {
+        const updatedUser = m.find((member: any) => member.id === currentUser.id);
+        if (updatedUser) setCurrentUser(updatedUser);
+      }
+    }
+  };
+  const refreshAttendance = async () => {
+    const a = await fetchJson('/api/attendance');
+    if (Array.isArray(a)) setAttendance(a);
+  };
+  const refreshTasks = async () => {
+    const tk = await fetchJson('/api/tasks');
+    if (Array.isArray(tk)) setTasks(tk);
+  };
+  const refreshBudget = async () => {
+    const b = await fetchJson('/api/budget');
+    if (Array.isArray(b)) setBudget(b);
+  };
+  const refreshOutreach = async () => {
+    const o = await fetchJson('/api/outreach');
+    if (Array.isArray(o)) setOutreach(o);
+  };
+  const refreshSocialProfiles = async () => {
+    const soc = await fetchJson('/api/outreach/social');
+    if (Array.isArray(soc)) setSocialProfiles(soc);
+  };
+  const refreshInventory = async () => {
+    const inv = await fetchJson('/api/inventory');
+    if (Array.isArray(inv)) setInventory(inv);
+  };
+  const refreshCommunications = async () => {
+    const c = await fetchJson('/api/communications');
+    if (Array.isArray(c)) setCommunications(c);
+  };
+  const refreshMessages = async () => {
+    const msgs = await fetchJson('/api/messages');
+    if (Array.isArray(msgs)) setMessages(msgs);
+  };
+  const refreshSettings = async () => {
+    const s = await fetchJson('/api/settings');
+    if (s && Array.isArray(s)) {
+      setSettings(s.reduce((acc: any, curr: any) => ({ ...acc, [curr.key]: curr.value }), {}));
+    }
+  };
+  const refreshHiddenDates = async () => {
+    const h = await fetchJson('/api/hidden-dates');
+    if (Array.isArray(h)) setHiddenDates(h);
+  };
+  const refreshDocumentation = async () => {
+    const d = await fetchJson('/api/documentation');
+    if (Array.isArray(d)) setDocumentation(d);
+  };
+  const refreshEvents = async () => {
+    const ev = await fetchJson('/api/events');
+    if (Array.isArray(ev)) setEvents(ev);
+  };
+  const refreshNotifications = async () => {
+    if (currentUser) {
+      const notes = await fetchJson(`/api/notifications/${currentUser.id}`);
+      if (Array.isArray(notes)) setNotifications(notes);
+    }
+  };
+  // Targeted refresh helpers passed to views via viewProps.
+  const refresh = {
+    teams: refreshTeams,
+    members: refreshMembers,
+    attendance: refreshAttendance,
+    tasks: refreshTasks,
+    budget: refreshBudget,
+    outreach: refreshOutreach,
+    socialProfiles: refreshSocialProfiles,
+    inventory: refreshInventory,
+    communications: refreshCommunications,
+    messages: refreshMessages,
+    settings: refreshSettings,
+    hiddenDates: refreshHiddenDates,
+    documentation: refreshDocumentation,
+    events: refreshEvents,
+    notifications: refreshNotifications,
+  };
+
   const fetchData = async () => {
     // First load blocks with the full-screen spinner; every later refresh
     // runs in the background with a slim top progress bar instead.
@@ -1397,67 +1503,23 @@ export default function App() {
       setLoading(true);
     }
     try {
-      const fetchJson = async (url: string) => {
-        const res = await apiFetch(url, { cache: 'no-store' });
-        if (!res.ok) {
-          console.warn(`Fetch failed for ${url}: ${res.status}`);
-          return null;
-        }
-        try {
-          return await res.json();
-        } catch (e) {
-          console.warn(`Failed to parse JSON for ${url}`);
-          return null;
-        }
-      };
-
-      const [t, m, a, tk, b, o, soc, inv, c, msgs, s, h, d, ev] = await Promise.all([
-        fetchJson('/api/teams'),
-        fetchJson('/api/members'),
-        fetchJson('/api/attendance'),
-        fetchJson('/api/tasks'),
-        fetchJson('/api/budget'),
-        fetchJson('/api/outreach'),
-        fetchJson('/api/outreach/social'),
-        fetchJson('/api/inventory'),
-        fetchJson('/api/communications'),
-        fetchJson('/api/messages'),
-        fetchJson('/api/settings'),
-        fetchJson('/api/hidden-dates'),
-        fetchJson('/api/documentation'),
-        fetchJson('/api/events'),
+      await Promise.all([
+        refreshTeams(),
+        refreshMembers(),
+        refreshAttendance(),
+        refreshTasks(),
+        refreshBudget(),
+        refreshOutreach(),
+        refreshSocialProfiles(),
+        refreshInventory(),
+        refreshCommunications(),
+        refreshMessages(),
+        refreshSettings(),
+        refreshHiddenDates(),
+        refreshDocumentation(),
+        refreshEvents(),
       ]);
-
-      if (Array.isArray(t)) setTeams(t);
-      if (Array.isArray(m)) {
-        console.log(`[Data Fetch] Received ${m.length} members`);
-        setMembers(m);
-        if (currentUser) {
-          const updatedUser = m.find((member: any) => member.id === currentUser.id);
-          console.log(`[Data Fetch] Updating currentUser:`, updatedUser);
-          if (updatedUser) setCurrentUser(updatedUser);
-        }
-      }
-      if (Array.isArray(a)) setAttendance(a);
-      if (Array.isArray(tk)) setTasks(tk);
-      if (Array.isArray(b)) setBudget(b);
-      if (Array.isArray(o)) setOutreach(o);
-      if (Array.isArray(soc)) setSocialProfiles(soc);
-      if (Array.isArray(inv)) setInventory(inv);
-      if (Array.isArray(c)) setCommunications(c);
-      if (Array.isArray(msgs)) setMessages(msgs);
-      if (Array.isArray(h)) setHiddenDates(h);
-      if (Array.isArray(d)) setDocumentation(d);
-      if (Array.isArray(ev)) setEvents(ev);
-      if (s && Array.isArray(s)) {
-        const settingsMap = s.reduce((acc: any, curr: any) => ({ ...acc, [curr.key]: curr.value }), {});
-        setSettings(settingsMap);
-      }
-
-      if (currentUser) {
-        const notes = await fetchJson(`/api/notifications/${currentUser.id}`);
-        if (Array.isArray(notes)) setNotifications(notes);
-      }
+      await refreshNotifications();
 
       // Background updates
       updateNews();
@@ -1991,7 +2053,7 @@ export default function App() {
   const renderContent = () => {
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, socialProfiles, youtubeEnabled, tiktokEnabled, inventory, communications, events,
-      messages, settings, hiddenDates, currentUser, onRefresh: fetchData, setLoading,
+      messages, settings, hiddenDates, currentUser, onRefresh: fetchData, refresh, setLoading,
       // ChatView gates channel create/delete UI on this — it was missing, so
       // the + button never rendered for anyone.
       isAdmin,
@@ -3265,7 +3327,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
 }
 
 
-function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam }: any) {
+function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam }: any) {
   const [showAddTeam, setShowAddTeam] = useState(false);
   const [showAddMember, setShowAddMember] = useState(false);
   const [editingTeam, setEditingTeam] = useState<any>(null);
@@ -3370,7 +3432,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
         return;
       }
       setMemberToRemove(null);
-      onRefresh();
+      refresh.members();
     } catch (error) {
       setRemoveError('Could not remove member: ' + error);
     } finally {
@@ -3400,7 +3462,7 @@ function TeamsView({ teams, members, onRefresh, currentUser, hasScope, onAddTeam
     setShowAddMember(false);
     setEditingMember(null);
     setNewMember({ team_id: '', name: '', role: '', email: '', is_board: false, scopes: [] });
-    onRefresh();
+    refresh.members();
   };
 
   return (
@@ -4033,7 +4095,7 @@ function QrCheckinPage({ currentUser, onRefresh }: any) {
   );
 }
 
-function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
+function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any) {
   const [scanOpen, setScanOpen] = useState(false);
   const [codeMode, setCodeMode] = useState(false);
   const [code, setCode] = useState('');
@@ -4060,7 +4122,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Check-in failed');
       notify(data.already ? 'You were already checked in.' : 'Checked in — welcome!', 'success');
-      await onRefresh();
+      await await refresh.attendance();
     } catch (e: any) {
       notify(e.message || 'Check-in failed', 'error');
     }
@@ -4081,7 +4143,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
       notify(data.already ? 'You were already checked in.' : 'Checked in — welcome!', 'success');
       setCode('');
       setCodeMode(false);
-      await onRefresh();
+      await await refresh.attendance();
     } catch (e: any) {
       notify(e.message || 'Check-in failed', 'error');
     } finally {
@@ -4164,7 +4226,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh }: any) {
   );
 }
 
-function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
+function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'grid' | 'history' | 'summary'>('grid');
   const [sessions, setSessions] = useState<string[]>([]);
   const [summary, setSummary] = useState<any[]>([]);
@@ -4281,7 +4343,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
         setSavingStatus('saved');
         setTimeout(() => setSavingStatus('idle'), 2000);
         // Keep optimistic update, refresh data in background
-        onRefresh();
+        refresh.attendance();
       } else {
         setSavingStatus('idle');
         notify('Failed to save attendance', 'error');
@@ -4731,7 +4793,7 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
   );
 }
 
-function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) {
+function CalendarView({ events, teams, onRefresh, refresh, currentUser, hasScope }: any) {
   const canManageCalendar = hasScope ? hasScope('calendar') : false;
 
   // Right-click on a calendar event: edit or delete without opening the card.
@@ -4747,7 +4809,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
         label: 'Delete event', icon: Trash2, danger: true, action: async () => {
           if (!(await confirmDialog({ title: 'Delete event', message: `Delete "${ev.title}"?`, confirmLabel: 'Delete', danger: true }))) return;
           await apiFetch(`/api/events/${id}`, { method: 'DELETE' });
-          onRefresh();
+          refresh.events();
         },
       },
     ];
@@ -4827,7 +4889,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
       resetAi();
       setAiOpen(false);
       setShowModal(false);
-      onRefresh();
+      refresh.events();
     } catch (e: any) {
       setAiNote(e?.message || "Couldn't create those events — please try again.");
     } finally {
@@ -4897,7 +4959,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
       await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     }
     setShowModal(false);
-    onRefresh();
+    refresh.events();
   };
 
   const handleDelete = async () => {
@@ -4905,7 +4967,7 @@ function CalendarView({ events, teams, onRefresh, currentUser, hasScope }: any) 
     if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/events/${editingId}`, { method: 'DELETE' });
     setShowModal(false);
-    onRefresh();
+    refresh.events();
   };
 
   const fmtTime = (t: string) => {
@@ -5146,7 +5208,7 @@ function defaultTeamId(teams: any[], currentUser: any): any {
   return teams.some((t: any) => String(t.id) === String(tid)) ? tid : '';
 }
 
-function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, hasScope }: any) {  const [showAddTask, setShowAddTask] = useState(false);
+function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope }: any) {  const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -5228,7 +5290,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
         });
         if (res.ok) {
           closeTaskModal();
-          onRefresh();
+          refresh.tasks();
         } else {
           notify('Could not save task — try again.', 'error');
         }
@@ -5241,7 +5303,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
       });
       if (res.ok) {
         closeTaskModal();
-        onRefresh();
+        refresh.tasks();
       } else {
         notify('Could not create task — try again.', 'error');
       }
@@ -5487,7 +5549,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
   );
 }
 
-function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
+function BudgetView({ budget, teams, onRefresh, refresh, hasScope, currentUser }: any) {
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
@@ -5543,7 +5605,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
         });
         if (res.ok) {
           closeEntryModal();
-          onRefresh();
+          refresh.budget();
         } else {
           notify('Could not save entry — try again.', 'error');
         }
@@ -5556,7 +5618,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
       });
       if (res.ok) {
         closeEntryModal();
-        onRefresh();
+        refresh.budget();
       } else {
         notify('Could not log entry — try again.', 'error');
       }
@@ -5571,7 +5633,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
     setBusy(true);
     try {
       const res = await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
-      if (res.ok) onRefresh();
+      if (res.ok) refresh.budget();
       else notify('Could not delete entry — try again.', 'error');
     } finally {
       setBusy(false);
@@ -5701,7 +5763,7 @@ function BudgetView({ budget, teams, onRefresh, hasScope, currentUser }: any) {
   );
 }
 
-function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasScope }: any) {
+function InventoryView({ inventory, members, teams, onRefresh, refresh, currentUser, hasScope }: any) {
   const canManage = hasScope ? hasScope('inventory') : false;
   const INVENTORY_CATEGORIES = [
     "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
@@ -5747,7 +5809,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
       if (res.ok) {
         setShowAdd(false);
         setNewPart({ team_id: '', name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' });
-        onRefresh();
+        refresh.inventory();
       } else {
         const err = await res.json();
         notify('Error: ' + err.error, 'error');
@@ -5776,7 +5838,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
       });
       if (res.ok) {
         setShowEdit(null);
-        onRefresh();
+        refresh.inventory();
       } else {
         const err = await res.json();
         notify('Error: ' + err.error, 'error');
@@ -5794,7 +5856,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
     setBusy(true);
     try {
       const res = await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
-      if (res.ok) onRefresh();
+      if (res.ok) refresh.inventory();
       else notify('Could not delete part — try again.', 'error');
     } finally {
       setBusy(false);
@@ -5918,7 +5980,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
       }
       setShowInvoicePreview(false);
       setInvoiceItems([]);
-      onRefresh();
+      refresh.inventory();
       const parts = [`${data.added} added`, `${data.merged} restocked`];
       if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
       notify('Import complete: ' + parts.join(', '), 'success');
@@ -5939,7 +6001,7 @@ function InventoryView({ inventory, members, teams, onRefresh, currentUser, hasS
         notify('Error: ' + (data.error || 'Auto-categorize failed'), 'error');
         return;
       }
-      onRefresh();
+      refresh.inventory();
       notify(data.categorized > 0 ? `Categorized ${data.categorized} part${data.categorized === 1 ? '' : 's'}` : 'Everything is already categorized', 'success');
     } catch (error) {
       notify('Error: ' + error, 'error');
@@ -6446,7 +6508,7 @@ function timeAgoSocial(ts: number) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, hasScope }: any) {
+function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, refresh, hasScope }: any) {
   const isAdminSocial = hasScope ? hasScope('outreach') : (currentUser as any)?.account_type === 'admin';
 
   // Right-click on an outreach event card: edit or delete.
@@ -6490,7 +6552,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
       notify('YouTube channel linked — stats synced.', 'success');
       setYtInput('');
       setShowLinkYT(false);
-      onRefresh();
+      refresh.socialProfiles();
     } catch (e: any) {
       notify(e.message || 'Could not link channel', 'error');
     } finally {
@@ -6501,12 +6563,12 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
   const handleUnlinkProfile = async (id: number) => {
     if (!window.confirm('Unlink this profile? Its sync history will be removed.')) return;
     await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
-    onRefresh();
+    refresh.socialProfiles();
   };
 
   const handlePinProfile = async (id: number, pinned: boolean) => {
     await apiFetch(`/api/outreach/social/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned: !pinned }) });
-    onRefresh();
+    refresh.socialProfiles();
   };
 
   const handleMoveProfile = async (id: number, dir: -1 | 1) => {
@@ -6516,7 +6578,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
     if (i < 0 || j < 0 || j >= ids.length) return;
     [ids[i], ids[j]] = [ids[j], ids[i]];
     await apiFetch('/api/outreach/social/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
-    onRefresh();
+    refresh.socialProfiles();
   };
 
   const handleSyncNow = async (id: number) => {
@@ -6526,7 +6588,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Sync failed');
       notify('Stats updated.', 'success');
-      onRefresh();
+      refresh.socialProfiles();
     } catch (e: any) {
       notify(e.message || 'Sync failed', 'error');
     } finally {
@@ -6611,7 +6673,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
       }
       notify(`Logged ${done} of ${bulkRows.length} outreach events.`, done === bulkRows.length ? 'success' : 'error');
       setBulkRows([]); setBulkText(''); setBulkNote(null); setBulkOpen(false);
-      onRefresh();
+      refresh.outreach();
     } finally {
       setBulkSaving(false);
     }
@@ -6664,7 +6726,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
       if (!res.ok) throw new Error('save failed');
       setShowForm(false);
       setEditingId(null);
-      onRefresh();
+      refresh.outreach();
       notify(editingId ? 'Event updated.' : 'Event logged.');
     } catch {
       notify('Could not save the event.', 'error');
@@ -6676,7 +6738,7 @@ function OutreachView({ outreach, socialProfiles, youtubeEnabled, tiktokEnabled,
   const handleDelete = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this outreach event?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
-    onRefresh();
+    refresh.outreach();
   };
 
   return (
@@ -7112,7 +7174,7 @@ function ScoutView({ scoutFeed, scoutUpdatedAt, scoutError, refreshNews, isAiLoa
   );
 }
 
-function CommunicationView({ communications, onRefresh, hasScope }: any) {
+function CommunicationView({ communications, onRefresh, refresh, hasScope }: any) {
   const canManage = hasScope ? hasScope('communications') : false;
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -7136,13 +7198,13 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
       body: JSON.stringify(newComm)
     });
     setShowAdd(false);
-    onRefresh();
+    refresh.communications();
   };
 
   const handleDelete = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete log', message: 'Delete this log?', confirmLabel: 'Delete', danger: true }))) return;
     await apiFetch(`/api/communications/${id}`, { method: 'DELETE' });
-    onRefresh();
+    refresh.communications();
   };
 
   return (
@@ -7165,7 +7227,7 @@ function CommunicationView({ communications, onRefresh, hasScope }: any) {
       {showImport && (
         <EmailImportModal
           onClose={() => setShowImport(false)}
-          onLogged={() => { setShowImport(false); onRefresh(); }}
+          onLogged={() => { setShowImport(false); refresh.communications(); }}
         />
       )}
 
@@ -9536,7 +9598,7 @@ function AccountManager({ currentUser }: any) {
   );
 }
 
-function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVersion }: any) {
+function ProfileView({ currentUser, onRefresh, refresh, setLoading, hasScope, setColorVersion }: any) {
   const [name, setName] = useState(currentUser?.name || '');
   const [role, setRole] = useState(currentUser?.role || '');
   const [accentColor, setAccentColor] = useState(currentUser?.accent_color || '');
@@ -9577,7 +9639,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
         body: fd
       });
       if (res.ok) {
-        await onRefresh();
+        await await refresh.members();
       } else {
         notify('Could not upload that picture.', 'error');
       }
@@ -9594,7 +9656,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ avatar_url: null })
       });
-      if (res.ok) await onRefresh();
+      if (res.ok) await refresh.members();
     } finally {
       setLoading(false);
     }
@@ -9614,7 +9676,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
         })
       });
       if (res.ok) {
-        await onRefresh();
+        await await refresh.members();
         notify('Profile updated successfully!', 'success');
       } else {
         notify('Could not save your profile.', 'error');
@@ -9689,7 +9751,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
                 root.style.removeProperty('--color-primary');
                 root.style.removeProperty('--color-text-base');
                 setColorVersion((v: number) => v + 1);
-                onRefresh();
+                refresh.settings();
                 notify('Theme reset to the default Volt & Carbon colors.', 'success');
               } catch (e: any) {
                 notify(e.message || 'Could not reset theme', 'error');
@@ -9743,7 +9805,7 @@ function ProfileView({ currentUser, onRefresh, setLoading, hasScope, setColorVer
   );
 }
 
-function SettingsView({ settings, members, teams, onRefresh, currentUser, navGptQualified, navGptActive, isOwner, hasPerm }: any) {
+function SettingsView({ settings, members, teams, onRefresh, refresh, currentUser, navGptQualified, navGptActive, isOwner, hasPerm }: any) {
   const voice = useVoice();
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
   const [maxTokensNews, setMaxTokensNews] = useState(settings.max_tokens_news || '1024');
@@ -9830,7 +9892,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
       if (!res.ok) { notify('Failed to save team number', 'error'); return; }
       setFtcVerified(null);
       if (num === null) setFtcNumber('');
-      onRefresh();
+      refresh.settings();
     } finally {
       setFtcSaving(false);
     }
@@ -9934,7 +9996,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
         body: JSON.stringify(payload)
       });
     }
-    onRefresh();
+    refresh.settings();
     notify('Settings saved', 'success');
   };
 
@@ -9945,7 +10007,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
-      onRefresh();
+      refresh.members();
       setShowMemberEdit(null);
     } catch {
       notify('Could not update member — try again.', 'error');
@@ -9965,7 +10027,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
       onCall: (memberId, media) => voice.startCall([memberId], media),
       onEditScopes: () => setShowMemberEdit(m),
       onToggleBoard: () => updateMember(m.id, { ...m, is_board: m.is_board ? 0 : 1 }),
-      onRemove: m.id !== currentUser?.id ? () => removeMemberFromTeam(m, onRefresh) : undefined,
+      onRemove: m.id !== currentUser?.id ? () => removeMemberFromTeam(m, refresh.members) : undefined,
     });
   });
 
@@ -10049,7 +10111,7 @@ function SettingsView({ settings, members, teams, onRefresh, currentUser, navGpt
                   const data = await res.json();
                   if (!res.ok) throw new Error(data.error || 'Could not update persona');
                   notify(navGptActive ? 'NavGPT ❤️ is off — the chatbot is Bruno again.' : 'NavGPT ❤️ is on.', 'success');
-                  onRefresh();
+                  refresh.members();
                 } catch (e: any) {
                   notify(e.message || 'Could not update persona', 'error');
                 } finally {
