@@ -5256,6 +5256,11 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const [bulkRoster, setBulkRoster] = useState<any[]>([]);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkSaving, setBulkSaving] = useState(false);
+  // Task completion proof: prompt for notes/screenshots when marking done.
+  const [completingTask, setCompletingTask] = useState<any | null>(null);
+  const [completionNotes, setCompletionNotes] = useState('');
+  const [completionFiles, setCompletionFiles] = useState<File[]>([]);
+  const [completing, setCompleting] = useState(false);
   const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
     const s = new Set(prev);
     if (on) s.add(id); else s.delete(id);
@@ -5435,6 +5440,17 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
 
   const updateStatus = async (id: number, status: string) => {
     if (pendingIds.has(id)) return;
+    // Moving to done requires proof: prompt for notes/screenshots first.
+    // The completer is auto-assigned if the task was unassigned.
+    if (status === 'done') {
+      const task = tasks.find((t: any) => t.id === id);
+      if (task && task.status !== 'done') {
+        setCompletingTask(task);
+        setCompletionNotes('');
+        setCompletionFiles([]);
+        return;
+      }
+    }
     // Optimistic: flip the status instantly, roll back if the server rejects.
     const prev = tasks;
     setTasks((ts: any[]) => ts.map((t: any) => t.id === id
@@ -5456,6 +5472,36 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
       notify('Could not update task — try again.', 'error');
     } finally {
       markPending(id, false);
+    }
+  };
+
+  const handleCompleteTask = async () => {
+    if (!completingTask || completing) return;
+    setCompleting(true);
+    try {
+      const form = new FormData();
+      form.append('notes', completionNotes.trim());
+      for (const f of completionFiles.slice(0, 5)) form.append('images', f);
+      const res = await apiFetch(`/api/tasks/${completingTask.id}/complete`, {
+        method: 'POST',
+        body: form,
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not complete task');
+      // Optimistic update; the WS broadcast will confirm.
+      if (d.task) {
+        setTasks((ts: any[]) => ts.map((t: any) => (t.id === d.task.id ? d.task : t)));
+      } else {
+        refresh.tasks();
+      }
+      notify('Task marked done.', 'success');
+      setCompletingTask(null);
+      setCompletionNotes('');
+      setCompletionFiles([]);
+    } catch (e: any) {
+      notify(e?.message || 'Could not complete task.', 'error');
+    } finally {
+      setCompleting(false);
     }
   };
 
@@ -5548,7 +5594,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
         </div>
         {canManageTasks && (
           <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-            <Button variant="secondary" onClick={() => setShowBulk(true)} className="w-full sm:w-auto"><Sparkles className="w-4 h-4" /> Bulk add with Bruno</Button>
+            <Button variant="secondary" onClick={() => setShowBulk(true)} className="w-full sm:w-auto"><Sparkles className="w-4 h-4" /> Bruno</Button>
             <Button onClick={() => openNewTask('todo')} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
           </div>
         )}
@@ -5660,7 +5706,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
       )}
       {showBulk && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title="Bulk add tasks with Bruno" className="w-full max-w-2xl max-h-[90dvh] flex flex-col min-w-0">
+          <Card title="Bruno" className="w-full max-w-2xl max-h-[90dvh] flex flex-col min-w-0">
             <p className="text-xs text-text-muted -mt-2">Paste meeting notes, chat logs, or a to-do dump — Bruno pulls out each task, guesses assignees and due dates. Edit before saving.</p>
             <textarea
               value={bulkText}
@@ -5751,6 +5797,48 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                 <Button variant="secondary" onClick={closeBulkModal}>Close</Button>
               </div>
             )}
+          </Card>
+        </div>
+      )}
+      {completingTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title="Mark task done" className="w-full max-w-md">
+            <p className="text-sm font-semibold text-text-base -mt-2 truncate">{completingTask.title}</p>
+            {!completingTask.assigned_to ? (
+              <p className="text-xs text-text-muted">This task is unassigned — it will be assigned to you when you complete it.</p>
+            ) : null}
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-text-muted">Proof of completion</label>
+                <textarea
+                  value={completionNotes}
+                  onChange={(e: any) => setCompletionNotes(e.target.value)}
+                  rows={4}
+                  placeholder="What was done? Describe it, or paste screenshots below…"
+                  className="mt-1 w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[96px]"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-text-muted">Screenshots (optional, up to 5)</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e: any) => setCompletionFiles((Array.from(e.target.files || []) as File[]).slice(0, 5))}
+                  className="mt-1 w-full text-sm text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-accent/15 file:text-accent file:font-bold file:text-xs hover:file:bg-accent/25 file:cursor-pointer"
+                />
+                {completionFiles.length > 0 ? (
+                  <p className="text-xs text-text-muted mt-1">{completionFiles.length} image{completionFiles.length === 1 ? '' : 's'} selected</p>
+                ) : null}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="secondary" onClick={() => { setCompletingTask(null); setCompletionNotes(''); setCompletionFiles([]); }} disabled={completing}>Cancel</Button>
+                <Button onClick={handleCompleteTask} disabled={completing}>
+                  {completing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  {completing ? 'Saving…' : 'Mark done'}
+                </Button>
+              </div>
+            </div>
           </Card>
         </div>
       )}

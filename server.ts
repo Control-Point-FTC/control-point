@@ -757,6 +757,16 @@ const taskColumns = (await dbAll("PRAGMA table_info(tasks)"));
 if (!taskColumns.some((c: any) => c.name === 'is_board')) {
   (await dbExec("ALTER TABLE tasks ADD COLUMN is_board INTEGER DEFAULT 0"));
 }
+// Task completion proof: who marked it done, their notes, screenshot paths (JSON).
+if (!taskColumns.some((c: any) => c.name === 'completion_notes')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN completion_notes TEXT"));
+}
+if (!taskColumns.some((c: any) => c.name === 'completed_by')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN completed_by INTEGER"));
+}
+if (!taskColumns.some((c: any) => c.name === 'completion_images')) {
+  (await dbExec("ALTER TABLE tasks ADD COLUMN completion_images TEXT"));
+}
 // Presence: user-chosen status mode (online = automatic from activity)
 const memberPresenceColumns = (await dbAll("PRAGMA table_info(members)"));
 if (!memberPresenceColumns.some((c: any) => c.name === 'presence_status')) {
@@ -5052,14 +5062,25 @@ Rules:
       let items: any[] = [];
       if (isGeminiConfigured()) {
         try {
+          const today = new Date();
+          const todayStr = today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+          const todayISO = today.toISOString().slice(0, 10);
           const system = `You turn pasted team notes/chat into a task list for a robotics team. Return ONLY a JSON array — no markdown fences, no commentary. Each element: {"title": string, "description": string, "status": string, "assignee_name": string|null, "due_date": string|null}.
+Today is ${todayStr} (${todayISO}). Use this to resolve EVERY relative date into an exact YYYY-MM-DD.
+
 Rules:
 - One element per distinct actionable task in the text (dedupe).
-- "title": short imperative title, max 80 chars.
-- "description": one sentence of context from the text, may be "".
+- "title": short imperative title, max 80 chars. Strip the date words out of the title when they become due_date (e.g. "final robot cad due next thursday" → title "Final robot CAD", due_date the coming Thursday).
+- "description": one sentence of context from the text, may be "". Do NOT dump the raw date phrase here when it was parsed into due_date.
 - "status": exactly one of "todo", "in-progress", "done" (default "todo"; use "in-progress" if the text says someone started it, "done" if completed).
 - "assignee_name": match to a name from this roster when the text names someone: ${rosterList}. Use the exact roster name or null.
-- "due_date": YYYY-MM-DD when the text names a date, else null.
+- "due_date": YYYY-MM-DD. Resolve relative dates against today (${todayISO}):
+  * "next thursday" / "thursday" → the next upcoming Thursday (if today is Friday Oct 2, "next thursday" = 2026-10-08)
+  * "tomorrow" → ${new Date(Date.now() + 86400000).toISOString().slice(0, 10)}, "today" → ${todayISO}
+  * "next week" → 7 days from today; "in 2 weeks" → 14 days from today
+  * "by friday", "due monday" → the next upcoming such weekday (if that weekday is today, use today)
+  * explicit dates like "Oct 8" or "10/8" → ${String(today.getFullYear())}-10-08 (use current year unless clearly past, then next year)
+  * else null. Never guess a date that wasn't mentioned.
 - Skip non-actionable chatter.`;
           const raw = await aiGenerate(system, text.slice(0, 15000), 4096);
           const parsed = JSON.parse(String(raw).replace(/^```(?:json)?/i, "").replace(/```$/, "").trim());
@@ -5209,6 +5230,44 @@ Rules:
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Mark a task done WITH proof: completion notes + optional screenshots.
+  // If the task is unassigned, the completer becomes the assignee.
+  app.post("/api/tasks/:id/complete", upload.array("images", 5), async (req: any, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      const canManage = await hasPerm(auth, 'manage_tasks');
+      const isAssignee = task.assigned_to === auth.memberId;
+      if (!canManage && !isAssignee && task.assigned_to) {
+        return res.status(403).json({ error: "Only the assignee or a manager can complete this task" });
+      }
+      const notes = String(req.body?.notes || "").trim().slice(0, 2000);
+      const images = (req.files || []).map((f: any) => `/uploads/${f.filename}`);
+      const prevImages = (() => { try { return JSON.parse(task.completion_images || "[]"); } catch { return []; } })();
+      const allImages = [...prevImages, ...images].slice(0, 10);
+      const now = new Date().toISOString();
+      // Unassigned task: the completer claims it.
+      const assignee = task.assigned_to || auth.memberId;
+      await dbRun(
+        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ? WHERE id = ?",
+        now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, req.params.id
+      );
+      if (task.assigned_to && task.assigned_to !== auth.memberId) {
+        createNotification(task.assigned_to, `Task completed by ${auth.memberId}: ${task.title}`, 'task');
+      }
+      const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
+      res.json({ success: true, task: updated });
+    } catch (error) {
+      console.error("Error completing task:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
