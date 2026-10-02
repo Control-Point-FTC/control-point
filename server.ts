@@ -2677,11 +2677,18 @@ async function startServer() {
     if (ids.length) {
       const ph = ids.map(() => "?").join(",");
       // Independent deletes → one batch (atomic on Turso, single round trip)
+      // Include every table with a FK to members(id) — team deletion should have
+      // cleaned team-scoped rows, but belt-and-suspenders here prevents 500s.
       await dbBatch([
         { sql: `DELETE FROM sessions WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM stream_sessions WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM notifications WHERE user_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM member_roles WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM attendance WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM messages WHERE sender_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM tasks WHERE assigned_to IN (${ph})`, args: ids },
+        { sql: `DELETE FROM feedback WHERE author_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM call_participants WHERE member_id IN (${ph})`, args: ids },
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
       ]);
