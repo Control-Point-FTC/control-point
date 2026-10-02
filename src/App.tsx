@@ -96,7 +96,8 @@ import {
   CheckCircle2,
   Clock3,
   ListTodo,
-  Smile
+  Smile,
+  ImageOff
 } from 'lucide-react';
 import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
 import { motion, AnimatePresence } from 'motion/react';
@@ -105,6 +106,7 @@ import { motion, AnimatePresence } from 'motion/react';
 const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
 const CodeView = React.lazy(() => import('./components/CodeView').then(m => ({ default: m.CodeView })));
 const AttendanceTrendChart = React.lazy(() => import('./components/dashboard/AttendanceTrend').then(m => ({ default: m.AttendanceTrendChart })));
+const AiUsageChart = React.lazy(() => import('./components/owner/AiUsageChart'));
 
 /** Lightweight placeholder while a heavy lazy chunk (charts, code editor) loads. */
 function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
@@ -112,6 +114,35 @@ function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
     <div className="flex items-center justify-center h-40 text-sm text-text-muted animate-pulse" aria-busy="true">
       {label}
     </div>
+  );
+}
+
+/**
+ * Chat attachment image with a graceful fallback. Uploads live on the host's
+ * ephemeral disk, so a file can vanish after a redeploy/restart while the
+ * message row (in the DB) survives — show "no longer available" instead of a
+ * broken-image icon in that case.
+ */
+function ChatImage({ src, href, alt }: { src: string | null | undefined; href: string | null | undefined; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src) return null;
+  if (failed) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg max-w-xs border border-text-base/10 bg-text-base/5 text-text-muted">
+        <ImageOff className="w-4 h-4 shrink-0" />
+        <span className="text-xs">This image is no longer available — it was removed when the server restarted. Ask the sender to re-upload it.</span>
+      </div>
+    );
+  }
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      <img
+        src={src}
+        alt={alt}
+        onError={() => setFailed(true)}
+        className="rounded-lg max-w-xs max-h-64 object-cover border border-text-base/10 shadow-sm hover:opacity-95 transition-opacity"
+      />
+    </a>
   );
 }
 import Markdown from 'react-markdown';
@@ -2997,7 +3028,7 @@ function AppFooter({ links, teamName }: { links: { id: string; path: string; lab
           ))}
         </nav>
         <p className="text-[10px] text-text-muted/70 text-center sm:text-right leading-relaxed">
-          Match data: ftc-scout.org<br className="sm:hidden" /> · © 2026 Control Point
+          Match data: ftcscout.org<br className="sm:hidden" /> · © 2026 Control Point
         </p>
       </div>
     </footer>
@@ -3331,7 +3362,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
       <p className="text-2xl font-display font-bold text-text-base">
         {attendanceRate === null ? '\u2014' : `${attendanceRate}%`}
         <span className="text-sm font-normal text-text-muted ml-2">
-          \u00b7 {presentCount} present \u00b7 {lateCount} late
+          &middot; {presentCount} present &middot; {lateCount} late
         </span>
       </p>
     </Card>
@@ -8487,13 +8518,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               {msg.file_path && (
                 <div className="flex flex-col gap-2 mb-1.5 mt-1">
                   {isImageFile(msg.file_path) && (
-                    <a href={assetUrl(msg.file_path)} target="_blank" rel="noopener noreferrer">
-                      <img
-                        src={assetUrl(msg.file_path)}
-                        alt={msg.file_name || 'uploaded'}
-                        className="rounded-lg max-w-xs max-h-64 object-cover border border-text-base/10 shadow-sm hover:opacity-95 transition-opacity"
-                      />
-                    </a>
+                    <ChatImage src={assetUrl(msg.file_path)} href={assetUrl(msg.file_path)} alt={msg.file_name || 'uploaded'} />
                   )}
                   {!isImageFile(msg.file_path) && (
                     <div className="flex flex-col gap-1 p-3 rounded-xl border min-w-[200px] max-w-xs bg-text-base/5 border-text-base/10">
@@ -9178,7 +9203,7 @@ function OwnerView(_props: any) {
         apiFetch('/api/owner/overview').then(r => r.json()),
         apiFetch('/api/owner/feedback').then(r => r.json()),
         apiFetch('/api/owner/users').then(r => r.json()),
-        apiFetch('/api/owner/ai-overview').then(r => r.json()),
+        apiFetch(aiOverviewUrl()).then(r => r.json()),
         apiFetch('/api/owner/ai-flags').then(r => r.json()),
       ]);
       setOverview(o);
@@ -9201,9 +9226,18 @@ function OwnerView(_props: any) {
     if (r.ok) setUsers(await r.json());
   };
   const reloadAi = async () => {
-    const r = await apiFetch('/api/owner/ai-overview');
+    const r = await apiFetch(aiOverviewUrl());
     if (r.ok) setAiOverview(await r.json());
   };
+  // The owner's timezone drives "today" and the daily history server-side.
+  // Defined after loadAll/reloadAi (function hoisting keeps both working).
+  function aiOverviewUrl() {
+    let tz = 'America/New_York';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; } catch { /* default */ }
+    return `/api/owner/ai-overview?tz=${encodeURIComponent(tz)}`;
+  }
+  // Fresh numbers every time the AI Control tab opens.
+  useEffect(() => { if (tab === 'ai') reloadAi(); }, [tab]);
 
   const setFeedbackStatus = async (id: number, status: 'new' | 'resolved') => {
     const res = await apiFetch(`/api/owner/feedback/${id}`, {
@@ -9412,6 +9446,15 @@ function OwnerView(_props: any) {
               {(aiOverview.providers || []).map((p: any) => `${p.provider} · ${p.messages} msgs`).join('  |  ')}
             </p>
           )}
+          <Card title="Usage — last 14 days" subtitle="Messages per day (bars) · tokens (line). Hover any day for detail.">
+            {(aiOverview?.daily || []).length > 0 ? (
+              <Suspense fallback={<ChartLoadingFallback label="Loading chart…" />}>
+                <AiUsageChart daily={aiOverview.daily} />
+              </Suspense>
+            ) : (
+              <p className="text-sm text-text-muted text-center py-8">No AI usage in the last 14 days.</p>
+            )}
+          </Card>
           <Card title="Heaviest AI users" subtitle="Last 7 days by tokens — spot runaway usage at a glance">
             <div className="space-y-1">
               {(aiOverview?.top || []).map((t: any, i: number) => (
