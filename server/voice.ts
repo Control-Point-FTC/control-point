@@ -318,7 +318,7 @@ export async function activeSessionForMember(deps: VoiceDeps, teamId: number, me
 
 export async function sessionParticipants(deps: VoiceDeps, sessionId: number): Promise<any[]> {
   return (await deps.dbAll(
-    `SELECT p.*, m.name, m.avatar_url, m.status AS member_status
+    `SELECT p.*, m.name, m.avatar_url, m.presence_status AS member_status
      FROM call_participants p
      JOIN members m ON m.id = p.member_id
      WHERE p.session_id = ? AND p.left_at IS NULL

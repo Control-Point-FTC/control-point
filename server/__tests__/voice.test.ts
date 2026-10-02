@@ -52,7 +52,7 @@ CREATE TABLE members (
   team_id INTEGER,
   name TEXT NOT NULL,
   avatar_url TEXT,
-  status TEXT DEFAULT 'online',
+  presence_status TEXT DEFAULT 'online',
   is_active INTEGER DEFAULT 1
 );`;
 
