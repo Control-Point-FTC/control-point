@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { SetupChecklist, shouldShowChecklist } from '../onboarding';
@@ -6,7 +6,8 @@ import DashboardHeader from './DashboardHeader';
 import DashboardMetricRow from './DashboardMetricRow';
 import MyStatusStrip from './MyStatusStrip';
 import BrunoBar from './BrunoBar';
-import AttendanceTrend from './AttendanceTrend';
+// Lazy: keeps recharts out of the initial bundle.
+const AttendanceTrend = lazy(() => import('./AttendanceTrend'));
 import TeamActivity from './TeamActivity';
 import UpcomingTimeline from './UpcomingTimeline';
 import TeamSummary from './TeamSummary';
@@ -147,7 +148,9 @@ export default function DashboardView({
 
       {/* Natural page flow — the page scrolls, every card shows its data. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
-        <AttendanceTrend attendance={attendance} onNavigate={navigate} hiddenDates={hiddenDates} />
+        <Suspense fallback={<div className="h-44 animate-pulse rounded-2xl bg-text-base/5" aria-busy="true" />}>
+          <AttendanceTrend attendance={attendance} onNavigate={navigate} hiddenDates={hiddenDates} />
+        </Suspense>
         <UpcomingTimeline events={events} onNavigate={navigate} />
       </div>
 

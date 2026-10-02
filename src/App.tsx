@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -98,10 +98,20 @@ import {
 } from 'lucide-react';
 import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell, PieChart, Pie
-} from 'recharts';
+// Heavy libraries stay out of the initial bundle: recharts (via TaskAnalytics),
+// Monaco (via CodeView), and three.js (via CadModelViewer, already lazy).
+const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
+const CodeView = React.lazy(() => import('./components/CodeView').then(m => ({ default: m.CodeView })));
+const AttendanceTrendChart = React.lazy(() => import('./components/dashboard/AttendanceTrend').then(m => ({ default: m.AttendanceTrendChart })));
+
+/** Lightweight placeholder while a heavy lazy chunk (charts, code editor) loads. */
+function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
+  return (
+    <div className="flex items-center justify-center h-40 text-sm text-text-muted animate-pulse" aria-busy="true">
+      {label}
+    </div>
+  );
+}
 import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
@@ -129,7 +139,6 @@ import { format } from 'date-fns';
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
 import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
-import { CodeView } from './components/CodeView';
 import { CadView } from './components/CadView';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
@@ -150,7 +159,6 @@ import { AuthShell } from './components/auth/AuthShell';
 import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
-import { AttendanceTrendChart } from './components/dashboard/AttendanceTrend';
 import ThemeToggle from './components/ThemeToggle';
 import { useTheme } from './hooks/useTheme';
 
@@ -2100,7 +2108,7 @@ export default function App() {
         <Route path="/budget" element={<BudgetView {...viewProps} />} />
         <Route path="/inventory" element={<InventoryView {...viewProps} />} />
         <Route path="/outreach" element={<OutreachView {...viewProps} />} />
-        <Route path="/code" element={<CodeView {...viewProps} />} />
+        <Route path="/code" element={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />
         <Route path="/cad" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-docs" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-reviews" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
@@ -4576,7 +4584,9 @@ function AttendanceView({ members, attendance, onRefresh, setLoading, hasScope, 
     <div className="space-y-4 sm:space-y-6">
       {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
       <Card title="Attendance Trend" subtitle={hiddenDates.length > 0 ? "Present check-ins · last 14 meeting days" : "Present check-ins · last 14 days"} icon={TrendingUp} className="p-5 gap-3">
-        <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="h-52" />
+        <Suspense fallback={<ChartLoadingFallback />}>
+          <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="h-52" />
+        </Suspense>
       </Card>
       <div className="flex gap-1 sm:gap-2 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
         <button 
@@ -5342,13 +5352,6 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
     { id: 'done', label: 'Done', color: 'bg-emerald-400' }
   ];
 
-  // Get dynamic colors for charts
-  const secondaryColor = getCSSVariable('--color-secondary') || '#1A1A1A';
-  const { theme: chartTheme } = useTheme();
-  const chartGrid = chartTheme === 'light' ? 'rgba(9,9,11,0.1)' : 'rgba(255,255,255,0.1)';
-  const chartAxis = chartTheme === 'light' ? '#71717a' : '#94a3b8';
-  const chartTooltipText = chartTheme === 'light' ? '#09090B' : '#fff';
-
   return (
     <div className="space-y-4 sm:space-y-6">
       <div>
@@ -5377,61 +5380,14 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, currentUser, ha
       </div>
 
       {showAnalytics ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          <Card title="Completion Trend (Last 7 Days)" icon={TrendingUp}>
-            <div className="h-64 min-h-[250px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={completionTrends}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
-                  <XAxis dataKey="date" stroke={chartAxis} fontSize={12} />
-                  <YAxis stroke={chartAxis} fontSize={12} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: secondaryColor, border: 'none', borderRadius: '8px', color: chartTooltipText }}
-                    itemStyle={{ color: '#10b981' }}
-                  />
-                  <Line type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={3} dot={{ fill: '#10b981' }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          <Card title="Member Capacity" icon={Users}>
-            <div className="h-64 min-h-[250px] w-full mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={memberCapacity} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} />
-                  <XAxis type="number" stroke={chartAxis} fontSize={12} />
-                  <YAxis dataKey="name" type="category" stroke={chartAxis} fontSize={10} width={80} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: secondaryColor, border: 'none', borderRadius: '8px', color: chartTooltipText }}
-                  />
-                  <Bar dataKey="todo" stackId="a" fill="#64748b" />
-                  <Bar dataKey="inProgress" stackId="a" fill="#60a5fa" />
-                  <Bar dataKey="done" stackId="a" fill="#10b981" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          <Card className="lg:col-span-2">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-center">
-              <div>
-                <p className="text-xs text-text-muted uppercase font-bold mb-1">Avg. Completion Time</p>
-                <p className="text-4xl font-display font-bold text-text-base">{avgCompletionTime} <span className="text-sm font-normal text-text-muted/70">days</span></p>
-              </div>
-              <div>
-                <p className="text-xs text-text-muted uppercase font-bold mb-1">Active Tasks</p>
-                <p className="text-4xl font-display font-bold text-blue-400">{tasks.filter(t => t.status !== 'done').length}</p>
-              </div>
-              <div>
-                <p className="text-xs text-text-muted uppercase font-bold mb-1">Success Rate</p>
-                <p className="text-4xl font-display font-bold text-emerald-400">
-                  {tasks.length > 0 ? Math.round((tasks.filter(t => t.status === 'done').length / tasks.length) * 100) : 0}%
-                </p>
-              </div>
-            </div>
-          </Card>
-        </div>
+        <Suspense fallback={<ChartLoadingFallback />}>
+          <TaskAnalytics
+            completionTrends={completionTrends}
+            memberCapacity={memberCapacity}
+            avgCompletionTime={avgCompletionTime}
+            tasks={tasks}
+          />
+        </Suspense>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 h-auto min-h-[600px] md:h-[calc(100vh-250px)]">
         {columns.map(col => (
