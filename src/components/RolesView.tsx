@@ -158,6 +158,10 @@ export default function RolesView({ members, onRefresh }: any) {
 
   useEffect(() => {
     load();
+    // Live role sync: another admin's role changes refresh this view too.
+    const onRolesChanged = () => load();
+    window.addEventListener('roles-changed', onRolesChanged);
+    return () => window.removeEventListener('roles-changed', onRolesChanged);
   }, []);
 
   const saveRole = async (draft: { name: string; color: string; permissions: string[] }) => {

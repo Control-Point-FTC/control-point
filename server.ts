@@ -3543,6 +3543,7 @@ async function startServer() {
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,0)",
       auth.teamId, name, color, JSON.stringify(permissions), (maxPos?.m ?? -1) + 1
     )) as any;
+    broadcastToTeam(auth.teamId, { type: "roles_changed" });
     res.json({ id: info.lastInsertRowid });
   });
 
@@ -3576,6 +3577,7 @@ async function startServer() {
     // Re-sync admin flags: a role gaining/losing manage_members promotes/demotes holders.
     const holders = (await dbAll("SELECT member_id FROM member_roles WHERE role_id = ?", roleId)) as any[];
     for (const h of holders) await syncAccountType(h.member_id, auth.teamId!);
+    broadcastToTeam(auth.teamId, { type: "roles_changed" });
     res.json({ success: true });
   });
 
@@ -3606,6 +3608,7 @@ async function startServer() {
     await dbRun("DELETE FROM member_roles WHERE role_id = ?", roleId);
     await dbRun("DELETE FROM roles WHERE id = ?", roleId);
     for (const h of holders) await syncAccountType(h.id, auth.teamId!);
+    broadcastToTeam(auth.teamId, { type: "roles_changed" });
     res.json({ success: true });
   });
 
@@ -3627,6 +3630,9 @@ async function startServer() {
     if (!role) return res.status(404).json({ error: "Role not found" });
     await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, roleId);
     await syncAccountType(memberId, auth.teamId!);
+    // Live mission control: the affected member's permissions change — push it
+    // so their client picks it up without a refresh.
+    broadcastToTeam(auth.teamId, { type: "member_roles_changed", member_id: memberId });
     res.json({ success: true });
   });
 
@@ -3651,6 +3657,7 @@ async function startServer() {
     }
     await dbRun("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?", memberId, roleId);
     await syncAccountType(memberId, auth.teamId!);
+    broadcastToTeam(auth.teamId, { type: "member_roles_changed", member_id: memberId });
     res.json({ success: true });
   });
 

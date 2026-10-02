@@ -99,6 +99,9 @@ export default function MessageReactions({
   // the set just guards against double-posting the same toggle twice.
   const inFlight = useRef<Set<string>>(new Set());
   const [, force] = useState(0);
+  // Discord-style rich hover card state — declared before the empty early
+  // return so hook order stays stable when reactions come and go.
+  const [hovered, setHovered] = useState<string | null>(null);
 
   if (!reactions || reactions.length === 0) return null;
 
@@ -120,38 +123,67 @@ export default function MessageReactions({
     }
   };
 
-  const tooltipFor = (r: Reaction): string => {
-    const names = (r.member_ids || [])
-      .map((id) => (id === memberId ? 'You' : memberNames?.[id]))
-      .filter(Boolean) as string[];
-    const who = names.length > 0 ? names.slice(0, 5).join(', ') + (names.length > 5 ? ` +${names.length - 5} more` : '') : `${r.count}`;
-    return `${who} reacted with ${isCustomReaction(r.emoji) ? 'a custom reaction' : r.emoji}`;
-  };
+  // Discord-style rich hover card: big emoji + who reacted, instead of the
+  // browser's plain native tooltip.
+  const namesFor = (r: Reaction): string[] =>
+    (r.member_ids || []).map((id) => (id === memberId ? 'You' : memberNames?.[id] || 'Someone'));
 
   return (
     <div className="flex flex-wrap items-center gap-1 mt-1.5" aria-label="Message reactions">
-      {reactions.map((r) => (
-        <button
+      {reactions.map((r) => {
+        const names = namesFor(r);
+        const shown = names.slice(0, 6);
+        const rest = names.length - shown.length;
+        return (
+        <div
           key={r.emoji}
-          onClick={(e) => {
-            e.stopPropagation();
-            handleToggle(r.emoji);
-          }}
-          title={tooltipFor(r)}
-          aria-pressed={r.reacted_by_me}
-          aria-label={`${r.count} ${isCustomReaction(r.emoji) ? 'custom' : r.emoji} reactions${r.reacted_by_me ? ', including you' : ''}`}
-          className={cn(
-            'flex items-center gap-1 pl-1.5 pr-2 py-0.5 rounded-full border text-xs font-semibold transition-all',
-            'hover:scale-105 active:scale-95',
-            r.reacted_by_me
-              ? 'bg-accent/20 border-accent/50 text-accent shadow-[0_0_8px_rgba(255,199,0,0.15)]'
-              : 'bg-text-base/[0.06] border-text-base/15 text-text-base/80 hover:border-text-base/30 hover:bg-text-base/[0.1]'
-          )}
+          className="relative"
+          onMouseEnter={() => setHovered(r.emoji)}
+          onMouseLeave={() => setHovered(null)}
         >
-          <ReactionFace reaction={r} />
-          <span className="tabular-nums leading-none">{r.count}</span>
-        </button>
-      ))}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggle(r.emoji);
+            }}
+            aria-pressed={r.reacted_by_me}
+            aria-label={`${r.count} ${isCustomReaction(r.emoji) ? 'custom' : r.emoji} reactions${r.reacted_by_me ? ', including you' : ''}`}
+            className={cn(
+              'flex items-center gap-1 pl-1.5 pr-2 py-0.5 rounded-full border text-xs font-semibold transition-all',
+              'hover:scale-105 active:scale-95',
+              r.reacted_by_me
+                ? 'bg-accent/20 border-accent/50 text-accent shadow-[0_0_8px_rgba(255,199,0,0.15)]'
+                : 'bg-text-base/[0.06] border-text-base/15 text-text-base/80 hover:border-text-base/30 hover:bg-text-base/[0.1]'
+            )}
+          >
+            <ReactionFace reaction={r} />
+            <span className="tabular-nums leading-none">{r.count}</span>
+          </button>
+          {hovered === r.emoji && (
+            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 min-w-[150px] max-w-[240px] rounded-xl border border-white/10 bg-[#111214]/95 px-3 py-2.5 shadow-2xl backdrop-blur text-center">
+              <div className="flex justify-center mb-1.5">
+                {isCustomReaction(r.emoji) && r.image_url ? (
+                  <img
+                    src={assetUrl(r.image_url) ?? undefined}
+                    alt="custom reaction"
+                    className="w-10 h-10 object-contain rounded"
+                    draggable={false}
+                  />
+                ) : (
+                  <span className="text-4xl leading-none select-none">{r.emoji}</span>
+                )}
+              </div>
+              <p className="text-xs font-semibold text-zinc-100 leading-snug">
+                {shown.join(', ')}{rest > 0 && <>, and {rest} other{rest === 1 ? '' : 's'}</>}
+              </p>
+              <p className="text-[10px] text-zinc-400 mt-1">
+                reacted with {isCustomReaction(r.emoji) ? 'a custom emoji' : r.emoji}
+              </p>
+            </div>
+          )}
+        </div>
+        );
+      })}
     </div>
   );
 }

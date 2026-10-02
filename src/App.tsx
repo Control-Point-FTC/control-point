@@ -1294,6 +1294,18 @@ export default function App() {
         } else if (msg.type === 'attendance_changed') {
           // Another user marked attendance — refresh it live.
           refresh.attendance();
+        } else if (msg.type === 'member_roles_changed') {
+          // Someone's roles changed — refresh the roster everywhere and
+          // re-read my own permissions so the new role applies live.
+          refresh.members();
+          window.dispatchEvent(new CustomEvent('roles-changed'));
+          refreshMe();
+        } else if (msg.type === 'roles_changed') {
+          // A role was created/edited/deleted — its holders' effective
+          // permissions may have changed, so re-read mine too.
+          refresh.members();
+          window.dispatchEvent(new CustomEvent('roles-changed'));
+          refreshMe();
         }
       } catch (err) {
         console.error("WS Message Error:", err);
