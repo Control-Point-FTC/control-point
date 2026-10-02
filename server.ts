@@ -789,6 +789,7 @@ try {
       if (!stat.isFile()) continue;
       const url = `/uploads/${f}`;
       const bytes = fs.readFileSync(diskPath);
+      let rewrote = 0;
       for (const c of rescueCols) {
         let rows: any[] = [];
         try {
@@ -803,6 +804,7 @@ try {
               row.t ?? null, row.m ?? null, c.kind, f, null, bytes.length, bytes
             );
             await dbRun(`UPDATE ${c.table} SET ${c.col} = ? WHERE id = ?`, `/api/files/${info.lastInsertRowid}`, row.id);
+            rewrote++;
           } catch (e) { console.error(`[rescue] ${c.table}.${c.col} id ${row.id}:`, (e as any)?.message || e); }
         }
       }
@@ -819,10 +821,14 @@ try {
             );
             const next = arr.map((u: string) => (u === url ? `/api/files/${info.lastInsertRowid}` : u));
             await dbRun(`UPDATE tasks SET completion_images = ? WHERE id = ?`, JSON.stringify(next), t.id);
+            rewrote++;
           } catch (e) { console.error(`[rescue] tasks.completion_images id ${t.id}:`, (e as any)?.message || e); }
         }
       } catch { /* table may not exist yet */ }
-      // Remove the disk copy once every reference was rewritten.
+      // Remove the disk copy only when we imported it AND no /uploads/
+      // references remain. Never delete files we didn't import (e.g.
+      // repo-committed fixtures) — orphaned disk files are harmless.
+      if (rewrote === 0) continue;
       try {
         let refs = 0;
         for (const c of rescueCols) {
