@@ -2937,6 +2937,11 @@ async function startServer() {
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
+      // Voice tables (FKs to teams have no CASCADE — must clean manually)
+      { sql: "DELETE FROM call_sessions WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM voice_channel_role_perms WHERE channel_id IN (SELECT id FROM voice_channels WHERE team_id = ?)", args: [teamId] },
+      { sql: "DELETE FROM voice_channels WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM team_voice_settings WHERE team_id = ?", args: [teamId] },
       { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
       // Keep the caller's session alive so they stay signed in (teamless when
       // this was their last team); every other session on the team is dropped.
