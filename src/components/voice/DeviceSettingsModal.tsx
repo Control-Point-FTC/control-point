@@ -89,11 +89,12 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
   const [testLevel, setTestLevel] = useState(0);
   const [previewingCam, setPreviewingCam] = useState(false);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
-  const testRef = useRef<{ stream: MediaStream | null; raf: number; ctx: AudioContext | null; analyser: AnalyserNode | null }>({
+  const testRef = useRef<{ stream: MediaStream | null; raf: number; ctx: AudioContext | null; analyser: AnalyserNode | null; gain: GainNode | null }>({
     stream: null,
     raf: 0,
     ctx: null,
     analyser: null,
+    gain: null,
   });
 
   useEffect(() => {
@@ -118,6 +119,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
     t.stream = null;
     t.ctx = null;
     t.analyser = null;
+    t.gain = null;
     setTestingMic(false);
     setTestLevel(0);
   }, []);
@@ -129,10 +131,13 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
       const AC = window.AudioContext || (window as any).webkitAudioContext;
       const ctx: AudioContext = new AC();
       const src = ctx.createMediaStreamSource(stream);
+      const gain = ctx.createGain();
+      gain.gain.value = devicePrefs.micVolume ?? 1;
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
-      src.connect(analyser); // analysis only — never connected to destination
-      testRef.current = { stream, raf: 0, ctx, analyser };
+      src.connect(gain);
+      gain.connect(analyser); // analysis only — never connected to destination
+      testRef.current = { stream, raf: 0, ctx, analyser, gain };
       const buf = new Float32Array(analyser.fftSize);
       const tick = () => {
         analyser.getFloatTimeDomainData(buf);
@@ -148,6 +153,14 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
       /* getMicStream throws MediaError with a friendly message */
     }
   }, [selectedDevices.micId, devicePrefs]);
+
+  // Live-update the mic test gain when the input volume slider moves mid-test.
+  useEffect(() => {
+    const g = testRef.current.gain;
+    if (g && testingMic) {
+      g.gain.setTargetAtTime(devicePrefs.micVolume ?? 1, g.context.currentTime, 0.02);
+    }
+  }, [devicePrefs.micVolume, testingMic]);
 
   const startCamPreview = useCallback(async () => {
     try {

@@ -65,6 +65,7 @@ import {
   Forward,
   Sparkles,
   ClipboardPaste,
+  Save,
   Trophy,
   Flag,
   Cog,
@@ -798,6 +799,24 @@ export default function App() {
   // and the presence status picker live here so the sidebar owns them.
   const [teamsNavOpen, setTeamsNavOpen] = useState(false);
   const [cadNavOpen, setCadNavOpen] = useState(false);
+  // Collapsible sidebar section groups (Compete/Team/Engineering/Outreach).
+  // Persisted so an outreach person can hide Engineering, etc.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('cp-collapsed-nav-groups') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      try {
+        localStorage.setItem('cp-collapsed-nav-groups', JSON.stringify(next));
+      } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
 
@@ -1245,6 +1264,36 @@ export default function App() {
             if (cur != null) msgCache.current.set(cur, next);
             return next;
           });
+        } else if (msg.type === 'task_created') {
+          // Live mission control: another user created a task — add it, no refresh.
+          if (msg.task && msg.task.id) {
+            setTasks((prev: any[]) => (prev.some((t: any) => t.id === msg.task.id) ? prev : [...prev, msg.task]));
+          }
+        } else if (msg.type === 'task_updated') {
+          if (msg.task && msg.task.id) {
+            setTasks((prev: any[]) => prev.map((t: any) => (t.id === msg.task.id ? { ...t, ...msg.task } : t)));
+          }
+        } else if (msg.type === 'task_deleted') {
+          setTasks((prev: any[]) => prev.filter((t: any) => t.id !== msg.id));
+        } else if (msg.type === 'tasks_changed') {
+          // Bulk import: simplest correct update is a refetch.
+          refresh.tasks();
+        } else if (msg.type === 'member_joined') {
+          if (msg.member && msg.member.id) {
+            setMembers((prev: any[]) => (prev.some((m: any) => m.id === msg.member.id) ? prev : [...prev, msg.member]));
+          }
+        } else if (msg.type === 'member_updated') {
+          if (msg.member && msg.member.id) {
+            setMembers((prev: any[]) => prev.map((m: any) => (m.id === msg.member.id ? { ...m, ...msg.member } : m)));
+          }
+        } else if (msg.type === 'member_removed') {
+          setMembers((prev: any[]) => prev.filter((m: any) => m.id !== msg.id));
+        } else if (msg.type === 'resources_changed') {
+          // ResourcesView owns its list — nudge it to refetch.
+          window.dispatchEvent(new CustomEvent('resources-changed'));
+        } else if (msg.type === 'attendance_changed') {
+          // Another user marked attendance — refresh it live.
+          refresh.attendance();
         }
       } catch (err) {
         console.error("WS Message Error:", err);
@@ -1799,7 +1848,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts'];
+  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);
@@ -2555,7 +2604,7 @@ export default function App() {
       </motion.aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0 bg-primary relative h-dvh">
+      <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh">
         {!isChatRoute && (
         <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
@@ -2774,8 +2823,8 @@ export default function App() {
         )}
 
         <div className={cn(
-          "flex flex-col flex-1 min-h-0",
-          isChatRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto custom-scrollbar"
+          "flex flex-col flex-1 min-h-0 min-w-0",
+          isChatRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto overflow-x-clip custom-scrollbar"
         )}>
           <AnimatePresence mode="wait">
             <motion.div
@@ -2784,7 +2833,7 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.12, ease: 'easeOut' }}
-              className="flex flex-col flex-1 min-h-0"
+              className="flex flex-col flex-1 min-h-0 min-w-0"
             >
               {loading ? (
                 <div className="flex flex-col items-center justify-center h-64 gap-4">
@@ -5199,6 +5248,14 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assigned_to: '', due_date: '', status: 'todo' });
   const [filterTeam, setFilterTeam] = useState('all');
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
+  // Bruno bulk import: paste notes/chat, AI extracts tasks, preview/edit, save all.
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState('');
+  const [bulkParsing, setBulkParsing] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState<any[] | null>(null);
+  const [bulkRoster, setBulkRoster] = useState<any[]>([]);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkSaving, setBulkSaving] = useState(false);
   const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
     const s = new Set(prev);
     if (on) s.add(id); else s.delete(id);
@@ -5299,6 +5356,75 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const closeTaskModal = () => {
     setShowAddTask(false);
     setEditingTaskId(null);
+  };
+
+  // ---- Bruno bulk import ----
+  const handleBulkParse = async () => {
+    const text = bulkText.trim();
+    if (!text || bulkParsing) return;
+    setBulkParsing(true);
+    setBulkError(null);
+    try {
+      const res = await apiFetch('/api/tasks/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not read tasks');
+      const list = Array.isArray(d.items) ? d.items : [];
+      if (!list.length) {
+        setBulkError('No tasks found in that text — try pasting notes with actionable items.');
+        setBulkPreview(null);
+      } else {
+        setBulkPreview(list);
+        setBulkRoster(Array.isArray(d.roster) ? d.roster : members.map((m: any) => ({ id: m.id, name: m.name })));
+      }
+    } catch (e: any) {
+      setBulkError(e?.message || 'Could not extract tasks.');
+      setBulkPreview(null);
+    } finally {
+      setBulkParsing(false);
+    }
+  };
+
+  const updateBulkRow = (idx: number, patch: any) => {
+    setBulkPreview((prev) => (prev ? prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)) : prev));
+  };
+
+  const removeBulkRow = (idx: number) => {
+    setBulkPreview((prev) => (prev ? prev.filter((_, i) => i !== idx) : prev));
+  };
+
+  const handleBulkSave = async () => {
+    if (!bulkPreview?.length || bulkSaving) return;
+    setBulkSaving(true);
+    setBulkError(null);
+    try {
+      const res = await apiFetch('/api/tasks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: bulkPreview }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not save tasks');
+      notify(`Saved ${d.count || 0} task${(d.count || 0) === 1 ? '' : 's'}.`, 'success');
+      setShowBulk(false);
+      setBulkText('');
+      setBulkPreview(null);
+      refresh.tasks();
+    } catch (e: any) {
+      setBulkError(e?.message || 'Could not save tasks.');
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  const closeBulkModal = () => {
+    setShowBulk(false);
+    setBulkText('');
+    setBulkPreview(null);
+    setBulkError(null);
   };
 
   const filteredTasks = tasks.filter((t: any) => {
@@ -5421,7 +5547,10 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
           </Button>
         </div>
         {canManageTasks && (
-          <Button onClick={() => openNewTask('todo')} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            <Button variant="secondary" onClick={() => setShowBulk(true)} className="w-full sm:w-auto"><Sparkles className="w-4 h-4" /> Bulk add with Bruno</Button>
+            <Button onClick={() => openNewTask('todo')} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> New Task</Button>
+          </div>
         )}
       </div>
 
@@ -5526,6 +5655,102 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                 <Button onClick={handleAddTask} disabled={pendingIds.has(-1)}>{pendingIds.has(-1) ? (editingTaskId ? 'Saving…' : 'Creating…') : (editingTaskId ? 'Save Changes' : 'Create Task')}</Button>
               </div>
             </div>
+          </Card>
+        </div>
+      )}
+      {showBulk && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title="Bulk add tasks with Bruno" className="w-full max-w-2xl max-h-[90dvh] flex flex-col min-w-0">
+            <p className="text-xs text-text-muted -mt-2">Paste meeting notes, chat logs, or a to-do dump — Bruno pulls out each task, guesses assignees and due dates. Edit before saving.</p>
+            <textarea
+              value={bulkText}
+              onChange={(e: any) => setBulkText(e.target.value)}
+              rows={5}
+              placeholder={"Paste tasks here…\n- Finish drive base CAD by Friday\n- Sushil: order 12T pinions\n- Test autonomous pathing (in progress)"}
+              className="w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[110px]"
+            />
+            <div className="flex justify-end">
+              <Button onClick={handleBulkParse} disabled={!bulkText.trim() || bulkParsing} className="shrink-0">
+                {bulkParsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                {bulkParsing ? 'Bruno is reading…' : 'Extract tasks'}
+              </Button>
+            </div>
+            {bulkError ? (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/5 px-4 py-2.5 text-sm text-rose-200/90">{bulkError}</div>
+            ) : null}
+            {bulkPreview && bulkPreview.length > 0 ? (
+              <div className="space-y-2 min-h-0">
+                <p className="text-xs font-bold uppercase tracking-wider text-text-muted">Preview — edit before saving ({bulkPreview.length})</p>
+                <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
+                  {bulkPreview.map((row: any, i: number) => (
+                    <div key={i} className="rounded-xl border border-text-base/10 bg-text-base/[0.02] p-3 space-y-2">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 space-y-2 min-w-0">
+                          <Input
+                            value={row.title}
+                            onChange={(e: any) => updateBulkRow(i, { title: e.target.value })}
+                            placeholder="Task title"
+                            className="!py-1.5 !text-sm font-semibold"
+                          />
+                          <Input
+                            value={row.description || ''}
+                            onChange={(e: any) => updateBulkRow(i, { description: e.target.value })}
+                            placeholder="Description (optional)"
+                            className="!py-1.5 !text-sm"
+                          />
+                        </div>
+                        <button
+                          onClick={() => removeBulkRow(i)}
+                          className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                          title="Remove"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <select
+                          value={row.status || 'todo'}
+                          onChange={(e: any) => updateBulkRow(i, { status: e.target.value })}
+                          className="sm:w-36 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
+                        >
+                          <option value="todo">To Do</option>
+                          <option value="in-progress">In Progress</option>
+                          <option value="done">Done</option>
+                        </select>
+                        <select
+                          value={row.assigned_to || ''}
+                          onChange={(e: any) => updateBulkRow(i, { assigned_to: e.target.value ? Number(e.target.value) : null })}
+                          className="flex-1 min-w-0 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
+                        >
+                          <option value="">Unassigned</option>
+                          {bulkRoster.map((m: any) => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                          ))}
+                        </select>
+                        <Input
+                          type="date"
+                          value={row.due_date || ''}
+                          onChange={(e: any) => updateBulkRow(i, { due_date: e.target.value || null })}
+                          className="!py-1.5 !text-sm sm:w-40"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 justify-end pt-1">
+                  <Button variant="secondary" onClick={closeBulkModal} disabled={bulkSaving}>Discard</Button>
+                  <Button onClick={handleBulkSave} disabled={bulkSaving || bulkPreview.length === 0}>
+                    {bulkSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {bulkSaving ? 'Saving…' : `Save all ${bulkPreview.length}`}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {(!bulkPreview || bulkPreview.length === 0) && (
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={closeBulkModal}>Close</Button>
+              </div>
+            )}
           </Card>
         </div>
       )}
@@ -6892,7 +7117,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {profiles.map((p: any) => {
-              const meta = PLATFORM_META[p.platform] || PLATFORM_META.youtube;
+              const meta = PLATFORM_META[p.platform] || { label: p.platform || 'Unknown', Icon: Globe, color: '#a1a1aa', metric: 'Followers' };
               const PIcon = meta.Icon;
               const g = p.growth;
               return (
@@ -7543,6 +7768,25 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   };
 
   // Update a message's reactions in state (optimistic or from server/socket).
+  // Recently-used reaction emojis for the hover toolbar quick-react buttons.
+  const [recentReactions, setRecentReactions] = useState<string[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('cp-recent-reactions') || '[]');
+      return Array.isArray(raw) ? raw.filter((e) => typeof e === 'string').slice(0, 3) : [];
+    } catch {
+      return [];
+    }
+  });
+  const recordRecentReaction = (emoji: string) => {
+    if (!emoji || emoji.startsWith('custom:')) return;
+    setRecentReactions((prev) => {
+      const next = [emoji, ...prev.filter((e) => e !== emoji)].slice(0, 3);
+      try {
+        localStorage.setItem('cp-recent-reactions', JSON.stringify(next));
+      } catch { /* ignore */ }
+      return next;
+    });
+  };
   const handleReactionsChange = (messageId: number, reactions: any[]) => {
     const cur = activeChannelId;
     setMessages((prev: any[]) => {
@@ -7555,6 +7799,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   // Pick an emoji from the picker → toggle it on the message.
   const handlePickReaction = async (messageId: number, emoji: string) => {
     setReactPickerFor(null);
+    recordRecentReaction(emoji);
     try {
       const server = await postReactionToggle(messageId, emoji);
       handleReactionsChange(messageId, server);

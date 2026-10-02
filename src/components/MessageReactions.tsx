@@ -78,6 +78,8 @@ interface MessageReactionsProps {
   onReactionsChange: (messageId: number, reactions: Reaction[]) => void;
   /** Optional member-id -> display-name map for the hover tooltip. */
   memberNames?: Record<number, string>;
+  /** Fires when the user toggles an emoji (for recent-reactions tracking). */
+  onToggleEmoji?: (emoji: string) => void;
 }
 
 /**
@@ -91,6 +93,7 @@ export default function MessageReactions({
   memberId,
   onReactionsChange,
   memberNames,
+  onToggleEmoji,
 }: MessageReactionsProps) {
   // Emojis with a request in flight — clicks still queue an optimistic flip;
   // the set just guards against double-posting the same toggle twice.

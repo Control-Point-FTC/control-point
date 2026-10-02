@@ -1151,6 +1151,32 @@ try {
   console.error('[DB Migration] default-scope cleanup failed:', e);
 }
 
+// Repair social_profiles with unrecognized platform values (shows "Unknown
+// platform" on sync and renders with the wrong branding). Normalizes
+// case/whitespace variants; profiles carrying a YouTube channel ID
+// (UC…) are restored to 'youtube'. Idempotent.
+try {
+  const bad = (await dbAll(
+    "SELECT id, platform, external_id FROM social_profiles WHERE platform IS NULL OR TRIM(LOWER(platform)) NOT IN ('youtube', 'tiktok')"
+  )) as any[];
+  let fixed = 0;
+  for (const p of bad) {
+    const norm = String(p.platform || '').trim().toLowerCase();
+    let target: string | null = null;
+    if (norm === 'youtube' || norm === 'tiktok') target = norm;
+    else if (p.external_id && /^UC[A-Za-z0-9_-]{20,}$/.test(String(p.external_id))) target = 'youtube';
+    if (target) {
+      await dbRun("UPDATE social_profiles SET platform = ? WHERE id = ?", target, p.id);
+      fixed++;
+    } else {
+      console.log(`[DB Migration] social_profiles id=${p.id} has unrecognized platform '${p.platform}' (external_id=${p.external_id || 'none'}) — left for manual review`);
+    }
+  }
+  if (fixed) console.log(`[DB Migration] repaired platform on ${fixed} social profile(s)`);
+} catch (e) {
+  console.error('[DB Migration] social platform repair failed:', e);
+}
+
 function generateAccessCode(): string {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // unambiguous chars only
   const bytes = crypto.getRandomValues(new Uint8Array(8));
@@ -2854,7 +2880,12 @@ async function startServer() {
     }
     const sessionId = await createSession(row.id);
     const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
-    res.json({ user, sessionId, team, joined: !existing || (existing.is_active ?? 1) !== 1 });
+    const wasNew = !existing || (existing.is_active ?? 1) !== 1;
+    if (wasNew) {
+      // Live mission control: everyone sees the new member without refreshing.
+      broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(row) });
+    }
+    res.json({ user, sessionId, team, joined: wasNew });
   });
 
   // Leave a team (non-admin path). History is preserved via soft-remove; the
@@ -3300,6 +3331,8 @@ async function startServer() {
     await setAdminRole(memberId, auth.teamId, nextType === 'admin');
     await syncAccountType(memberId, auth.teamId);
 
+    const updatedMember = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
+    broadcastToTeam(auth.teamId, { type: "member_updated", member: sanitizeMember(updatedMember) });
     res.json({ success: true });
   });
 
@@ -3451,6 +3484,7 @@ async function startServer() {
     // Soft remove: the member loses access immediately, but their messages,
     // tasks, attendance, and other history stay intact.
     (await dbRun("UPDATE members SET is_active = 0 WHERE id = ?", memberId));
+    broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
     res.json({ success: true });
   });
 
@@ -3672,6 +3706,7 @@ async function startServer() {
         }
       }
       await dbBatch(stmts);
+      broadcastToTeam(auth.teamId, { type: "attendance_changed", date });
       res.json({ success: true });
     } catch (error) {
       console.error("Error in attendance batch:", error);
@@ -4573,6 +4608,7 @@ Rules:
       );
       saved.push({ id: info.lastInsertRowid, url, title, description, category });
     }
+    if (saved.length) broadcastToTeam(auth.teamId, { type: "resources_changed" });
     res.json({ ok: true, saved, count: saved.length });
   });
 
@@ -4582,6 +4618,7 @@ Rules:
     const row: any = await dbGet("SELECT id FROM resources WHERE id = ? AND team_id = ?", req.params.id, auth.teamId);
     if (!row) return res.status(404).json({ error: "Not found" });
     await dbRun("DELETE FROM resources WHERE id = ?", req.params.id);
+    broadcastToTeam(auth.teamId, { type: "resources_changed" });
     res.json({ ok: true });
   });
 
@@ -4991,9 +5028,109 @@ Rules:
         createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
       }
 
+      const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", info.lastInsertRowid)) as any;
+      broadcastToTeam(auth.teamId, { type: "task_created", task: created });
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Bulk task import: paste a blob of text (meeting notes, chat logs) — Bruno AI
+  // extracts each task with title, description, status, assignee, and due date.
+  // Returns parsed items for preview/edit before saving.
+  app.post("/api/tasks/parse", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_tasks");
+      if (!auth) return;
+      const text = String(req.body?.text || "").slice(0, 30000);
+      if (!text.trim()) return res.status(400).json({ error: "Paste some text first" });
+      // Team roster so the AI can match @names to real members.
+      const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+      const rosterList = roster.map((m: any) => `${m.name} (id ${m.id})`).join(", ") || "no members";
+      let items: any[] = [];
+      if (isGeminiConfigured()) {
+        try {
+          const system = `You turn pasted team notes/chat into a task list for a robotics team. Return ONLY a JSON array — no markdown fences, no commentary. Each element: {"title": string, "description": string, "status": string, "assignee_name": string|null, "due_date": string|null}.
+Rules:
+- One element per distinct actionable task in the text (dedupe).
+- "title": short imperative title, max 80 chars.
+- "description": one sentence of context from the text, may be "".
+- "status": exactly one of "todo", "in-progress", "done" (default "todo"; use "in-progress" if the text says someone started it, "done" if completed).
+- "assignee_name": match to a name from this roster when the text names someone: ${rosterList}. Use the exact roster name or null.
+- "due_date": YYYY-MM-DD when the text names a date, else null.
+- Skip non-actionable chatter.`;
+          const raw = await aiGenerate(system, text.slice(0, 15000), 4096);
+          const parsed = JSON.parse(String(raw).replace(/^```(?:json)?/i, "").replace(/```$/, "").trim());
+          if (Array.isArray(parsed) && parsed.length) {
+            const byName = new Map(roster.map((m: any) => [String(m.name).toLowerCase(), m.id]));
+            items = parsed
+              .filter((p: any) => p && typeof p.title === "string" && p.title.trim())
+              .slice(0, 50)
+              .map((p: any) => {
+                const an = String(p.assignee_name || "").toLowerCase().trim();
+                return {
+                  title: String(p.title).slice(0, 80),
+                  description: String(p.description || "").slice(0, 500),
+                  status: ["todo", "in-progress", "done"].includes(p.status) ? p.status : "todo",
+                  assigned_to: (an && byName.get(an)) || null,
+                  assignee_name: (an && byName.get(an)) ? roster.find((m: any) => m.id === byName.get(an))?.name || null : null,
+                  due_date: /^\d{4}-\d{2}-\d{2}$/.test(String(p.due_date || "")) ? p.due_date : null,
+                };
+              });
+          }
+        } catch (e: any) {
+          console.error("tasks AI parse error:", e?.message);
+        }
+      }
+      // Fallback: one task per non-empty line when AI is unavailable or found nothing.
+      if (!items.length) {
+        const lines = text.split(/\r?\n/).map((l) => l.trim().replace(/^[-*•\d.)\s]+/, "").trim()).filter((l) => l.length > 2);
+        items = [...new Set(lines)].slice(0, 50).map((title) => ({
+          title: title.slice(0, 80), description: "", status: "todo",
+          assigned_to: null, assignee_name: null, due_date: null,
+        }));
+      }
+      if (!items.length) return res.status(422).json({ error: "No tasks found in that text" });
+      res.json({ items, count: items.length, roster: roster.map((m: any) => ({ id: m.id, name: m.name })) });
+    } catch (error) {
+      console.error("tasks parse error:", (error as any)?.message);
+      res.status(500).json({ error: "Could not read those tasks" });
+    }
+  });
+
+  // Bulk task creation (from the Bruno parse preview). One row per task.
+  app.post("/api/tasks/bulk", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_tasks");
+      if (!auth) return;
+      const items = Array.isArray(req.body?.items) ? req.body.items : [];
+      if (!items.length) return res.status(400).json({ error: "No tasks to save" });
+      const createdAt = new Date().toISOString();
+      const saved: any[] = [];
+      for (const it of items.slice(0, 50)) {
+        const title = String(it?.title || "").trim().slice(0, 200);
+        if (!title) continue;
+        const status = ["todo", "in-progress", "done"].includes(it?.status) ? it.status : "todo";
+        let targetAssignedTo: number | null = null;
+        if (it?.assigned_to) {
+          const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", it.assigned_to)) as any;
+          if (m && m.team_id === auth.teamId) targetAssignedTo = it.assigned_to;
+        }
+        const due = /^\d{4}-\d{2}-\d{2}$/.test(String(it?.due_date || "")) ? it.due_date : null;
+        const info = (await dbRun(
+          "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          auth.teamId, title, String(it?.description || "").trim().slice(0, 1000), status, targetAssignedTo, due, 0, createdAt
+        ));
+        saved.push(info.lastInsertRowid);
+        if (targetAssignedTo) createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
+      }
+      // Bulk import: receivers just refresh their task list.
+      broadcastToTeam(auth.teamId, { type: "tasks_changed" });
+      res.json({ ok: true, ids: saved, count: saved.length });
+    } catch (error) {
+      console.error("Error bulk-creating tasks:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -5050,6 +5187,8 @@ Rules:
         createNotification(task.assigned_to, note, 'task');
       }
 
+      const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating task:", error);
@@ -5066,6 +5205,7 @@ Rules:
         return res.status(404).json({ error: "Task not found" });
       }
       (await dbRun("DELETE FROM tasks WHERE id = ?", req.params.id));
+      broadcastToTeam(auth.teamId, { type: "task_deleted", id: Number(req.params.id) });
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting task:", error);
@@ -5413,7 +5553,7 @@ Rules:
         });
         return { ok: true };
       }
-      return { ok: false, error: "Unknown platform" };
+      return { ok: false, error: `Unknown platform "${profile.platform}" — unlink and re-link this profile` };
     } catch (e: any) {
       console.error(`[Social] Sync failed for profile ${profile.id}:`, e.message);
       return { ok: false, error: e.message || "Sync failed" };

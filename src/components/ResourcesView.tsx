@@ -62,18 +62,19 @@ function catMeta(cat: string): { Icon: any; badge: string } {
   }
 }
 
-function timeAgo(ts: number | string | null | undefined): string {
+function formatDate(ts: number | string | null | undefined): string {
   if (!ts) return '';
-  const ms = typeof ts === 'string' ? Date.parse(ts) : ts;
+  // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS" — parse as UTC explicitly
+  // so the date doesn't shift or read as "in the future" in US timezones.
+  let ms: number;
+  if (typeof ts === 'string') {
+    const iso = ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
+    ms = Date.parse(iso);
+  } else {
+    ms = ts;
+  }
   if (!Number.isFinite(ms)) return '';
-  const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.round(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(ms).toLocaleDateString();
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function domainOf(url: string): string {
@@ -116,6 +117,13 @@ export default function ResourcesView() {
 
   useEffect(() => {
     fetchResources();
+  }, [fetchResources]);
+
+  // Live mission control: another user added/removed a resource — refetch, no page reload.
+  useEffect(() => {
+    const handler = () => { fetchResources(); };
+    window.addEventListener('resources-changed', handler);
+    return () => window.removeEventListener('resources-changed', handler);
   }, [fetchResources]);
 
   const items = useMemo(() => {
@@ -219,7 +227,7 @@ export default function ResourcesView() {
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
+    <div className="space-y-4 sm:space-y-6 min-w-0">
       {/* header */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div>
@@ -412,7 +420,7 @@ export default function ResourcesView() {
                     <ExternalLink className="w-3.5 h-3.5" /> Open
                   </a>
                   <p className="text-[11px] text-text-muted/70 truncate">
-                    {r.created_by_name ? `${r.created_by_name} · ` : ''}{timeAgo(r.created_at)}
+                    {r.created_by_name ? `${r.created_by_name} · ` : ''}{formatDate(r.created_at)}
                   </p>
                 </div>
               </div>
