@@ -1,5 +1,5 @@
 // FTC team statistics: shared hook + dashboard card + dedicated stats page.
-// Match data comes from the backend's FTC Scout proxy (credited to ftc-scout.org).
+// Match data comes from the backend's FTC Scout proxy (credited to ftcscout.org).
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -201,7 +201,7 @@ export function FtcTeamCard() {
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-text-base/5 mt-1">
         <p className="text-xs text-text-muted pt-3">
           {best ? <>Best finish: <span className="text-text-base font-bold">#{best.rank} — {best.name}</span></> : 'No ranked events this season.'}
-          <span className="ml-2 text-text-muted/60">Match data: ftc-scout.org</span>
+          <span className="ml-2 text-text-muted/60">Match data: ftcscout.org</span>
         </p>
         <button
           onClick={() => navigate('/stats')}
@@ -284,7 +284,7 @@ export function TeamStatsView() {
             </div>
           </div>
           <a
-            href={`https://ftc-scout.org/teams/${data.number}`}
+            href={`https://ftcscout.org/teams/${data.number}`}
             target="_blank" rel="noreferrer"
             className="flex items-center gap-1.5 text-xs font-bold text-text-muted hover:text-accent transition-colors"
           >
@@ -350,7 +350,7 @@ export function TeamStatsView() {
         )}
       </div>
 
-      <p className="text-center text-[11px] text-text-muted/60">Match data courtesy of <a href="https://ftc-scout.org" target="_blank" rel="noreferrer" className="underline hover:text-accent">ftc-scout.org</a> · OPR & rankings update as events report results</p>
+      <p className="text-center text-[11px] text-text-muted/60">Match data courtesy of <a href="https://ftcscout.org" target="_blank" rel="noreferrer" className="underline hover:text-accent">ftcscout.org</a> · OPR & rankings update as events report results</p>
     </div>
   );
 }

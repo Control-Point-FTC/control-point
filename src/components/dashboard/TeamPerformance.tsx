@@ -18,7 +18,7 @@ function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
   return (
     <Card
       title="Team Performance"
-      subtitle={ftc.data ? `${ftc.data.name} · ftc-scout.org` : 'FTC Scout integration'}
+      subtitle={ftc.data ? `${ftc.data.name} · ftcscout.org` : 'FTC Scout integration'}
       icon={Trophy}
       className="md:col-span-2 xl:col-span-5 p-5 gap-3"
     >
