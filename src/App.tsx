@@ -1063,6 +1063,10 @@ export default function App() {
   // <VoiceProvider>): the one app WebSocket routes voice:* messages here and
   // attaches the engine's send callback on (re)connect.
   const voiceApiRef = useRef<VoiceSocketApi | null>(null);
+  // Tracks whether the app WebSocket has connected before, so onopen can
+  // tell an initial connect from a reconnect (presence may have decayed
+  // while disconnected — refresh the roster on reconnect).
+  const socketWasConnected = useRef(false);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [hiddenDates, setHiddenDates] = useState<string[]>([]);
   const [settings, setSettings] = useState<any>({});
@@ -1253,6 +1257,27 @@ export default function App() {
     }
   }, [isLoggedIn]);
 
+  // Presence reconciliation: computed presence decays server-side
+  // (online -> idle after 3 min quiet, offline after 15), so re-read the
+  // lightweight presence map every minute while signed in. Dots stay
+  // truthful without a full roster fetch.
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let stopped = false;
+    const pollPresence = async () => {
+      try {
+        const r = await apiFetch('/api/members/presence');
+        if (!r.ok || stopped) return;
+        const d = await r.json().catch(() => ({}));
+        const map = d?.presence || {};
+        setMembers((prev: any[]) => prev.map((m: any) =>
+          (map[m.id] !== undefined && map[m.id] !== m.presence) ? { ...m, presence: map[m.id] } : m));
+      } catch { /* presence is best-effort — the next poll retries */ }
+    };
+    const t = setInterval(pollPresence, 60000);
+    return () => { stopped = true; clearInterval(t); };
+  }, [isLoggedIn]);
+
   // Bruno structured actions (calendar/outreach inserts) refresh team data
   // without a page reload — event-driven, no polling.
   useEffect(() => {
@@ -1274,6 +1299,10 @@ export default function App() {
       console.log("WebSocket connected");
       const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
       if (sid) ws.send(JSON.stringify({ type: 'hello', sessionId: sid }));
+      // Reconnect: re-read the roster — computed presence may have decayed
+      // (online -> idle -> offline) while the socket was down.
+      if (socketWasConnected.current) refreshMembers();
+      socketWasConnected.current = true;
       // Voice signaling rides this socket — attach the engine's send path.
       // (Re-attached on every reconnect; attachSocket re-announces state.)
       voiceApiRef.current?.attachSocket((m) => {

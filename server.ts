@@ -164,6 +164,15 @@ async function presenceMap(memberIds: number[]): Promise<Record<number, string>>
   }
   return out;
 }
+// A member row ready to broadcast: sanitized + computed presence attached so
+// clients' dots update live instead of going stale.
+async function memberWithPresence(row: any): Promise<any> {
+  const m = sanitizeMember(row);
+  if (m && m.id != null) {
+    m.presence = (await presenceMap([m.id]))[m.id] || "offline";
+  }
+  return m;
+}
 
 // --- Chat channels ----------------------------------------------------------
 // Every team gets a #general channel. Existing messages (channel_id NULL)
@@ -3251,6 +3260,18 @@ async function startServer() {
   });
 
   // Members — scoped to the caller's workspace
+  app.get("/api/members/presence", async (req, res) => {
+    // Lightweight presence reconciliation: the client polls this every minute
+    // so online/idle/offline dots decay correctly without a full roster fetch.
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const rows = (await dbAll(
+      "SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1",
+      auth.teamId
+    )) as any[];
+    res.json({ presence: await presenceMap(rows.map((r: any) => r.id)) });
+  });
+
   app.get("/api/members", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -3352,7 +3373,7 @@ async function startServer() {
     await syncAccountType(memberId, auth.teamId);
 
     const updatedMember = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
-    broadcastToTeam(auth.teamId, { type: "member_updated", member: sanitizeMember(updatedMember) });
+    broadcastToTeam(auth.teamId, { type: "member_updated", member: await memberWithPresence(updatedMember) });
     res.json({ success: true });
   });
 
@@ -3379,9 +3400,10 @@ async function startServer() {
     const cols = Object.keys(updates);
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
-    const sanitized = sanitizeMember(user);
-    sanitized.presence = (await presenceMap([auth.memberId!]))[auth.memberId!] || 'offline';
-    res.json({ user: sanitized });
+    const withPresence = await memberWithPresence(user);
+    // Live presence: a status/name change is visible to the team immediately.
+    if (auth.teamId) broadcastToTeam(auth.teamId, { type: "member_updated", member: withPresence });
+    res.json({ user: withPresence });
   });
 
   // ---- Onboarding progress ----
