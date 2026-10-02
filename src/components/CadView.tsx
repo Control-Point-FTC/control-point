@@ -581,6 +581,7 @@ function CadParts() {
   const [parts, setParts] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any>(null);
+  const [showInvoice, setShowInvoice] = useState(false);
   const load = async () => {
     const r = await apiFetch('/api/cad/parts');
     if (r.ok) setParts(await r.json());
@@ -605,7 +606,10 @@ function CadParts() {
           <CircleDollarSign className="w-4 h-4 text-accent" />
           <span className="font-bold text-text-base text-base">${total.toFixed(2)}</span> total BOM cost · {parts.length} parts
         </p>
-        <Button onClick={() => { setEditing(null); setShowForm(true); }}><Plus className="w-4 h-4" /> Add Part</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => setShowInvoice(true)}><Sparkles className="w-4 h-4" /> Import Invoice with Bruno</Button>
+          <Button onClick={() => { setEditing(null); setShowForm(true); }}><Plus className="w-4 h-4" /> Add Part</Button>
+        </div>
       </div>
       {grouped.length ? grouped.map(({ section, items }) => (
         <Card key={section} title={section} subtitle={`${items.length} parts`} icon={Package}>
@@ -646,6 +650,7 @@ function CadParts() {
       )) : <Card><Empty icon={Package} title="BOM is empty" hint="Add every part the robot needs — printed, purchased, or goBILDA." /></Card>}
 
       {showForm && <PartForm initial={editing} onClose={() => { setShowForm(false); setEditing(null); }} onDone={() => { setShowForm(false); setEditing(null); load(); }} />}
+      {showInvoice && <InvoiceImportModal onClose={() => setShowInvoice(false)} onDone={() => { setShowInvoice(false); load(); }} />}
     </div>
   );
 }
@@ -699,6 +704,186 @@ function PartForm({ initial, onClose, onDone }: { initial?: any; onClose: () => 
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={submit} disabled={busy}><Check className="w-4 h-4" /> {initial ? 'Save' : 'Add Part'}</Button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ================= Invoice import (Bruno) =================
+function InvoiceImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [files, setFiles] = useState<File[]>([]);
+  const [parsing, setParsing] = useState<string | null>(null);
+  const [items, setItems] = useState<any[]>([]);
+  const [importing, setImporting] = useState(false);
+
+  const parse = async () => {
+    if (!files.length || parsing) return;
+    const found: any[] = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setParsing(files.length > 1 ? `Reading ${i + 1} of ${files.length}…` : 'Bruno is reading the invoice…');
+        const form = new FormData();
+        form.append('file', file);
+        const r = await apiFetch('/api/cad/parts/import-invoice/parse', { method: 'POST', body: form });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { notify(`Couldn't read ${file.name}: ` + (d.error || 'Unsupported file'), 'error'); continue; }
+        for (const it of d.items || []) {
+          found.push({
+            selected: true,
+            name: String(it.name || ''),
+            quantity: Number(it.quantity) || 1,
+            unitCost: Number(it.unitPrice) || 0,
+            section: 'Other',
+            source: 'purchased',
+            status: 'to_order',
+            notes: it.sku ? `SKU: ${it.sku}` : '',
+          });
+        }
+      }
+      if (!found.length) { notify('No line items found in the selected file(s).', 'error'); return; }
+      setItems(found);
+    } catch (e: any) {
+      notify('Error reading file: ' + (e?.message || e), 'error');
+    } finally {
+      setParsing(null);
+    }
+  };
+
+  const updateItem = (index: number, patch: any) => {
+    setItems((xs) => xs.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  };
+  const removeItem = (index: number) => setItems((xs) => xs.filter((_, i) => i !== index));
+  const toggleAll = (v: boolean) => setItems((xs) => xs.map((it) => ({ ...it, selected: v })));
+
+  const importSelected = async () => {
+    const selected = items.filter((it) => it.selected && String(it.name || '').trim());
+    if (!selected.length) { notify('Select at least one item with a name to import.', 'info'); return; }
+    if (importing) return;
+    setImporting(true);
+    try {
+      const results = await Promise.all(selected.map((it) =>
+        apiFetch('/api/cad/parts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: String(it.name).trim(),
+            section: it.section,
+            quantity: Math.max(1, Math.floor(Number(it.quantity) || 1)),
+            source: it.source,
+            unit_cost: Math.max(0, Number(it.unitCost) || 0),
+            status: it.status,
+            assignee: '',
+            notes: String(it.notes || '').trim(),
+          }),
+        }).then((r) => r.ok).catch(() => false)
+      ));
+      const ok = results.filter(Boolean).length;
+      if (ok === selected.length) notify(`Imported ${ok} part${ok === 1 ? '' : 's'} into the BOM.`, 'success');
+      else if (ok > 0) notify(`Imported ${ok} of ${selected.length} parts — ${selected.length - ok} failed.`, 'error');
+      else { notify('Import failed. Check the rows and try again.', 'error'); return; }
+      onDone();
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const selectedCount = items.filter((it) => it.selected).length;
+  const cellInput = 'w-full bg-elevated border border-text-base/10 rounded-lg px-2.5 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60 min-w-0';
+
+  return (
+    <Modal title="Import Invoice with Bruno" onClose={onClose} wide>
+      <div className="space-y-4">
+        {!items.length ? (
+          <>
+            <p className="text-sm text-text-muted flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-accent shrink-0" />
+              Upload a vendor invoice (PDF or image). Bruno reads the line items so you don't have to type them one by one.
+            </p>
+            <Field label="Invoice file (PDF / PNG / JPG)">
+              <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple
+                onChange={(e: any) => setFiles(Array.from(e.target.files || []))}
+                className="w-full text-sm text-text-muted file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-elevated file:text-text-base file:font-semibold hover:file:bg-text-base/10" />
+            </Field>
+            {files.length > 0 && (
+              <p className="text-xs text-text-muted">{files.length} file{files.length === 1 ? '' : 's'}: {files.map((f) => f.name).join(', ')}</p>
+            )}
+            {parsing ? (
+              <div className="flex items-center gap-3 py-4">
+                <div className="w-5 h-5 rounded-full border-2 border-accent/30 border-t-accent animate-spin shrink-0" />
+                <p className="text-sm text-text-muted">{parsing}</p>
+              </div>
+            ) : (
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={onClose}>Cancel</Button>
+                <Button onClick={parse} disabled={!files.length}><Sparkles className="w-4 h-4" /> Parse with Bruno</Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-text-muted">{items.length} line item{items.length === 1 ? '' : 's'} found — review, edit, then import.</p>
+              <button onClick={() => toggleAll(selectedCount !== items.length)} className="text-xs font-semibold text-accent hover:underline shrink-0">
+                {selectedCount === items.length ? 'Deselect all' : 'Select all'}
+              </button>
+            </div>
+            <div className="overflow-x-auto -mx-6 px-6">
+              <table className="w-full text-sm min-w-[980px]">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-widest text-text-muted border-b border-text-base/10">
+                    <th className="py-2 pr-2 w-8"></th>
+                    <th className="py-2 pr-2 font-bold">Part</th>
+                    <th className="py-2 pr-2 font-bold w-16">Qty</th>
+                    <th className="py-2 pr-2 font-bold w-20">Unit $</th>
+                    <th className="py-2 pr-2 font-bold w-32">Section</th>
+                    <th className="py-2 pr-2 font-bold w-32">Source</th>
+                    <th className="py-2 pr-2 font-bold w-32">Status</th>
+                    <th className="py-2 pr-2 font-bold">Notes</th>
+                    <th className="py-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it, i) => (
+                    <tr key={i} className={cn('border-b border-text-base/5 last:border-0', !it.selected && 'opacity-40')}>
+                      <td className="py-2 pr-2">
+                        <input type="checkbox" checked={it.selected} onChange={(e: any) => updateItem(i, { selected: e.target.checked })} className="w-4 h-4 accent-accent" />
+                      </td>
+                      <td className="py-2 pr-2"><input className={cellInput} value={it.name} onChange={(e: any) => updateItem(i, { name: e.target.value })} placeholder="Part name" /></td>
+                      <td className="py-2 pr-2"><input type="number" min={1} className={cellInput} value={it.quantity} onChange={(e: any) => updateItem(i, { quantity: e.target.value })} /></td>
+                      <td className="py-2 pr-2"><input type="number" min={0} step="0.01" className={cellInput} value={it.unitCost} onChange={(e: any) => updateItem(i, { unitCost: e.target.value })} /></td>
+                      <td className="py-2 pr-2">
+                        <select className={cellInput} value={it.section} onChange={(e: any) => updateItem(i, { section: e.target.value })}>
+                          {CAD_SECTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <select className={cellInput} value={it.source} onChange={(e: any) => updateItem(i, { source: e.target.value })}>
+                          {Object.entries(PART_SOURCE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <select className={cellInput} value={it.status} onChange={(e: any) => updateItem(i, { status: e.target.value })}>
+                          {Object.entries(PART_STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-2 pr-2"><input className={cellInput} value={it.notes} onChange={(e: any) => updateItem(i, { notes: e.target.value })} placeholder="SKU / link" /></td>
+                      <td className="py-2">
+                        <button onClick={() => removeItem(i)} className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10" title="Remove row"><X className="w-4 h-4" /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button onClick={importSelected} disabled={importing || !selectedCount}>
+                <Check className="w-4 h-4" /> {importing ? 'Importing…' : `Import selected (${selectedCount})`}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   );

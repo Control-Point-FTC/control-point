@@ -429,14 +429,20 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
       let cam: MediaStream | null = null;
       try {
         const { session: rawSession, ice } = await voiceApi.joinChannel(channelId);
-        mic = await acquireMicOrThrow();
-        if (opts?.video) {
-          try {
-            cam = await getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium');
-          } catch (camErr) {
-            // Video is optional — join audio-only rather than failing the join.
-            console.warn('[voice] camera unavailable, joining audio-only:', camErr);
-          }
+        // Acquire mic and camera concurrently — video stays optional with
+        // audio-only fallback if the camera fails.
+        const micPromise = acquireMicOrThrow();
+        const camPromise = opts?.video
+          ? getCameraStream(prefsRef.current.cameraId, prefsRef.current.cameraQuality ?? 'medium')
+          : Promise.resolve(null);
+        const [micSettled, camSettled] = await Promise.allSettled([micPromise, camPromise]);
+        if (micSettled.status === 'rejected') throw micSettled.reason;
+        mic = micSettled.value;
+        if (camSettled.status === 'fulfilled' && camSettled.value) {
+          cam = camSettled.value;
+        } else if (opts?.video && camSettled.status === 'rejected') {
+          // Video is optional — join audio-only rather than failing the join.
+          console.warn('[voice] camera unavailable, joining audio-only:', camSettled.reason);
         }
         const info: VoiceSessionInfo = {
           id: rawSession.id,

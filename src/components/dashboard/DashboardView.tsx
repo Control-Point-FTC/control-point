@@ -31,6 +31,7 @@ interface DashboardViewProps {
   onDismissChecklist: () => void;
   inventory: any[];
   setTasks?: (fn: any) => void;
+  setAttendance?: (fn: any) => void;
   hiddenDates?: string[];
 }
 
@@ -80,6 +81,7 @@ export default function DashboardView({
   onContinueSetup,
   onDismissChecklist,
   hiddenDates,
+  setAttendance,
 }: DashboardViewProps) {
   const navigate = useNavigate();
   // Stable string dep for the memo below; the feed window uses Date.now()
@@ -142,6 +144,7 @@ export default function DashboardView({
         isAiLoading={isAiLoading}
         ThinkingIndicator={ThinkingIndicator}
         onRefresh={onRefresh}
+        setAttendance={setAttendance}
       />
 
       <BrunoBar />

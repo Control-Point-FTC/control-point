@@ -13,6 +13,7 @@ interface MyStatusStripProps {
   isAiLoading: boolean;
   ThinkingIndicator: any;
   onRefresh: () => void;
+  setAttendance?: (fn: (prev: any[]) => any[]) => void;
 }
 
 /**
@@ -28,6 +29,7 @@ function MyStatusStrip({
   isAiLoading,
   ThinkingIndicator,
   onRefresh,
+  setAttendance,
 }: MyStatusStripProps) {
   const [showOut, setShowOut] = useState(false);
   const [outReason, setOutReason] = useState('');
@@ -36,12 +38,26 @@ function MyStatusStrip({
   const myStatus = attendance?.find((r: any) => r.member_id === currentUser?.id && r.date === today);
 
   const handleSelfReport = async (status: string, reason?: string) => {
+    let finalStatus = status;
+    if (status === 'O' && reason) {
+      finalStatus = 'U';
+    }
+    // Optimistic: show the new status instantly, reconcile in background.
+    const prev = attendance;
+    if (setAttendance) {
+      const optimistic = { member_id: currentUser.id, date: today, status: finalStatus, reason: reason || '' };
+      setAttendance((prev: any[]) => {
+        const idx = prev.findIndex((r: any) => r.member_id === currentUser.id && r.date === today);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...optimistic };
+          return next;
+        }
+        return [...prev, optimistic];
+      });
+    }
     setLoading(true);
     try {
-      let finalStatus = status;
-      if (status === 'O' && reason) {
-        finalStatus = 'U';
-      }
       const res = await apiFetch('/api/attendance/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -54,7 +70,11 @@ function MyStatusStrip({
         setShowOut(false);
         onRefresh();
         if (reason) notify('Absence logged. An admin can mark it excused from the Attendance view.', 'success');
+      } else if (setAttendance) {
+        setAttendance(() => prev);
       }
+    } catch {
+      if (setAttendance) setAttendance(() => prev);
     } finally {
       setLoading(false);
     }

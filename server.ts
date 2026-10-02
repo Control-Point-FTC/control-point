@@ -251,6 +251,43 @@ async function backfillMessageChannels(teamId: number): Promise<void> {
   ));
 }
 
+// Aggregate reactions for a batch of message ids.
+// Returns { [messageId]: [{ emoji, count, reacted_by_me, member_ids }] }.
+async function getMessageReactions(messageIds: number[], viewerMemberId: number): Promise<Record<number, any[]>> {
+  const out: Record<number, any[]> = {};
+  if (!messageIds.length) return out;
+  const placeholders = messageIds.map(() => "?").join(",");
+  const rows = (await dbAll(
+    `SELECT message_id, emoji, member_id FROM message_reactions WHERE message_id IN (${placeholders})`,
+    ...messageIds
+  )) as any[];
+  const byMsg: Record<number, Record<string, number[]>> = {};
+  for (const r of rows) {
+    (byMsg[r.message_id] ||= {})[r.emoji] ||= [];
+    (byMsg[r.message_id] as any)[r.emoji].push(r.member_id);
+  }
+  // Resolve custom emoji image urls in one query.
+  const customIds = [...new Set(rows.map((r) => String(r.emoji)).filter((e) => e.startsWith("custom:")).map((e) => e.slice(7)))];
+  const customMap: Record<string, string> = {};
+  if (customIds.length) {
+    const ce = (await dbAll(
+      `SELECT id, image_url FROM custom_emoji WHERE id IN (${customIds.map(() => "?").join(",")})`,
+      ...customIds
+    )) as any[];
+    for (const c of ce) customMap[`custom:${c.id}`] = c.image_url;
+  }
+  for (const [mid, emojis] of Object.entries(byMsg)) {
+    out[Number(mid)] = Object.entries(emojis).map(([emoji, memberIds]) => ({
+      emoji,
+      count: memberIds.length,
+      reacted_by_me: memberIds.includes(viewerMemberId),
+      member_ids: memberIds,
+      ...(customMap[emoji] ? { image_url: customMap[emoji] } : {}),
+    }));
+  }
+  return out;
+}
+
 // Members DDL (single source of truth — also reused by the multi-team migration below).
 // One email (account) may hold one membership row PER TEAM, hence
 // UNIQUE(team_id, email) instead of a global UNIQUE(email).
@@ -335,6 +372,41 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     content TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     FOREIGN KEY(sender_id) REFERENCES members(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS message_reactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    member_id INTEGER NOT NULL,
+    emoji TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE,
+    UNIQUE(message_id, member_id, emoji)
+  );
+
+  CREATE TABLE IF NOT EXISTS custom_emoji (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL,
+    team_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    image_url TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE,
+    FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    description TEXT,
+    category TEXT DEFAULT 'Other',
+    created_by INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE,
+    FOREIGN KEY(created_by) REFERENCES members(id)
   );
 
   CREATE TABLE IF NOT EXISTS chat_channels (
@@ -696,7 +768,21 @@ if (!messageChannelColumns.some((c: any) => c.name === 'channel_id')) {
 (await dbExec(`CREATE INDEX IF NOT EXISTS idx_messages_channel_ts ON messages(team_id, channel_id, timestamp)`));
 // YouTube rich channel details on social_profiles (link + sync populate them)
 const socialProfileColumns = (await dbAll("PRAGMA table_info(social_profiles)"));
-for (const [col, type] of [['country', 'TEXT'], ['published_at', 'TEXT'], ['description', 'TEXT'], ['custom_url', 'TEXT']] as const) {
+for (const [col, type] of [
+  // Core linking columns (absent on DBs created before the social feature matured)
+  ['external_id', 'TEXT'],
+  ['avatar_url', 'TEXT'],
+  ['access_token', 'TEXT'],
+  ['refresh_token', 'TEXT'],
+  ['token_expires_at', 'INTEGER'],
+  ['token_status', "TEXT DEFAULT 'ok'"],
+  ['last_synced_at', 'INTEGER'],
+  // Rich YouTube channel details
+  ['country', 'TEXT'],
+  ['published_at', 'TEXT'],
+  ['description', 'TEXT'],
+  ['custom_url', 'TEXT'],
+] as const) {
   if (!socialProfileColumns.some((c: any) => c.name === col)) {
     (await dbExec(`ALTER TABLE social_profiles ADD COLUMN ${col} ${type}`));
   }
@@ -3926,6 +4012,11 @@ async function startServer() {
       WHERE ${where}
       ORDER BY m.id DESC LIMIT ?
     `, ...args, limit)) as any[];
+    // Attach aggregated reactions (one extra query for the whole page).
+    try {
+      const reacted = await getMessageReactions(msgs.map((m: any) => m.id), auth.memberId);
+      for (const m of msgs) m.reactions = reacted[m.id] || [];
+    } catch {}
     res.json(msgs.reverse());
   });
 
@@ -4230,6 +4321,222 @@ async function startServer() {
     // No broadcast for silent edit
     res.json({ success: true });
   });
+
+  // ---- Message reactions (Discord-style) ----
+  // Toggle: POST adds the reaction if absent, removes it if the user already reacted.
+  app.post("/api/messages/:id/reactions", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const messageId = parseInt(req.params.id, 10);
+      const emoji = String(req.body?.emoji || "").slice(0, 64);
+      if (!Number.isFinite(messageId) || !emoji) {
+        return res.status(400).json({ error: "Message id and emoji are required" });
+      }
+      const msg: any = await dbGet("SELECT id, team_id, channel_id FROM messages WHERE id = ?", messageId);
+      if (!msg || msg.team_id !== auth.teamId) {
+        return res.status(404).json({ error: "Message not found" });
+      }
+      // Custom emoji (custom:<id>) may only be used by their owner.
+      if (emoji.startsWith("custom:")) {
+        const ce: any = await dbGet("SELECT id, member_id FROM custom_emoji WHERE id = ?", emoji.slice(7));
+        if (!ce || ce.member_id !== auth.memberId) {
+          return res.status(403).json({ error: "That custom reaction isn't yours to use" });
+        }
+      }
+      const existing: any = await dbGet(
+        "SELECT id FROM message_reactions WHERE message_id = ? AND member_id = ? AND emoji = ?",
+        messageId, auth.memberId, emoji
+      );
+      let added: boolean;
+      if (existing) {
+        await dbRun("DELETE FROM message_reactions WHERE id = ?", existing.id);
+        added = false;
+      } else {
+        await dbRun(
+          "INSERT INTO message_reactions (message_id, member_id, emoji) VALUES (?, ?, ?)",
+          messageId, auth.memberId, emoji
+        );
+        added = true;
+      }
+      const reactions = await getMessageReactions([messageId], auth.memberId);
+      // Broadcast so every client updates live.
+      try {
+        broadcastToTeam(auth.teamId, {
+          type: "message:reaction",
+          messageId, emoji, added, memberId: auth.memberId,
+          reactions: reactions[messageId] || [],
+        });
+      } catch {}
+      res.json({ ok: true, added, reactions: reactions[messageId] || [] });
+    } catch (e: any) {
+      console.error("reaction toggle error:", e?.message);
+      res.status(500).json({ error: "Could not update reaction" });
+    }
+  });
+
+  // ---- Custom personal reactions ----
+  // Each user can upload their own reaction images in settings; only the
+  // uploader can use them (referenced as "custom:<id>" in reactions).
+  app.get("/api/chat/custom-emoji", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const rows = await dbAll(
+      "SELECT id, name, image_url, created_at FROM custom_emoji WHERE member_id = ? AND team_id = ? ORDER BY created_at",
+      auth.memberId, auth.teamId
+    );
+    res.json(rows);
+  });
+
+  app.post("/api/chat/custom-emoji", (req, res) => {
+    const single = upload.single("image");
+    single(req, res, async (err: any) => {
+      try {
+        const auth = await requireAuth(req, res);
+        if (!auth) return;
+        if (err) return res.status(400).json({ error: err.message || "Upload failed" });
+        const file = (req as any).file;
+        const name = String(req.body?.name || "").trim().slice(0, 32);
+        if (!file) return res.status(400).json({ error: "No image uploaded" });
+        if (!name) return res.status(400).json({ error: "Give your reaction a name" });
+        if (!String(file.mimetype || "").startsWith("image/")) {
+          try { fs.unlinkSync(file.path); } catch {}
+          return res.status(400).json({ error: "Upload an image file" });
+        }
+        const count: any = await dbGet(
+          "SELECT COUNT(*) AS n FROM custom_emoji WHERE member_id = ? AND team_id = ?",
+          auth.memberId, auth.teamId
+        );
+        if ((count?.n || 0) >= 25) {
+          try { fs.unlinkSync(file.path); } catch {}
+          return res.status(400).json({ error: "You have 25 custom reactions — delete one to add another" });
+        }
+        const info = await dbRun(
+          "INSERT INTO custom_emoji (member_id, team_id, name, image_url) VALUES (?, ?, ?, ?)",
+          auth.memberId, auth.teamId, name, `/uploads/${file.filename}`
+        );
+        res.json({ ok: true, id: info.lastInsertRowid, name, image_url: `/uploads/${file.filename}` });
+      } catch (e: any) {
+        console.error("custom emoji upload error:", e?.message);
+        res.status(500).json({ error: "Could not save that reaction" });
+      }
+    });
+  });
+
+  app.delete("/api/chat/custom-emoji/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const row: any = await dbGet(
+      "SELECT id, member_id, image_url FROM custom_emoji WHERE id = ? AND team_id = ?",
+      req.params.id, auth.teamId
+    );
+    if (!row || row.member_id !== auth.memberId) {
+      return res.status(404).json({ error: "Reaction not found" });
+    }
+    await dbRun("DELETE FROM message_reactions WHERE emoji = ?", `custom:${row.id}`);
+    await dbRun("DELETE FROM custom_emoji WHERE id = ?", row.id);
+    res.json({ ok: true });
+  });
+
+  // ---- Resources: team link library (replaces AI Scout) ----
+  const RESOURCE_CATEGORIES = [
+    "Game Updates", "Parts & Suppliers", "CAD & Design", "Code & Programming",
+    "Outreach", "Videos", "Community", "Other",
+  ] as const;
+
+  app.get("/api/resources", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const rows = await dbAll(
+      `SELECT r.*, m.name AS created_by_name FROM resources r
+       LEFT JOIN members m ON m.id = r.created_by
+       WHERE r.team_id = ? ORDER BY r.created_at DESC`,
+      auth.teamId
+    );
+    res.json(rows);
+  });
+
+  // Paste a blob of text (chat logs, notes) — Bruno AI extracts every link,
+  // writes a title + description, and categorizes each one.
+  app.post("/api/resources/parse", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const text = String(req.body?.text || "").slice(0, 30000);
+      if (!text.trim()) return res.status(400).json({ error: "Paste some text first" });
+      // Fast path: pull out raw URLs even before AI.
+      const urlRe = /https?:\/\/[^\s<>"')\]]+/gi;
+      const found = [...new Set((text.match(urlRe) || []).map((u) => u.replace(/[.,;!?]+$/, "")))].slice(0, 50);
+      if (!found.length) return res.status(422).json({ error: "No links found in that text" });
+      let items: any[] = found.map((url) => ({ url, title: "", description: "", category: "Other" }));
+      if (isGeminiConfigured()) {
+        try {
+          const system = `You organize a robotics team's saved link library. Given pasted text containing links, return ONLY a JSON array — no markdown fences, no commentary. Each element: {"url": string, "title": string, "description": string, "category": string}.
+Rules:
+- One element per distinct URL in the text (dedupe).
+- "title": short human title (page/site/video name); guess from surrounding text or the URL itself.
+- "description": one sentence on what the link is useful for, from context clues.
+- "category" must be exactly one of: ${RESOURCE_CATEGORIES.join(", ")}.
+- Skip image-only or tracking URLs with no useful content.`;
+          const raw = await aiGenerate(system, text.slice(0, 15000), 4096);
+          const parsed = JSON.parse(String(raw).replace(/^```(?:json)?/i, "").replace(/```$/, "").trim());
+          if (Array.isArray(parsed) && parsed.length) {
+            items = parsed
+              .filter((p: any) => p && typeof p.url === "string" && /^https?:\/\//i.test(p.url))
+              .slice(0, 50)
+              .map((p: any) => ({
+                url: p.url,
+                title: String(p.title || "").slice(0, 200),
+                description: String(p.description || "").slice(0, 500),
+                category: (RESOURCE_CATEGORIES as readonly string[]).includes(p.category) ? p.category : "Other",
+              }));
+          }
+        } catch (e: any) {
+          console.error("resources AI parse error:", e?.message);
+        }
+      }
+      res.json({ items, count: items.length });
+    } catch (e: any) {
+      console.error("resources parse error:", e?.message);
+      res.status(500).json({ error: "Could not read those links" });
+    }
+  });
+
+  app.post("/api/resources", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const items = Array.isArray(req.body?.items) ? req.body.items : [req.body];
+    const saved: any[] = [];
+    for (const it of items.slice(0, 50)) {
+      const url = String(it?.url || "").trim().slice(0, 2000);
+      if (!/^https?:\/\//i.test(url)) continue;
+      const title = String(it?.title || "").trim().slice(0, 200) || url;
+      const description = String(it?.description || "").trim().slice(0, 1000);
+      const category = (RESOURCE_CATEGORIES as readonly string[]).includes(it?.category) ? it.category : "Other";
+      const dup: any = await dbGet("SELECT id FROM resources WHERE team_id = ? AND url = ?", auth.teamId, url);
+      if (dup) continue;
+      const info = await dbRun(
+        "INSERT INTO resources (team_id, url, title, description, category, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+        auth.teamId, url, title, description, category, auth.memberId
+      );
+      saved.push({ id: info.lastInsertRowid, url, title, description, category });
+    }
+    res.json({ ok: true, saved, count: saved.length });
+  });
+
+  app.delete("/api/resources/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const row: any = await dbGet("SELECT id FROM resources WHERE id = ? AND team_id = ?", req.params.id, auth.teamId);
+    if (!row) return res.status(404).json({ error: "Not found" });
+    await dbRun("DELETE FROM resources WHERE id = ?", req.params.id);
+    res.json({ ok: true });
+  });
+
+  // ---- CAD parts: invoice import (reuses the Bruno invoice parser) ----
+  app.post("/api/cad/parts/import-invoice/parse", (req, res) =>
+    handleInvoiceParse(req, res, invoiceUpload, "file", "auth")
+  );
 
   // Notifications
   app.get("/api/notifications/:userId", async (req, res) => {
@@ -5220,7 +5527,16 @@ async function startServer() {
       await recordSocialSnapshot(info.lastInsertRowid, auth.teamId, { followers: ch.followers, likes: 0, posts: ch.posts, views: ch.views });
       res.json({ ok: true, id: info.lastInsertRowid });
     } catch (error) {
-      console.error("Error linking YouTube channel:", error);
+      // Log the full error server-side; return a safe specific message.
+      const err: any = error;
+      console.error("Error linking YouTube channel:", err?.message, String(err?.stack || "").split("\n").slice(0, 3).join(" | "));
+      const msg = String(err?.message || "");
+      if (/no such column/i.test(msg)) {
+        return res.status(500).json({ error: "Database needs an update — please try again in a minute" });
+      }
+      if (/no such table/i.test(msg)) {
+        return res.status(500).json({ error: "Database table missing — please try again in a minute" });
+      }
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -5577,8 +5893,8 @@ Rules:
     }
   }
 
-  async function handleInvoiceParse(req: any, res: any, upload: any, fieldName: string) {
-    const auth = await requirePerm(req, res, "manage_inventory");
+  async function handleInvoiceParse(req: any, res: any, upload: any, fieldName: string, perm: string = "manage_inventory") {
+    const auth = perm === "auth" ? await requireAuth(req, res) : await requirePerm(req, res, perm);
     if (!auth) return;
     if (aiRateLimitExceeded(auth.memberId, "invoice-parse", 30)) {
       return res.status(429).json({ error: AI_RATE_LIMIT_MSG });

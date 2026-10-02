@@ -94,7 +94,8 @@ import {
   Loader2,
   CheckCircle2,
   Clock3,
-  ListTodo
+  ListTodo,
+  Smile
 } from 'lucide-react';
 import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
 import { motion, AnimatePresence } from 'motion/react';
@@ -140,6 +141,9 @@ import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Commun
 import { fetchScoutFeed, getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
 import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
 import { CadView } from './components/CadView';
+import ResourcesView from './components/ResourcesView';
+import MessageReactions, { postReactionToggle } from './components/MessageReactions';
+import ReactionPicker from './components/ReactionPicker';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import RolesView, { RoleBadge } from './components/RolesView';
 import {
@@ -728,6 +732,7 @@ const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code
 // (Members / Roles) instead of Roles being a top-level tab.
 const navItems = [
   { id: 'dashboard', path: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, pinned: true },
+  { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare, pinned: true },
   { id: 'stats', path: 'stats', label: 'Team Stats', icon: Trophy, group: 'Compete' },
   {
     id: 'teams', path: 'teams', label: 'Teams & Members', icon: Users, group: 'Team',
@@ -737,14 +742,12 @@ const navItems = [
     ],
   },
   { id: 'attendance', path: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
-  { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Team' },
   { id: 'calendar', path: 'calendar', label: 'Calendar', icon: Calendar, group: 'Team' },
   { id: 'comm', path: 'comm', label: 'Communication', icon: Mail, group: 'Team' },
-  { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare, group: 'Team' },
-  { id: 'budget', path: 'budget', label: 'Budget', icon: Wallet, scope: 'budget', group: 'Team' },
-  { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory', group: 'Team' },
+  { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Engineering' },
+  { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
   {
-    id: 'cad', path: 'cad', label: 'CAD', icon: Box, group: 'Team',
+    id: 'cad', path: 'cad', label: 'CAD', icon: Box, group: 'Engineering',
     children: [
       { id: 'cad', path: 'cad', label: 'Dashboard', icon: Box },
       { id: 'cad-docs', path: 'cad-docs', label: 'Onshape Docs', icon: FileBox },
@@ -753,9 +756,10 @@ const navItems = [
       { id: 'cad-parts', path: 'cad-parts', label: 'Parts List', icon: Package },
     ],
   },
-  { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code', group: 'Team' },
-  { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe, group: 'Team' },
-  { id: 'scout', path: 'scout', label: 'AI Scout', icon: Newspaper, group: 'Compete' },
+  { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code', group: 'Engineering' },
+  { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe, group: 'Outreach' },
+  { id: 'budget', path: 'budget', label: 'Budget', icon: Wallet, scope: 'budget', group: 'Outreach' },
+  { id: 'resources', path: 'resources', label: 'Resources', icon: Newspaper, group: 'Outreach' },
   { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true, pinned: true },
 ];
 // NOTE: 'profile' and 'settings' are intentionally not nav items anymore —
@@ -919,7 +923,11 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !currentUser.team_id) return;
     (async () => {
-      const ch = await fetchJsonStandalone('/api/chat/channels');
+      // Fetch channels and categories concurrently — they don't depend on each other.
+      const [ch, cats] = await Promise.all([
+        fetchJsonStandalone('/api/chat/channels'),
+        fetchJsonStandalone('/api/chat/categories').catch(() => null),
+      ]);
       if (Array.isArray(ch) && ch.length > 0) {
         setChannels(ch);
         setActiveChannelId((prev) => {
@@ -928,7 +936,6 @@ export default function App() {
           return general ? general.id : null;
         });
       }
-      const cats = await fetchJsonStandalone('/api/chat/categories').catch(() => null);
       if (Array.isArray(cats)) setChatCategories(cats);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1279,6 +1286,14 @@ export default function App() {
           if (currentUser && msg.notification.user_id === currentUser.id) {
             setNotifications(prev => [msg.notification, ...prev]);
           }
+        } else if (msg.type === 'message:reaction') {
+          // Live reaction update: swap in the server's canonical reaction list.
+          const cur = activeChannelIdRef.current;
+          setMessages((prev: any[]) => {
+            const next = prev.map((m: any) => (m.id === msg.messageId ? { ...m, reactions: msg.reactions } : m));
+            if (cur != null) msgCache.current.set(cur, next);
+            return next;
+          });
         }
       } catch (err) {
         console.error("WS Message Error:", err);
@@ -2168,7 +2183,7 @@ export default function App() {
         <Route path="/cad-parts" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/comm" element={<CommunicationView {...viewProps} />} />
         <Route path="/chat" element={<ChatView {...viewProps} />} />
-        <Route path="/scout" element={<ScoutView {...viewProps} />} />
+        <Route path="/resources" element={<ResourcesView />} />
         <Route path="/bruno" element={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />
         <Route path="/profile" element={<ProfileView {...viewProps} />} />
         <Route path="/settings" element={<SettingsView {...viewProps} hasPerm={hasPerm} />} />
@@ -4943,13 +4958,32 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
   const handleSave = async () => {
     if (!form.title.trim() || !form.date) return;
     const payload = { ...form, team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id };
-    if (editingId) {
-      await apiFetch(`/api/events/${editingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    } else {
-      await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    }
     setShowModal(false);
-    refresh.events();
+    // Optimistic: upsert immediately, reconcile with server in background.
+    const prev = events;
+    if (editingId) {
+      const id = editingId;
+      setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, ...payload } : e)));
+      try {
+        const res = await apiFetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error();
+        refresh.events();
+      } catch {
+        setEvents(prev);
+        notify('Could not save event — try again.', 'error');
+      }
+    } else {
+      const tempId = `temp-${Date.now()}`;
+      setEvents((es: any[]) => [...es, { ...payload, id: tempId }]);
+      try {
+        const res = await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) throw new Error();
+        refresh.events();
+      } catch {
+        setEvents((es: any[]) => es.filter((e: any) => e.id !== tempId));
+        notify('Could not save event — try again.', 'error');
+      }
+    }
   };
 
   const handleDelete = async () => {
@@ -7409,6 +7443,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   const [moveMenuFor, setMoveMenuFor] = useState<number | null>(null); // channel id with the move-to-category menu open
   const [dragChannelId, setDragChannelId] = useState<number | null>(null); // admin drag-and-drop between categories
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null); // 'cat:<id>' | 'uncat'
+  const [reactPickerFor, setReactPickerFor] = useState<number | null>(null); // message id with the reaction picker open
   const voice = useVoice();
 
   // Right-click a member in the member list: call, mention, copy ID.
@@ -7690,6 +7725,27 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
         });
         notify('Could not delete that message.', 'error');
       }
+    }
+  };
+
+  // Update a message's reactions in state (optimistic or from server/socket).
+  const handleReactionsChange = (messageId: number, reactions: any[]) => {
+    const cur = activeChannelId;
+    setMessages((prev: any[]) => {
+      const next = prev.map((m: any) => (m.id === messageId ? { ...m, reactions } : m));
+      if (cur != null) msgCache.current.set(cur, next);
+      return next;
+    });
+  };
+
+  // Pick an emoji from the picker → toggle it on the message.
+  const handlePickReaction = async (messageId: number, emoji: string) => {
+    setReactPickerFor(null);
+    try {
+      const server = await postReactionToggle(messageId, emoji);
+      handleReactionsChange(messageId, server);
+    } catch (e: any) {
+      notify(e?.message || 'Could not add reaction.', 'error');
     }
   };
 
@@ -8232,6 +8288,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); startReply(msg); }} title="Reply (R)" aria-label="Reply to message" className="p-2 text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors">
               <Reply className="w-4 h-4" />
             </button>
+            <button onClick={(e) => { e.stopPropagation(); setReactPickerFor(reactPickerFor === msg.id ? null : msg.id); }} title="Add reaction" aria-label="Add reaction" className="p-2 text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors">
+              <Smile className="w-4 h-4" />
+            </button>
             <button onClick={(e) => { e.stopPropagation(); setActiveMsgId(null); setForwardMsg(msg); }} title="Forward" aria-label="Forward message" className="p-2 text-text-muted hover:text-text-base hover:bg-text-base/[0.07] transition-colors">
               <Forward className="w-4 h-4" />
             </button>
@@ -8304,6 +8363,21 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               )}
               {msg.content && <div>{renderContent(msg.content)}</div>}
             </div>
+            <MessageReactions
+              messageId={msg.id}
+              reactions={msg.reactions || []}
+              memberId={currentUser?.id}
+              onReactionsChange={handleReactionsChange}
+              memberNames={Object.fromEntries((members || []).map((m: any) => [m.id, m.name]))}
+            />
+            {reactPickerFor === msg.id && (
+              <div className="relative z-20 mt-1">
+                <ReactionPicker
+                  onPick={(emoji: string) => handlePickReaction(msg.id, emoji)}
+                  onClose={() => setReactPickerFor(null)}
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
