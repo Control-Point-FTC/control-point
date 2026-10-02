@@ -188,6 +188,9 @@ export function streamActivitySummary(
 export interface BuildHelperMessage {
   role: 'user' | 'model';
   text: string;
+  /** Screenshots attached to a user message: sent to the AI in-memory only,
+      never persisted (see /api/ai/build-helper). */
+  images?: { mimeType: string; data: string }[];
 }
 
 /** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
@@ -319,5 +322,14 @@ export function streamBuildHelper(
 ) {
   const body: any = chatId ? { messages, chatId } : { messages };
   if (opts?.persona) body.persona = opts.persona;
+  // Screenshots ride on the latest user message; the server validates them
+  // and routes the request to the Gemini vision path.
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+  if (lastUser?.images?.length) {
+    body.images = lastUser.images
+      .filter((im) => im && typeof im.mimeType === 'string' && typeof im.data === 'string')
+      .slice(0, 2)
+      .map((im) => ({ mimeType: im.mimeType.slice(0, 64), data: im.data.slice(0, 6 * 1024 * 1024) }));
+  }
   return postStream('/api/ai/build-helper', body, onChunk);
 }

@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, ExternalLink, Sparkles, Maximize2, Plus } from 'lucide-react';
+import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
 import BrunoIcon from './BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
+import { AttachedImageStrip, filesToAttachedImages, imagesFromPaste, MAX_BRUNO_IMAGES, type AttachedImage } from './BrunoImageAttach';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
@@ -49,6 +50,15 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   const [busy, setBusy] = useState(false);
   const [chatId, setChatId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  // Screenshots attached to the next message. Cleared on send; the images
+  // travel to the AI in-memory only and are never saved anywhere.
+  const [attached, setAttached] = useState<AttachedImage[]>([]);
+
+  const addAttached = (imgs: AttachedImage[]) => {
+    if (!imgs.length) return;
+    setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
+  };
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -63,6 +73,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     setMessages([]);
     setProposalState({});
     setInput('');
+    setAttached([]);
   };
 
   // Escape closes the panel
@@ -92,10 +103,14 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
-    if (!content || busy) return;
+    if ((!content && !attached.length) || busy) return;
     setInput('');
+    const outgoing = attached;
+    setAttached([]);
     const id = await ensureChat();
-    const next: BuildHelperMessage[] = [...messages, { role: 'user', text: content }];
+    const userMsg: BuildHelperMessage = { role: 'user', text: content || 'What do you see in this screenshot?' };
+    if (outgoing.length) userMsg.images = outgoing;
+    const next: BuildHelperMessage[] = [...messages, userMsg];
     setMessages(next);
     setBusy(true);
     let agg = '';
@@ -218,6 +233,18 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 m.role === 'user' ? (
                   <div key={i} className="flex justify-end">
                     <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink text-[13px] font-medium px-3.5 py-2.5 leading-relaxed">
+                      {m.images?.length ? (
+                        <div className="flex gap-1.5 mb-2">
+                          {m.images.map((img, j) => (
+                            <img
+                              key={j}
+                              src={`data:${img.mimeType};base64,${img.data}`}
+                              alt={`Screenshot ${j + 1}`}
+                              className="w-20 h-20 rounded-lg object-cover border border-black/10"
+                            />
+                          ))}
+                        </div>
+                      ) : null}
                       {m.text}
                     </div>
                   </div>
@@ -262,17 +289,50 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 e.preventDefault();
                 send();
               }}
+              onPaste={(e) => {
+                // Screenshots paste straight into the composer.
+                imagesFromPaste(e).then((imgs) => {
+                  if (imgs.length) { e.preventDefault(); addAttached(imgs); }
+                });
+              }}
               className="p-3 border-t border-text-base/10 bg-text-base/[0.02] flex-shrink-0"
             >
-              <ChatInput
-                value={input}
-                onChange={setInput}
-                onSend={() => send()}
-                disabled={busy}
-                placeholder="Ask about mechanisms, code, strategy…"
-              />
+              <AttachedImageStrip images={attached} onRemove={(idx) => setAttached((p) => p.filter((_, j) => j !== idx))} />
+              <div className="flex gap-2 items-end">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    filesToAttachedImages(e.target.files || []).then(addAttached);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={busy || attached.length >= MAX_BRUNO_IMAGES}
+                  aria-label="Attach a screenshot"
+                  title="Attach a screenshot"
+                  className="w-10 h-10 shrink-0 rounded-xl border border-text-base/10 text-text-muted hover:text-accent hover:border-accent/40 flex items-center justify-center transition disabled:opacity-40"
+                >
+                  <ImagePlus className="w-4 h-4" />
+                </button>
+                <div className="flex-1 min-w-0">
+                  <ChatInput
+                    value={input}
+                    onChange={setInput}
+                    onSend={() => send()}
+                    disabled={busy}
+                    canSend={attached.length > 0}
+                    placeholder="Ask about mechanisms, code, strategy…"
+                  />
+                </div>
+              </div>
               <p className="text-[10px] text-text-muted/60 mt-1.5 px-1">
-                Grounded in GM0, FTC docs &amp; REV resources. Verify rules in the official manual.
+                Grounded in GM0, FTC docs &amp; REV resources. Screenshots are read once and never saved.
               </p>
             </form>
             </div>

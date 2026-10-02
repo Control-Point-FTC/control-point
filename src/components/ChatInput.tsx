@@ -3,12 +3,14 @@ import { Send } from 'lucide-react';
 
 // Multiline chat input: Enter sends, Shift+Enter inserts a newline.
 // Autogrows up to ~5 lines, then scrolls.
-export default function ChatInput({ value, onChange, onSend, disabled, placeholder }: {
+export default function ChatInput({ value, onChange, onSend, disabled, placeholder, canSend }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
   disabled?: boolean;
   placeholder?: string;
+  /** Allow sending even with empty text (e.g. an image-only message). */
+  canSend?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -22,7 +24,7 @@ export default function ChatInput({ value, onChange, onSend, disabled, placehold
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!disabled && value.trim()) onSend();
+      if (!disabled && (value.trim() || canSend)) onSend();
     }
   };
 
@@ -41,7 +43,7 @@ export default function ChatInput({ value, onChange, onSend, disabled, placehold
       />
       <button
         type="submit"
-        disabled={disabled || !value.trim()}
+        disabled={disabled || (!value.trim() && !canSend)}
         aria-label="Send"
         className="w-10 h-10 shrink-0 rounded-xl bg-accent text-accent-ink flex items-center justify-center hover:brightness-110 active:scale-95 transition disabled:opacity-40"
       >
