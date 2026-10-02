@@ -148,6 +148,15 @@ export class VoiceEngine {
   private disposed = false;
   private audioQuality: 'low' | 'medium' | 'high' = 'medium';
 
+  // Mic input-gain chain: raw mic -> GainNode -> MediaStreamDestination.
+  // Peers receive the destination track so the input-volume slider (0..2x)
+  // actually changes what others hear. The raw stream stays on micStream
+  // for the local preview / level meter.
+  private micGainNode: GainNode | null = null;
+  private micGainSrc: MediaStreamAudioSourceNode | null = null;
+  private micGainDest: MediaStreamAudioDestinationNode | null = null;
+  private micGainValue = 1;
+
   constructor(opts: VoiceEngineOptions) {
     this.selfId = opts.selfMemberId;
     this.iceServers = opts.iceServers ?? [];
@@ -461,17 +470,18 @@ export class VoiceEngine {
   async setMicStream(stream: MediaStream | null): Promise<void> {
     const old = this.micStream;
     this.micStream = stream;
-    const track = stream?.getAudioTracks()[0] ?? null;
+    const track = this.routeMicThroughGain(stream);
+    const sendStream = (track && this.micGainDest) ? this.micGainDest.stream : stream;
     for (const peer of this.peers.values()) {
       if (track && peer.micSender) {
         try {
           await peer.micSender.replaceTrack(track);
         } catch {
-          peer.micSender = peer.pc.addTrack(track, stream!);
+          peer.micSender = peer.pc.addTrack(track, sendStream!);
           void this.applyAudioBitrate(peer.micSender);
         }
       } else if (track && !peer.micSender) {
-        peer.micSender = peer.pc.addTrack(track, stream!);
+        peer.micSender = peer.pc.addTrack(track, sendStream!);
         void this.applyAudioBitrate(peer.micSender);
       } else if (!track && peer.micSender) {
         try {
@@ -484,6 +494,62 @@ export class VoiceEngine {
     }
     if (old && old !== stream) for (const t of old.getTracks()) t.stop();
     this.setupLocalAnalyser();
+  }
+
+  /**
+   * Live input-gain control (0..2, 1 = unity). Applies immediately to the
+   * gain node when one exists; otherwise stored for the next setMicStream.
+   */
+  setMicGain(volume: number): void {
+    const v = Number.isFinite(volume) ? Math.min(2, Math.max(0, volume)) : 1;
+    this.micGainValue = v;
+    const node = this.micGainNode;
+    const ctx = this.audioCtx;
+    if (node && ctx) {
+      try {
+        node.gain.setTargetAtTime(v, ctx.currentTime, 0.02);
+      } catch {
+        try {
+          node.gain.value = v;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  /**
+   * Route the mic through the gain chain. Returns the track peers should
+   * send (the destination track), or the raw track when WebAudio is
+   * unavailable. The previous source node is always disconnected first.
+   */
+  private routeMicThroughGain(stream: MediaStream | null): MediaStreamTrack | null {
+    const raw = stream?.getAudioTracks()[0] ?? null;
+    if (this.micGainSrc) {
+      try {
+        this.micGainSrc.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.micGainSrc = null;
+    }
+    if (!raw) return null;
+    const ctx = this.ensureAudioCtx();
+    if (!ctx) return raw;
+    try {
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
+      if (!this.micGainNode || !this.micGainDest) {
+        this.micGainNode = ctx.createGain();
+        this.micGainNode.gain.value = this.micGainValue;
+        this.micGainDest = ctx.createMediaStreamDestination();
+        this.micGainNode.connect(this.micGainDest);
+      }
+      this.micGainSrc = ctx.createMediaStreamSource(stream!);
+      this.micGainSrc.connect(this.micGainNode);
+      return this.micGainDest.stream.getAudioTracks()[0] ?? raw;
+    } catch {
+      return raw;
+    }
   }
 
   /** Attach/detach the local camera; addTrack triggers renegotiation when needed. */
@@ -745,6 +811,9 @@ export class VoiceEngine {
       this.analyserTimer = null;
     }
     this.teardownLocalAnalyser();
+    this.micGainSrc = null;
+    this.micGainNode = null;
+    this.micGainDest = null;
     for (const s of [this.micStream, this.cameraStream, this.screenStream]) {
       if (s) for (const t of s.getTracks()) try { t.stop(); } catch { /* ignore */ }
     }

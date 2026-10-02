@@ -6,6 +6,7 @@
 // permission prompt; labels stay empty until the user grants permission once.
 
 import type { DevicePrefs } from './types';
+import { loadDevicePrefs } from './types';
 
 export type MediaErrorCode = 'denied' | 'not-found' | 'not-supported' | 'in-use' | 'unknown';
 
@@ -173,9 +174,23 @@ export async function requestDevicePermissions(): Promise<{ microphone: Permissi
     // A combined request fails if EITHER device is unavailable, which used to
     // surface as "no microphone or camera found" even when one of them works.
     // Diagnose each device separately so the message names the real problem.
+    // The probes use the same constraints as the real mic/camera paths — a
+    // bare { audio: true } can fail on drivers that need the full constraint
+    // set, which would report a working mic as missing.
     stopStream(stream);
-    const micErr = await probeDevice({ audio: true, video: false });
-    const camErr = await probeDevice({ audio: false, video: true });
+    const prefs = loadDevicePrefs();
+    const micErr = await probeDevice({
+      audio: {
+        echoCancellation: prefs.echoCancellation,
+        noiseSuppression: prefs.noiseSuppression,
+        autoGainControl: prefs.autoGainControl,
+      },
+      video: false,
+    });
+    const camErr = await probeDevice({
+      audio: false,
+      video: { ...VIDEO_CONSTRAINTS[prefs.cameraQuality ?? 'medium'] },
+    });
     if (!micErr && !camErr) throw toMediaError(err); // transient — report the original
     if (micErr && camErr) throw toMediaError(micErr);
     throw new MediaError(

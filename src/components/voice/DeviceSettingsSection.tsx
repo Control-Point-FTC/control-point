@@ -316,17 +316,23 @@ export function DeviceSettingsSection() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="voice-mic-volume">Input volume</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="voice-mic-volume">Input volume</Label>
+            <span className="text-xs font-semibold text-text-muted tabular-nums">
+              {Math.round((devicePrefs.micVolume ?? 1) * 100)}%
+            </span>
+          </div>
           <input
             id="voice-mic-volume"
             type="range"
             min={0}
-            max={100}
+            max={200}
             value={Math.round((devicePrefs.micVolume ?? 1) * 100)}
             onChange={(e) => setDevicePrefs({ micVolume: Number(e.target.value) / 100 })}
             className="w-full accent-[#FFC700]"
             aria-valuetext={`${Math.round((devicePrefs.micVolume ?? 1) * 100)} percent`}
           />
+          <p className="text-xs text-text-muted">100% is unity — push past it to boost a quiet mic, up to 2x.</p>
         </div>
 
         <div className="divide-y divide-text-base/[0.06]">
@@ -377,7 +383,12 @@ export function DeviceSettingsSection() {
           )}
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="voice-speaker-volume">Output volume</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="voice-speaker-volume">Output volume</Label>
+            <span className="text-xs font-semibold text-text-muted tabular-nums">
+              {Math.round((devicePrefs.speakerVolume ?? 1) * 100)}%
+            </span>
+          </div>
           <input
             id="voice-speaker-volume"
             type="range"

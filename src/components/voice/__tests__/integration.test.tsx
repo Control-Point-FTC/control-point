@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => {
       this.disposed = true;
     }
     async setMicStream(_s: any) {}
+    setMicGain(_v: number) {}
     async setCameraStream(_s: any) {}
     async setScreenStream(_s: any) {}
     setDeafened(_b: boolean) {}

@@ -178,6 +178,12 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
   memberNameRef.current = memberName ?? '';
   memberAvatarRef.current = memberAvatar ?? null;
 
+  // Live input gain: the engine routes the mic through a GainNode, so the
+  // settings slider takes effect mid-call without re-acquiring the mic.
+  useEffect(() => {
+    engineRef.current?.setMicGain(prefs.micVolume ?? 1);
+  }, [prefs.micVolume]);
+
   const canModerate = useMemo(
     () => Boolean(hasPerm && (hasPerm('moderate_calls') || hasPerm('manage_voice'))),
     [hasPerm],
@@ -304,6 +310,7 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
         },
       });
       engineRef.current = engine;
+      engine.setMicGain(prefsRef.current.micVolume ?? 1);
 
       await engine.setMicStream(mic);
       if (cam) await engine.setCameraStream(cam);

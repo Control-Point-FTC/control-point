@@ -99,7 +99,7 @@ export interface DevicePrefs {
   noiseSuppression: boolean;
   echoCancellation: boolean;
   autoGainControl: boolean;
-  micVolume: number; // 0..1
+  micVolume: number; // 0..2 input gain (1 = unity, 2 = +6dB boost)
   speakerVolume: number; // 0..1
   cameraQuality?: 'low' | 'medium' | 'high'; // capture quality; defaults to 'medium'
 }
@@ -196,7 +196,7 @@ export function loadDevicePrefs(storage?: Pick<Storage, 'getItem'>): DevicePrefs
       noiseSuppression: parsed.noiseSuppression !== false,
       echoCancellation: parsed.echoCancellation !== false,
       autoGainControl: parsed.autoGainControl !== false,
-      micVolume: clamp01(parsed.micVolume, 1),
+      micVolume: clampRange(parsed.micVolume, 0, 2, 1),
       speakerVolume: clamp01(parsed.speakerVolume, 1),
       cameraQuality: ['low', 'medium', 'high'].includes(parsed.cameraQuality as any)
         ? (parsed.cameraQuality as 'low' | 'medium' | 'high')
@@ -217,9 +217,13 @@ export function saveDevicePrefs(prefs: DevicePrefs, storage?: Pick<Storage, 'set
 }
 
 function clamp01(v: unknown, fallback: number): number {
+  return clampRange(v, 0, 1, fallback);
+}
+
+function clampRange(v: unknown, min: number, max: number, fallback: number): number {
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
-  return Math.min(1, Math.max(0, n));
+  return Math.min(max, Math.max(min, n));
 }
 
 /**

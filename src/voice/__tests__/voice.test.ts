@@ -110,11 +110,15 @@ describe('device prefs load/save', () => {
     expect(store.has(VOICE_PREFS_KEY)).toBe(true);
     expect(loadDevicePrefs(storage)).toEqual(prefs);
   });
-  it('clamps volumes into 0..1 and tolerates garbage', () => {
+  it('clamps volumes into range and tolerates garbage', () => {
     saveDevicePrefs({ ...DEFAULT_DEVICE_PREFS, micVolume: 9, speakerVolume: -2 }, storage);
     const loaded = loadDevicePrefs(storage);
-    expect(loaded.micVolume).toBe(1);
+    expect(loaded.micVolume).toBe(2);
     expect(loaded.speakerVolume).toBe(0);
+  });
+  it('keeps a 2x mic boost round-tripping', () => {
+    saveDevicePrefs({ ...DEFAULT_DEVICE_PREFS, micVolume: 1.5 }, storage);
+    expect(loadDevicePrefs(storage).micVolume).toBe(1.5);
   });
   it('tolerates corrupt JSON', () => {
     store.set(VOICE_PREFS_KEY, '{not json');
