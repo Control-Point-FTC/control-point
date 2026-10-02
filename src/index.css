@@ -403,4 +403,12 @@ html.light .theme-dark .card-surface {
   [data-resize] {
     cursor: ew-resize;
   }
+  /* Prevent iOS Safari auto-zoom on input focus: any form control under 16px
+     triggers a jarring zoom. Scoped to touch devices so desktop is untouched.
+     !important wins over Tailwind text-sm etc. — this is a platform fix, not a design choice. */
+  @media (pointer: coarse) {
+    input, textarea, select {
+      font-size: 16px !important;
+    }
+  }
 }
