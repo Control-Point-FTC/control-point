@@ -151,6 +151,7 @@ import BrunoPanel from './components/BrunoPanel';
 import BrunoIcon from './components/BrunoIcon';
 import FeedbackIcon from './components/FeedbackIcon';
 import EmailImportModal from './components/EmailImport';
+import TaskCompletionDialog from './components/TaskCompletionDialog';
 import {
   WelcomeScreen,
   Walkthrough,
@@ -942,6 +943,51 @@ export default function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  // Shared task-completion proof dialog: every Done transition (dashboard,
+  // Tasks list, Kanban, context menu) opens this — the server rejects direct
+  // PATCH transitions to done, so nothing may bypass it.
+  const [completingTask, setCompletingTask] = useState<any | null>(null);
+  const [completionNotes, setCompletionNotes] = useState('');
+  const [completionFiles, setCompletionFiles] = useState<File[]>([]);
+  const [completing, setCompleting] = useState(false);
+  const openCompleteDialog = (task: any) => {
+    if (!task || task.status === 'done') return;
+    setCompletingTask(task);
+    setCompletionNotes('');
+    setCompletionFiles([]);
+  };
+  const closeCompleteDialog = () => {
+    setCompletingTask(null);
+    setCompletionNotes('');
+    setCompletionFiles([]);
+  };
+  const handleCompleteTask = async () => {
+    if (!completingTask || completing) return;
+    setCompleting(true);
+    try {
+      const form = new FormData();
+      form.append('notes', completionNotes.trim());
+      for (const f of completionFiles.slice(0, 5)) form.append('images', f);
+      const res = await apiFetch(`/api/tasks/${completingTask.id}/complete`, {
+        method: 'POST',
+        body: form,
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not complete task');
+      // Optimistic update; the WS broadcast confirms it for everyone.
+      if (d.task) {
+        setTasks((ts: any[]) => ts.map((t: any) => (t.id === d.task.id ? d.task : t)));
+      } else {
+        refresh.tasks();
+      }
+      notify('Task marked done.', 'success');
+      closeCompleteDialog();
+    } catch (e: any) {
+      notify(e?.message || 'Could not complete task.', 'error');
+    } finally {
+      setCompleting(false);
+    }
+  };
   const [budget, setBudget] = useState<BudgetItem[]>([]);
   const [outreach, setOutreach] = useState<OutreachEvent[]>([]);
   const [socialProfiles, setSocialProfiles] = useState<any[]>([]);
@@ -2122,8 +2168,9 @@ export default function App() {
       onDismissChecklist: handleChecklistDismiss,
       // Discord-style chat channels
       channels, activeChannelId, setActiveChannelId,
-      msgExhausted,
-      chatCategories,
+      msgExhausted,      chatCategories,
+      // Shared task-completion proof dialog — every Done transition opens it.
+      onRequestComplete: openCompleteDialog,
       handleCreateChannel: async (name: string, topic: string, categoryId?: number | null) => {
         const res = await apiFetch('/api/chat/channels', {
           method: 'POST',
@@ -2446,6 +2493,18 @@ export default function App() {
       <ContextMenuProvider>
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
+      {completingTask && (
+        <TaskCompletionDialog
+          task={completingTask}
+          notes={completionNotes}
+          onNotesChange={setCompletionNotes}
+          files={completionFiles}
+          onFilesChange={setCompletionFiles}
+          completing={completing}
+          onSubmit={handleCompleteTask}
+          onClose={closeCompleteDialog}
+        />
+      )}
       {/* Slim non-blocking refresh indicator (background fetchData after first load). */}
       {refreshing && !loading && (
         <div className="fixed top-0 left-0 right-0 z-[120] h-[3px] pointer-events-none" aria-hidden="true">
@@ -3202,7 +3261,7 @@ async function removeMemberFromTeam(m: any, onRefresh: () => void) {
 // Personal dashboard for students: my tasks, my attendance, upcoming events
 // Personal dashboard for students: check-in, my tasks, upcoming events, my attendance.
 // Deliberately focused — no budget, access codes, admin AI, team-wide metrics, or FTC details.
-function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading, onboardingState, onContinueSetup, onDismissChecklist }: any) {
+function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading, onboardingState, onContinueSetup, onDismissChecklist, onRequestComplete }: any) {
   const navigate = useNavigate();
   const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
   const today = format(new Date(), 'yyyy-MM-dd');
@@ -3224,8 +3283,14 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
     .slice(0, 5);
 
   const toggleTask = async (task: any) => {
-    // Optimistic: flip instantly, roll back on failure. No global spinner.
+    // Moving to done requires proof: open the shared completion dialog.
+    // (The server rejects direct PATCH transitions to done.)
     const next = task.status === 'done' ? 'todo' : 'done';
+    if (next === 'done' && onRequestComplete) {
+      onRequestComplete(task);
+      return;
+    }
+    // Optimistic: flip instantly, roll back on failure. No global spinner.
     const prev = tasks;
     setTasks((ts: any[]) => ts.map((t: any) => t.id === task.id
       ? { ...t, status: next, completed_at: next === 'done' ? new Date().toISOString() : null }
@@ -5284,7 +5349,7 @@ function defaultTeamId(teams: any[], currentUser: any): any {
   return teams.some((t: any) => String(t.id) === String(tid)) ? tid : '';
 }
 
-function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope }: any) {  const [showAddTask, setShowAddTask] = useState(false);
+function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope, onRequestComplete }: any) {  const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -5299,11 +5364,6 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const [bulkRoster, setBulkRoster] = useState<any[]>([]);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkSaving, setBulkSaving] = useState(false);
-  // Task completion proof: prompt for notes/screenshots when marking done.
-  const [completingTask, setCompletingTask] = useState<any | null>(null);
-  const [completionNotes, setCompletionNotes] = useState('');
-  const [completionFiles, setCompletionFiles] = useState<File[]>([]);
-  const [completing, setCompleting] = useState(false);
   const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
     const s = new Set(prev);
     if (on) s.add(id); else s.delete(id);
@@ -5483,14 +5543,12 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
 
   const updateStatus = async (id: number, status: string) => {
     if (pendingIds.has(id)) return;
-    // Moving to done requires proof: prompt for notes/screenshots first.
-    // The completer is auto-assigned if the task was unassigned.
+    // Moving to done requires proof: open the shared completion dialog.
+    // (The server rejects direct PATCH transitions to done.)
     if (status === 'done') {
       const task = tasks.find((t: any) => t.id === id);
-      if (task && task.status !== 'done') {
-        setCompletingTask(task);
-        setCompletionNotes('');
-        setCompletionFiles([]);
+      if (task && task.status !== 'done' && onRequestComplete) {
+        onRequestComplete(task);
         return;
       }
     }
@@ -5515,36 +5573,6 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
       notify('Could not update task — try again.', 'error');
     } finally {
       markPending(id, false);
-    }
-  };
-
-  const handleCompleteTask = async () => {
-    if (!completingTask || completing) return;
-    setCompleting(true);
-    try {
-      const form = new FormData();
-      form.append('notes', completionNotes.trim());
-      for (const f of completionFiles.slice(0, 5)) form.append('images', f);
-      const res = await apiFetch(`/api/tasks/${completingTask.id}/complete`, {
-        method: 'POST',
-        body: form,
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Could not complete task');
-      // Optimistic update; the WS broadcast will confirm.
-      if (d.task) {
-        setTasks((ts: any[]) => ts.map((t: any) => (t.id === d.task.id ? d.task : t)));
-      } else {
-        refresh.tasks();
-      }
-      notify('Task marked done.', 'success');
-      setCompletingTask(null);
-      setCompletionNotes('');
-      setCompletionFiles([]);
-    } catch (e: any) {
-      notify(e?.message || 'Could not complete task.', 'error');
-    } finally {
-      setCompleting(false);
     }
   };
 
@@ -5840,48 +5868,6 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                 <Button variant="secondary" onClick={closeBulkModal}>Close</Button>
               </div>
             )}
-          </Card>
-        </div>
-      )}
-      {completingTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title="Mark task done" className="w-full max-w-md">
-            <p className="text-sm font-semibold text-text-base -mt-2 truncate">{completingTask.title}</p>
-            {!completingTask.assigned_to ? (
-              <p className="text-xs text-text-muted">This task is unassigned — it will be assigned to you when you complete it.</p>
-            ) : null}
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-text-muted">Proof of completion</label>
-                <textarea
-                  value={completionNotes}
-                  onChange={(e: any) => setCompletionNotes(e.target.value)}
-                  rows={4}
-                  placeholder="What was done? Describe it, or paste screenshots below…"
-                  className="mt-1 w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[96px]"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-text-muted">Screenshots (optional, up to 5)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e: any) => setCompletionFiles((Array.from(e.target.files || []) as File[]).slice(0, 5))}
-                  className="mt-1 w-full text-sm text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-accent/15 file:text-accent file:font-bold file:text-xs hover:file:bg-accent/25 file:cursor-pointer"
-                />
-                {completionFiles.length > 0 ? (
-                  <p className="text-xs text-text-muted mt-1">{completionFiles.length} image{completionFiles.length === 1 ? '' : 's'} selected</p>
-                ) : null}
-              </div>
-              <div className="flex gap-2 justify-end">
-                <Button variant="secondary" onClick={() => { setCompletingTask(null); setCompletionNotes(''); setCompletionFiles([]); }} disabled={completing}>Cancel</Button>
-                <Button onClick={handleCompleteTask} disabled={completing}>
-                  {completing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                  {completing ? 'Saving…' : 'Mark done'}
-                </Button>
-              </div>
-            </div>
           </Card>
         </div>
       )}
