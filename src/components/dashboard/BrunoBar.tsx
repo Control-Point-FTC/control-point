@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Send, Sparkles, ChevronUp, Loader2 } from 'lucide-react';
-import Markdown from 'react-markdown';
+import { BrunoMarkdown } from '../BrunoMarkdown';
 import BrunoIcon from '../BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from '../ActionProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
@@ -164,13 +164,13 @@ export default function BrunoBar({ botName }: { botName?: string }) {
         <div className="border-t border-text-base/10 px-3 sm:px-4 py-3 max-h-[420px] overflow-y-auto">
           {streamingText !== null && (
             <div className="prose prose-sm prose-invert max-w-none text-text-base/85 [&_p]:my-1.5">
-              <Markdown>{stripEventBlocks(streamingText)}</Markdown>
+              <BrunoMarkdown>{stripEventBlocks(streamingText)}</BrunoMarkdown>
               <span className="inline-block w-2 h-4 bg-accent/70 animate-pulse rounded-[2px] ml-0.5 align-middle" />
             </div>
           )}
           {streamingText === null && lastReply && (
             <div className="prose prose-sm prose-invert max-w-none text-text-base/85 [&_p]:my-1.5">
-              <Markdown>{stripEventBlocks(lastReply.text)}</Markdown>
+              <BrunoMarkdown>{stripEventBlocks(lastReply.text)}</BrunoMarkdown>
             </div>
           )}
           {proposals.length > 0 && (

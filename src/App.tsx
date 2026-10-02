@@ -900,6 +900,10 @@ export default function App() {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTeamMenu, setShowTeamMenu] = useState(false);
   const [brunoPanelOpen, setBrunoPanelOpen] = useState(false);
+  // The sidebar panel's active chat, so "expand" can land the full view on
+  // the same conversation instead of an unrelated chat. Ref, not state —
+  // it's only read at expand time.
+  const brunoPanelChatRef = useRef<number | null>(null);
 
   // ---- Onboarding (welcome, tour, setup wizard, dashboard checklist) ----
   // Persisted per account (email-keyed) on the server so progress survives
@@ -3138,7 +3142,8 @@ export default function App() {
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
         onClose={() => setBrunoPanelOpen(false)}
-        onExpand={() => { setBrunoPanelOpen(false); navigate('/bruno'); }}
+        onExpand={() => { setBrunoPanelOpen(false); navigate('/bruno', { state: { chatId: brunoPanelChatRef.current } }); }}
+        onActiveChatId={(id) => { brunoPanelChatRef.current = id; }}
         currentUser={currentUser}
         botName={botName}
       />

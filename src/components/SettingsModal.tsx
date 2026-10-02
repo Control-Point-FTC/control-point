@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
-import { notify } from './dialog';
+import { notify, confirmDialog } from './dialog';
 import { PRESENCE_META, PresencePicker } from './presence';
 import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
 import { assetUrl } from '../services/api';
@@ -22,6 +22,12 @@ export interface SettingsModalProps {
 
 type Section = 'account' | 'voice' | 'team' | 'roles';
 
+/** The secret NavGPT ❤️ persona only exists for 4215 Hypnotic Robotics. */
+function navGptQualifies(teamName: any): boolean {
+  const n = String(teamName || '');
+  return /hypnotic/i.test(n) || /4215/.test(n);
+}
+
 /**
  * Discord-style settings: full-screen overlay, section nav on the left,
  * content on the right. ESC or the X closes it.
@@ -40,6 +46,7 @@ export default function SettingsModal({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [savingPersona, setSavingPersona] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Seed the forms every time the modal opens.
@@ -151,6 +158,37 @@ export default function SettingsModal({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch { /* clipboard unavailable */ }
+  };
+
+  // Secret persona: NavGPT ❤️ only exists for the qualifying team
+  // (name contains "hypnotic" or "4215"). Every other team never sees it —
+  // the toggle, the name, and the persona are invisible to them.
+  const navGptOn = navGptQualifies(team?.name) && (team?.navgpt_enabled ?? 1) === 1;
+  const togglePersona = async () => {
+    if (savingPersona) return;
+    if (navGptOn && !(await confirmDialog({
+      title: 'Turn off NavGPT ❤️?',
+      message: 'The team chatbot will go back to being Bruno — the normal persona. You can switch back to NavGPT ❤️ anytime.',
+      confirmLabel: 'Turn off',
+      cancelLabel: 'Keep NavGPT ❤️',
+      danger: true,
+    }))) return;
+    setSavingPersona(true);
+    try {
+      const res = await apiFetch('/api/team/chat-persona', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !navGptOn }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not update persona');
+      onTeamSaved({ ...team, navgpt_enabled: data.navgpt_enabled ? 1 : 0 });
+      notify(navGptOn ? 'NavGPT ❤️ is off — the chatbot is Bruno again.' : 'NavGPT ❤️ is on.', 'success');
+    } catch (e: any) {
+      notify(e?.message || 'Could not update persona', 'error');
+    } finally {
+      setSavingPersona(false);
+    }
   };
 
   const sections: { id: Section; label: string; icon: any; heading: string }[] = [
@@ -352,6 +390,40 @@ export default function SettingsModal({
                     </button>
                   </div>
                 </section>
+
+                {navGptQualifies(team?.name) && (
+                  <section>
+                    <h3 className="text-sm font-bold text-text-base mb-1">Chatbot Persona</h3>
+                    <p className="text-xs text-text-muted mb-3">Who answers in the team chatbot.</p>
+                    <div className="flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={!!navGptOn}
+                        aria-label="NavGPT ❤️"
+                        disabled={savingPersona}
+                        onClick={() => void togglePersona()}
+                        className={cn(
+                          'relative w-12 h-7 rounded-full transition-colors flex-shrink-0 disabled:opacity-50',
+                          navGptOn ? 'bg-accent' : 'bg-text-base/15 hover:bg-text-base/20'
+                        )}
+                      >
+                        <span className={cn(
+                          'absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all',
+                          navGptOn ? 'left-6' : 'left-1'
+                        )} />
+                      </button>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
+                        <p className="text-xs text-text-muted leading-relaxed">
+                          {navGptOn
+                            ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
+                            : 'Off — the chatbot is the normal Bruno. Flip the switch to bring back NavGPT ❤️.'}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+                )}
               </>
             )}
 

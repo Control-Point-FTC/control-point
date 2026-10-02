@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import { useLocation } from 'react-router-dom';
+import { BrunoMarkdown } from './BrunoMarkdown';
 import {
   Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus,
 } from 'lucide-react';
@@ -14,11 +15,12 @@ import { useBatchedStream } from './useBatchedStream';
 import { confirmDialog } from './dialog';
 import type { BrunoChat, BrunoChatMessage } from '../types/bruno';
 
-const STARTERS = [
-  'How should we design an intake for BIOBUZZ pollen?',
-  'Mecanum vs tank drive — which should we pick?',
-  'Help me write a TeleOp OpMode in Java',
-  'How do I tune PID for our lift?',
+/** Lightweight starter categories for the full-page empty state. */
+const STARTER_GROUPS: { label: string; prompts: string[] }[] = [
+  { label: 'Code', prompts: ['Help me write a TeleOp OpMode in Java', 'How do I use encoders in autonomous?'] },
+  { label: 'Build', prompts: ['How should we design an intake for BIOBUZZ pollen?', 'Mecanum vs tank drive — which should we pick?'] },
+  { label: 'Strategy', prompts: ['What should our BIOBUZZ match strategy be?', 'How do we prepare for the judges?'] },
+  { label: 'Debugging', prompts: ['How do I tune PID for our lift?', 'My robot drifts in autonomous — where do I start?'] },
 ];
 
 function timeAgo(iso?: string) {
@@ -38,7 +40,19 @@ function timeAgo(iso?: string) {
 export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const name = botName || 'Bruno';
   const [chats, setChats] = useState<BrunoChat[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
+  const location = useLocation();
+  const [activeId, setActiveId] = useState<number | null>(() => {
+    // Expanding the sidebar panel passes its chat through location state so
+    // the full view lands on the same conversation.
+    const s = (location.state as any)?.chatId;
+    return typeof s === 'number' && s > 0 ? s : null;
+  });
+  // Same, for expands that happen while the full view is already mounted.
+  useEffect(() => {
+    const s = (location.state as any)?.chatId;
+    if (typeof s === 'number' && s > 0 && s !== activeId) setActiveId(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -286,7 +300,12 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       <div
         key={chat.id}
         onClick={() => setActiveId(chat.id)}
-        className={`group w-full text-left rounded-xl border px-3 py-2.5 cursor-pointer transition-colors ${
+        role="button"
+        tabIndex={0}
+        aria-current={chat.id === activeId ? 'true' : undefined}
+        aria-label={`Open chat: ${chat.title || 'Untitled chat'}`}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveId(chat.id); } }}
+        className={`group w-full text-left rounded-xl border px-3 py-2.5 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
           chat.id === activeId
             ? 'bg-accent/10 border-accent/40'
             : 'bg-text-base/[0.03] border-text-base/[0.07] hover:border-text-base/20'
@@ -310,8 +329,10 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
           {canDelete && (
             <button
               onClick={(e) => { e.stopPropagation(); removeChat(chat); }}
-              aria-label="Delete chat"
-              className="opacity-0 group-hover:opacity-100 p-1.5 text-text-muted hover:text-rose-400 transition-all shrink-0"
+              aria-label={`Delete chat: ${chat.title || 'Untitled chat'}`}
+              title="Delete chat"
+              // Hover-only reveal doesn't exist on touch screens — always show there.
+              className="opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100 p-1.5 text-text-muted hover:text-rose-400 transition-all shrink-0"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -434,16 +455,23 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                 </p>
               </div>
               <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70 text-center">Try one</p>
-              <div className="grid gap-1.5">
-                {STARTERS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => send(s)}
-                    disabled={busy}
-                    className="text-left text-[13px] text-text-base/75 hover:text-accent bg-text-base/[0.03] hover:bg-accent/10 border border-text-base/[0.07] hover:border-accent/30 rounded-xl px-3.5 py-2.5 transition-colors disabled:opacity-50"
-                  >
-                    {s}
-                  </button>
+              <div className="grid sm:grid-cols-2 gap-x-3 gap-y-4">
+                {STARTER_GROUPS.map((g) => (
+                  <div key={g.label}>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-accent/80 mb-1.5">{g.label}</p>
+                    <div className="grid gap-1.5">
+                      {g.prompts.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => send(s)}
+                          disabled={busy}
+                          className="text-left text-[13px] text-text-base/75 hover:text-accent bg-text-base/[0.03] hover:bg-accent/10 border border-text-base/[0.07] hover:border-accent/30 rounded-xl px-3.5 py-2.5 transition-colors disabled:opacity-50"
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </div>
@@ -490,7 +518,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-4 py-2.5 text-sm text-text-base/85 leading-relaxed">
                 {stream.text ? (
-                  <Markdown>{stripEventBlocks(stream.text)}</Markdown>
+                  <BrunoMarkdown>{stripEventBlocks(stream.text)}</BrunoMarkdown>
                 ) : (
                   <span className="flex gap-1 items-center text-text-muted py-1">
                     {[0, 1, 2].map((d) => (

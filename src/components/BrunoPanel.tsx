@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
+import { BrunoMarkdown } from './BrunoMarkdown';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
@@ -23,12 +23,14 @@ const STARTERS = [
   'How do I tune PID for our lift?',
 ];
 
-export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName }: {
+export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId }: {
   open: boolean;
   onClose: () => void;
   onExpand: () => void;
   currentUser: any;
   botName?: string;
+  /** Reports the panel's current chat id upward so "expand" can land on the same conversation. */
+  onActiveChatId?: (id: number | null) => void;
 }) {
   const name = botName || 'Bruno';
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
@@ -76,6 +78,12 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     setAttached([]);
   };
 
+  // Let the parent know which conversation is active so expanding the panel
+  // into the full view can preserve it instead of opening an unrelated chat.
+  useEffect(() => {
+    onActiveChatId?.(chatId);
+  }, [chatId, onActiveChatId]);
+
   // Escape closes the panel
   useEffect(() => {
     if (!open) return;
@@ -115,11 +123,20 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     setBusy(true);
     let agg = '';
     setMessages([...next, { role: 'model', text: '' }]);
+    // Throttle streamed renders: each render re-parses the growing markdown
+    // reply, so cap re-renders at ~11/sec. The accumulator keeps every char.
+    let renderTimer: number | null = null;
+    const pushRender = () => {
+      renderTimer = null;
+      setMessages([...next, { role: 'model', text: agg }]);
+    };
     try {
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
-        setMessages([...next, { role: 'model', text: agg }]);
+        if (renderTimer === null) renderTimer = window.setTimeout(pushRender, 90);
       }, id || undefined);
+      if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
+      setMessages([...next, { role: 'model', text: agg }]);
       if (!agg.trim()) {
         setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
       }
@@ -161,26 +178,31 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-text-base font-bold text-sm leading-tight">{name}</p>
-                  <p className="text-text-muted text-[11px] leading-tight">FTC build mentor · BIOBUZZ season</p>
+                  <p className="text-text-muted text-[11px] leading-tight">FTC Java mentor · BIOBUZZ season</p>
                 </div>
                 <button
                   onClick={newChat}
                   aria-label="Start a new chat"
                   title="New chat"
                   disabled={busy}
-                  className="p-1.5 text-text-muted hover:text-accent transition-colors disabled:opacity-40"
+                  className="p-1.5 rounded-lg text-text-muted hover:text-accent transition-colors disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
                 <button
                   onClick={onExpand}
                   aria-label={`Open full ${name} view`}
-                  title="Open full view"
-                  className="p-1.5 text-text-muted hover:text-accent transition-colors"
+                  title="Open full Bruno"
+                  className="p-1.5 rounded-lg text-text-muted hover:text-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                 >
                   <Maximize2 className="w-4 h-4" />
                 </button>
-                <button onClick={onClose} aria-label="Close" className="p-1.5 text-text-muted hover:text-text-base transition-colors">
+                <button
+                  onClick={onClose}
+                  aria-label="Close Bruno panel"
+                  title="Close"
+                  className="p-1.5 rounded-lg text-text-muted hover:text-text-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                >
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -252,7 +274,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   <div key={i} className="flex justify-start">
                     <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-3.5 py-2.5 text-[13px] text-text-base/85 leading-relaxed prose-sm">
                       {m.text ? (
-                        <Markdown>{stripEventBlocks(m.text)}</Markdown>
+                        <BrunoMarkdown>{stripEventBlocks(m.text)}</BrunoMarkdown>
                       ) : (
                         <span className="flex gap-1 items-center text-text-muted">
                           {[0, 1, 2].map((d) => (

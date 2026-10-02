@@ -1,5 +1,5 @@
 import { memo, useMemo } from 'react';
-import Markdown from 'react-markdown';
+import { BrunoMarkdown } from './BrunoMarkdown';
 import { stripEventBlocks, stripSwitchBlock, extractActionProposals, type ActionProposal } from '../services/aiService';
 import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 
@@ -47,7 +47,7 @@ export const BrunoMessageRow = memo(function BrunoMessageRow({
     <div className="flex justify-start">
       <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-4 py-2.5 text-sm text-text-base/85 leading-relaxed">
         {text ? (
-          <Markdown>{stripEventBlocks(text)}</Markdown>
+          <BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown>
         ) : (
           <span className="flex gap-1 items-center text-text-muted py-1">
             {[0, 1, 2].map((d) => (
