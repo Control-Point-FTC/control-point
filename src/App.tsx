@@ -7577,15 +7577,32 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   };
 
   const handleDeleteMessage = async (msgId: number) => {
+    // Optimistic: vanish instantly like Discord does. The server hard-deletes
+    // and broadcasts message_deleted (deleted_permanently), whose socket
+    // handler is a no-op once we've already removed it. Roll back on failure.
+    const removed = (messages || []).find((m: any) => m.id === msgId);
+    const cur = activeChannelId;
+    const drop = (list: any[]) => list.filter((m: any) => m.id !== msgId);
+    setMessages((prev: any[]) => {
+      const next = drop(prev);
+      if (cur != null) msgCache.current.set(cur, next);
+      return next;
+    });
     try {
       const res = await apiFetch(`/api/messages/${msgId}`, {
         method: 'DELETE'
       });
-      if (!res.ok) {
-        console.error('Failed to delete message');
-      }
+      if (!res.ok) throw new Error('delete failed');
     } catch (error) {
       console.error('Delete error:', error);
+      if (removed) {
+        setMessages((prev: any[]) => {
+          const next = [...prev, removed].sort((a: any, b: any) => (a.id || 0) - (b.id || 0));
+          if (cur != null) msgCache.current.set(cur, next);
+          return next;
+        });
+        notify('Could not delete that message.', 'error');
+      }
     }
   };
 
@@ -9926,23 +9943,28 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
 
   const handleSilentDelete = async (messageId: number) => {
     if (await confirmDialog({ title: 'Delete message', message: 'Are you sure you want to permanently delete this message? This cannot be undone.', confirmLabel: 'Delete', danger: true })) {
+      const removed = (allMessages || []).find((m: any) => m.id === messageId);
+      setAllMessages((prev: any[]) => (prev || []).filter((m: any) => m.id !== messageId));
       try {
         const res = await apiFetch(`/api/messages/${messageId}?silent=true`, { method: 'DELETE' });
         if (res.ok) {
-          await fetchAllMessages();
           notify('Message permanently deleted.', 'success');
         } else {
-          notify('Failed to delete message.', 'error');
+          throw new Error('delete failed');
         }
       } catch (error) {
         console.error('Delete error:', error);
-        notify('Error deleting message: ' + error, 'error');
+        if (removed) setAllMessages((prev: any[]) => [...(prev || []), removed].sort((a: any, b: any) => (a.id || 0) - (b.id || 0)));
+        notify('Failed to delete message.', 'error');
       }
     }
   };
 
   const handleUpdateMessage = async () => {
     if (!editingMessage) return;
+    const prevContent = (allMessages || []).find((m: any) => m.id === editingMessage.id)?.content;
+    setAllMessages((prev: any[]) => (prev || []).map((m: any) => m.id === editingMessage.id ? { ...m, content: editingMessage.content } : m));
+    setEditingMessage(null);
     try {
       const res = await apiFetch(`/api/messages/${editingMessage.id}`, {
         method: 'PATCH',
@@ -9950,15 +9972,14 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
         body: JSON.stringify({ content: editingMessage.content })
       });
       if (res.ok) {
-        setEditingMessage(null);
-        await fetchAllMessages();
         notify('Message updated.', 'success');
       } else {
-        notify('Failed to update message.', 'error');
+        throw new Error('update failed');
       }
     } catch (error) {
       console.error('Update error:', error);
-      notify('Error updating message: ' + error, 'error');
+      setAllMessages((prev: any[]) => (prev || []).map((m: any) => m.id === editingMessage.id ? { ...m, content: prevContent } : m));
+      notify('Failed to update message.', 'error');
     }
   };
 
