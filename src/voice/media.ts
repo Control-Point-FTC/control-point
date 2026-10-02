@@ -41,7 +41,10 @@ function toMediaError(err: any): MediaError {
       return new MediaError('denied', 'Permission denied — allow microphone/camera access to join the call.');
     case 'NotFoundError':
     case 'OverconstrainedError':
-      return new MediaError('not-found', 'No microphone or camera found on this device.');
+      return new MediaError(
+        'not-found',
+        'No microphone or camera found. If you have them, check your OS privacy settings (Windows: Settings → Privacy → Microphone / Camera) and make sure no other app is using them.',
+      );
     case 'NotReadableError':
     case 'AbortError':
       return new MediaError('in-use', 'The device is already in use by another app.');
@@ -66,17 +69,27 @@ export async function enumerateDevices(): Promise<DeviceLists> {
 /** Call this only from a user gesture (join / toggle camera on). */
 export async function getMicStream(deviceId: string | undefined, prefs: DevicePrefs): Promise<MediaStream> {
   if (!hasMediaDevices()) throw new MediaError('not-supported', 'Audio capture is not supported in this browser.');
+  const audio: MediaTrackConstraints = {
+    echoCancellation: prefs.echoCancellation,
+    noiseSuppression: prefs.noiseSuppression,
+    autoGainControl: prefs.autoGainControl,
+  };
   try {
     return await navigator.mediaDevices.getUserMedia({
-      audio: {
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-        echoCancellation: prefs.echoCancellation,
-        noiseSuppression: prefs.noiseSuppression,
-        autoGainControl: prefs.autoGainControl,
-      },
+      audio: deviceId ? { ...audio, deviceId: { exact: deviceId } } : audio,
       video: false,
     });
-  } catch (err) {
+  } catch (err: any) {
+    // The saved device may be gone (unplugged, or prefs synced from another
+    // machine) — an exact deviceId then fails even though a mic exists.
+    // Retry with the default device before giving up.
+    if (deviceId && (err?.name === 'OverconstrainedError' || err?.name === 'NotFoundError')) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio, video: false });
+      } catch (retryErr) {
+        throw toMediaError(retryErr);
+      }
+    }
     throw toMediaError(err);
   }
 }
@@ -95,12 +108,22 @@ export async function getCameraStream(
   quality: VideoQuality = 'medium',
 ): Promise<MediaStream> {
   if (!hasMediaDevices()) throw new MediaError('not-supported', 'Camera capture is not supported in this browser.');
+  const video: MediaTrackConstraints = { ...VIDEO_CONSTRAINTS[quality] };
   try {
     return await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { ...(deviceId ? { deviceId: { exact: deviceId } } : {}), ...VIDEO_CONSTRAINTS[quality] },
+      video: deviceId ? { ...video, deviceId: { exact: deviceId } } : video,
     });
-  } catch (err) {
+  } catch (err: any) {
+    // Same stale-device fallback as getMicStream: retry with the default
+    // camera when the saved deviceId no longer resolves.
+    if (deviceId && (err?.name === 'OverconstrainedError' || err?.name === 'NotFoundError')) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: false, video });
+      } catch (retryErr) {
+        throw toMediaError(retryErr);
+      }
+    }
     throw toMediaError(err);
   }
 }
@@ -147,12 +170,38 @@ export async function requestDevicePermissions(): Promise<{ microphone: Permissi
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
   } catch (err) {
-    throw toMediaError(err);
+    // A combined request fails if EITHER device is unavailable, which used to
+    // surface as "no microphone or camera found" even when one of them works.
+    // Diagnose each device separately so the message names the real problem.
+    stopStream(stream);
+    const micErr = await probeDevice({ audio: true, video: false });
+    const camErr = await probeDevice({ audio: false, video: true });
+    if (!micErr && !camErr) throw toMediaError(err); // transient — report the original
+    if (micErr && camErr) throw toMediaError(micErr);
+    throw new MediaError(
+      'not-found',
+      micErr
+        ? 'Microphone is ready, but no camera was found. Check Windows Settings → Privacy → Camera, and make sure no other app is using it.'
+        : 'Camera is ready, but no microphone was found. Check Windows Settings → Privacy → Microphone, and make sure no other app is using it.',
+    );
   } finally {
     stopStream(stream);
   }
   const [microphone, camera] = await Promise.all([queryPermission('microphone'), queryPermission('camera')]);
   return { microphone, camera };
+}
+
+/** Try to acquire (then immediately release) a device set. Returns null on success, the MediaError on failure. */
+async function probeDevice(constraints: MediaStreamConstraints): Promise<MediaError | null> {
+  let s: MediaStream | null = null;
+  try {
+    s = await navigator.mediaDevices.getUserMedia(constraints);
+    return null;
+  } catch (err) {
+    return toMediaError(err);
+  } finally {
+    stopStream(s);
+  }
 }
 
 /**
