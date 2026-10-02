@@ -1123,6 +1123,34 @@ async function repairGhostRepairReferences(): Promise<void> {
 }
 await repairGhostRepairReferences();
 
+// One-time cleanup: the team-join endpoint used to grant every new student the
+// legacy 'attendance' scope by default, which the client treats as attendance
+// admin (full grid, start sessions). Members get no default scopes — strip the
+// default grant from students whose scopes are exactly that default shape.
+// Idempotent: only touches rows still carrying the untouched default.
+try {
+  const rows = (await dbAll(
+    "SELECT id, scopes FROM members WHERE account_type = 'student' AND COALESCE(is_active, 1) = 1 AND scopes IS NOT NULL AND scopes != '' AND scopes != '[]'"
+  )) as any[];
+  let cleaned = 0;
+  for (const r of rows) {
+    let s: any = r.scopes;
+    try {
+      while (typeof s === 'string') {
+        const p = JSON.parse(s);
+        if (typeof p === 'string') s = p; else { s = p; break; }
+      }
+    } catch { continue; }
+    if (Array.isArray(s) && s.length === 1 && s[0] === 'attendance') {
+      await dbRun("UPDATE members SET scopes = ? WHERE id = ?", JSON.stringify([]), r.id);
+      cleaned++;
+    }
+  }
+  if (cleaned) console.log(`[DB Migration] cleared default 'attendance' scope from ${cleaned} student member(s)`);
+} catch (e) {
+  console.error('[DB Migration] default-scope cleanup failed:', e);
+}
+
 function generateAccessCode(): string {
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // unambiguous chars only
   const bytes = crypto.getRandomValues(new Uint8Array(8));
@@ -2812,11 +2840,13 @@ async function startServer() {
     } else {
       // New membership: carry the account's identity (name, password hash,
       // linked providers) so sign-in keeps working everywhere.
+      // NOTE: members get NO default scopes — permissions come from roles
+      // (the "Member" system role) or explicit admin grants via Edit scopes.
       const src = (await dbGet("SELECT * FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any;
       const info = (await dbRun(
         "INSERT INTO members (team_id, name, role, email, password, avatar_url, is_setup, account_type, scopes, google_id, discord_id, github_id) VALUES (?, ?, ?, ?, ?, ?, 1, 'student', ?, ?, ?, ?)",
         team.id, src?.name || email.split("@")[0], "Member", email, src?.password || null, src?.avatar_url || null,
-        JSON.stringify(['attendance']), src?.google_id || null, src?.discord_id || null, src?.github_id || null
+        JSON.stringify([]), src?.google_id || null, src?.discord_id || null, src?.github_id || null
       )) as any;
       row = (await dbGet("SELECT * FROM members WHERE id = ?", info.lastInsertRowid)) as any;
       await ensureRolesSeeded(team.id);
