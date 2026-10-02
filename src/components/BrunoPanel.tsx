@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, ExternalLink, Sparkles, Maximize2 } from 'lucide-react';
+import { X, ExternalLink, Sparkles, Maximize2, Plus } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
@@ -48,7 +48,6 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [chatId, setChatId] = useState<number | null>(null);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,29 +55,15 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, open]);
 
-  // Resume the user's most recent chat when the panel first opens
-  useEffect(() => {
-    if (!open || historyLoaded) return;
-    setHistoryLoaded(true);
-    (async () => {
-      try {
-        const res = await apiFetch('/api/bruno/chats');
-        if (!res.ok) return;
-        const list = await res.json();
-        const mine = currentUser ? list.filter((c: any) => c.member_id === currentUser.id) : list;
-        const recent = mine[0];
-        if (!recent) return;
-        setChatId(recent.id);
-        const r2 = await apiFetch(`/api/bruno/chats/${recent.id}`);
-        if (r2.ok) {
-          const data = await r2.json();
-          setMessages((data.messages || []).map((m: any) => ({ role: m.role, text: m.text })));
-        }
-      } catch {
-        /* fall back to ephemeral */
-      }
-    })();
-  }, [open, historyLoaded, currentUser]);
+  // Every panel open starts a FRESH chat — never resume the previous one.
+  // Past chats keep their auto-titles and stay available in the full view.
+  const newChat = () => {
+    if (busy) return;
+    setChatId(null);
+    setMessages([]);
+    setProposalState({});
+    setInput('');
+  };
 
   // Escape closes the panel
   useEffect(() => {
@@ -163,6 +148,15 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   <p className="text-text-base font-bold text-sm leading-tight">{name}</p>
                   <p className="text-text-muted text-[11px] leading-tight">FTC build mentor · BIOBUZZ season</p>
                 </div>
+                <button
+                  onClick={newChat}
+                  aria-label="Start a new chat"
+                  title="New chat"
+                  disabled={busy}
+                  className="p-1.5 text-text-muted hover:text-accent transition-colors disabled:opacity-40"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
                 <button
                   onClick={onExpand}
                   aria-label={`Open full ${name} view`}
