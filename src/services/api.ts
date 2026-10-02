@@ -79,6 +79,12 @@ export function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Respo
   const headers = new Headers(rest.headers || undefined);
   const sid = getStoredSessionId();
   if (sid && !headers.has('X-Session-ID')) headers.set('X-Session-ID', sid);
+  // Default to JSON for string bodies (JSON.stringify payloads). FormData /
+  // Blob / URLSearchParams bodies are left alone — fetch sets their content
+  // type automatically, and an explicit header is never overridden.
+  if (typeof rest.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   let signal = rest.signal;
   if (timeoutMs != null && !signal) {
     try {
