@@ -2911,7 +2911,7 @@ export default function App() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: 10 }}
                     className={cn(
-                      "glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
+                      "dropdown-surface rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
                       isMobile
                         ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
                         : "absolute right-0 mt-2 w-80"
@@ -2963,7 +2963,7 @@ export default function App() {
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
                       className={cn(
-                        "glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
+                        "dropdown-surface rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
                         isMobile
                           ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
                           : "absolute right-0 mt-2 w-56"
@@ -3041,7 +3041,7 @@ export default function App() {
                       exit={{ opacity: 0, y: 8 }}
                       transition={{ duration: 0.15, ease: 'easeOut' }}
                       className={cn(
-                        "glass rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
+                        "dropdown-surface rounded-2xl border border-text-base/10 shadow-2xl overflow-hidden z-50",
                         isMobile
                           ? "fixed left-3 right-3 top-[calc(60px+env(safe-area-inset-top))] w-auto"
                           : "absolute right-0 mt-2 w-52"
