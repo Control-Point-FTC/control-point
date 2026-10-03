@@ -22,7 +22,7 @@ set -euo pipefail
 APP_DIR="/opt/control-point"
 APP_USER="controlpoint"
 APP_PORT="3000"
-REPO_URL="${REPO_URL:-https://github.com/sushilm20/control-point.git}"
+REPO_URL="${REPO_URL:-https://github.com/Control-Point-FTC/control-point.git}"
 DOMAIN="${DOMAIN:-tryctrlpoint.org}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
 ACME_ROOT="/var/www/certbot"
@@ -116,14 +116,19 @@ EOF
 systemctl daemon-reload
 systemctl enable control-point
 
-# Only request www.$DOMAIN when its DNS actually points at this VM, so a
+# Only request www.$DOMAIN when one of its A records points at this VM, so a
 # missing www record doesn't fail certificate validation for the apex.
 SERVER_NAMES="$DOMAIN"
 CERT_DOMAINS=(-d "$DOMAIN")
-if [ "$(getent ahostsv4 "www.$DOMAIN" | awk 'NR==1{print $1}')" = "$PUBLIC_IP" ]; then
+if getent ahostsv4 "www.$DOMAIN" | awk '{print $1}' | grep -qxF "$PUBLIC_IP"; then
   SERVER_NAMES="$DOMAIN www.$DOMAIN"
   CERT_DOMAINS+=(-d "www.$DOMAIN")
 fi
+
+cert_covers_www() {
+  openssl x509 -noout -ext subjectAltName -in "$CERT_DIR/fullchain.pem" 2>/dev/null \
+    | grep -qF "DNS:www.$DOMAIN"
+}
 
 # Writes the nginx site. With a certificate present the HTTPS config is written
 # directly (port 80 only serves ACME challenges + redirects), so a re-run never
@@ -158,6 +163,9 @@ map \$http_upgrade \$connection_upgrade {
 
 EOF
     if [ -f "$CERT_DIR/fullchain.pem" ]; then
+      # Serve www over HTTPS only if the certificate actually covers it.
+      local tls_names="$DOMAIN"
+      cert_covers_www && tls_names="$DOMAIN www.$DOMAIN"
       cat <<EOF
 server {
     listen 80 default_server;
@@ -172,7 +180,7 @@ server {
     # "listen ... http2" (not "http2 on;") so this works on nginx < 1.25 (Ubuntu 22.04/24.04).
     listen 443 ssl http2 default_server;
     listen [::]:443 ssl http2 default_server;
-    server_name $SERVER_NAMES;
+    server_name $tls_names;
 
     ssl_certificate     $CERT_DIR/fullchain.pem;
     ssl_certificate_key $CERT_DIR/privkey.pem;
@@ -221,6 +229,15 @@ if [ ! -f "$CERT_DIR/fullchain.pem" ] && [ -n "$CERTBOT_EMAIL" ]; then
     -m "$CERTBOT_EMAIL" --cert-name "$DOMAIN" "${CERT_DOMAINS[@]}" \
     --deploy-hook "systemctl reload nginx"
   write_nginx_site
+elif [ -f "$CERT_DIR/fullchain.pem" ] && [ ${#CERT_DOMAINS[@]} -gt 2 ] && ! cert_covers_www; then
+  # www was pointed here after the first certificate was issued; expand it.
+  echo "==> Expanding TLS certificate to include www.$DOMAIN…"
+  if certbot certonly --webroot -w "$ACME_ROOT" --non-interactive --expand \
+      --cert-name "$DOMAIN" "${CERT_DOMAINS[@]}" --deploy-hook "systemctl reload nginx"; then
+    write_nginx_site
+  else
+    echo "WARNING: could not add www.$DOMAIN to the certificate; serving the apex only over HTTPS." >&2
+  fi
 fi
 
 if [ -f "$CERT_DIR/fullchain.pem" ]; then
