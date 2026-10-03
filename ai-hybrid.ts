@@ -25,7 +25,7 @@
 // https://console.groq.com/keys). Optional: GROQ_MODEL to pick a model
 // (default: openai/gpt-oss-120b). For Fireworks: FIREWORKS_API_KEY
 // (https://fireworks.ai) and optional FIREWORKS_MODEL
-// (default: accounts/fireworks/models/llama-v3p1-70b-instruct).
+// (default: accounts/fireworks/models/glm-5p3-flash).
 // Until a chat key is set, everything routes to Gemini exactly as before —
 // deploying this is safe before the keys exist.
 
@@ -47,7 +47,7 @@ const GROQ_USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 const FIREWORKS_API_BASE = "https://api.fireworks.ai/inference/v1";
-const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/models/llama-v3p1-70b-instruct";
+const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p3-flash";
 const FIREWORKS_TIMEOUT_MS = 90_000;
 
 export type AIProvider = "groq" | "fireworks" | "gemini";
