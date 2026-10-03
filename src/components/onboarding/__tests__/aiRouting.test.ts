@@ -8,21 +8,28 @@ import {
   routeChatRequest,
   needsWebSearch,
   isGroqConfigured,
+  isFireworksConfigured,
   isGroqQuotaError,
+  isFireworksQuotaError,
   extractGroqUsage,
   aiChat,
   GROQ_QUOTA_EXHAUSTED_MSG,
+  FIREWORKS_QUOTA_EXHAUSTED_MSG,
 } from '../../../../ai-hybrid';
 
 const GROQ_KEY_BACKUP = process.env.GROQ_API_KEY;
+const FIREWORKS_KEY_BACKUP = process.env.FIREWORKS_API_KEY;
 
 beforeEach(() => {
   process.env.GROQ_API_KEY = 'test-key';
+  delete process.env.FIREWORKS_API_KEY;
 });
 
 afterEach(() => {
   if (GROQ_KEY_BACKUP === undefined) delete process.env.GROQ_API_KEY;
   else process.env.GROQ_API_KEY = GROQ_KEY_BACKUP;
+  if (FIREWORKS_KEY_BACKUP === undefined) delete process.env.FIREWORKS_API_KEY;
+  else process.env.FIREWORKS_API_KEY = FIREWORKS_KEY_BACKUP;
 });
 
 describe('isGroqConfigured', () => {
@@ -106,6 +113,68 @@ describe('routeChatRequest', () => {
     const r = routeChatRequest({ text: 'what is the latest FTC news' });
     expect(r.provider).toBe('gemini');
     expect(r.grounded).toBe(true);
+  });
+
+  it('routes ordinary chat to Fireworks when Groq is not configured but Fireworks is', () => {
+    delete process.env.GROQ_API_KEY;
+    process.env.FIREWORKS_API_KEY = 'fw-test-key';
+    const r = routeChatRequest({ text: 'hey bruno, how are you' });
+    expect(r.provider).toBe('fireworks');
+    expect(r.grounded).toBe(false);
+  });
+
+  it('prefers Groq over Fireworks in hybrid when both are configured', () => {
+    process.env.FIREWORKS_API_KEY = 'fw-test-key';
+    const r = routeChatRequest({ text: 'hey bruno, how are you' });
+    expect(r.provider).toBe('groq');
+  });
+
+  it('routes to Fireworks on owner override (forceProvider: fireworks)', () => {
+    process.env.FIREWORKS_API_KEY = 'fw-test-key';
+    const r = routeChatRequest({ text: 'hey bruno, how are you', forceProvider: 'fireworks' });
+    expect(r.provider).toBe('fireworks');
+    expect(r.grounded).toBe(false);
+  });
+
+  it('falls back to Gemini on owner Fireworks override when the key is missing', () => {
+    const r = routeChatRequest({ text: 'hey bruno, how are you', forceProvider: 'fireworks' });
+    expect(r.provider).toBe('gemini');
+    expect(r.grounded).toBe(false);
+  });
+
+  it('routes to Gemini on owner override (forceProvider: gemini)', () => {
+    process.env.FIREWORKS_API_KEY = 'fw-test-key';
+    const r = routeChatRequest({ text: 'hey bruno, how are you', forceProvider: 'gemini' });
+    expect(r.provider).toBe('gemini');
+    expect(r.grounded).toBe(false);
+  });
+});
+
+describe('isFireworksConfigured', () => {
+  it('is true when FIREWORKS_API_KEY is set', () => {
+    process.env.FIREWORKS_API_KEY = 'fw-test-key';
+    expect(isFireworksConfigured()).toBe(true);
+  });
+
+  it('is false when the key is missing', () => {
+    expect(isFireworksConfigured()).toBe(false);
+  });
+});
+
+describe('isFireworksQuotaError', () => {
+  it('detects Fireworks 429 credit-exhaustion errors', () => {
+    expect(isFireworksQuotaError(new Error('Fireworks API error 429: {"error":"credits exhausted"}'))).toBe(true);
+  });
+
+  it('does not confuse Groq errors for Fireworks errors', () => {
+    expect(isFireworksQuotaError(new Error('Groq API error 429: rate_limit_exceeded'))).toBe(false);
+    expect(isFireworksQuotaError(new Error('Fireworks API error 401: bad key'))).toBe(false);
+  });
+});
+
+describe('FIREWORKS_QUOTA_EXHAUSTED_MSG', () => {
+  it('explains the fix is a credit top-up', () => {
+    expect(FIREWORKS_QUOTA_EXHAUSTED_MSG).toMatch(/top-up|credits/i);
   });
 });
 

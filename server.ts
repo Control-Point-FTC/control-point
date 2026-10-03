@@ -64,7 +64,9 @@ import {
   aiChat,
   isGeminiConfigured,
   isGroqQuotaError,
+  isFireworksQuotaError,
   GROQ_QUOTA_EXHAUSTED_MSG,
+  FIREWORKS_QUOTA_EXHAUSTED_MSG,
 } from "./ai-hybrid.js";
 import {
   youtubeApi as youtubeApiImpl,
@@ -7654,8 +7656,9 @@ Rules:
         } catch (err: any) {
           console.error("AI build-helper stream error:", err);
           const groqQuota = isGroqQuotaError(err);
-          const quota = groqQuota || isQuotaError(err);
-          const quotaMsg = groqQuota ? GROQ_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
+          const fireworksQuota = isFireworksQuotaError(err);
+          const quota = groqQuota || fireworksQuota || isQuotaError(err);
+          const quotaMsg = groqQuota ? GROQ_QUOTA_EXHAUSTED_MSG : fireworksQuota ? FIREWORKS_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
           // Track the attempt even on failure so the owner dashboard reflects
           // real usage during an upstream outage (0 tokens — nothing was generated).
           logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (err as any)?.aiProvider || "unknown");
@@ -7690,10 +7693,12 @@ Rules:
     } catch (error: any) {
       console.error("AI build-helper error:", error);
       const groqQuota = isGroqQuotaError(error);
-      const quota = groqQuota || isQuotaError(error);
+      const fireworksQuota = isFireworksQuotaError(error);
+      const quota = groqQuota || fireworksQuota || isQuotaError(error);
       if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (error as any)?.aiProvider || "unknown");
       if (quota) {
-        res.status(429).json({ error: "AI quota exhausted", result: groqQuota ? GROQ_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG });
+        const quotaMsg = groqQuota ? GROQ_QUOTA_EXHAUSTED_MSG : fireworksQuota ? FIREWORKS_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
+        res.status(429).json({ error: "AI quota exhausted", result: quotaMsg });
       } else {
         res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });
       }

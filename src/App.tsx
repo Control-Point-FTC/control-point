@@ -10870,9 +10870,10 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
       <Card title="AI Configuration (Max Tokens)" icon={Bolt}>
         <div className="space-y-1 mb-4">
           <label className="text-xs font-bold text-text-muted uppercase">Chat provider</label>
-          <div className="grid grid-cols-2 gap-1.5 max-w-md" role="radiogroup" aria-label="Chat provider">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 max-w-xl" role="radiogroup" aria-label="Chat provider">
             {([
               { id: 'hybrid', label: 'Hybrid', hint: 'Groq free tier + Gemini for research' },
+              { id: 'fireworks', label: 'Fireworks', hint: 'Fireworks credits for chat + Gemini for research' },
               { id: 'gemini', label: 'Gemini only', hint: 'All chat via Gemini (paid)' },
             ] as const).map((p) => (
               <button
