@@ -3907,7 +3907,66 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
         <Button onClick={() => setShowAddMember(true)}><Plus className="w-4 h-4" /> Add Member</Button>
       </div>
 
-      <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
+      {/* Mobile: stacked cards. A wide table inside an overflow-x container
+          traps vertical swipe gestures on touch, making the page feel
+          unscrollable. */}
+      <div className="md:hidden space-y-3">
+        {members.map((m: any) => (
+          <div key={m.id} data-cm-type="member-team" data-cm-id={m.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4">
+            <div className="flex items-center gap-3">
+              <AvatarWithPresence user={m} size="sm" presence={m.presence} />
+              <div className="min-w-0 flex-1">
+                <p className="text-text-base font-semibold truncate">{m.name}</p>
+                <span className="inline-flex items-center gap-1.5 text-xs text-text-muted mt-0.5">
+                  <PresenceDot presence={m.presence} className="w-2 h-2 !border-0" />
+                  {PRESENCE_META[m.presence]?.label || 'Offline'}
+                </span>
+              </div>
+              {isAdmin && (
+                <div className="flex gap-0.5 shrink-0">
+                  <button
+                    onClick={() => openEditMember(m)}
+                    className="p-2.5 text-text-muted/70 hover:text-accent transition-colors"
+                    title="Edit Member"
+                    aria-label="Edit member"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleResetPassword(m.email)}
+                    className="p-2.5 text-text-muted/70 hover:text-accent transition-colors"
+                    title="Reset Password"
+                    aria-label="Reset password"
+                  >
+                    <Lock className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => { setMemberToRemove(m); setRemoveError(''); }}
+                    className="p-2.5 text-text-muted/70 hover:text-rose-400 transition-colors"
+                    title="Remove Member"
+                    aria-label="Remove member"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+            {(m.roles || []).length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-3">
+                {(m.roles || []).map((r: any) => (
+                  <RoleBadge key={r.id} role={r} />
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-text-muted">
+              <span>Team <span className="text-text-base/80 font-medium">{m.team_name || 'N/A'}</span></span>
+              <span>Role <span className="text-text-base/80 font-medium">{m.role}</span></span>
+              <span>Board <span className="text-text-base/80 font-medium">{m.is_board ? 'Yes' : 'No'}</span></span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="hidden md:block glass rounded-2xl overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm">
           <thead className="bg-text-base/5 border-b border-text-base/10">
             <tr>
