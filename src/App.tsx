@@ -903,6 +903,17 @@ export default function App() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showTeamMenu, setShowTeamMenu] = useState(false);
+  // Dismiss header dropdowns (notifications / team / account) when the user
+  // scrolls the page — no need to tap the button again to close them.
+  useEffect(() => {
+    const dismiss = () => {
+      setShowNotifications(false);
+      setShowUserMenu(false);
+      setShowTeamMenu(false);
+    };
+    window.addEventListener('scroll', dismiss, { passive: true });
+    return () => window.removeEventListener('scroll', dismiss);
+  }, []);
   const [brunoPanelOpen, setBrunoPanelOpen] = useState(false);
   // The sidebar panel's active chat, so "expand" can land the full view on
   // the same conversation instead of an unrelated chat. Ref, not state —
@@ -2904,6 +2915,13 @@ export default function App() {
                 )}
               </button>
 
+              {showNotifications && (
+                <button
+                  className="fixed inset-0 z-40 cursor-default"
+                  onClick={() => setShowNotifications(false)}
+                  aria-label="Close notifications"
+                />
+              )}
               <AnimatePresence>
                 {showNotifications && (
                   <motion.div 
@@ -5330,11 +5348,15 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
           <p className="text-sm text-text-muted">Meetings, competitions, and deadlines</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Month stepper stays together as one unit so the arrows never
+              end up on different rows on narrow screens. */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Button variant="secondary" onClick={() => setCursor(new Date(year, month - 1, 1))} aria-label="Previous month"><ChevronLeft className="w-4 h-4" /></Button>
+            <span className="text-text-base font-semibold min-w-[130px] text-center text-sm sm:text-base">{monthLabel}</span>
+            <Button variant="secondary" onClick={() => setCursor(new Date(year, month + 1, 1))} aria-label="Next month"><ChevronRight className="w-4 h-4" /></Button>
+          </div>
           <Button variant="secondary" onClick={() => setCursor(new Date())}>Today</Button>
-          <Button variant="secondary" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
-          <span className="text-text-base font-semibold min-w-[150px] text-center">{monthLabel}</span>
-          <Button variant="secondary" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
-          {canManageCalendar && <Button onClick={() => openNew(todayKey)}><Plus className="w-4 h-4" /> New Event</Button>}
+          {canManageCalendar && <Button onClick={() => openNew(todayKey)} className="max-sm:flex-1"><Plus className="w-4 h-4" /> New Event</Button>}
         </div>
       </div>
 
@@ -5412,7 +5434,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md">
+          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
               {!editingId && (
                 <div className="rounded-xl border border-accent/20 bg-accent/[0.04] overflow-hidden">
