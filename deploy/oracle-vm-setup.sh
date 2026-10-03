@@ -224,13 +224,18 @@ systemctl enable nginx
 write_nginx_site
 
 if [ ! -f "$CERT_DIR/fullchain.pem" ] && [ -n "$CERTBOT_EMAIL" ]; then
-  echo "==> Requesting TLS certificate for ${CERT_DOMAINS[*]}…"
+  # Issue the apex alone first so a www validation failure (e.g. a www record
+  # with other addresses that don't serve this VM's challenge) can't block it.
+  echo "==> Requesting TLS certificate for $DOMAIN…"
   certbot certonly --webroot -w "$ACME_ROOT" --non-interactive --agree-tos \
-    -m "$CERTBOT_EMAIL" --cert-name "$DOMAIN" "${CERT_DOMAINS[@]}" \
+    -m "$CERTBOT_EMAIL" --cert-name "$DOMAIN" -d "$DOMAIN" \
     --deploy-hook "systemctl reload nginx"
   write_nginx_site
-elif [ -f "$CERT_DIR/fullchain.pem" ] && [ ${#CERT_DOMAINS[@]} -gt 2 ] && ! cert_covers_www; then
-  # www was pointed here after the first certificate was issued; expand it.
+fi
+
+if [ -f "$CERT_DIR/fullchain.pem" ] && [ ${#CERT_DOMAINS[@]} -gt 2 ] && ! cert_covers_www; then
+  # Best-effort: add www to the existing certificate. Failure keeps the
+  # apex-only cert and nginx serves only the apex over HTTPS.
   echo "==> Expanding TLS certificate to include www.$DOMAIN…"
   if certbot certonly --webroot -w "$ACME_ROOT" --non-interactive --expand \
       --cert-name "$DOMAIN" "${CERT_DOMAINS[@]}" --deploy-hook "systemctl reload nginx"; then
