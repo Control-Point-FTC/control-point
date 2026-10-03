@@ -3131,7 +3131,11 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.12, ease: 'easeOut' }}
-              className="flex flex-col flex-1 min-h-0 min-w-0"
+              // grow + shrink-0 + basis-auto (NOT flex-1): flex-1's
+              // flex-basis:0% makes Chromium under-report this wrapper's
+              // height, so the scroller's scrollHeight misses the bottom
+              // padding and the last content hides behind the mobile nav.
+              className="flex flex-col grow shrink-0 basis-auto min-w-0"
             >
               {loading ? (
                 loadError ? (
@@ -3343,8 +3347,8 @@ function CookieConsent() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-0 inset-x-0 z-50 p-4 sm:p-6">
-      <div className="glass rounded-2xl border border-text-base/10 max-w-2xl mx-auto p-5 sm:p-6 shadow-2xl">
+    <div className="fixed bottom-0 inset-x-0 z-50 p-4 sm:p-6 pointer-events-none">
+      <div className="glass rounded-2xl border border-text-base/10 max-w-2xl mx-auto p-5 sm:p-6 shadow-2xl pointer-events-auto">
         {!customizing ? (
           <>
             <h3 className="text-base font-display font-bold text-text-base mb-2">How Control Point stores data</h3>
