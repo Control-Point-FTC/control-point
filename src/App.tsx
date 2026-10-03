@@ -2881,9 +2881,11 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
+            {/* Hidden on phones: lives in the account menu instead, so the
+                page title always has room to breathe. */}
             <button
               onClick={() => setShowFeedback(true)}
-              className="p-2 text-text-muted hover:text-text-base transition-colors"
+              className="hidden sm:block p-2 text-text-muted hover:text-text-base transition-colors"
               title="Send feedback to Sushil"
             >
               <FeedbackIcon className="w-5 h-5" />
@@ -3001,7 +3003,7 @@ export default function App() {
                 )}
               </div>
             )}
-            <ThemeToggle />
+            <ThemeToggle className="hidden sm:block" />
             <button
               onClick={handleBrunoButton}
               data-onboard="header-bruno"
@@ -3063,6 +3065,15 @@ export default function App() {
                         >
                           <Sparkles className="w-[18px] h-[18px] text-accent" />
                           Setup guide
+                        </button>
+                        {/* Mobile-only: the header feedback button is hidden on
+                            phones to give the page title room. */}
+                        <button
+                          onClick={() => { setShowUserMenu(false); setShowFeedback(true); }}
+                          className="sm:hidden w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
+                        >
+                          <FeedbackIcon className="w-[18px] h-[18px] text-accent" />
+                          Send feedback
                         </button>
                         {(currentUser as any)?.account_type === 'admin' && (
                           <button
