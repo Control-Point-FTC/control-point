@@ -1367,10 +1367,21 @@ if (!(await hasColumn('teams', 'access_code'))) {
 }
 (await dbExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_access_code ON teams(access_code)"));
 
-// Secret chatbot persona (NavGPT ❤️): per-team toggle, default ON. Only has any
+// Secret chatbot persona (NavGPT ❤️): per-team toggle, default OFF. Only has any
 // effect for the qualifying team (name contains "hypnotic" or "4215").
+// They can turn it on from Settings whenever they want.
 if (!(await hasColumn('teams', 'navgpt_enabled'))) {
-  (await dbExec("ALTER TABLE teams ADD COLUMN navgpt_enabled INTEGER NOT NULL DEFAULT 1"));
+  (await dbExec("ALTER TABLE teams ADD COLUMN navgpt_enabled INTEGER NOT NULL DEFAULT 0"));
+}
+// One-time backfill (guarded by marker column, so an explicit Settings choice
+// is never overridden on later boots): existing qualifying teams were created
+// when the default was ON.
+if (!(await hasColumn('teams', 'navgpt_backfill_v1'))) {
+  await dbExec("ALTER TABLE teams ADD COLUMN navgpt_backfill_v1 INTEGER NOT NULL DEFAULT 0");
+  await dbRun(
+    "UPDATE teams SET navgpt_enabled = 0 WHERE (name LIKE '%hypnotic%' OR name LIKE '%4215%') AND navgpt_enabled <> 0"
+  );
+  await dbRun("UPDATE teams SET navgpt_backfill_v1 = 1");
 }
 
 // Feedback screenshots: optional image attached to a feedback entry.
@@ -1409,7 +1420,7 @@ function navGptQualifies(teamName: any): boolean {
 async function navGptActiveForTeam(teamId: number | null | undefined): Promise<boolean> {
   if (!teamId) return false;
   const t = (await dbGet("SELECT name, navgpt_enabled FROM teams WHERE id = ?", teamId)) as any;
-  return !!t && navGptQualifies(t.name) && (t.navgpt_enabled ?? 1) === 1;
+  return !!t && navGptQualifies(t.name) && (t.navgpt_enabled ?? 0) === 1;
 }
 
 if (!(await hasColumn('members', 'account_type'))) {
@@ -1443,7 +1454,7 @@ const orphanCount = (await dbGet(
 let defaultTeam = (await dbGet("SELECT id FROM teams ORDER BY id LIMIT 1")) as any;
 if (!defaultTeam && orphanCount && orphanCount.n > 0) {
   const code = await uniqueAccessCode();
-  const info = (await dbRun("INSERT INTO teams (name, number, access_code) VALUES (?, ?, ?)", "My Team", "", code)) as any;
+  const info = (await dbRun("INSERT INTO teams (name, number, access_code, navgpt_enabled) VALUES (?, ?, ?, 0)", "My Team", "", code)) as any;
   defaultTeam = { id: info.lastInsertRowid };
 }
 if (defaultTeam) {
@@ -2260,7 +2271,7 @@ async function startServer() {
         const identity: any = await resolveTeamIdentity(teamNumber, teamName);
         if (identity.error) return res.status(400).json({ error: identity.error });
         const code = await uniqueAccessCode();
-        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number) VALUES (?, ?, ?, ?)", identity.name, identity.number, code, identity.ftcNumber)) as any;
+        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number, navgpt_enabled) VALUES (?, ?, ?, ?, 0)", identity.name, identity.number, code, identity.ftcNumber)) as any;
         const teamId = tInfo.lastInsertRowid;
         const mInfo = (await dbRun(
           "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 1, 'admin', ?)",
@@ -2613,7 +2624,7 @@ async function startServer() {
         const identity: any = await resolveTeamIdentity(teamNumber, teamName);
         if (identity.error) return res.status(400).json({ error: identity.error });
         const code = await uniqueAccessCode();
-        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number) VALUES (?, ?, ?, ?)", identity.name, identity.number, code, identity.ftcNumber)) as any;
+        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number, navgpt_enabled) VALUES (?, ?, ?, ?, 0)", identity.name, identity.number, code, identity.ftcNumber)) as any;
         const teamId = tInfo.lastInsertRowid;
         const mInfo = (await dbRun(
           `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes, avatar_url) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?, ?)`,
@@ -2984,7 +2995,7 @@ async function startServer() {
     if (!cleanName) return res.status(400).json({ error: "Team name is required" });
     const code = await uniqueAccessCode();
     const tInfo = (await dbRun(
-      "INSERT INTO teams (name, number, access_code, accent_color, primary_color, text_color) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO teams (name, number, access_code, accent_color, primary_color, text_color, navgpt_enabled) VALUES (?, ?, ?, ?, ?, ?, 0)",
       cleanName, (number || "").trim(), code, cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)
     )) as any;
     const teamId = tInfo.lastInsertRowid;

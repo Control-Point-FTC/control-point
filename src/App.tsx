@@ -1895,7 +1895,7 @@ export default function App() {
   // Secret persona: NavGPT ❤️ — only exists for 4215 Hypnotic Robotics (default ON).
   // For every other team the chatbot is always Bruno.
   const navGptQualified = /hypnotic/i.test(activeTeamName || '') || /4215/.test(activeTeamName || '');
-  const navGptActive = navGptQualified && (activeTeam?.navgpt_enabled ?? 1) === 1;
+  const navGptActive = navGptQualified && (activeTeam?.navgpt_enabled ?? 0) === 1;
   const botName = navGptActive ? 'NavGPT ❤️' : 'Bruno';
 
   const handleLogin = async (e: React.FormEvent) => {
