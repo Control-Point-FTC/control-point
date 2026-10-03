@@ -1,6 +1,8 @@
 #!/bin/bash
 # Control Point — Oracle Cloud Always-Free VM setup (nginx + systemd).
-# Safe to re-run: every step is idempotent, and re-running redeploys the code.
+# Safe to re-run: every step is idempotent. Re-running rebuilds and restarts
+# whatever code is in $APP_DIR (git installs pull first; archive installs must
+# copy the new archive over before re-running).
 #
 # Run on a fresh Ubuntu 22.04/24.04 VM (ARM 4 OCPU / 24GB RAM, Always Free):
 #   sudo bash deploy/oracle-vm-setup.sh
@@ -10,10 +12,11 @@
 # it is used as-is. Otherwise the repo is cloned from $REPO_URL (private repos
 # need a deploy key or token in the URL).
 #
-# Optional env vars:
-#   DOMAIN="tryctrlpoint.org"   nginx server_name (www.$DOMAIN is added too)
-#   CERTBOT_EMAIL="you@x.com"   when set, requests a Let's Encrypt cert for
-#                               $DOMAIN — only do this once DNS points here
+# Optional env vars (pass them after sudo so they survive its env reset):
+#   sudo DOMAIN=tryctrlpoint.org CERTBOT_EMAIL=you@example.com bash deploy/oracle-vm-setup.sh
+#   DOMAIN          nginx server_name; www.$DOMAIN is included if its DNS points here
+#   CERTBOT_EMAIL   when set, requests a Let's Encrypt cert for $DOMAIN (agrees to
+#                   the Let's Encrypt terms) — only once DNS points at this VM
 set -euo pipefail
 
 APP_DIR="/opt/control-point"
@@ -22,16 +25,25 @@ APP_PORT="3000"
 REPO_URL="${REPO_URL:-https://github.com/sushilm20/control-point.git}"
 DOMAIN="${DOMAIN:-tryctrlpoint.org}"
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-}"
+ACME_ROOT="/var/www/certbot"
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+SITE_CONF="/etc/nginx/sites-available/control-point"
 
 echo "==> Updating system…"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
 
-echo "==> Installing base packages (nginx, git, iptables-persistent)…"
+# Earlier versions of this script used Caddy, which holds ports 80/443.
+if systemctl cat caddy.service >/dev/null 2>&1; then
+  echo "==> Disabling Caddy (replaced by nginx)…"
+  systemctl disable --now caddy || true
+fi
+
+echo "==> Installing base packages (nginx, git, certbot, iptables-persistent)…"
 echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
 echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  ca-certificates curl gnupg git nginx iptables-persistent
+  ca-certificates curl gnupg git nginx certbot iptables-persistent
 
 echo "==> Installing Node.js 22…"
 if ! command -v node >/dev/null 2>&1; then
@@ -54,10 +66,14 @@ if [ -d "$APP_DIR/.git" ]; then
 elif [ ! -f "$APP_DIR/package.json" ]; then
   rm -rf "$APP_DIR"
   git clone "$REPO_URL" "$APP_DIR"
+else
+  echo "    Using existing code in $APP_DIR (archive install — copy a new archive to update)."
 fi
+PUBLIC_IP="$(curl -fsS --max-time 5 https://ifconfig.me || hostname -I | awk '{print $1}')"
 if [ ! -f "$APP_DIR/.env" ]; then
   # Minimal env so the server starts; replace with the real production values.
-  echo "APP_URL=\"http://$(curl -fsS https://ifconfig.me || hostname -I | awk '{print $1}')\"" > "$APP_DIR/.env"
+  # This placeholder APP_URL is swapped for https://$DOMAIN once HTTPS is live.
+  echo "APP_URL=\"http://$PUBLIC_IP\"" > "$APP_DIR/.env"
 fi
 chmod 600 "$APP_DIR/.env"
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
@@ -99,22 +115,24 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable control-point
-systemctl restart control-point
 
-echo "==> Configuring nginx…"
-cat >/etc/nginx/sites-available/control-point <<EOF
-map \$http_upgrade \$connection_upgrade {
-    default upgrade;
-    ''      close;
-}
+# Only request www.$DOMAIN when its DNS actually points at this VM, so a
+# missing www record doesn't fail certificate validation for the apex.
+SERVER_NAMES="$DOMAIN"
+CERT_DOMAINS=(-d "$DOMAIN")
+if [ "$(getent ahostsv4 "www.$DOMAIN" | awk 'NR==1{print $1}')" = "$PUBLIC_IP" ]; then
+  SERVER_NAMES="$DOMAIN www.$DOMAIN"
+  CERT_DOMAINS+=(-d "www.$DOMAIN")
+fi
 
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name $DOMAIN www.$DOMAIN _;
-
-    # Chat attachments are capped at 10MB by multer; leave headroom.
-    client_max_body_size 25m;
+# Writes the nginx site. With a certificate present the HTTPS config is written
+# directly (port 80 only serves ACME challenges + redirects), so a re-run never
+# drops back to HTTP-only, even briefly.
+write_nginx_site() {
+  local proxy
+  proxy=$(cat <<EOF
+    # Largest legit request: CAD snapshot (25MiB model + 25MiB screenshot) plus multipart framing.
+    client_max_body_size 64m;
 
     location / {
         proxy_pass http://127.0.0.1:$APP_PORT;
@@ -129,33 +147,108 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
+EOF
+)
+  {
+    cat <<EOF
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+EOF
+    if [ -f "$CERT_DIR/fullchain.pem" ]; then
+      cat <<EOF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name $SERVER_NAMES _;
+
+    location /.well-known/acme-challenge/ { root $ACME_ROOT; }
+    location / { return 301 https://$DOMAIN\$request_uri; }
+}
+
+server {
+    # "listen ... http2" (not "http2 on;") so this works on nginx < 1.25 (Ubuntu 22.04/24.04).
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name $SERVER_NAMES;
+
+    ssl_certificate     $CERT_DIR/fullchain.pem;
+    ssl_certificate_key $CERT_DIR/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+$proxy
 }
 EOF
-ln -sf /etc/nginx/sites-available/control-point /etc/nginx/sites-enabled/control-point
-rm -f /etc/nginx/sites-enabled/default
-nginx -t
-systemctl enable nginx
-systemctl reload nginx || systemctl restart nginx
+    else
+      cat <<EOF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name $SERVER_NAMES _;
 
-if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-  # The nginx site was just rewritten as HTTP-only; re-apply the existing cert.
-  certbot install --nginx --non-interactive --redirect --cert-name "$DOMAIN"
-elif [ -n "$CERTBOT_EMAIL" ]; then
-  echo "==> Requesting TLS certificate for $DOMAIN…"
-  apt-get install -y -qq certbot python3-certbot-nginx
-  certbot --nginx --non-interactive --agree-tos --redirect -m "$CERTBOT_EMAIL" \
-    -d "$DOMAIN" -d "www.$DOMAIN"
+    location /.well-known/acme-challenge/ { root $ACME_ROOT; }
+
+$proxy
+}
+EOF
+    fi
+  } > "$SITE_CONF.new"
+  # Validate before swapping so a bad config never replaces a working one.
+  cp -f "$SITE_CONF" "$SITE_CONF.bak" 2>/dev/null || true
+  mv -f "$SITE_CONF.new" "$SITE_CONF"
+  if ! nginx -t; then
+    [ -f "$SITE_CONF.bak" ] && mv -f "$SITE_CONF.bak" "$SITE_CONF"
+    echo "nginx config test failed; previous config restored." >&2
+    exit 1
+  fi
+  systemctl reload nginx || systemctl restart nginx
+}
+
+echo "==> Configuring nginx…"
+mkdir -p "$ACME_ROOT"
+ln -sf "$SITE_CONF" /etc/nginx/sites-enabled/control-point
+rm -f /etc/nginx/sites-enabled/default
+systemctl enable nginx
+write_nginx_site
+
+if [ ! -f "$CERT_DIR/fullchain.pem" ] && [ -n "$CERTBOT_EMAIL" ]; then
+  echo "==> Requesting TLS certificate for ${CERT_DOMAINS[*]}…"
+  certbot certonly --webroot -w "$ACME_ROOT" --non-interactive --agree-tos \
+    -m "$CERTBOT_EMAIL" --cert-name "$DOMAIN" "${CERT_DOMAINS[@]}" \
+    --deploy-hook "systemctl reload nginx"
+  write_nginx_site
 fi
+
+if [ -f "$CERT_DIR/fullchain.pem" ]; then
+  # Swap the bootstrap http://<ip> placeholder for the real HTTPS origin so
+  # OAuth callbacks use the domain. A hand-set APP_URL is left alone.
+  sed -i -E "s#^APP_URL=\"?http://[0-9.]+\"?\$#APP_URL=\"https://$DOMAIN\"#" "$APP_DIR/.env"
+fi
+
+systemctl restart control-point
 
 echo ""
 echo "=============================================================="
-echo " Control Point is running behind nginx on port 80."
+if [ -f "$CERT_DIR/fullchain.pem" ]; then
+  echo " Control Point is live at https://$DOMAIN (nginx, HTTP → HTTPS)."
+else
+  echo " Control Point is running behind nginx on http://$PUBLIC_IP"
+  echo ""
+  echo " WARNING: HTTPS is NOT enabled — logins and messages travel in"
+  echo " plaintext. Use this for testing only until step 3 is done."
+fi
 echo ""
 echo " Remaining manual steps:"
 echo "  1) Put the real production env vars in $APP_DIR/.env, then"
 echo "       sudo systemctl restart control-point"
 echo "  2) In the OCI console, allow ingress TCP 80/443 from 0.0.0.0/0"
 echo "     in the subnet's security list."
-echo "  3) Point $DOMAIN DNS at this VM, then re-run with"
-echo "     CERTBOT_EMAIL=you@example.com to enable HTTPS."
+if [ ! -f "$CERT_DIR/fullchain.pem" ]; then
+  echo "  3) Point $DOMAIN (and optionally www.$DOMAIN) DNS at $PUBLIC_IP, then:"
+  echo "       sudo DOMAIN=$DOMAIN CERTBOT_EMAIL=you@example.com bash $APP_DIR/deploy/oracle-vm-setup.sh"
+fi
 echo "=============================================================="
