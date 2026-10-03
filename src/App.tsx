@@ -6296,7 +6296,36 @@ function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, cu
         {isAdmin && <Button onClick={openNewEntry} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Log Transaction</Button>}
       </div>
 
-      <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
+      {/* Mobile: stacked cards — same swipe-trap reason as members/roles. */}
+      <div className="md:hidden space-y-3">
+        {budget.map((item: any) => (
+          <div key={item.id} data-cm-type="budget-tx" data-cm-id={item.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-text-base font-semibold leading-snug">{item.description}</p>
+                <p className="text-xs text-text-muted mt-1">{item.category} · {item.date}</p>
+              </div>
+              <span className={cn("text-sm font-bold shrink-0", item.type === 'income' ? 'text-emerald-400' : 'text-rose-400')}>
+                {item.type === 'income' ? '+' : '-'}${item.amount.toLocaleString()}
+              </span>
+            </div>
+            {isAdmin && (
+              <div className="flex gap-1 mt-1.5">
+                <button onClick={() => openEditEntry(item)} title="Edit transaction" aria-label="Edit transaction" className="text-text-muted hover:text-accent transition-colors p-2.5 -ml-2.5">
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button onClick={() => handleDelete(item.id)} title="Delete transaction" aria-label="Delete transaction" className="text-text-muted hover:text-rose-400 transition-colors p-2.5">
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+        {!budget.length && (
+          <p className="text-xs text-text-muted/60 text-center py-6">No transactions yet</p>
+        )}
+      </div>
+      <div className="hidden md:block glass rounded-2xl overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm">
           <thead className="bg-text-base/5 border-b border-text-base/10">
             <tr>
@@ -6339,7 +6368,7 @@ function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, cu
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title={editingId ? 'Edit Transaction' : 'Log Transaction'} className="w-full max-w-md">
+          <Card title={editingId ? 'Edit Transaction' : 'Log Transaction'} className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
               <div className="flex gap-2">
                 <Button 
