@@ -10872,7 +10872,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
           <label className="text-xs font-bold text-text-muted uppercase">Chat provider</label>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 max-w-xl" role="radiogroup" aria-label="Chat provider">
             {([
-              { id: 'hybrid', label: 'Hybrid', hint: 'Groq free tier + Gemini for research' },
+              { id: 'hybrid', label: 'Hybrid', hint: 'Fireworks + Gemini for research' },
               { id: 'fireworks', label: 'Fireworks', hint: 'Fireworks credits for chat + Gemini for research' },
               { id: 'gemini', label: 'Gemini only', hint: 'All chat via Gemini (paid)' },
             ] as const).map((p) => (

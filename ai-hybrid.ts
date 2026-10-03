@@ -1,19 +1,17 @@
 // Hybrid AI provider layer for Control Point.
 //
 // Routes each Bruno chat request to the cheapest capable provider:
-//   - Groq (free tier, OpenAI-compatible API) for ordinary chat and simple
+//   - Fireworks AI (OpenAI-compatible API) for ordinary chat and simple
 //     structured actions — the high-volume path.
-//   - Fireworks AI (OpenAI-compatible API, paid credits) as an alternative
-//     chat provider — same framework as Groq, different base URL + key.
 //   - Gemini with google_search grounding for requests that need live web /
 //     current external information.
 // The router is a pure deterministic function: no model call is spent deciding
 // where to send the request (that decision is the "fast path").
 //
 // Provider framework: any OpenAI-compatible chat-completions endpoint plugs
-// in via OpenAIProviderConfig (base URL + key + model). Groq and Fireworks
-// are the two configured providers; adding another is a new config entry,
-// not new call logic.
+// in via OpenAIProviderConfig (base URL + key + model). Fireworks is the
+// configured provider; adding another is a new config entry, not new call
+// logic.
 //
 // Fallback policy: if the chat provider fails with a rate limit, server
 // error, or transport failure, the request fails over ONCE to ungrounded
@@ -21,11 +19,9 @@
 // errors (401/400) are never failed over — they indicate a bad key or bad
 // request, and hiding them would mask a real config problem.
 //
-// Setup: set GROQ_API_KEY in the environment (free at
-// https://console.groq.com/keys). Optional: GROQ_MODEL to pick a model
-// (default: openai/gpt-oss-120b). For Fireworks: FIREWORKS_API_KEY
-// (https://fireworks.ai) and optional FIREWORKS_MODEL
-// (default: accounts/fireworks/models/glm-5p3-flash).
+// Setup: set FIREWORKS_API_KEY in the environment (https://fireworks.ai)
+// and optional FIREWORKS_MODEL (default:
+// accounts/fireworks/models/glm-5p3-flash).
 // Until a chat key is set, everything routes to Gemini exactly as before —
 // deploying this is safe before the keys exist.
 
@@ -39,23 +35,16 @@ import {
   type ChatMessage,
 } from "./ai.js";
 
-const GROQ_API_BASE = "https://api.groq.com/openai/v1";
-const DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b";
-const GROQ_TIMEOUT_MS = 90_000;
-// Groq sits behind Cloudflare, which 1010-blocks non-browser user agents.
-const GROQ_USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
-
 const FIREWORKS_API_BASE = "https://api.fireworks.ai/inference/v1";
 const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p3-flash";
 const FIREWORKS_TIMEOUT_MS = 90_000;
 
-export type AIProvider = "groq" | "fireworks" | "gemini";
+export type AIProvider = "fireworks" | "gemini";
 
 /** Pluggable OpenAI-compatible chat provider. Add a config here — no new
  *  call logic needed — to support another provider (Together, OpenRouter…). */
 interface OpenAIProviderConfig {
-  id: "groq" | "fireworks";
+  id: "fireworks";
   /** Human label used in error prefixes and logs. */
   label: string;
   base: string;
@@ -67,16 +56,8 @@ interface OpenAIProviderConfig {
   extraBody?: Record<string, any>;
 }
 
-export function groqModel(): string {
-  return process.env.GROQ_MODEL || DEFAULT_GROQ_MODEL;
-}
-
 export function fireworksModel(): string {
   return process.env.FIREWORKS_MODEL || DEFAULT_FIREWORKS_MODEL;
-}
-
-export function isGroqConfigured(): boolean {
-  return !!process.env.GROQ_API_KEY;
 }
 
 export function isFireworksConfigured(): boolean {
@@ -87,31 +68,13 @@ export function isGeminiConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
 
-function groqKey(): string {
-  const key = process.env.GROQ_API_KEY;
-  if (!key) throw new Error("GROQ_API_KEY is not set");
-  return key;
-}
-
 function fireworksKey(): string {
   const key = process.env.FIREWORKS_API_KEY;
   if (!key) throw new Error("FIREWORKS_API_KEY is not set");
   return key;
 }
 
-const OPENAI_PROVIDERS: Record<"groq" | "fireworks", OpenAIProviderConfig> = {
-  groq: {
-    id: "groq",
-    label: "Groq",
-    base: GROQ_API_BASE,
-    key: groqKey,
-    model: groqModel,
-    timeoutMs: GROQ_TIMEOUT_MS,
-    userAgent: GROQ_USER_AGENT,
-    // GPT-OSS models reason before answering; keep it snappy for chat so the
-    // reasoning budget doesn't eat the reply.
-    extraBody: { reasoning_effort: "low" },
-  },
+const OPENAI_PROVIDERS: Record<"fireworks", OpenAIProviderConfig> = {
   fireworks: {
     id: "fireworks",
     label: "Fireworks",
@@ -125,7 +88,7 @@ const OPENAI_PROVIDERS: Record<"groq" | "fireworks", OpenAIProviderConfig> = {
 // --- Router ----------------------------------------------------------------
 // Explicit, deterministic routing. Deliberately biased TOWARD grounding on
 // uncertainty: a grounded Gemini answer to a simple question just costs quota,
-// but a Groq answer to a question needing current facts risks hallucination.
+// but a Fireworks answer to a question needing current facts risks hallucination.
 
 /** Patterns that strongly suggest the answer needs live external information. */
 const NEEDS_WEB_PATTERNS: RegExp[] = [
@@ -191,18 +154,14 @@ export function routeChatRequest(opts: {
     }
     return { provider: "gemini", grounded: false, reason: "owner setting: Fireworks (key missing, Gemini fallback)" };
   }
-  // Hybrid order: cheapest capable first. Groq's free tier, then Fireworks
-  // credits, then Gemini.
-  if (isGroqConfigured()) {
-    return { provider: "groq", grounded: false, reason: "ordinary chat: Groq default" };
-  }
+  // Hybrid order: Fireworks for ordinary chat, then Gemini.
   if (isFireworksConfigured()) {
-    return { provider: "fireworks", grounded: false, reason: "ordinary chat: Fireworks (Groq not configured)" };
+    return { provider: "fireworks", grounded: false, reason: "ordinary chat: Fireworks" };
   }
   return { provider: "gemini", grounded: false, reason: "no chat provider configured: Gemini fallback" };
 }
 
-// --- OpenAI-compatible provider calls (Groq, Fireworks, …) ------------------
+// --- OpenAI-compatible provider calls (Fireworks, …) ------------------
 
 function extractOpenAIText(data: any): string {
   try {
@@ -228,7 +187,7 @@ export function extractOpenAIUsage(data: any): AiUsage | null {
   }
 }
 
-/** Back-compat alias (tests + server.ts import the Groq name). */
+/** Back-compat alias (tests import the old name). */
 export const extractGroqUsage = extractOpenAIUsage;
 
 /** True when the provider rejected the call because its quota/credits are spent.
@@ -240,26 +199,10 @@ export function isOpenAIQuotaError(err: any, label: string): boolean {
   return new RegExp(label, "i").test(msg) && /rate_limit_exceeded/i.test(msg);
 }
 
-/** True when Groq rejected the call because the free-tier allowance is spent.
- *  Keeps the legacy fallback: a bare rate_limit_exceeded with no provider
- *  label counts as Groq's (from when Groq was the only OpenAI-compatible
- *  provider). */
-export function isGroqQuotaError(err: any): boolean {
-  if (isOpenAIQuotaError(err, "Groq")) return true;
-  const msg = String(err?.message || err || "");
-  return /rate_limit_exceeded/i.test(msg) && !/fireworks/i.test(msg);
-}
-
 /** True when Fireworks rejected the call because its credits are spent. */
 export function isFireworksQuotaError(err: any): boolean {
   return isOpenAIQuotaError(err, "Fireworks");
 }
-
-/** User-facing copy for Groq quota exhaustion. Plain: the fix is quota reset
- *  or billing on the Groq side, not retrying. */
-export const GROQ_QUOTA_EXHAUSTED_MSG =
-  "Bruno's free Groq allowance is used up right now — it refills on its own (usually daily). " +
-  "If this keeps happening, the team owner can add billing to the Groq API key for uninterrupted use.";
 
 /** User-facing copy for Fireworks credit exhaustion. */
 export const FIREWORKS_QUOTA_EXHAUSTED_MSG =
@@ -413,8 +356,8 @@ export async function aiChat(opts: {
   onUsage?: (u: AiUsage) => void;
   signal?: AbortSignal;
 }): Promise<AIChatResult> {
-  if (!isGroqConfigured() && !isFireworksConfigured() && !isGeminiConfigured()) {
-    throw new Error("AI not configured: set GROQ_API_KEY, FIREWORKS_API_KEY, or GEMINI_API_KEY");
+  if (!isFireworksConfigured() && !isGeminiConfigured()) {
+    throw new Error("AI not configured: set FIREWORKS_API_KEY or GEMINI_API_KEY");
   }
   const latestUser = [...opts.messages].reverse().find((m) => m.role === "user")?.text || "";
   const chatProviderSetting = await getAISetting("chat_provider", "hybrid");
@@ -437,7 +380,7 @@ export async function aiChat(opts: {
     throw err;
   };
 
-  if (route.provider === "groq" || route.provider === "fireworks") {
+  if (route.provider === "fireworks") {
     const cfg = OPENAI_PROVIDERS[route.provider];
     try {
       const text = await callOpenAIChat(cfg, {

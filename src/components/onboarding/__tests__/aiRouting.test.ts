@@ -1,46 +1,28 @@
 /**
  * Hybrid AI provider routing — the deterministic fast path that decides whether
- * a Bruno chat request goes to Groq (ordinary chat) or grounded Gemini
+ * a Bruno chat request goes to Fireworks (ordinary chat) or grounded Gemini
  * (web research). Pure functions: no model call is spent on the decision.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   routeChatRequest,
   needsWebSearch,
-  isGroqConfigured,
   isFireworksConfigured,
-  isGroqQuotaError,
   isFireworksQuotaError,
-  extractGroqUsage,
+  extractOpenAIUsage,
   aiChat,
-  GROQ_QUOTA_EXHAUSTED_MSG,
   FIREWORKS_QUOTA_EXHAUSTED_MSG,
 } from '../../../../ai-hybrid';
 
-const GROQ_KEY_BACKUP = process.env.GROQ_API_KEY;
 const FIREWORKS_KEY_BACKUP = process.env.FIREWORKS_API_KEY;
 
 beforeEach(() => {
-  process.env.GROQ_API_KEY = 'test-key';
-  delete process.env.FIREWORKS_API_KEY;
+  process.env.FIREWORKS_API_KEY = 'fw-test-key';
 });
 
 afterEach(() => {
-  if (GROQ_KEY_BACKUP === undefined) delete process.env.GROQ_API_KEY;
-  else process.env.GROQ_API_KEY = GROQ_KEY_BACKUP;
   if (FIREWORKS_KEY_BACKUP === undefined) delete process.env.FIREWORKS_API_KEY;
   else process.env.FIREWORKS_API_KEY = FIREWORKS_KEY_BACKUP;
-});
-
-describe('isGroqConfigured', () => {
-  it('is true when GROQ_API_KEY is set', () => {
-    expect(isGroqConfigured()).toBe(true);
-  });
-
-  it('is false when the key is missing', () => {
-    delete process.env.GROQ_API_KEY;
-    expect(isGroqConfigured()).toBe(false);
-  });
 });
 
 describe('needsWebSearch', () => {
@@ -71,15 +53,15 @@ describe('needsWebSearch', () => {
 });
 
 describe('routeChatRequest', () => {
-  it('routes ordinary conversation to Groq', () => {
+  it('routes ordinary conversation to Fireworks', () => {
     const r = routeChatRequest({ text: 'hey bruno, how should we organize saturday practice?' });
-    expect(r.provider).toBe('groq');
+    expect(r.provider).toBe('fireworks');
     expect(r.grounded).toBe(false);
   });
 
-  it('routes supplied event-log data to Groq — never to search', () => {
+  it('routes supplied event-log data to Fireworks — never to search', () => {
     const r = routeChatRequest({ text: 'add this to my event log: drivetrain assembled, intake in progress' });
-    expect(r.provider).toBe('groq');
+    expect(r.provider).toBe('fireworks');
     expect(r.grounded).toBe(false);
   });
 
@@ -101,49 +83,34 @@ describe('routeChatRequest', () => {
     expect(r.grounded).toBe(false);
   });
 
-  it('falls back to ungrounded Gemini when Groq is not configured', () => {
-    delete process.env.GROQ_API_KEY;
+  it('falls back to ungrounded Gemini when Fireworks is not configured', () => {
+    delete process.env.FIREWORKS_API_KEY;
     const r = routeChatRequest({ text: 'hey bruno, how are you' });
     expect(r.provider).toBe('gemini');
     expect(r.grounded).toBe(false);
   });
 
-  it('still grounds on Gemini without a Groq key when the web is needed', () => {
-    delete process.env.GROQ_API_KEY;
+  it('still grounds on Gemini without a Fireworks key when the web is needed', () => {
+    delete process.env.FIREWORKS_API_KEY;
     const r = routeChatRequest({ text: 'what is the latest FTC news' });
     expect(r.provider).toBe('gemini');
     expect(r.grounded).toBe(true);
   });
 
-  it('routes ordinary chat to Fireworks when Groq is not configured but Fireworks is', () => {
-    delete process.env.GROQ_API_KEY;
-    process.env.FIREWORKS_API_KEY = 'fw-test-key';
-    const r = routeChatRequest({ text: 'hey bruno, how are you' });
-    expect(r.provider).toBe('fireworks');
-    expect(r.grounded).toBe(false);
-  });
-
-  it('prefers Groq over Fireworks in hybrid when both are configured', () => {
-    process.env.FIREWORKS_API_KEY = 'fw-test-key';
-    const r = routeChatRequest({ text: 'hey bruno, how are you' });
-    expect(r.provider).toBe('groq');
-  });
-
   it('routes to Fireworks on owner override (forceProvider: fireworks)', () => {
-    process.env.FIREWORKS_API_KEY = 'fw-test-key';
     const r = routeChatRequest({ text: 'hey bruno, how are you', forceProvider: 'fireworks' });
     expect(r.provider).toBe('fireworks');
     expect(r.grounded).toBe(false);
   });
 
   it('falls back to Gemini on owner Fireworks override when the key is missing', () => {
+    delete process.env.FIREWORKS_API_KEY;
     const r = routeChatRequest({ text: 'hey bruno, how are you', forceProvider: 'fireworks' });
     expect(r.provider).toBe('gemini');
     expect(r.grounded).toBe(false);
   });
 
   it('routes to Gemini on owner override (forceProvider: gemini)', () => {
-    process.env.FIREWORKS_API_KEY = 'fw-test-key';
     const r = routeChatRequest({ text: 'hey bruno, how are you', forceProvider: 'gemini' });
     expect(r.provider).toBe('gemini');
     expect(r.grounded).toBe(false);
@@ -152,11 +119,11 @@ describe('routeChatRequest', () => {
 
 describe('isFireworksConfigured', () => {
   it('is true when FIREWORKS_API_KEY is set', () => {
-    process.env.FIREWORKS_API_KEY = 'fw-test-key';
     expect(isFireworksConfigured()).toBe(true);
   });
 
   it('is false when the key is missing', () => {
+    delete process.env.FIREWORKS_API_KEY;
     expect(isFireworksConfigured()).toBe(false);
   });
 });
@@ -166,9 +133,9 @@ describe('isFireworksQuotaError', () => {
     expect(isFireworksQuotaError(new Error('Fireworks API error 429: {"error":"credits exhausted"}'))).toBe(true);
   });
 
-  it('does not confuse Groq errors for Fireworks errors', () => {
-    expect(isFireworksQuotaError(new Error('Groq API error 429: rate_limit_exceeded'))).toBe(false);
+  it('does not flag auth or bad-request errors as quota', () => {
     expect(isFireworksQuotaError(new Error('Fireworks API error 401: bad key'))).toBe(false);
+    expect(isFireworksQuotaError(new Error('Fireworks API error 400: bad request'))).toBe(false);
   });
 });
 
@@ -178,52 +145,28 @@ describe('FIREWORKS_QUOTA_EXHAUSTED_MSG', () => {
   });
 });
 
-describe('isGroqQuotaError', () => {
-  it('detects Groq 429 rate-limit errors', () => {
-    expect(isGroqQuotaError(new Error('Groq API error 429: {"error":{"code":"rate_limit_exceeded"}}'))).toBe(true);
-  });
-
-  it('detects rate_limit_exceeded language without the 429 prefix', () => {
-    expect(isGroqQuotaError(new Error('Request failed: rate_limit_exceeded for model'))).toBe(true);
-  });
-
-  it('does not flag auth, bad-request, or server errors as quota', () => {
-    expect(isGroqQuotaError(new Error('Groq API error 401: invalid api key'))).toBe(false);
-    expect(isGroqQuotaError(new Error('Groq API error 400: bad request'))).toBe(false);
-    expect(isGroqQuotaError(new Error('Groq API error 500: internal error'))).toBe(false);
-    expect(isGroqQuotaError(null)).toBe(false);
-  });
-});
-
-describe('extractGroqUsage', () => {
-  it('parses OpenAI-format usage from a Groq response', () => {
-    const u = extractGroqUsage({
+describe('extractOpenAIUsage', () => {
+  it('parses OpenAI-format usage from a provider response', () => {
+    const u = extractOpenAIUsage({
       usage: { prompt_tokens: 77, completion_tokens: 25, total_tokens: 102 },
     });
     expect(u).toEqual({ promptTokens: 77, responseTokens: 25, totalTokens: 102 });
   });
 
   it('returns null when usage is absent', () => {
-    expect(extractGroqUsage({})).toBe(null);
-    expect(extractGroqUsage(null)).toBe(null);
+    expect(extractOpenAIUsage({})).toBe(null);
+    expect(extractOpenAIUsage(null)).toBe(null);
   });
 });
 
-describe('GROQ_QUOTA_EXHAUSTED_MSG', () => {
-  it('tells the user the fix is quota reset or Groq billing, not retrying', () => {
-    expect(GROQ_QUOTA_EXHAUSTED_MSG).toMatch(/groq/i);
-    expect(GROQ_QUOTA_EXHAUSTED_MSG).toMatch(/refill|reset|daily/i);
-  });
-});
-
-describe('aiChat (Groq path, stubbed network)', () => {
+describe('aiChat (Fireworks path, stubbed network)', () => {
   const realFetch = globalThis.fetch;
 
   afterEach(() => {
     globalThis.fetch = realFetch;
   });
 
-  function stubGroqSse() {
+  function stubFireworksSse() {
     const chunks = [
       'data: {"choices":[{"delta":{"content":"Hello"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\n\n',
       'data: {"choices":[{"delta":{"content":" there"}}]}\n\n',
@@ -238,8 +181,8 @@ describe('aiChat (Groq path, stubbed network)', () => {
     globalThis.fetch = (async () => new Response(stream, { status: 200 })) as any;
   }
 
-  it('streams Groq deltas and returns the concatenated reply', async () => {
-    stubGroqSse();
+  it('streams Fireworks deltas and returns the concatenated reply', async () => {
+    stubFireworksSse();
     const seen: string[] = [];
     const result = await aiChat({
       messages: [{ role: 'user', text: 'say hi' }],
@@ -247,14 +190,14 @@ describe('aiChat (Groq path, stubbed network)', () => {
       stream: true,
       onChunk: (t) => seen.push(t),
     });
-    expect(result.provider).toBe('groq');
+    expect(result.provider).toBe('fireworks');
     expect(result.grounded).toBe(false);
     expect(result.text).toBe('Hello there');
     expect(seen.join('')).toBe('Hello there');
   });
 
   it('extracts usage from the stream for token logging', async () => {
-    stubGroqSse();
+    stubFireworksSse();
     let usage: any = null;
     await aiChat({
       messages: [{ role: 'user', text: 'say hi' }],
@@ -265,8 +208,8 @@ describe('aiChat (Groq path, stubbed network)', () => {
     expect(usage).toEqual({ promptTokens: 10, responseTokens: 5, totalTokens: 15 });
   });
 
-  it('sends the OpenAI-compatible request shape to the Groq endpoint', async () => {
-    stubGroqSse();
+  it('sends the OpenAI-compatible request shape to the Fireworks endpoint', async () => {
+    stubFireworksSse();
     let capturedUrl = '';
     let capturedBody: any = null;
     globalThis.fetch = (async (url: any, init: any) => {
@@ -278,10 +221,9 @@ describe('aiChat (Groq path, stubbed network)', () => {
       );
     }) as any;
     await aiChat({ messages: [{ role: 'user', text: 'hi' }], maxTokens: 256, stream: false });
-    expect(capturedUrl).toBe('https://api.groq.com/openai/v1/chat/completions');
+    expect(capturedUrl).toBe('https://api.fireworks.ai/inference/v1/chat/completions');
     expect(capturedBody.model).toBeTruthy();
     expect(capturedBody.messages[0].role).toBe('system');
     expect(capturedBody.messages[1]).toEqual({ role: 'user', content: 'hi' });
-    expect(capturedBody.reasoning_effort).toBe('low');
   });
 });
