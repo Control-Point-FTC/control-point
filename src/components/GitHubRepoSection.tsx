@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import Editor from '@monaco-editor/react';
 import {
   Github,
   Link2,
@@ -46,6 +47,18 @@ function guessLanguage(path: string): string {
     txt: 'Text', properties: 'Properties', html: 'HTML', css: 'CSS',
   };
   return map[ext] || 'Text';
+}
+
+/** Map file extension to Monaco editor language ID for syntax highlighting. */
+function monacoLanguage(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    java: 'java', kt: 'kotlin', py: 'python', js: 'javascript', ts: 'typescript',
+    tsx: 'typescript', jsx: 'javascript', c: 'c', cpp: 'cpp', h: 'cpp', hpp: 'cpp',
+    xml: 'xml', gradle: 'java', md: 'markdown', json: 'json', yml: 'yaml', yaml: 'yaml',
+    html: 'html', css: 'css', sh: 'shell', properties: 'ini', txt: 'plaintext',
+  };
+  return map[ext] || 'plaintext';
 }
 
 interface TreeNode {
@@ -353,13 +366,26 @@ export const GitHubRepoSection: React.FC<GitHubRepoSectionProps> = ({ teamId, is
                     <span className="text-xs font-mono text-text-muted truncate">{selectedPath}</span>
                     <span className="text-[10px] font-bold text-accent uppercase ml-2 flex-shrink-0">{guessLanguage(selectedPath)}</span>
                   </div>
-                  <div className="flex-1 overflow-auto p-3">
+                  <div className="flex-1 overflow-hidden">
                     {fileLoading ? (
-                      <div className="flex items-center gap-2 text-text-muted text-sm">
+                      <div className="flex items-center gap-2 text-text-muted text-sm p-3">
                         <Loader className="w-4 h-4 animate-spin" /> Loading file...
                       </div>
                     ) : (
-                      <pre className="text-xs font-mono text-text-base whitespace-pre-wrap break-words">{fileContent}</pre>
+                      <Editor
+                        height="100%"
+                        language={monacoLanguage(selectedPath)}
+                        value={fileContent || ''}
+                        theme="vs-dark"
+                        options={{
+                          readOnly: true,
+                          minimap: { enabled: false },
+                          scrollBeyondLastLine: false,
+                          fontSize: 12,
+                          wordWrap: 'on',
+                          padding: { top: 8 },
+                        }}
+                      />
                     )}
                   </div>
                 </>
