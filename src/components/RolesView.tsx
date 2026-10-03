@@ -260,7 +260,7 @@ export default function RolesView({ members, onRefresh }: any) {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto min-w-0">
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl sm:text-2xl font-display font-bold text-text-base flex items-center gap-2">
@@ -369,7 +369,33 @@ export default function RolesView({ members, onRefresh }: any) {
       <div>
         <h3 className="text-lg font-display font-bold text-text-base mb-1">Members</h3>
         <p className="text-sm text-text-muted mb-4">Assign roles to members — changes apply immediately.</p>
-        <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
+        {/* Mobile: stacked cards. A table inside an overflow-x container traps
+            vertical swipe gestures on touch, making the page feel unscrollable. */}
+        <div className="md:hidden space-y-3">
+          {(members || []).map((m: any) => (
+            <div key={m.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4">
+              <p className="text-text-base font-semibold truncate">{m.name}</p>
+              <p className="text-xs text-text-muted truncate mt-0.5">{m.email}</p>
+              <div className="flex flex-wrap gap-1.5 my-3">
+                {(m.roles || []).map((r: RoleRef) => (
+                  <RoleBadge key={r.id} role={r} />
+                ))}
+                {!(m.roles || []).length && <span className="text-xs text-text-muted/60">No roles</span>}
+              </div>
+              <button
+                onClick={() => openMemberRoles(m)}
+                className="w-full text-[13px] font-semibold text-accent border border-accent/40 rounded-xl px-3 py-2 transition-all active:scale-[0.98]"
+              >
+                Manage roles
+              </button>
+            </div>
+          ))}
+          {!(members || []).length && (
+            <p className="text-xs text-text-muted/60 text-center py-6">No members yet</p>
+          )}
+        </div>
+        {/* Desktop: table */}
+        <div className="hidden md:block glass rounded-2xl overflow-x-auto custom-scrollbar">
           <table className="w-full text-left text-sm">
             <thead className="bg-text-base/5 border-b border-text-base/10">
               <tr>

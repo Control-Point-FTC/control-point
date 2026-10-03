@@ -5933,9 +5933,9 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                       </div>
                       <span className="text-[10px] text-text-muted/70">{task.due_date}</span>
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {col.id !== 'todo' && <button onClick={() => updateStatus(task.id, 'todo')} className="p-1 hover:text-accent"><ChevronRight className="w-4 h-4 rotate-180" /></button>}
-                      {col.id !== 'done' && <button onClick={() => updateStatus(task.id, col.id === 'todo' ? 'in-progress' : 'done')} className="p-1 hover:text-accent"><ChevronRight className="w-4 h-4" /></button>}
+                    <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                      {col.id !== 'todo' && <button onClick={() => updateStatus(task.id, 'todo')} aria-label="Move back" className="p-1.5 md:p-1 hover:text-accent active:scale-90 transition-transform"><ChevronRight className="w-4 h-4 rotate-180" /></button>}
+                      {col.id !== 'done' && <button onClick={() => updateStatus(task.id, col.id === 'todo' ? 'in-progress' : 'done')} aria-label="Move forward" className="p-1.5 md:p-1 hover:text-accent active:scale-90 transition-transform"><ChevronRight className="w-4 h-4" /></button>}
                     </div>
                   </div>
                 </div>
@@ -5948,7 +5948,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
 
       {showAddTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title={editingTaskId ? 'Edit Task' : 'New Task'} className="w-full max-w-md">
+          <Card title={editingTaskId ? 'Edit Task' : 'New Task'} className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
               <Select 
                 options={[
