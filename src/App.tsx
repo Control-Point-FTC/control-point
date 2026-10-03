@@ -191,7 +191,7 @@ import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import SettingsModal from './components/SettingsModal';
 import Landing from './Landing';
 import LegalPage from './Legal';
-import { cn, Card, Button, Input } from './components/ui';
+import { cn, Card, Button, Input, Switch } from './components/ui';
 import { AuthShell } from './components/auth/AuthShell';
 import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
@@ -3378,13 +3378,11 @@ function CookieConsent() {
                   <p className="text-sm font-bold text-text-base">Preferences</p>
                   <p className="text-xs text-text-muted">Theme colors and UI choices, saved on this device.</p>
                 </div>
-                <button
-                  onClick={() => setFunctional(!functional)}
-                  className={cn("w-11 h-6 rounded-full transition-colors relative flex-shrink-0", functional ? "bg-accent" : "bg-text-base/10")}
-                  aria-label="Toggle preference storage"
-                >
-                  <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all", functional ? "left-[22px]" : "left-0.5")} />
-                </button>
+                <Switch
+                  checked={functional}
+                  onChange={setFunctional}
+                  label="Toggle preference storage"
+                />
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
@@ -10041,13 +10039,13 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
                   <p className="text-sm font-bold text-text-base">AI enabled</p>
                   <p className="text-[11px] text-text-muted">Turn off to block all Bruno / NavGPT replies</p>
                 </div>
-                <button
+                <Switch
+                  checked={u.ai_disabled !== 1}
+                  onChange={(next) => patchAi({ ai_disabled: !next }, next ? 'AI re-enabled' : 'AI disabled for user')}
+                  label={`AI enabled for ${u.name || u.email || 'user'}`}
                   disabled={busy}
-                  onClick={() => patchAi({ ai_disabled: u.ai_disabled !== 1 }, u.ai_disabled === 1 ? 'AI re-enabled' : 'AI disabled for user')}
-                  className={cn("relative w-11 h-6 rounded-full transition-colors flex-shrink-0", u.ai_disabled === 1 ? "bg-text-base/10" : "bg-emerald-500")}
-                >
-                  <span className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all", u.ai_disabled === 1 ? "left-0.5" : "left-[22px]")} />
-                </button>
+                  onClassName="bg-emerald-500"
+                />
               </div>
 
               <div>
@@ -10101,14 +10099,14 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
             </Card>
 
             <Card title="Warn user" subtitle="Warnings are logged and visible here" className="!gap-2">
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   value={warnNote}
                   onChange={(e) => setWarnNote(e.target.value)}
                   placeholder="Reason for the warning…"
-                  className="flex-1 bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
+                  className="flex-1 min-w-0 bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                 />
-                <Button variant="secondary" size="sm" disabled={busy} onClick={doWarn}>
+                <Button variant="secondary" size="sm" disabled={busy} onClick={doWarn} className="sm:w-auto w-full">
                   <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Warn
                 </Button>
               </div>
@@ -10762,13 +10760,11 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
       {navGptQualified && (
         <Card title="Chatbot Persona" icon={Bot} subtitle="Who answers in the team chatbot">
           <div className="flex items-center gap-4">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={!!navGptActive}
-              aria-label="NavGPT ❤️"
+            <Switch
+              checked={!!navGptActive}
+              label="NavGPT ❤️"
               disabled={savingPersona}
-              onClick={async () => {
+              onChange={async () => {
                 if (savingPersona) return;
                 if (navGptActive) {
                   const ok = await confirmDialog({
@@ -10797,18 +10793,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
                   setSavingPersona(false);
                 }
               }}
-              className={cn(
-                'relative w-12 h-7 rounded-full transition-colors flex-shrink-0',
-                navGptActive ? 'bg-accent' : 'bg-text-base/15 hover:bg-text-base/20'
-              )}
-            >
-              <span
-                className={cn(
-                  'absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all',
-                  navGptActive ? 'left-6' : 'left-1'
-                )}
-              />
-            </button>
+            />
             <div className="min-w-0">
               <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
               <p className="text-xs text-text-muted leading-relaxed">

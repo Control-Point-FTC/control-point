@@ -78,3 +78,52 @@ export const Input = ({ className, ...props }: any) => (
     {...props}
   />
 );
+
+// Presentational switch track (no button wrapper) — for when the switch visual
+// lives inside another interactive element (e.g. the Teaching mode card).
+export const SwitchTrack = ({ checked, onClassName, className }: {
+  checked: boolean;
+  onClassName?: string;
+  className?: string;
+}) => (
+  <span className={cn(
+    "block relative w-11 h-6 rounded-full transition-colors flex-shrink-0",
+    checked ? (onClassName || "bg-accent") : "bg-text-base/15",
+    className
+  )}>
+    <span className={cn(
+      "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform",
+      checked && "translate-x-5"
+    )} />
+  </span>
+);
+
+// Accessible toggle switch. Fixed track/thumb geometry (translate-x, never
+// absolute left math), role="switch" for a11y, and a 44px touch target via
+// padding so the mobile min-height button rule doesn't stretch the track.
+// The role="switch" also opts it out of that rule (see index.css).
+export const Switch = ({ checked, onChange, label, disabled, onClassName, className }: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  onClassName?: string;
+  className?: string;
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    disabled={disabled}
+    onClick={() => onChange(!checked)}
+    className={cn(
+      "flex-shrink-0 rounded-full p-2.5 -m-2.5 transition-opacity",
+      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-transparent",
+      "disabled:opacity-50 disabled:cursor-not-allowed",
+      className
+    )}
+  >
+    <SwitchTrack checked={checked} onClassName={onClassName} />
+  </button>
+);

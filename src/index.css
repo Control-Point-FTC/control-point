@@ -424,8 +424,10 @@ html.light .theme-dark .card-surface {
     input, textarea, select {
       font-size: 16px !important;
     }
-    /* Minimum 44px touch targets for buttons on touch devices (Apple HIG). */
-    button {
+    /* Minimum 44px touch targets for buttons on touch devices (Apple HIG).
+       role="switch" toggles are excluded: they get their 44px target from
+       padding around a fixed-size track instead (see Switch in ui.tsx). */
+    button:not([role="switch"]) {
       min-height: 44px;
     }
   }

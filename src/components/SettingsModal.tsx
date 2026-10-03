@@ -6,6 +6,7 @@ import { notify, confirmDialog } from './dialog';
 import { PRESENCE_META, PresencePicker } from './presence';
 import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
 import { assetUrl } from '../services/api';
+import { Switch, SwitchTrack } from './ui';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -440,20 +441,7 @@ export default function SettingsModal({
                         : 'Off — Bruno writes the full code for you.'}
                     </span>
                   </span>
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'relative w-12 h-7 rounded-full transition-colors duration-300 flex-shrink-0',
-                      teachMode ? 'bg-accent' : 'bg-text-base/20'
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all duration-300',
-                        teachMode ? 'left-6' : 'left-1'
-                      )}
-                    />
-                  </span>
+                  <SwitchTrack checked={teachMode} aria-hidden="true" />
                 </button>
                 <p className="text-xs text-text-muted leading-relaxed">
                   You can always override it in the moment — just tell Bruno “write it for me” or “teach me” in chat.
@@ -539,23 +527,12 @@ export default function SettingsModal({
                     <h3 className="text-sm font-bold text-text-base mb-1">Chatbot Persona</h3>
                     <p className="text-xs text-text-muted mb-3">Who answers in the team chatbot.</p>
                     <div className="flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4">
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={!!navGptOn}
-                        aria-label="NavGPT ❤️"
+                      <Switch
+                        checked={!!navGptOn}
+                        label="NavGPT ❤️"
                         disabled={savingPersona}
-                        onClick={() => void togglePersona()}
-                        className={cn(
-                          'relative w-12 h-7 rounded-full transition-colors flex-shrink-0 disabled:opacity-50',
-                          navGptOn ? 'bg-accent' : 'bg-text-base/15 hover:bg-text-base/20'
-                        )}
-                      >
-                        <span className={cn(
-                          'absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all',
-                          navGptOn ? 'left-6' : 'left-1'
-                        )} />
-                      </button>
+                        onChange={() => void togglePersona()}
+                      />
                       <div className="min-w-0">
                         <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
                         <p className="text-xs text-text-muted leading-relaxed">
