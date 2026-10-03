@@ -566,7 +566,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                                 <div className="text-xs text-text-base">{commit.message}</div>
                                 <div className="flex items-center gap-1 text-[10px] text-text-muted">
                                   <User className="w-3 h-3" />
-                                  {commit.author_name || 'Unknown'} • {format(new Date(commit.created_at), 'MMM dd, HH:mm')}
+                                  {commit.author_name || 'Unknown'} • {format(new Date(commit.created_at), 'MMM dd, h:mm a')}
                                 </div>
                               </div>
                               <div className="flex flex-col items-end gap-1">

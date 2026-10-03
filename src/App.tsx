@@ -8801,7 +8801,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             )}
             <div className="flex items-baseline gap-2 flex-wrap">
               <span className="text-sm font-bold text-text-base">{senderName}</span>
-              <span className="text-[10px] text-text-muted/60">{format(new Date(msg.timestamp), 'HH:mm')}</span>
+              <span className="text-[10px] text-text-muted/60">{format(new Date(msg.timestamp), 'h:mm a')}</span>
             </div>
             <div className="text-[15px] text-text-base/90 leading-relaxed break-words">
               {msg.file_path && (
