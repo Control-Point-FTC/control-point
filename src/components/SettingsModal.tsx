@@ -60,6 +60,54 @@ function SoundToggle() {
   );
 }
 
+/** Camera default: 'ask' | 'on' | 'off'. Camera never turns on automatically —
+ *  this controls whether joining asks, always enables, or stays off. */
+export type CameraDefault = 'ask' | 'on' | 'off';
+export function getCameraDefault(): CameraDefault {
+  try {
+    const v = localStorage.getItem('controlpoint-camera-default');
+    if (v === 'on' || v === 'off' || v === 'ask') return v;
+  } catch {}
+  return 'ask';
+}
+export function setCameraDefault(v: CameraDefault) {
+  try { localStorage.setItem('controlpoint-camera-default', v); } catch {}
+}
+
+function CameraDefaultSetting() {
+  const [value, setValue] = useState<CameraDefault>(() => getCameraDefault());
+  const options: { id: CameraDefault; label: string; desc: string }[] = [
+    { id: 'ask', label: 'Ask each time', desc: 'Prompt when joining a channel' },
+    { id: 'on', label: 'Always on', desc: 'Join with camera enabled' },
+    { id: 'off', label: 'Always off', desc: 'Join audio-only; toggle camera manually' },
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Camera default">
+      {options.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          role="radio"
+          aria-checked={value === opt.id}
+          title={opt.desc}
+          onClick={() => {
+            setValue(opt.id);
+            setCameraDefault(opt.id);
+          }}
+          className={cn(
+            'rounded-xl border px-2 py-2.5 text-[13px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+            value === opt.id
+              ? 'bg-accent text-accent-ink border-accent'
+              : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
@@ -461,6 +509,17 @@ export default function SettingsModal({
         'w-full md:w-60 lg:w-72 flex-shrink-0 bg-secondary md:border-r border-text-base/[0.06] flex-col',
         mobileNav ? 'flex' : 'hidden md:flex'
       )}>
+        {/* Mobile nav header with close button */}
+        <div className="md:hidden flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2">
+          <h2 className="text-xl font-display font-bold text-text-base">{t('settings.title')}</h2>
+          <button
+            onClick={requestClose}
+            aria-label="Close settings"
+            className="p-2.5 rounded-full border border-text-base/10 text-text-muted hover:text-text-base hover:border-text-base/25 transition-all"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
         <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-6">
           {[t('settings.userSettings'), t('settings.teamSettings')].map((heading) => {
             const items = sections.filter((s) => s.heading === heading);
@@ -822,6 +881,13 @@ export default function SettingsModal({
               <section className="space-y-6">
                 <h3 className="text-sm font-bold text-text-base">Devices</h3>
                 <DeviceSettingsSection />
+                <div>
+                  <h4 className="text-sm font-bold text-text-base mb-1">Camera</h4>
+                  <p className="text-xs text-text-muted leading-relaxed mb-2">
+                    Camera only turns on when you explicitly ask — never automatically.
+                  </p>
+                  <CameraDefaultSetting />
+                </div>
                 <div>
                   <h3 className="text-sm font-bold text-text-base mb-3">Sounds</h3>
                   <SoundToggle />

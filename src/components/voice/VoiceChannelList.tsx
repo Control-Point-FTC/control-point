@@ -6,6 +6,8 @@ import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp,
 import { cn } from '../ui';
 import { useVoice, type VoiceChannelSummary } from '../../voice';
 import { VoiceAvatar } from './shared';
+import { confirmDialog } from '../dialog';
+import { getCameraDefault } from '../SettingsModal';
 
 function JoinedRow({ p, isSelf }: { p: VoiceChannelSummary['participants'][number]; isSelf: boolean }) {
   return (
@@ -61,7 +63,21 @@ export function VoiceChannelList({ className }: { className?: string }) {
     if (session?.kind === 'voice_channel' && session.channelId === channel.id) return;
     setJoiningId(channel.id);
     try {
-      await joinChannel(channel.id);
+      // Camera only turns on with explicit user consent — never automatically.
+      const camDefault = getCameraDefault();
+      let withVideo = false;
+      if (camDefault === 'on') {
+        withVideo = true;
+      } else if (camDefault === 'ask') {
+        withVideo = await confirmDialog({
+          title: 'Join with video?',
+          message: `Turn on your camera when joining ${channel.name}?`,
+          confirmLabel: 'Join with video',
+          cancelLabel: 'Audio only',
+        });
+      }
+      // 'off' → withVideo stays false, joins audio-only.
+      await joinChannel(channel.id, withVideo ? { video: true } : undefined);
     } finally {
       setJoiningId(null);
     }
