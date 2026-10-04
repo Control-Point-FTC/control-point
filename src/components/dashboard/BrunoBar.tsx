@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Send, Sparkles, ChevronUp, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { BrunoMarkdown } from '../BrunoMarkdown';
 import BrunoIcon from '../BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from '../ActionProposalCard';
@@ -14,11 +16,11 @@ import {
   type ActionProposal,
 } from '../../services/aiService';
 
-const SUGGESTIONS = [
-  'What\u2019s happening this week?',
-  'Add a calendar event',
-  'Summarize recent team activity',
-];
+const SUGGESTION_KEYS = [
+  'dashboard.suggestionWeek',
+  'dashboard.suggestionAddEvent',
+  'dashboard.suggestionSummarize',
+] as const;
 
 /**
  * Immersive Bruno bar on the dashboard, directly below My Status.
@@ -28,7 +30,9 @@ const SUGGESTIONS = [
  * chat history.
  */
 export default function BrunoBar({ botName }: { botName?: string }) {
+  const { t } = useTranslation();
   const name = botName || 'Bruno';
+  const suggestions = SUGGESTION_KEYS.map((k) => t(k));
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -80,12 +84,12 @@ export default function BrunoBar({ botName }: { botName?: string }) {
       stream.finish();
       const finalText = agg.trim()
         ? agg
-        : `${name} hit a snag \u2014 please try again in a moment.`;
+        : t('dashboard.brunoSnag', { name });
       setMessages([...next, { role: 'model', text: finalText }]);
       setProposals(extractActionProposals(agg));
     } catch (e: any) {
       stream.finish();
-      const msg = e?.serverError || `${name} isn't reachable right now. Check your connection and try again.`;
+      const msg = e?.serverError || t('dashboard.brunoUnreachable', { name });
       setMessages([...next, { role: 'model', text: msg }]);
     } finally {
       setBusy(false);
@@ -116,8 +120,8 @@ export default function BrunoBar({ botName }: { botName?: string }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter') send();
           }}
-          placeholder={`Ask ${name} to do something\u2026`}
-          aria-label={`Ask ${name}`}
+          placeholder={t('dashboard.askBruno', { name })}
+          aria-label={t('dashboard.askBruno', { name })}
           className="flex-1 min-w-0 bg-transparent text-sm text-text-base placeholder:text-text-base/35 focus:outline-none"
         />
         {busy ? (
@@ -126,7 +130,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
           <button
             onClick={() => send()}
             disabled={!input.trim()}
-            aria-label="Send"
+            aria-label={t('dashboard.submit')}
             className="shrink-0 w-8 h-8 rounded-xl bg-accent text-accent-ink flex items-center justify-center hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100 transition"
           >
             <Send className="w-4 h-4" />
@@ -135,7 +139,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
         {expanded && (
           <button
             onClick={collapse}
-            aria-label="Collapse"
+            aria-label={t('dashboard.collapse')}
             className="shrink-0 p-1.5 rounded-lg text-text-base/40 hover:text-text-base hover:bg-text-base/10 transition"
           >
             <ChevronUp className="w-4 h-4" />
@@ -146,7 +150,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
       {/* Suggestion chips when idle */}
       {!expanded && (
         <div className="flex flex-wrap gap-1.5 px-3 sm:px-4 pb-3">
-          {SUGGESTIONS.map((s) => (
+          {suggestions.map((s) => (
             <button
               key={s}
               onClick={() => send(s)}
@@ -183,7 +187,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
             />
           )}
           {!busy && streamingText === null && !lastReply && (
-            <p className="text-sm text-text-base/40">Type above and hit enter \u2014 {name} answers right here.</p>
+            <p className="text-sm text-text-base/40">{t('dashboard.brunoHint', { name })}</p>
           )}
         </div>
       )}

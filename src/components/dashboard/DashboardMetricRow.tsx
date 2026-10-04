@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import { CalendarCheck, CheckSquare, Calendar, Wallet } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { cn } from '../ui';
 
 function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: any) {
@@ -50,35 +52,36 @@ function DashboardMetricRow({
   totalBudget,
   onNavigate,
 }: DashboardMetricRowProps) {
+  const { t } = useTranslation();
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
       <KpiCard
         icon={CalendarCheck}
-        label="Today's attendance"
-        value={hasSessionToday ? `${presentCount} / ${memberCount}` : `${memberCount} member${memberCount === 1 ? '' : 's'}`}
-        sub={hasSessionToday ? 'checked in so far' : 'no session today'}
+        label={t('dashboard.todayAttendance')}
+        value={hasSessionToday ? `${presentCount} / ${memberCount}` : `${memberCount} ${memberCount === 1 ? t('dashboard.member') : t('dashboard.members')}`}
+        sub={hasSessionToday ? t('dashboard.checkedInSoFar') : t('dashboard.noSessionToday')}
         onClick={() => onNavigate('/attendance')}
       />
       <KpiCard
         icon={CheckSquare}
-        label="Open tasks"
+        label={t('dashboard.openTasks')}
         value={activeTaskCount}
-        sub={overdueCount > 0 ? `${overdueCount} overdue` : 'everything on track'}
+        sub={overdueCount > 0 ? t('dashboard.overdue', { count: overdueCount }) : t('dashboard.everythingOnTrack')}
         tone={overdueCount > 0 ? 'warn' : 'default'}
         onClick={() => onNavigate('/tasks')}
       />
       <KpiCard
         icon={Calendar}
-        label="Up next"
-        value={nextEvent ? nextEvent.title : 'Nothing'}
-        sub={nextEvent ? nextEvent.dateLabel : 'no events scheduled'}
+        label={t('dashboard.upNext')}
+        value={nextEvent ? nextEvent.title : t('dashboard.nothing')}
+        sub={nextEvent ? nextEvent.dateLabel : t('dashboard.noEventsScheduled')}
         onClick={() => onNavigate('/calendar')}
       />
       <KpiCard
         icon={Wallet}
-        label="Budget"
+        label={t('nav.budget')}
         value={`$${totalBudget.toLocaleString()}`}
-        sub="net balance"
+        sub={t('dashboard.netBalance')}
         tone={totalBudget < 0 ? 'warn' : 'ok'}
         onClick={() => onNavigate('/budget')}
       />

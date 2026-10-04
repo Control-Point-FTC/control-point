@@ -5410,8 +5410,22 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
   };
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+  const now = new Date();
+  const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  // An event is finished if its date is past, or it's today and the end time (or start time) has passed.
+  const isEventFinished = (e: any) => {
+    if (!e) return false;
+    if (e.date < todayKey) return true;
+    if (e.date === todayKey) {
+      const endTime = e.end_time || e.start_time || '';
+      if (endTime && endTime <= nowTime) return true;
+    }
+    return false;
+  };
+
   const upcoming = [...events]
-    .filter((e: any) => e.date >= todayKey)
+    .filter((e: any) => e.date >= todayKey && !isEventFinished(e))
     .sort((a: any, b: any) => (a.date + (a.start_time || '')).localeCompare(b.date + (b.start_time || '')))
     .slice(0, 8);
 
@@ -5469,9 +5483,11 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                         data-cm-type="cal-event"
                         data-cm-id={e.id}
                         onClick={(ev) => { ev.stopPropagation(); if (canManageCalendar) openEdit(e); }}
-                        className={cn('w-full text-left text-[11px] px-1.5 py-0.5 rounded-md border truncate', canManageCalendar ? 'cursor-pointer' : 'cursor-default', typeStyle[e.event_type] || typeStyle.other)}
+                        className={cn('w-full text-left text-[11px] px-1.5 py-0.5 rounded-md border truncate', canManageCalendar ? 'cursor-pointer' : 'cursor-default', typeStyle[e.event_type] || typeStyle.other, isEventFinished(e) && 'opacity-60')}
                       >
-                        {e.start_time && <span className="opacity-70">{fmtTime(e.start_time)} </span>}{e.title}
+                        <span className={cn(isEventFinished(e) && 'line-through')}>
+                          {e.start_time && <span className="opacity-70">{fmtTime(e.start_time)} </span>}{e.title}
+                        </span>
                       </button>
                     ))}
                     {dayEvents.length > 3 && <div className="text-[11px] text-text-muted/70 px-1">+{dayEvents.length - 3} more</div>}

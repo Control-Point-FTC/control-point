@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { format } from 'date-fns';
 import { Activity, CheckSquare, UserPlus, Calendar, CalendarCheck, Wallet } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { Card } from '../ui';
 
 const icons: Record<string, any> = {
@@ -20,6 +22,15 @@ const kindRoutes: Record<ActivityItem['kind'], string> = {
   budget: '/budget',
 };
 
+/** Nav label key per activity kind, for the "Open …" row tooltip. */
+const kindNavKeys: Record<ActivityItem['kind'], string> = {
+  task: 'nav.tasks',
+  event: 'nav.calendar',
+  attendance: 'nav.attendance',
+  member: 'nav.teamsMembers',
+  budget: 'nav.budget',
+};
+
 export interface ActivityItem {
   kind: 'task' | 'event' | 'attendance' | 'member' | 'budget';
   title: string;
@@ -31,12 +42,14 @@ export interface ActivityItem {
 }
 
 /** "Today · 2:14 PM", "Yesterday · 6:20 PM", "Sep 28 · 3:00 PM" — or just the day when there's no time. */
-export function activityWhen(item: ActivityItem): string {
+export function activityWhen(item: ActivityItem, t?: (key: string) => string): string {
+  const todayLabel = t ? t('dashboard.today') : 'Today';
+  const yesterdayLabel = t ? t('dashboard.yesterday') : 'Yesterday';
   const dayLabel = (dateStr: string) => {
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     const yesterdayStr = format(new Date(Date.now() - 864e5), 'yyyy-MM-dd');
-    if (dateStr === todayStr) return 'Today';
-    if (dateStr === yesterdayStr) return 'Yesterday';
+    if (dateStr === todayStr) return todayLabel;
+    if (dateStr === yesterdayStr) return yesterdayLabel;
     return format(new Date(dateStr + 'T12:00:00'), 'MMM d');
   };
   if (item.ts) {
@@ -54,28 +67,29 @@ export function activityWhen(item: ActivityItem): string {
  * Every row is clickable and leads to the relevant section.
  */
 function TeamActivity({ items, onNavigate }: { items: ActivityItem[]; onNavigate: (path: string) => void }) {
+  const { t } = useTranslation();
   return (
     <Card
-      title="Team Activity"
-      subtitle={items.length === 0 ? 'Quiet week so far' : 'What the team has been up to'}
+      title={t('dashboard.teamActivity')}
+      subtitle={items.length === 0 ? t('dashboard.quietWeek') : t('dashboard.teamUpTo')}
       icon={Activity}
       className="xl:col-span-7 p-5 gap-3"
     >
       {items.length === 0 ? (
         <p className="text-sm text-text-muted py-6 text-center">
-          Nothing logged in the last 7 days. Once tasks move and events get added, they'll show up here.
+          {t('dashboard.noActivity')}
         </p>
       ) : (
         <div className="max-h-[26rem] overflow-y-auto custom-scrollbar pr-1 space-y-1">
           {items.map((a, i) => {
             const Icon = icons[a.kind] || Activity;
-            const when = activityWhen(a);
+            const when = activityWhen(a, t);
             return (
               <div
                 key={`${a.kind}-${i}`}
                 onClick={() => onNavigate(kindRoutes[a.kind])}
                 className="flex items-start gap-2.5 p-2 rounded-xl hover:bg-text-base/[0.04] hover:border-accent/20 border border-transparent transition-all cursor-pointer"
-                title={`Open ${kindRoutes[a.kind].replace('/', '')}`}
+                title={t('dashboard.openIn', { section: t(kindNavKeys[a.kind]) })}
               >
                 <div className="w-7 h-7 rounded-lg bg-text-base/5 border border-text-base/10 flex items-center justify-center shrink-0 mt-0.5">
                   <Icon className="w-3.5 h-3.5 text-accent" />

@@ -2,6 +2,8 @@ import { useMemo, memo } from 'react';
 import { format } from 'date-fns';
 import { TrendingUp } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { useTheme } from '../../hooks/useTheme';
 import { Card } from '../ui';
 
@@ -85,12 +87,13 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
  * line follows the current accent color.
  */
 function AttendanceTrend({ attendance, onNavigate, hiddenDates }: AttendanceTrendProps) {
+  const { t } = useTranslation();
   const subtitle = hiddenDates && hiddenDates.length > 0
-    ? 'Present check-ins · last 14 meeting days'
-    : 'Present check-ins · last 14 days';
+    ? t('dashboard.presentCheckinsMeetingDays')
+    : t('dashboard.presentCheckinsDays');
   return (
     <Card
-      title="Attendance Trend"
+      title={t('dashboard.attendanceTrend')}
       subtitle={subtitle}
       icon={TrendingUp}
       className="md:col-span-2 xl:col-span-7 p-5 gap-3 cursor-pointer hover:border-accent/30 transition-colors"

@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import { Trophy } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { useFtcTeam, seasonLabel } from '../FtcStats';
 import { Card, Button } from '../ui';
 
@@ -13,24 +15,32 @@ interface TeamPerformanceProps {
  * Links out to the full Team Stats view.
  */
 function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
+  const { t } = useTranslation();
   const ftc = useFtcTeam();
+
+  const oprLabels: [string, any][] = [
+    [t('dashboard.totalOpr'), ftc.data?.opr.tot],
+    [t('dashboard.autoPhase'), ftc.data?.opr.auto],
+    [t('dashboard.teleopPhase'), ftc.data?.opr.dc],
+    [t('dashboard.endgamePhase'), ftc.data?.opr.eg],
+  ];
 
   return (
     <Card
-      title="Team Performance"
-      subtitle={ftc.data ? `${ftc.data.name} · ftcscout.org` : 'FTC Scout integration'}
+      title={t('dashboard.teamPerformance')}
+      subtitle={ftc.data ? `${ftc.data.name} · ftcscout.org` : t('dashboard.ftcScoutIntegration')}
       icon={Trophy}
       className="md:col-span-2 xl:col-span-5 p-5 gap-3"
     >
       {ftc.loading ? (
         <div className="flex items-center gap-3 py-6">
           <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-text-muted animate-pulse">Loading stats…</p>
+          <p className="text-sm text-text-muted animate-pulse">{t('dashboard.loadingStats')}</p>
         </div>
       ) : ftc.notConnected ? (
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 py-2">
-          <p className="text-sm text-text-muted flex-1">Connect your FTC team number to see live OPR, rankings, and event history here.</p>
-          <Button onClick={() => onNavigate('/settings')} className="text-sm w-fit">Connect team</Button>
+          <p className="text-sm text-text-muted flex-1">{t('dashboard.connectFtcTeam')}</p>
+          <Button onClick={() => onNavigate('/settings')} className="text-sm w-fit">{t('dashboard.connectTeam')}</Button>
         </div>
       ) : ftc.data ? (
         <div className="flex flex-col gap-3">
@@ -54,11 +64,11 @@ function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
                   </button>
                 ))}
               </div>
-              <button onClick={() => onNavigate('/stats')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">Full stats →</button>
+              <button onClick={() => onNavigate('/stats')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">{t('dashboard.fullStats')}</button>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2.5">
-            {[['Total OPR', ftc.data.opr.tot], ['Auto', ftc.data.opr.auto], ['TeleOp', ftc.data.opr.dc], ['Endgame', ftc.data.opr.eg]].map(([label, stat]: any) => (
+            {oprLabels.map(([label, stat]: any) => (
               <button
                 key={label as string}
                 onClick={() => onNavigate('/stats')}
@@ -74,8 +84,8 @@ function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
         </div>
       ) : (
         <div className="flex items-center gap-3 py-4">
-          <p className="text-sm text-text-muted flex-1">{ftc.error || 'Stats unavailable.'}</p>
-          <Button variant="secondary" onClick={ftc.refresh} className="text-sm">Retry</Button>
+          <p className="text-sm text-text-muted flex-1">{ftc.error || t('dashboard.statsUnavailable')}</p>
+          <Button variant="secondary" onClick={ftc.refresh} className="text-sm">{t('dashboard.retry')}</Button>
         </div>
       )}
     </Card>

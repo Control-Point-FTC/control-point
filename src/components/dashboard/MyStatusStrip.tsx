@@ -1,6 +1,8 @@
 import { useState, memo } from 'react';
 import { format } from 'date-fns';
 import { CalendarCheck, CheckSquare, Clock, LogOut, User } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { apiFetch } from '../../services/api';
 import { notify } from '../dialog';
 import { Card, Button, cn } from '../ui';
@@ -31,11 +33,19 @@ function MyStatusStrip({
   onRefresh,
   setAttendance,
 }: MyStatusStripProps) {
+  const { t } = useTranslation();
   const [showOut, setShowOut] = useState(false);
   const [outReason, setOutReason] = useState('');
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const myStatus = attendance?.find((r: any) => r.member_id === currentUser?.id && r.date === today);
+
+  const statusLabel =
+    myStatus?.status === 'P' ? t('dashboard.statusPresent')
+    : myStatus?.status === 'A' ? t('dashboard.statusAbsent')
+    : myStatus?.status === 'E' ? t('dashboard.statusExcused')
+    : myStatus?.status === 'L' ? t('dashboard.statusLate')
+    : t('dashboard.statusOther');
 
   const handleSelfReport = async (status: string, reason?: string) => {
     let finalStatus = status;
@@ -69,7 +79,7 @@ function MyStatusStrip({
       if (res.ok) {
         setShowOut(false);
         onRefresh();
-        if (reason) notify('Absence logged. An admin can mark it excused from the Attendance view.', 'success');
+        if (reason) notify(t('dashboard.absenceLogged'), 'success');
       } else if (setAttendance) {
         setAttendance(() => prev);
       }
@@ -87,8 +97,8 @@ function MyStatusStrip({
           <div className="rounded-lg bg-accent/12 p-1.5">
             <User className="w-4 h-4 text-accent" />
           </div>
-          <span className="text-sm font-bold text-text-base">My status</span>
-          <span className="text-[11px] text-text-muted">today's check-in</span>
+          <span className="text-sm font-bold text-text-base">{t('dashboard.myStatus')}</span>
+          <span className="text-[11px] text-text-muted">{t('dashboard.todaysCheckin')}</span>
         </div>
         <div className="flex-1" />
         {myStatus ? (
@@ -101,20 +111,20 @@ function MyStatusStrip({
           )}>
             <span className="flex items-center gap-2">
               <CalendarCheck className="w-4 h-4" />
-              {myStatus.status === 'P' ? 'Present' : myStatus.status === 'A' ? 'Absent' : myStatus.status === 'E' ? 'Excused' : myStatus.status === 'L' ? 'Late' : 'Other'}
+              {statusLabel}
             </span>
-            <button onClick={() => handleSelfReport('-')} className="text-[11px] opacity-60 hover:opacity-100 font-medium">Reset</button>
+            <button onClick={() => handleSelfReport('-')} className="text-[11px] opacity-60 hover:opacity-100 font-medium">{t('dashboard.reset')}</button>
           </div>
         ) : (
           <div className="flex gap-2">
             <Button onClick={() => handleSelfReport('P')} variant="outline" className="text-xs border-emerald-500/50 text-emerald-400 hover:bg-emerald-500/10" disabled={isAiLoading || isLoading}>
-              <CheckSquare className="w-3.5 h-3.5" /> I'm Here
+              <CheckSquare className="w-3.5 h-3.5" /> {t('dashboard.imHere')}
             </Button>
             <Button onClick={() => handleSelfReport('L')} variant="outline" className="text-xs border-amber-500/50 text-amber-400 hover:bg-amber-500/10" disabled={isAiLoading || isLoading}>
-              <Clock className="w-3.5 h-3.5" /> Late
+              <Clock className="w-3.5 h-3.5" /> {t('dashboard.statusLate')}
             </Button>
             <Button onClick={() => setShowOut(true)} variant="secondary" className="text-xs" disabled={isAiLoading || isLoading}>
-              <LogOut className="w-3.5 h-3.5" /> Out
+              <LogOut className="w-3.5 h-3.5" /> {t('dashboard.out')}
             </Button>
           </div>
         )}
@@ -122,20 +132,20 @@ function MyStatusStrip({
 
       {showOut && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title="Log Absence" className="w-full max-w-md">
+          <Card title={t('dashboard.logAbsence')} className="w-full max-w-md">
             <div className="space-y-4">
-              <p className="text-sm text-text-muted">Let the team know why you'll be missing today's session.</p>
+              <p className="text-sm text-text-muted">{t('dashboard.absenceWhy')}</p>
               <textarea
                 className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-24 disabled:opacity-50"
-                placeholder="Reason for absence..."
+                placeholder={t('dashboard.absenceReasonPlaceholder')}
                 value={outReason}
                 onChange={(e) => setOutReason(e.target.value)}
                 disabled={isAiLoading}
               />
               {isAiLoading && <div className="flex justify-center"><ThinkingIndicator /></div>}
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => setShowOut(false)} disabled={isAiLoading}>Cancel</Button>
-                <Button onClick={() => handleSelfReport('O', outReason)} disabled={isAiLoading || !outReason}>Submit</Button>
+                <Button variant="secondary" onClick={() => setShowOut(false)} disabled={isAiLoading}>{t('common.cancel')}</Button>
+                <Button onClick={() => handleSelfReport('O', outReason)} disabled={isAiLoading || !outReason}>{t('dashboard.submit')}</Button>
               </div>
             </div>
           </Card>

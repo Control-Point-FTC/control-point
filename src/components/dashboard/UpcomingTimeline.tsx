@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import { format } from 'date-fns';
 import { Calendar, MapPin, ArrowRight } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { Card } from '../ui';
 
 interface UpcomingTimelineProps {
@@ -9,14 +11,14 @@ interface UpcomingTimelineProps {
 }
 
 /** Group an event's date into Today / Tomorrow / weekday buckets. */
-function bucketFor(dateStr: string): string {
+function bucketFor(dateStr: string, t: (key: string) => string): string {
   const today = new Date();
   const todayStr = format(today, 'yyyy-MM-dd');
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = format(tomorrow, 'yyyy-MM-dd');
-  if (dateStr === todayStr) return 'Today';
-  if (dateStr === tomorrowStr) return 'Tomorrow';
+  if (dateStr === todayStr) return t('dashboard.today');
+  if (dateStr === tomorrowStr) return t('dashboard.tomorrow');
   return format(new Date(dateStr + 'T12:00:00'), 'EEEE');
 }
 
@@ -25,6 +27,7 @@ function bucketFor(dateStr: string): string {
  * Today, Tomorrow, then by weekday. Every row opens the calendar.
  */
 function UpcomingTimeline({ events, onNavigate }: UpcomingTimelineProps) {
+  const { t } = useTranslation();
   const upcoming = (events || [])
     .filter((e: any) => e.date >= format(new Date(), 'yyyy-MM-dd'))
     .sort((a: any, b: any) => a.date.localeCompare(b.date) || String(a.time || '').localeCompare(String(b.time || '')))
@@ -32,7 +35,7 @@ function UpcomingTimeline({ events, onNavigate }: UpcomingTimelineProps) {
 
   const groups: { label: string; items: any[] }[] = [];
   for (const e of upcoming) {
-    const label = bucketFor(e.date);
+    const label = bucketFor(e.date, t);
     const g = groups.find((x) => x.label === label);
     if (g) g.items.push(e);
     else groups.push({ label, items: [e] });
@@ -40,14 +43,14 @@ function UpcomingTimeline({ events, onNavigate }: UpcomingTimelineProps) {
 
   return (
     <Card
-      title="Up next"
-      subtitle={upcoming.length === 0 ? 'Nothing on the calendar' : `${upcoming.length} upcoming ${upcoming.length === 1 ? 'event' : 'events'}`}
+      title={t('dashboard.upNext')}
+      subtitle={upcoming.length === 0 ? t('dashboard.nothingOnCalendar') : `${upcoming.length} ${upcoming.length === 1 ? t('dashboard.upcomingEvent') : t('dashboard.upcomingEvents')}`}
       icon={Calendar}
       className="xl:col-span-5 p-5 gap-3"
     >
       {upcoming.length === 0 ? (
         <p className="text-sm text-text-muted py-6 text-center">
-          No events scheduled. Add one from the calendar.
+          {t('dashboard.noEventsYet')}
         </p>
       ) : (
         <div className="space-y-3 max-h-[26rem] overflow-y-auto custom-scrollbar pr-1">

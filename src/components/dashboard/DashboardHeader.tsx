@@ -1,5 +1,7 @@
 import { memo } from 'react';
 import { format } from 'date-fns';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 
 interface DashboardHeaderProps {
   userName?: string;
@@ -12,22 +14,23 @@ interface DashboardHeaderProps {
  * who you are, which team you're looking at, and what day it is.
  */
 function DashboardHeader({ userName, teamName, teamNumber }: DashboardHeaderProps) {
+  const { t } = useTranslation();
   const h = new Date().getHours();
   const greet =
-    h >= 5 && h < 12 ? 'Good morning'
-    : h >= 12 && h < 17 ? 'Good afternoon'
-    : h >= 17 && h < 22 ? 'Good evening'
-    : 'Hello';
+    h >= 5 && h < 12 ? t('dashboard.greetMorning')
+    : h >= 12 && h < 17 ? t('dashboard.greetAfternoon')
+    : h >= 17 && h < 22 ? t('dashboard.greetEvening')
+    : t('dashboard.greetHello');
   const first = String(userName || '').split(' ')[0];
 
   return (
     <div className="mb-1">
       <h2 className="text-lg font-display font-bold text-text-base tracking-tight">
-        {first ? `${greet}, ${first}` : greet}
+        {first ? t('dashboard.greetingWithName', { greet, name: first }) : greet}
       </h2>
       <p className="text-xs text-text-muted mt-0.5">
-        {teamName || 'Your team'}
-        {teamNumber ? ` · Team ${teamNumber}` : ''}
+        {teamName || t('dashboard.yourTeam')}
+        {teamNumber ? ` · ${t('dashboard.teamPrefix')} ${teamNumber}` : ''}
         {' · '}
         {format(new Date(), 'EEE, MMM d, yyyy')}
       </p>

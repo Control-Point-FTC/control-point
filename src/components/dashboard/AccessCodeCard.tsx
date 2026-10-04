@@ -1,5 +1,7 @@
 import { useState, memo } from 'react';
 import { KeyRound, Copy, Check } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import '../../i18n';
 import { apiFetch } from '../../services/api';
 import { confirmDialog } from '../dialog';
 import { Card, Button } from '../ui';
@@ -15,6 +17,7 @@ interface AccessCodeCardProps {
  * (the old code stops working immediately).
  */
 function AccessCodeCard({ team, setLoading, onRefresh }: AccessCodeCardProps) {
+  const { t } = useTranslation();
   const [copiedCode, setCopiedCode] = useState(false);
 
   const copyAccessCode = async () => {
@@ -31,9 +34,9 @@ function AccessCodeCard({ team, setLoading, onRefresh }: AccessCodeCardProps) {
   const regenerateCode = async () => {
     if (
       !(await confirmDialog({
-        title: 'Regenerate access code',
-        message: 'Generate a new access code? The old code will stop working.',
-        confirmLabel: 'Regenerate',
+        title: t('dashboard.regenCodeTitle'),
+        message: t('dashboard.regenCodeMessage'),
+        confirmLabel: t('dashboard.regenerate'),
         danger: true,
       }))
     )
@@ -50,23 +53,23 @@ function AccessCodeCard({ team, setLoading, onRefresh }: AccessCodeCardProps) {
   if (!team) return null;
 
   return (
-    <Card title="Team Access Code" subtitle="Students join with this code" icon={KeyRound} className="xl:col-span-5 p-5 gap-3">
+    <Card title={t('dashboard.teamAccessCode')} subtitle={t('dashboard.studentsJoin')} icon={KeyRound} className="xl:col-span-5 p-5 gap-3">
       <div className="flex flex-col gap-3">
         <p className="text-2xl font-mono font-bold text-accent tracking-[0.12em] whitespace-nowrap">{team.access_code}</p>
         <div className="flex gap-2.5">
           <Button variant="secondary" onClick={copyAccessCode} className="text-sm flex-1 !py-2.5">
             {copiedCode ? (
               <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" /> Copied
+                <Check className="w-3.5 h-3.5 text-emerald-400" /> {t('dashboard.copied')}
               </>
             ) : (
               <>
-                <Copy className="w-3.5 h-3.5" /> Copy
+                <Copy className="w-3.5 h-3.5" /> {t('dashboard.copy')}
               </>
             )}
           </Button>
           <Button variant="ghost" onClick={regenerateCode} className="text-sm !py-2.5">
-            Regenerate
+            {t('dashboard.regenerate')}
           </Button>
         </div>
       </div>
