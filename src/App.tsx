@@ -803,6 +803,12 @@ const navItems = [
 // NOTE: 'profile' and 'settings' are intentionally not nav items anymore —
 // they live in the Discord-style settings popup (gear button by the user card).
 // Their routes still work for deep links.
+// Header titles for routes that aren't nav items (otherwise the header would
+// fall back to "Dashboard").
+const ROUTE_TITLE_KEYS: Record<string, string> = {
+  profile: 'nav.profile',
+  settings: 'nav.teamSettings',
+};
 
 // Reactive mobile breakpoint (md breakpoint, 768px). Replaces direct
 // window.innerWidth reads so the layout responds to rotation/resize.
@@ -2964,7 +2970,7 @@ export default function App() {
           // the page content.
           (showUserMenu || showNotifications || showTeamMenu) && "!z-[60]")}>
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : t('nav.dashboard')}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : ROUTE_TITLE_KEYS[activeTab] ? t(ROUTE_TITLE_KEYS[activeTab]) : t('nav.dashboard')}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
@@ -3169,13 +3175,22 @@ export default function App() {
                           <FeedbackIcon className="w-[18px] h-[18px] text-accent" />
                           Send feedback
                         </button>
+                        {/* Personal settings popup (appearance, voice, Bruno…) — for
+                            everyone; on phones this is the only easy way in. */}
+                        <button
+                          onClick={() => { setShowUserMenu(false); setSettingsOpen(true); }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
+                        >
+                          <Settings className="w-[18px] h-[18px] text-accent" />
+                          Settings
+                        </button>
                         {(currentUser as any)?.account_type === 'admin' && (
                           <button
                             onClick={() => { setShowUserMenu(false); navigate('/settings'); }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                           >
-                            <Settings className="w-[18px] h-[18px] text-accent" />
-                            Settings
+                            <ShieldCheck className="w-[18px] h-[18px] text-accent" />
+                            {t('nav.teamSettings')}
                           </button>
                         )}
                         <div className="my-1.5 border-t border-text-base/[0.06]" />
