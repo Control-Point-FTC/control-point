@@ -151,7 +151,7 @@ export default function DashboardView({
 
       {/* Natural page flow — the page scrolls, every card shows its data. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-3 sm:gap-4 mt-3 sm:mt-4">
-        <Suspense fallback={<div className="h-44 animate-pulse rounded-2xl bg-text-base/5" aria-busy="true" />}>
+        <Suspense fallback={<div className="h-44 animate-pulse card-surface" aria-busy="true" />}>
           <AttendanceTrend attendance={attendance} onNavigate={navigate} hiddenDates={hiddenDates} />
         </Suspense>
         <UpcomingTimeline events={events} onNavigate={navigate} />

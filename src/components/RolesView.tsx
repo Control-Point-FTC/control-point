@@ -250,7 +250,7 @@ export default function RolesView({ members, onRefresh }: any) {
     return (
       <div className="p-6 space-y-4">
         {[0, 1].map((i) => (
-          <div key={i} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-6 animate-pulse">
+          <div key={i} className="card-surface p-6 animate-pulse">
             <div className="h-5 w-40 bg-text-base/10 rounded" />
             <div className="h-3 w-64 bg-text-base/5 rounded mt-3" />
           </div>
@@ -306,7 +306,7 @@ export default function RolesView({ members, onRefresh }: any) {
 
       <div className="grid gap-4 md:grid-cols-2">
         {roles.map((role) => (
-          <div key={role.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-5">
+          <div key={role.id} className="card-surface p-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: role.color }} />
@@ -373,7 +373,7 @@ export default function RolesView({ members, onRefresh }: any) {
             vertical swipe gestures on touch, making the page feel unscrollable. */}
         <div className="md:hidden space-y-3">
           {(members || []).map((m: any) => (
-            <div key={m.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4">
+            <div key={m.id} className="card-surface p-4">
               <p className="text-text-base font-semibold truncate">{m.name}</p>
               <p className="text-xs text-text-muted truncate mt-0.5">{m.email}</p>
               <div className="flex flex-wrap gap-1.5 my-3">
@@ -395,7 +395,7 @@ export default function RolesView({ members, onRefresh }: any) {
           )}
         </div>
         {/* Desktop: table */}
-        <div className="hidden md:block glass rounded-2xl overflow-x-auto custom-scrollbar">
+        <div className="hidden md:block card-surface overflow-x-auto custom-scrollbar">
           <table className="w-full text-left text-sm">
             <thead className="bg-text-base/5 border-b border-text-base/10">
               <tr>

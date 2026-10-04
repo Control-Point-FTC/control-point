@@ -104,7 +104,7 @@ function SeasonPills({ seasons, active, onPick, small }: { seasons: number[]; ac
 
 function OprTile({ label, stat, icon: Icon, accent }: { label: string; stat: FtcOprStat | null; icon: any; accent?: boolean }) {
   return (
-    <div className="p-4 bg-text-base/5 rounded-2xl border border-text-base/5 flex flex-col gap-1">
+    <div className="p-4 card-surface flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
         <Icon className={`w-3.5 h-3.5 ${accent ? 'text-accent' : 'text-text-muted'}`} />
         <p className="text-[10px] text-text-muted uppercase font-bold tracking-wider">{label}</p>

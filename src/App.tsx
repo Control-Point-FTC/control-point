@@ -216,6 +216,41 @@ function validHex(v: any): v is string {
   return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim());
 }
 
+// "#22c55e" -> "34 197 94" — the space-separated form rgb(var(--x) / a) needs.
+// Callers pass a validHex() value.
+function hexToRgbTriplet(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+}
+
+// The team grid colour is cached per session so the next load paints it
+// before the team list arrives — and never leaks to another account.
+const GRID_RGB_CACHE_KEY = 'controlpoint-grid-rgb';
+function readStoredSessionId(): string | null {
+  try { return localStorage.getItem('sessionId'); } catch { return null; }
+}
+// Short non-reversible tag of the session id, so the cache doesn't hold a
+// second copy of the token — it only needs to tell sessions apart.
+function sessionTag(sid: string): string {
+  let h = 5381;
+  for (let i = 0; i < sid.length; i++) h = ((h << 5) + h + sid.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+function readCachedGridRgb(): string | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(GRID_RGB_CACHE_KEY) || 'null');
+    const sid = readStoredSessionId();
+    return c && sid && c.sid === sessionTag(sid) && /^\d{1,3} \d{1,3} \d{1,3}$/.test(c.rgb) ? c.rgb : null;
+  } catch { return null; }
+}
+function writeCachedGridRgb(rgb: string | null): void {
+  try {
+    const sid = readStoredSessionId();
+    if (rgb && sid) localStorage.setItem(GRID_RGB_CACHE_KEY, JSON.stringify({ sid: sessionTag(sid), rgb }));
+    else localStorage.removeItem(GRID_RGB_CACHE_KEY);
+  } catch {}
+}
+
 // --- Components ---
 // (Input lives in ./components/ui — shared with standalone auth screens.)
 
@@ -842,6 +877,9 @@ export default function App() {
     root.style.setProperty('--grid-pulse-speed', `${get('controlpoint-grid-pulse-speed', '6')}s`);
     root.style.setProperty('--grid-pulse-opacity', get('controlpoint-grid-pulse-opacity', '0.22'));
     applyPulseOrigins(root, readPulseOrigins(get('controlpoint-grid-pulse-origins', 'center,edges,corners')));
+    // Team branding grid colour cached for this session (refreshed once teams load).
+    const cachedGridRgb = readCachedGridRgb();
+    if (cachedGridRgb) root.style.setProperty('--grid-rgb', cachedGridRgb);
     root.style.setProperty('--grid-glow-size', `${get('controlpoint-grid-glow-size', '280')}px`);
     root.style.setProperty('--grid-glow-opacity', get('controlpoint-grid-glow-opacity', '0.25'));
   }, []);
@@ -1345,15 +1383,34 @@ export default function App() {
         const accent = [currentUser.accent_color, myTeam?.accent_color].find(validHex)?.trim();
         if (accent) root.style.setProperty('--color-accent', accent);
         else clear();
+        // Background grid + pulse follow the team branding (admin-set on
+        // Teams & Members), not a member's personal accent.
+        // Only act once we actually know the team's colour: the team row
+        // is loaded, or the account is genuinely teamless (team_id null →
+        // volt). teamsLoaded alone isn't enough — it's also set when the
+        // /api/teams fetch fails, and that must not wipe the cached colour.
+        if (teamsLoaded && (myTeam || !currentUser.team_id)) {
+          const gridRgb = validHex(myTeam?.accent_color) ? hexToRgbTriplet(myTeam!.accent_color.trim()) : null;
+          if (gridRgb) root.style.setProperty('--grid-rgb', gridRgb);
+          else root.style.removeProperty('--grid-rgb');
+          writeCachedGridRgb(gridRgb);
+        }
       } else {
         clear();
+        // On boot this branch runs before the session check, so keep the
+        // session-scoped cached colour; once the session is really gone
+        // (logout / expiry), drop it so the next account starts on volt.
+        if (!readStoredSessionId()) {
+          root.style.removeProperty('--grid-rgb');
+          writeCachedGridRgb(null);
+        }
       }
     };
     applyColors();
     // useTheme() dispatches this whenever the theme toggles.
     window.addEventListener('cp-theme-change', applyColors);
     return () => window.removeEventListener('cp-theme-change', applyColors);
-  }, [currentUser, teams, isLoggedIn]);
+  }, [currentUser, teams, teamsLoaded, isLoggedIn]);
 
   useEffect(() => {
     if (isLoggedIn) {
@@ -4008,7 +4065,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
           unscrollable. */}
       <div className="md:hidden space-y-3">
         {members.map((m: any) => (
-          <div key={m.id} data-cm-type="member-team" data-cm-id={m.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4">
+          <div key={m.id} data-cm-type="member-team" data-cm-id={m.id} className="card-surface p-4">
             <div className="flex items-center gap-3">
               <AvatarWithPresence user={m} size="sm" presence={m.presence} />
               <div className="min-w-0 flex-1">
@@ -4062,7 +4119,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
           </div>
         ))}
       </div>
-      <div className="hidden md:block glass rounded-2xl overflow-x-auto custom-scrollbar">
+      <div className="hidden md:block card-surface overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm">
           <thead className="bg-text-base/5 border-b border-text-base/10">
             <tr>
@@ -4687,7 +4744,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any
         ) : (
           <div className="space-y-2">
             {myRecords.slice(0, 30).map((r: any) => (
-              <div key={r.date} className="glass rounded-xl px-4 py-3 flex items-center justify-between">
+              <div key={r.date} className="card-surface px-4 py-3 flex items-center justify-between">
                 <span className="text-sm text-text-base font-medium">{format(new Date(r.date + 'T12:00:00'), 'EEE, MMM d, yyyy')}</span>
                 <span className={cn("text-xs font-bold px-2.5 py-1 rounded-full border", statusMeta[r.status]?.cls || 'bg-text-base/5 text-text-muted border-text-base/10')}>
                   {statusMeta[r.status]?.label || r.status}
@@ -4995,7 +5052,7 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
       </div>
 
       {showHideMenu && (
-        <div className="glass rounded-2xl p-4 border border-text-base/10 space-y-4">
+        <div className="card-surface p-4 space-y-4">
           <h4 className="text-sm font-bold text-text-base">Hide/Show Meeting Dates</h4>
           
           <div className="space-y-3">
@@ -5052,7 +5109,7 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
         </div>
       )}
 
-      <div className="glass rounded-2xl overflow-x-auto custom-scrollbar">
+      <div className="card-surface overflow-x-auto custom-scrollbar">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
@@ -5165,7 +5222,7 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
                   onClick={() => {
                     // Navigate to grid or just view info
                   }}
-                  className="glass p-4 rounded-2xl border border-text-base/10 text-left hover:border-accent/50 transition-all group cursor-default"
+                  className="card-surface p-4 text-left hover:!border-accent/50 transition-all group cursor-default"
                 >
                   <div className="flex justify-between items-start mb-3">
                     <div className="p-2 bg-text-base/5 rounded-lg text-accent group-hover:bg-accent group-hover:text-accent-ink transition-colors">
@@ -6414,7 +6471,7 @@ function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, cu
       {/* Mobile: stacked cards — same swipe-trap reason as members/roles. */}
       <div className="md:hidden space-y-3">
         {budget.map((item: any) => (
-          <div key={item.id} data-cm-type="budget-tx" data-cm-id={item.id} className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4">
+          <div key={item.id} data-cm-type="budget-tx" data-cm-id={item.id} className="card-surface p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-sm text-text-base font-semibold leading-snug">{item.description}</p>
@@ -6440,7 +6497,7 @@ function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, cu
           <p className="text-xs text-text-muted/60 text-center py-6">No transactions yet</p>
         )}
       </div>
-      <div className="hidden md:block glass rounded-2xl overflow-x-auto custom-scrollbar">
+      <div className="hidden md:block card-surface overflow-x-auto custom-scrollbar">
         <table className="w-full text-left text-sm">
           <thead className="bg-text-base/5 border-b border-text-base/10">
             <tr>
