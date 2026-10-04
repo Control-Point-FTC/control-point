@@ -93,6 +93,7 @@ import {
 import {
   registerVoiceRoutes,
   handleVoiceWSMessage,
+  dedupeVoiceChannels,
   voiceMaintenance,
   scheduleVoiceDisconnectCleanup,
   cancelVoiceDisconnectCleanup,
@@ -9184,6 +9185,9 @@ Rules:
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // One-time boot cleanup: remove duplicate voice channels for every team.
+  dedupeVoiceChannels(voiceDeps).catch((e) => console.warn('[voice] boot dedupe failed:', e?.message));
 }
 
 startServer();

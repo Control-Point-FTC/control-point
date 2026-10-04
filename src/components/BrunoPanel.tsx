@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus } from 'lucide-react';
+import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
 import BrunoIcon from './BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 import { AttachedImageStrip, filesToAttachedImages, imagesFromPaste, MAX_BRUNO_IMAGES, type AttachedImage } from './BrunoImageAttach';
+import { cn } from './ui';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
@@ -67,6 +68,18 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   // Output length — the same member preference as Settings → Bruno AI,
   // adjustable right here in the sidebar too.
   const [outputLevel, setOutputLevel] = useState('medium');
+  const [outputMenuOpen, setOutputMenuOpen] = useState(false);
+  const outputMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!outputMenuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (outputMenuRef.current && !outputMenuRef.current.contains(e.target as Node)) {
+        setOutputMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [outputMenuOpen]);
   useEffect(() => {
     // 'max' was removed — anyone who had it falls back to 'high'
     const lvl = currentUser?.bruno_output_level;
@@ -248,20 +261,43 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 ))}
               </div>
               <div className="flex items-center gap-2 mt-2">
-                <label htmlFor="bruno-panel-output" className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">
+                <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">
                   Output
                 </label>
-                <select
-                  id="bruno-panel-output"
-                  value={outputLevel}
-                  onChange={(e) => void changeOutputLevel(e.target.value)}
-                  aria-label="Bruno output length"
-                  className="text-[11px] font-semibold bg-text-base/[0.04] border border-text-base/10 rounded-lg px-2 py-1 text-text-muted focus:text-text-base focus:border-accent/50 focus:outline-none cursor-pointer"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
+                <div className="relative" ref={outputMenuRef}>
+                  <button
+                    onClick={() => setOutputMenuOpen(!outputMenuOpen)}
+                    aria-label="Bruno output length"
+                    aria-expanded={outputMenuOpen}
+                    className="flex items-center gap-1.5 text-[11px] font-semibold bg-text-base/[0.04] border border-text-base/10 rounded-lg px-2 py-1 text-text-muted hover:text-text-base hover:border-accent/40 focus:outline-none focus:border-accent/50 transition-colors cursor-pointer"
+                  >
+                    {outputLevel === 'low' ? 'Low' : outputLevel === 'high' ? 'High' : 'Medium'}
+                    <ChevronDown className={cn("w-3 h-3 transition-transform", outputMenuOpen && "rotate-180")} />
+                  </button>
+                  {outputMenuOpen && (
+                    <div className="absolute z-50 mt-1 min-w-[120px] rounded-xl border border-text-base/10 bg-elevated shadow-xl shadow-black/30 overflow-hidden">
+                      {[
+                        { value: 'low', label: 'Low', desc: 'Brief replies' },
+                        { value: 'medium', label: 'Medium', desc: 'Balanced detail' },
+                        { value: 'high', label: 'High', desc: 'Full explanations' },
+                      ].map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => { void changeOutputLevel(opt.value); setOutputMenuOpen(false); }}
+                          className={cn(
+                            "w-full text-left px-3 py-2 transition-colors",
+                            outputLevel === opt.value
+                              ? "bg-accent/15 text-accent"
+                              : "text-text-base/80 hover:bg-text-base/[0.06] hover:text-text-base"
+                          )}
+                        >
+                          <div className="text-[12px] font-bold">{opt.label}</div>
+                          <div className="text-[10px] text-text-muted">{opt.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 

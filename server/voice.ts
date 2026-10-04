@@ -250,6 +250,47 @@ export async function ensureVoiceSeeded(deps: VoiceDeps, teamId: number): Promis
   }
 }
 
+// Remove duplicate voice channels (same team + same name), keeping the
+// oldest (lowest id). Runs at boot for every team so a bad seed or double
+// create can't leave the sidebar showing each channel twice.
+export async function dedupeVoiceChannels(deps: VoiceDeps): Promise<number> {
+  const { dbGet, dbRun } = deps;
+  let removed = 0;
+  try {
+    const dupes = (await deps.dbAll?.(
+      `SELECT team_id, LOWER(TRIM(name)) AS n, MIN(id) AS keep_id, COUNT(*) AS c
+       FROM voice_channels
+       WHERE is_temporary = 0 OR is_temporary IS NULL
+       GROUP BY team_id, LOWER(TRIM(name))
+       HAVING c > 1`
+    ) as any[]) || [];
+    for (const d of dupes) {
+      // Move any FK references (role perms) to the kept channel first
+      await dbRun(
+        `UPDATE OR IGNORE voice_channel_role_perms SET channel_id = ? WHERE channel_id IN (
+           SELECT id FROM voice_channels WHERE team_id = ? AND LOWER(TRIM(name)) = ? AND id != ?
+         )`,
+        d.keep_id, d.team_id, d.n, d.keep_id
+      ).catch(() => {});
+      await dbRun(
+        `DELETE FROM voice_channel_role_perms WHERE channel_id IN (
+           SELECT id FROM voice_channels WHERE team_id = ? AND LOWER(TRIM(name)) = ? AND id != ?
+         )`,
+        d.team_id, d.n, d.keep_id
+      ).catch(() => {});
+      const r: any = await dbRun(
+        `DELETE FROM voice_channels WHERE team_id = ? AND LOWER(TRIM(name)) = ? AND id != ?`,
+        d.team_id, d.n, d.keep_id
+      );
+      removed += r?.changes ?? 0;
+    }
+    if (removed > 0) console.log(`[voice] deduped ${removed} duplicate voice channel(s)`);
+  } catch (e: any) {
+    console.warn('[voice] dedupe failed:', e?.message);
+  }
+  return removed;
+}
+
 export async function getVoiceSettings(deps: VoiceDeps, teamId: number): Promise<any> {
   await ensureVoiceSeeded(deps, teamId);
   const row = (await deps.dbGet("SELECT * FROM team_voice_settings WHERE team_id = ?", teamId)) as any;
