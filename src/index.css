@@ -283,6 +283,99 @@ html.light main.bg-primary {
   background-size: 44px 44px;
 }
 
+/* ---------- Volt grid + pulse wave (app background) ---------- */
+/* Yellow grid lines like the landing page, with a traveling pulse wave.
+   Applied to main content areas. Toggle via Settings → Appearance. */
+.app-volt-grid {
+  position: relative;
+}
+.app-volt-grid::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgb(255 199 0 / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 199 0 / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  z-index: 0;
+}
+html.light .app-volt-grid::before {
+  background-image:
+    linear-gradient(rgb(202 138 4 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(202 138 4 / 0.08) 1px, transparent 1px);
+}
+/* Pulsing wave that travels across the grid — disable via Settings → Appearance */
+.app-volt-grid.grid-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    ellipse 80% 50% at 50% 50%,
+    rgb(255 199 0 / 0.08) 0%,
+    rgb(255 199 0 / 0.03) 40%,
+    transparent 70%
+  );
+  animation: volt-wave 6s ease-in-out infinite;
+}
+/* Reactive cursor glow — the grid ignites around the cursor like the landing page */
+.app-volt-grid .grid-reactive-spot {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgb(255 199 0 / 0.25) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 199 0 / 0.25) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), black 10%, transparent 65%);
+  mask-image: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), black 10%, transparent 65%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+html.light .app-volt-grid .grid-reactive-spot {
+  background-image:
+    linear-gradient(rgb(202 138 4 / 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(202 138 4 / 0.3) 1px, transparent 1px);
+}
+.app-volt-grid.grid-hot .grid-reactive-spot {
+  opacity: 1;
+}
+html.grid-pulse-off .app-volt-grid.grid-pulse::after {
+  display: none;
+}
+html.light .app-volt-grid.grid-pulse::after {
+  background: radial-gradient(
+    ellipse 80% 50% at 50% 50%,
+    rgb(202 138 4 / 0.06) 0%,
+    rgb(202 138 4 / 0.02) 40%,
+    transparent 70%
+  );
+}
+@keyframes volt-wave {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1) translateX(-5%);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1) translateX(5%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-volt-grid.grid-pulse::after {
+    animation: none;
+    opacity: 0.4;
+  }
+}
+/* Ensure content sits above the grid layers */
+.app-volt-grid > * {
+  position: relative;
+  z-index: 1;
+}
+
 /* Cards sit on a white page in light mode — give them real depth. */
 html.light .card-surface {
   background: var(--color-elevated);

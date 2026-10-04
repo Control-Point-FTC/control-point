@@ -819,6 +819,44 @@ function useIsMobile() {
 
 export default function App() {
   const { t } = useTranslation();
+  // Initialize grid pulse setting from localStorage
+  useEffect(() => {
+    if (localStorage.getItem('controlpoint-grid-pulse') === '0') {
+      document.documentElement.classList.add('grid-pulse-off');
+    }
+  }, []);
+  // Reactive volt grid: track cursor over the main content area so the grid
+  // ignites around it, like the landing page hero.
+  useEffect(() => {
+    const main = document.querySelector('main.app-volt-grid');
+    if (!main) return;
+    // Add the reactive spot layer
+    const spot = document.createElement('div');
+    spot.className = 'grid-reactive-spot';
+    (main as HTMLElement).prepend(spot);
+    let raf = 0;
+    const onMove = (e: MouseEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const r = (main as HTMLElement).getBoundingClientRect();
+        (main as HTMLElement).style.setProperty('--mx', `${(e.clientX - r.left).toFixed(1)}px`);
+        (main as HTMLElement).style.setProperty('--my', `${(e.clientY - r.top).toFixed(1)}px`);
+        main.classList.add('grid-hot');
+      });
+    };
+    const onLeave = () => {
+      cancelAnimationFrame(raf);
+      main.classList.remove('grid-hot');
+    };
+    main.addEventListener('mousemove', onMove);
+    main.addEventListener('mouseleave', onLeave);
+    return () => {
+      cancelAnimationFrame(raf);
+      main.removeEventListener('mousemove', onMove);
+      main.removeEventListener('mouseleave', onLeave);
+      spot.remove();
+    };
+  }, []);
   // Real URL routing — every section is its own route, so refresh keeps you where you are
   const location = useLocation();
   const navigate = useNavigate();
@@ -2897,7 +2935,7 @@ export default function App() {
       </motion.aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh">
+      <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh app-volt-grid grid-pulse">
         {!isImmersiveRoute && (
         <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
@@ -5989,7 +6027,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4 h-auto min-h-[600px] md:h-[calc(100vh-250px)]">
         {columns.map(col => (
-          <div key={col.id} data-cm-type="task-column" data-cm-status={col.id} className="bg-secondary/30 rounded-2xl p-4 flex flex-col gap-4 border border-text-base/5">
+          <div key={col.id} data-cm-type="task-column" data-cm-status={col.id} className="bg-elevated rounded-2xl p-4 flex flex-col gap-4 border border-text-base/5 shadow-sm">
             <div className="flex items-center gap-2 mb-2">
               <div className={cn("w-2 h-2 rounded-full", col.color)} />
               <h4 className="text-sm font-bold text-text-base uppercase tracking-wider">{col.label}</h4>
@@ -6002,8 +6040,8 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                   data-cm-type="task"
                   data-cm-id={task.id}
                   className={cn(
-                  "glass p-4 rounded-xl border group",
-                  task.is_board ? "border-accent/30 bg-accent/5" : "border-text-base/10"
+                  "bg-elevated p-4 rounded-xl border group shadow-sm",
+                  task.is_board ? "border-accent/30" : "border-text-base/10"
                 )}>
                   <div className="flex items-center justify-between mb-1">
                     <h5 className="text-sm font-bold text-text-base">{task.title}</h5>

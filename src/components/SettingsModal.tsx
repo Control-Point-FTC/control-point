@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap } from 'lucide-react';
+import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify, confirmDialog } from './dialog';
@@ -23,7 +23,7 @@ export interface SettingsModalProps {
   onStatusPick: (status: string) => void;
 }
 
-type Section = 'account' | 'voice' | 'bruno' | 'team' | 'roles';
+type Section = 'account' | 'appearance' | 'voice' | 'bruno' | 'team' | 'roles';
 
 /** The secret NavGPT ❤️ persona only exists for 4215 Hypnotic Robotics. */
 function navGptQualifies(teamName: any): boolean {
@@ -39,6 +39,9 @@ export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
+  const [gridPulseEnabled, setGridPulseEnabled] = useState(
+    () => localStorage.getItem('controlpoint-grid-pulse') !== '0'
+  );
   const [section, setSection] = useState<Section>('account');
   // On phones the nav and content can't sit side-by-side — drill in instead.
   const [mobileNav, setMobileNav] = useState(true);
@@ -262,6 +265,7 @@ export default function SettingsModal({
 
   const sections: { id: Section; label: string; icon: any; heading: string }[] = [
     { id: 'account', label: 'My Account', icon: UserCircle, heading: 'USER SETTINGS' },
+    { id: 'appearance', label: 'Appearance', icon: Palette, heading: 'USER SETTINGS' },
     { id: 'voice', label: 'Voice & Video', icon: PhoneCall, heading: 'USER SETTINGS' },
     { id: 'bruno', label: 'Bruno AI', icon: Bot, heading: 'USER SETTINGS' },
     ...(isAdmin
@@ -428,6 +432,34 @@ export default function SettingsModal({
                   </div>
                 </section>
               </>
+            )}
+
+            {section === 'appearance' && (
+              <section className="space-y-6">
+                <div>
+                  <h3 className="text-sm font-bold text-text-base">Background Effects</h3>
+                  <p className="text-xs text-text-muted leading-relaxed mt-1">
+                    Customize the animated background grid.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                  <div>
+                    <p className="text-sm font-semibold text-text-base">Pulsing volt wave</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Animated yellow glow that travels across the background grid
+                    </p>
+                  </div>
+                  <Switch
+                    checked={gridPulseEnabled}
+                    onChange={(v) => {
+                      setGridPulseEnabled(v);
+                      localStorage.setItem('controlpoint-grid-pulse', v ? '1' : '0');
+                      document.documentElement.classList.toggle('grid-pulse-off', !v);
+                    }}
+                    label="Pulsing volt wave"
+                  />
+                </div>
+              </section>
             )}
 
             {section === 'voice' && (
