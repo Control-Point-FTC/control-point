@@ -110,6 +110,64 @@ function CameraDefaultSetting() {
   );
 }
 
+function PasswordChangeForm({ inputClass }: { inputClass: string }) {
+  const [cur, setCur] = useState('');
+  const [nw, setNw] = useState('');
+  const [nw2, setNw2] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setMsg(null);
+    if (nw !== nw2) { setMsg({ ok: false, text: 'New passwords do not match.' }); return; }
+    if (nw.length < 6) { setMsg({ ok: false, text: 'New password must be at least 6 characters.' }); return; }
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: cur, newPassword: nw }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setMsg({ ok: true, text: 'Password changed. Other devices were signed out.' });
+        setCur(''); setNw(''); setNw2('');
+      } else {
+        setMsg({ ok: false, text: data.error || 'Could not change password.' });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3 max-w-sm">
+      <div>
+        <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Current password</label>
+        <input type="password" value={cur} onChange={(e) => setCur(e.target.value)} autoComplete="current-password" className={inputClass} />
+      </div>
+      <div>
+        <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">New password</label>
+        <input type="password" value={nw} onChange={(e) => setNw(e.target.value)} autoComplete="new-password" className={inputClass} />
+      </div>
+      <div>
+        <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Confirm new password</label>
+        <input type="password" value={nw2} onChange={(e) => setNw2(e.target.value)} autoComplete="new-password" className={inputClass} />
+      </div>
+      {msg && (
+        <p className={cn('text-xs font-medium', msg.ok ? 'text-emerald-400' : 'text-rose-400')}>{msg.text}</p>
+      )}
+      <button
+        onClick={() => void submit()}
+        disabled={busy || !cur || !nw || !nw2}
+        className="px-5 py-2.5 rounded-xl text-sm font-bold bg-accent text-accent-ink hover:brightness-105 active:scale-95 disabled:opacity-50 transition-all"
+      >
+        {busy ? 'Changing…' : 'Change password'}
+      </button>
+    </div>
+  );
+}
+
 export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
@@ -677,6 +735,17 @@ export default function SettingsModal({
                       </p>
                     )}
                   </div>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-text-base mb-3">Password</h3>
+                  {user?.hasPassword ? (
+                    <PasswordChangeForm inputClass={inputClass} />
+                  ) : (
+                    <p className="text-xs text-text-muted">
+                      You sign in with Google, so there's no password here to change — manage it in your Google account instead.
+                    </p>
+                  )}
                 </section>
 
                 <section>
