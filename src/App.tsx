@@ -9729,7 +9729,11 @@ function OwnerView(_props: any) {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status })
     });
-    if (res.ok) setFeedback(feedback.map(f => f.id === id ? { ...f, status } : f));
+    if (res.ok) {
+      // Resolved feedback is deleted server-side (user gets notified), so drop it from the list.
+      if (status === 'resolved') setFeedback(feedback.filter(f => f.id !== id));
+      else setFeedback(feedback.map(f => f.id === id ? { ...f, status } : f));
+    }
   };
 
   const handleFlagAction = async (id: number, action: string, note: string, timeoutHours?: number) => {

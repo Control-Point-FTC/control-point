@@ -2550,7 +2550,8 @@ async function startServer() {
   // either start a session (existing member) or stash a single-use signup token.
   // Fill in a missing name/avatar from the OAuth provider profile for every
   // membership row on this account. Never clobbers a name the user chose or an
-  // avatar they uploaded themselves.
+  // avatar they uploaded themselves. OAuth avatar URLs (Google, Discord, etc.)
+  // can expire or break, so we download and store them locally on first sight.
   async function fillOAuthProfile(email: string, name: string, avatarUrl: string | null) {
     const rows = (await dbAll("SELECT id, name, avatar_url FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email)) as any[];
     const cleanName = (name || '').trim();
@@ -2559,7 +2560,41 @@ async function startServer() {
       const nameIsDefault = !r.name || r.name === emailPrefix;
       const avatarIsEmpty = !r.avatar_url;
       const newName = cleanName && nameIsDefault ? cleanName : r.name;
-      const newAvatar = avatarUrl && avatarIsEmpty ? avatarUrl : r.avatar_url;
+      let newAvatar = r.avatar_url;
+      if (avatarUrl && avatarIsEmpty) {
+        // Try to download and store locally; fall back to the external URL.
+        try {
+          const resp = await fetch(avatarUrl, { signal: AbortSignal.timeout(8000) });
+          const buf = Buffer.from(await resp.arrayBuffer());
+          const ctype = resp.headers.get('content-type') || '';
+          if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
+            const fid = await storeFile({
+              teamId: null, memberId: r.id, kind: 'avatar',
+              filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
+            });
+            newAvatar = fileUrl(fid);
+          } else {
+            newAvatar = avatarUrl;
+          }
+        } catch {
+          newAvatar = avatarUrl;
+        }
+      } else if (avatarUrl && r.avatar_url && /^https?:\/\//.test(r.avatar_url)) {
+        // Existing external OAuth avatar: migrate it to local storage so it
+        // can't break later when the provider URL expires.
+        try {
+          const resp = await fetch(r.avatar_url, { signal: AbortSignal.timeout(8000) });
+          const buf = Buffer.from(await resp.arrayBuffer());
+          const ctype = resp.headers.get('content-type') || '';
+          if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
+            const fid = await storeFile({
+              teamId: null, memberId: r.id, kind: 'avatar',
+              filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
+            });
+            newAvatar = fileUrl(fid);
+          }
+        } catch { /* keep the external URL */ }
+      }
       if (newName !== r.name || newAvatar !== r.avatar_url) {
         await dbRun("UPDATE members SET name = ?, avatar_url = ? WHERE id = ?", newName, newAvatar, r.id);
       }
@@ -5067,8 +5102,24 @@ Rules:
     const auth = await requireOwner(req, res);
     if (!auth) return;
     const { status } = req.body || {};
-    const next = status === 'resolved' ? 'resolved' : 'new';
-    (await dbRun("UPDATE feedback SET status = ? WHERE id = ?", next, req.params.id));
+    const fid = parseInt(req.params.id, 10);
+    if (status === 'resolved') {
+      // Notify the reporter, then delete so it's gone from the Owner Portal.
+      const fb = (await dbGet("SELECT id, user_id, category, message FROM feedback WHERE id = ?", fid)) as any;
+      if (fb?.user_id) {
+        const preview = String(fb.message || '').slice(0, 80);
+        await createNotification(
+          fb.user_id,
+          `Your feedback${fb.category ? ` (${fb.category})` : ''} has been addressed by the Control Point team. Thanks for reporting it!`,
+          'system',
+          { feedbackId: fb.id, feedbackPreview: preview }
+        );
+      }
+      (await dbRun("DELETE FROM feedback WHERE id = ?", fid));
+    } else {
+      const next = 'new';
+      (await dbRun("UPDATE feedback SET status = ? WHERE id = ?", next, fid));
+    }
     res.json({ success: true });
   });
 
