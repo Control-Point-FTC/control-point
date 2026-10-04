@@ -73,11 +73,13 @@ function ParticipantTile({
         'relative rounded-2xl overflow-hidden bg-secondary border transition-all cursor-pointer',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
         p.speaking ? 'border-emerald-400 ring-2 ring-emerald-400/60' : 'border-text-base/10',
-        large ? 'w-full h-full min-h-[240px]' : 'aspect-video min-h-[120px]',
+        // Don't force 16:9 — let portrait video be portrait, landscape be landscape.
+        // Large tiles fill their container; small tiles adapt with a sensible min.
+        large ? 'w-full h-full min-h-[240px]' : 'min-h-[120px] aspect-[3/4] sm:aspect-video',
       )}
     >
       {hasVideo ? (
-        <StreamVideo stream={stream} muted={p.isSelf} label={`${p.name}'s video`} className="absolute inset-0 w-full h-full" />
+        <StreamVideo stream={stream} muted={p.isSelf} label={`${p.name}'s video`} className="absolute inset-0 w-full h-full" zoomable />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center">
           <VoiceAvatar name={p.name} avatarUrl={p.avatarUrl} size={large ? 96 : 56} speaking={p.speaking} muted={p.isMuted} />
@@ -226,7 +228,7 @@ export function CallView({ onOpenSettings }: { onOpenSettings?: () => void }) {
           <VoiceIconButton label={self.deafened ? 'Undeafen' : 'Deafen'} active={self.deafened} onClick={toggleDeafen} className={cn('p-2.5', self.deafened && '!text-rose-400')}>
             {self.deafened ? <VolumeX className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
           </VoiceIconButton>
-          <VoiceIconButton label={self.cameraOn ? 'Turn camera off' : 'Turn camera on'} active={self.cameraOn} onClick={() => void toggleCamera()} className="p-2.5 hidden sm:inline-flex">
+          <VoiceIconButton label={self.cameraOn ? 'Turn camera off' : 'Turn camera on'} active={self.cameraOn} onClick={() => void toggleCamera()} className="p-2.5">
             {self.cameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
           </VoiceIconButton>
           <VoiceIconButton label={self.sharingScreen ? 'Stop sharing screen' : 'Share screen'} active={self.sharingScreen} onClick={() => void toggleScreenShare()} className={cn('p-2.5 hidden sm:inline-flex', self.sharingScreen && '!text-emerald-400')}>

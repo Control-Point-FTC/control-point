@@ -6,7 +6,7 @@
 // does not route audio to speakers), so per-participant volume is a real UI
 // concern: the menu writes it here, the tile applies it to its <audio>.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Signal, SignalHigh, SignalLow, SignalMedium } from 'lucide-react';
 import { cn } from '../ui';
 import type { ConnectionQuality, ConnectionStatus, VoiceParticipant } from '../../voice';
@@ -188,26 +188,87 @@ export function VoiceIconButton({
 
 // ------------------------------------------------------ media element helper
 
-/** <video> that binds a MediaStream via srcObject (muted for local preview). */
+/** <video> that binds a MediaStream via srcObject (muted for local preview).
+ *  Supports pinch-to-zoom and double-tap to zoom on touch devices. */
 export function StreamVideo({
   stream,
   muted = false,
   className,
   label,
+  zoomable = false,
 }: {
   stream: MediaStream | null | undefined;
   muted?: boolean;
   className?: string;
   label: string;
+  zoomable?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const pinchRef = useRef<{ dist: number; zoom: number } | null>(null);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.srcObject = stream ?? null;
     if (stream) el.play().catch(() => {});
   }, [stream]);
-  return <video ref={ref} muted={muted} playsInline autoPlay aria-label={label} className={cn('object-cover', className)} />;
+
+  // Reset zoom when stream changes
+  useEffect(() => { setZoom(1); }, [stream]);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (!zoomable || e.touches.length !== 2) return;
+    const [a, b] = [e.touches[0], e.touches[1]];
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    pinchRef.current = { dist, zoom };
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!zoomable || e.touches.length !== 2 || !pinchRef.current) return;
+    e.preventDefault();
+    const [a, b] = [e.touches[0], e.touches[1]];
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const { dist: startDist, zoom: startZoom } = pinchRef.current;
+    const next = Math.min(4, Math.max(1, startZoom * (dist / startDist)));
+    setZoom(next);
+  };
+
+  const onTouchEnd = () => { pinchRef.current = null; };
+
+  const onDoubleClick = () => {
+    if (!zoomable) return;
+    setZoom((z) => (z > 1 ? 1 : 2));
+  };
+
+  return (
+    <div
+      className="relative w-full h-full overflow-hidden"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onDoubleClick={onDoubleClick}
+    >
+      <video
+        ref={ref}
+        muted={muted}
+        playsInline
+        autoPlay
+        aria-label={label}
+        className={cn('object-cover w-full h-full transition-transform duration-150', className)}
+        style={zoomable && zoom > 1 ? { transform: `scale(${zoom})` } : undefined}
+      />
+      {zoomable && zoom > 1 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setZoom(1); }}
+          className="absolute top-2 right-2 px-2 py-1 rounded-lg bg-black/60 text-white text-[10px] font-bold"
+          aria-label="Reset zoom"
+        >
+          1×
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** <audio> that binds a remote participant's MediaStream and applies their saved volume. */

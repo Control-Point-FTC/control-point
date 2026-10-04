@@ -2949,7 +2949,7 @@ export default function App() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh app-volt-grid grid-pulse">
         {!isImmersiveRoute && (
-        <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
+        <header className={cn("flex-shrink-0 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between", showUserMenu ? "z-[60]" : "z-20")}>
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : t('nav.dashboard')}</h2>
           </div>

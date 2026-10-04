@@ -2,7 +2,7 @@
 // styling (same padding, hover, active states) so it feels native.
 
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, VideoOff, Volume2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, Video, VideoOff, Volume2 } from 'lucide-react';
 import { cn } from '../ui';
 import { useVoice, type VoiceChannelSummary } from '../../voice';
 import { VoiceAvatar } from './shared';
@@ -126,6 +126,30 @@ export function VoiceChannelList({ className }: { className?: string }) {
                     )}
                     {joining && <span className="text-[11px] text-text-muted flex-shrink-0">Joining…</span>}
                   </button>
+                  {/* Join with video — requests camera permission from the tap gesture */}
+                  {!isActive && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setJoiningId(c.id);
+                        try {
+                          await joinChannel(c.id, { video: true });
+                        } finally {
+                          setJoiningId(null);
+                        }
+                      }}
+                      disabled={joining}
+                      title={`Join ${c.name} with video`}
+                      aria-label={`Join ${c.name} with video on`}
+                      className={cn(
+                        'flex-shrink-0 p-2 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/[0.06] transition-all',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                        'opacity-100 md:opacity-0 md:group-hover/channel:opacity-100'
+                      )}
+                    >
+                      <Video className="w-[18px] h-[18px]" aria-hidden="true" />
+                    </button>
+                  )}
                   {liveCount > 0 && (
                     <button
                       type="button"
