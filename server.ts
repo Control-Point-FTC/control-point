@@ -63,8 +63,8 @@ import {
 import {
   aiChat,
   isGeminiConfigured,
-  isFireworksQuotaError,
-  FIREWORKS_QUOTA_EXHAUSTED_MSG,
+  isAnthropicQuotaError,
+  ANTHROPIC_QUOTA_EXHAUSTED_MSG,
 } from "./ai-hybrid.js";
 import {
   youtubeApi as youtubeApiImpl,
@@ -715,7 +715,7 @@ const aiUsageColumns = (await dbAll(`PRAGMA table_info(ai_usage)`)) as any[];
 if (!aiUsageColumns.some((c: any) => c.name === 'status')) {
   (await dbExec("ALTER TABLE ai_usage ADD COLUMN status TEXT DEFAULT 'ok'"));
 }
-// provider: 'fireworks' | 'gemini' | 'unknown' — which backend served the request,
+// provider: 'gemini' | 'anthropic' | 'unknown' — which backend served the request,
 // so the owner can see the hybrid split in the AI dashboard.
 if (!aiUsageColumns.some((c: any) => c.name === 'provider')) {
   (await dbExec("ALTER TABLE ai_usage ADD COLUMN provider TEXT DEFAULT 'gemini'"));
@@ -5139,7 +5139,7 @@ Rules:
     const flagRows = (await dbAll("SELECT status, COUNT(*) AS n FROM ai_flags GROUP BY status")) as any[];
     const flags: Record<string, number> = {};
     for (const r of flagRows) flags[r.status] = r.n;
-    // Provider split (Fireworks vs Gemini) for today's traffic — shows the hybrid
+    // Provider split (Gemini vs Anthropic) for today's traffic — shows the hybrid
     // router working. Older rows default to 'gemini' via the column default.
     const providers = (await dbAll(
       "SELECT provider, COUNT(*) AS messages, COALESCE(SUM(total_tokens), 0) AS tokens FROM ai_usage WHERE created_at >= ? GROUP BY provider",
@@ -7501,7 +7501,7 @@ Rules:
       auth = await requireAuth(req, res);
       if (!auth) return;
       if (!isAIConfigured()) {
-        return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Fireworks or Gemini API key." });
+        return res.status(501).json({ error: "AI not configured", result: "Bruno isn't set up yet — the team owner needs to add a Gemini or Anthropic API key." });
       }
       // Owner AI governance: disabled / timed-out / over daily token budget
       const gate = await aiAccessCheck(auth.memberId);
@@ -7626,8 +7626,8 @@ Rules:
         req.on("close", () => streamAbort.abort());
         try {
           let usage: any = null;
-          // Hybrid provider: Fireworks handles ordinary chat, Gemini (grounded)
-          // handles web research. The router decides deterministically — no
+          // Hybrid provider: Gemini (free) handles everything; Anthropic is
+          // fallback on quota. The router decides deterministically — no
           // model call is spent choosing the provider.
           const aiReply = await aiChat({
             extraSystem: systemExtra,
@@ -7653,9 +7653,9 @@ Rules:
           res.end();
         } catch (err: any) {
           console.error("AI build-helper stream error:", err);
-          const fireworksQuota = isFireworksQuotaError(err);
-          const quota = fireworksQuota || isQuotaError(err);
-          const quotaMsg = fireworksQuota ? FIREWORKS_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
+          const anthropicQuota = isAnthropicQuotaError(err);
+          const quota = anthropicQuota || isQuotaError(err);
+          const quotaMsg = anthropicQuota ? ANTHROPIC_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
           // Track the attempt even on failure so the owner dashboard reflects
           // real usage during an upstream outage (0 tokens — nothing was generated).
           logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (err as any)?.aiProvider || "unknown");
@@ -7689,11 +7689,11 @@ Rules:
       res.json({ result: finalResult, chatId: chat ? chat.id : undefined });
     } catch (error: any) {
       console.error("AI build-helper error:", error);
-      const fireworksQuota = isFireworksQuotaError(error);
-      const quota = fireworksQuota || isQuotaError(error);
+      const anthropicQuota = isAnthropicQuotaError(error);
+      const quota = anthropicQuota || isQuotaError(error);
       if (auth) logAiUsage(auth.memberId, auth.teamId, null, 0, 0, quota ? "quota" : "error", (error as any)?.aiProvider || "unknown");
       if (quota) {
-        const quotaMsg = fireworksQuota ? FIREWORKS_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
+        const quotaMsg = anthropicQuota ? ANTHROPIC_QUOTA_EXHAUSTED_MSG : QUOTA_EXHAUSTED_MSG;
         res.status(429).json({ error: "AI quota exhausted", result: quotaMsg });
       } else {
         res.status(502).json({ error: "AI request failed", result: "Bruno hit a snag — please try again in a moment." });

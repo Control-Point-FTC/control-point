@@ -18,7 +18,7 @@ export function aiModel(): string {
 }
 
 export function isAIConfigured(): boolean {
-  return !!process.env.GEMINI_API_KEY || !!process.env.GROQ_API_KEY;
+  return !!process.env.GEMINI_API_KEY || !!process.env.ANTHROPIC_API_KEY;
 }
 
 function apiKey(): string {

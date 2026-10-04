@@ -1,29 +1,21 @@
 // Hybrid AI provider layer for Control Point.
 //
 // Routes each Bruno chat request to the cheapest capable provider:
-//   - Fireworks AI (OpenAI-compatible API) for ordinary chat and simple
-//     structured actions — the high-volume path.
-//   - Gemini with google_search grounding for requests that need live web /
-//     current external information.
+//   - Gemini (free) for ordinary chat, web grounding, and vision — the
+//     primary path.
+//   - Anthropic (Claude) as fallback when Gemini hits rate limits or quota.
 // The router is a pure deterministic function: no model call is spent deciding
 // where to send the request (that decision is the "fast path").
 //
-// Provider framework: any OpenAI-compatible chat-completions endpoint plugs
-// in via OpenAIProviderConfig (base URL + key + model). Fireworks is the
-// configured provider; adding another is a new config entry, not new call
-// logic.
+// Fallback policy: if Gemini fails with a rate limit, server error, or
+// transport failure, the request fails over ONCE to Anthropic (a different
+// provider = a different quota bucket). Auth/config errors (401/400) are
+// never failed over — they indicate a bad key or bad request, and hiding
+// them would mask a real config problem.
 //
-// Fallback policy: if the chat provider fails with a rate limit, server
-// error, or transport failure, the request fails over ONCE to ungrounded
-// Gemini (a different provider = a different quota bucket). Auth/config
-// errors (401/400) are never failed over — they indicate a bad key or bad
-// request, and hiding them would mask a real config problem.
-//
-// Setup: set FIREWORKS_API_KEY in the environment (https://fireworks.ai)
-// and optional FIREWORKS_MODEL (default:
-// accounts/fireworks/models/glm-5p3-flash).
-// Until a chat key is set, everything routes to Gemini exactly as before —
-// deploying this is safe before the keys exist.
+// Setup: set GEMINI_API_KEY in the environment (https://aistudio.google.com)
+// and ANTHROPIC_API_KEY (https://console.anthropic.com) for fallback.
+// Until keys are set, requests fail with a clear config error.
 
 import {
   readStreamChunk,
@@ -35,16 +27,18 @@ import {
   type ChatMessage,
 } from "./ai.js";
 
-const FIREWORKS_API_BASE = "https://api.fireworks.ai/inference/v1";
-const DEFAULT_FIREWORKS_MODEL = "accounts/fireworks/models/glm-5p3-flash";
-const FIREWORKS_TIMEOUT_MS = 90_000;
+const ANTHROPIC_API_BASE = "https://api.anthropic.com/v1";
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+const ANTHROPIC_TIMEOUT_MS = 90_000;
+const ANTHROPIC_VERSION = "2023-06-01";
 
-export type AIProvider = "fireworks" | "gemini";
+export type AIProvider = "gemini" | "anthropic";
 
-/** Pluggable OpenAI-compatible chat provider. Add a config here — no new
- *  call logic needed — to support another provider (Together, OpenRouter…). */
+/** Pluggable OpenAI-compatible chat provider. Kept for reference; the active
+ *  providers are Gemini (via buildHelperChat) and Anthropic (via
+ *  callAnthropicChat below). */
 interface OpenAIProviderConfig {
-  id: "fireworks";
+  id: string;
   /** Human label used in error prefixes and logs. */
   label: string;
   base: string;
@@ -56,39 +50,28 @@ interface OpenAIProviderConfig {
   extraBody?: Record<string, any>;
 }
 
-export function fireworksModel(): string {
-  return process.env.FIREWORKS_MODEL || DEFAULT_FIREWORKS_MODEL;
+export function anthropicModel(): string {
+  return process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
 }
 
-export function isFireworksConfigured(): boolean {
-  return !!process.env.FIREWORKS_API_KEY;
+export function isAnthropicConfigured(): boolean {
+  return !!process.env.ANTHROPIC_API_KEY;
 }
 
 export function isGeminiConfigured(): boolean {
   return !!process.env.GEMINI_API_KEY;
 }
 
-function fireworksKey(): string {
-  const key = process.env.FIREWORKS_API_KEY;
-  if (!key) throw new Error("FIREWORKS_API_KEY is not set");
+function anthropicKey(): string {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY is not set");
   return key;
 }
-
-const OPENAI_PROVIDERS: Record<"fireworks", OpenAIProviderConfig> = {
-  fireworks: {
-    id: "fireworks",
-    label: "Fireworks",
-    base: FIREWORKS_API_BASE,
-    key: fireworksKey,
-    model: fireworksModel,
-    timeoutMs: FIREWORKS_TIMEOUT_MS,
-  },
-};
 
 // --- Router ----------------------------------------------------------------
 // Explicit, deterministic routing. Deliberately biased TOWARD grounding on
 // uncertainty: a grounded Gemini answer to a simple question just costs quota,
-// but a Fireworks answer to a question needing current facts risks hallucination.
+// but an ungrounded answer to a question needing current facts risks hallucination.
 
 /** Patterns that strongly suggest the answer needs live external information. */
 const NEEDS_WEB_PATTERNS: RegExp[] = [
@@ -131,7 +114,7 @@ export function routeChatRequest(opts: {
   webSearch?: boolean;
   hasImages?: boolean;
   /** Owner override (settings → chat_provider): skip the hybrid order. */
-  forceProvider?: "gemini" | "fireworks";
+  forceProvider?: "gemini" | "anthropic";
 }): RouteDecision {
   // Vision requests stay on Gemini — that path is tested and working.
   if (opts.hasImages) {
@@ -148,17 +131,15 @@ export function routeChatRequest(opts: {
   if (opts.forceProvider === "gemini") {
     return { provider: "gemini", grounded: false, reason: "owner setting: Gemini only" };
   }
-  if (opts.forceProvider === "fireworks") {
-    if (isFireworksConfigured()) {
-      return { provider: "fireworks", grounded: false, reason: "owner setting: Fireworks" };
+  if (opts.forceProvider === "anthropic") {
+    if (isAnthropicConfigured()) {
+      return { provider: "anthropic", grounded: false, reason: "owner setting: Anthropic" };
     }
-    return { provider: "gemini", grounded: false, reason: "owner setting: Fireworks (key missing, Gemini fallback)" };
+    return { provider: "gemini", grounded: false, reason: "owner setting: Anthropic (key missing, Gemini fallback)" };
   }
-  // Hybrid order: Fireworks for ordinary chat, then Gemini.
-  if (isFireworksConfigured()) {
-    return { provider: "fireworks", grounded: false, reason: "ordinary chat: Fireworks" };
-  }
-  return { provider: "gemini", grounded: false, reason: "no chat provider configured: Gemini fallback" };
+  // Hybrid order: Gemini (free) for everything, Anthropic as fallback on quota.
+  // The fallback happens in aiChat(), not here — this just picks the primary.
+  return { provider: "gemini", grounded: false, reason: "ordinary chat: Gemini (free primary)" };
 }
 
 // --- OpenAI-compatible provider calls (Fireworks, …) ------------------
@@ -199,30 +180,156 @@ export function isOpenAIQuotaError(err: any, label: string): boolean {
   return new RegExp(label, "i").test(msg) && /rate_limit_exceeded/i.test(msg);
 }
 
-/** True when Fireworks rejected the call because its credits are spent. */
-export function isFireworksQuotaError(err: any): boolean {
-  return isOpenAIQuotaError(err, "Fireworks");
+/** True when Anthropic rejected the call because its quota/credits are spent. */
+export function isAnthropicQuotaError(err: any): boolean {
+  const msg = String(err?.message || err || "");
+  return /Anthropic API error 429/i.test(msg) || (/anthropic/i.test(msg) && /rate_limit/i.test(msg));
 }
 
-/** User-facing copy for Fireworks credit exhaustion. */
-export const FIREWORKS_QUOTA_EXHAUSTED_MSG =
-  "Bruno's Fireworks credits are used up right now — the key needs a top-up at fireworks.ai. " +
-  "Chat falls back to Gemini in the meantime.";
+/** User-facing copy for Anthropic credit exhaustion. */
+export const ANTHROPIC_QUOTA_EXHAUSTED_MSG =
+  "Bruno's Anthropic credits are used up right now — the key needs a top-up at console.anthropic.com.";
 
-/** Provider failures worth failing over to Gemini for. Auth/config errors
- *  (401/400) are excluded on purpose: failing over would hide a bad key or
- *  bad request. */
-function isOpenAIFailoverable(err: any, label: string): boolean {
+/** Provider failures worth failing over for. Auth/config errors (401/400)
+ *  are excluded on purpose: failing over would hide a bad key or bad request. */
+function isAnthropicFailoverable(err: any): boolean {
   const msg = String(err?.message || err || "");
   return (
-    new RegExp(`${label} API error 429`, "i").test(msg) ||
-    new RegExp(`${label} API error 5\\d\\d`, "i").test(msg) ||
+    /Anthropic API error 429/i.test(msg) ||
+    /Anthropic API error 5\d\d/i.test(msg) ||
+    /overloaded/i.test(msg) ||
     /timed out/i.test(msg) ||
-    /stalled/i.test(msg) ||
-    /aborted/i.test(msg) ||
     /fetch failed/i.test(msg)
   );
 }
+
+function isGeminiFailoverable(err: any): boolean {
+  const msg = String(err?.message || err || "");
+  return (
+    /429/.test(msg) ||
+    /5\d\d/.test(msg) ||
+    /quota/i.test(msg) ||
+    /rate.?limit/i.test(msg) ||
+    /timed out/i.test(msg) ||
+    /fetch failed/i.test(msg)
+  );
+}
+
+function extractAnthropicText(data: any): string {
+  try {
+    const blocks = data?.content || [];
+    return blocks.filter((b: any) => b.type === "text").map((b: any) => b.text || "").join("");
+  } catch {
+    return "";
+  }
+}
+
+export function extractAnthropicUsage(data: any): AiUsage | null {
+  try {
+    const u = data?.usage;
+    if (!u) return null;
+    const promptTokens = u.input_tokens || 0;
+    const responseTokens = u.output_tokens || 0;
+    return { promptTokens, responseTokens, totalTokens: promptTokens + responseTokens };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Call Anthropic's Messages API (not OpenAI-compatible: system is a top-level
+ * param, roles are user/assistant, response nests text in content blocks).
+ */
+async function callAnthropicChat(opts: {
+  system: string;
+  messages: ChatMessage[];
+  maxTokens: number;
+  stream: boolean;
+  onChunk?: (text: string) => void;
+  onUsage?: (u: AiUsage) => void;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const body: any = {
+    model: anthropicModel(),
+    max_tokens: opts.maxTokens,
+    system: opts.system,
+    messages: opts.messages.map((m) => ({
+      role: m.role === "model" ? "assistant" : "user",
+      content: m.text || " ",
+    })),
+  };
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": anthropicKey(),
+    "anthropic-version": ANTHROPIC_VERSION,
+  };
+
+  const res = await fetchWithPolicy(
+    `${ANTHROPIC_API_BASE}/messages`,
+    { method: "POST", headers, body: JSON.stringify(body) },
+    { timeoutMs: ANTHROPIC_TIMEOUT_MS, label: "Anthropic", signal: opts.signal }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Anthropic API error ${res.status}: ${text.slice(0, 2000)}`);
+  }
+
+  if (!opts.stream || !res.body) {
+    const data = await res.json();
+    const u = extractAnthropicUsage(data);
+    if (u && opts.onUsage) opts.onUsage(u);
+    return extractAnthropicText(data);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let full = "";
+  let lastUsage: AiUsage | null = null;
+  const maxAccumChars = Math.max(8000, opts.maxTokens * 8);
+  for (;;) {
+    if (opts.signal?.aborted) break;
+    let read: ReadableStreamReadResult<Uint8Array>;
+    try {
+      read = await readStreamChunk(reader);
+    } catch (err) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      throw err;
+    }
+    const { done, value } = read;
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload) continue;
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed?.type === "content_block_delta" && parsed?.delta?.type === "text_delta") {
+          const text = parsed.delta.text || "";
+          if (text) {
+            full += text;
+            opts.onChunk?.(text);
+            if (full.length >= maxAccumChars) break;
+          }
+        }
+        if (parsed?.type === "message_delta" && parsed?.usage) {
+          lastUsage = extractAnthropicUsage({ usage: parsed.usage });
+        }
+      } catch { /* skip malformed chunk */ }
+    }
+    if (full.length >= maxAccumChars) break;
+  }
+  try { await reader.cancel(); } catch { /* noop */ }
+  if (lastUsage && opts.onUsage) opts.onUsage(lastUsage);
+  return full;
+}
+
+// --- Legacy OpenAI-compatible helpers (Fireworks removed) -------------------
 
 async function callOpenAIChat(
   cfg: OpenAIProviderConfig,
@@ -356,14 +463,14 @@ export async function aiChat(opts: {
   onUsage?: (u: AiUsage) => void;
   signal?: AbortSignal;
 }): Promise<AIChatResult> {
-  if (!isFireworksConfigured() && !isGeminiConfigured()) {
-    throw new Error("AI not configured: set FIREWORKS_API_KEY or GEMINI_API_KEY");
+  if (!isGeminiConfigured() && !isAnthropicConfigured()) {
+    throw new Error("AI not configured: set GEMINI_API_KEY or ANTHROPIC_API_KEY");
   }
   const latestUser = [...opts.messages].reverse().find((m) => m.role === "user")?.text || "";
   const chatProviderSetting = await getAISetting("chat_provider", "hybrid");
   const forceProvider =
     chatProviderSetting === "gemini" ? "gemini"
-    : chatProviderSetting === "fireworks" ? "fireworks"
+    : chatProviderSetting === "anthropic" ? "anthropic"
     : undefined;
   const route = routeChatRequest({
     text: latestUser,
@@ -380,10 +487,10 @@ export async function aiChat(opts: {
     throw err;
   };
 
-  if (route.provider === "fireworks") {
-    const cfg = OPENAI_PROVIDERS[route.provider];
+  // Anthropic route (owner override).
+  if (route.provider === "anthropic") {
     try {
-      const text = await callOpenAIChat(cfg, {
+      const text = await callAnthropicChat({
         system,
         messages: opts.messages,
         maxTokens: opts.maxTokens,
@@ -392,33 +499,16 @@ export async function aiChat(opts: {
         onUsage: opts.onUsage,
         signal: opts.signal,
       });
-      return { text, provider: route.provider, grounded: false };
+      return { text, provider: "anthropic", grounded: false };
     } catch (err: any) {
-      // One failover to ungrounded Gemini on rate limits / server errors /
-      // transport failures (different provider = different quota bucket).
-      // Anything else — bad key, bad request — throws honestly.
-      if (isGeminiConfigured() && isOpenAIFailoverable(err, cfg.label)) {
-        console.warn(`[AI] ${cfg.label} failed (%s); failing over once to Gemini`, String(err?.message || err).slice(0, 120));
-        try {
-          const text = await buildHelperChat(
-            opts.messages,
-            opts.maxTokens,
-            opts.onChunk,
-            opts.extraSystem,
-            opts.onUsage,
-            opts.signal,
-            false // ungrounded: this is the degraded path, keep it cheap
-          );
-          return { text, provider: "gemini", grounded: false };
-        } catch (geminiErr: any) {
-          fail("gemini", geminiErr);
-        }
-      }
-      fail(route.provider, err);
+      fail("anthropic", err);
     }
   }
 
-  // Gemini route (grounded for web research, plain for images).
+  // Gemini route (primary: ordinary chat, grounded web research, vision).
+  // On quota/rate-limit/server errors, fail over ONCE to Anthropic
+  // (different provider = different quota bucket). Auth/config errors
+  // (401/400) throw honestly — they indicate a bad key, not spent quota.
   try {
     const text = await buildHelperChat(
       opts.messages,
@@ -431,6 +521,23 @@ export async function aiChat(opts: {
     );
     return { text, provider: "gemini", grounded: route.grounded };
   } catch (err: any) {
+    if (isAnthropicConfigured() && isGeminiFailoverable(err)) {
+      console.warn(`[AI] Gemini failed (%s); failing over once to Anthropic`, String(err?.message || err).slice(0, 120));
+      try {
+        const text = await callAnthropicChat({
+          system,
+          messages: opts.messages,
+          maxTokens: opts.maxTokens,
+          stream: opts.stream,
+          onChunk: opts.onChunk,
+          onUsage: opts.onUsage,
+          signal: opts.signal,
+        });
+        return { text, provider: "anthropic", grounded: false };
+      } catch (anthropicErr: any) {
+        fail("anthropic", anthropicErr);
+      }
+    }
     fail("gemini", err);
   }
 }
