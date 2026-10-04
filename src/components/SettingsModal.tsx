@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ChevronLeft, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette } from 'lucide-react';
+import { X, ChevronLeft, ChevronDown, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette, AlertCircle } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify, confirmDialog } from './dialog';
@@ -9,6 +9,7 @@ import { assetUrl } from '../services/api';
 import { Switch, SwitchTrack } from './ui';
 import { useTranslation } from 'react-i18next';
 import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
+import { soundsEnabled, setSoundsEnabled } from '../utils/sounds';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -110,6 +111,11 @@ export default function SettingsModal({
   const [mobileNav, setMobileNav] = useState(true);
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
+  // Seeded values for unsaved-changes tracking on the account form.
+  const [initialName, setInitialName] = useState('');
+  const [initialRole, setInitialRole] = useState('');
+  // Inline save feedback (auto-clears after 4s).
+  const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null);
   const [teamName, setTeamName] = useState('');
   const [teamNumber, setTeamNumber] = useState('');
   const [ftcNumber, setFtcNumber] = useState('');
@@ -123,7 +129,63 @@ export default function SettingsModal({
   // Bruno output level: low | medium | high | max — caps reply length.
   const [outputLevel, setOutputLevel] = useState('medium');
   const [savingLevel, setSavingLevel] = useState(false);
+  // Bruno AI personal preferences (persisted to localStorage, see getBrunoPreferences in src/utils/brunoPrefs.ts)
+  const readPref = (key: string, fallback: string) => {
+    try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+  };
+  const readBoolPref = (key: string, fallback: boolean) => {
+    try {
+      const v = localStorage.getItem(key);
+      return v == null ? fallback : v === '1';
+    } catch { return fallback; }
+  };
+  const [explanationStyle, setExplanationStyle] = useState(() => readPref('controlpoint-bruno-explanation-style', 'balanced'));
+  const [responseFormat, setResponseFormat] = useState(() => readPref('controlpoint-bruno-response-format', 'detailed'));
+  const [autoExplain, setAutoExplain] = useState(() => readBoolPref('controlpoint-bruno-auto-explain', true));
+  const [confirmChanges, setConfirmChanges] = useState(() => readBoolPref('controlpoint-bruno-confirm-changes', true));
+  const [rememberPrefs, setRememberPrefs] = useState(() => readBoolPref('controlpoint-bruno-remember-prefs', true));
+  const [ftcPrefsOpen, setFtcPrefsOpen] = useState(false);
+  const [ftcOpmodeStyle, setFtcOpmodeStyle] = useState(() => readPref('controlpoint-ftc-opmode-style', 'linear'));
+  const [ftcIndent, setFtcIndent] = useState(() => readPref('controlpoint-ftc-indent', '4'));
+  const [ftcComments, setFtcComments] = useState(() => readBoolPref('controlpoint-ftc-comments', true));
+  const [ftcBeginnerComments, setFtcBeginnerComments] = useState(() => readBoolPref('controlpoint-ftc-beginner-comments', false));
+  const [ftcWarnHardware, setFtcWarnHardware] = useState(() => readBoolPref('controlpoint-ftc-warn-hardware', true));
+  const [ftcWarnReversed, setFtcWarnReversed] = useState(() => readBoolPref('controlpoint-ftc-warn-reversed', true));
+  const [ftcWarnPower, setFtcWarnPower] = useState(() => readBoolPref('controlpoint-ftc-warn-power', true));
+  const [ftcWarnBlocking, setFtcWarnBlocking] = useState(() => readBoolPref('controlpoint-ftc-warn-blocking', true));
+  const setPref = (key: string, value: string) => {
+    try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+  };
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // --- Unsaved-changes guard for the account form ---
+  const accountDirty = name !== initialName || role !== initialRole;
+  const nameError: string | null = !name.trim()
+    ? "Name can't be empty."
+    : name.trim().length > 60
+      ? 'Name must be 60 characters or fewer.'
+      : null;
+  const confirmDiscard = (): Promise<boolean> => {
+    if (!accountDirty) return Promise.resolve(true);
+    return confirmDialog({
+      title: 'Unsaved changes',
+      message: 'You have unsaved changes. Discard them?',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+      danger: true,
+    });
+  };
+  const switchSection = (id: Section) => {
+    void confirmDiscard().then((ok) => {
+      if (ok) { setSection(id); setMobileNav(false); }
+    });
+  };
+  const backToNav = () => {
+    void confirmDiscard().then((ok) => { if (ok) setMobileNav(true); });
+  };
+  const requestClose = () => {
+    void confirmDiscard().then((ok) => { if (ok) onClose(); });
+  };
 
   // Seed the forms every time the modal opens.
   useEffect(() => {
@@ -131,6 +193,9 @@ export default function SettingsModal({
     setSection('account');
     setName(user?.name || '');
     setRole(user?.role || '');
+    setInitialName(user?.name || '');
+    setInitialRole(user?.role || '');
+    setSaveFeedback(null);
     setTeachMode(user?.bruno_teach_mode === 1);
     // 'max' was removed — anyone who had it falls back to 'high'
     setOutputLevel(user?.bruno_output_level === 'max' ? 'high' : (user?.bruno_output_level || 'medium'));
@@ -140,36 +205,57 @@ export default function SettingsModal({
     setCopied(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ESC closes, like Discord.
+  // ESC closes, like Discord — guarded when the account form is dirty.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(); }
+      if (e.key === 'Escape') { e.stopPropagation(); requestClose(); }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [open, onClose]);
+  });
 
   if (!open) return null;
 
   const saveAccount = async () => {
-    if (!name.trim()) { notify("Name can't be empty.", 'error'); return; }
+    const trimmed = name.trim();
+    // Inline error is shown under the field; the button is disabled while invalid.
+    if (!trimmed || trimmed.length > 60) return;
     setSaving(true);
+    setSaveFeedback(null);
     try {
       const res = await apiFetch('/api/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), role: role.trim() }),
+        body: JSON.stringify({ name: trimmed, role: role.trim() }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.user) { onUserSaved(data.user); notify('Profile saved.', 'success'); }
-      else notify(data.error || 'Could not save.', 'error');
+      if (res.ok && data.user) {
+        onUserSaved(data.user);
+        // Saved values become the new baseline — the form is no longer dirty.
+        setInitialName(data.user.name || '');
+        setInitialRole(data.user.role || '');
+        setSaveFeedback({ kind: 'success', msg: 'Profile saved.' });
+        notify('Profile saved.', 'success');
+      } else {
+        const msg = data.error || 'Could not save.';
+        setSaveFeedback({ kind: 'error', msg });
+        notify(msg, 'error');
+      }
     } catch {
+      setSaveFeedback({ kind: 'error', msg: 'Could not save.' });
       notify('Could not save.', 'error');
     } finally {
       setSaving(false);
     }
   };
+
+  // Inline save feedback auto-clears after 4s.
+  useEffect(() => {
+    if (!saveFeedback) return;
+    const id = window.setTimeout(() => setSaveFeedback(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [saveFeedback]);
 
   const saveTeam = async () => {
     if (!team?.id) return;
@@ -361,7 +447,7 @@ export default function SettingsModal({
                   {items.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => { setSection(s.id); setMobileNav(false); }}
+                      onClick={() => switchSection(s.id)}
                       className={cn(
                         'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all',
                         section === s.id
@@ -388,7 +474,7 @@ export default function SettingsModal({
         <div className="flex items-center justify-between px-4 sm:px-10 pt-6 pb-4 flex-shrink-0">
           <div className="flex items-center gap-1 min-w-0">
             <button
-              onClick={() => setMobileNav(true)}
+              onClick={backToNav}
               aria-label="Back to settings list"
               className="md:hidden p-2 -ml-2 rounded-xl text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors"
             >
@@ -399,7 +485,7 @@ export default function SettingsModal({
             </h2>
           </div>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="Close settings"
             className="p-2.5 rounded-full border border-text-base/10 text-text-muted hover:text-text-base hover:border-text-base/25 hover:rotate-90 transition-all"
           >
@@ -446,24 +532,53 @@ export default function SettingsModal({
                 <section className="space-y-4">
                   <h3 className="text-sm font-bold text-text-base">Details</h3>
                   <div>
-                    <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Display name</label>
-                    <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className={inputClass} />
+                    <label htmlFor="settings-display-name" className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Display name</label>
+                    <input
+                      id="settings-display-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      maxLength={60}
+                      aria-invalid={!!nameError}
+                      aria-describedby={nameError ? 'settings-display-name-error' : undefined}
+                      className={cn(inputClass, nameError && 'border-rose-500/60 focus:border-rose-500/60 focus:ring-rose-500/20')}
+                    />
+                    {nameError && (
+                      <p id="settings-display-name-error" role="alert" className="text-xs text-rose-400 font-medium mt-1.5">
+                        {nameError}
+                      </p>
+                    )}
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Role / title</label>
-                    <input value={role} onChange={(e) => setRole(e.target.value)} maxLength={80} placeholder="e.g. Build Captain" className={inputClass} />
+                    <label htmlFor="settings-role" className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Role / title</label>
+                    <input id="settings-role" value={role} onChange={(e) => setRole(e.target.value)} maxLength={80} placeholder="e.g. Build Captain" className={inputClass} />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Email</label>
-                    <input value={user?.email || ''} disabled className={cn(inputClass, 'opacity-50 cursor-not-allowed')} />
+                    <label htmlFor="settings-email" className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Email</label>
+                    <input id="settings-email" value={user?.email || ''} disabled className={cn(inputClass, 'opacity-50 cursor-not-allowed')} />
                   </div>
-                  <button
-                    onClick={() => void saveAccount()}
-                    disabled={saving}
-                    className="px-5 py-2.5 rounded-xl text-sm font-bold bg-accent text-accent-ink hover:brightness-105 active:scale-95 disabled:opacity-50 transition-all"
-                  >
-                    {saving ? 'Saving…' : 'Save changes'}
-                  </button>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={() => void saveAccount()}
+                      disabled={saving || !!nameError}
+                      className="px-5 py-2.5 rounded-xl text-sm font-bold bg-accent text-accent-ink hover:brightness-105 active:scale-95 disabled:opacity-50 transition-all"
+                    >
+                      {saving ? 'Saving…' : 'Save changes'}
+                    </button>
+                    {saveFeedback && (
+                      <p
+                        role="status"
+                        className={cn(
+                          'text-xs font-semibold flex items-center gap-1.5',
+                          saveFeedback.kind === 'success' ? 'text-emerald-400' : 'text-rose-400'
+                        )}
+                      >
+                        {saveFeedback.kind === 'success'
+                          ? <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                          : <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />}
+                        {saveFeedback.msg}
+                      </p>
+                    )}
+                  </div>
                 </section>
 
                 <section>
@@ -675,6 +790,10 @@ export default function SettingsModal({
               <section className="space-y-6">
                 <h3 className="text-sm font-bold text-text-base">Devices</h3>
                 <DeviceSettingsSection />
+                <div>
+                  <h3 className="text-sm font-bold text-text-base mb-3">Sounds</h3>
+                  <SoundToggle />
+                </div>
               </section>
             )}
 
@@ -683,7 +802,7 @@ export default function SettingsModal({
                 <div>
                   <h3 className="text-sm font-bold text-text-base">Bruno AI</h3>
                   <p className="text-xs text-text-muted leading-relaxed mt-1">
-                    How Bruno helps you with code. Saved to your account, so it follows you on every device.
+                    Customize how Bruno helps you with FTC code and robotics. Saved to your account, so it follows you on every device.
                   </p>
                 </div>
                 <button
@@ -738,6 +857,209 @@ export default function SettingsModal({
                   <p className="text-[11px] text-text-muted/80 leading-relaxed mt-2">
                     Longer answers use more AI tokens, but at typical team use that&apos;s only a few dollars a month.
                   </p>
+                </div>
+
+                {/* Explanation style */}
+                <div>
+                  <h4 className="text-sm font-bold text-text-base mb-1">Explanation style</h4>
+                  <p className="text-xs text-text-muted leading-relaxed mb-2">
+                    How technical Bruno&apos;s explanations should be.
+                  </p>
+                  <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Explanation style">
+                    {([
+                      { value: 'beginner', label: 'Beginner-friendly' },
+                      { value: 'balanced', label: 'Balanced' },
+                      { value: 'technical', label: 'Technical' },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={explanationStyle === opt.value}
+                        onClick={() => { setExplanationStyle(opt.value); setPref('controlpoint-bruno-explanation-style', opt.value); }}
+                        className={cn(
+                          'rounded-xl border px-2 py-2.5 text-[13px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                          explanationStyle === opt.value
+                            ? 'bg-accent text-accent-ink border-accent'
+                            : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Response format */}
+                <div>
+                  <h4 className="text-sm font-bold text-text-base mb-1">Response format</h4>
+                  <p className="text-xs text-text-muted leading-relaxed mb-2">
+                    How Bruno structures its answers by default.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Response format">
+                    {([
+                      { value: 'concise', label: 'Concise answers' },
+                      { value: 'detailed', label: 'Detailed explanations' },
+                      { value: 'step-by-step', label: 'Step-by-step tutorials' },
+                      { value: 'code-first', label: 'Code-first responses' },
+                    ] as const).map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={responseFormat === opt.value}
+                        onClick={() => { setResponseFormat(opt.value); setPref('controlpoint-bruno-response-format', opt.value); }}
+                        className={cn(
+                          'rounded-xl border px-2 py-2.5 text-[13px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                          responseFormat === opt.value
+                            ? 'bg-accent text-accent-ink border-accent'
+                            : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Behavior toggles */}
+                <div className="space-y-2">
+                  {([
+                    { label: 'Auto-explain code', desc: 'Automatically explain unfamiliar code snippets.', value: autoExplain, set: setAutoExplain, key: 'controlpoint-bruno-auto-explain' },
+                    { label: 'Confirm before changes', desc: 'Ask before making changes to tasks, notes, or robot code.', value: confirmChanges, set: setConfirmChanges, key: 'controlpoint-bruno-confirm-changes' },
+                    { label: 'Remember preferences', desc: 'Bruno remembers your preferred explanation style and coding habits.', value: rememberPrefs, set: setRememberPrefs, key: 'controlpoint-bruno-remember-prefs' },
+                  ] as const).map((row) => (
+                    <div key={row.key} className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div>
+                        <p className="text-sm font-semibold text-text-base">{row.label}</p>
+                        <p className="text-xs text-text-muted mt-0.5">{row.desc}</p>
+                      </div>
+                      <Switch
+                        checked={row.value}
+                        onChange={(v) => { row.set(v); setPref(row.key, v ? '1' : '0'); }}
+                        label={row.label}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* FTC Coding Preferences */}
+                <div className="rounded-2xl border border-text-base/10 overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setFtcPrefsOpen((v) => !v)}
+                    aria-expanded={ftcPrefsOpen}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3.5 bg-text-base/[0.03] hover:bg-text-base/[0.06] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                  >
+                    <span className="text-left">
+                      <span className="block text-sm font-bold text-text-base">FTC Coding Preferences</span>
+                      <span className="block text-xs text-text-muted mt-0.5">OpMode style, code conventions, and safety checks for FTC Java.</span>
+                    </span>
+                    <ChevronDown className={cn('w-5 h-5 text-text-muted transition-transform', ftcPrefsOpen && 'rotate-180')} aria-hidden="true" />
+                  </button>
+                  {ftcPrefsOpen && (
+                    <div className="p-4 space-y-4 border-t border-text-base/10">
+                      {/* Programming language — read-only, team controlled */}
+                      <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                        <p className="text-sm font-semibold text-text-base">Programming language</p>
+                        <p className="text-sm font-bold text-accent mt-1">Java</p>
+                        <p className="text-[11px] text-text-muted mt-1">Managed by your team administrator.</p>
+                      </div>
+
+                      {/* OpMode style */}
+                      <div>
+                        <h4 className="text-sm font-bold text-text-base mb-1">Preferred OpMode style</h4>
+                        <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Preferred OpMode style">
+                          {([
+                            { value: 'linear', label: 'LinearOpMode' },
+                            { value: 'opmode', label: 'OpMode' },
+                            { value: 'ask', label: 'Ask each time' },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="radio"
+                              aria-checked={ftcOpmodeStyle === opt.value}
+                              onClick={() => { setFtcOpmodeStyle(opt.value); setPref('controlpoint-ftc-opmode-style', opt.value); }}
+                              className={cn(
+                                'rounded-xl border px-2 py-2.5 text-[13px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                                ftcOpmodeStyle === opt.value
+                                  ? 'bg-accent text-accent-ink border-accent'
+                                  : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Code conventions */}
+                      <div>
+                        <h4 className="text-sm font-bold text-text-base mb-2">Code conventions</h4>
+                        <p className="text-xs text-text-muted mb-1.5">Indentation</p>
+                        <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Indentation">
+                          {([
+                            { value: '2', label: '2 spaces' },
+                            { value: '4', label: '4 spaces' },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              role="radio"
+                              aria-checked={ftcIndent === opt.value}
+                              onClick={() => { setFtcIndent(opt.value); setPref('controlpoint-ftc-indent', opt.value); }}
+                              className={cn(
+                                'rounded-xl border px-2 py-2.5 text-[13px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                                ftcIndent === opt.value
+                                  ? 'bg-accent text-accent-ink border-accent'
+                                  : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="space-y-2 mt-2">
+                          {([
+                            { label: 'Include comments by default', value: ftcComments, set: setFtcComments, key: 'controlpoint-ftc-comments' },
+                            { label: 'Beginner-friendly comments', value: ftcBeginnerComments, set: setFtcBeginnerComments, key: 'controlpoint-ftc-beginner-comments' },
+                          ] as const).map((row) => (
+                            <div key={row.key} className="flex items-center justify-between gap-4 p-3.5 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                              <p className="text-sm font-semibold text-text-base">{row.label}</p>
+                              <Switch
+                                checked={row.value}
+                                onChange={(v) => { row.set(v); setPref(row.key, v ? '1' : '0'); }}
+                                label={row.label}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Safety checks */}
+                      <div>
+                        <h4 className="text-sm font-bold text-text-base mb-2">Safety checks</h4>
+                        <div className="space-y-2">
+                          {([
+                            { label: 'Warn about missing hardware mappings', value: ftcWarnHardware, set: setFtcWarnHardware, key: 'controlpoint-ftc-warn-hardware' },
+                            { label: 'Warn about reversed motors', value: ftcWarnReversed, set: setFtcWarnReversed, key: 'controlpoint-ftc-warn-reversed' },
+                            { label: 'Warn about unsafe motor powers', value: ftcWarnPower, set: setFtcWarnPower, key: 'controlpoint-ftc-warn-power' },
+                            { label: 'Warn when code may block the main loop', value: ftcWarnBlocking, set: setFtcWarnBlocking, key: 'controlpoint-ftc-warn-blocking' },
+                          ] as const).map((row) => (
+                            <div key={row.key} className="flex items-center justify-between gap-4 p-3.5 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                              <p className="text-sm font-semibold text-text-base">{row.label}</p>
+                              <Switch
+                                checked={row.value}
+                                onChange={(v) => { row.set(v); setPref(row.key, v ? '1' : '0'); }}
+                                label={row.label}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </section>
             )}

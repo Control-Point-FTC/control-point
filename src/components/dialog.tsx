@@ -4,6 +4,7 @@
 
 import React, { useEffect, useReducer, useState } from 'react';
 import { X, CheckCircle2, Info, AlertCircle } from 'lucide-react';
+import { playNotificationSound } from '../utils/sounds';
 
 export interface ConfirmOptions {
   title?: string;
@@ -91,6 +92,7 @@ export function notify(message: string, kind: ToastKind = 'info'): void {
   const id = nextToastId++;
   toasts.push({ id, message, kind });
   emit();
+  playNotificationSound();
   setTimeout(() => {
     toasts = toasts.filter((t) => t.id !== id);
     emit();

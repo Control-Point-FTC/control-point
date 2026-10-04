@@ -7,14 +7,14 @@ import { cn } from './onboarding/onboardingState';
 // the setting + session last_activity.
 export const PRESENCE_META: Record<string, { dot: string; label: string; desc: string }> = {
   online: { dot: 'bg-emerald-500', label: 'Online', desc: 'Active now' },
-  idle: { dot: 'bg-amber-400', label: 'Idle', desc: 'Away — still signed in' },
-  dnd: { dot: 'bg-rose-500', label: 'Do Not Disturb', desc: 'You will not receive pings' },
+  idle: { dot: 'bg-amber-400', label: 'Idle', desc: 'Away from keyboard' },
+  dnd: { dot: 'bg-rose-500', label: 'Do Not Disturb', desc: 'Mute all notifications' },
   offline: { dot: 'bg-zinc-500', label: 'Offline', desc: 'Not around right now' },
 };
 export const PRESENCE_SETTINGS = ['online', 'idle', 'dnd', 'invisible'] as const;
 export const PRESENCE_SETTING_META: Record<string, { dot: string; label: string; desc: string }> = {
   ...PRESENCE_META,
-  invisible: { dot: 'bg-zinc-600', label: 'Invisible', desc: 'Appear offline to everyone' },
+  invisible: { dot: 'bg-zinc-600', label: 'Invisible', desc: 'Appear offline' },
 };
 
 export const PresenceDot = ({ presence, className }: any) => {
@@ -37,8 +37,10 @@ export const PresencePicker = ({ value, onPick }: { value?: string; onPick: (s: 
         <button
           key={s}
           onClick={() => onPick(s)}
+          aria-pressed={active}
           className={cn(
             'w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-inset',
             active ? 'bg-accent/15' : 'hover:bg-text-base/[0.06]'
           )}
         >

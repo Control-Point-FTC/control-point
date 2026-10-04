@@ -3661,7 +3661,7 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
                   <span className={cn("block text-sm font-semibold truncate", task.status === 'done' ? "text-text-muted line-through" : "text-text-base")}>
                     {task.title}
                   </span>
-                  {task.due_date && <span className="text-[11px] text-text-muted">Due {task.due_date}</span>}
+                  {task.due_date && <DueDateLabel task={task} />}
                 </span>
                 <span className={cn(
                   "text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md",
@@ -6070,7 +6070,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                       <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-accent-ink">
                         {members.find((m: any) => m.id === task.assigned_to)?.name.charAt(0) || '?'}
                       </div>
-                      <span className="text-[10px] text-text-muted/70">{task.due_date}</span>
+                      <DueDateLabel task={task} className={isOverdue(task) ? 'text-[10px] font-semibold text-amber-400' : 'text-[10px] text-text-muted/70'} />
                     </div>
                     <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                       {col.id !== 'todo' && <button onClick={() => updateStatus(task.id, 'todo')} aria-label="Move back" className="p-1.5 md:p-1 hover:text-accent active:scale-90 transition-transform"><ChevronRight className="w-4 h-4 rotate-180" /></button>}
@@ -7069,6 +7069,30 @@ function fmtCompact(n: any) {
   if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
   if (v >= 1_000) return (v / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
   return String(Math.round(v * 100) / 100);
+}
+
+// Overdue logic — shared everywhere due dates are shown.
+// A task is overdue when its due date is before today (local) and it isn't done.
+// Overdue items render in orange/amber, never red (red = destructive/error).
+function isOverdue(task: { due_date?: string | null; status?: string }): boolean {
+  if (!task.due_date || task.status === 'done') return false;
+  const due = new Date(task.due_date + 'T00:00:00');
+  if (isNaN(due.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return due < today;
+}
+
+// Consistent due-date label: orange "Overdue" when overdue, muted "Due" otherwise.
+// Returns null when there's no due date.
+function DueDateLabel({ task, className }: { task: { due_date?: string | null; status?: string }; className?: string }) {
+  if (!task.due_date) return null;
+  const overdue = isOverdue(task);
+  return (
+    <span className={className || (overdue ? 'text-[11px] font-semibold text-amber-400' : 'text-[11px] text-text-muted')}>
+      {overdue ? `Overdue · ${task.due_date}` : `Due ${task.due_date}`}
+    </span>
+  );
 }
 
 // Bulk outreach paste parser: turns pasted tables/text into outreach rows.

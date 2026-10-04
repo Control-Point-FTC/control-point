@@ -7,6 +7,7 @@ import { Phone, PhoneCall, PhoneOff, TriangleAlert, Video, X } from 'lucide-reac
 import { cn } from '../ui';
 import { useVoice } from '../../voice';
 import { VoiceAvatar } from './shared';
+import { startRingtone, stopRingtone } from '../../utils/sounds';
 
 export function IncomingCallModal() {
   const { incomingCall, session, status, acceptCall, declineCall, dismissIncomingCall, leave } = useVoice();
@@ -16,12 +17,20 @@ export function IncomingCallModal() {
     setBusy(null);
   }, [incomingCall?.inviteId]);
 
+  // Ring while the incoming-call modal is showing; stop on any resolution.
+  useEffect(() => {
+    if (!incomingCall) return;
+    startRingtone();
+    return () => stopRingtone();
+  }, [incomingCall?.inviteId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!incomingCall) return null;
 
   const inAnotherCall = session != null && status !== 'idle' && status !== 'ended';
   const isVideo = incomingCall.media === 'video';
 
   const handleAccept = async () => {
+    stopRingtone();
     setBusy('accept');
     try {
       await acceptCall();
@@ -31,11 +40,18 @@ export function IncomingCallModal() {
   };
 
   const handleDecline = async () => {
+    stopRingtone();
     await declineCall();
+  };
+
+  const handleDismiss = () => {
+    stopRingtone();
+    dismissIncomingCall();
   };
 
   /** Explicit leave-and-join: never implicit. */
   const handleSwitch = async () => {
+    stopRingtone();
     setBusy('switch');
     try {
       await leave();
@@ -159,7 +175,7 @@ export function IncomingCallModal() {
             </div>
             <button
               type="button"
-              onClick={dismissIncomingCall}
+              onClick={handleDismiss}
               className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-base transition-colors"
             >
               <X className="w-3.5 h-3.5" aria-hidden="true" />
