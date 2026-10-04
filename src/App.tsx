@@ -1385,10 +1385,11 @@ export default function App() {
         else clear();
         // Background grid + pulse follow the team branding (admin-set on
         // Teams & Members), not a member's personal accent.
-        // Wait for the team list (teamsLoaded, not teams.length — a user
-        // with no teams must still fall back to volt): before it loads
-        // myTeam is undefined and clearing would flash the cached colour.
-        if (teamsLoaded) {
+        // Only act once we actually know the team's colour: the team row
+        // is loaded, or the account is genuinely teamless (team_id null →
+        // volt). teamsLoaded alone isn't enough — it's also set when the
+        // /api/teams fetch fails, and that must not wipe the cached colour.
+        if (teamsLoaded && (myTeam || !currentUser.team_id)) {
           const gridRgb = validHex(myTeam?.accent_color) ? hexToRgbTriplet(myTeam!.accent_color.trim()) : null;
           if (gridRgb) root.style.setProperty('--grid-rgb', gridRgb);
           else root.style.removeProperty('--grid-rgb');
