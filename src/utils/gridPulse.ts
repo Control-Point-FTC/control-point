@@ -1,6 +1,6 @@
 // Where the background grid pulse glows from (Settings → Appearance).
 // Persisted as a comma list in localStorage ('controlpoint-grid-pulse-origins')
-// and applied as 0/1 multipliers that index.css folds into each glow layer.
+// and applied as html.pulse-off-<origin> classes that hide that glow layer.
 
 export type PulseOrigin = 'center' | 'edges' | 'corners';
 export type PulseOrigins = Record<PulseOrigin, boolean>;
@@ -26,7 +26,7 @@ export function writePulseOrigins(o: PulseOrigins): string {
 }
 
 export function applyPulseOrigins(root: HTMLElement, o: PulseOrigins): void {
-  root.style.setProperty('--pulse-on-center', o.center ? '1' : '0');
-  root.style.setProperty('--pulse-on-edge', o.edges ? '1' : '0');
-  root.style.setProperty('--pulse-on-corner', o.corners ? '1' : '0');
+  root.classList.toggle('pulse-off-center', !o.center);
+  root.classList.toggle('pulse-off-edges', !o.edges);
+  root.classList.toggle('pulse-off-corners', !o.corners);
 }
