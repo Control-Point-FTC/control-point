@@ -270,8 +270,8 @@ html.light {
    landing page hero grid, but quiet enough to sit behind content. */
 html.light body {
   background-image:
-    linear-gradient(rgb(9 9 11 / 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(9 9 11 / 0.035) 1px, transparent 1px);
+    linear-gradient(rgb(9 9 11 / 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(9 9 11 / 0.07) 1px, transparent 1px);
   background-size: 44px 44px;
 }
 

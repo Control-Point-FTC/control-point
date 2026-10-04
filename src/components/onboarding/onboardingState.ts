@@ -126,6 +126,8 @@ export interface TourStep {
   target?: string;
   /** Mobile fallback targets (bottom tab bar) when the sidebar item is hidden. */
   mobileTargets?: string[];
+  /** Only show this step to admins. */
+  adminOnly?: boolean;
 }
 
 export const TOUR_STEPS: TourStep[] = [
@@ -142,11 +144,19 @@ export const TOUR_STEPS: TourStep[] = [
     mobileTargets: ['mtab-dashboard'],
   },
   {
+    id: 'chat',
+    title: 'Messaging',
+    body: 'Team chat for quick coordination — with file attachments and @mentions so nothing gets lost.',
+    target: 'nav-chat',
+    mobileTargets: ['mtab-chat'],
+  },
+  {
     id: 'teams',
     title: 'Teams & Members',
     body: 'Manage your roster here — invite members, assign Discord-style roles, and control who can see or change what. On phones, it lives under the More tab.',
     target: 'nav-teams',
     mobileTargets: ['mtab-more'],
+    adminOnly: true,
   },
   {
     id: 'attendance',
@@ -156,13 +166,6 @@ export const TOUR_STEPS: TourStep[] = [
     mobileTargets: ['mtab-attendance'],
   },
   {
-    id: 'tasks',
-    title: 'Tasks',
-    body: 'Plan the build season as tasks: assign owners, set due dates, and track everything from CAD to competition prep.',
-    target: 'nav-tasks',
-    mobileTargets: ['mtab-tasks'],
-  },
-  {
     id: 'calendar',
     title: 'Calendar',
     body: 'Keep meetings, build sessions, and competition dates in one shared team calendar. On phones, find it under the More tab.',
@@ -170,11 +173,11 @@ export const TOUR_STEPS: TourStep[] = [
     mobileTargets: ['mtab-more'],
   },
   {
-    id: 'chat',
-    title: 'Messaging',
-    body: 'Team chat for quick coordination — with file attachments and @mentions so nothing gets lost.',
-    target: 'nav-chat',
-    mobileTargets: ['mtab-chat'],
+    id: 'tasks',
+    title: 'Tasks',
+    body: 'Plan the build season as tasks: assign owners, set due dates, and track everything from CAD to competition prep.',
+    target: 'nav-tasks',
+    mobileTargets: ['mtab-tasks'],
   },
   {
     id: 'outreach',
@@ -204,7 +207,7 @@ export interface TourStepResolved extends TourStep {
 
 /** Filter tour steps to what the current user can actually see. */
 export function resolveTourSteps(isAdmin: boolean): TourStep[] {
-  return TOUR_STEPS.filter((s) => !(s as any).adminOnly || isAdmin);
+  return TOUR_STEPS.filter((s) => !s.adminOnly || isAdmin);
 }
 
 // ---------------------------------------------------------------------------

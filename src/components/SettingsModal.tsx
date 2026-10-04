@@ -7,6 +7,8 @@ import { PRESENCE_META, PresencePicker } from './presence';
 import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
 import { assetUrl } from '../services/api';
 import { Switch, SwitchTrack } from './ui';
+import { useTranslation } from 'react-i18next';
+import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -36,6 +38,7 @@ function navGptQualifies(teamName: any): boolean {
 export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
+  const { t, i18n } = useTranslation();
   const [section, setSection] = useState<Section>('account');
   // On phones the nav and content can't sit side-by-side — drill in instead.
   const [mobileNav, setMobileNav] = useState(true);
@@ -393,6 +396,26 @@ export default function SettingsModal({
                   >
                     {saving ? 'Saving…' : 'Save changes'}
                   </button>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-text-base mb-3">Language</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {SUPPORTED_LANGUAGES.map((lang) => (
+                      <button
+                        key={lang.code}
+                        onClick={() => setLanguage(lang.code)}
+                        className={cn(
+                          "px-4 py-2.5 rounded-xl text-sm font-semibold transition-all",
+                          i18n.language === lang.code
+                            ? "bg-accent text-accent-ink"
+                            : "bg-text-base/[0.04] text-text-muted hover:bg-text-base/[0.08] hover:text-text-base"
+                        )}
+                      >
+                        {lang.label}
+                      </button>
+                    ))}
+                  </div>
                 </section>
 
                 <section>

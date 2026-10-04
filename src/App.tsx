@@ -197,7 +197,7 @@ import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import ThemeToggle from './components/ThemeToggle';
-import LanguageToggle from './components/LanguageToggle';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from './hooks/useTheme';
 
 // Helper to get CSS variable values
@@ -764,37 +764,38 @@ const CodeRevealScreen = ({ team, onEnter }: { team: { name: string; access_code
 // Sidebar navigation. `pinned` items stay at the top; everything else is grouped
 // under a section label. The Teams & Members entry expands into a submenu
 // (Members / Roles) instead of Roles being a top-level tab.
+// Labels use i18n keys — translated at render time via getNavItems(t).
 const navItems = [
-  { id: 'dashboard', path: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, pinned: true },
-  { id: 'chat', path: 'chat', label: 'Messaging', icon: MessageSquare, pinned: true },
-  { id: 'stats', path: 'stats', label: 'Team Stats', icon: Trophy, group: 'Compete' },
+  { id: 'dashboard', path: 'dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, pinned: true },
+  { id: 'chat', path: 'chat', labelKey: 'nav.messaging', icon: MessageSquare, pinned: true },
+  { id: 'stats', path: 'stats', labelKey: 'nav.teamStats', icon: Trophy, group: 'Compete' },
   {
-    id: 'teams', path: 'teams', label: 'Teams & Members', icon: Users, group: 'Team',
+    id: 'teams', path: 'teams', labelKey: 'nav.teamsMembers', icon: Users, group: 'Team',
     children: [
-      { id: 'teams', path: 'teams', label: 'Members', icon: Users },
-      { id: 'roles', path: 'roles', label: 'Roles', icon: ShieldCheck, perm: 'manage_roles' },
+      { id: 'teams', path: 'teams', labelKey: 'nav.members', icon: Users },
+      { id: 'roles', path: 'roles', labelKey: 'nav.roles', icon: ShieldCheck, perm: 'manage_roles' },
     ],
   },
-  { id: 'attendance', path: 'attendance', label: 'Attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
-  { id: 'calendar', path: 'calendar', label: 'Calendar', icon: Calendar, group: 'Team' },
-  { id: 'comm', path: 'comm', label: 'Communication', icon: Mail, group: 'Team' },
-  { id: 'tasks', path: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Engineering' },
-  { id: 'inventory', path: 'inventory', label: 'Inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
+  { id: 'attendance', path: 'attendance', labelKey: 'nav.attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
+  { id: 'calendar', path: 'calendar', labelKey: 'nav.calendar', icon: Calendar, group: 'Team' },
+  { id: 'comm', path: 'comm', labelKey: 'nav.communication', icon: Mail, group: 'Team' },
+  { id: 'tasks', path: 'tasks', labelKey: 'nav.tasks', icon: CheckSquare, group: 'Engineering' },
+  { id: 'inventory', path: 'inventory', labelKey: 'nav.inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
   {
-    id: 'cad', path: 'cad', label: 'CAD', icon: Box, group: 'Engineering',
+    id: 'cad', path: 'cad', labelKey: 'nav.cad', icon: Box, group: 'Engineering',
     children: [
-      { id: 'cad', path: 'cad', label: 'Dashboard', icon: Box },
-      { id: 'cad-docs', path: 'cad-docs', label: 'Onshape Docs', icon: FileBox },
-      { id: 'cad-reviews', path: 'cad-reviews', label: 'Design Reviews', icon: ClipboardCheck },
-      { id: 'cad-snapshots', path: 'cad-snapshots', label: 'Snapshots', icon: Layers },
-      { id: 'cad-parts', path: 'cad-parts', label: 'Parts List', icon: Package },
+      { id: 'cad', path: 'cad', labelKey: 'nav.cadDashboard', icon: Box },
+      { id: 'cad-docs', path: 'cad-docs', labelKey: 'nav.onshapeDocs', icon: FileBox },
+      { id: 'cad-reviews', path: 'cad-reviews', labelKey: 'nav.designReviews', icon: ClipboardCheck },
+      { id: 'cad-snapshots', path: 'cad-snapshots', labelKey: 'nav.snapshots', icon: Layers },
+      { id: 'cad-parts', path: 'cad-parts', labelKey: 'nav.partsList', icon: Package },
     ],
   },
-  { id: 'code', path: 'code', label: 'Code', icon: Code2, scope: 'code', group: 'Engineering' },
-  { id: 'outreach', path: 'outreach', label: 'Outreach', icon: Globe, group: 'Outreach' },
-  { id: 'budget', path: 'budget', label: 'Budget', icon: Wallet, scope: 'budget', group: 'Outreach' },
-  { id: 'resources', path: 'resources', label: 'Resources', icon: Newspaper, group: 'Outreach' },
-  { id: 'owner', path: 'owner', label: 'Owner', icon: Crown, ownerOnly: true, pinned: true },
+  { id: 'code', path: 'code', labelKey: 'nav.code', icon: Code2, scope: 'code', group: 'Engineering' },
+  { id: 'outreach', path: 'outreach', labelKey: 'nav.outreach', icon: Globe, group: 'Outreach' },
+  { id: 'budget', path: 'budget', labelKey: 'nav.budget', icon: Wallet, scope: 'budget', group: 'Outreach' },
+  { id: 'resources', path: 'resources', labelKey: 'nav.resources', icon: Newspaper, group: 'Outreach' },
+  { id: 'owner', path: 'owner', labelKey: 'nav.owner', icon: Crown, ownerOnly: true, pinned: true },
 ];
 // NOTE: 'profile' and 'settings' are intentionally not nav items anymore —
 // they live in the Discord-style settings popup (gear button by the user card).
@@ -817,6 +818,7 @@ function useIsMobile() {
 }
 
 export default function App() {
+  const { t } = useTranslation();
   // Real URL routing — every section is its own route, so refresh keeps you where you are
   const location = useLocation();
   const navigate = useNavigate();
@@ -2214,6 +2216,14 @@ export default function App() {
   /** Persist the tour's resume position (lightly debounced). */
   const handleTourStepChange = (index: number) => {
     tourStepRef.current = index;
+    // Auto-open the Bruno panel when its tour step is shown, close otherwise.
+    // This gives users a live preview of the AI assistant during onboarding.
+    const step = tourSteps[index];
+    if (step?.id === 'bruno') {
+      setBrunoPanelOpen(true);
+    } else {
+      setBrunoPanelOpen(false);
+    }
     if (tourSaveTimer.current) window.clearTimeout(tourSaveTimer.current);
     tourSaveTimer.current = window.setTimeout(() => {
       patchOnboarding({ walkthrough: { lastStep: index } }).catch(() => {});
@@ -2223,6 +2233,7 @@ export default function App() {
   const handleTourExit = async () => {
     if (tourSaveTimer.current) window.clearTimeout(tourSaveTimer.current);
     setTourOpen(false);
+    setBrunoPanelOpen(false);
     // Persist the resume position; the tour stays resumable from the account menu.
     try {
       await patchOnboarding({ walkthrough: { lastStep: tourStepRef.current } });
@@ -2234,6 +2245,7 @@ export default function App() {
   const handleTourFinish = async (next: 'setup' | 'explore') => {
     if (tourSaveTimer.current) window.clearTimeout(tourSaveTimer.current);
     setTourOpen(false);
+    setBrunoPanelOpen(false);
     const now = new Date().toISOString();
     try {
       const s = await patchOnboarding({
@@ -2740,7 +2752,7 @@ export default function App() {
                     <button
                       data-onboard={`nav-${item.id}`}
                       onClick={() => (isSidebarOpen ? (item.id === 'cad' ? setCadNavOpen(!cadNavOpen) : setTeamsNavOpen(!teamsNavOpen)) : navigate(`/${item.path}`))}
-                      title={!isSidebarOpen ? item.label : undefined}
+                      title={!isSidebarOpen ? t(item.labelKey) : undefined}
                       className={cn(
                         "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
                         childActive
@@ -2751,7 +2763,7 @@ export default function App() {
                       <item.icon className={cn("w-[18px] h-[18px] shrink-0", childActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
                       {isSidebarOpen && (
                         <>
-                          <span className="truncate flex-1 text-left">{item.label}</span>
+                          <span className="truncate flex-1 text-left">{t(item.labelKey)}</span>
                           <ChevronDown className={cn("w-4 h-4 flex-shrink-0 transition-transform", open && "rotate-180")} />
                         </>
                       )}
@@ -2773,7 +2785,7 @@ export default function App() {
                               )}
                             >
                               <k.icon className={cn("w-4 h-4 shrink-0", kActive ? "text-accent" : "text-accent/70 group-hover:text-accent")} strokeWidth={2.25} />
-                              <span className="truncate">{k.label}</span>
+                              <span className="truncate">{t(k.labelKey)}</span>
                             </button>
                           );
                         })}
@@ -2787,7 +2799,7 @@ export default function App() {
                   key={item.id}
                   data-onboard={`nav-${item.id}`}
                   onClick={() => navigate(`/${item.path}`)}
-                  title={!isSidebarOpen ? item.label : undefined}
+                  title={!isSidebarOpen ? t(item.labelKey) : undefined}
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group relative text-sm",
                     depth > 0 && "py-2 text-[13px]",
@@ -2797,7 +2809,7 @@ export default function App() {
                   )}
                 >
                   <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
-                  {isSidebarOpen && <span className="truncate">{item.label}</span>}
+                  {isSidebarOpen && <span className="truncate">{t(item.labelKey)}</span>}
                   {item.id === 'chat' && unreadMentions > 0 && (
                     <span
                       className={cn(
@@ -2889,7 +2901,7 @@ export default function App() {
         {!isImmersiveRoute && (
         <header className="flex-shrink-0 z-20 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav?.label || 'Dashboard'}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : t('nav.dashboard')}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
@@ -3023,7 +3035,6 @@ export default function App() {
               </div>
             )}
             <ThemeToggle className="hidden sm:block" />
-            <LanguageToggle className="hidden sm:block" />
             <button
               onClick={handleBrunoButton}
               data-onboard="header-bruno"
@@ -3177,20 +3188,20 @@ export default function App() {
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
           <div className="flex">
-            {mobileTabs.map((t) => {
-              const isActive = activeTab === t.id;
-              const Icon = t.icon;
+            {mobileTabs.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const Icon = tab.icon;
               return (
                 <button
-                  key={t.id}
-                  data-onboard={`mtab-${t.id}`}
-                  onClick={() => navigate(`/${t.path}`)}
+                  key={tab.id}
+                  data-onboard={`mtab-${tab.id}`}
+                  onClick={() => navigate(`/${tab.path}`)}
                   aria-current={isActive ? 'page' : undefined}
                   className="relative flex-1 flex flex-col items-center justify-center gap-1 py-2.5 min-h-[62px] active:scale-95 transition-transform"
                 >
                   <Icon className={cn('w-6 h-6', isActive ? 'text-accent' : 'text-text-muted')} strokeWidth={isActive ? 2.5 : 2} />
                   <span className={cn('text-[10px] font-bold leading-none', isActive ? 'text-accent' : 'text-text-muted')}>
-                    {mobileTabShortLabels[t.id] || t.label}
+                    {mobileTabShortLabels[tab.id] || t(tab.labelKey)}
                   </span>
                   {isActive && <span className="absolute bottom-1 w-1 h-1 rounded-full bg-accent" />}
                 </button>
@@ -3278,8 +3289,9 @@ export default function App() {
 }
 
 // Site footer for the app shell: quick navigation, data credit, copyright.
-function AppFooter({ links, teamName }: { links: { id: string; path: string; label: string }[]; teamName?: string }) {
+function AppFooter({ links, teamName }: { links: { id: string; path: string; labelKey: string }[]; teamName?: string }) {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   return (
     <footer className="hidden md:block flex-shrink-0 border-t border-text-base/[0.06] bg-secondary/60">
       <div className="px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
@@ -3299,7 +3311,7 @@ function AppFooter({ links, teamName }: { links: { id: string; path: string; lab
               onClick={() => navigate(`/${l.path}`)}
               className="text-xs text-text-muted hover:text-accent transition-colors font-medium"
             >
-              {l.label}
+              {t(l.labelKey)}
             </button>
           ))}
         </nav>
