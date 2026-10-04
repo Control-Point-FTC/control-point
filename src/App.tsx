@@ -169,6 +169,7 @@ import {
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { clearFtcCache } from './components/ftcCache';
 import { format } from 'date-fns';
+import { InstallPrompt } from './components/InstallPrompt';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
@@ -3276,6 +3277,7 @@ export default function App() {
       <IncomingCallModal />
       <CallView onOpenSettings={() => setSettingsOpen(true)} />
       <CookieConsent />
+      <InstallPrompt />
       <BrunoPanel
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
