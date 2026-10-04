@@ -6127,7 +6127,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
               value={bulkText}
               onChange={(e: any) => setBulkText(e.target.value)}
               rows={5}
-              placeholder={"Paste tasks here…\n- Finish drive base CAD by Friday\n- Sushil: order 12T pinions\n- Test autonomous pathing (in progress)"}
+              placeholder={"Paste tasks here…\n- Design intake prototype, test with pollen samples by Wed — assign to build team\n- Order 2x goBILDA 5203 motors before the weekend\n- Sushil to review autonomous pathing code, fix odometry drift\n- Schedule design review for Thursday 6pm"}
               className="w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[110px]"
             />
             <div className="flex justify-end">
