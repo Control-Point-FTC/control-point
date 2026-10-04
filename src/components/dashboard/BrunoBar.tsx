@@ -108,7 +108,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
   const streamingText = stream.active ? stream.text : null;
 
   return (
-    <div className="rounded-2xl border border-text-base/10 bg-text-base/[0.03] overflow-hidden mt-3 sm:mt-4">
+    <div className="card-surface overflow-hidden mt-3 sm:mt-4">
       {/* The bar itself */}
       <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5">
         <span className="shrink-0 w-8 h-8 rounded-xl bg-accent/15 border border-accent/30 flex items-center justify-center">
