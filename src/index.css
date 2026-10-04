@@ -285,7 +285,14 @@ html.light main.bg-primary {
 
 /* ---------- Volt grid + pulse wave (app background) ---------- */
 /* Yellow grid lines like the landing page, with a traveling pulse wave.
-   Applied to main content areas. Toggle via Settings → Appearance. */
+   All values are CSS variables so Settings → Appearance can adjust them live.
+   Defaults: */
+:root {
+  --grid-size: 32px;
+  --grid-opacity: 0.12;
+  --grid-pulse-opacity: 0.12;
+  --grid-pulse-speed: 6s;
+}
 .app-volt-grid {
   position: relative;
 }
@@ -295,15 +302,15 @@ html.light main.bg-primary {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgb(255 199 0 / 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 199 0 / 0.06) 1px, transparent 1px);
-  background-size: 44px 44px;
+    linear-gradient(rgb(255 199 0 / var(--grid-opacity)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 199 0 / var(--grid-opacity)) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
   z-index: 0;
 }
 html.light .app-volt-grid::before {
   background-image:
-    linear-gradient(rgb(202 138 4 / 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(202 138 4 / 0.08) 1px, transparent 1px);
+    linear-gradient(rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px);
 }
 /* Pulsing wave that travels across the grid — disable via Settings → Appearance */
 .app-volt-grid.grid-pulse::after {

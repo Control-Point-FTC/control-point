@@ -6,13 +6,17 @@ import type { FtcTeamPayload } from './FtcStats';
  *
  * The dashboard card and the /stats page each run their own `useFtcTeam`
  * instance; without this they each fetched `/api/ftc/team?season=…`
- * independently. Entries live for 10 minutes, are keyed by season (the
- * server scopes by the session's active team), and are dropped on team
- * switch via `clearFtcCache()`.
+ * independently. Entries live for 10 minutes and are keyed by team ID +
+ * season to prevent cross-team data leaks on team switch.
  */
 const TTL_MS = 10 * 60 * 1000;
 
-const cache = new Map<number, { expiresAt: number; data: FtcTeamPayload }>();
+const cache = new Map<string, { expiresAt: number; data: FtcTeamPayload }>();
+
+/** Cache key: team ID + season. */
+function cacheKey(teamId: string | number, season: number): string {
+  return `${teamId}:${season}`;
+}
 
 /** Thrown when the team has no FTC team connected (HTTP 404 + message). */
 export class FtcNotConnectedError extends Error {
@@ -22,29 +26,44 @@ export class FtcNotConnectedError extends Error {
   }
 }
 
-export function getFtcCacheEntry(season: number): FtcTeamPayload | null {
-  const hit = cache.get(season);
+export function getFtcCacheEntry(teamId: string | number, season: number): FtcTeamPayload | null {
+  const hit = cache.get(cacheKey(teamId, season));
   if (hit && hit.expiresAt > Date.now()) return hit.data;
-  if (hit) cache.delete(season);
+  if (hit) cache.delete(cacheKey(teamId, season));
   return null;
 }
 
-export function invalidateFtcSeason(season: number): void {
-  cache.delete(season);
+export function invalidateFtcSeason(season: number, teamId?: string | number): void {
+  if (teamId != null) {
+    cache.delete(cacheKey(teamId, season));
+  } else {
+    // Legacy: clear all entries for this season across teams
+    for (const key of cache.keys()) {
+      if (key.endsWith(`:${season}`)) cache.delete(key);
+    }
+  }
 }
 
-/** Called on team switch / logout — the server scopes by active team. */
+/** Called on team switch / logout — clears all cached entries. */
 export function clearFtcCache(): void {
   cache.clear();
 }
 
 /**
- * Fetches (or returns the cached) FTC payload for a season.
+ * Fetches (or returns the cached) FTC payload for a team + season.
  * Only successful responses are cached; 404s and errors always re-fetch.
+ * The teamId ensures Team A's data is never served to Team B.
+ * If teamId is not provided, falls back to season-only key (legacy behavior).
  */
-export async function fetchFtcTeam(season: number, signal?: AbortSignal): Promise<FtcTeamPayload> {
-  const cached = getFtcCacheEntry(season);
-  if (cached) return cached;
+export async function fetchFtcTeam(
+  season: number,
+  signal?: AbortSignal,
+  teamId?: string | number
+): Promise<FtcTeamPayload> {
+  const key = teamId != null ? cacheKey(teamId, season) : season;
+  const hit = cache.get(key as any);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  if (hit) cache.delete(key as any);
 
   const res = await apiFetch(`/api/ftc/team?season=${season}`, { signal });
   const body = await res.json().catch(() => ({}));
@@ -55,6 +74,6 @@ export async function fetchFtcTeam(season: number, signal?: AbortSignal): Promis
     throw new Error(body?.error || `FTC request failed (${res.status})`);
   }
   const data = body as FtcTeamPayload;
-  cache.set(season, { expiresAt: Date.now() + TTL_MS, data });
+  cache.set(key as any, { expiresAt: Date.now() + TTL_MS, data });
   return data;
 }

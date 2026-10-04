@@ -209,14 +209,23 @@ export default function ResourcesView() {
 
   const handleDelete = async (id: number) => {
     if (deletingIds.has(id)) return;
-    const prev = resources;
-    // Optimistic removal with rollback on failure
+    // Capture the specific item for targeted rollback (not the whole array,
+    // which could restore items deleted by concurrent requests).
+    const deletedItem = resources.find((r) => r.id === id);
+    // Optimistic removal with targeted rollback on failure
     setResources((rs) => rs.filter((r) => r.id !== id));
     setDeletingIds((s) => new Set(s).add(id));
     try {
       await apiJson(`/api/resources/${id}`, { method: 'DELETE' });
     } catch (e: any) {
-      setResources(prev);
+      // Re-insert only the failed item, preserving other concurrent changes.
+      if (deletedItem) {
+        setResources((rs) => {
+          // Avoid duplicates if it was somehow re-added
+          if (rs.some((r) => r.id === id)) return rs;
+          return [...rs, deletedItem];
+        });
+      }
     } finally {
       setDeletingIds((s) => {
         const next = new Set(s);

@@ -1405,15 +1405,30 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'de', label: 'Deutsch' },
 ];
 
+/** Safe localStorage access — works in SSR, tests, and non-browser environments. */
+function getSavedLanguage(): string {
+  try {
+    return localStorage.getItem('controlpoint-lang') || 'en';
+  } catch {
+    return 'en';
+  }
+}
+
 i18n.use(initReactI18next).init({
   resources,
-  lng: localStorage.getItem('controlpoint-lang') || 'en',
+  lng: getSavedLanguage(),
   fallbackLng: 'en',
+  // escapeValue: false is safe here because React escapes interpolated values
+  // by default in JSX. Never use translated strings with dangerouslySetInnerHTML.
   interpolation: { escapeValue: false },
 });
 
 export default i18n;
 export const setLanguage = (lng: string) => {
-  localStorage.setItem('controlpoint-lang', lng);
+  try {
+    localStorage.setItem('controlpoint-lang', lng);
+  } catch {
+    /* storage unavailable — language still changes for this session */
+  }
   i18n.changeLanguage(lng);
 };

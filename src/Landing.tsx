@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion, useInView, animate } from "framer-motion";
+import { motion, useInView, animate } from "motion/react";
 import {
   Bolt, Users, CalendarCheck, CheckSquare, CalendarDays, Wallet,
   MessageSquare, ArrowRight, Zap, ShieldCheck, Smartphone, Cloud,
@@ -442,8 +442,8 @@ export default function Landing({ onSignIn, onGetStarted }: { onSignIn: () => vo
           </div>
           <p className="text-xs text-text-muted">Mission control for robotics teams.</p>
           <div className="flex items-center gap-5 text-xs text-text-muted">
-            <a href="/privacy" className="hover:text-text-base transition-colors">Privacy Policy</a>
-            <a href="/terms" className="hover:text-text-base transition-colors">Terms of Service</a>
+            <a href="privacy" className="hover:text-text-base transition-colors">Privacy Policy</a>
+            <a href="terms" className="hover:text-text-base transition-colors">Terms of Service</a>
           </div>
         </div>
       </footer>
