@@ -197,6 +197,7 @@ import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import ThemeToggle from './components/ThemeToggle';
+import LanguageToggle from './components/LanguageToggle';
 import { useTheme } from './hooks/useTheme';
 
 // Helper to get CSS variable values
@@ -3022,6 +3023,7 @@ export default function App() {
               </div>
             )}
             <ThemeToggle className="hidden sm:block" />
+            <LanguageToggle className="hidden sm:block" />
             <button
               onClick={handleBrunoButton}
               data-onboard="header-bruno"
