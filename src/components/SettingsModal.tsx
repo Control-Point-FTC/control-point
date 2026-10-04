@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ChevronLeft, ChevronDown, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette, AlertCircle, Sparkles, Sun, Moon } from 'lucide-react';
+import { X, ChevronLeft, ChevronDown, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette, AlertCircle, Sparkles } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify, confirmDialog } from './dialog';
@@ -8,7 +8,7 @@ import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
 import { assetUrl } from '../services/api';
 import { Switch, SwitchTrack } from './ui';
 import { useTranslation } from 'react-i18next';
-import { useTheme } from '../hooks/useTheme';
+import ThemePicker from './ThemePicker';
 import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
 import { soundsEnabled, setSoundsEnabled } from '../utils/sounds';
 import { WhatsNewModal } from './WhatsNewModal';
@@ -114,7 +114,6 @@ export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
-  const { theme, setTheme } = useTheme();
   // Grid appearance settings — all persisted to localStorage and applied as CSS vars
   const [gridEnabled, setGridEnabled] = useState(() => localStorage.getItem('controlpoint-grid-enabled') !== '0');
   const [gridSize, setGridSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-size')) || 32);
@@ -725,34 +724,7 @@ export default function SettingsModal({
 
             {section === 'appearance' && (
               <section className="space-y-6">
-                {/* Theme — the header toggle is hidden on phones, so this is
-                    the way to switch there (and works everywhere). */}
-                <div>
-                  <h3 className="text-sm font-bold text-text-base mb-2">{t('settings.theme')}</h3>
-                  <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label={t('settings.theme')}>
-                    {([
-                      { value: 'light', label: t('settings.lightMode'), Icon: Sun },
-                      { value: 'dark', label: t('settings.darkMode'), Icon: Moon },
-                    ] as const).map(({ value, label, Icon }) => (
-                      <button
-                        key={value}
-                        type="button"
-                        role="radio"
-                        aria-checked={theme === value}
-                        onClick={() => setTheme(value)}
-                        className={cn(
-                          'flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
-                          theme === value
-                            ? 'bg-accent text-accent-ink border-accent'
-                            : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
-                        )}
-                      >
-                        <Icon className="w-4 h-4" />
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <ThemePicker />
 
                 <div className="flex items-start justify-between">
                   <div>
