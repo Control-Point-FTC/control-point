@@ -251,9 +251,9 @@
 html.light {
   color-scheme: light;
 
-  --color-primary: #ffffff;       /* white page background */
+  --color-primary: #fafaf9;       /* warm off-white page — softer than pure white */
   --color-secondary: #f4f4f5;    /* zinc-100 — sidebar, wells */
-  --color-elevated: #ffffff;     /* cards, popovers */
+  --color-elevated: #ffffff;     /* cards, popovers — true white for contrast */
   --color-accent: #eab308;       /* volt, deepened a notch so it holds on white */
   --color-accent-hover: #ca8a04;
   --color-accent-ink: #231a00;   /* text on volt */
@@ -264,6 +264,15 @@ html.light {
   --color-warning: #ea580c;
   --color-text-base: #18181b;
   --color-text-muted: #52525b;
+}
+
+/* Subtle grid texture on the page background in light mode — echoes the
+   landing page hero grid, but quiet enough to sit behind content. */
+html.light body {
+  background-image:
+    linear-gradient(rgb(9 9 11 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(9 9 11 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
 }
 
 /* Cards sit on a white page in light mode — give them real depth. */
