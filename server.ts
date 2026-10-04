@@ -7563,7 +7563,15 @@ Rules:
           upcomingCtx = `UPCOMING TEAM EVENTS (next ${upcoming.length}):\n${lines.join("\n")}`;
         }
       } catch (err) { console.error("[bruno] upcoming-events context query failed:", err); /* context is best-effort — never block the reply */ }
-      const fullContext = [teamContext, snapshotCtx, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
+      // User identity: Bruno should address the user by name, not the team name.
+      let userLine = "";
+      try {
+        const member = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
+        if (member?.name) {
+          userLine = `You are chatting with ${member.name}. Address them by their first name in greetings (e.g. "Hey ${member.name.split(' ')[0]}!"), not by the team name.`;
+        }
+      } catch (err) { console.error("[bruno] user name lookup failed:", err); /* best-effort */ }
+      const fullContext = [userLine, teamContext, snapshotCtx, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
       // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
       // unless the client explicitly asked for Bruno (the coding-handoff switch).
