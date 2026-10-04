@@ -383,7 +383,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       </div>
 
       {/* Active chat — immersive: fills the whole right side */}
-      <div className={`${activeId || messages.length ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 min-h-0 flex-col rounded-2xl border border-text-base/10 bg-text-base/[0.02] overflow-hidden`}>
+      <div className={`${activeId || messages.length ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 min-h-0 flex-col card-surface overflow-hidden`}>
         {/* Header */}
         <div className="px-4 py-3 border-b border-text-base/10 bg-text-base/[0.03] flex items-center gap-3">
           <button onClick={() => setActiveId(null)} aria-label="Back to chats" className="md:hidden text-text-muted hover:text-text-base">

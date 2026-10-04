@@ -293,6 +293,12 @@ html.light main.bg-primary {
   --grid-pulse-speed: 6s;
   --grid-glow-size: 280px;
   --grid-glow-opacity: 0.25;
+  /* Grid / pulse / cursor-glow colour. Volt by default; App.tsx overrides it
+     inline with the team's branding colour (Teams & Members). */
+  --grid-rgb: 255 199 0;
+}
+html.light {
+  --grid-rgb: 202 138 4;
 }
 .app-volt-grid {
   position: relative;
@@ -307,15 +313,15 @@ html.grid-off .app-volt-grid .grid-reactive-spot {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgb(255 199 0 / var(--grid-opacity)) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 199 0 / var(--grid-opacity)) 1px, transparent 1px);
+    linear-gradient(rgb(var(--grid-rgb) / var(--grid-opacity)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--grid-rgb) / var(--grid-opacity)) 1px, transparent 1px);
   background-size: var(--grid-size) var(--grid-size);
   z-index: 0;
 }
 html.light .app-volt-grid::before {
   background-image:
-    linear-gradient(rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px);
+    linear-gradient(rgb(var(--grid-rgb) / var(--grid-opacity)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--grid-rgb) / var(--grid-opacity)) 1px, transparent 1px);
 }
 /* Pulsing glow across the grid — disable via Settings → Appearance.
    Three layers (centre, edge midpoints, corners) rendered inside <main> in
@@ -324,11 +330,10 @@ html.light .app-volt-grid::before {
    glow ripple outward: centre → edges → corners. "Pulse from" in Settings
    hides layers via html.pulse-off-<origin>. */
 .app-volt-grid {
-  --pulse-rgb: 255 199 0;
+  --pulse-rgb: var(--grid-rgb);
   --pulse-max: var(--grid-pulse-opacity);
 }
 html.light .app-volt-grid {
-  --pulse-rgb: 202 138 4;
   --pulse-max: 0.06;
 }
 .app-volt-grid .grid-pulse-layer {
@@ -373,8 +378,8 @@ html.pulse-off-corners .app-volt-grid .grid-pulse-corners {
   pointer-events: none;
   z-index: 0;
   background-image:
-    linear-gradient(rgb(255 199 0 / var(--grid-glow-opacity)) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(255 199 0 / var(--grid-glow-opacity)) 1px, transparent 1px);
+    linear-gradient(rgb(var(--grid-rgb) / var(--grid-glow-opacity)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--grid-rgb) / var(--grid-glow-opacity)) 1px, transparent 1px);
   background-size: var(--grid-size) var(--grid-size);
   -webkit-mask-image: radial-gradient(var(--grid-glow-size) circle at var(--mx, 50%) var(--my, 50%), black 10%, transparent 65%);
   mask-image: radial-gradient(var(--grid-glow-size) circle at var(--mx, 50%) var(--my, 50%), black 10%, transparent 65%);
@@ -383,8 +388,8 @@ html.pulse-off-corners .app-volt-grid .grid-pulse-corners {
 }
 html.light .app-volt-grid .grid-reactive-spot {
   background-image:
-    linear-gradient(rgb(202 138 4 / 0.3) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(202 138 4 / 0.3) 1px, transparent 1px);
+    linear-gradient(rgb(var(--grid-rgb) / 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--grid-rgb) / 0.3) 1px, transparent 1px);
 }
 .app-volt-grid.grid-hot .grid-reactive-spot {
   opacity: 1;

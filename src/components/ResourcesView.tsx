@@ -373,7 +373,7 @@ export default function ResourcesView() {
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-text-base/10 bg-text-base/[0.02] p-5 space-y-3 animate-pulse">
+            <div key={i} className="card-surface p-5 space-y-3 animate-pulse">
               <div className="h-6 w-32 rounded-full bg-text-base/10" />
               <div className="h-5 w-4/5 rounded bg-text-base/10" />
               <div className="h-4 w-full rounded bg-text-base/5" />
@@ -396,7 +396,7 @@ export default function ResourcesView() {
               <div
                 key={r.id}
                 className={cn(
-                  'group rounded-2xl border border-text-base/10 bg-text-base/[0.03] p-4 sm:p-5 flex flex-col gap-3 hover:border-accent/40 hover:bg-text-base/[0.05] transition-all active:scale-[0.99]',
+                  'group card-surface p-4 sm:p-5 flex flex-col gap-3 hover:!border-accent/40 transition-all active:scale-[0.99]',
                   deleting && 'opacity-50 pointer-events-none'
                 )}
               >
