@@ -1,7 +1,7 @@
 // VOICE CHANNELS section for the sidebar. Mirrors the text-channel row
 // styling (same padding, hover, active states) so it feels native.
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, VideoOff, Volume2 } from 'lucide-react';
 import { cn } from '../ui';
 import { useVoice, type VoiceChannelSummary } from '../../voice';
@@ -36,6 +36,18 @@ export function VoiceChannelList({ className }: { className?: string }) {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [joiningId, setJoiningId] = useState<number | null>(null);
   const selfId = participants.find((p) => p.isSelf)?.memberId;
+
+  // Auto-expand channels that have participants, so users can see who's
+  // in the call without clicking (Discord-style).
+  useEffect(() => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      for (const c of channels) {
+        if (c.participants.length > 0) next.add(c.id);
+      }
+      return next;
+    });
+  }, [channels]);
 
   const toggleExpanded = (id: number) =>
     setExpandedIds((prev) => {

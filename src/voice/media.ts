@@ -98,9 +98,9 @@ export async function getMicStream(deviceId: string | undefined, prefs: DevicePr
 export type VideoQuality = 'low' | 'medium' | 'high';
 
 const VIDEO_CONSTRAINTS: Record<VideoQuality, MediaTrackConstraints> = {
-  low: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } },
-  medium: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } },
-  high: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+  low: { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 }, facingMode: 'user' },
+  medium: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 }, facingMode: 'user' },
+  high: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 }, facingMode: 'user' },
 };
 
 /** Call this only from a user gesture (join with video / toggle camera on). */
