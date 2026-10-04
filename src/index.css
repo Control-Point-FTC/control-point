@@ -318,19 +318,35 @@ html.light .app-volt-grid::before {
     linear-gradient(rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px),
     linear-gradient(90deg, rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px);
 }
-/* Pulsing wave that travels across the grid — disable via Settings → Appearance */
+/* Pulsing glow across the grid — disable via Settings → Appearance.
+   Nine glow sources (centre, four edge midpoints, four corners) whose
+   strengths ripple outward in turn: centre → edges → corners. Each layer's
+   strength is a registered custom property so it can be animated on its own;
+   --pulse-on-* (0/1, set from Settings → "Pulse from") switch sources off. */
+@property --pulse-center { syntax: '<number>'; inherits: false; initial-value: 1; }
+@property --pulse-edge   { syntax: '<number>'; inherits: false; initial-value: 0.35; }
+@property --pulse-corner { syntax: '<number>'; inherits: false; initial-value: 0.35; }
 .app-volt-grid.grid-pulse::after {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: radial-gradient(
-    ellipse 80% 50% at 50% 50%,
-    rgb(255 199 0 / var(--grid-pulse-opacity)) 0%,
-    rgb(255 199 0 / calc(var(--grid-pulse-opacity) * 0.4)) 40%,
-    transparent 70%
-  );
+  --pulse-rgb: 255 199 0;
+  --pulse-max: var(--grid-pulse-opacity);
+  --c: calc(var(--pulse-max) * var(--pulse-center) * var(--pulse-on-center, 1));
+  --e: calc(var(--pulse-max) * var(--pulse-edge) * var(--pulse-on-edge, 1));
+  --k: calc(var(--pulse-max) * var(--pulse-corner) * var(--pulse-on-corner, 1));
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 50%, rgb(var(--pulse-rgb) / var(--c)) 0%, rgb(var(--pulse-rgb) / calc(var(--c) * 0.4)) 40%, transparent 70%),
+    radial-gradient(ellipse 60% 35% at 50% 0%,   rgb(var(--pulse-rgb) / var(--e)) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 35% at 50% 100%, rgb(var(--pulse-rgb) / var(--e)) 0%, transparent 70%),
+    radial-gradient(ellipse 35% 60% at 0% 50%,   rgb(var(--pulse-rgb) / var(--e)) 0%, transparent 70%),
+    radial-gradient(ellipse 35% 60% at 100% 50%, rgb(var(--pulse-rgb) / var(--e)) 0%, transparent 70%),
+    radial-gradient(circle at 0% 0%,     rgb(var(--pulse-rgb) / var(--k)) 0%, transparent 35%),
+    radial-gradient(circle at 100% 0%,   rgb(var(--pulse-rgb) / var(--k)) 0%, transparent 35%),
+    radial-gradient(circle at 0% 100%,   rgb(var(--pulse-rgb) / var(--k)) 0%, transparent 35%),
+    radial-gradient(circle at 100% 100%, rgb(var(--pulse-rgb) / var(--k)) 0%, transparent 35%);
   animation: volt-wave var(--grid-pulse-speed) ease-in-out infinite;
 }
 /* Reactive cursor glow — the grid ignites around the cursor like the landing page */
@@ -363,27 +379,20 @@ html.grid-glow-off .app-volt-grid .grid-reactive-spot {
   display: none;
 }
 html.light .app-volt-grid.grid-pulse::after {
-  background: radial-gradient(
-    ellipse 80% 50% at 50% 50%,
-    rgb(202 138 4 / 0.06) 0%,
-    rgb(202 138 4 / 0.02) 40%,
-    transparent 70%
-  );
+  --pulse-rgb: 202 138 4;
+  --pulse-max: 0.06;
 }
 @keyframes volt-wave {
-  0%, 100% {
-    opacity: 0.3;
-    transform: scale(1) translateX(-5%);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.1) translateX(5%);
-  }
+  0%, 100% { --pulse-center: 1;    --pulse-edge: 0.25; --pulse-corner: 0.3; }
+  33%      { --pulse-center: 0.35; --pulse-edge: 1;    --pulse-corner: 0.35; }
+  66%      { --pulse-center: 0.3;  --pulse-edge: 0.35; --pulse-corner: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .app-volt-grid.grid-pulse::after {
     animation: none;
-    opacity: 0.4;
+    --pulse-center: 0.5;
+    --pulse-edge: 0.5;
+    --pulse-corner: 0.5;
   }
 }
 /* Ensure content sits above the grid layers */
