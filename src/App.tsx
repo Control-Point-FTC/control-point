@@ -5589,8 +5589,11 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-4">
-          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar mb-[env(safe-area-inset-bottom)]">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm p-3 pb-[calc(62px+env(safe-area-inset-bottom)+0.75rem)] md:p-4">
+          {/* Below md the fixed bottom nav (62px + safe area) paints over this
+              overlay, so reserve its height — the sticky Save/Cancel row then
+              sits fully above the nav. */}
+          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-62px-env(safe-area-inset-bottom)-1.5rem)] md:max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
               {!editingId && (
                 <div className="rounded-xl border border-accent/20 bg-accent/[0.04] overflow-hidden">
