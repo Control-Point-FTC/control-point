@@ -8,7 +8,7 @@ function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: a
   return (
     <button
       onClick={onClick}
-      className="text-left rounded-2xl border border-text-base/10 bg-text-base/[0.04] hover:bg-text-base/[0.07] hover:border-accent/40 active:scale-[0.98] transition-all p-3 sm:p-4 group cursor-pointer"
+      className="text-left card-surface hover:!border-accent/40 active:scale-[0.98] transition-all p-3 sm:p-4 group cursor-pointer"
     >
       <div className="flex items-center gap-2 mb-1.5">
         <Icon className="w-4 h-4 text-accent shrink-0" />

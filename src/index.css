@@ -298,7 +298,6 @@ html.light main.bg-primary {
   position: relative;
 }
 html.grid-off .app-volt-grid::before,
-html.grid-off .app-volt-grid::after,
 html.grid-off .app-volt-grid .grid-reactive-spot {
   display: none;
 }
@@ -318,20 +317,54 @@ html.light .app-volt-grid::before {
     linear-gradient(rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px),
     linear-gradient(90deg, rgb(202 138 4 / var(--grid-opacity)) 1px, transparent 1px);
 }
-/* Pulsing wave that travels across the grid — disable via Settings → Appearance */
-.app-volt-grid.grid-pulse::after {
-  content: '';
+/* Pulsing glow across the grid — disable via Settings → Appearance.
+   Three layers (centre, edge midpoints, corners) rendered inside <main> in
+   App.tsx. Each has a static gradient and only its opacity animates, so the
+   pulse runs on the compositor without repainting. Staggered delays make the
+   glow ripple outward: centre → edges → corners. "Pulse from" in Settings
+   hides layers via html.pulse-off-<origin>. */
+.app-volt-grid {
+  --pulse-rgb: 255 199 0;
+  --pulse-max: var(--grid-pulse-opacity);
+}
+html.light .app-volt-grid {
+  --pulse-rgb: 202 138 4;
+  --pulse-max: 0.06;
+}
+.app-volt-grid .grid-pulse-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background: radial-gradient(
-    ellipse 80% 50% at 50% 50%,
-    rgb(255 199 0 / var(--grid-pulse-opacity)) 0%,
-    rgb(255 199 0 / calc(var(--grid-pulse-opacity) * 0.4)) 40%,
-    transparent 70%
-  );
+  opacity: 0.3;
+  will-change: opacity;
   animation: volt-wave var(--grid-pulse-speed) ease-in-out infinite;
+}
+.app-volt-grid .grid-pulse-center {
+  background: radial-gradient(ellipse 80% 50% at 50% 50%, rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, rgb(var(--pulse-rgb) / calc(var(--pulse-max) * 0.4)) 40%, transparent 70%);
+}
+.app-volt-grid .grid-pulse-edges {
+  background:
+    radial-gradient(ellipse 60% 35% at 50% 0%,   rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 35% at 50% 100%, rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 70%),
+    radial-gradient(ellipse 35% 60% at 0% 50%,   rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 70%),
+    radial-gradient(ellipse 35% 60% at 100% 50%, rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 70%);
+  animation-delay: calc(var(--grid-pulse-speed) / -1.5);
+}
+.app-volt-grid .grid-pulse-corners {
+  background:
+    radial-gradient(circle at 0% 0%,     rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 35%),
+    radial-gradient(circle at 100% 0%,   rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 35%),
+    radial-gradient(circle at 0% 100%,   rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 35%),
+    radial-gradient(circle at 100% 100%, rgb(var(--pulse-rgb) / var(--pulse-max)) 0%, transparent 35%);
+  animation-delay: calc(var(--grid-pulse-speed) / -3);
+}
+html.grid-off .app-volt-grid .grid-pulse-layer,
+html.grid-pulse-off .app-volt-grid .grid-pulse-layer,
+html.pulse-off-center .app-volt-grid .grid-pulse-center,
+html.pulse-off-edges .app-volt-grid .grid-pulse-edges,
+html.pulse-off-corners .app-volt-grid .grid-pulse-corners {
+  display: none;
 }
 /* Reactive cursor glow — the grid ignites around the cursor like the landing page */
 .app-volt-grid .grid-reactive-spot {
@@ -356,34 +389,18 @@ html.light .app-volt-grid .grid-reactive-spot {
 .app-volt-grid.grid-hot .grid-reactive-spot {
   opacity: 1;
 }
-html.grid-pulse-off .app-volt-grid.grid-pulse::after {
-  display: none;
-}
 html.grid-glow-off .app-volt-grid .grid-reactive-spot {
   display: none;
 }
-html.light .app-volt-grid.grid-pulse::after {
-  background: radial-gradient(
-    ellipse 80% 50% at 50% 50%,
-    rgb(202 138 4 / 0.06) 0%,
-    rgb(202 138 4 / 0.02) 40%,
-    transparent 70%
-  );
-}
 @keyframes volt-wave {
-  0%, 100% {
-    opacity: 0.3;
-    transform: scale(1) translateX(-5%);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.1) translateX(5%);
-  }
+  0%, 100% { opacity: 1; }
+  33%      { opacity: 0.3; }
+  66%      { opacity: 0.25; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .app-volt-grid.grid-pulse::after {
+  .app-volt-grid .grid-pulse-layer {
     animation: none;
-    opacity: 0.4;
+    opacity: 0.5;
   }
 }
 /* Ensure content sits above the grid layers */

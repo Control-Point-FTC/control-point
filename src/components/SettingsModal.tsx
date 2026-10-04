@@ -12,6 +12,7 @@ import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
 import { soundsEnabled, setSoundsEnabled } from '../utils/sounds';
 import { WhatsNewModal } from './WhatsNewModal';
 import { CURRENT_VERSION } from '../utils/changelog';
+import { DEFAULT_PULSE_ORIGINS, PULSE_ORIGIN_OPTIONS, applyPulseOrigins, readPulseOrigins, writePulseOrigins, type PulseOrigins } from '../utils/gridPulse';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -121,6 +122,8 @@ export default function SettingsModal({
   );
   const [gridPulseSpeed, setGridPulseSpeed] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-speed')) || 6);
   const [gridPulseOpacity, setGridPulseOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-opacity')) || 0.22);
+  // Where the pulse glows from: any non-empty mix of centre, edges, corners.
+  const [gridPulseOrigins, setGridPulseOrigins] = useState<PulseOrigins>(() => readPulseOrigins(localStorage.getItem('controlpoint-grid-pulse-origins')));
   const [gridGlowEnabled, setGridGlowEnabled] = useState(() => localStorage.getItem('controlpoint-grid-glow') !== '0');
   const [gridGlowSize, setGridGlowSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-size')) || 280);
   const [gridGlowOpacity, setGridGlowOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-opacity')) || 0.25);
@@ -128,7 +131,7 @@ export default function SettingsModal({
   // Apply grid settings to CSS variables and classes
   const applyGridSettings = (s: {
     enabled: boolean; size: number; opacity: number;
-    pulse: boolean; pulseSpeed: number; pulseOpacity: number;
+    pulse: boolean; pulseSpeed: number; pulseOpacity: number; pulseOrigins: PulseOrigins;
     glow: boolean; glowSize: number; glowOpacity: number;
   }) => {
     const root = document.documentElement;
@@ -139,13 +142,14 @@ export default function SettingsModal({
     root.style.setProperty('--grid-opacity', String(s.opacity));
     root.style.setProperty('--grid-pulse-speed', `${s.pulseSpeed}s`);
     root.style.setProperty('--grid-pulse-opacity', String(s.pulseOpacity));
+    applyPulseOrigins(root, s.pulseOrigins);
     root.style.setProperty('--grid-glow-size', `${s.glowSize}px`);
     root.style.setProperty('--grid-glow-opacity', String(s.glowOpacity));
   };
 
   const updateGrid = (partial: Partial<{
     enabled: boolean; size: number; opacity: number;
-    pulse: boolean; pulseSpeed: number; pulseOpacity: number;
+    pulse: boolean; pulseSpeed: number; pulseOpacity: number; pulseOrigins: PulseOrigins;
     glow: boolean; glowSize: number; glowOpacity: number;
   }>) => {
     const s = {
@@ -155,6 +159,7 @@ export default function SettingsModal({
       pulse: partial.pulse ?? gridPulseEnabled,
       pulseSpeed: partial.pulseSpeed ?? gridPulseSpeed,
       pulseOpacity: partial.pulseOpacity ?? gridPulseOpacity,
+      pulseOrigins: partial.pulseOrigins ?? gridPulseOrigins,
       glow: partial.glow ?? gridGlowEnabled,
       glowSize: partial.glowSize ?? gridGlowSize,
       glowOpacity: partial.glowOpacity ?? gridGlowOpacity,
@@ -165,6 +170,7 @@ export default function SettingsModal({
     if (partial.pulse !== undefined) { setGridPulseEnabled(s.pulse); localStorage.setItem('controlpoint-grid-pulse', s.pulse ? '1' : '0'); }
     if (partial.pulseSpeed !== undefined) { setGridPulseSpeed(s.pulseSpeed); localStorage.setItem('controlpoint-grid-pulse-speed', String(s.pulseSpeed)); }
     if (partial.pulseOpacity !== undefined) { setGridPulseOpacity(s.pulseOpacity); localStorage.setItem('controlpoint-grid-pulse-opacity', String(s.pulseOpacity)); }
+    if (partial.pulseOrigins !== undefined) { setGridPulseOrigins(s.pulseOrigins); localStorage.setItem('controlpoint-grid-pulse-origins', writePulseOrigins(s.pulseOrigins)); }
     if (partial.glow !== undefined) { setGridGlowEnabled(s.glow); localStorage.setItem('controlpoint-grid-glow', s.glow ? '1' : '0'); }
     if (partial.glowSize !== undefined) { setGridGlowSize(s.glowSize); localStorage.setItem('controlpoint-grid-glow-size', String(s.glowSize)); }
     if (partial.glowOpacity !== undefined) { setGridGlowOpacity(s.glowOpacity); localStorage.setItem('controlpoint-grid-glow-opacity', String(s.glowOpacity)); }
@@ -174,7 +180,7 @@ export default function SettingsModal({
   const resetGrid = () => {
     updateGrid({
       enabled: true, size: 32, opacity: 0.12,
-      pulse: true, pulseSpeed: 6, pulseOpacity: 0.22,
+      pulse: true, pulseSpeed: 6, pulseOpacity: 0.22, pulseOrigins: { ...DEFAULT_PULSE_ORIGINS },
       glow: true, glowSize: 280, glowOpacity: 0.25,
     });
   };
@@ -824,6 +830,36 @@ export default function SettingsModal({
                         aria-label="Pulse intensity"
                       />
                       <p className="text-xs text-text-muted mt-1">How bright the traveling glow is</p>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <p className="text-sm font-semibold text-text-base mb-2">Pulse from</p>
+                      <div className="grid grid-cols-3 gap-2" role="group" aria-label="Pulse from">
+                        {PULSE_ORIGIN_OPTIONS.map(({ key, label }) => {
+                          const on = gridPulseOrigins[key];
+                          // Keep at least one origin on — turning off the last
+                          // would silently hide the pulse (use the switch above).
+                          const lastOn = on && Object.values(gridPulseOrigins).filter(Boolean).length === 1;
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              aria-pressed={on}
+                              disabled={lastOn}
+                              onClick={() => updateGrid({ pulseOrigins: { ...gridPulseOrigins, [key]: !on } })}
+                              className={cn(
+                                "px-3 py-2 rounded-xl text-xs font-semibold border transition-colors disabled:cursor-not-allowed",
+                                on
+                                  ? "bg-accent text-accent-ink border-accent"
+                                  : "bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-accent/40 hover:text-text-base"
+                              )}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-xs text-text-muted mt-1">Where the glow rises from — pick any mix</p>
                     </div>
                   </>
                 )}

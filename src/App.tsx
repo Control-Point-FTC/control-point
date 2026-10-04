@@ -201,6 +201,7 @@ import DashboardView from './components/dashboard/DashboardView';
 import ThemeToggle from './components/ThemeToggle';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from './hooks/useTheme';
+import { applyPulseOrigins, readPulseOrigins } from './utils/gridPulse';
 
 // Helper to get CSS variable values
 function getCSSVariable(name: string): string {
@@ -834,25 +835,25 @@ export default function App() {
     root.style.setProperty('--grid-opacity', get('controlpoint-grid-opacity', '0.12'));
     root.style.setProperty('--grid-pulse-speed', `${get('controlpoint-grid-pulse-speed', '6')}s`);
     root.style.setProperty('--grid-pulse-opacity', get('controlpoint-grid-pulse-opacity', '0.22'));
+    applyPulseOrigins(root, readPulseOrigins(get('controlpoint-grid-pulse-origins', 'center,edges,corners')));
     root.style.setProperty('--grid-glow-size', `${get('controlpoint-grid-glow-size', '280')}px`);
     root.style.setProperty('--grid-glow-opacity', get('controlpoint-grid-glow-opacity', '0.25'));
   }, []);
   // Reactive volt grid: track cursor over the main content area so the grid
-  // ignites around it, like the landing page hero.
+  // ignites around it, like the landing page hero. Keyed on the <main>
+  // element itself (callback ref) — it isn't mounted yet on first render
+  // (loading splash / auth), so a run-once effect would never attach.
+  const [voltMain, setVoltMain] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    const main = document.querySelector('main.app-volt-grid');
+    const main = voltMain;
     if (!main) return;
-    // Add the reactive spot layer
-    const spot = document.createElement('div');
-    spot.className = 'grid-reactive-spot';
-    (main as HTMLElement).prepend(spot);
     let raf = 0;
     const onMove = (e: MouseEvent) => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const r = (main as HTMLElement).getBoundingClientRect();
-        (main as HTMLElement).style.setProperty('--mx', `${(e.clientX - r.left).toFixed(1)}px`);
-        (main as HTMLElement).style.setProperty('--my', `${(e.clientY - r.top).toFixed(1)}px`);
+        const r = main.getBoundingClientRect();
+        main.style.setProperty('--mx', `${(e.clientX - r.left).toFixed(1)}px`);
+        main.style.setProperty('--my', `${(e.clientY - r.top).toFixed(1)}px`);
         main.classList.add('grid-hot');
       });
     };
@@ -866,9 +867,8 @@ export default function App() {
       cancelAnimationFrame(raf);
       main.removeEventListener('mousemove', onMove);
       main.removeEventListener('mouseleave', onLeave);
-      spot.remove();
     };
-  }, []);
+  }, [voltMain]);
   // Real URL routing — every section is its own route, so refresh keeps you where you are
   const location = useLocation();
   const navigate = useNavigate();
@@ -2947,9 +2947,22 @@ export default function App() {
       </motion.aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh app-volt-grid grid-pulse">
+      <main ref={setVoltMain} className="flex-1 flex flex-col min-h-0 min-w-0 bg-primary relative h-dvh app-volt-grid grid-pulse">
+        {/* Background effects (see index.css): pulse glow layers — static
+            gradients with only opacity animated — and the cursor glow. */}
+        <div className="grid-pulse-layer grid-pulse-center" aria-hidden="true" />
+        <div className="grid-pulse-layer grid-pulse-edges" aria-hidden="true" />
+        <div className="grid-pulse-layer grid-pulse-corners" aria-hidden="true" />
+        <div className="grid-reactive-spot" aria-hidden="true" />
         {!isImmersiveRoute && (
-        <header className={cn("flex-shrink-0 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between", showUserMenu ? "z-[60]" : "z-20")}>
+        <header className={cn("flex-shrink-0 glass px-4 sm:px-6 lg:px-8 py-3 sm:py-4 pt-[max(0.75rem,env(safe-area-inset-top))] flex items-center justify-between",
+          // Raise the header above page content only while one of its
+          // dropdowns is open (otherwise content modals must cover it).
+          // Needs `!`: the unlayered `.app-volt-grid > *` rule in index.css
+          // pins every <main> child to z-index:1 and beats plain utilities,
+          // which left these menus painted under — and unclickable behind —
+          // the page content.
+          (showUserMenu || showNotifications || showTeamMenu) && "!z-[60]")}>
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : t('nav.dashboard')}</h2>
           </div>
@@ -5576,8 +5589,11 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-4">
-          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar mb-[env(safe-area-inset-bottom)]">
+        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 backdrop-blur-sm p-3 pb-[calc(62px+env(safe-area-inset-bottom)+0.75rem)] md:p-4">
+          {/* Below md the fixed bottom nav (62px + safe area) paints over this
+              overlay, so reserve its height — the sticky Save/Cancel row then
+              sits fully above the nav. */}
+          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-62px-env(safe-area-inset-bottom)-1.5rem)] md:max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
               {!editingId && (
                 <div className="rounded-xl border border-accent/20 bg-accent/[0.04] overflow-hidden">
