@@ -5026,6 +5026,60 @@ Rules:
     res.json({ success: true });
   });
 
+  // --- Link preview: fetch OpenGraph metadata for chat embeds ---
+  // Server-side fetch avoids CORS issues. 8s timeout, 1MB cap, HTML only.
+  app.get("/api/link-preview", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const rawUrl = String(req.query.url || '').slice(0, 2048);
+    if (!rawUrl) return res.status(400).json({ error: "Missing url" });
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('bad protocol');
+    } catch {
+      return res.status(400).json({ error: "Invalid URL" });
+    }
+    // SSRF guard: block private/internal addresses
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'localhost' || host.endsWith('.local') || host === '127.0.0.1' || host === '::1' ||
+        /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+      return res.status(400).json({ error: "Private URLs not allowed" });
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 8000);
+      const resp = await fetch(parsed.toString(), {
+        signal: ctrl.signal,
+        headers: { 'User-Agent': 'ControlPoint-LinkPreview/1.0', 'Accept': 'text/html' },
+        redirect: 'follow',
+      });
+      clearTimeout(timer);
+      const ctype = resp.headers.get('content-type') || '';
+      if (!resp.ok || !ctype.includes('text/html')) {
+        return res.json({ url: parsed.toString(), site: parsed.hostname });
+      }
+      const buf = await resp.arrayBuffer();
+      if (buf.byteLength > 1024 * 1024) return res.json({ url: parsed.toString(), site: parsed.hostname });
+      const html = new TextDecoder().decode(buf.slice(0, 200 * 1024)); // only need the head
+      const meta = (prop: string): string | null => {
+        const m = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i'))
+               || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, 'i'));
+        return m ? m[1].slice(0, 500) : null;
+      };
+      const titleM = html.match(/<title[^>]*>([^<]{1,200})<\/title>/i);
+      res.json({
+        url: parsed.toString(),
+        site: parsed.hostname,
+        title: meta('og:title') || (titleM ? titleM[1].trim() : null),
+        description: meta('og:description') || meta('description'),
+        image: meta('og:image'),
+      });
+    } catch (e: any) {
+      res.json({ url: parsed.toString(), site: parsed.hostname });
+    }
+  });
+
   // --- Feedback: any user can send feedback to the app owner ---
   app.post("/api/feedback", (req, res, next) => {
     feedbackUpload.single('attachment')(req, res, (err: any) => {

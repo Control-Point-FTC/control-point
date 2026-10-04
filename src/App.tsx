@@ -8080,6 +8080,50 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   );
 }
 
+// Link preview embed for chat messages (Discord-style).
+function LinkPreview({ url }: { url: string }) {
+  const [preview, setPreview] = useState<any>(null);
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setPreview(null);
+    setDismissed(false);
+    apiFetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled && d && (d.title || d.description || d.image)) setPreview(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [url]);
+  if (dismissed || !preview) return null;
+  return (
+    <div className="mt-2 max-w-md rounded-xl border border-text-base/10 bg-text-base/[0.03] overflow-hidden">
+      {preview.image && (
+        <img src={preview.image} alt="" className="w-full max-h-48 object-cover" loading="lazy"
+             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+      )}
+      <div className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <a href={preview.url} target="_blank" rel="noopener noreferrer"
+             className="text-sm font-bold text-blue-400 hover:text-blue-300 line-clamp-2 break-all"
+             onClick={(e) => e.stopPropagation()}>
+            {preview.title || preview.site || url}
+          </a>
+          <button onClick={() => setDismissed(true)}
+                  className="p-1 text-text-muted/50 hover:text-text-muted shrink-0" aria-label="Dismiss preview">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        {preview.description && (
+          <p className="text-xs text-text-muted mt-1 line-clamp-3">{preview.description}</p>
+        )}
+        {preview.site && (
+          <p className="text-[10px] text-text-muted/60 mt-1.5 uppercase tracking-wide">{preview.site}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Discord-style messaging: channel list on the left, conversation in the
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
@@ -8536,6 +8580,8 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   };
 
   const renderContent = (text: string) => {
+    // Split on @mentions and URLs, keeping delimiters
+    const urlRegex = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
     return text.split(/(@\[[^\]]+\])/).map((part: string, i: number) => {
       if (part.startsWith('@[') && part.endsWith(']')) {
         const name = part.slice(2, -1);
@@ -8545,8 +8591,40 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           </span>
         );
       }
-      return part;
+      // Linkify URLs within this part
+      const urlParts = part.split(urlRegex);
+      if (urlParts.length === 1) return part;
+      return urlParts.map((up: string, j: number) => {
+        if (urlRegex.test(up)) {
+          urlRegex.lastIndex = 0;
+          const href = up.startsWith('http') ? up : `https://${up}`;
+          // Strip trailing punctuation that isn't part of the URL
+          const m = up.match(/^(.*?)([.,;:!?)]+)$/);
+          const cleanUp = m ? m[1] : up;
+          const trail = m ? m[2] : '';
+          const cleanHref = cleanUp.startsWith('http') ? cleanUp : `https://${cleanUp}`;
+          return (
+            <span key={`${i}-${j}`}>
+              <a href={cleanHref} target="_blank" rel="noopener noreferrer"
+                 className="text-blue-400 hover:text-blue-300 underline break-all"
+                 onClick={(e) => e.stopPropagation()}>
+                {cleanUp}
+              </a>
+              {trail}
+            </span>
+          );
+        }
+        return up;
+      });
     });
+  };
+
+  // Extract the first URL from message text for link preview embeds
+  const extractFirstUrl = (text: string): string | null => {
+    const m = text.match(/(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/i);
+    if (!m) return null;
+    let url = m[0].replace(/[.,;:!?)]+$/, '');
+    return url.startsWith('http') ? url : `https://${url}`;
   };
 
   const onlineMembers = members.filter((m: any) => m.presence === 'online' || m.presence === 'idle' || m.presence === 'dnd');
@@ -9038,6 +9116,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
                 </div>
               )}
               {msg.content && <div>{renderContent(msg.content)}</div>}
+              {msg.content && extractFirstUrl(msg.content) && (
+                <LinkPreview url={extractFirstUrl(msg.content)!} />
+              )}
             </div>
             <MessageReactions
               messageId={msg.id}
