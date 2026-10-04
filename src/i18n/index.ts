@@ -28,6 +28,8 @@ const resources = {
         budget: 'Budget',
         resources: 'Resources',
         owner: 'Owner',
+        profile: 'Profile',
+        teamSettings: 'Team Settings',
       },
       // Common actions
       common: {
@@ -271,6 +273,8 @@ const resources = {
         budget: 'Presupuesto',
         resources: 'Recursos',
         owner: 'Propietario',
+        profile: 'Perfil',
+        teamSettings: 'Ajustes del equipo',
       },
       // Acciones comunes
       common: {
@@ -513,6 +517,8 @@ const resources = {
         budget: 'Budget',
         resources: 'Ressources',
         owner: 'Propriétaire',
+        profile: 'Profil',
+        teamSettings: "Paramètres de l'équipe",
       },
       common: {
         save: 'Enregistrer',
@@ -753,6 +759,8 @@ const resources = {
         budget: 'Orçamento',
         resources: 'Recursos',
         owner: 'Proprietário',
+        profile: 'Perfil',
+        teamSettings: 'Configurações da equipe',
       },
       common: {
         save: 'Salvar',
@@ -994,6 +1002,8 @@ const resources = {
         budget: 'Buget',
         resources: 'Resurse',
         owner: 'Proprietar',
+        profile: 'Profil',
+        teamSettings: 'Setările echipei',
       },
       // Acțiuni comune
       common: {
@@ -1237,6 +1247,8 @@ const resources = {
         budget: 'Budget',
         resources: 'Ressourcen',
         owner: 'Eigentümer',
+        profile: 'Profil',
+        teamSettings: 'Team-Einstellungen',
       },
       // Häufige Aktionen
       common: {

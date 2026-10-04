@@ -1103,9 +1103,11 @@ export default function SettingsModal({
                       {/* OpMode style */}
                       <div>
                         <h4 className="text-sm font-bold text-text-base mb-1">Preferred OpMode style</h4>
+                        {/* Labels wrap rather than clip on phones; <wbr> lets
+                            "LinearOpMode" break as Linear / OpMode. */}
                         <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Preferred OpMode style">
                           {([
-                            { value: 'linear', label: 'LinearOpMode' },
+                            { value: 'linear', label: <>Linear<wbr />OpMode</> },
                             { value: 'opmode', label: 'OpMode' },
                             { value: 'ask', label: 'Ask each time' },
                           ] as const).map((opt) => (
@@ -1116,7 +1118,7 @@ export default function SettingsModal({
                               aria-checked={ftcOpmodeStyle === opt.value}
                               onClick={() => { setFtcOpmodeStyle(opt.value); setPref('controlpoint-ftc-opmode-style', opt.value); }}
                               className={cn(
-                                'rounded-xl border px-2 py-2.5 text-[13px] font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
+                                'min-w-0 rounded-xl border px-1.5 py-2.5 text-xs sm:text-[13px] leading-tight font-bold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60',
                                 ftcOpmodeStyle === opt.value
                                   ? 'bg-accent text-accent-ink border-accent'
                                   : 'bg-text-base/[0.03] text-text-muted border-text-base/10 hover:border-text-base/25 hover:text-text-base'
