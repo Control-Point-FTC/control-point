@@ -819,11 +819,21 @@ function useIsMobile() {
 
 export default function App() {
   const { t } = useTranslation();
-  // Initialize grid pulse setting from localStorage
+  // Initialize grid appearance settings from localStorage
   useEffect(() => {
-    if (localStorage.getItem('controlpoint-grid-pulse') === '0') {
-      document.documentElement.classList.add('grid-pulse-off');
-    }
+    const root = document.documentElement;
+    const get = (k: string, d: string) => {
+      try { return localStorage.getItem(k) ?? d; } catch { return d; }
+    };
+    if (get('controlpoint-grid-enabled', '1') === '0') root.classList.add('grid-off');
+    if (get('controlpoint-grid-pulse', '1') === '0') root.classList.add('grid-pulse-off');
+    if (get('controlpoint-grid-glow', '1') === '0') root.classList.add('grid-glow-off');
+    root.style.setProperty('--grid-size', `${get('controlpoint-grid-size', '32')}px`);
+    root.style.setProperty('--grid-opacity', get('controlpoint-grid-opacity', '0.12'));
+    root.style.setProperty('--grid-pulse-speed', `${get('controlpoint-grid-pulse-speed', '6')}s`);
+    root.style.setProperty('--grid-pulse-opacity', get('controlpoint-grid-pulse-opacity', '0.12'));
+    root.style.setProperty('--grid-glow-size', `${get('controlpoint-grid-glow-size', '280')}px`);
+    root.style.setProperty('--grid-glow-opacity', get('controlpoint-grid-glow-opacity', '0.25'));
   }, []);
   // Reactive volt grid: track cursor over the main content area so the grid
   // ignites around it, like the landing page hero.

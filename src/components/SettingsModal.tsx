@@ -39,9 +39,72 @@ export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
+  // Grid appearance settings — all persisted to localStorage and applied as CSS vars
+  const [gridEnabled, setGridEnabled] = useState(() => localStorage.getItem('controlpoint-grid-enabled') !== '0');
+  const [gridSize, setGridSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-size')) || 32);
+  const [gridOpacity, setGridOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-opacity')) || 0.12);
   const [gridPulseEnabled, setGridPulseEnabled] = useState(
     () => localStorage.getItem('controlpoint-grid-pulse') !== '0'
   );
+  const [gridPulseSpeed, setGridPulseSpeed] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-speed')) || 6);
+  const [gridPulseOpacity, setGridPulseOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-opacity')) || 0.12);
+  const [gridGlowEnabled, setGridGlowEnabled] = useState(() => localStorage.getItem('controlpoint-grid-glow') !== '0');
+  const [gridGlowSize, setGridGlowSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-size')) || 280);
+  const [gridGlowOpacity, setGridGlowOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-opacity')) || 0.25);
+
+  // Apply grid settings to CSS variables and classes
+  const applyGridSettings = (s: {
+    enabled: boolean; size: number; opacity: number;
+    pulse: boolean; pulseSpeed: number; pulseOpacity: number;
+    glow: boolean; glowSize: number; glowOpacity: number;
+  }) => {
+    const root = document.documentElement;
+    root.classList.toggle('grid-off', !s.enabled);
+    root.classList.toggle('grid-pulse-off', !s.pulse);
+    root.classList.toggle('grid-glow-off', !s.glow);
+    root.style.setProperty('--grid-size', `${s.size}px`);
+    root.style.setProperty('--grid-opacity', String(s.opacity));
+    root.style.setProperty('--grid-pulse-speed', `${s.pulseSpeed}s`);
+    root.style.setProperty('--grid-pulse-opacity', String(s.pulseOpacity));
+    root.style.setProperty('--grid-glow-size', `${s.glowSize}px`);
+    root.style.setProperty('--grid-glow-opacity', String(s.glowOpacity));
+  };
+
+  const updateGrid = (partial: Partial<{
+    enabled: boolean; size: number; opacity: number;
+    pulse: boolean; pulseSpeed: number; pulseOpacity: number;
+    glow: boolean; glowSize: number; glowOpacity: number;
+  }>) => {
+    const s = {
+      enabled: partial.enabled ?? gridEnabled,
+      size: partial.size ?? gridSize,
+      opacity: partial.opacity ?? gridOpacity,
+      pulse: partial.pulse ?? gridPulseEnabled,
+      pulseSpeed: partial.pulseSpeed ?? gridPulseSpeed,
+      pulseOpacity: partial.pulseOpacity ?? gridPulseOpacity,
+      glow: partial.glow ?? gridGlowEnabled,
+      glowSize: partial.glowSize ?? gridGlowSize,
+      glowOpacity: partial.glowOpacity ?? gridGlowOpacity,
+    };
+    if (partial.enabled !== undefined) { setGridEnabled(s.enabled); localStorage.setItem('controlpoint-grid-enabled', s.enabled ? '1' : '0'); }
+    if (partial.size !== undefined) { setGridSize(s.size); localStorage.setItem('controlpoint-grid-size', String(s.size)); }
+    if (partial.opacity !== undefined) { setGridOpacity(s.opacity); localStorage.setItem('controlpoint-grid-opacity', String(s.opacity)); }
+    if (partial.pulse !== undefined) { setGridPulseEnabled(s.pulse); localStorage.setItem('controlpoint-grid-pulse', s.pulse ? '1' : '0'); }
+    if (partial.pulseSpeed !== undefined) { setGridPulseSpeed(s.pulseSpeed); localStorage.setItem('controlpoint-grid-pulse-speed', String(s.pulseSpeed)); }
+    if (partial.pulseOpacity !== undefined) { setGridPulseOpacity(s.pulseOpacity); localStorage.setItem('controlpoint-grid-pulse-opacity', String(s.pulseOpacity)); }
+    if (partial.glow !== undefined) { setGridGlowEnabled(s.glow); localStorage.setItem('controlpoint-grid-glow', s.glow ? '1' : '0'); }
+    if (partial.glowSize !== undefined) { setGridGlowSize(s.glowSize); localStorage.setItem('controlpoint-grid-glow-size', String(s.glowSize)); }
+    if (partial.glowOpacity !== undefined) { setGridGlowOpacity(s.glowOpacity); localStorage.setItem('controlpoint-grid-glow-opacity', String(s.glowOpacity)); }
+    applyGridSettings(s);
+  };
+
+  const resetGrid = () => {
+    updateGrid({
+      enabled: true, size: 32, opacity: 0.12,
+      pulse: true, pulseSpeed: 6, pulseOpacity: 0.12,
+      glow: true, glowSize: 280, glowOpacity: 0.25,
+    });
+  };
   const [section, setSection] = useState<Section>('account');
   // On phones the nav and content can't sit side-by-side — drill in instead.
   const [mobileNav, setMobileNav] = useState(true);
@@ -436,12 +499,71 @@ export default function SettingsModal({
 
             {section === 'appearance' && (
               <section className="space-y-6">
-                <div>
-                  <h3 className="text-sm font-bold text-text-base">Background Effects</h3>
-                  <p className="text-xs text-text-muted leading-relaxed mt-1">
-                    Customize the animated background grid.
-                  </p>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-sm font-bold text-text-base">Background Effects</h3>
+                    <p className="text-xs text-text-muted leading-relaxed mt-1">
+                      Customize the animated background grid.
+                    </p>
+                  </div>
+                  <button
+                    onClick={resetGrid}
+                    className="text-xs text-accent hover:underline shrink-0 mt-0.5"
+                  >
+                    Reset to defaults
+                  </button>
                 </div>
+
+                {/* Grid on/off */}
+                <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                  <div>
+                    <p className="text-sm font-semibold text-text-base">Background grid</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Show the volt grid lines behind everything
+                    </p>
+                  </div>
+                  <Switch
+                    checked={gridEnabled}
+                    onChange={(v) => updateGrid({ enabled: v })}
+                    label="Background grid"
+                  />
+                </div>
+
+                {gridEnabled && (
+                  <>
+                    {/* Grid size */}
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-text-base">Grid size</p>
+                        <span className="text-xs text-text-muted font-mono">{gridSize}px</span>
+                      </div>
+                      <input
+                        type="range" min={16} max={64} step={2} value={gridSize}
+                        onChange={(e) => updateGrid({ size: Number(e.target.value) })}
+                        className="w-full accent-[#FFC700]"
+                        aria-label="Grid size"
+                      />
+                      <p className="text-xs text-text-muted mt-1">Spacing between grid lines</p>
+                    </div>
+
+                    {/* Grid brightness */}
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-text-base">Grid brightness</p>
+                        <span className="text-xs text-text-muted font-mono">{Math.round(gridOpacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range" min={0.02} max={0.4} step={0.01} value={gridOpacity}
+                        onChange={(e) => updateGrid({ opacity: Number(e.target.value) })}
+                        className="w-full accent-[#FFC700]"
+                        aria-label="Grid brightness"
+                      />
+                      <p className="text-xs text-text-muted mt-1">How visible the grid lines are</p>
+                    </div>
+                  </>
+                )}
+
+                {/* Pulse wave */}
                 <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                   <div>
                     <p className="text-sm font-semibold text-text-base">Pulsing volt wave</p>
@@ -451,14 +573,89 @@ export default function SettingsModal({
                   </div>
                   <Switch
                     checked={gridPulseEnabled}
-                    onChange={(v) => {
-                      setGridPulseEnabled(v);
-                      localStorage.setItem('controlpoint-grid-pulse', v ? '1' : '0');
-                      document.documentElement.classList.toggle('grid-pulse-off', !v);
-                    }}
+                    onChange={(v) => updateGrid({ pulse: v })}
                     label="Pulsing volt wave"
                   />
                 </div>
+
+                {gridPulseEnabled && (
+                  <>
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-text-base">Pulse speed</p>
+                        <span className="text-xs text-text-muted font-mono">{gridPulseSpeed}s</span>
+                      </div>
+                      <input
+                        type="range" min={2} max={15} step={0.5} value={gridPulseSpeed}
+                        onChange={(e) => updateGrid({ pulseSpeed: Number(e.target.value) })}
+                        className="w-full accent-[#FFC700]"
+                        aria-label="Pulse speed"
+                      />
+                      <p className="text-xs text-text-muted mt-1">How fast the wave travels</p>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-text-base">Pulse intensity</p>
+                        <span className="text-xs text-text-muted font-mono">{Math.round(gridPulseOpacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range" min={0.02} max={0.4} step={0.01} value={gridPulseOpacity}
+                        onChange={(e) => updateGrid({ pulseOpacity: Number(e.target.value) })}
+                        className="w-full accent-[#FFC700]"
+                        aria-label="Pulse intensity"
+                      />
+                      <p className="text-xs text-text-muted mt-1">How bright the traveling glow is</p>
+                    </div>
+                  </>
+                )}
+
+                {/* Cursor glow */}
+                <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                  <div>
+                    <p className="text-sm font-semibold text-text-base">Cursor glow</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      The grid ignites around your cursor as you move
+                    </p>
+                  </div>
+                  <Switch
+                    checked={gridGlowEnabled}
+                    onChange={(v) => updateGrid({ glow: v })}
+                    label="Cursor glow"
+                  />
+                </div>
+
+                {gridGlowEnabled && (
+                  <>
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-text-base">Glow size</p>
+                        <span className="text-xs text-text-muted font-mono">{gridGlowSize}px</span>
+                      </div>
+                      <input
+                        type="range" min={120} max={500} step={10} value={gridGlowSize}
+                        onChange={(e) => updateGrid({ glowSize: Number(e.target.value) })}
+                        className="w-full accent-[#FFC700]"
+                        aria-label="Glow size"
+                      />
+                      <p className="text-xs text-text-muted mt-1">How far the glow spreads from your cursor</p>
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-semibold text-text-base">Glow intensity</p>
+                        <span className="text-xs text-text-muted font-mono">{Math.round(gridGlowOpacity * 100)}%</span>
+                      </div>
+                      <input
+                        type="range" min={0.05} max={0.6} step={0.01} value={gridGlowOpacity}
+                        onChange={(e) => updateGrid({ glowOpacity: Number(e.target.value) })}
+                        className="w-full accent-[#FFC700]"
+                        aria-label="Glow intensity"
+                      />
+                      <p className="text-xs text-text-muted mt-1">How bright the cursor glow is</p>
+                    </div>
+                  </>
+                )}
               </section>
             )}
 
