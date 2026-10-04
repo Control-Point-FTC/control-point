@@ -136,8 +136,7 @@
 /* Floating dropdowns (notifications, team switcher, account menu): near-solid
  * so busy page content can't bleed through and kill readability. */
 .dropdown-surface {
-  background: color-mix(in srgb, var(--color-secondary) 96%, transparent);
-  backdrop-filter: blur(20px);
+  background: var(--color-secondary);
   border: 1px solid var(--color-line);
 }
 
