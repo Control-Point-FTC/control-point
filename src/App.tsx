@@ -5576,8 +5576,8 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
       </div>
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-4">
+          <Card title={editingId ? 'Edit Event' : 'New Event'} className="w-full max-w-md max-h-[calc(100dvh-6rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar mb-[env(safe-area-inset-bottom)]">
             <div className="space-y-4">
               {!editingId && (
                 <div className="rounded-xl border border-accent/20 bg-accent/[0.04] overflow-hidden">
@@ -5681,7 +5681,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                   onChange={(e: any) => setForm({ ...form, team_id: e.target.value })}
                 />
               </div>
-              <div className="flex gap-3 justify-between">
+              <div className="sticky bottom-0 -mx-6 -mb-6 px-6 py-4 bg-elevated border-t border-text-base/10 flex gap-3 justify-between">
                 <div>
                   {editingId && <Button variant="danger" onClick={handleDelete}><Trash2 className="w-4 h-4" /> Delete</Button>}
                 </div>
