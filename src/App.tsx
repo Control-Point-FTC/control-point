@@ -268,6 +268,67 @@ const Select = ({ className, options, ...props }: any) => (
   </select>
 );
 
+// Multi-select dropdown for task assignees — checkbox list with avatar chips.
+const AssigneeMultiSelect = ({ members, selected, onChange }: any) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open ]);
+  const sel = Array.isArray(selected) ? selected : [];
+  const toggle = (id: number) => {
+    onChange(sel.includes(id) ? sel.filter((x: number) => x !== id) : [...sel, id]);
+  };
+  const selMembers = members.filter((m: any) => sel.includes(m.id));
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-left text-text-base focus:outline-none focus:border-accent/60 transition-all flex items-center justify-between gap-2"
+      >
+        <span className="flex items-center gap-1.5 flex-wrap min-h-[24px]">
+          {selMembers.length === 0 ? (
+            <span className="text-text-muted">Assign to…</span>
+          ) : selMembers.map((m: any) => (
+            <span key={m.id} className="inline-flex items-center gap-1 bg-accent/15 text-accent text-xs font-semibold rounded-full pl-1 pr-2 py-0.5">
+              {m.avatar_url
+                ? <img src={assetUrl(m.avatar_url)} alt="" className="w-5 h-5 rounded-full object-cover" />
+                : <span className="w-5 h-5 rounded-full bg-accent/25 flex items-center justify-center text-[10px]">{m.name?.charAt(0)}</span>}
+              {m.name}
+            </span>
+          ))}
+        </span>
+        <ChevronDown className={cn("w-4 h-4 text-text-muted shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-xl border border-text-base/10 bg-elevated shadow-xl shadow-black/30">
+          {members.length === 0 && <div className="px-4 py-3 text-sm text-text-muted">No members</div>}
+          {members.map((m: any) => (
+            <label key={m.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-text-base/[0.05] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sel.includes(m.id)}
+                onChange={() => toggle(m.id)}
+                className="w-4 h-4 accent-[#FFC700]"
+              />
+              {m.avatar_url
+                ? <img src={assetUrl(m.avatar_url)} alt="" className="w-6 h-6 rounded-full object-cover" />
+                : <span className="w-6 h-6 rounded-full bg-text-base/10 flex items-center justify-center text-xs font-bold">{m.name?.charAt(0)}</span>}
+              <span className="text-sm text-text-base">{m.name}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Avatar: profile picture when set, otherwise the user's initial
 const Avatar = ({ user, size = 'md', className }: any) => {
   const sizes: any = {
@@ -3630,7 +3691,10 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
   const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
   const today = format(new Date(), 'yyyy-MM-dd');
   const tomorrow = format(new Date(Date.now() + 864e5), 'yyyy-MM-dd');
-  const myTasks = (tasks || []).filter((t: any) => t.assigned_to === currentUser?.id);
+  const myTasks = (tasks || []).filter((t: any) => {
+    const ids = Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
+    return ids.includes(currentUser?.id);
+  });
   const openTasks = myTasks.filter((t: any) => t.status !== 'done');
   const myAttendance = (attendance || []).filter((r: any) => r.member_id === currentUser?.id);
   const todayRecord = myAttendance.find((r: any) => r.date === today);
@@ -5799,7 +5863,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
-  const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assigned_to: '', due_date: '', status: 'todo' });
+  const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assignee_ids: [] as number[], due_date: '', status: 'todo' });
   const [filterTeam, setFilterTeam] = useState('all');
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
   // Bruno bulk import: paste notes/chat, AI extracts tasks, preview/edit, save all.
@@ -5848,7 +5912,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
 
   const openNewTask = (status = 'todo') => {
     setEditingTaskId(null);
-    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assigned_to: '', due_date: '', status });
+    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', status });
     setIsBoardTask(false);
     setShowAddTask(true);
   };
@@ -5859,7 +5923,9 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
       team_id: task.team_id?.toString() || '',
       title: task.title || '',
       description: task.description || '',
-      assigned_to: task.assigned_to?.toString() || '',
+      assignee_ids: Array.isArray(task.assignee_ids) && task.assignee_ids.length > 0
+        ? task.assignee_ids
+        : (task.assigned_to ? [task.assigned_to] : []),
       due_date: task.due_date || '',
       status: task.status || 'todo',
     });
@@ -5878,7 +5944,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
           body: JSON.stringify({
             title: newTask.title,
             description: newTask.description,
-            assigned_to: newTask.assigned_to ? Number(newTask.assigned_to) : null,
+            assignee_ids: newTask.assignee_ids,
             due_date: newTask.due_date || null,
             is_board: isBoardTask ? 1 : 0,
           })
@@ -6059,7 +6125,10 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
 
   const memberCapacity = useMemo(() => {
     return members.map((m: any) => {
-      const memberTasks = tasks.filter((t: any) => t.assigned_to === m.id);
+      const memberTasks = tasks.filter((t: any) => {
+        const ids = Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
+        return ids.includes(m.id);
+      });
       return {
         name: m.name,
         total: memberTasks.length,
@@ -6160,12 +6229,33 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       {(() => {
-                        const assignee = members.find((m: any) => m.id === task.assigned_to);
-                        return assignee?.avatar_url ? (
-                          <img src={assetUrl(assignee.avatar_url)} alt={assignee.name} className="w-6 h-6 rounded-full object-cover" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-accent-ink">
-                            {assignee?.name.charAt(0) || '?'}
+                        const ids = Array.isArray(task.assignee_ids) && task.assignee_ids.length > 0
+                          ? task.assignee_ids
+                          : (task.assigned_to ? [task.assigned_to] : []);
+                        const assignees = ids.map((id: number) => members.find((m: any) => m.id === id)).filter(Boolean);
+                        if (assignees.length === 0) {
+                          return (
+                            <div className="w-6 h-6 rounded-full bg-text-base/10 flex items-center justify-center text-[10px] font-bold text-text-muted">
+                              ?
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="flex -space-x-1.5">
+                            {assignees.slice(0, 4).map((a: any) => (
+                              a?.avatar_url ? (
+                                <img key={a.id} src={assetUrl(a.avatar_url)} alt={a.name} title={a.name} className="w-6 h-6 rounded-full object-cover ring-2 ring-card" />
+                              ) : (
+                                <div key={a.id} title={a.name} className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-accent-ink ring-2 ring-card">
+                                  {a?.name.charAt(0) || '?'}
+                                </div>
+                              )
+                            ))}
+                            {assignees.length > 4 && (
+                              <div className="w-6 h-6 rounded-full bg-text-base/15 flex items-center justify-center text-[9px] font-bold text-text-muted ring-2 ring-card">
+                                +{assignees.length - 4}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
@@ -6203,13 +6293,10 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                 value={newTask.description}
                 onChange={(e: any) => setNewTask({...newTask, description: e.target.value})}
               />
-              <Select 
-                options={[
-                  { label: 'Assign To', value: '' },
-                  ...members.map(m => ({ label: m.name, value: m.id }))
-                ]} 
-                value={newTask.assigned_to}
-                onChange={(e: any) => setNewTask({...newTask, assigned_to: e.target.value})}
+              <AssigneeMultiSelect
+                members={members}
+                selected={newTask.assignee_ids}
+                onChange={(ids: number[]) => setNewTask({...newTask, assignee_ids: ids})}
               />
               <Input type="date" value={newTask.due_date} onChange={(e: any) => setNewTask({...newTask, due_date: e.target.value})} />
               
@@ -10762,6 +10849,109 @@ function ProfileView({ currentUser, onRefresh, refresh, setLoading, hasScope, se
   );
 }
 
+function GoogleCalendarSettings({ settings, isAdmin, onRefresh }: any) {
+  const [link, setLink] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [syncOn, setSyncOn] = useState(settings?.google_calendar_sync === '1');
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await apiFetch('/api/calendar/link');
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setLink(data);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => { setSyncOn(settings?.google_calendar_sync === '1'); }, [settings?.google_calendar_sync]);
+
+  // Handle OAuth return flags
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('cal_linked') === '1') {
+      notify('Google Calendar linked!', 'success');
+      window.history.replaceState({}, '', window.location.pathname);
+      load();
+    } else if (params.get('cal_error')) {
+      notify('Could not link Google Calendar — try again.', 'error');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const unlink = async () => {
+    if (!(await confirmDialog({ title: 'Unlink Google Calendar?', message: 'Team events will no longer sync to your personal calendar.', confirmLabel: 'Unlink' }))) return;
+    const res = await apiFetch('/api/calendar/link', { method: 'DELETE' });
+    if (res.ok) { notify('Google Calendar unlinked', 'success'); load(); }
+    else notify('Could not unlink — try again.', 'error');
+  };
+
+  const toggleSync = async () => {
+    setSaving(true);
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'google_calendar_sync', value: syncOn ? '0' : '1' }),
+      });
+      if (res.ok) {
+        setSyncOn(!syncOn);
+        notify(syncOn ? 'Team calendar sync turned off' : 'Team calendar sync turned on — new events will push to linked calendars', 'success');
+        onRefresh?.();
+      } else notify('Could not save setting', 'error');
+    } finally { setSaving(false); }
+  };
+
+  if (loading) return <p className="text-sm text-text-muted">Loading…</p>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-text-base">Personal calendar link</p>
+          <p className="text-xs text-text-muted mt-0.5">
+            {link?.linked
+              ? `Linked as ${link.google_email || 'your Google account'}`
+              : 'Link your Google account to receive team events on your personal calendar.'}
+          </p>
+        </div>
+        {link?.linked ? (
+          <Button variant="secondary" onClick={unlink} className="shrink-0">Unlink</Button>
+        ) : (
+          <a href="/api/auth/google/calendar" className="shrink-0">
+            <Button className="w-full sm:w-auto">Link Google Calendar</Button>
+          </a>
+        )}
+      </div>
+      {isAdmin && (
+        <div className="flex items-start gap-3 pt-3 border-t border-text-base/10">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <button
+              role="switch"
+              aria-checked={syncOn}
+              onClick={toggleSync}
+              disabled={saving}
+              className={cn("w-11 h-6 rounded-full transition-colors shrink-0", syncOn ? "bg-accent" : "bg-text-base/15")}
+            >
+              <span className={cn("block w-5 h-5 rounded-full bg-white shadow transition-transform mt-0.5", syncOn ? "translate-x-5 ml-0.5" : "translate-x-0.5")} />
+            </button>
+            <span>
+              <span className="text-sm font-semibold text-text-base block">Sync team events to members' calendars</span>
+              <span className="text-xs text-text-muted block mt-0.5">
+                When on, meetings, league meets, and other team events automatically appear on every linked member's personal Google Calendar.
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+      {!link?.team_sync_enabled && link?.linked && (
+        <p className="text-xs text-text-muted/70">Team sync is currently off — your admin can turn it on anytime.</p>
+      )}
+    </div>
+  );
+}
+
 function SettingsView({ settings, members, teams, onRefresh, refresh, currentUser, navGptQualified, navGptActive, isOwner, hasPerm }: any) {
   const voice = useVoice();
   const [criteria, setCriteria] = useState(settings.excuse_criteria || '');
@@ -11300,6 +11490,14 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
           </Card>
         </div>
       )}
+
+      <Card title="Google Calendar" icon={Calendar} subtitle="Sync team events to your personal calendar">
+        <GoogleCalendarSettings
+          settings={settings}
+          isAdmin={hasPerm?.('manage_calendar') || currentUser?.role === 'President'}
+          onRefresh={onRefresh}
+        />
+      </Card>
 
       <Card title="Danger Zone" icon={ShieldCheck} subtitle="Irreversible actions" className="border-rose-500/25">
         {(teams || []).length > 0 ? (

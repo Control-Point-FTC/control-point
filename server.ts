@@ -2431,7 +2431,7 @@ async function startServer() {
       return mirrorOrigins().includes(u.origin);
     } catch { return false; }
   }
-  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string }>(); // state -> {expiry, intent, provider}
+  const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number }>(); // state -> {expiry, intent, provider}
   // Pending OAuth signups: token -> {provider, providerSub, email, name, intent, expiry}. Single-use, 10 min.
   const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; avatarUrl: string | null; intent: string; expiry: number }>();
 
@@ -2886,6 +2886,249 @@ async function startServer() {
   app.post("/api/auth/google/complete", async (req, res) => {
     await completeOAuthSignup('google', req, res);
   });
+
+  // --- Google Calendar linking (per-member, from Settings) ---
+  // Separate OAuth flow with calendar.events scope. Stores a refresh token per
+  // member; the admin's `google_calendar_sync` setting controls whether team
+  // events auto-push to every linked member's personal calendar.
+
+  const getCalendarSyncEnabled = async (): Promise<boolean> => {
+    try {
+      const row = (await dbGet("SELECT value FROM settings WHERE key = 'google_calendar_sync'")) as any;
+      return row?.value === '1';
+    } catch { return false; }
+  };
+
+  const getGoogleAccessToken = async (memberId: number): Promise<string | null> => {
+    try {
+      const link = (await dbGet("SELECT refresh_token FROM google_calendar_links WHERE member_id = ?", memberId)) as any;
+      if (!link?.refresh_token) return null;
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          refresh_token: link.refresh_token,
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!tokenRes.ok) {
+        // Refresh token revoked/expired — drop the link so the user can re-link.
+        if (tokenRes.status === 400 || tokenRes.status === 401) {
+          await dbRun("DELETE FROM google_calendar_links WHERE member_id = ?", memberId);
+        }
+        return null;
+      }
+      const { access_token } = (await tokenRes.json()) as any;
+      return access_token || null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Start the calendar-link OAuth flow (must be signed in).
+  // Uses its own redirect URI (/api/auth/google/calendar/callback) — it must
+  // be added to the Google Cloud Console's authorized redirect URIs.
+  const getCalendarRedirectUri = (req: any): string => {
+    const base = getOAuthRedirectUri(req, 'google');
+    return base.replace('/api/auth/google/callback', '/api/auth/google/calendar/callback');
+  };
+  app.get("/api/auth/google/calendar", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+        return res.status(400).json({ error: "Google sign-in is not configured" });
+      }
+      const state = randomHex(16);
+      oauthStates.set(state, {
+        expiry: Date.now() + 10 * 60 * 1000,
+        intent: 'calendar_link',
+        provider: 'google',
+        memberId: auth.memberId,
+      });
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: getCalendarRedirectUri(req),
+        response_type: "code",
+        scope: "openid email https://www.googleapis.com/auth/calendar.events",
+        state,
+        access_type: "offline",
+        prompt: "consent select_account",
+      });
+      res.redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params.toString());
+    } catch (error) {
+      console.error("Calendar link start error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // OAuth callback for calendar linking lives at /api/auth/google/calendar/callback (below).
+
+  app.get("/api/auth/google/calendar/callback", async (req, res) => {
+    try {
+      const { code, state } = req.query as { code?: string; state?: string };
+      const pending = state ? oauthStates.get(state) : undefined;
+      if (state) oauthStates.delete(state);
+      if (!code || !pending || pending.expiry < Date.now() || pending.intent !== 'calendar_link') {
+        return res.redirect("/settings?cal_error=invalid_state");
+      }
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: GOOGLE_CLIENT_ID,
+          client_secret: GOOGLE_CLIENT_SECRET,
+          redirect_uri: getCalendarRedirectUri(req),
+          grant_type: "authorization_code",
+        }),
+      });
+      if (!tokenRes.ok) throw new Error("Token exchange failed");
+      const { access_token, refresh_token } = (await tokenRes.json()) as any;
+      if (!refresh_token) throw new Error("No refresh token granted");
+      const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+      const profile = profileRes.ok ? ((await profileRes.json()) as any) : {};
+      await dbRun(
+        "INSERT OR REPLACE INTO google_calendar_links (member_id, google_email, refresh_token, linked_at) VALUES (?, ?, ?, datetime('now'))",
+        pending.memberId, profile.email || '', refresh_token
+      );
+      res.redirect("/settings?cal_linked=1");
+    } catch (error) {
+      console.error("Calendar link callback error:", error);
+      res.redirect("/settings?cal_error=link_failed");
+    }
+  });
+
+  // Calendar link status for the current member.
+  app.get("/api/calendar/link", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const link = (await dbGet(
+        "SELECT google_email, linked_at FROM google_calendar_links WHERE member_id = ?", auth.memberId
+      )) as any;
+      const syncEnabled = await getCalendarSyncEnabled();
+      res.json({ linked: !!link, google_email: link?.google_email || null, linked_at: link?.linked_at || null, team_sync_enabled: syncEnabled });
+    } catch (error) {
+      console.error("Error fetching calendar link:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Unlink the current member's Google Calendar.
+  app.delete("/api/calendar/link", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      await dbRun("DELETE FROM google_calendar_links WHERE member_id = ?", auth.memberId);
+      await dbRun("DELETE FROM event_calendar_sync WHERE member_id = ?", auth.memberId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error unlinking calendar:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Push one team event to one member's Google Calendar.
+  const pushEventToGoogle = async (memberId: number, event: any): Promise<string | null> => {
+    const accessToken = await getGoogleAccessToken(memberId);
+    if (!accessToken) return null;
+    const body: any = {
+      summary: event.title,
+      description: `${event.description || ''}\n\n— via Control Point`.trim(),
+      location: event.location || undefined,
+    };
+    if (event.start_time) {
+      // Timed event — interpret in the server's local timezone
+      const dateStr = `${event.date}T${event.start_time}:00`;
+      const endStr = event.end_time ? `${event.date}T${event.end_time}:00` : null;
+      body.start = { dateTime: dateStr };
+      body.end = { dateTime: endStr || dateStr };
+    } else {
+      body.start = { date: event.date };
+      const end = new Date(event.date + 'T12:00:00Z');
+      end.setUTCDate(end.getUTCDate() + 1);
+      body.end = { date: end.toISOString().slice(0, 10) };
+    }
+    try {
+      const r = await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) return null;
+      const created = (await r.json()) as any;
+      return created.id || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const syncEventToCalendars = async (event: any, teamId: number) => {
+    if (!(await getCalendarSyncEnabled())) return;
+    try {
+      const links = (await dbAll(
+        `SELECT g.member_id FROM google_calendar_links g
+         JOIN members m ON m.id = g.member_id
+         WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1`, teamId
+      )) as any[];
+      for (const l of links) {
+        const googleEventId = await pushEventToGoogle(l.member_id, event);
+        if (googleEventId) {
+          await dbRun(
+            "INSERT OR REPLACE INTO event_calendar_sync (event_id, member_id, google_event_id) VALUES (?, ?, ?)",
+            event.id, l.member_id, googleEventId
+          );
+        }
+      }
+    } catch (e) {
+      console.error("Calendar sync failed:", (e as any)?.message);
+    }
+  };
+
+  const updateSyncedEvent = async (event: any) => {
+    if (!(await getCalendarSyncEnabled())) return;
+    try {
+      const rows = (await dbAll("SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id = ?", event.id)) as any[];
+      for (const r of rows) {
+        const accessToken = await getGoogleAccessToken(r.member_id);
+        if (!accessToken) continue;
+        const body: any = {
+          summary: event.title,
+          description: `${event.description || ''}\n\n— via Control Point`.trim(),
+          location: event.location || undefined,
+        };
+        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.error("Calendar sync update failed:", (e as any)?.message);
+    }
+  };
+
+  const deleteSyncedEvent = async (eventId: number) => {
+    try {
+      const rows = (await dbAll("SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id = ?", eventId)) as any[];
+      for (const r of rows) {
+        const accessToken = await getGoogleAccessToken(r.member_id);
+        if (!accessToken) continue;
+        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(r.google_event_id)}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }).catch(() => {});
+      }
+      await dbRun("DELETE FROM event_calendar_sync WHERE event_id = ?", eventId);
+    } catch (e) {
+      console.error("Calendar sync delete failed:", (e as any)?.message);
+    }
+  };
 
   // --- Self-service account management ---
 
@@ -5525,13 +5768,46 @@ Rules:
     }
   });
 
-  // Tasks
+  // Tasks — multi-assignee support.
+  // task_assignees is the source of truth; tasks.assigned_to is legacy.
+  const getTaskAssigneeIds = async (taskId: number): Promise<number[]> => {
+    try {
+      const rows = (await dbAll("SELECT member_id FROM task_assignees WHERE task_id = ?", taskId)) as any[];
+      const ids = rows.map((r: any) => r.member_id);
+      if (ids.length > 0) return ids;
+    } catch { /* table may not exist yet on very old DBs */ }
+    // Legacy fallback
+    const t = (await dbGet("SELECT assigned_to FROM tasks WHERE id = ?", taskId)) as any;
+    return t?.assigned_to ? [t.assigned_to] : [];
+  };
+  const setTaskAssignees = async (taskId: number, memberIds: number[], teamId: number) => {
+    // Validate all members belong to the team
+    const valid: number[] = [];
+    for (const mid of memberIds) {
+      const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", mid)) as any;
+      if (m && m.team_id === teamId) valid.push(mid);
+    }
+    await dbRun("DELETE FROM task_assignees WHERE task_id = ?", taskId);
+    for (const mid of valid) {
+      await dbRun("INSERT OR IGNORE INTO task_assignees (task_id, member_id) VALUES (?, ?)", taskId, mid);
+    }
+    // Keep legacy column in sync (first assignee, for old clients)
+    await dbRun("UPDATE tasks SET assigned_to = ? WHERE id = ?", valid[0] || null, taskId);
+    return valid;
+  };
+  const withAssignees = async (tasks: any[]) => {
+    for (const t of tasks) {
+      t.assignee_ids = await getTaskAssigneeIds(t.id);
+    }
+    return tasks;
+  };
+
   app.get("/api/tasks", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const tasks = (await dbAll("SELECT * FROM tasks WHERE team_id = ?", auth.teamId));
-      res.json(tasks);
+      const tasks = (await dbAll("SELECT * FROM tasks WHERE team_id = ?", auth.teamId)) as any[];
+      res.json(await withAssignees(tasks));
     } catch (error) {
       console.error("Error fetching tasks:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -5542,26 +5818,39 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
-      const { title, description, status, assigned_to, due_date, is_board } = req.body;
+      const { title, description, status, assigned_to, assignee_ids, due_date, is_board } = req.body;
       const createdAt = new Date().toISOString();
 
-      const targetAssignedTo = assigned_to || null;
-      if (targetAssignedTo) {
-        const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", targetAssignedTo)) as any;
-        if (!m || m.team_id !== auth.teamId) {
-          return res.status(403).json({ error: "Not your workspace" });
-        }
+      // assignee_ids (array) is preferred; assigned_to (single) for legacy clients
+      let targetIds: number[] = [];
+      if (Array.isArray(assignee_ids)) {
+        targetIds = assignee_ids.map(Number).filter((n: number) => Number.isFinite(n));
+      } else if (assigned_to) {
+        targetIds = [Number(assigned_to)];
+      }
+      const validIds: number[] = [];
+      for (const mid of targetIds) {
+        const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", mid)) as any;
+        if (m && m.team_id === auth.teamId) validIds.push(mid);
+      }
+      if (targetIds.length > 0 && validIds.length === 0) {
+        return res.status(403).json({ error: "Not your workspace" });
+      }
+      const legacyAssignedTo = validIds[0] || null;
+
+      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', legacyAssignedTo, due_date, is_board || 0, createdAt));
+
+      const taskId = Number(info.lastInsertRowid);
+      await setTaskAssignees(taskId, validIds, auth.teamId);
+
+      for (const mid of validIds) {
+        createNotification(mid, `New task assigned: ${title}`, 'task');
       }
 
-      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', targetAssignedTo, due_date, is_board || 0, createdAt));
-
-      if (targetAssignedTo) {
-        createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
-      }
-
-      const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", info.lastInsertRowid)) as any;
+      const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", taskId)) as any;
+      created.assignee_ids = validIds;
       broadcastToTeam(auth.teamId, { type: "task_created", task: created });
-      res.json({ id: info.lastInsertRowid });
+      res.json({ id: taskId });
     } catch (error) {
       console.error("Error creating task:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -5665,8 +5954,12 @@ Rules:
           "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
           auth.teamId, title, String(it?.description || "").trim().slice(0, 1000), status, targetAssignedTo, due, 0, createdAt
         ));
-        saved.push(info.lastInsertRowid);
-        if (targetAssignedTo) createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
+        const bulkTaskId = Number(info.lastInsertRowid);
+        saved.push(bulkTaskId);
+        if (targetAssignedTo) {
+          await setTaskAssignees(bulkTaskId, [targetAssignedTo], auth.teamId);
+          createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
+        }
       }
       // Bulk import: receivers just refresh their task list.
       broadcastToTeam(auth.teamId, { type: "tasks_changed" });
@@ -5687,7 +5980,8 @@ Rules:
       }
       // Managers may edit anything; assignees without the permission may only move status.
       const canManage = await hasPerm(auth, 'manage_tasks');
-      const isAssignee = task.assigned_to === auth.memberId;
+      const assigneeIds = await getTaskAssigneeIds(Number(req.params.id));
+      const isAssignee = assigneeIds.includes(auth.memberId) || task.assigned_to === auth.memberId;
       if (!canManage && !isAssignee) {
         return res.status(403).json({ error: "You can only update tasks assigned to you" });
       }
@@ -5696,8 +5990,8 @@ Rules:
       if (req.body?.status === 'done' && task.status !== 'done') {
         return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
       }
-      const { status, title, description, assigned_to, due_date, is_board } = req.body;
-      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || due_date !== undefined || is_board !== undefined)) {
+      const { status, title, description, assigned_to, assignee_ids, due_date, is_board } = req.body;
+      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || is_board !== undefined)) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
       const completedAt = status === 'done' ? new Date().toISOString() : null;
@@ -5713,28 +6007,38 @@ Rules:
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (due_date !== undefined) { sets.push('due_date = ?'); vals.push(due_date || null); }
       if (is_board !== undefined) { sets.push('is_board = ?'); vals.push(is_board ? 1 : 0); }
-      if (assigned_to !== undefined) {
-        const targetAssignedTo = assigned_to || null;
-        if (targetAssignedTo) {
-          const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", targetAssignedTo)) as any;
-          if (!m || m.team_id !== auth.teamId) {
-            return res.status(403).json({ error: "Not your workspace" });
+      if (assigned_to !== undefined || assignee_ids !== undefined) {
+        let newIds: number[] = [];
+        if (Array.isArray(assignee_ids)) {
+          newIds = assignee_ids.map(Number).filter((n: number) => Number.isFinite(n));
+        } else if (assigned_to) {
+          newIds = [Number(assigned_to)];
+        }
+        const valid = await setTaskAssignees(Number(req.params.id), newIds, auth.teamId);
+        if (newIds.length > 0 && valid.length === 0) {
+          return res.status(403).json({ error: "Not your workspace" });
+        }
+        // Notify newly added assignees
+        for (const mid of valid) {
+          if (!assigneeIds.includes(mid)) {
+            createNotification(mid, `New task assigned: ${task.title}`, 'task');
           }
         }
-        sets.push('assigned_to = ?'); vals.push(targetAssignedTo);
       }
       if (sets.length > 0) {
         (await dbRun(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`, ...vals, req.params.id));
       }
 
-      if (task.assigned_to) {
+      const notifyIds = await getTaskAssigneeIds(Number(req.params.id));
+      for (const mid of notifyIds) {
         const note = status !== undefined && title === undefined
           ? `Task status updated to ${status}: ${task.title}`
           : `Task updated: ${title ?? task.title}`;
-        createNotification(task.assigned_to, note, 'task');
+        createNotification(mid, note, 'task');
       }
 
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      updated.assignee_ids = notifyIds;
       broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
       res.json({ success: true });
     } catch (error) {
@@ -5751,6 +6055,7 @@ Rules:
       if (!task || task.team_id !== auth.teamId) {
         return res.status(404).json({ error: "Task not found" });
       }
+      try { await dbRun("DELETE FROM task_assignees WHERE task_id = ?", req.params.id); } catch { /* table may not exist yet */ }
       (await dbRun("DELETE FROM tasks WHERE id = ?", req.params.id));
       broadcastToTeam(auth.teamId, { type: "task_deleted", id: Number(req.params.id) });
       res.json({ success: true });
@@ -5773,9 +6078,10 @@ Rules:
         return res.status(404).json({ error: "Task not found" });
       }
       const canManage = await hasPerm(auth, 'manage_tasks');
-      const isAssignee = task.assigned_to === auth.memberId;
-      if (!canManage && !isAssignee && task.assigned_to) {
-        return res.status(403).json({ error: "Only the assignee or a manager can complete this task" });
+      const taskAssignees = await getTaskAssigneeIds(Number(req.params.id));
+      const isAssignee = taskAssignees.includes(auth.memberId) || task.assigned_to === auth.memberId;
+      if (!canManage && !isAssignee && (taskAssignees.length > 0 || task.assigned_to)) {
+        return res.status(403).json({ error: "Only an assignee or a manager can complete this task" });
       }
       const notes = String(req.body?.notes || "").trim().slice(0, 2000);
       // Proof images are persisted in the database so they survive restarts.
@@ -5835,7 +6141,11 @@ Rules:
       "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       e.title, e.notes || "", e.date, e.time || "", "", "", "meeting", teamId, memberId
     )) as any;
-    return info.lastInsertRowid;
+    const eventId = info.lastInsertRowid;
+    // Push to linked personal Google Calendars (if the admin enabled sync)
+    const newEvent = (await dbGet("SELECT * FROM events WHERE id = ?", eventId)) as any;
+    if (newEvent) void syncEventToCalendars(newEvent, teamId);
+    return eventId;
   }
 
   app.post("/api/events", async (req, res) => {
@@ -5876,6 +6186,8 @@ Rules:
         location ?? existing.location,
         event_type ?? existing.event_type,
         req.params.id));
+      const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id)) as any;
+      if (updatedEvent) void updateSyncedEvent(updatedEvent);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating event:", error);
@@ -5889,6 +6201,7 @@ Rules:
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
+      await deleteSyncedEvent(Number(req.params.id));
       (await dbRun("DELETE FROM events WHERE id = ?", req.params.id));
       res.json({ ok: true });
     } catch (error) {

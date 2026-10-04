@@ -260,20 +260,20 @@ export default function RolesView({ members, onRefresh }: any) {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto min-w-0">
-      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-        <div>
+    <div className="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto min-w-0 w-full overflow-x-hidden">
+      <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between min-w-0">
+        <div className="min-w-0">
           <h2 className="text-xl sm:text-2xl font-display font-bold text-text-base flex items-center gap-2">
-            <ShieldCheck className="w-6 h-6 text-accent" /> Roles
+            <ShieldCheck className="w-6 h-6 text-accent shrink-0" /> Roles
           </h2>
-          <p className="text-sm text-text-muted mt-1">
+          <p className="text-sm text-text-muted mt-1 break-words">
             Discord-style roles — group permissions and hand them to members. Give someone the Admin role (or any
             role with <span className="text-text-base font-semibold">Manage members</span>) to make them an admin.
           </p>
         </div>
         <button
           onClick={() => setEditingId('new')}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition-all active:scale-95 shrink-0"
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-bold transition-all active:scale-95 shrink-0 w-full sm:w-auto"
           style={{ backgroundColor: '#FFC700', color: '#231A00' }}
         >
           <Plus className="w-4 h-4" /> New role
@@ -306,13 +306,13 @@ export default function RolesView({ members, onRefresh }: any) {
 
       <div className="grid gap-4 md:grid-cols-2">
         {roles.map((role) => (
-          <div key={role.id} className="card-surface p-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5 min-w-0">
+          <div key={role.id} className="card-surface p-5 min-w-0 overflow-hidden">
+            <div className="flex items-center justify-between gap-2 min-w-0">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
                 <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: role.color }} />
-                <span className="text-text-base font-bold truncate">{role.name}</span>
+                <span className="text-text-base font-bold truncate min-w-0">{role.name}</span>
                 {role.is_system ? (
-                  <span className="text-[10px] font-bold uppercase tracking-wide text-text-muted/70 border border-text-base/15 rounded-md px-1.5 py-0.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide text-text-muted/70 border border-text-base/15 rounded-md px-1.5 py-0.5 shrink-0">
                     System
                   </span>
                 ) : null}
