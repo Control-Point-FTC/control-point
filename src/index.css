@@ -274,6 +274,14 @@ html.light body {
     linear-gradient(90deg, rgb(9 9 11 / 0.07) 1px, transparent 1px);
   background-size: 44px 44px;
 }
+/* The app shell uses bg-primary (solid) which covers the body grid —
+   re-apply the grid there so it's visible in the main content area. */
+html.light main.bg-primary {
+  background-image:
+    linear-gradient(rgb(9 9 11 / 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(9 9 11 / 0.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
 
 /* Cards sit on a white page in light mode — give them real depth. */
 html.light .card-surface {
