@@ -6159,9 +6159,16 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                   <p className="text-xs text-text-muted line-clamp-2 mb-3">{task.description}</p>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-accent-ink">
-                        {members.find((m: any) => m.id === task.assigned_to)?.name.charAt(0) || '?'}
-                      </div>
+                      {(() => {
+                        const assignee = members.find((m: any) => m.id === task.assigned_to);
+                        return assignee?.avatar_url ? (
+                          <img src={assetUrl(assignee.avatar_url)} alt={assignee.name} className="w-6 h-6 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-accent-ink">
+                            {assignee?.name.charAt(0) || '?'}
+                          </div>
+                        );
+                      })()}
                       <DueDateLabel task={task} className={isOverdue(task) ? 'text-[10px] font-semibold text-amber-400' : 'text-[10px] text-text-muted/70'} />
                     </div>
                     <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
