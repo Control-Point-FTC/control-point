@@ -289,7 +289,7 @@ html.light main.bg-primary {
 :root {
   --grid-size: 32px;
   --grid-opacity: 0.12;
-  --grid-pulse-opacity: 0.12;
+  --grid-pulse-opacity: 0.22;
   --grid-pulse-speed: 6s;
   --grid-glow-size: 280px;
   --grid-glow-opacity: 0.25;

@@ -833,7 +833,7 @@ export default function App() {
     root.style.setProperty('--grid-size', `${get('controlpoint-grid-size', '32')}px`);
     root.style.setProperty('--grid-opacity', get('controlpoint-grid-opacity', '0.12'));
     root.style.setProperty('--grid-pulse-speed', `${get('controlpoint-grid-pulse-speed', '6')}s`);
-    root.style.setProperty('--grid-pulse-opacity', get('controlpoint-grid-pulse-opacity', '0.12'));
+    root.style.setProperty('--grid-pulse-opacity', get('controlpoint-grid-pulse-opacity', '0.22'));
     root.style.setProperty('--grid-glow-size', `${get('controlpoint-grid-glow-size', '280')}px`);
     root.style.setProperty('--grid-glow-opacity', get('controlpoint-grid-glow-opacity', '0.25'));
   }, []);

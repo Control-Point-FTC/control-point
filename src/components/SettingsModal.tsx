@@ -72,7 +72,7 @@ export default function SettingsModal({
     () => localStorage.getItem('controlpoint-grid-pulse') !== '0'
   );
   const [gridPulseSpeed, setGridPulseSpeed] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-speed')) || 6);
-  const [gridPulseOpacity, setGridPulseOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-opacity')) || 0.12);
+  const [gridPulseOpacity, setGridPulseOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-opacity')) || 0.22);
   const [gridGlowEnabled, setGridGlowEnabled] = useState(() => localStorage.getItem('controlpoint-grid-glow') !== '0');
   const [gridGlowSize, setGridGlowSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-size')) || 280);
   const [gridGlowOpacity, setGridGlowOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-opacity')) || 0.25);
@@ -126,7 +126,7 @@ export default function SettingsModal({
   const resetGrid = () => {
     updateGrid({
       enabled: true, size: 32, opacity: 0.12,
-      pulse: true, pulseSpeed: 6, pulseOpacity: 0.12,
+      pulse: true, pulseSpeed: 6, pulseOpacity: 0.22,
       glow: true, glowSize: 280, glowOpacity: 0.25,
     });
   };
