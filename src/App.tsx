@@ -9138,10 +9138,10 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
             <p className="hidden sm:block text-xs text-text-muted truncate border-l border-text-base/10 pl-2 ml-1">{activeChannel.topic}</p>
           )}
           <div className="flex-1" />
-          <button onClick={() => setShowMemberList(!showMemberList)} className="hidden lg:block p-2 text-text-muted hover:text-text-base transition-colors" aria-label="Toggle member list" title="Toggle member list">
+          <button onClick={() => setShowMemberList(!showMemberList)} className="hidden xl:block p-2 text-text-muted hover:text-text-base transition-colors" aria-label="Toggle member list" title="Toggle member list">
             <Users className={cn('w-5 h-5', showMemberList && 'text-accent')} />
           </button>
-          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="lg:hidden p-2 text-text-muted hover:text-text-base" aria-label="Toggle members">
+          <button onClick={() => setShowMembersMobile(!showMembersMobile)} className="xl:hidden p-2 text-text-muted hover:text-text-base" aria-label="Toggle members">
             <Users className="w-5 h-5" />
           </button>
         </div>
@@ -9278,10 +9278,10 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
       {/* Right: members */}
       <div className={cn(
         'w-56 flex-shrink-0 border-l border-text-base/[0.06] bg-secondary/40 flex-col min-h-0',
-        showMembersMobile ? 'absolute inset-y-0 right-0 z-30 flex bg-secondary' : (showMemberList ? 'hidden lg:flex' : 'hidden')
+        showMembersMobile ? 'absolute inset-y-0 right-0 z-30 flex bg-secondary' : (showMemberList ? 'hidden xl:flex' : 'hidden')
       )}>
         {showMembersMobile && (
-          <div className="lg:hidden flex items-center justify-between px-4 h-12 border-b border-text-base/[0.06] flex-shrink-0">
+          <div className="xl:hidden flex items-center justify-between px-4 h-12 border-b border-text-base/[0.06] flex-shrink-0">
             <span className="text-sm font-bold text-text-base">Members</span>
             <button onClick={() => setShowMembersMobile(false)} className="p-1.5 text-text-muted hover:text-text-base" aria-label="Close members">
               <X className="w-5 h-5" />
