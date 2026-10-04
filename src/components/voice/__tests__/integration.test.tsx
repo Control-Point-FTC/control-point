@@ -233,7 +233,7 @@ describe('VoiceProvider + call UI', () => {
     expect(screen.getByRole('alertdialog')).toBeTruthy();
     expect(screen.getByText('Rida')).toBeTruthy();
 
-    fireEvent.click(screen.getByLabelText('Decline call'));
+    fireEvent.click(screen.getByRole('button', { name: /Decline/ }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(mocks.voiceApi.declineCall).toHaveBeenCalledWith(42);
   });
