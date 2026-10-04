@@ -36,11 +36,14 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
     let dates: string[];
     if (hiddenDates) {
       const hidden = new Set(hiddenDates);
+      // Dates with actual check-in records are meeting days by definition —
+      // never hide them from the trend, even if they're in the hidden list.
+      const datesWithData = new Set((attendance || []).map((r: any) => r.date));
       const meetingDays: string[] = [];
       const d = new Date();
       for (let i = 0; i < 120 && meetingDays.length < 14; i++) {
         const ds = format(d, 'yyyy-MM-dd');
-        if (!hidden.has(ds)) meetingDays.unshift(ds);
+        if (!hidden.has(ds) || datesWithData.has(ds)) meetingDays.unshift(ds);
         d.setDate(d.getDate() - 1);
       }
       // Degenerate case (e.g. every weekday hidden): fall back to plain
