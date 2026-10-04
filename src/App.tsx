@@ -170,6 +170,7 @@ import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { clearFtcCache } from './components/ftcCache';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
+import { WhatsNewAutoPopup } from './components/WhatsNewModal';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
@@ -3278,6 +3279,7 @@ export default function App() {
       <CallView onOpenSettings={() => setSettingsOpen(true)} />
       <CookieConsent />
       <InstallPrompt />
+      <WhatsNewAutoPopup />
       <BrunoPanel
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
