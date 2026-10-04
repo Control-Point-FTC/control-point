@@ -8,6 +8,7 @@ import { DeviceSettingsSection } from './voice/DeviceSettingsSection';
 import { assetUrl } from '../services/api';
 import { Switch, SwitchTrack } from './ui';
 import { useTranslation } from 'react-i18next';
+import ThemePicker from './ThemePicker';
 import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
 import { soundsEnabled, setSoundsEnabled } from '../utils/sounds';
 import { WhatsNewModal } from './WhatsNewModal';
@@ -723,6 +724,8 @@ export default function SettingsModal({
 
             {section === 'appearance' && (
               <section className="space-y-6">
+                <ThemePicker />
+
                 <div className="flex items-start justify-between">
                   <div>
                     <h3 className="text-sm font-bold text-text-base">Background Effects</h3>

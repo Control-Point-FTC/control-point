@@ -13,9 +13,12 @@ function readStoredTheme(): Theme {
   try {
     return window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
   } catch {
-    // Storage unavailable (private mode etc.) — fall back to dark, the app's
-    // designed look. Nothing persists, but the toggle still works in-memory.
-    return 'dark';
+    // Storage unavailable (private mode etc.) — nothing persists, so keep
+    // whatever is on screen: a hook mounting later (e.g. the Settings popup)
+    // must not reset an in-memory light choice. First load → dark.
+    return typeof document !== 'undefined' && document.documentElement.classList.contains('light')
+      ? 'light'
+      : 'dark';
   }
 }
 
@@ -80,12 +83,17 @@ export function useTheme(): {
     setThemeState(t);
   }, []);
 
+  // Side effects stay OUT of the state updater: persistAndApply dispatches
+  // THEME_EVENT, which sets this same state, and React may then re-run a
+  // pending updater against that new value — flipping the theme straight
+  // back (the "first click does nothing" bug). The <html> class is the
+  // source of truth for what's on screen.
   const toggle = useCallback(() => {
-    setThemeState((prev) => {
-      const next: Theme = prev === 'light' ? 'dark' : 'light';
-      persistAndApply(next);
-      return next;
-    });
+    const isLight =
+      typeof document !== 'undefined' && document.documentElement.classList.contains('light');
+    const next: Theme = isLight ? 'dark' : 'light';
+    persistAndApply(next);
+    setThemeState(next);
   }, []);
 
   return { theme, setTheme, toggle };
