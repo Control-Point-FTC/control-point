@@ -11262,7 +11262,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
                   const data = await res.json();
                   if (!res.ok) throw new Error(data.error || 'Could not update persona');
                   notify(navGptActive ? 'NavGPT ❤️ is off — the chatbot is Bruno again.' : 'NavGPT ❤️ is on.', 'success');
-                  refresh.members();
+                  refresh.teams();
                 } catch (e: any) {
                   notify(e.message || 'Could not update persona', 'error');
                 } finally {
