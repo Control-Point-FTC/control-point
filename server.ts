@@ -3567,8 +3567,9 @@ async function startServer() {
     const updates: any = { name: cleanName, role: (role || '').trim() };
     if (bruno_teach_mode !== undefined) updates.bruno_teach_mode = bruno_teach_mode ? 1 : 0;
     if (bruno_output_level !== undefined) {
-      const lvl = String(bruno_output_level);
-      if (['low', 'medium', 'high', 'max'].includes(lvl)) updates.bruno_output_level = lvl;
+      let lvl = String(bruno_output_level);
+      if (lvl === 'max') lvl = 'high'; // 'max' was removed — map to 'high'
+      if (['low', 'medium', 'high'].includes(lvl)) updates.bruno_output_level = lvl;
     }
     if (presence_status !== undefined) {
       if (!(PRESENCE_STATUSES as readonly string[]).includes(presence_status)) {

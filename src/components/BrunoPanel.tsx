@@ -68,7 +68,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   // adjustable right here in the sidebar too.
   const [outputLevel, setOutputLevel] = useState('medium');
   useEffect(() => {
-    setOutputLevel(currentUser?.bruno_output_level || 'medium');
+    // 'max' was removed — anyone who had it falls back to 'high'
+    const lvl = currentUser?.bruno_output_level;
+    setOutputLevel(lvl === 'max' ? 'high' : (lvl || 'medium'));
   }, [currentUser?.bruno_output_level, open]);
   const changeOutputLevel = async (lvl: string) => {
     const prev = outputLevel;
@@ -259,7 +261,6 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
-                  <option value="max">Max</option>
                 </select>
               </div>
             </div>

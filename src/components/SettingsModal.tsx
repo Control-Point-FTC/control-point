@@ -132,7 +132,8 @@ export default function SettingsModal({
     setName(user?.name || '');
     setRole(user?.role || '');
     setTeachMode(user?.bruno_teach_mode === 1);
-    setOutputLevel(user?.bruno_output_level || 'medium');
+    // 'max' was removed — anyone who had it falls back to 'high'
+    setOutputLevel(user?.bruno_output_level === 'max' ? 'high' : (user?.bruno_output_level || 'medium'));
     setTeamName(team?.name || '');
     setTeamNumber(team?.number || '');
     setFtcNumber(team?.ftc_team_number ? String(team.ftc_team_number) : '');
@@ -703,8 +704,8 @@ export default function SettingsModal({
                   <p className="text-xs text-text-muted leading-relaxed mb-2">
                     How long Bruno&apos;s replies can run. Higher levels fix cut-off answers.
                   </p>
-                  <div className="grid grid-cols-4 gap-1.5" role="radiogroup" aria-label="Output length">
-                    {(['low', 'medium', 'high', 'max'] as const).map((lvl) => (
+                  <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="Output length">
+                    {(['low', 'medium', 'high'] as const).map((lvl) => (
                       <button
                         key={lvl}
                         type="button"
