@@ -13,9 +13,12 @@ function readStoredTheme(): Theme {
   try {
     return window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
   } catch {
-    // Storage unavailable (private mode etc.) — fall back to dark, the app's
-    // designed look. Nothing persists, but the toggle still works in-memory.
-    return 'dark';
+    // Storage unavailable (private mode etc.) — nothing persists, so keep
+    // whatever is on screen: a hook mounting later (e.g. the Settings popup)
+    // must not reset an in-memory light choice. First load → dark.
+    return typeof document !== 'undefined' && document.documentElement.classList.contains('light')
+      ? 'light'
+      : 'dark';
   }
 }
 

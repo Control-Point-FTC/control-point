@@ -21,8 +21,11 @@ export default function ThemePicker() {
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
     e.preventDefault();
-    // Two options: any arrow moves to the other one.
-    const next: Theme = theme === 'light' ? 'dark' : 'light';
+    // Two options: any arrow moves to the other one. Go from the focused
+    // option (not the selected theme) — another tab can change the theme
+    // while focus stays put.
+    const focused = (e.target as HTMLElement).closest<HTMLElement>('[data-theme-option]')?.dataset.themeOption;
+    const next: Theme = (focused ?? theme) === 'light' ? 'dark' : 'light';
     setTheme(next);
     refs.current[next]?.focus();
   };
@@ -36,6 +39,7 @@ export default function ThemePicker() {
             key={value}
             ref={(el) => { refs.current[value] = el; }}
             type="button"
+            data-theme-option={value}
             role="radio"
             aria-checked={theme === value}
             tabIndex={theme === value ? 0 : -1}

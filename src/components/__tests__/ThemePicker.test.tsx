@@ -58,4 +58,16 @@ describe('ThemePicker (Settings → Appearance)', () => {
     expect(isLight()).toBe(false);
     expect(document.activeElement).toBe(radio('Dark'));
   });
+
+  it('arrow keys move from the focused option even if the theme changed elsewhere', () => {
+    render(<StrictMode><ThemeToggle /><ThemePicker /></StrictMode>);
+    radio('Dark').focus();
+    // Theme switches to light from somewhere else while Dark keeps focus.
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle light/dark mode' }));
+    expect(isLight()).toBe(true);
+    radio('Dark').focus();
+    fireEvent.keyDown(radio('Dark'), { key: 'ArrowRight' });
+    expect(isLight()).toBe(true);
+    expect(document.activeElement).toBe(radio('Light'));
+  });
 });

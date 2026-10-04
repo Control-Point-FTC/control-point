@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react';
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import ThemeToggle from '../ThemeToggle';
 
@@ -35,5 +35,22 @@ describe('ThemeToggle', () => {
     fireEvent.click(button);
     expect(document.documentElement.classList.contains('light')).toBe(false);
     expect(localStorage.getItem('cp-theme')).toBe('dark');
+  });
+
+  it('keeps the on-screen theme when storage is unavailable and another hook mounts', () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+    try {
+      const first = render(<StrictMode><ThemeToggle /></StrictMode>);
+      fireEvent.click(screen.getByRole('button', { name: 'Toggle light/dark mode' }));
+      expect(document.documentElement.classList.contains('light')).toBe(true);
+      first.unmount();
+      // e.g. the Settings popup mounting later
+      render(<StrictMode><ThemeToggle /></StrictMode>);
+      expect(document.documentElement.classList.contains('light')).toBe(true);
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
   });
 });
