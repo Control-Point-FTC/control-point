@@ -3182,7 +3182,7 @@ export default function App() {
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
                           <Settings className="w-[18px] h-[18px] text-accent" />
-                          Settings
+                          {t('settings.title')}
                         </button>
                         {(currentUser as any)?.account_type === 'admin' && (
                           <button
