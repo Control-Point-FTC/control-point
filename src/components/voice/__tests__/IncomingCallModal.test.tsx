@@ -66,23 +66,23 @@ describe('IncomingCallModal', () => {
     setVoiceMock(makeVoiceMock({ incomingCall }));
     render(<IncomingCallModal />);
     expect(screen.getByText('Ash')).toBeTruthy();
-    expect(screen.getByText('Voice call')).toBeTruthy();
-    expect(screen.getByLabelText('Accept call')).toBeTruthy();
-    expect(screen.getByLabelText('Decline call')).toBeTruthy();
-    expect(screen.getByLabelText(/Dismiss/)).toBeTruthy();
+    expect(screen.getByText('Incoming voice call')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Accept/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Decline/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Dismiss/ })).toBeTruthy();
   });
 
   it('shows the video badge for video invites', () => {
     setVoiceMock(makeVoiceMock({ incomingCall: { ...incomingCall, media: 'video' } }));
     render(<IncomingCallModal />);
-    expect(screen.getByText('Video call')).toBeTruthy();
+    expect(screen.getByText('Incoming video call')).toBeTruthy();
   });
 
   it('Accept calls acceptCall()', () => {
     const acceptCall = vi.fn(async () => {});
     setVoiceMock(makeVoiceMock({ incomingCall, acceptCall }));
     render(<IncomingCallModal />);
-    fireEvent.click(screen.getByLabelText('Accept call'));
+    fireEvent.click(screen.getByRole('button', { name: /Accept/ }));
     expect(acceptCall).toHaveBeenCalledTimes(1);
   });
 
@@ -90,7 +90,7 @@ describe('IncomingCallModal', () => {
     const declineCall = vi.fn(async () => {});
     setVoiceMock(makeVoiceMock({ incomingCall, declineCall }));
     render(<IncomingCallModal />);
-    fireEvent.click(screen.getByLabelText('Decline call'));
+    fireEvent.click(screen.getByRole('button', { name: /Decline/ }));
     expect(declineCall).toHaveBeenCalledTimes(1);
   });
 
@@ -99,7 +99,7 @@ describe('IncomingCallModal', () => {
     const declineCall = vi.fn(async () => {});
     setVoiceMock(makeVoiceMock({ incomingCall, dismissIncomingCall, declineCall }));
     render(<IncomingCallModal />);
-    fireEvent.click(screen.getByLabelText(/Dismiss/));
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss/ }));
     expect(dismissIncomingCall).toHaveBeenCalledTimes(1);
     expect(declineCall).not.toHaveBeenCalled();
   });
@@ -114,11 +114,11 @@ describe('IncomingCallModal', () => {
     );
     render(<IncomingCallModal />);
     expect(screen.getByRole('alert')).toBeTruthy();
-    expect(screen.getByText(/already in another call/)).toBeTruthy();
-    expect(screen.getByText('Stay in this call')).toBeTruthy();
+    expect(screen.getByText(/already in/i)).toBeTruthy();
+    expect(screen.getByText('Stay here')).toBeTruthy();
     expect(screen.getByText('Leave & join')).toBeTruthy();
     // No one-click accept path while in another call.
-    expect(screen.queryByLabelText('Accept call')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Accept$/ })).toBeNull();
   });
 
   it('"Leave & join" leaves the current call before accepting', async () => {
