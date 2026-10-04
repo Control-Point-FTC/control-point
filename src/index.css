@@ -595,3 +595,22 @@ html.light .theme-dark .card-surface {
   .bruno-icon-idle { animation: bruno-float 3s ease-in-out infinite; }
   .bruno-icon-thinking { animation: bruno-think 1.2s ease-in-out infinite; }
 }
+
+/* Bruno logo: blinking eyes, talking mouth, antenna pulse */
+@keyframes bruno-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95%, 97% { transform: scaleY(0.08); }
+}
+@keyframes bruno-talk {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.35); }
+}
+@keyframes bruno-antenna {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bruno-eyes { animation: bruno-blink 4.2s ease-in-out infinite; }
+  .bruno-mouth-talk { animation: bruno-talk 0.5s ease-in-out infinite; }
+  .bruno-antenna-dot { animation: bruno-antenna 1.6s ease-in-out infinite; }
+}
