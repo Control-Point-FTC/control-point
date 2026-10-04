@@ -3168,7 +3168,7 @@ export default function App() {
               aria-label={`Open ${botName}`}
               className="w-10 h-10 rounded-full bg-accent/15 border border-accent/40 hover:bg-accent/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
             >
-              <BrunoIcon className="w-6 h-6 text-accent" />
+              <BrunoIcon className="w-6 h-6 text-accent" animate thinking={isAiLoading} />
             </button>
             {currentUser && (
               <div className="relative">

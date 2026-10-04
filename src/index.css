@@ -580,3 +580,18 @@ html.light .theme-dark .card-surface {
     }
   }
 }
+
+/* Bruno icon animations — idle float + thinking pulse. Disabled under
+   prefers-reduced-motion. */
+@keyframes bruno-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.5px); }
+}
+@keyframes bruno-think {
+  0%, 100% { transform: scale(1); opacity: 1; filter: drop-shadow(0 0 2px currentColor); }
+  50% { transform: scale(1.15); opacity: 0.85; filter: drop-shadow(0 0 7px currentColor); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bruno-icon-idle { animation: bruno-float 3s ease-in-out infinite; }
+  .bruno-icon-thinking { animation: bruno-think 1.2s ease-in-out infinite; }
+}
