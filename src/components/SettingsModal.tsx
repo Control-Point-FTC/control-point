@@ -328,14 +328,14 @@ export default function SettingsModal({
   };
 
   const sections: { id: Section; label: string; icon: any; heading: string }[] = [
-    { id: 'account', label: 'My Account', icon: UserCircle, heading: 'USER SETTINGS' },
-    { id: 'appearance', label: 'Appearance', icon: Palette, heading: 'USER SETTINGS' },
-    { id: 'voice', label: 'Voice & Video', icon: PhoneCall, heading: 'USER SETTINGS' },
-    { id: 'bruno', label: 'Bruno AI', icon: Bot, heading: 'USER SETTINGS' },
+    { id: 'account', label: t('settings.myAccount'), icon: UserCircle, heading: t('settings.userSettings') },
+    { id: 'appearance', label: t('settings.appearance'), icon: Palette, heading: t('settings.userSettings') },
+    { id: 'voice', label: t('settings.voiceVideo'), icon: PhoneCall, heading: t('settings.userSettings') },
+    { id: 'bruno', label: t('settings.brunoAI'), icon: Bot, heading: t('settings.userSettings') },
     ...(isAdmin
       ? [
-          { id: 'team' as Section, label: 'Team Overview', icon: Users, heading: 'TEAM SETTINGS' },
-          { id: 'roles' as Section, label: 'Roles', icon: ShieldCheck, heading: 'TEAM SETTINGS' },
+          { id: 'team' as Section, label: t('settings.teamOverview'), icon: Users, heading: t('settings.teamSettings') },
+          { id: 'roles' as Section, label: t('settings.roles'), icon: ShieldCheck, heading: t('settings.teamSettings') },
         ]
       : []),
   ];
@@ -351,7 +351,7 @@ export default function SettingsModal({
         mobileNav ? 'flex' : 'hidden md:flex'
       )}>
         <div className="flex-1 overflow-y-auto custom-scrollbar px-4 py-6">
-          {['USER SETTINGS', 'TEAM SETTINGS'].map((heading) => {
+          {[t('settings.userSettings'), t('settings.teamSettings')].map((heading) => {
             const items = sections.filter((s) => s.heading === heading);
             if (!items.length) return null;
             return (
@@ -467,12 +467,20 @@ export default function SettingsModal({
                 </section>
 
                 <section>
-                  <h3 className="text-sm font-bold text-text-base mb-3">Language</h3>
+                  <h3 className="text-sm font-bold text-text-base mb-3">{t('settings.language')}</h3>
                   <div className="grid grid-cols-2 gap-2">
                     {SUPPORTED_LANGUAGES.map((lang) => (
                       <button
                         key={lang.code}
-                        onClick={() => setLanguage(lang.code)}
+                        onClick={() => {
+                          if (i18n.language === lang.code) return;
+                          // setLanguage persists + calls i18n.changeLanguage (async).
+                          // Wait for it, then confirm in the NEW language.
+                          setLanguage(lang.code);
+                          void i18n.changeLanguage(lang.code).then(() => {
+                            notify(i18n.t('settings.languageChanged', { language: lang.label }), 'success');
+                          });
+                        }}
                         className={cn(
                           "px-4 py-2.5 rounded-xl text-sm font-semibold transition-all",
                           i18n.language === lang.code
@@ -484,6 +492,9 @@ export default function SettingsModal({
                       </button>
                     ))}
                   </div>
+                  <p className="text-[11px] text-text-muted mt-2">
+                    {t('settings.languageAppliesInstantly')}
+                  </p>
                 </section>
 
                 <section>
