@@ -36,6 +36,28 @@ function navGptQualifies(teamName: any): boolean {
  * Discord-style settings: full-screen overlay, section nav on the left,
  * content on the right. ESC or the X closes it.
  */
+function SoundToggle() {
+  const [enabled, setEnabled] = useState(() => soundsEnabled());
+  return (
+    <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+      <div>
+        <p className="text-sm font-semibold text-text-base">Notification &amp; call sounds</p>
+        <p className="text-xs text-text-muted mt-0.5">
+          Play a chime for notifications and a ringtone for incoming calls
+        </p>
+      </div>
+      <Switch
+        checked={enabled}
+        onChange={(v) => {
+          setEnabled(v);
+          setSoundsEnabled(v);
+        }}
+        label="Notification & call sounds"
+      />
+    </div>
+  );
+}
+
 export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
