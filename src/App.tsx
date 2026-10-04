@@ -223,6 +223,34 @@ function hexToRgbTriplet(hex: string): string {
   return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
 }
 
+// The team grid colour is cached per session so the next load paints it
+// before the team list arrives — and never leaks to another account.
+const GRID_RGB_CACHE_KEY = 'controlpoint-grid-rgb';
+function readStoredSessionId(): string | null {
+  try { return localStorage.getItem('sessionId'); } catch { return null; }
+}
+// Short non-reversible tag of the session id, so the cache doesn't hold a
+// second copy of the token — it only needs to tell sessions apart.
+function sessionTag(sid: string): string {
+  let h = 5381;
+  for (let i = 0; i < sid.length; i++) h = ((h << 5) + h + sid.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+function readCachedGridRgb(): string | null {
+  try {
+    const c = JSON.parse(localStorage.getItem(GRID_RGB_CACHE_KEY) || 'null');
+    const sid = readStoredSessionId();
+    return c && sid && c.sid === sessionTag(sid) && /^\d{1,3} \d{1,3} \d{1,3}$/.test(c.rgb) ? c.rgb : null;
+  } catch { return null; }
+}
+function writeCachedGridRgb(rgb: string | null): void {
+  try {
+    const sid = readStoredSessionId();
+    if (rgb && sid) localStorage.setItem(GRID_RGB_CACHE_KEY, JSON.stringify({ sid: sessionTag(sid), rgb }));
+    else localStorage.removeItem(GRID_RGB_CACHE_KEY);
+  } catch {}
+}
+
 // --- Components ---
 // (Input lives in ./components/ui — shared with standalone auth screens.)
 
@@ -849,9 +877,9 @@ export default function App() {
     root.style.setProperty('--grid-pulse-speed', `${get('controlpoint-grid-pulse-speed', '6')}s`);
     root.style.setProperty('--grid-pulse-opacity', get('controlpoint-grid-pulse-opacity', '0.22'));
     applyPulseOrigins(root, readPulseOrigins(get('controlpoint-grid-pulse-origins', 'center,edges,corners')));
-    // Team branding grid colour from the last session (refreshed once teams load).
-    const cachedGridRgb = get('controlpoint-grid-rgb', '');
-    if (/^\d{1,3} \d{1,3} \d{1,3}$/.test(cachedGridRgb)) root.style.setProperty('--grid-rgb', cachedGridRgb);
+    // Team branding grid colour cached for this session (refreshed once teams load).
+    const cachedGridRgb = readCachedGridRgb();
+    if (cachedGridRgb) root.style.setProperty('--grid-rgb', cachedGridRgb);
     root.style.setProperty('--grid-glow-size', `${get('controlpoint-grid-glow-size', '280')}px`);
     root.style.setProperty('--grid-glow-opacity', get('controlpoint-grid-glow-opacity', '0.25'));
   }, []);
@@ -1357,29 +1385,31 @@ export default function App() {
         else clear();
         // Background grid + pulse follow the team branding (admin-set on
         // Teams & Members), not a member's personal accent.
-        // Wait for the team list: before it loads myTeam is undefined, and
-        // clearing here would flash the cached colour back to volt.
-        if (teams.length) {
+        // Wait for the team list (teamsLoaded, not teams.length — a user
+        // with no teams must still fall back to volt): before it loads
+        // myTeam is undefined and clearing would flash the cached colour.
+        if (teamsLoaded) {
           const gridRgb = validHex(myTeam?.accent_color) ? hexToRgbTriplet(myTeam!.accent_color.trim()) : null;
-          // Cached so the next page load paints the right colour immediately.
-          try {
-            if (gridRgb) localStorage.setItem('controlpoint-grid-rgb', gridRgb);
-            else localStorage.removeItem('controlpoint-grid-rgb');
-          } catch {}
           if (gridRgb) root.style.setProperty('--grid-rgb', gridRgb);
           else root.style.removeProperty('--grid-rgb');
+          writeCachedGridRgb(gridRgb);
         }
       } else {
-        // Leave --grid-rgb alone: this branch also runs on boot before the
-        // session check, and the grid only renders when signed in anyway.
         clear();
+        // On boot this branch runs before the session check, so keep the
+        // session-scoped cached colour; once the session is really gone
+        // (logout / expiry), drop it so the next account starts on volt.
+        if (!readStoredSessionId()) {
+          root.style.removeProperty('--grid-rgb');
+          writeCachedGridRgb(null);
+        }
       }
     };
     applyColors();
     // useTheme() dispatches this whenever the theme toggles.
     window.addEventListener('cp-theme-change', applyColors);
     return () => window.removeEventListener('cp-theme-change', applyColors);
-  }, [currentUser, teams, isLoggedIn]);
+  }, [currentUser, teams, teamsLoaded, isLoggedIn]);
 
   useEffect(() => {
     if (isLoggedIn) {
