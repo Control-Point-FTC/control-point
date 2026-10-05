@@ -317,11 +317,15 @@ function OddsTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null }) {
 function AllianceTab({ season, code, fc, nameOf, myTeam, refreshKey }: { season: number; code: string; fc: ForecastView; nameOf: (t: number) => string; myTeam: number | null; refreshKey: number }) {
   const [data, setData] = useState<Partners | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Bypass the client cache only for a Refresh made while this tab exists, not
+  // on every later mount (switching tabs keeps using fresh cached choices).
+  const seenRefresh = useRef(refreshKey);
   useEffect(() => {
     let alive = true;
     setData(null); setErr(null);
-    // Refresh on the page bumps refreshKey and re-runs these scenarios.
-    fetchPartners(season, code, { force: refreshKey > 0 }).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
+    const force = refreshKey !== seenRefresh.current;
+    seenRefresh.current = refreshKey;
+    fetchPartners(season, code, { force }).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
     return () => { alive = false; };
   }, [season, code, refreshKey]);
   if (!myTeam) return <EmptyState title="Connect your FTC team" body="Alliance scenarios are worked out for your team." />;
