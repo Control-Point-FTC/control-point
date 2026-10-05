@@ -1149,6 +1149,32 @@ export default function SettingsModal({
                   ))}
                 </div>
 
+                {/* Chatbot Persona */}
+                {navGptQualifies(team?.name) && (
+                  <div>
+                    <h4 className="text-sm font-bold text-text-base mb-1">Chatbot persona</h4>
+                    <p className="text-xs text-text-muted leading-relaxed mb-2">
+                      Who answers in the team chatbot.
+                    </p>
+                    <div className="flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4">
+                      <Switch
+                        checked={!!navGptOn}
+                        label="NavGPT ❤️"
+                        disabled={savingPersona}
+                        onChange={() => void togglePersona()}
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
+                        <p className="text-xs text-text-muted leading-relaxed">
+                          {navGptOn
+                            ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
+                            : 'Off — the chatbot is the normal Bruno. Flip the switch to bring back NavGPT ❤️.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* FTC Coding Preferences */}
                 <div className="rounded-2xl border border-text-base/10 overflow-hidden">
                   <button
@@ -1316,28 +1342,6 @@ export default function SettingsModal({
                   </div>
                 </section>
 
-                {navGptQualifies(team?.name) && (
-                  <section>
-                    <h3 className="text-sm font-bold text-text-base mb-1">Chatbot Persona</h3>
-                    <p className="text-xs text-text-muted mb-3">Who answers in the team chatbot.</p>
-                    <div className="flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4">
-                      <Switch
-                        checked={!!navGptOn}
-                        label="NavGPT ❤️"
-                        disabled={savingPersona}
-                        onChange={() => void togglePersona()}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
-                        <p className="text-xs text-text-muted leading-relaxed">
-                          {navGptOn
-                            ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
-                            : 'Off — the chatbot is the normal Bruno. Flip the switch to bring back NavGPT ❤️.'}
-                        </p>
-                      </div>
-                    </div>
-                  </section>
-                )}
               </>
             )}
 
