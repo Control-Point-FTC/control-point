@@ -60,6 +60,30 @@ describe('useShortlist', () => {
     expect(result.current.entries.map((e) => e.teamNumber)).toEqual([1]);
   });
 
+  it('rolls back a failed edit even when the reload fails too', async () => {
+    api.fetchShortlist.mockResolvedValueOnce([entry(1)]).mockRejectedValue(new Error('offline'));
+    api.saveShortlistPatch.mockRejectedValue(new Error('offline'));
+    const { result } = renderHook(() => useShortlist(2025));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    act(() => { result.current.patch({ teamNumber: 1, notes: 'unsaved' }); });
+    expect(result.current.entries[0].notes).toBe('unsaved');
+    await waitFor(() => expect(result.current.error).toMatch(/wasn't saved/));
+    expect(result.current.entries[0].notes).toBe('');
+  });
+
+  it('still sends edits queued before a season switch', async () => {
+    const first = deferred<ShortlistEntry[]>();
+    api.fetchShortlist.mockResolvedValue([]);
+    api.saveShortlistPatch.mockReturnValueOnce(first.promise).mockResolvedValue([]);
+    const { result, rerender } = renderHook(({ s }) => useShortlist(s), { initialProps: { s: 2025 } });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    act(() => { result.current.patch({ teamNumber: 1 }); result.current.patch({ teamNumber: 2 }); });
+    rerender({ s: 2024 });
+    await act(async () => { first.resolve([]); });
+    await waitFor(() => expect(api.saveShortlistPatch).toHaveBeenCalledTimes(2));
+    expect(api.saveShortlistPatch.mock.calls[1][0]).toMatchObject({ season: 2025, teamNumber: 2 });
+  });
+
   it('ignores responses from a previous season', async () => {
     const late = deferred<ShortlistEntry[]>();
     api.fetchShortlist.mockImplementation(async (season: number) => (season === 2025 ? [entry(1)] : [entry(9, { season: 2024 })]));

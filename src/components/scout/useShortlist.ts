@@ -3,9 +3,10 @@
 // Writes are serialized (one request in flight) so each server response
 // reflects every earlier edit; edits still queued behind it are re-applied
 // on top of that snapshot, so nothing pending flickers away. A season change
-// starts a new epoch: the list is cleared, queued writes for the old season
-// are dropped and late responses from it are ignored. A failed write rolls
-// back to the server's list (plus any still-pending edits) and reports why.
+// starts a new epoch: the list is cleared and responses for the old season
+// no longer touch the view — but its queued writes are still sent, since the
+// user already saw them applied. A failed write rolls back to the server's
+// list (plus any still-pending edits) and reports why.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ShortlistEntry } from '../../types/ftcScout';
 import { fetchShortlist, removeShortlistEntry, saveShortlistPatch } from '../../services/ftcScoutApi';
@@ -20,18 +21,20 @@ export function useShortlist(season: number) {
   const epoch = useRef(0);
   const pending = useRef<Op[]>([]);
   const chain = useRef<Promise<void>>(Promise.resolve());
+  // Last list the server confirmed for the current season (rollback target).
+  const confirmed = useRef<ShortlistEntry[]>([]);
 
   const withPending = (list: ShortlistEntry[]) => pending.current.reduce((l, op) => op.apply(l), list);
 
   useEffect(() => {
     const ep = ++epoch.current;
     pending.current = [];
-    chain.current = Promise.resolve();
+    confirmed.current = [];
     setEntries([]);
     setLoaded(false);
     setError(null);
     fetchShortlist(season)
-      .then((list) => { if (ep === epoch.current) { setEntries(withPending(list)); setLoaded(true); } })
+      .then((list) => { if (ep === epoch.current) { confirmed.current = list; setEntries(withPending(list)); setLoaded(true); } })
       .catch((e) => { if (ep === epoch.current) setError(e instanceof Error ? e.message : 'Could not load the shortlist'); });
     return () => { epoch.current++; };
   }, [season]);
@@ -41,21 +44,24 @@ export function useShortlist(season: number) {
     pending.current.push(op);
     setEntries((l) => op.apply(l));
     chain.current = chain.current.then(async () => {
-      if (ep !== epoch.current) return;
       try {
         const list = await op.send();
         if (ep !== epoch.current) return;
         pending.current = pending.current.filter((o) => o !== op);
+        confirmed.current = list;
         setEntries(withPending(list));
         setError(null);
       } catch (e) {
         if (ep !== epoch.current) return;
         pending.current = pending.current.filter((o) => o !== op);
         setError(`${e instanceof Error ? e.message : 'Could not save the shortlist'} — that change wasn't saved.`);
+        // Drop the failed edit now (last confirmed list + other pending
+        // edits), then refresh from the server if it's reachable.
+        setEntries(withPending(confirmed.current));
         try {
           const list = await fetchShortlist(season);
-          if (ep === epoch.current) setEntries(withPending(list));
-        } catch { /* keep the optimistic list; the error is already shown */ }
+          if (ep === epoch.current) { confirmed.current = list; setEntries(withPending(list)); }
+        } catch { /* already rolled back; the error is shown */ }
       }
     });
   }, [season]);
