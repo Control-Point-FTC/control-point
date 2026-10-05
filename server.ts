@@ -1514,10 +1514,34 @@ async function validateSession(sessionId: string): Promise<{ valid: boolean; mem
   }
 }
 
+// Stored files (/api/files/:id — avatars, chat images, emoji, …) are loaded
+// by plain <img> tags, which can't send the X-Session-ID header. The session
+// id is therefore mirrored into an HttpOnly cookie scoped to /api/files/ only
+// (see the middleware in startServer), and accepted from that cookie for GET
+// /api/files/* requests alone — every other route still needs the header, so
+// the cookie adds no CSRF surface beyond read-only file fetches.
+const FILES_COOKIE = "cp_files_sid";
+function readCookie(req: any, name: string): string | null {
+  const raw = String(req.headers?.cookie || "");
+  for (const part of raw.split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) {
+      try { return decodeURIComponent(part.slice(i + 1).trim()) || null; } catch { return null; }
+    }
+  }
+  return null;
+}
+function isFilesGet(req: any): boolean {
+  return req.method === "GET" && String(req.path || req.url || "").startsWith("/api/files/");
+}
+
 // Resolve the calling user + their workspace from a session id.
-// Looks in query (?sessionId=), JSON body, then the x-session-id header.
+// Looks in query (?sessionId=), JSON body, then the x-session-id header —
+// plus the files cookie, for GET /api/files/* only.
 function getSessionId(req: any): string | null {
-  return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string) || null;
+  return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string)
+    || (isFilesGet(req) ? readCookie(req, FILES_COOKIE) : null)
+    || null;
 }
 
 /**
@@ -1863,6 +1887,33 @@ async function startServer() {
   const wss = new WebSocketServer({ server });
 
   app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
+
+  // Keep the /api/files/ cookie in step with the session, so <img> tags for
+  // stored files authenticate (see FILES_COOKIE): from the X-Session-ID
+  // header on any API call, and from a sessionId handed out in a JSON
+  // response (login / signup / verify), so the very first render after
+  // signing in already has it. The value is validated on use.
+  app.use("/api", (req, res, next) => {
+    const have = readCookie(req, FILES_COOKIE);
+    const secure = req.secure || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+    let set: string | null = null;
+    const setFilesCookie = (sid: string) => {
+      if (!sid || sid === have || sid === set || res.headersSent) return;
+      set = sid;
+      res.append(
+        "Set-Cookie",
+        `${FILES_COOKIE}=${encodeURIComponent(sid)}; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`
+      );
+    };
+    const headerSid = req.headers["x-session-id"];
+    if (typeof headerSid === "string") setFilesCookie(headerSid);
+    const json = res.json.bind(res);
+    res.json = (body: any) => {
+      if (body && typeof body.sessionId === "string") setFilesCookie(body.sessionId);
+      return json(body);
+    };
+    next();
+  });
 
   // CORS for the GitHub Pages mirror (MIRROR_ORIGINS). Header-based sessions
   // mean no credentials flag is needed; the X-Session-ID header is allowlisted
@@ -3181,6 +3232,7 @@ async function startServer() {
     try {
       const sid = currentSessionId(req);
       if (sid) await dbRun("DELETE FROM sessions WHERE id = ?", sid);
+      res.append("Set-Cookie", `${FILES_COOKIE}=; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=0`);
       res.json({ ok: true });
     } catch (e) {
       res.json({ ok: true }); // logout should never fail client-side
