@@ -15,7 +15,7 @@
  * No production DB is touched.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -64,11 +64,14 @@ async function api(path: string, session: string | null, opts: RequestInit = {})
   const raw = Buffer.from(await res.arrayBuffer());
   let body: any = null;
   try { body = JSON.parse(raw.toString("utf8")); } catch { /* non-JSON */ }
-  return { status: res.status, body, buf: raw };
+  return { status: res.status, body, buf: raw, headers: res.headers };
 }
 
 async function bootServer(): Promise<void> {
-  proc = spawn("npx", ["tsx", "server.ts"], {
+  // Windows can't spawn the npx.cmd shim without a shell.
+  const win = process.platform === "win32";
+  proc = spawn(win ? "npx tsx server.ts" : "npx", win ? [] : ["tsx", "server.ts"], {
+    shell: win,
     cwd: REPO,
     env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) },
     stdio: "ignore",
@@ -77,7 +80,12 @@ async function bootServer(): Promise<void> {
 }
 
 async function killServer(): Promise<void> {
-  if (proc) { proc.kill("SIGKILL"); proc = null; }
+  if (proc) {
+    // With a shell (Windows) the server is a grandchild — kill the tree.
+    if (process.platform === "win32" && proc.pid) spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"]);
+    else proc.kill("SIGKILL");
+    proc = null;
+  }
   await new Promise((r) => setTimeout(r, 800));
 }
 
@@ -197,6 +205,57 @@ describe("durable file store", () => {
     expect((await api(imgs[0], SESS.outsider)).status).toBe(403);
   });
 
+  it("<img>-style requests authenticate with the /api/files/ cookie only", async () => {
+    const url = (globalThis as any).__avatarUrl as string;
+    // Any API call carrying the header sets the scoped cookie…
+    const me = await api("/api/auth/me", SESS.admin);
+    const setCookie = me.headers.get("set-cookie") || "";
+    expect(setCookie).toContain("cp_files_sid=");
+    expect(setCookie).toContain("Path=/api/files/");
+    expect(setCookie).toContain("HttpOnly");
+    const cookie = setCookie.split(";")[0];
+    // …which alone loads a stored file (what an <img> tag sends)…
+    const viaCookie = await api(url, null, { headers: { cookie } });
+    expect(viaCookie.status).toBe(200);
+    expect(viaCookie.buf.equals(pngBytes())).toBe(true);
+    // …but authenticates nothing outside /api/files/.
+    const meViaCookie = await api("/api/auth/me", null, { headers: { cookie } });
+    expect(meViaCookie.status).toBe(401);
+    (globalThis as any).__filesCookie = cookie;
+  });
+
+  it("stored files revalidate (no stale cache) and 304 on a matching ETag", async () => {
+    const url = (globalThis as any).__avatarUrl as string;
+    const first = await api(url, SESS.admin);
+    expect(first.headers.get("cache-control")).toBe("private, no-cache");
+    const etag = first.headers.get("etag");
+    expect(etag).toBeTruthy();
+    const again = await api(url, SESS.admin, { headers: { "if-none-match": etag! } });
+    expect(again.status).toBe(304);
+    // A 304 still requires auth.
+    const anon = await api(url, null, { headers: { "if-none-match": etag! } });
+    expect([401, 403]).toContain(anon.status);
+  });
+
+  it("untrusted uploads never render inline: HTML is a sandboxed download", async () => {
+    const db = createClient({ url: `file:${dbPath}` });
+    const r = await db.execute({
+      sql: "INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, data) VALUES (?, ?, 'chat', 'evil.html', 'text/html', ?)",
+      args: [teamA, (globalThis as any).__fsAdminId, Buffer.from("<script>alert(1)</script>")],
+    });
+    await db.close();
+    const res = await api(`/api/files/${Number(r.lastInsertRowid)}`, SESS.admin);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toMatch(/^attachment;/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    // Raster images still render inline.
+    const img = await api((globalThis as any).__avatarUrl, SESS.admin);
+    expect(img.headers.get("content-type")).toBe("image/png");
+    expect(img.headers.get("content-disposition") || "inline").toMatch(/^inline/);
+  });
+
   it("every upload survives a full server restart (Render redeploy simulation)", async () => {
     const avatarUrl = (globalThis as any).__avatarUrl as string;
     const proofUrl = (globalThis as any).__proofUrl as string;
@@ -211,4 +270,12 @@ describe("durable file store", () => {
     // Isolation still enforced after restart.
     expect((await api(proofUrl, SESS.outsider)).status).toBe(403);
   }, 120000);
+
+  // Last: signs the outsider session out.
+  it("logout expires the files cookie", async () => {
+    const out = await api("/api/auth/logout", SESS.outsider, { method: "POST" });
+    expect(out.status).toBe(200);
+    const sc = out.headers.get("set-cookie") || "";
+    expect(sc).toMatch(/cp_files_sid=;[^,]*Max-Age=0/);
+  });
 });
