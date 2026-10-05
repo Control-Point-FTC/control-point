@@ -204,7 +204,18 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   }
 }
 
-function taskAssignedEmailHtml(taskTitle: string, taskDescription: string, dueDate: string, teamName: string, assignerName: string): string {
+// Task fields, names and team names are user-controlled — escape them so a
+// teammate can't inject HTML/links into an email sent from our domain.
+function escapeHtml(v: string): string {
+  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
+export function taskAssignedEmailHtml(rawTitle: string, rawDescription: string, rawDueDate: string, rawTeamName: string, rawAssignerName: string): string {
+  const taskTitle = escapeHtml(rawTitle);
+  const taskDescription = escapeHtml(rawDescription);
+  const dueDate = escapeHtml(rawDueDate);
+  const teamName = escapeHtml(rawTeamName);
+  const assignerName = escapeHtml(rawAssignerName);
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#09090b;font-family:system-ui,-apple-system,sans-serif;">
 <div style="max-width:560px;margin:0 auto;padding:32px 24px;">
 <div style="background:#131316;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:32px;">
