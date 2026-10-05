@@ -1,14 +1,17 @@
-"""Render the Control Point badge (yellow tile, dark hexagon + ring) full-bleed.
+"""Regenerate the app icons in public/: python scripts/make-icons.py (needs Pillow).
+
+Render the Control Point badge (yellow tile, dark hexagon + ring) full-bleed.
 
 Geometry is measured from the official badge (public/icon-512.png from PR #14),
 in units of the yellow tile's width.
 """
 import math
+from pathlib import Path
 from PIL import Image, ImageDraw
 
 YELLOW = (253, 213, 4, 255)
 INK = (9, 9, 11, 255)
-OUT = r"C:\Users\mksus\StudioProjects\control-point\public"
+OUT = Path(__file__).resolve().parent.parent / "public"
 
 HEX_APOTHEM = 91 / 335   # tile centre -> hexagon stroke centre (flat sides)
 HEX_STROKE = 28 / 335
@@ -48,7 +51,7 @@ def save(im: Image.Image, name: str, opaque: bool = False) -> None:
         bg = Image.new("RGB", im.size, YELLOW[:3])
         bg.paste(im, mask=im.split()[3])
         im = bg
-    im.save(f"{OUT}\\{name}", optimize=True)
+    im.save(OUT / name, optimize=True)
 
 
 # In-app logo: full-bleed square; the UI rounds it with CSS.
