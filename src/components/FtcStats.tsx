@@ -25,8 +25,12 @@ export interface FtcTeamPayload {
   oprSource?: string | null;
   events: FtcEvent[];
   source?: 'first-events' | 'ftc-scout' | 'cache';
+  /** For a cached response: where the data originally came from. */
+  origin?: 'first-events' | 'ftc-scout';
   fetchedAt?: string;
   cached?: boolean;
+  /** Served from cache because every live source was unreachable. */
+  stale?: boolean;
 }
 
 // FTC season number -> game name (season N = the N–N+1 school year)
@@ -40,8 +44,19 @@ export const FTC_SEASON_NAMES: Record<number, string> = {
 export const seasonLabel = (s: number) =>
   `${s}–${String(s + 1).slice(2)}${FTC_SEASON_NAMES[s] ? ` · ${FTC_SEASON_NAMES[s]}` : ''}`;
 
+// Season that started most recently (FTC seasons start in September),
+// clamped to the seasons the server supports.
+export function currentFtcSeason(): number {
+  const now = new Date();
+  const s = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return Math.min(Math.max(s, 2022), 2026);
+}
+
 export function useFtcTeam() {
-  const [season, setSeason] = useState(2025);
+  const [season, setSeason] = useState(currentFtcSeason);
+  // Only the very first load may auto-step back a season; after that the
+  // user's explicit pick always sticks (and shows "no data yet").
+  const autoFallbackRef = useRef(true);
   const [data, setData] = useState<FtcTeamPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,8 +83,15 @@ export function useFtcTeam() {
       if (requestId !== requestIdRef.current || controller.signal.aborted) return;
       setData(payload);
       if (payload?.seasons?.length) setKnownSeasons(payload.seasons);
+      autoFallbackRef.current = false;
     } catch (e: any) {
       if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+      if (autoFallbackRef.current && isNoSeasonData(e?.message || null) && s > 2022) {
+        autoFallbackRef.current = false;
+        setSeason(s - 1); // effect reloads with the previous season
+        return;
+      }
+      autoFallbackRef.current = false;
       if (e instanceof FtcNotConnectedError) {
         setNotConnected(true);
         setData(null);
@@ -89,6 +111,15 @@ export function useFtcTeam() {
   }, [season]);
 
   return { season, setSeason, data, loading, error, notConnected, knownSeasons, refresh: () => load(season, { refresh: true }) };
+}
+
+function sourceBadgeText(d: { source?: string; origin?: string; cached?: boolean; stale?: boolean }): string {
+  const name = (s?: string) => (s === 'first-events' ? 'FIRST' : s === 'ftc-scout' ? 'FTC Scout' : null);
+  if (d.cached || d.source === 'cache') {
+    const from = name(d.origin);
+    return `● ${d.stale ? 'Offline copy' : 'Cached'}${from ? ` · ${from}` : ''}`;
+  }
+  return d.source === 'first-events' ? '● Live · FIRST' : '● FTC Scout';
 }
 
 // The API's 404 for a season the team hasn't competed in (yet).
@@ -481,8 +512,7 @@ export function TeamStatsView() {
                     className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border border-text-base/15 text-text-muted"
                     title={data.fetchedAt ? `Last updated ${new Date(data.fetchedAt).toLocaleString()}` : undefined}
                   >
-                    {data.source === 'first-events' ? '● Live · FIRST' : data.source === 'ftc-scout' ? '● FTC Scout' : '● Cached'}
-                    {data.cached ? ' (cached)' : ''}
+                    {sourceBadgeText(data)}
                   </span>
                 )}
               </div>

@@ -1,5 +1,6 @@
 /**
- * FIRST Events API client (https://ftc-events.firstinspires.org).
+ * FIRST Events API client (https://ftc-api.firstinspires.org; docs at
+ * https://ftc-events.firstinspires.org/api-docs).
  *
  * This is the PRIMARY source of FTC competition data — official FIRST data
  * with the freshest event/team/match information. FTC Scout remains as a
@@ -13,7 +14,9 @@
  *   2025 = 2025-26 DECODE, 2026 = 2026-27 BIOBUZZ
  */
 
-const BASE_URL = "https://ftc-events.firstinspires.org/v2.0";
+// The API host itself. ftc-events.firstinspires.org/v2.0 only redirects here,
+// and the Authorization header does not survive that cross-host redirect.
+const BASE_URL = "https://ftc-api.firstinspires.org/v2.0";
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_RETRIES = 1; // one retry on 5xx / timeout / network error only
 const RETRY_DELAY_MS = 1_000;
@@ -99,10 +102,6 @@ export interface FirstRanking {
   rankingPoints: number | null;
 }
 
-export interface FirstMatchTeam {
-  number: number;
-}
-
 export interface FirstMatch {
   matchNumber: number;
   level: "qual" | "playoff";
@@ -117,12 +116,14 @@ export interface FirstAlliance {
   captain: number | null;
   pick1: number | null;
   pick2: number | null;
+  pick3: number | null;
   backup: number | null;
   name: string | null;
 }
 
 // ---------------------------------------------------------------------------
-// Validation helpers — never trust the wire
+// Validation helpers — never trust the wire. Field names follow the official
+// FTC Events API v2.0 OpenAPI contract (ftc-api.firstinspires.org/swagger).
 // ---------------------------------------------------------------------------
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -134,11 +135,7 @@ function num(v: unknown): number | null {
 }
 
 function str(v: unknown): string | null {
-  return typeof v === "string" && v.length ? v : null;
-}
-
-function strOrEmpty(v: unknown): string {
-  return typeof v === "string" ? v : "";
+  return typeof v === "string" && v.trim().length ? v.trim() : null;
 }
 
 function dateOnly(v: unknown): string | null {
@@ -149,48 +146,46 @@ function dateOnly(v: unknown): string | null {
   return m ? m[1] : null;
 }
 
+/** Stable key for a match: playoff match numbers repeat across series. */
+export function matchKey(m: { level: string; series: number | null; matchNumber: number }): string {
+  return `${m.level}:${m.series ?? 0}:${m.matchNumber}`;
+}
+
+// SeasonTeamModel_Version2: nameShort is the team name; nameFull is the
+// official "Sponsor/Sponsor&School" string, which we split into sponsors.
 function validateTeam(raw: unknown): FirstTeam | null {
   if (!isObj(raw)) return null;
   const teamNumber = num(raw.teamNumber);
   if (!teamNumber) return null;
-  const sponsorsRaw = Array.isArray(raw.sponsors) ? raw.sponsors : [];
+  const full = str(raw.nameFull);
+  const sponsors = full
+    ? full.split(/[\/&]/).map((x) => x.trim()).filter((x) => x.length > 0 && x.length < 120)
+    : [];
   return {
     teamNumber,
-    name: str(raw.nameFull) || str(raw.nameShort) || `Team ${teamNumber}`,
+    name: str(raw.nameShort) || `Team ${teamNumber}`,
     schoolName: str(raw.schoolName),
     city: str(raw.city),
     state: str(raw.stateProv),
     country: str(raw.country),
     rookieYear: num(raw.rookieYear),
-    sponsors: sponsorsRaw.filter((s): s is string => typeof s === "string" && s.length > 0),
+    sponsors,
   };
 }
 
-function validateTeamEvent(raw: unknown): FirstTeamEvent | null {
-  if (!isObj(raw)) return null;
-  const eventCode = str(raw.eventCode);
-  if (!eventCode) return null;
-  return {
-    eventCode,
-    name: str(raw.name) || eventCode,
-    eventType: str(raw.eventType),
-    dateStart: dateOnly(raw.dateStart),
-    dateEnd: dateOnly(raw.dateEnd),
-  };
-}
-
+// SeasonEventModel_Version2: `code`, `typeName`/`type`, lowercase-p `stateprov`.
 function validateEvent(raw: unknown): FirstEvent | null {
   if (!isObj(raw)) return null;
-  const eventCode = str(raw.eventCode);
+  const eventCode = str(raw.code);
   if (!eventCode) return null;
   return {
     eventCode,
     name: str(raw.name) || eventCode,
-    eventType: str(raw.eventType),
+    eventType: str(raw.typeName) || str(raw.type),
     venue: str(raw.venue),
     address: str(raw.address),
     city: str(raw.city),
-    state: str(raw.stateProv),
+    state: str(raw.stateprov),
     country: str(raw.country),
     dateStart: dateOnly(raw.dateStart),
     dateEnd: dateOnly(raw.dateEnd),
@@ -198,6 +193,12 @@ function validateEvent(raw: unknown): FirstEvent | null {
   };
 }
 
+function validateTeamEvent(raw: unknown): FirstTeamEvent | null {
+  const e = validateEvent(raw);
+  return e ? { eventCode: e.eventCode, name: e.name, eventType: e.eventType, dateStart: e.dateStart, dateEnd: e.dateEnd } : null;
+}
+
+// TeamRankingModel. sortOrder1 is the season's primary ranking value.
 function validateRanking(raw: unknown): FirstRanking | null {
   if (!isObj(raw)) return null;
   const teamNumber = num(raw.teamNumber);
@@ -209,46 +210,57 @@ function validateRanking(raw: unknown): FirstRanking | null {
     losses: num(raw.losses),
     ties: num(raw.ties),
     qualAverage: num(raw.qualAverage),
-    // FIRST uses sortOrder1.. for ranking points depending on season; try a few.
-    rankingPoints: num(raw.rankingPoints) ?? num(raw.sortOrder1),
+    rankingPoints: num(raw.sortOrder1),
   };
 }
 
+// ScheduledMatchModel_Version2 / MatchResultModel_Version2: alliances come as
+// a `teams` array whose `station` is "Red1".."Blue3"; final scores are the
+// top-level scoreRedFinal / scoreBlueFinal (absent on schedule entries).
 function validateMatch(raw: unknown): FirstMatch | null {
   if (!isObj(raw)) return null;
   const matchNumber = num(raw.matchNumber);
   if (!matchNumber) return null;
-  const levelRaw = strOrEmpty(raw.tournamentLevel).toLowerCase();
-  const level: "qual" | "playoff" = levelRaw.includes("playoff") ? "playoff" : "qual";
-  const side = (s: unknown): { teams: number[]; score: number | null } => {
-    if (!isObj(s)) return { teams: [], score: null };
-    const teams: number[] = [];
-    for (const k of ["team1", "team2", "team3"]) {
-      const n = num(s[k]);
-      if (n) teams.push(n);
-    }
-    return { teams, score: num(s.score) ?? num(s.totalPoints) };
-  };
+  const levelRaw = (str(raw.tournamentLevel) || "").toLowerCase();
+  const level: "qual" | "playoff" = levelRaw.startsWith("qual") ? "qual" : "playoff";
+  const red: number[] = [];
+  const blue: number[] = [];
+  const teams = Array.isArray(raw.teams) ? raw.teams : [];
+  const ordered = [...teams].sort((a: any, b: any) => String(a?.station).localeCompare(String(b?.station)));
+  for (const t of ordered) {
+    if (!isObj(t)) continue;
+    const n = num(t.teamNumber);
+    const station = (str(t.station) || "").toLowerCase();
+    if (!n) continue;
+    if (station.startsWith("red")) red.push(n);
+    else if (station.startsWith("blue")) blue.push(n);
+  }
   return {
     matchNumber,
     level,
     series: num(raw.series),
     description: str(raw.description),
-    red: side(raw.red),
-    blue: side(raw.blue),
+    red: { teams: red, score: num(raw.scoreRedFinal) },
+    blue: { teams: blue, score: num(raw.scoreBlueFinal) },
   };
 }
 
+// AllianceModel_Version2: captain/round1/round2/round3/backup are AllianceTeam
+// objects ({ teamNumber, ... }) or null.
+function allianceTeam(v: unknown): number | null {
+  return isObj(v) ? num(v.teamNumber) : null;
+}
 function validateAlliance(raw: unknown): FirstAlliance | null {
   if (!isObj(raw)) return null;
-  const number = num(raw.number ?? raw.allianceNumber);
+  const number = num(raw.number);
   if (!number) return null;
   return {
     number,
-    captain: num(raw.captain),
-    pick1: num(raw.pick1),
-    pick2: num(raw.pick2),
-    backup: num(raw.backup),
+    captain: allianceTeam(raw.captain),
+    pick1: allianceTeam(raw.round1),
+    pick2: allianceTeam(raw.round2),
+    pick3: allianceTeam(raw.round3),
+    backup: allianceTeam(raw.backup),
     name: str(raw.name),
   };
 }
@@ -278,46 +290,38 @@ async function firstEventsFetch(path: string): Promise<unknown> {
   }
   const url = `${BASE_URL}${path}`;
   let lastErr: unknown = null;
+  let rateLimitWaits = 0; // a 429 wait never consumes the error retry
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; ) {
     const ctrl = new AbortController();
+    // The timeout covers headers AND body: it is cleared only once the body
+    // has been read (or the attempt failed), in the finally below.
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
       const res = await fetch(url, {
-        headers: {
-          Authorization: authHeader(),
-          Accept: "application/json",
-        },
+        headers: { Authorization: authHeader(), Accept: "application/json" },
         signal: ctrl.signal,
+        // BASE_URL is the API host itself; a redirect would drop the auth
+        // header, so treat one as an error rather than silently failing.
+        redirect: "error",
       });
-      clearTimeout(timer);
 
-      if (res.status === 429) {
-        // Rate limited — respect Retry-After, then backoff once.
+      if (res.status === 429 && rateLimitWaits < 1) {
+        rateLimitWaits++;
         const retryAfter = parseInt(res.headers.get("retry-after") || "5", 10);
         const waitMs = Math.min(Number.isFinite(retryAfter) ? retryAfter * 1000 : 5000, 30_000);
         logError("rate limited (429)", `path=${path} waiting ${waitMs}ms`);
         await sleep(waitMs);
-        // One more attempt after the wait (does not count as the retry).
-        continue;
+        continue; // same attempt number
       }
       if (res.status === 401 || res.status === 403) {
         throw new FirstEventsError("FIRST Events auth rejected (check credentials)", res.status, false);
       }
-      if (res.status === 404) {
-        throw new FirstEventsError("not found", 404, false);
+      if (res.status === 404) throw new FirstEventsError("not found", 404, false);
+      if (res.status === 429 || res.status >= 500) {
+        throw new FirstEventsError(`upstream ${res.status}`, res.status, true);
       }
-      if (res.status >= 500) {
-        lastErr = new FirstEventsError(`upstream ${res.status}`, res.status, true);
-        if (attempt < MAX_RETRIES) {
-          await sleep(RETRY_DELAY_MS);
-          continue;
-        }
-        throw lastErr;
-      }
-      if (!res.ok) {
-        throw new FirstEventsError(`unexpected status ${res.status}`, res.status, false);
-      }
+      if (!res.ok) throw new FirstEventsError(`unexpected status ${res.status}`, res.status, false);
       const text = await res.text();
       try {
         return JSON.parse(text);
@@ -325,108 +329,122 @@ async function firstEventsFetch(path: string): Promise<unknown> {
         throw new FirstEventsError("invalid JSON response", res.status, false);
       }
     } catch (err) {
-      clearTimeout(timer);
-      if (err instanceof FirstEventsError) {
-        if (err.retryable && attempt < MAX_RETRIES) {
-          lastErr = err;
-          await sleep(RETRY_DELAY_MS);
-          continue;
-        }
-        throw err;
+      let e: FirstEventsError;
+      if (err instanceof FirstEventsError) e = err;
+      else {
+        const isTimeout = err instanceof Error && err.name === "AbortError";
+        e = new FirstEventsError(isTimeout ? "request timed out" : "network error", 0, true);
       }
-      // Network error / timeout (AbortError)
-      const isTimeout = err instanceof Error && err.name === "AbortError";
-      lastErr = new FirstEventsError(isTimeout ? "request timed out" : "network error", 0, true);
-      if (attempt < MAX_RETRIES) {
+      lastErr = e;
+      if (e.retryable && attempt < MAX_RETRIES) {
+        attempt++;
         await sleep(RETRY_DELAY_MS);
         continue;
       }
-      throw lastErr;
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastErr instanceof Error ? lastErr : new FirstEventsError("request failed", 0, false);
 }
 
+function listOf(data: unknown, key: string): unknown[] {
+  return isObj(data) && Array.isArray(data[key]) ? (data[key] as unknown[]) : [];
+}
+
 // ---------------------------------------------------------------------------
-// Public API
+// Public API (paths per the official v2.0 contract)
 // ---------------------------------------------------------------------------
 
-/** Team details for a season. Returns null on 404. */
+/** Team details for a season. Null when FIRST has no team with that number. */
 export async function getFirstEventsTeam(season: number, teamNumber: number): Promise<FirstTeam | null> {
   try {
     const data = await firstEventsFetch(`/${season}/teams?teamNumber=${teamNumber}`);
-    const teams = isObj(data) && Array.isArray(data.teams) ? data.teams : [];
-    for (const t of teams) {
+    for (const t of listOf(data, "teams")) {
       const v = validateTeam(t);
       if (v && v.teamNumber === teamNumber) return v;
     }
-    return validateTeam(teams[0]) ?? null;
+    return null; // never substitute an unrelated team
   } catch (err) {
     if (err instanceof FirstEventsError && err.status === 404) return null;
     throw err;
   }
 }
 
-/** Events a team is registered for in a season. */
+/** Events a team is registered for in a season (GET /events?teamNumber=). */
 export async function getFirstEventsTeamEvents(season: number, teamNumber: number): Promise<FirstTeamEvent[]> {
-  const data = await firstEventsFetch(`/${season}/teams/${teamNumber}/events`);
-  const events = isObj(data) && Array.isArray(data.events) ? data.events : [];
-  const seen = new Set<string>();
-  const out: FirstTeamEvent[] = [];
-  for (const e of events) {
-    const v = validateTeamEvent(e);
-    const key = v?.eventCode.toLowerCase();
-    if (v && key && !seen.has(key)) {
-      seen.add(key);
-      out.push(v);
+  try {
+    const data = await firstEventsFetch(`/${season}/events?teamNumber=${teamNumber}`);
+    const seen = new Set<string>();
+    const out: FirstTeamEvent[] = [];
+    for (const e of listOf(data, "events")) {
+      const v = validateTeamEvent(e);
+      const key = v?.eventCode.toLowerCase();
+      if (v && key && !seen.has(key)) {
+        seen.add(key);
+        out.push(v);
+      }
     }
+    return out.sort((a, b) => (a.dateStart || "").localeCompare(b.dateStart || ""));
+  } catch (err) {
+    if (err instanceof FirstEventsError && err.status === 404) return [];
+    throw err;
   }
-  return out.sort((a, b) => (a.dateStart || "").localeCompare(b.dateStart || ""));
 }
 
-/** Single event details. Returns null on 404. */
+/** Single event details. Null when FIRST has no event with that code. */
 export async function getFirstEventsEvent(season: number, eventCode: string): Promise<FirstEvent | null> {
   try {
     const data = await firstEventsFetch(`/${season}/events?eventCode=${encodeURIComponent(eventCode)}`);
-    const events = isObj(data) && Array.isArray(data.events) ? data.events : [];
-    for (const e of events) {
+    for (const e of listOf(data, "events")) {
       const v = validateEvent(e);
       if (v && v.eventCode.toLowerCase() === eventCode.toLowerCase()) return v;
     }
-    return validateEvent(events[0]) ?? null;
+    return null; // never substitute an unrelated event
   } catch (err) {
     if (err instanceof FirstEventsError && err.status === 404) return null;
     throw err;
   }
 }
 
-/** Teams registered at an event (deduped by team number). */
+const MAX_TEAM_PAGES = 10;
+
+/** Teams at an event (GET /teams?eventCode=, all pages), deduped. */
 export async function getFirstEventsEventTeams(
   season: number,
   eventCode: string
 ): Promise<{ teamNumber: number; name: string }[]> {
-  const data = await firstEventsFetch(`/${season}/events/${encodeURIComponent(eventCode)}/teams`);
-  const teams = isObj(data) && Array.isArray(data.teams) ? data.teams : [];
   const seen = new Set<number>();
   const out: { teamNumber: number; name: string }[] = [];
-  for (const t of teams) {
-    const v = validateTeam(t);
-    if (v && !seen.has(v.teamNumber)) {
-      seen.add(v.teamNumber);
-      out.push({ teamNumber: v.teamNumber, name: v.name });
+  for (let page = 1; page <= MAX_TEAM_PAGES; page++) {
+    let data: unknown;
+    try {
+      data = await firstEventsFetch(`/${season}/teams?eventCode=${encodeURIComponent(eventCode)}&page=${page}`);
+    } catch (err) {
+      if (err instanceof FirstEventsError && err.status === 404) break;
+      throw err;
     }
+    for (const t of listOf(data, "teams")) {
+      const v = validateTeam(t);
+      if (v && !seen.has(v.teamNumber)) {
+        seen.add(v.teamNumber);
+        out.push({ teamNumber: v.teamNumber, name: v.name });
+      }
+    }
+    const pageTotal = isObj(data) ? num(data.pageTotal) : null;
+    if (!pageTotal || page >= pageTotal) break;
   }
   return out.sort((a, b) => a.teamNumber - b.teamNumber);
 }
 
-/** Rankings at an event. Returns [] when the event hasn't published rankings yet. */
+/** Rankings at an event (GET /rankings/{eventCode}); [] before rankings exist. */
 export async function getFirstEventsRankings(season: number, eventCode: string): Promise<FirstRanking[]> {
   try {
-    const data = await firstEventsFetch(`/${season}/events/${encodeURIComponent(eventCode)}/rankings`);
-    const rankings = isObj(data) && Array.isArray(data.rankings) ? data.rankings : [];
+    const data = await firstEventsFetch(`/${season}/rankings/${encodeURIComponent(eventCode)}`);
     const seen = new Set<number>();
     const out: FirstRanking[] = [];
-    for (const r of rankings) {
+    for (const r of listOf(data, "rankings")) {
       const v = validateRanking(r);
       if (v && !seen.has(v.teamNumber)) {
         seen.add(v.teamNumber);
@@ -440,7 +458,25 @@ export async function getFirstEventsRankings(season: number, eventCode: string):
   }
 }
 
-/** Match schedule (quals or playoffs). Returns [] when not published yet. */
+function dedupeMatches(raw: unknown[]): FirstMatch[] {
+  const seen = new Set<string>();
+  const out: FirstMatch[] = [];
+  for (const m of raw) {
+    const v = validateMatch(m);
+    if (!v) continue;
+    const key = matchKey(v);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out.sort((a, b) =>
+    a.level !== b.level
+      ? (a.level === "qual" ? -1 : 1)
+      : (a.series ?? 0) - (b.series ?? 0) || a.matchNumber - b.matchNumber
+  );
+}
+
+/** Match schedule (GET /schedule/{eventCode}?tournamentLevel=); [] when unpublished. */
 export async function getFirstEventsSchedule(
   season: number,
   eventCode: string,
@@ -448,55 +484,33 @@ export async function getFirstEventsSchedule(
 ): Promise<FirstMatch[]> {
   try {
     const data = await firstEventsFetch(
-      `/${season}/events/${encodeURIComponent(eventCode)}/schedule/${level}`
+      `/${season}/schedule/${encodeURIComponent(eventCode)}?tournamentLevel=${level}`
     );
-    const matches = isObj(data) && Array.isArray(data.matches) ? data.matches : [];
-    const seen = new Set<number>();
-    const out: FirstMatch[] = [];
-    for (const m of matches) {
-      const v = validateMatch(m);
-      if (v && !seen.has(v.matchNumber)) {
-        seen.add(v.matchNumber);
-        out.push(v);
-      }
-    }
-    return out.sort((a, b) => a.matchNumber - b.matchNumber);
+    return dedupeMatches(listOf(data, "schedule"));
   } catch (err) {
     if (err instanceof FirstEventsError && err.status === 404) return [];
     throw err;
   }
 }
 
-/** Match results (scores). Returns [] when no results yet. */
+/** Scored match results, all levels (GET /matches/{eventCode}); [] when none. */
 export async function getFirstEventsMatches(season: number, eventCode: string): Promise<FirstMatch[]> {
   try {
-    const data = await firstEventsFetch(`/${season}/events/${encodeURIComponent(eventCode)}/matches`);
-    const matches = isObj(data) && Array.isArray(data.matches) ? data.matches : [];
-    const seen = new Set<string>();
-    const out: FirstMatch[] = [];
-    for (const m of matches) {
-      const v = validateMatch(m);
-      if (!v) continue;
-      const key = `${v.level}:${v.matchNumber}:${v.series ?? 0}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(v);
-    }
-    return out.sort((a, b) => (a.level === b.level ? a.matchNumber - b.matchNumber : a.level === "qual" ? -1 : 1));
+    const data = await firstEventsFetch(`/${season}/matches/${encodeURIComponent(eventCode)}`);
+    return dedupeMatches(listOf(data, "matches"));
   } catch (err) {
     if (err instanceof FirstEventsError && err.status === 404) return [];
     throw err;
   }
 }
 
-/** Playoff alliances. Returns [] when not formed yet. */
+/** Playoff alliances (GET /alliances/{eventCode}); [] when not formed yet. */
 export async function getFirstEventsAlliances(season: number, eventCode: string): Promise<FirstAlliance[]> {
   try {
-    const data = await firstEventsFetch(`/${season}/events/${encodeURIComponent(eventCode)}/alliances`);
-    const alliances = isObj(data) && Array.isArray(data.alliances) ? data.alliances : [];
+    const data = await firstEventsFetch(`/${season}/alliances/${encodeURIComponent(eventCode)}`);
     const seen = new Set<number>();
     const out: FirstAlliance[] = [];
-    for (const a of alliances) {
+    for (const a of listOf(data, "alliances")) {
       const v = validateAlliance(a);
       if (v && !seen.has(v.number)) {
         seen.add(v.number);

@@ -24,7 +24,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       '2026–27 BIOBUZZ season in Team Stats',
       'Clickable event history — tap any event for full match breakdowns (quals + playoffs, alliances, scores)',
       'Ask Bruno to scout teams: "who should we pair with for this event?" or "how is team 23375 doing?"',
-      'Event-wide scouting — Bruno ranks the whole field by OPR for alliance picks',
+      'Event-wide scouting — Bruno ranks the field by event standings, or by OPR (up to 40 teams) before rankings exist',
       'Channel renaming for admins (text + voice channels)',
       'Download button in the 3D model viewer',
     ],
@@ -103,4 +103,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const CURRENT_VERSION = '1.2.0';
+export const CURRENT_VERSION = '1.3.0';
