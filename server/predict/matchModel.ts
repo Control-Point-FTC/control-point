@@ -8,12 +8,17 @@
 import type { RatingBook } from "./rating.js";
 
 export interface NoiseParams {
-  /** Score noise: σ = a + b·mean (fitted on the tuning season). */
+  /** Score noise: σ = a + b·mean (fitted by likelihood on the tuning season). */
   a: number;
   b: number;
+  /**
+   * Extra per-robot variance (points²) when predicting ahead from an
+   * event-start snapshot: a team's level can move during the event.
+   */
+  preExtra?: number;
 }
 
-export const DEFAULT_NOISE: NoiseParams = { a: 12, b: 0.18 };
+export const DEFAULT_NOISE: NoiseParams = { a: 14, b: 0.21, preExtra: 0 };
 
 export interface AlliancePrediction {
   mean: number;

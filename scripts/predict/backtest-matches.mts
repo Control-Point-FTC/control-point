@@ -95,7 +95,7 @@ export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseP
       if (opts.report.has(season)) {
         const exp = (teams: number[], src?: Map<number, TeamRating>) => {
           let np = 0, pen = 0, unc = 0;
-          for (const t of teams) { const r = src?.get(t) ?? book.get(t); np += npOf(r); pen += r.pen; unc += r.uncertainty; }
+          for (const t of teams) { const r = src?.get(t) ?? book.get(t); np += npOf(r); pen += r.pen; unc += r.uncertainty + (src ? opts.noise.preExtra ?? 0 : 0); }
           return { np, pen, unc };
         };
         const prob = (src?: Map<number, TeamRating>) => {
