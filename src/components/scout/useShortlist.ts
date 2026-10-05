@@ -12,6 +12,9 @@ import type { ShortlistEntry } from '../../types/ftcScout';
 import { fetchShortlist, removeShortlistEntry, saveShortlistPatch } from '../../services/ftcScoutApi';
 import { applyShortlistPatch, type ShortlistPatch } from '../../utils/shortlist';
 
+/** Wait before re-reading the list after a timed-out write. */
+const RECHECK_DELAY_MS = 4000;
+
 type Op = { apply: (list: ShortlistEntry[]) => ShortlistEntry[]; send: () => Promise<ShortlistEntry[]> };
 
 export function useShortlist(season: number) {
@@ -57,14 +60,33 @@ export function useShortlist(season: number) {
       } catch (e) {
         if (ep !== epoch.current) return;
         pending.current = pending.current.filter((o) => o !== op);
-        setError(`${e instanceof Error ? e.message : 'Could not save the shortlist'} — that change wasn't saved.`);
-        // Drop the failed edit now (last confirmed list + other pending
-        // edits), then refresh from the server if it's reachable.
-        setEntries(withPending(confirmed.current));
+        // A timed-out write may still commit on the server, so its outcome
+        // is unknown: keep it shown and reconcile with a later reload.
+        const timedOut = (e as { name?: string } | null)?.name === 'TimeoutError';
+        if (timedOut) {
+          setError('Saving is taking longer than usual — checking whether it went through…');
+          await new Promise((r) => setTimeout(r, RECHECK_DELAY_MS));
+          if (ep !== epoch.current) return;
+        } else {
+          setError(`${e instanceof Error ? e.message : 'Could not save the shortlist'} — that change wasn't saved.`);
+          // Drop the failed edit now (last confirmed list + other pending
+          // edits), then refresh from the server if it's reachable.
+          setEntries(withPending(confirmed.current));
+        }
         try {
           const list = await fetchShortlist(season);
-          if (ep === epoch.current) { confirmed.current = list; setEntries(withPending(list)); }
-        } catch { /* already rolled back; the error is shown */ }
+          if (ep === epoch.current) {
+            confirmed.current = list;
+            setEntries(withPending(list));
+            if (timedOut) setError(null); // the list now shows what the server actually has
+          }
+        } catch {
+          // Still unreachable: fall back to the last confirmed list.
+          if (ep === epoch.current && timedOut) {
+            setEntries(withPending(confirmed.current));
+            setError("Couldn't confirm that change was saved — check your connection and refresh.");
+          }
+        }
       }
     });
     chains.current.set(season, next);

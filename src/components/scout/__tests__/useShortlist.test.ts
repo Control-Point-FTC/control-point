@@ -71,6 +71,21 @@ describe('useShortlist', () => {
     expect(result.current.entries[0].notes).toBe('');
   });
 
+  it('treats a timed-out write as unknown and reconciles with the server', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    api.fetchShortlist.mockResolvedValueOnce([]).mockResolvedValueOnce([entry(4, { notes: 'saved after all' })]);
+    api.saveShortlistPatch.mockRejectedValue(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+    const { result } = renderHook(() => useShortlist(2025));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    act(() => { result.current.patch({ teamNumber: 4, notes: 'saved after all' }); });
+    await waitFor(() => expect(result.current.error).toMatch(/taking longer/));
+    expect(result.current.entries).toHaveLength(1); // not rolled back
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await waitFor(() => expect(result.current.error).toBeNull());
+    expect(result.current.entries[0].notes).toBe('saved after all');
+    vi.useRealTimers();
+  });
+
   it('still sends edits queued before a season switch', async () => {
     const first = deferred<ShortlistEntry[]>();
     api.fetchShortlist.mockResolvedValue([]);
