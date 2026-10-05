@@ -257,13 +257,16 @@ export function sortMatches(ms: FtcMatchFull[]): FtcMatchFull[] {
 }
 
 /** Parse FTC Scout team search results. */
+/** FTC team numbers are at most 6 digits; FTC Scout search also returns junk ids. */
+const MAX_TEAM_NUMBER = 999999;
+
 export function parseScoutSearch(resp: unknown): FtcTeamSearchHit[] {
   const list = isObj(resp) && isObj(resp.data) ? arr(resp.data.teamsSearch) : [];
   const out: FtcTeamSearchHit[] = [];
   for (const t of list) {
     if (!isObj(t)) continue;
     const n = num(t.number);
-    if (!n) continue;
+    if (!n || n > MAX_TEAM_NUMBER) continue;
     const loc = isObj(t.location) ? t.location : {};
     out.push({ number: n, name: str(t.name) || `Team ${n}`, city: str(loc.city), state: str(loc.state) });
   }
@@ -384,9 +387,12 @@ export function mergeEventFull(
       if (played) {
         score = scoutSide?.score ? { ...scoutSide.score } : emptySplit();
         // FIRST is authoritative for the final score, auto and foul points.
+        // scoreRedFoul / scoreBlueFoul are the penalty points that alliance
+        // COMMITTED (awarded to the opponent): Q-1 at USNJCMPPKWY has red
+        // foul 15 with red's own total unchanged and blue's total +15.
         score.total = final;
         if (auto != null) score.auto = auto;
-        if (foul != null) score.penaltiesByOpp = foul;
+        if (foul != null) score.penaltiesCommitted = foul;
       }
       return {
         teams: teams.map((n) => ({ number: n, name: nameOf(n), surrogate: scoutSide?.teams.find((t) => t.number === n)?.surrogate, dq: scoutSide?.teams.find((t) => t.number === n)?.dq })),

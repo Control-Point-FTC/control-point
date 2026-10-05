@@ -108,7 +108,7 @@ export interface FirstAllianceResult {
   score: number | null;
   /** Auto points (results only). */
   auto?: number | null;
-  /** Foul points awarded to this alliance (results only). */
+  /** Penalty points this alliance committed, i.e. awarded to the opponent (results only). */
   foul?: number | null;
 }
 
