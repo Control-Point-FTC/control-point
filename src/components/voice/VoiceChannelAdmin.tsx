@@ -23,6 +23,7 @@ import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { useVoice, voiceAdminApi, type RolePermRow, type VoiceChannelSummary } from '../../voice';
 import { VoiceIconButton } from './shared';
+import { Select as ThemedSelect } from '../Select';
 
 const PERM_COLS = [
   { key: 'can_view', label: 'View' },
@@ -328,12 +329,12 @@ export function VoiceChannelAdmin({
               {categories.length > 0 && (
                 <div className="space-y-1.5">
                   <label htmlFor="vc-cat" className="text-xs font-semibold text-text-muted uppercase tracking-wider">Category</label>
-                  <select id="vc-cat" className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+                  <ThemedSelect id="vc-cat" className={inputCls} value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
                     <option value="">None</option>
                     {categories.map((cat) => (
                       <option key={cat.id} value={cat.id}>{cat.name}</option>
                     ))}
-                  </select>
+                  </ThemedSelect>
                 </div>
               )}
             </div>

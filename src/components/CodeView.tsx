@@ -35,6 +35,8 @@ import {
   downloadCodeFile,
   deleteCodeFile
 } from '../services/codeService';
+import { Select as ThemedSelect } from './Select';
+import { setScreenEntity } from '../services/brunoContext';
 
 interface CodeViewProps {
   teams: Team[];
@@ -52,6 +54,11 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
   const monacoTheme = theme === 'light' ? 'light' : 'vs-dark';
   const [files, setFiles] = useState<CodeFile[]>([]);
   const [selectedFile, setSelectedFile] = useState<CodeFile | null>(null);
+  // Bruno screen context: the file open in the editor.
+  useEffect(() => {
+    setScreenEntity('codeFileId', selectedFile?.id ?? null);
+    return () => setScreenEntity('codeFileId', null);
+  }, [selectedFile?.id]);
   const [currentBranch, setCurrentBranch] = useState<'main' | 'drafts'>('drafts');
   const [code, setCode] = useState('');
   const [history, setHistory] = useState<CodeCommit[]>([]);
@@ -386,7 +393,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
         {selectedTeamId && (
           <div className="flex-1 min-w-[200px]">
             <label className="text-xs font-bold text-text-muted mb-2 block">SELECT FILE</label>
-            <select
+            <ThemedSelect
               value={selectedFile?.id || ''}
               onChange={(e) => {
                 const file = files.find(f => f.id === parseInt(e.target.value));
@@ -398,7 +405,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
               {files.map(f => (
                 <option key={f.id} value={f.id}>{f.file_name}</option>
               ))}
-            </select>
+            </ThemedSelect>
           </div>
         )}
       </div>
@@ -654,7 +661,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
               </div>
               <div>
                 <label className="text-xs font-bold text-text-muted block mb-2">LANGUAGE</label>
-                <select
+                <ThemedSelect
                   value={newFileLanguage}
                   onChange={(e) => setNewFileLanguage(e.target.value)}
                   className="w-full px-3 py-2 bg-primary text-text-base rounded-lg border border-line focus:border-accent focus:outline-none"
@@ -663,7 +670,7 @@ export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser,
                   <option value="cpp">C++</option>
                   <option value="python">Python</option>
                   <option value="javascript">JavaScript</option>
-                </select>
+                </ThemedSelect>
               </div>
             </div>
             <div className="flex gap-3 mt-6">

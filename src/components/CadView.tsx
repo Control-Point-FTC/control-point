@@ -11,6 +11,7 @@ import { format } from 'date-fns';
 import { apiFetch } from '../services/api';
 import { notify, confirmDialog } from './dialog';
 import { cn } from './onboarding/onboardingState';
+import { Select as ThemedSelect } from './Select';
 
 const CadModelViewer = React.lazy(() => import('./CadModelViewer'));
 
@@ -68,9 +69,9 @@ const TextArea = ({ className, ...props }: any) => (
   <textarea className={cn('w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm min-h-[90px]', className)} {...props} />
 );
 const Select = ({ className, options, ...props }: any) => (
-  <select className={cn('w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm', className)} {...props}>
+  <ThemedSelect className={cn('w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all text-sm', className)} {...props}>
     {options.map((opt: any) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-  </select>
+  </ThemedSelect>
 );
 const Field = ({ label, children }: any) => (
   <label className="block space-y-1.5">
@@ -858,19 +859,19 @@ function InvoiceImportModal({ onClose, onDone }: { onClose: () => void; onDone: 
                       <td className="py-2 pr-2"><input type="number" min={1} className={cellInput} value={it.quantity} onChange={(e: any) => updateItem(i, { quantity: e.target.value })} /></td>
                       <td className="py-2 pr-2"><input type="number" min={0} step="0.01" className={cellInput} value={it.unitCost} onChange={(e: any) => updateItem(i, { unitCost: e.target.value })} /></td>
                       <td className="py-2 pr-2">
-                        <select className={cellInput} value={it.section} onChange={(e: any) => updateItem(i, { section: e.target.value })}>
+                        <ThemedSelect className={cellInput} value={it.section} onChange={(e: any) => updateItem(i, { section: e.target.value })}>
                           {CAD_SECTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        </ThemedSelect>
                       </td>
                       <td className="py-2 pr-2">
-                        <select className={cellInput} value={it.source} onChange={(e: any) => updateItem(i, { source: e.target.value })}>
+                        <ThemedSelect className={cellInput} value={it.source} onChange={(e: any) => updateItem(i, { source: e.target.value })}>
                           {Object.entries(PART_SOURCE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                        </select>
+                        </ThemedSelect>
                       </td>
                       <td className="py-2 pr-2">
-                        <select className={cellInput} value={it.status} onChange={(e: any) => updateItem(i, { status: e.target.value })}>
+                        <ThemedSelect className={cellInput} value={it.status} onChange={(e: any) => updateItem(i, { status: e.target.value })}>
                           {Object.entries(PART_STATUS_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                        </select>
+                        </ThemedSelect>
                       </td>
                       <td className="py-2 pr-2"><input className={cellInput} value={it.notes} onChange={(e: any) => updateItem(i, { notes: e.target.value })} placeholder="SKU / link" /></td>
                       <td className="py-2">

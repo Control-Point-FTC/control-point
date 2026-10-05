@@ -11,6 +11,7 @@ import { Info, PhoneCall } from 'lucide-react';
 import { cn } from '../ui';
 import { voiceApi } from '../../voice';
 import { notify } from '../dialog';
+import { Select as ThemedSelect } from '../Select';
 
 const inputCls =
   'w-full bg-secondary border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base focus:outline-none focus:border-accent/60 focus-visible:ring-2 focus-visible:ring-accent';
@@ -157,7 +158,7 @@ export function VoiceSettingsSection() {
           label="Default video quality"
           desc="Capture quality for new channels"
           control={
-            <select
+            <ThemedSelect
               value={s.default_video_quality || 'medium'}
               onChange={(e) => set({ default_video_quality: e.target.value })}
               aria-label="Default video quality"
@@ -166,14 +167,14 @@ export function VoiceSettingsSection() {
               {QUALITY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
+            </ThemedSelect>
           }
         />
         <Row
           label="Default audio quality"
           desc="Opus bitrate for voice: low 24 kbps · medium 64 kbps · high 128 kbps"
           control={
-            <select
+            <ThemedSelect
               value={s.default_audio_quality || 'medium'}
               onChange={(e) => set({ default_audio_quality: e.target.value })}
               aria-label="Default audio quality"
@@ -182,7 +183,7 @@ export function VoiceSettingsSection() {
               {QUALITY_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
+            </ThemedSelect>
           }
         />
         <Row

@@ -150,7 +150,7 @@ function ChatImage({ src, href, alt }: { src: string | null | undefined; href: s
 import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
-import { BRUNO_OPEN_EVENT } from './services/brunoContext';
+import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
 import BrunoIcon from './components/BrunoIcon';
 import FeedbackIcon from './components/FeedbackIcon';
 import EmailImportModal from './components/EmailImport';
@@ -260,7 +260,7 @@ function writeCachedGridRgb(rgb: string | null): void {
 // (Input lives in ./components/ui — shared with standalone auth screens.)
 
 const Select = ({ className, options, ...props }: any) => (
-  <select 
+  <ThemedSelect 
     className={cn(
       "w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
       className
@@ -270,7 +270,7 @@ const Select = ({ className, options, ...props }: any) => (
     {options.map((opt: any) => (
       <option key={opt.value} value={opt.value}>{opt.label}</option>
     ))}
-  </select>
+  </ThemedSelect>
 );
 
 // Multi-select dropdown for task assignees — checkbox list with avatar chips.
@@ -356,6 +356,7 @@ const Avatar = ({ user, size = 'md', className }: any) => {
 };
 
 import { PRESENCE_META, PresenceDot, PresencePicker } from './components/presence';
+import { Select as ThemedSelect } from './components/Select';
 
 // --- Presence (Discord-style online / idle / dnd / invisible) ---
 // Display values live in ./components/presence (shared with the settings modal).
@@ -1945,6 +1946,7 @@ export default function App() {
   const clearTeamCaches = () => {
     clearFtcCache();
     clearScoutCache();
+    clearScreenContext();
     if (typeof localStorage === 'undefined') return;
     [
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',
@@ -2087,6 +2089,14 @@ export default function App() {
   const navGptQualified = /hypnotic/i.test(activeTeamName || '') || /4215/.test(activeTeamName || '');
   const navGptActive = navGptQualified && (activeTeam?.navgpt_enabled ?? 0) === 1;
   const botName = navGptActive ? 'NavGPT ❤️' : 'Bruno';
+  // Bruno screen context: the page the user is on (same title as the header).
+  const pageTitle = activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : ROUTE_TITLE_KEYS[activeTab] ? t(ROUTE_TITLE_KEYS[activeTab]) : t('nav.dashboard');
+  useEffect(() => {
+    setScreenRoute(`${location.pathname}${location.search}`, pageTitle);
+  }, [location.pathname, location.search, pageTitle]);
+  useEffect(() => {
+    setScreenEntity('channelId', isChatRoute ? activeChannelId : null);
+  }, [isChatRoute, activeChannelId]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3101,7 +3111,7 @@ export default function App() {
           // the page content.
           (showUserMenu || showNotifications || showTeamMenu) && "!z-[60]")}>
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
-            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : ROUTE_TITLE_KEYS[activeTab] ? t(ROUTE_TITLE_KEYS[activeTab]) : t('nav.dashboard')}</h2>
+            <h2 className="text-lg sm:text-xl md:text-2xl font-display font-bold text-text-base capitalize truncate">{pageTitle}</h2>
           </div>
           
           <div className="flex items-center gap-1 sm:gap-2 md:gap-4 flex-shrink-0">
@@ -5507,6 +5517,11 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState({ title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
+  // Bruno screen context: the event open in the editor.
+  useEffect(() => {
+    setScreenEntity('eventId', showModal ? editingId : null);
+    return () => setScreenEntity('eventId', null);
+  }, [showModal, editingId]);
 
   // AI quick-add: paste/type natural language, Bruno parses it into event
   // proposals. One proposal fills the form; several get a bulk-create preview.
@@ -5946,6 +5961,11 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
+  // Bruno screen context: the task open in the editor.
+  useEffect(() => {
+    setScreenEntity('taskId', editingTaskId);
+    return () => setScreenEntity('taskId', null);
+  }, [editingTaskId]);
   const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assignee_ids: [] as number[], due_date: '', status: 'todo' });
   const [filterTeam, setFilterTeam] = useState('all');
   const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
@@ -6560,7 +6580,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                         </button>
                       </div>
                       <div className="flex flex-col sm:flex-row gap-2">
-                        <select
+                        <ThemedSelect
                           value={row.status || 'todo'}
                           onChange={(e: any) => updateBulkRow(i, { status: e.target.value })}
                           className="sm:w-36 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
@@ -6568,8 +6588,8 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                           <option value="todo">To Do</option>
                           <option value="in-progress">In Progress</option>
                           <option value="done">Done</option>
-                        </select>
-                        <select
+                        </ThemedSelect>
+                        <ThemedSelect
                           value={row.assigned_to || ''}
                           onChange={(e: any) => updateBulkRow(i, { assigned_to: e.target.value ? Number(e.target.value) : null })}
                           className="flex-1 min-w-0 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
@@ -6578,7 +6598,7 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                           {bulkRoster.map((m: any) => (
                             <option key={m.id} value={m.id}>{m.name}</option>
                           ))}
-                        </select>
+                        </ThemedSelect>
                         <Input
                           type="date"
                           value={row.due_date || ''}
@@ -10273,14 +10293,14 @@ function OwnerView(_props: any) {
                 className="w-full bg-text-base/5 border border-text-base/10 rounded-xl pl-9 pr-3 py-2 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
               />
             </div>
-            <select
+            <ThemedSelect
               value={teamFilter}
               onChange={(e) => setTeamFilter(e.target.value)}
               className="bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-2 text-sm text-text-base focus:outline-none"
             >
               <option value="all">All teams</option>
               {teams.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            </ThemedSelect>
           </div>
           <div className="space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar">
             {filteredUsers.map((u: any) => {
@@ -10815,7 +10835,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                 Moving clears their roles and signs them out of all sessions.
               </p>
               <div className="flex gap-2">
-                <select
+                <ThemedSelect
                   value={moveTeamId}
                   onChange={(e) => { setMoveTeamId(e.target.value); setMoveError(''); }}
                   disabled={moving || busy}
@@ -10827,7 +10847,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                     .map((t: any) => (
                       <option key={t.id} value={t.id}>{t.name}{t.number ? ` (${t.number})` : ''}</option>
                     ))}
-                </select>
+                </ThemedSelect>
                 <Button variant="secondary" size="sm" className="!text-xs whitespace-nowrap" disabled={moving || busy || !moveTeamId} onClick={doMoveUser}>
                   {moving ? 'Moving…' : 'Move'}
                 </Button>

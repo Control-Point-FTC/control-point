@@ -16,6 +16,7 @@ import {
   type VideoQuality,
 } from '../../voice';
 import { MicLevelMeter, StreamVideo, VoiceIconButton } from './shared';
+import { Select as ThemedSelect } from '../Select';
 
 function Section({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {
   return (
@@ -236,7 +237,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
         <Section icon={Mic} title="Microphone">
           <div className="space-y-1.5">
             <Label htmlFor="voice-mic-select">Input device</Label>
-            <select
+            <ThemedSelect
               id="voice-mic-select"
               className={selectCls}
               value={selectedDevices.micId ?? ''}
@@ -249,7 +250,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
                   {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
                 </option>
               ))}
-            </select>
+            </ThemedSelect>
             <p id="voice-mic-perm" className="text-xs text-text-muted">
               Permission:{' '}
               <span className={cn('font-semibold', micPerm === 'granted' ? 'text-emerald-400' : micPerm === 'denied' ? 'text-rose-400' : 'text-amber-300')}>
@@ -327,7 +328,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
         <Section icon={Volume2} title="Speaker">
           <div className="space-y-1.5">
             <Label htmlFor="voice-speaker-select">Output device</Label>
-            <select
+            <ThemedSelect
               id="voice-speaker-select"
               className={selectCls}
               value={selectedDevices.speakerId ?? ''}
@@ -340,7 +341,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
                   {d.label || `Output ${d.deviceId.slice(0, 6)}`}
                 </option>
               ))}
-            </select>
+            </ThemedSelect>
             {speakerUnsupported && (
               <p className="text-xs text-text-muted">
                 Output device selection is not supported in this browser — the system default is used.
@@ -373,7 +374,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
         <Section icon={Camera} title="Camera">
           <div className="space-y-1.5">
             <Label htmlFor="voice-cam-select">Camera</Label>
-            <select
+            <ThemedSelect
               id="voice-cam-select"
               className={selectCls}
               value={selectedDevices.cameraId ?? ''}
@@ -385,7 +386,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
                   {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
                 </option>
               ))}
-            </select>
+            </ThemedSelect>
             <p className="text-xs text-text-muted">
               Permission:{' '}
               <span className={cn('font-semibold', camPerm === 'granted' ? 'text-emerald-400' : camPerm === 'denied' ? 'text-rose-400' : 'text-amber-300')}>
@@ -396,7 +397,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="voice-cam-quality">Capture quality</Label>
-            <select
+            <ThemedSelect
               id="voice-cam-quality"
               className={selectCls}
               value={devicePrefs.cameraQuality ?? 'medium'}
@@ -405,7 +406,7 @@ export function DeviceSettingsModal({ onClose }: { onClose: () => void }) {
               <option value="low">Low (480p)</option>
               <option value="medium">Medium (720p)</option>
               <option value="high">High (1080p)</option>
-            </select>
+            </ThemedSelect>
           </div>
           <div className="space-y-2">
             <div className="flex items-center gap-3">

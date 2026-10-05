@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { apiJson } from '../services/api';
 import { Card, Button, Input, cn } from './ui';
+import { Select as ThemedSelect } from './Select';
 
 export interface ResourceItem {
   id: number;
@@ -321,7 +322,7 @@ export default function ResourcesView() {
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  <select
+                  <ThemedSelect
                     value={row.category}
                     onChange={(e) => updatePreviewRow(i, { category: e.target.value })}
                     className="w-full sm:w-56 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
@@ -329,7 +330,7 @@ export default function ResourcesView() {
                     {RESOURCE_CATEGORIES.map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
-                  </select>
+                  </ThemedSelect>
                 </div>
               ))}
             </div>

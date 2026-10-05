@@ -19,6 +19,7 @@ import {
   type VideoQuality,
 } from '../../voice';
 import { MicLevelMeter, StreamVideo } from './shared';
+import { Select as ThemedSelect } from '../Select';
 
 function SubSection({ icon: Icon, title, children }: { icon: any; title: string; children: React.ReactNode }) {
   return (
@@ -291,7 +292,7 @@ export function DeviceSettingsSection() {
       <SubSection icon={Mic} title="Microphone">
         <div className="space-y-1.5">
           <Label htmlFor="voice-mic-select">Input device</Label>
-          <select
+          <ThemedSelect
             id="voice-mic-select"
             className={selectCls}
             value={selectedDevices.micId ?? ''}
@@ -304,7 +305,7 @@ export function DeviceSettingsSection() {
                 {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
               </option>
             ))}
-          </select>
+          </ThemedSelect>
           {micUnsupported && <p id="voice-mic-perm" className="text-xs text-text-muted">No input devices found.</p>}
         </div>
 
@@ -375,7 +376,7 @@ export function DeviceSettingsSection() {
       <SubSection icon={Volume2} title="Speaker">
         <div className="space-y-1.5">
           <Label htmlFor="voice-speaker-select">Output device</Label>
-          <select
+          <ThemedSelect
             id="voice-speaker-select"
             className={selectCls}
             value={selectedDevices.speakerId ?? ''}
@@ -388,7 +389,7 @@ export function DeviceSettingsSection() {
                 {d.label || `Output ${d.deviceId.slice(0, 6)}`}
               </option>
             ))}
-          </select>
+          </ThemedSelect>
           {speakerUnsupported && (
             <p className="text-xs text-text-muted">
               Output device selection is not supported in this browser — the system default is used.
@@ -426,7 +427,7 @@ export function DeviceSettingsSection() {
       <SubSection icon={Camera} title="Camera">
         <div className="space-y-1.5">
           <Label htmlFor="voice-cam-select">Camera</Label>
-          <select
+          <ThemedSelect
             id="voice-cam-select"
             className={selectCls}
             value={selectedDevices.cameraId ?? ''}
@@ -438,12 +439,12 @@ export function DeviceSettingsSection() {
                 {d.label || `Camera ${d.deviceId.slice(0, 6)}`}
               </option>
             ))}
-          </select>
+          </ThemedSelect>
           {devices.videoinputs.length === 0 && <p className="text-xs text-text-muted">No cameras found.</p>}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="voice-cam-quality">Capture quality</Label>
-          <select
+          <ThemedSelect
             id="voice-cam-quality"
             className={selectCls}
             value={devicePrefs.cameraQuality ?? 'medium'}
@@ -452,7 +453,7 @@ export function DeviceSettingsSection() {
             <option value="low">Low (480p)</option>
             <option value="medium">Medium (720p)</option>
             <option value="high">High (1080p)</option>
-          </select>
+          </ThemedSelect>
         </div>
         <div className="space-y-2">
           <div className="flex items-center gap-3">

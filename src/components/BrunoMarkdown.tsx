@@ -44,7 +44,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
       </button>
       <pre
         ref={preRef}
-        className="bg-black/40 px-4 py-3 overflow-x-auto text-[12.5px] leading-relaxed custom-scrollbar"
+        className="bg-primary text-text-base px-4 py-3 overflow-x-auto text-[12.5px] leading-relaxed custom-scrollbar"
       >
         {children}
       </pre>
@@ -72,7 +72,8 @@ export function BrunoMarkdown({ children, className }: { children: string; class
   return (
     // Trim first/last block margins so bubbles hug the text evenly, like
     // big-company chat UIs — rigid, equally-spaced vertical rhythm.
-    <div className={`${className || ''} [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 text-[14px] leading-7`}>
+    // Inline code (not inside a fenced block) gets a token tint so it reads in light and dark themes.
+    <div className={`${className || ''} [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 text-[14px] leading-7 [&_:not(pre)>code]:rounded-md [&_:not(pre)>code]:bg-text-base/[0.07] [&_:not(pre)>code]:px-1.5 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:text-[0.9em] [&_:not(pre)>code]:text-text-base`}>
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -99,6 +100,9 @@ export function BrunoMarkdown({ children, className }: { children: string; class
           h2: ({ children }: any) => <h2 className="font-display text-base font-bold text-text-base mt-4 mb-2">{children}</h2>,
           h3: ({ children }: any) => <h3 className="text-sm font-bold text-text-base mt-3 mb-1.5">{children}</h3>,
           hr: () => <hr className="my-4 border-text-base/10" />,
+          a: ({ children, href }: any) => (
+            <a href={href} target="_blank" rel="noreferrer" className="text-info font-semibold underline underline-offset-2 hover:opacity-80">{children}</a>
+          ),
         }}
       >
         {children}

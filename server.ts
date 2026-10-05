@@ -127,6 +127,7 @@ import {
 } from "./server/ftcScout.js";
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
+import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
@@ -4693,6 +4694,40 @@ async function startServer() {
   });
 
   /**
+   * Bruno screen context: the page the user is on plus whatever record they
+   * have open. Every lookup is scoped to the caller's active workspace, so an
+   * id from another workspace (or a forged one) simply finds nothing.
+   */
+  async function screenContextFor(auth: { teamId: number | null }, raw: unknown): Promise<string> {
+    const req = parseScreenRequest(raw);
+    if (!req || auth.teamId == null) return "";
+    const found: ScreenLookups = {};
+    if (req.taskId) {
+      const t = (await dbGet("SELECT id, title, status, due_date, description FROM tasks WHERE id = ? AND team_id = ?", req.taskId, auth.teamId)) as any;
+      if (t) {
+        const who = (await dbAll(
+          "SELECT m.name FROM task_assignees ta JOIN members m ON m.id = ta.member_id WHERE ta.task_id = ? AND m.team_id = ? ORDER BY m.name LIMIT 8",
+          t.id, auth.teamId
+        )) as any[];
+        found.task = { id: t.id, title: String(t.title || ""), status: t.status ?? null, due_date: t.due_date ?? null, description: t.description ?? null, assignees: who.map((w) => String(w.name || "")).filter(Boolean) };
+      }
+    }
+    if (req.eventId) {
+      const e = (await dbGet("SELECT id, title, date, start_time, end_time, location, event_type, description FROM events WHERE id = ? AND team_id = ?", req.eventId, auth.teamId)) as any;
+      if (e) found.event = { id: e.id, title: String(e.title || ""), date: String(e.date || ""), start_time: e.start_time || null, end_time: e.end_time || null, location: e.location || null, event_type: e.event_type || null, description: e.description || null };
+    }
+    if (req.channelId) {
+      const c = (await dbGet("SELECT id, name, topic FROM chat_channels WHERE id = ? AND team_id = ?", req.channelId, auth.teamId)) as any;
+      if (c) found.channel = { id: c.id, name: String(c.name || ""), topic: c.topic || null };
+    }
+    if (req.codeFileId) {
+      const f = (await dbGet("SELECT id, file_path, language, file_size, updated_at FROM code_files WHERE id = ? AND team_id = ?", req.codeFileId, auth.teamId)) as any;
+      if (f) found.codeFile = { id: f.id, file_path: String(f.file_path || ""), language: f.language || null, file_size: f.file_size ?? null, updated_at: f.updated_at || null };
+    }
+    return formatScreenContext(req, found);
+  }
+
+  /**
    * Bruno scouting context (Analyze mode): the client sends only what it is
    * looking at; the server builds the pack from its own cached FTC data.
    */
@@ -9191,7 +9226,12 @@ Rules:
         console.error("[bruno] scouting context failed:", err);
         return "";
       });
-      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, scoutingCtx].filter(Boolean).join("\n\n");
+      // What the user is looking at (page + open record). Best-effort.
+      const screenCtx = await screenContextFor(auth, req.body?.screen).catch((err: unknown) => {
+        console.error("[bruno] screen context failed:", err);
+        return "";
+      });
+      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls

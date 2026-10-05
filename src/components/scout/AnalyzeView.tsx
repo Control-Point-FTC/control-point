@@ -16,6 +16,7 @@ import { useShortlist } from './useShortlist';
 import { eventAverages, partnerFit, scoutingPriorities, strengthsWeaknesses, teamMatches, winRate } from '../../utils/ftcAnalysis';
 import { TeamScoutView, MatchRow, MatchSheet, scoutWithBruno, type TeamActions } from './CompeteView';
 import { ALL_SEASONS, EmptyState, ErrorState, QuickPop, SeasonChip, SeasonPicker, Sheet, Skeleton, SourceBadge, fmt, placementClass, relTime, useIsNarrow } from './ScoutUi';
+import { Select as ThemedSelect } from '../Select';
 
 type View = 'team' | 'field' | 'shortlist';
 type SortKey = 'rank' | 'opr' | 'auto' | 'teleop' | 'endgame' | 'rp' | 'avgScore' | 'avgPen' | 'number';
@@ -213,11 +214,11 @@ function LeftPanel({ season, onSeasonChange, eventCode, eventOptions, onEvent, o
         </div>
         <div>
           <label htmlFor="scout-event" className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">Event</label>
-          <select id="scout-event" value={eventCode ?? ''} onChange={(e) => e.target.value && onEvent(e.target.value)}
+          <ThemedSelect id="scout-event" value={eventCode ?? ''} onChange={(e) => e.target.value && onEvent(e.target.value)}
             className="w-full rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2.5 text-sm text-text-base focus:outline-none focus:border-accent/60">
             {!eventOptions.length && <option value="">No events this season</option>}
             {eventOptions.map((o) => <option key={o.code} value={o.code}>{o.name}{o.date ? ` · ${o.date}` : ''}</option>)}
-          </select>
+          </ThemedSelect>
           <p className="text-[11px] text-text-muted mt-1">Events of the searched team (or yours). Defaults to the most recent or upcoming one.</p>
         </div>
       </div>
@@ -343,16 +344,16 @@ function EventField({ season, code, myTeam, shortlist, actions, onOpenTeam }: { 
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by number or name" aria-label="Filter teams"
             className="w-full rounded-xl bg-text-base/[0.04] border border-text-base/10 pl-9 pr-3 py-2 text-sm text-text-base placeholder:text-text-muted/70 focus:outline-none focus:border-accent/60" />
         </div>
-        <select value={round} onChange={(e) => setRound(e.target.value as typeof round)} aria-label="Round filter" className="rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base">
+        <ThemedSelect value={round} onChange={(e) => setRound(e.target.value as typeof round)} aria-label="Round filter" className="rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base">
           <option value="all">All rounds</option><option value="qual">Quals</option><option value="playoff">Playoffs</option>
-        </select>
-        <select value={color} onChange={(e) => setColor(e.target.value as typeof color)} aria-label="Alliance color filter" className="rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base">
+        </ThemedSelect>
+        <ThemedSelect value={color} onChange={(e) => setColor(e.target.value as typeof color)} aria-label="Alliance color filter" className="rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base">
           <option value="all">Any alliance</option><option value="red">Played red</option><option value="blue">Played blue</option>
-        </select>
+        </ThemedSelect>
         {narrow && (
-          <select value={`${sort.key}:${sort.dir}`} onChange={(e) => { const [k, d] = e.target.value.split(':'); setSort({ key: k as SortKey, dir: Number(d) as 1 | -1 }); }} aria-label="Sort" className="rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base">
+          <ThemedSelect value={`${sort.key}:${sort.dir}`} onChange={(e) => { const [k, d] = e.target.value.split(':'); setSort({ key: k as SortKey, dir: Number(d) as 1 | -1 }); }} aria-label="Sort" className="rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base">
             <option value="rank:1">Rank</option><option value="opr:-1">OPR</option><option value="auto:-1">Auto OPR</option><option value="teleop:-1">TeleOp OPR</option><option value="endgame:-1">Endgame OPR</option><option value="rp:-1">Ranking points</option><option value="avgPen:1">Fewest penalties</option>
-          </select>
+          </ThemedSelect>
         )}
       </div>
 
