@@ -66,8 +66,8 @@ export function clearScoutCache(): void {
   searchCache.invalidate();
 }
 
-async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const res = await apiFetch(url, { signal });
+async function getJson<T>(url: string, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+  const res = await apiFetch(url, { signal, timeoutMs });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ScoutHttpError(body?.error || `Request failed (${res.status})`, res.status);
   return body as T;
@@ -111,8 +111,8 @@ export async function searchScoutTeams(q: string, season: number): Promise<FtcTe
 /** Writes are queued, so a hung request must fail rather than block the queue. */
 const SHORTLIST_TIMEOUT_MS = 15_000;
 
-export async function fetchShortlist(season: number): Promise<ShortlistEntry[]> {
-  return (await getJson<{ entries: ShortlistEntry[] }>(`/api/ftc/shortlist?season=${season}`)).entries || [];
+export async function fetchShortlist(season: number, opts?: { timeoutMs?: number }): Promise<ShortlistEntry[]> {
+  return (await getJson<{ entries: ShortlistEntry[] }>(`/api/ftc/shortlist?season=${season}`, undefined, opts?.timeoutMs)).entries || [];
 }
 
 /** Save a field-level shortlist edit; returns the workspace's whole list. */
