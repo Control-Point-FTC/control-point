@@ -1,6 +1,7 @@
 // Control Point service worker — basic offline support.
 // Caches the app shell so the app loads fast and works offline-ish.
-const CACHE = 'control-point-v1';
+// Bump to drop cached static files (e.g. after the app icons change).
+const CACHE = 'control-point-v2';
 
 self.addEventListener('install', (event) => {
   // Activate immediately

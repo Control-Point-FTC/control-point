@@ -38,7 +38,7 @@ function LogoImage({ className }: { className?: string }) {
   }
   return (
     <img
-      src="/logo.png"
+      src="/logo.png?v=3"
       alt="Control Point logo"
       onError={() => setMissing(true)}
       className={cn('object-contain flex-shrink-0', className)}
