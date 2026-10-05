@@ -1514,10 +1514,42 @@ async function validateSession(sessionId: string): Promise<{ valid: boolean; mem
   }
 }
 
+// Stored files (/api/files/:id — avatars, chat images, emoji, …) are loaded
+// by plain <img> tags, which can't send the X-Session-ID header. The session
+// id is therefore mirrored into an HttpOnly cookie scoped to /api/files/ only
+// (see the middleware in startServer), and accepted from that cookie for GET
+// /api/files/* requests alone — every other route still needs the header, so
+// the cookie adds no CSRF surface beyond read-only file fetches.
+const FILES_COOKIE = "cp_files_sid";
+// Stored-file MIME types rendered inline (video/audio are allowed by prefix).
+// SVG is included: it can't run script inside <img>, and opened directly the
+// route's `sandbox` CSP blocks its scripts. HTML is never inline — see the
+// /api/files/:id route.
+const INLINE_SAFE_MIME = new Set([
+  "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/avif", "image/bmp", "image/x-icon",
+  "image/svg+xml",
+]);
+function readCookie(req: any, name: string): string | null {
+  const raw = String(req.headers?.cookie || "");
+  for (const part of raw.split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) {
+      try { return decodeURIComponent(part.slice(i + 1).trim()) || null; } catch { return null; }
+    }
+  }
+  return null;
+}
+function isFilesGet(req: any): boolean {
+  return req.method === "GET" && String(req.path || req.url || "").startsWith("/api/files/");
+}
+
 // Resolve the calling user + their workspace from a session id.
-// Looks in query (?sessionId=), JSON body, then the x-session-id header.
+// Looks in query (?sessionId=), JSON body, then the x-session-id header —
+// plus the files cookie, for GET /api/files/* only.
 function getSessionId(req: any): string | null {
-  return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string) || null;
+  return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string)
+    || (isFilesGet(req) ? readCookie(req, FILES_COOKIE) : null)
+    || null;
 }
 
 /**
@@ -1863,6 +1895,33 @@ async function startServer() {
   const wss = new WebSocketServer({ server });
 
   app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
+
+  // Keep the /api/files/ cookie in step with the session, so <img> tags for
+  // stored files authenticate (see FILES_COOKIE): from the X-Session-ID
+  // header on any API call, and from a sessionId handed out in a JSON
+  // response (login / signup / verify), so the very first render after
+  // signing in already has it. The value is validated on use.
+  app.use("/api", (req, res, next) => {
+    const have = readCookie(req, FILES_COOKIE);
+    const secure = req.secure || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+    let set: string | null = null;
+    const setFilesCookie = (sid: string) => {
+      if (!sid || sid === have || sid === set || res.headersSent) return;
+      set = sid;
+      res.append(
+        "Set-Cookie",
+        `${FILES_COOKIE}=${encodeURIComponent(sid)}; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`
+      );
+    };
+    const headerSid = req.headers["x-session-id"];
+    if (typeof headerSid === "string") setFilesCookie(headerSid);
+    const json = res.json.bind(res);
+    res.json = (body: any) => {
+      if (body && typeof body.sessionId === "string") setFilesCookie(body.sessionId);
+      return json(body);
+    };
+    next();
+  });
 
   // CORS for the GitHub Pages mirror (MIRROR_ORIGINS). Header-based sessions
   // mean no credentials flag is needed; the X-Session-ID header is allowlisted
@@ -3178,6 +3237,9 @@ async function startServer() {
 
   // Log out: invalidate the current session server-side
   app.post("/api/auth/logout", async (req, res) => {
+    // Expire the files cookie first, so it's cleared even if the session
+    // delete below fails.
+    res.append("Set-Cookie", `${FILES_COOKIE}=; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=0`);
     try {
       const sid = currentSessionId(req);
       if (sid) await dbRun("DELETE FROM sessions WHERE id = ?", sid);
@@ -4876,10 +4938,12 @@ async function startServer() {
       if (!auth) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(404).end();
+      // Metadata only: the BLOB is read after the auth + ETag checks, so a
+      // 304 revalidation never pulls the file out of the database.
       const f = (await dbGet(
-        `SELECT id, team_id, kind, filename, mime_type, data FROM stored_files WHERE id = ?`, id
+        `SELECT id, team_id, kind, filename, mime_type FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
       )) as any;
-      if (!f || !f.data) return res.status(404).end();
+      if (!f) return res.status(404).end();
       let email = String((auth as any).email || "");
       if (!email) {
         const me = (await dbGet(`SELECT email FROM members WHERE id = ?`, auth.memberId)) as any;
@@ -4889,14 +4953,29 @@ async function startServer() {
       if (!isOwner && f.kind !== "avatar") {
         if (!f.team_id || f.team_id !== auth.teamId) return res.status(403).end();
       }
-      const buf = Buffer.from(f.data as ArrayBuffer);
-      res.setHeader("Content-Type", f.mime_type || "application/octet-stream");
+      // Uploads are untrusted and their MIME type is whatever the uploader
+      // sent. Since the files cookie makes these URLs openable directly in a
+      // tab, only media renders inline; anything else (HTML, ...) is forced
+      // to an opaque download. The sandbox CSP + nosniff mean
+      // nothing served here can ever run script on the app's origin.
+      const mime = String(f.mime_type || "").toLowerCase().split(";")[0].trim();
+      const inlineSafe = INLINE_SAFE_MIME.has(mime) || mime.startsWith("video/") || mime.startsWith("audio/");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox");
+      // Revalidate every use (no stale reuse after logout / account switch);
+      // stored file content never changes, so an id-based ETag makes repeat
+      // loads a cheap 304 — after the auth checks above.
+      const etag = `"f${f.id}"`;
+      res.setHeader("ETag", etag);
+      res.setHeader("Cache-Control", "private, no-cache");
+      if (req.headers["if-none-match"] === etag) return res.status(304).end();
+      const row = (await dbGet(`SELECT data FROM stored_files WHERE id = ?`, f.id)) as any;
+      if (!row?.data) return res.status(404).end();
+      const buf = Buffer.from(row.data as ArrayBuffer);
+      res.setHeader("Content-Type", inlineSafe ? mime : "application/octet-stream");
       res.setHeader("Content-Length", buf.length);
-      res.setHeader("Cache-Control", "private, max-age=86400");
-      if (f.filename) {
-        const safe = String(f.filename).replace(/["\r\n]/g, "").slice(0, 120) || "file";
-        res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
-      }
+      const safe = String(f.filename || "file").replace(/["\r\n]/g, "").slice(0, 120) || "file";
+      res.setHeader("Content-Disposition", `${inlineSafe ? "inline" : "attachment"}; filename="${safe}"`);
       res.send(buf);
     } catch (e) {
       console.error("file serve error:", (e as any)?.message || e);
