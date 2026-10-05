@@ -2,7 +2,7 @@
 // event, alliance-selection scenarios, the whole field and every match.
 // All numbers come from the server's simulation engine (/api/predict/*);
 // the "How accurate is this?" sheet shows the back-test results.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Sparkles, Target, Users, ListOrdered, Swords, Info, RefreshCw, Settings as SettingsIcon, Trophy, Crown, Gauge, BarChart3, CircleHelp } from 'lucide-react';
 import { cn } from '../ui';
@@ -49,18 +49,31 @@ export function PredictView() {
   const [teamError, setTeamError] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(() => params.get('event'));
   const [tab, setTab] = useState<Tab>('odds');
-  const [fc, setFc] = useState<ForecastView | null>(null);
+  const [fcState, setFc] = useState<ForecastView | null>(null);
+  // Never show one event's forecast under another event's picker.
+  const fc = fcState && code && fcState.season === season && fcState.event.toUpperCase() === code.toUpperCase() ? fcState : null;
   const [fcError, setFcError] = useState<PredictError | null>(null);
   const [loading, setLoading] = useState(false);
   const [names, setNames] = useState<Map<number, string>>(new Map());
   const [accuracy, setAccuracy] = useState<PredictAccuracy | null>(null);
   const [showAccuracy, setShowAccuracy] = useState(false);
   const [autoStepped, setAutoStepped] = useState(() => params.has('season'));
+  const [teamReload, setTeamReload] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
+  // State -> URL.
   useEffect(() => {
     if (!code) return;
     if (params.get('season') === String(season) && params.get('event') === code) return;
     setParams({ season: String(season), event: code }, { replace: true });
-  }, [season, code, params, setParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [season, code]);
+  // URL -> state (back/forward, or a link to another forecast while on the page).
+  useEffect(() => {
+    const s = Number(params.get('season')), e = params.get('event');
+    if (Number.isInteger(s) && s >= 2019 && s <= currentFtcSeason() && s !== season) { setAutoStepped(true); setSeason(s); }
+    if (e && e !== code) setCode(e);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
 
   // Our team's events this season (advancing types only).
   useEffect(() => {
@@ -84,22 +97,29 @@ export function PredictView() {
     });
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season]);
+  }, [season, teamReload]);
 
   useEffect(() => { fetchPredictStatus().then((s) => setAccuracy(s.accuracy)).catch(() => {}); }, []);
 
+  // Every request (initial, Refresh, Try again) gets an id and only the latest
+  // may update state, so a slow answer for an old selection can't overwrite it.
+  const reqId = useRef(0);
   const load = useCallback((force?: boolean) => {
+    const id = ++reqId.current;
     if (!code) return;
-    let alive = true;
+    const latest = () => id === reqId.current;
     setLoading(true); setFcError(null);
-    fetchForecast(season, code, { force }).then((f) => { if (alive) setFc(f); })
-      .catch((e) => { if (alive) { setFc(null); setFcError(e instanceof PredictError ? e : new PredictError(String(e?.message ?? e), 0)); } })
-      .finally(() => { if (alive) setLoading(false); });
+    if (force) setRefreshKey((k) => k + 1); // re-runs the Alliance scenarios too
+    fetchForecast(season, code, { force }).then((f) => { if (latest()) setFc(f); })
+      .catch((e) => { if (latest()) { setFc(null); setFcError(e instanceof PredictError ? e : new PredictError(String(e?.message ?? e), 0)); } })
+      .finally(() => { if (latest()) setLoading(false); });
     // Team names for the event (shared client cache with Team Stats).
-    fetchScoutEvent(season, code).then((ev) => { if (alive) setNames(new Map(ev.field.map((t) => [t.teamNumber, t.name]))); }).catch(() => {});
-    return () => { alive = false; };
+    fetchScoutEvent(season, code).then((ev) => { if (latest()) setNames(new Map(ev.field.map((t) => [t.teamNumber, t.name]))); }).catch(() => {});
   }, [season, code]);
-  useEffect(() => load(), [load]);
+  useEffect(() => {
+    load();
+    return () => { reqId.current++; };
+  }, [load]);
 
   // Bruno sees the forecast on screen.
   useEffect(() => {
@@ -141,7 +161,9 @@ export function PredictView() {
         <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] items-end">
           <div className="min-w-0">
             <label htmlFor="predict-event" className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">Event</label>
-            {events == null ? <Skeleton className="h-10" /> : events.length ? (
+            {events == null ? <Skeleton className="h-10" /> : teamError ? (
+              <ErrorState message={teamError} onRetry={() => setTeamReload((n) => n + 1)} />
+            ) : events.length ? (
               <Select id="predict-event" value={code ?? ''} onChange={(e) => { setCode(e.target.value); setTab('odds'); }} className="w-full">
                 {events.map((e) => <option key={e.code} value={e.code}>{e.name}{e.date ? ` · ${e.date}` : ''}</option>)}
               </Select>
@@ -183,7 +205,7 @@ export function PredictView() {
       ) : fc ? (
         <>
           {tab === 'odds' && <OddsTab fc={fc} myTeam={myTeam} />}
-          {tab === 'alliance' && <AllianceTab season={season} code={code} fc={fc} nameOf={nameOf} myTeam={myTeam} />}
+          {tab === 'alliance' && <AllianceTab season={season} code={code} fc={fc} nameOf={nameOf} myTeam={myTeam} refreshKey={refreshKey} />}
           {tab === 'field' && <FieldTab fc={fc} nameOf={nameOf} myTeam={myTeam} />}
           {tab === 'matches' && <MatchesTab fc={fc} myTeam={myTeam} />}
           {fc.assumptions.length > 0 && (
@@ -292,15 +314,16 @@ function OddsTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null }) {
 // Alliance ("who should we pick" / "best captains for us")
 // ---------------------------------------------------------------------------
 
-function AllianceTab({ season, code, fc, nameOf, myTeam }: { season: number; code: string; fc: ForecastView; nameOf: (t: number) => string; myTeam: number | null }) {
+function AllianceTab({ season, code, fc, nameOf, myTeam, refreshKey }: { season: number; code: string; fc: ForecastView; nameOf: (t: number) => string; myTeam: number | null; refreshKey: number }) {
   const [data, setData] = useState<Partners | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     setData(null); setErr(null);
-    fetchPartners(season, code).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
+    // Refresh on the page bumps refreshKey and re-runs these scenarios.
+    fetchPartners(season, code, { force: refreshKey > 0 }).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
     return () => { alive = false; };
-  }, [season, code]);
+  }, [season, code, refreshKey]);
   if (!myTeam) return <EmptyState title="Connect your FTC team" body="Alliance scenarios are worked out for your team." />;
   if (err) return <ErrorState message={err} />;
   if (!data) return (
@@ -364,7 +387,8 @@ function FieldTab({ fc, nameOf, myTeam }: { fc: ForecastView; nameOf: (t: number
             <div className="flex items-center gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-text-base truncate">{t.team} <span className="font-medium text-text-muted">{nameOf(t.team)}</span></p>
-                <p className="text-[11px] text-text-muted">Rank {rankRange(t.rank.p10, t.rank.p90)} · captain {pct(t.pCaptain)} · win {pct(t.pWin)}</p>
+                <p className="text-[11px] text-text-muted">Rank {rankRange(t.rank.p10, t.rank.p90)} · captain {pct(t.pCaptain)} · picked {pct(t.pPicked)}</p>
+                <p className="text-[11px] text-text-muted">Win {pct(t.pWin)} · {t.points.matchPoints.toFixed(1)} match pts</p>
               </div>
               <span className="text-lg font-display font-bold text-text-base tabular-nums">{pre.has(t.team) ? 'Q' : pct(t.pAdvance)}</span>
             </div>
@@ -415,8 +439,6 @@ function FieldTab({ fc, nameOf, myTeam }: { fc: ForecastView; nameOf: (t: number
 function MatchesTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null }) {
   const [mine, setMine] = useState(!!myTeam);
   const list = useMemo(() => (fc.matches ?? []).filter((m) => !mine || !myTeam || m.red.includes(myTeam) || m.blue.includes(myTeam)), [fc.matches, mine, myTeam]);
-  const played = list.filter((m) => m.played);
-  const called = played.filter((m) => (m.pRedWin >= 0.5) === (m.played!.red > m.played!.blue) && m.played!.red !== m.played!.blue).length;
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -425,26 +447,32 @@ function MatchesTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null })
             <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="accent-[var(--color-accent)]" /> Only team {myTeam}'s matches
           </label>
         )}
-        {played.length > 0 && <span className="text-xs text-text-muted">Called {called} of {played.length} played matches correctly</span>}
+        <span className="text-xs text-text-muted">Upcoming matches show predicted scores and win odds; played ones show the result.</span>
       </div>
       {!list.length ? <EmptyState title="No matches yet" body="The match schedule appears here once it's published." /> : (
         <ul className="space-y-1.5">
           {list.map((m) => {
-            const favRed = m.pRedWin >= 0.5;
-            const right = m.played ? (m.played.red === m.played.blue ? null : (m.played.red > m.played.blue) === favRed) : null;
+            const p = m.pRedWin;
+            const favRed = p != null && p >= 0.5;
+            const won = m.played ? (m.played.red === m.played.blue ? 'Tie' : m.played.red > m.played.blue ? 'Red won' : 'Blue won') : null;
             return (
               <li key={m.key} className="card-surface p-3 grid grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3">
                 <span className="text-xs font-bold text-text-muted">{m.label}</span>
                 <div className="min-w-0 space-y-1">
                   <Side color="red" teams={m.red} myTeam={myTeam} mean={m.redMean} actual={m.played?.red} />
                   <Side color="blue" teams={m.blue} myTeam={myTeam} mean={m.blueMean} actual={m.played?.blue} />
-                  <div className="flex h-1.5 rounded-full overflow-hidden" title={`Red ${pct(m.pRedWin)} · Blue ${pct(1 - m.pRedWin)}`}>
-                    <div className="bg-red-500" style={{ width: `${m.pRedWin * 100}%` }} /><div className="bg-blue-500 flex-1" />
-                  </div>
+                  {p != null && (
+                    <div className="flex h-1.5 rounded-full overflow-hidden" title={`Red ${pct(p)} · Blue ${pct(1 - p)}`}>
+                      <div className="bg-red-500" style={{ width: `${p * 100}%` }} /><div className="bg-blue-500 flex-1" />
+                    </div>
+                  )}
                 </div>
                 <div className="text-right text-xs">
-                  <p className={cn('font-bold', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? m.pRedWin : 1 - m.pRedWin)}</p>
-                  {right != null && <p className={cn('font-bold', right ? 'text-emerald-500' : 'text-rose-500')}>{right ? 'Called it' : 'Upset'}</p>}
+                  {won ? (
+                    <p className={cn('font-bold', won === 'Red won' ? 'text-red-500' : won === 'Blue won' ? 'text-blue-500' : 'text-text-muted')}>{won}</p>
+                  ) : p != null ? (
+                    <p className={cn('font-bold', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? p : 1 - p)}</p>
+                  ) : <p className="text-text-muted" title="Which two robots will play isn't known yet">No prediction</p>}
                 </div>
               </li>
             );
@@ -455,12 +483,14 @@ function MatchesTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null })
   );
 }
 
-function Side({ color, teams, myTeam, mean, actual }: { color: 'red' | 'blue'; teams: number[]; myTeam: number | null; mean: number; actual?: number }) {
+function Side({ color, teams, myTeam, mean, actual }: { color: 'red' | 'blue'; teams: number[]; myTeam: number | null; mean: number | null; actual?: number }) {
   return (
     <div className="flex items-center gap-1.5 text-xs">
       <span className={cn('w-2 h-2 rounded-full shrink-0', color === 'red' ? 'bg-red-500' : 'bg-blue-500')} />
       {teams.map((t) => <span key={t} className={cn('px-1.5 py-0.5 rounded-md font-bold tabular-nums', t === myTeam ? 'bg-accent text-accent-ink' : 'bg-text-base/[0.06] text-text-base')}>{t}</span>)}
-      <span className="ml-auto tabular-nums text-text-muted">~{Math.round(mean)}{actual != null && <span className="font-bold text-text-base"> · {actual}</span>}</span>
+      <span className="ml-auto tabular-nums text-text-muted">
+        {actual != null ? <span className="font-bold text-text-base">{actual}</span> : mean != null ? `~${Math.round(mean)}` : null}
+      </span>
     </div>
   );
 }

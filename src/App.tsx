@@ -2176,6 +2176,8 @@ export default function App() {
     setSessionId(null);
     setTeams([]);
     setTeamsLoaded(false);
+    // Team-specific client caches (FTC data, forecasts, Bruno screen context).
+    clearTeamCaches();
     if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
     setSocket(null);
   };
@@ -2267,7 +2269,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  const studentTabIds = ['dashboard', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);

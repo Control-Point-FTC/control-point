@@ -69,9 +69,12 @@ export interface ForecastMatch {
   level: "qual" | "playoff";
   red: number[];
   blue: number[];
-  pRedWin: number;
-  redMean: number;
-  blueMean: number;
+  /** Prediction from current ratings; null for played matches (current ratings
+   *  already include the result, so it wouldn't be a real prediction) and for
+   *  playoff alliances listing three robots (which two played is unknown). */
+  pRedWin: number | null;
+  redMean: number | null;
+  blueMean: number | null;
   /** Real final scores once played. */
   played: { red: number; blue: number } | null;
 }
@@ -385,9 +388,9 @@ export class PredictEngine {
     const teams: ForecastTeam[] = [...res.values()].map((o) => this.teamView(o, book, o.team === myTeam));
     const matches: ForecastMatch[] = ev.matches.filter((m) => m.red.teams.length && m.blue.teams.length).slice(0, 400).map((m) => {
       const red = m.red.teams.map((t) => t.number), blue = m.blue.teams.map((t) => t.number);
-      const p = predictMatch(book, red, blue, M.noise);
+      const p = !m.played && red.length <= 2 && blue.length <= 2 ? predictMatch(book, red, blue, M.noise) : null;
       return {
-        key: m.key, label: m.label, level: m.level, red, blue, pRedWin: p.pRedWin, redMean: p.red.mean, blueMean: p.blue.mean,
+        key: m.key, label: m.label, level: m.level, red, blue, pRedWin: p?.pRedWin ?? null, redMean: p?.red.mean ?? null, blueMean: p?.blue.mean ?? null,
         played: m.played && m.red.score?.total != null && m.blue.score?.total != null ? { red: m.red.score.total, blue: m.blue.score.total } : null,
       };
     });

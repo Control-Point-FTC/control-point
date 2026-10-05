@@ -28,7 +28,7 @@ const forecast = {
   stage: 'pre', slots: 4, slotsSource: 'estimated', runs: 2000, generatedAt: new Date().toISOString(),
   teams: [team(1111, 0.9), team(4215, 0.63)], prequalified: [], matchesOnly: { pAdvance: 0.55 },
   assumptions: ['Advancement slots are estimated.'],
-  matches: [{ key: 'Q-1', label: 'Q-1', level: 'qual', red: [4215, 1111], blue: [2222, 3333], pRedWin: 0.7, redMean: 120, blueMean: 90, played: null }],
+  matches: [{ key: 'Q-1', label: 'Q-1', level: 'qual', red: [4215, 1111], blue: [2222, 3333], pRedWin: 0.7, redMean: 120, blueMean: 90, played: null }, { key: "Q-2", label: "Q-2", level: "qual", red: [4215, 2222], blue: [1111, 3333], pRedWin: null, redMean: null, blueMean: null, played: { red: 150, blue: 90 } }],
 };
 
 beforeEach(() => {
@@ -47,7 +47,7 @@ describe('PredictView', () => {
       ev('USNJCMP', 'Championship', '2099-03-15'),
       ev('USNJCMPPKWY', 'Championship', '2099-03-15'),
     ]));
-    predict.fetchForecast.mockResolvedValue(forecast);
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) => ({ ...forecast, season, event }));
     setScreenRoute('/predict', 'Predict');
     renderView();
     expect((await screen.findAllByText('63%')).length).toBeGreaterThan(0);
@@ -58,12 +58,14 @@ describe('PredictView', () => {
 
   it('lists matches with our team highlighted', async () => {
     scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
-    predict.fetchForecast.mockResolvedValue(forecast);
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) => ({ ...forecast, season, event }));
     renderView('/predict?season=2025&event=USNJCMPPKWY');
     await screen.findAllByText('63%');
     fireEvent.click(screen.getByRole('tab', { name: /matches/i }));
     expect(screen.getByText('Q-1')).toBeInTheDocument();
     expect(screen.getByText('Red 70%')).toBeInTheDocument();
+    expect(screen.getByText('Red won')).toBeInTheDocument();
+    expect(screen.queryByText(/called it/i)).not.toBeInTheDocument();
   });
 
   it('explains warm-up and unsupported events instead of erroring', async () => {
@@ -75,5 +77,18 @@ describe('PredictView', () => {
     predict.fetchForecast.mockRejectedValue(new PredictError('warming', 503));
     renderView();
     expect(await screen.findByText(/warming up/i)).toBeInTheDocument();
+  });
+});
+
+describe('PredictView selection', () => {
+  it("doesn't show an old event's forecast while another event loads", async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('AAA', 'Qualifier', '2099-01-01'), ev('BBB', 'Qualifier', '2099-02-01')]));
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) =>
+      event === 'AAA' ? { ...forecast, season, event } : new Promise(() => {}));
+    renderView();
+    await screen.findAllByText('63%');
+    fireEvent.click(screen.getByRole('combobox', { name: /event/i }));
+    fireEvent.click(await screen.findByText(/Event BBB/));
+    expect(screen.queryByText('63%')).not.toBeInTheDocument();
   });
 });
