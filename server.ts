@@ -2582,9 +2582,11 @@ async function startServer() {
         }
       } else if (avatarUrl && r.avatar_url && /^https?:\/\//.test(r.avatar_url)) {
         // Existing external OAuth avatar: migrate it to local storage so it
-        // can't break later when the provider URL expires.
+        // can't break later when the provider URL expires. Fetch the FRESH
+        // provider URL (avatarUrl), not the stored one — the stored one may
+        // already be dead, which is why we're migrating.
         try {
-          const resp = await fetch(r.avatar_url, { signal: AbortSignal.timeout(8000) });
+          const resp = await fetch(avatarUrl, { signal: AbortSignal.timeout(8000) });
           const buf = Buffer.from(await resp.arrayBuffer());
           const ctype = resp.headers.get('content-type') || '';
           if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
@@ -9501,6 +9503,38 @@ Rules:
 
   // One-time boot cleanup: remove duplicate voice channels for every team.
   dedupeVoiceChannels(voiceDeps).catch((e) => console.warn('[voice] boot dedupe failed:', e?.message));
+
+  // Boot backfill: migrate external avatar URLs to local storage. Broken
+  // (expired) ones get cleared so they fall back to initials instead of
+  // showing broken images.
+  (async () => {
+    try {
+      const rows = (await dbAll(
+        "SELECT id, avatar_url FROM members WHERE avatar_url LIKE 'http%' AND COALESCE(is_active, 1) = 1"
+      )) as any[];
+      for (const r of rows) {
+        try {
+          const resp = await fetch(r.avatar_url, { signal: AbortSignal.timeout(8000) });
+          const buf = Buffer.from(await resp.arrayBuffer());
+          const ctype = resp.headers.get('content-type') || '';
+          if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
+            const fid = await storeFile({
+              teamId: null, memberId: r.id, kind: 'avatar',
+              filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
+            });
+            await dbRun("UPDATE members SET avatar_url = ? WHERE id = ?", fileUrl(fid), r.id);
+            console.log(`[avatar-backfill] migrated avatar for member ${r.id}`);
+          } else if (resp.status === 404 || resp.status === 410) {
+            // URL is dead — clear it so the UI falls back to initials.
+            await dbRun("UPDATE members SET avatar_url = NULL WHERE id = ?", r.id);
+            console.log(`[avatar-backfill] cleared dead avatar for member ${r.id}`);
+          }
+        } catch { /* network error — leave it for next boot */ }
+      }
+    } catch (e) {
+      console.warn('[avatar-backfill] failed:', (e as any)?.message);
+    }
+  })();
 }
 
 startServer();
