@@ -77,7 +77,7 @@ export function DashboardPreview({ onClose }: { onClose?: () => void }) {
               </div>
             ))}
           </div>
-          <button className="px-4 py-2 rounded-xl text-xs font-bold bg-accent text-accent-ink">
+          <button className="px-4 py-2 rounded-xl text-xs font-bold bg-accent text-accent-ink" tabIndex={-1} aria-hidden="true">
             Primary button
           </button>
         </div>
@@ -132,7 +132,8 @@ export function DashboardPreview({ onClose }: { onClose?: () => void }) {
             else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
           }}
         >
-          <button className="absolute inset-0 bg-black/60 cursor-default" aria-label="Close preview" onClick={() => setExpanded(false)} />
+          {/* Backdrop: click to close; kept out of the Tab order (Shrink is the keyboard control). */}
+          <button className="absolute inset-0 bg-black/60 cursor-default" aria-label="Close preview" tabIndex={-1} onClick={() => setExpanded(false)} />
           <div className="relative w-[min(1100px,94vw)] h-[min(680px,82vh)] flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <p className="text-xs font-bold text-white uppercase tracking-widest">Preview</p>
