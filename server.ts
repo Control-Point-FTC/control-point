@@ -7965,6 +7965,7 @@ Rules:
   // when the user confirms an event. Parse it, validate, strip it from the
   // visible text. Returns { text, event } where event is null when absent/invalid.
   const EVENT_BLOCK_RE = /```event\s*\r?\n([\s\S]*?)\r?\n```/;
+  const SCOUT_BLOCK_RE = /```scout-team\s*\r?\n([\s\S]*?)\r?\n```/;
   // Bruno calendar skill: the model ends its reply with a fenced ```event block
   // (a JSON object OR array) when the user confirms calendar events. Parse,
   // validate, strip. Events are only PROPOSED here — the client shows a
@@ -7991,6 +7992,27 @@ Rules:
       if (valid.length && valid.length <= 20) events = valid;
     } catch { /* malformed JSON — treat as no events */ }
     return { text: src.replace(EVENT_BLOCK_RE, "").trim(), events };
+  }
+
+  // Bruno scouting skill: the model ends its reply with a fenced ```scout-team
+  // block (a JSON object OR array of {number} entries) when the user asks about
+  // other teams. Parse, validate, strip. The backend fetches the stats and
+  // appends a summary to the reply.
+  function extractScoutBlock(fullText: string): { text: string; numbers: number[] | null } {
+    const src = String(fullText || "");
+    const m = src.match(SCOUT_BLOCK_RE);
+    if (!m) return { text: src, numbers: null };
+    let numbers: number[] | null = null;
+    try {
+      const raw = JSON.parse(m[1]);
+      const arr = Array.isArray(raw) ? raw : [raw];
+      const valid = arr.map((p: any) => {
+        const n = parseInt(p?.number, 10);
+        return Number.isFinite(n) && n > 0 && n < 100000 ? n : null;
+      }).filter(Boolean) as number[];
+      if (valid.length && valid.length <= 3) numbers = valid;
+    } catch { /* malformed JSON — treat as no scout request */ }
+    return { text: src.replace(SCOUT_BLOCK_RE, "").trim(), numbers };
   }
 
   // Bruno calendar skill: the model ends its reply with a fenced ```delete-event
@@ -8310,6 +8332,7 @@ Rules:
         t = extractCommunicationsBlock(t).text;
         t = extractTasksBlock(t).text;
         t = extractBudgetBlock(t).text;
+        t = extractScoutBlock(t).text;
         return t;
       };
       // Optional chat persistence: validate access, store the user message now
@@ -8395,7 +8418,31 @@ Rules:
         signal: nonStreamAbort.signal,
       });
       const result = aiReply.text;
-      const finalResult = stripActionBlocks(String(result || ""));
+      const scout = extractScoutBlock(String(result || ""));
+      let finalResult = stripActionBlocks(String(result || ""));
+      // If Bruno requested team scouting, fetch the stats and append a summary.
+      if (scout.numbers?.length) {
+        const season = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+        const summaries: string[] = [];
+        for (const num of scout.numbers) {
+          try {
+            const p = await getFtcTeamPayload(num, season).catch(() => null);
+            if (p) {
+              const opr = p.opr || {};
+              const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
+              const evts = (p.events || []).slice(0, 3).map((e: any) =>
+                `${e.name}${e.rank ? ` (#${e.rank})` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}`
+              ).join('; ');
+              summaries.push(`**Team ${p.number} — ${p.name}**: OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`);
+            } else {
+              summaries.push(`**Team ${num}**: no data found for ${season} season`);
+            }
+          } catch { summaries.push(`**Team ${num}**: lookup failed`); }
+        }
+        if (summaries.length) {
+          finalResult += `\n\n---\n**Scouting data** (FTC Scout, ${season} season):\n\n${summaries.join('\n\n')}`;
+        }
+      }
       const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
       logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
       if (chat) {
