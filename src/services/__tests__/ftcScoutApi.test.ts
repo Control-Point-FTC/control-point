@@ -143,33 +143,47 @@ describe('Bruno scouting context', () => {
   });
 });
 
-describe('stamped shortlist merge (server ordering)', () => {
+describe('shortlist write ordering (server merge)', () => {
   const e0: ShortlistEntry = { teamNumber: 7, teamName: 'T7', season: 2025, eventCode: null, notes: 'old', priority: 'medium', scoutNext: false, strengths: [], weaknesses: [], updatedAt: '' };
-  const live = (stamps: Record<string, number> = {}) => ({ entry: e0, stamps, deleted: false });
+  const A = (seq: number) => ({ client: 'tab-aaaaaaaa', seq });
+  const B = (seq: number) => ({ client: 'tab-bbbbbbbb', seq });
+  const live = (stamps = {}) => ({ entry: e0, stamps, deleted: false });
+  const P = { season: 2025, teamNumber: 7 };
 
-  it('a delayed older save cannot overwrite a newer edit of the same field', () => {
-    const newer = mergeStampedPatch(live(), { season: 2025, teamNumber: 7, notes: 'new' }, 200, 't')!;
-    const late = mergeStampedPatch({ entry: newer.entry, stamps: newer.stamps, deleted: false }, { season: 2025, teamNumber: 7, notes: 'stale', priority: 'high' }, 100, 't')!;
+  it("ignores a client's own older request that arrives late, field by field", () => {
+    const newer = mergeStampedPatch(live(), { ...P, notes: 'new' }, A(2), 't')!;
+    const late = mergeStampedPatch({ ...live(newer.stamps), entry: newer.entry }, { ...P, notes: 'stale', priority: 'high' }, A(1), 't')!;
     expect(late.entry.notes).toBe('new');
-    expect(late.entry.priority).toBe('high'); // untouched field still applies
+    expect(late.entry.priority).toBe('high');
   });
 
-  it('per-tag stamps: a late add cannot undo a newer remove', () => {
-    const add = mergeStampedPatch(live(), { season: 2025, teamNumber: 7, addStrengths: ['Auto'] }, 100, 't')!;
-    const rm = mergeStampedPatch({ entry: add.entry, stamps: add.stamps, deleted: false }, { season: 2025, teamNumber: 7, removeStrengths: ['Auto'] }, 300, 't')!;
-    const lateAdd = mergeStampedPatch({ entry: rm.entry, stamps: rm.stamps, deleted: false }, { season: 2025, teamNumber: 7, addStrengths: ['Auto'] }, 200, 't')!;
+  it('applies other members in arrival order, regardless of their sequence numbers', () => {
+    const a = mergeStampedPatch(live(), { ...P, notes: 'from A' }, A(50), 't')!;
+    const b = mergeStampedPatch({ ...live(a.stamps), entry: a.entry }, { ...P, notes: 'from B' }, B(1), 't')!;
+    expect(b.entry.notes).toBe('from B');
+  });
+
+  it('per-tag ordering: a late add cannot undo the same client\'s newer remove', () => {
+    const add = mergeStampedPatch(live(), { ...P, addStrengths: ['Auto'] }, A(1), 't')!;
+    const rm = mergeStampedPatch({ ...live(add.stamps), entry: add.entry }, { ...P, removeStrengths: ['Auto'] }, A(3), 't')!;
+    const lateAdd = mergeStampedPatch({ ...live(rm.stamps), entry: rm.entry }, { ...P, addStrengths: ['Auto'] }, A(2), 't')!;
     expect(lateAdd.entry.strengths).toEqual([]);
   });
 
-  it('deletes leave a tombstone: older saves are ignored, newer saves re-add', () => {
-    const stamps = mergeStampedDelete(live({ notes: 100 }), 200)!;
-    const dead = { entry: e0, stamps, deleted: true };
-    expect(mergeStampedPatch(dead, { season: 2025, teamNumber: 7, notes: 'late' }, 150, 't')).toBeNull();
-    const revived = mergeStampedPatch(dead, { season: 2025, teamNumber: 7, teamName: 'T7' }, 250, 't')!;
-    expect(revived.entry.notes).toBe('');
+  it('a late save cannot resurrect what its client deleted; stamps survive re-add', () => {
+    const notes = mergeStampedPatch(live(), { ...P, notes: 'x' }, A(5), 't')!;
+    const stamps = mergeStampedDelete({ ...live(notes.stamps), entry: notes.entry }, A(6))!;
+    const dead = { entry: notes.entry, stamps, deleted: true };
+    expect(mergeStampedPatch(dead, { ...P, notes: 'late' }, A(4), 't')).toBeNull();
+    const readd = mergeStampedPatch(dead, { ...P, teamName: 'T7' }, B(1), 't')!;
+    expect(readd.entry.notes).toBe('');
+    const lateNotes = mergeStampedPatch({ entry: readd.entry, stamps: readd.stamps, deleted: false }, { ...P, notes: 'pre-delete' }, A(3), 't')!;
+    expect(lateNotes.entry.notes).toBe('');
   });
 
-  it('a delete issued before a newer edit is ignored', () => {
-    expect(mergeStampedDelete(live({ notes: 300 }), 200)).toBeNull();
+  it("ignores a client's late delete after its own newer edit", () => {
+    const edit = mergeStampedPatch(live(), { ...P, notes: 'keep' }, A(9), 't')!;
+    expect(mergeStampedDelete({ ...live(edit.stamps), entry: edit.entry }, A(8))).toBeNull();
+    expect(mergeStampedDelete({ ...live(edit.stamps), entry: edit.entry }, B(1))).not.toBeNull();
   });
 });

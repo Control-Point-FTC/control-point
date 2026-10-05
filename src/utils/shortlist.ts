@@ -5,8 +5,6 @@
 import type { ShortlistEntry, ShortlistPriority } from '../types/ftcScout';
 
 export interface ShortlistPatch {
-  /** Client edit time (ms since epoch); orders concurrent or delayed saves. */
-  editedAt?: number;
   season: number;
   teamNumber: number;
   teamName?: string;
@@ -63,15 +61,20 @@ export function applyShortlistPatch(existing: ShortlistEntry | null, patch: Shor
   };
 }
 
-// ---- Server-side merge with per-field edit times ----
+// ---- Server-side merge: per-client write ordering ----
 //
-// Each patch carries the client's edit time. A field (or a single tag) only
-// changes if this edit is at least as new as the last one applied to it, so
-// a delayed or retried save can't overwrite a newer edit no matter when it
-// arrives. Deletes leave a tombstone with their time: older saves can't
-// resurrect the entry, newer ones re-add it.
+// The shortlist is shared, so edits from different members apply in the
+// order the server receives them (the server serializes each entry's
+// read-merge-write). What must not happen is one client's *own* delayed or
+// retried request (e.g. a save that timed out but still arrives) overwriting
+// a newer edit that client already made. So every write carries an origin:
+// a random per-tab client id plus a sequence number that only ever goes up
+// in that tab. For each field (and each tag) the server remembers the origin
+// of the last write it applied, and ignores a write from the same client
+// with a lower sequence. No device clocks are involved.
 
-export type FieldStamps = Record<string, number>;
+export interface WriteOrigin { client: string; seq: number }
+export type FieldStamps = Record<string, WriteOrigin>;
 
 export interface StoredShortlistEntry {
   entry: ShortlistEntry | null;
@@ -81,40 +84,51 @@ export interface StoredShortlistEntry {
 
 const SCALAR_FIELDS = ['teamName', 'eventCode', 'notes', 'priority', 'scoutNext'] as const;
 
-/** Result of a stamped merge, or null when the patch is older than a delete. */
+/** Is `o` allowed to overwrite whatever wrote `key` last? */
+function supersedes(stamps: FieldStamps, key: string, o: WriteOrigin): boolean {
+  const last = stamps[key];
+  return !last || last.client !== o.client || o.seq > last.seq;
+}
+
+/**
+ * Merge a patch into the stored entry. Null = ignore it: it's an older
+ * request from the client that has since deleted the entry.
+ */
 export function mergeStampedPatch(
   stored: StoredShortlistEntry,
   patch: ShortlistPatch,
-  editedAt: number,
+  origin: WriteOrigin,
   updatedAt: string
 ): { entry: ShortlistEntry; stamps: FieldStamps } | null {
-  const deletedAt = stored.stamps._deleted ?? 0;
-  if (stored.deleted && editedAt < deletedAt) return null;
-  const reviving = stored.deleted || !stored.entry;
-  const stamps: FieldStamps = reviving ? { _deleted: deletedAt } : { ...stored.stamps };
-  const newer = (key: string) => editedAt >= (stamps[key] ?? 0);
+  if (stored.deleted && !supersedes(stored.stamps, '_deleted', origin)) return null;
+  // Stamps survive a delete + re-add, so a pre-delete request arriving late
+  // still can't touch fields written after it.
+  const stamps: FieldStamps = { ...stored.stamps };
   const allowed: ShortlistPatch = { season: patch.season, teamNumber: patch.teamNumber };
   for (const k of SCALAR_FIELDS) {
-    if (patch[k] === undefined || !newer(k)) continue;
+    if (patch[k] === undefined || !supersedes(stamps, k, origin)) continue;
     (allowed as unknown as Record<string, unknown>)[k] = patch[k];
-    stamps[k] = editedAt;
+    stamps[k] = origin;
   }
   const tagOps = (list: string[] | undefined, prefix: string) => {
-    const out = (list ?? []).map(cleanTag).filter((t) => t && newer(`${prefix}:${t}`));
-    out.forEach((t) => { stamps[`${prefix}:${t}`] = editedAt; });
+    const out = (list ?? []).map(cleanTag).filter((t) => t && supersedes(stamps, `${prefix}:${t}`, origin));
+    out.forEach((t) => { stamps[`${prefix}:${t}`] = origin; });
     return out.length ? out : undefined;
   };
   allowed.addStrengths = tagOps(patch.addStrengths, 's');
   allowed.removeStrengths = tagOps(patch.removeStrengths, 's');
   allowed.addWeaknesses = tagOps(patch.addWeaknesses, 'w');
   allowed.removeWeaknesses = tagOps(patch.removeWeaknesses, 'w');
-  const entry = applyShortlistPatch(reviving ? null : stored.entry, allowed, updatedAt);
+  const entry = applyShortlistPatch(stored.deleted ? null : stored.entry, allowed, updatedAt);
   return { entry, stamps };
 }
 
-/** Stamps after a delete, or null when an edit newer than the delete exists. */
-export function mergeStampedDelete(stored: StoredShortlistEntry, editedAt: number): FieldStamps | null {
-  const newest = Math.max(0, ...Object.entries(stored.stamps).filter(([k]) => k !== '_deleted').map(([, v]) => v));
-  if (!stored.deleted && newest > editedAt) return null;
-  return { ...stored.stamps, _deleted: Math.max(editedAt, stored.stamps._deleted ?? 0) };
+/**
+ * Stamps after a delete. Null = ignore it: the same client already made a
+ * newer edit to this entry (its delete request arrived late).
+ */
+export function mergeStampedDelete(stored: StoredShortlistEntry, origin: WriteOrigin): FieldStamps | null {
+  const newerOwnEdit = Object.values(stored.stamps).some((s) => s.client === origin.client && s.seq > origin.seq);
+  if (newerOwnEdit) return null;
+  return { ...stored.stamps, _deleted: origin };
 }

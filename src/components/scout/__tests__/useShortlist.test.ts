@@ -6,6 +6,7 @@ const api = vi.hoisted(() => ({
   fetchShortlist: vi.fn(),
   saveShortlistPatch: vi.fn(),
   removeShortlistEntry: vi.fn(),
+  nextShortlistWrite: vi.fn(),
 }));
 vi.mock('../../../services/ftcScoutApi', () => api);
 
@@ -23,6 +24,8 @@ function deferred<T>() {
 
 beforeEach(() => {
   Object.values(api).forEach((f) => f.mockReset());
+  let seq = 0;
+  api.nextShortlistWrite.mockImplementation(() => ({ clientId: 'test-client', seq: ++seq }));
 });
 
 describe('useShortlist', () => {

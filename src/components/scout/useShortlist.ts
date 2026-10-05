@@ -9,7 +9,7 @@
 // list (plus any still-pending edits) and reports why.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ShortlistEntry } from '../../types/ftcScout';
-import { fetchShortlist, removeShortlistEntry, saveShortlistPatch } from '../../services/ftcScoutApi';
+import { fetchShortlist, nextShortlistWrite, removeShortlistEntry, saveShortlistPatch } from '../../services/ftcScoutApi';
 import { applyShortlistPatch, type ShortlistPatch } from '../../utils/shortlist';
 
 /** Wait before re-reading the list after a timed-out write. */
@@ -106,7 +106,8 @@ export function useShortlist(season: number) {
   }, [season]);
 
   const patch = useCallback((p: Omit<ShortlistPatch, 'season'>) => {
-    const full: ShortlistPatch = { ...p, season, editedAt: Date.now() };
+    const full: ShortlistPatch = { ...p, season };
+    const origin = nextShortlistWrite();
     const now = new Date().toISOString();
     enqueue({
       apply: (list) => {
@@ -114,13 +115,13 @@ export function useShortlist(season: number) {
         const next = applyShortlistPatch(i === -1 ? null : list[i], full, now);
         return i === -1 ? [...list, next] : list.map((x, j) => (j === i ? next : x));
       },
-      send: () => saveShortlistPatch(full),
+      send: () => saveShortlistPatch(full, origin),
     });
   }, [season, enqueue]);
 
   const remove = useCallback((teamNumber: number) => {
-    const editedAt = Date.now();
-    enqueue({ apply: (list) => list.filter((x) => x.teamNumber !== teamNumber), send: () => removeShortlistEntry(season, teamNumber, editedAt) });
+    const origin = nextShortlistWrite();
+    enqueue({ apply: (list) => list.filter((x) => x.teamNumber !== teamNumber), send: () => removeShortlistEntry(season, teamNumber, origin) });
   }, [season, enqueue]);
 
   return { entries, loaded, error, patch, remove };

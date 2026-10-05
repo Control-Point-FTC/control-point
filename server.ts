@@ -125,7 +125,7 @@ import {
   type FirstEventPieces,
   type ScoutEventParsed,
 } from "./server/ftcScout.js";
-import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry } from "./src/utils/shortlist.js";
+import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
@@ -4588,8 +4588,18 @@ async function startServer() {
   });
 
   // Shortlist writes (see src/utils/shortlist.ts): field-level patches merged
-  // into the stored row using per-field client edit times, so delayed or
-  // retried requests can't overwrite newer edits or resurrect deleted teams.
+  // into the stored row. Each entry's read-merge-write runs under a lock, and
+  // per-field write origins stop a client's own delayed request from
+  // overwriting its newer edit or resurrecting a team it deleted.
+  const shortlistLocks = new Map<string, Promise<unknown>>();
+  function withShortlistLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = shortlistLocks.get(key) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tail = run.catch(() => {});
+    shortlistLocks.set(key, tail);
+    void tail.then(() => { if (shortlistLocks.get(key) === tail) shortlistLocks.delete(key); });
+    return run;
+  }
   async function storedShortlist(teamId: number, season: number, teamNumber: number): Promise<StoredShortlistEntry> {
     const rows = (await dbAll(
       "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND team_number = ?",
@@ -4600,16 +4610,20 @@ async function startServer() {
     let stamps: FieldStamps = {};
     try {
       const parsed = JSON.parse(String(r.field_ts || "{}"));
-      if (parsed && typeof parsed === "object") for (const [k, v] of Object.entries(parsed)) if (typeof v === "number" && Number.isFinite(v)) stamps[k] = v;
+      if (parsed && typeof parsed === "object") {
+        for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
+          if (v && typeof v.client === "string" && Number.isInteger(v.seq)) stamps[k] = { client: v.client, seq: v.seq };
+        }
+      }
     } catch { stamps = {}; }
     return { entry: shortlistRow(r), stamps, deleted: Number(r.deleted) === 1 };
   }
 
-  /** Client edit time, clamped so a skewed clock can't lock fields far into the future. */
-  function editTime(raw: unknown): number {
-    const now = Date.now();
-    const t = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
-    return Number.isFinite(t) && t > 0 ? Math.min(t, now + 60_000) : now;
+  /** Write origin from the request; without one, the write always applies. */
+  function writeOrigin(client: unknown, seq: unknown): WriteOrigin {
+    const c = typeof client === "string" && /^[A-Za-z0-9-]{8,64}$/.test(client) ? client : `anon-${crypto.randomUUID()}`;
+    const n = typeof seq === "number" ? seq : parseInt(String(seq ?? ""), 10);
+    return { client: c, seq: Number.isSafeInteger(n) && n >= 0 ? n : 0 };
   }
 
   async function writeShortlistRow(teamId: number, memberId: number | null, e: ShortlistEntry, stamps: FieldStamps, deleted: boolean) {
@@ -4648,10 +4662,13 @@ async function startServer() {
       addWeaknesses: tagList(b.addWeaknesses),
       removeWeaknesses: tagList(b.removeWeaknesses),
     };
-    const stored = await storedShortlist(auth.teamId!, season, teamNumber);
-    const merged = mergeStampedPatch(stored, patch, editTime(b.editedAt), new Date().toISOString());
-    // null = this save is older than a delete of the entry: ignore it.
-    if (merged) await writeShortlistRow(auth.teamId!, auth.memberId, merged.entry, merged.stamps, false);
+    const origin = writeOrigin(b.clientId, b.seq);
+    await withShortlistLock(`${auth.teamId}:${season}:${teamNumber}`, async () => {
+      const stored = await storedShortlist(auth.teamId!, season, teamNumber);
+      const merged = mergeStampedPatch(stored, patch, origin, new Date().toISOString());
+      // null = an older request from a client that has since deleted the entry.
+      if (merged) await writeShortlistRow(auth.teamId!, auth.memberId, merged.entry, merged.stamps, false);
+    });
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 
@@ -4661,12 +4678,14 @@ async function startServer() {
     const season = parseSeason(req.query.season);
     const teamNumber = parseInt(String(req.query.team || ""), 10);
     if (season == null || !teamNumber) return res.status(400).json({ error: "Season and team number are required" });
-    const stored = await storedShortlist(auth.teamId!, season, teamNumber);
-    if (stored.entry) {
-      const stamps = mergeStampedDelete(stored, editTime(req.query.editedAt));
-      // null = someone edited the entry after this delete was issued: keep it.
+    const origin = writeOrigin(req.query.clientId, req.query.seq);
+    await withShortlistLock(`${auth.teamId}:${season}:${teamNumber}`, async () => {
+      const stored = await storedShortlist(auth.teamId!, season, teamNumber);
+      if (!stored.entry || stored.deleted) return;
+      const stamps = mergeStampedDelete(stored, origin);
+      // null = the same client already made a newer edit (late delete): keep it.
       if (stamps) await writeShortlistRow(auth.teamId!, auth.memberId, stored.entry, stamps, true);
-    }
+    });
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 
