@@ -9747,21 +9747,22 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
-      const targetId = Number(req.params.id);
-      const rows: any[] = (await dbAll("SELECT id, parent_id FROM communications WHERE team_id = ?", auth.teamId));
-      if (!rows.some((r: any) => r.id === targetId)) return res.status(404).json({ error: "Not found" });
-      // Collect the entry plus every descendant at any depth so no orphaned
-      // replies survive a thread delete.
-      const toDelete = new Set<number>();
-      const stack: number[] = [targetId];
-      while (stack.length) {
-        const cur = stack.pop()!;
-        if (toDelete.has(cur)) continue;
-        toDelete.add(cur);
-        for (const r of rows) if (r.parent_id === cur) stack.push(r.id);
-      }
-      const ids = [...toDelete];
-      (await dbRun(`DELETE FROM communications WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids));
+      const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      // Delete the entry and every descendant in ONE statement (recursive CTE)
+      // so a reply saved concurrently cannot slip between a read and the
+      // delete and survive as an orphaned thread.
+      (await dbRun(
+        `WITH RECURSIVE descendants(id) AS (
+           SELECT id FROM communications WHERE id = ? AND team_id = ?
+           UNION
+           SELECT c.id FROM communications c
+           JOIN descendants d ON c.parent_id = d.id
+           WHERE c.team_id = ?
+         )
+         DELETE FROM communications WHERE id IN (SELECT id FROM descendants)`,
+        req.params.id, auth.teamId, auth.teamId
+      ));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting communication:", error);
