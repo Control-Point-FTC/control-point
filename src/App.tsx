@@ -9784,7 +9784,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-2 -ml-1 text-text-muted hover:text-text-base" aria-label="Open channels">
             <Menu className="w-5 h-5" />
           </button>
-          <img src="/logo.png" alt="" className="w-5 h-5 rounded-md flex-shrink-0" />
+          <img src="/logo.png?v=3" alt="" className="w-5 h-5 rounded-md flex-shrink-0" />
           <h3 className="text-[15px] font-bold text-text-base truncate">{activeChannel?.name || 'general'}</h3>
           {activeChannel?.topic && (
             <p className="hidden sm:block text-xs text-text-muted truncate border-l border-text-base/10 pl-2 ml-1">{activeChannel.topic}</p>
