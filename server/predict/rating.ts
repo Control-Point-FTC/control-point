@@ -219,6 +219,19 @@ export class RatingBook {
     }
   }
 
+  /** Independent copy of the whole book (ratings, baseline, history, clock). */
+  clone(): RatingBook {
+    const c = new RatingBook(this.params);
+    for (const [t, r] of this.ratings) c.ratings.set(t, { ...r });
+    c.base = { ...this.base };
+    c.baseSq = { ...this.baseSq };
+    c.baseReady = this.baseReady;
+    c.history = new Map([...this.history].map(([t, h]) => [t, [...h]]));
+    c.season = this.season;
+    c.now = this.now;
+    return c;
+  }
+
   /** Copy of current ratings, grown to now (for "as of event start" snapshots). */
   snapshot(): Map<number, TeamRating> {
     const m = new Map<number, TeamRating>();

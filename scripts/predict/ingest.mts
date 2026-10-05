@@ -7,39 +7,13 @@
 //   npx tsx scripts/predict/ingest.mts 2025 2024 2023 2022
 import { mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SCOUT_EVENT_LIST_QUERY, scoutEventQuery } from "../../server/predict/scoutData.ts";
 
 const API = "https://api.ftcscout.org/graphql";
 const ROOT = join(process.cwd(), ".cache", "predict", "scout");
 const CONCURRENCY = 3;
 const MIN_GAP_MS = 150; // per worker, between requests
 
-/** Alliance score fields per season (totals + game-part split + RP flags). */
-function allianceFields(season: number): string {
-  const common = "autoPoints dcPoints penaltyPointsCommitted penaltyPointsByOpp totalPointsNp totalPoints";
-  if (season === 2025) return `${common} dcBasePoints movementRp goalRp patternRp`;
-  if (season === 2024) return `${common} dcParkPoints`;
-  return `${common} egPoints`;
-}
-
-function eventQuery(season: number): string {
-  return `query E($season: Int!, $code: String!) {
-    eventByCode(season: $season, code: $code) {
-      code divisionCode name type start end remote hybrid timezone
-      location { state country }
-      awards { type placement teamNumber }
-      teams { teamNumber stats { __typename ... on TeamEventStats${season} { rank rp wins losses ties qualMatchesPlayed } } }
-      matches {
-        matchNum series tournamentLevel hasBeenPlayed actualStartTime scheduledStartTime
-        teams { teamNumber alliance station surrogate dq onField }
-        scores { __typename ... on MatchScores${season} { red { ${allianceFields(season)} } blue { ${allianceFields(season)} } } }
-      }
-    }
-  }`;
-}
-
-const LIST_QUERY = `query L($season: Int!) {
-  eventsSearch(season: $season, hasMatches: true, limit: 10000) { code type start end remote hybrid divisionCode }
-}`;
 
 async function gql(query: string, variables: Record<string, unknown>, tries = 5): Promise<any> {
   for (let i = 0; ; i++) {
@@ -61,11 +35,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function ingestSeason(season: number) {
   const dir = join(ROOT, String(season));
   mkdirSync(dir, { recursive: true });
-  const list = (await gql(LIST_QUERY, { season })).data.eventsSearch as any[];
+  const list = (await gql(SCOUT_EVENT_LIST_QUERY, { season })).data.eventsSearch as any[];
   writeFileSync(join(dir, "_events.json"), JSON.stringify(list));
   const todo = list.filter((e) => !existsSync(join(dir, `${e.code}.json`)));
   console.log(`[${season}] ${list.length} events with matches, ${todo.length} to fetch`);
-  const q = eventQuery(season);
+  const q = scoutEventQuery(season);
   let done = 0, failed = 0;
   const worker = async () => {
     while (todo.length) {

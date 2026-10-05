@@ -109,9 +109,12 @@ import {
   getFirstEventsMatches,
   getFirstEventsSchedule,
   getFirstEventsAlliances,
+  getFirstEventsAdvancement,
   FirstEventsError,
   matchKey,
 } from "./server/ftcEvents.js";
+import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
+import { PredictStore } from "./server/predict/store.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
 import {
   SCOUT_SEASONS,
@@ -4691,6 +4694,129 @@ async function startServer() {
       if (stamps) await writeShortlistRow(auth.teamId!, auth.memberId, stored.entry, stamps, true);
     });
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
+  });
+
+  // -------------------------------------------------------------------------
+  // Predict (Compete → Predict): advancement odds, partner scenarios, matches.
+  // The engine keeps its own match history on disk (PREDICT_DATA_DIR) synced
+  // from FTC Scout + FIRST in the background; live event data comes from the
+  // same cached event payload as Team Stats.
+  // -------------------------------------------------------------------------
+  const predictSeasons = [currentFtcSeason() - 2, currentFtcSeason() - 1, currentFtcSeason()].filter((s) => SUPPORTED_SEASONS.includes(s));
+  const predictStore = new PredictStore(process.env.PREDICT_DATA_DIR || path.join(process.cwd(), ".data", "predict"), {
+    scout: (query, variables) => ftcQuery(query, variables),
+    advancement: (season, code) => (isFirstEventsConfigured() ? getFirstEventsAdvancement(season, code) : Promise.resolve(null)),
+    gapMs: 150,
+    log: (m) => console.log(m),
+  });
+  const predictEngine = new PredictEngine(predictStore, predictSeasons);
+  let predictSyncing = false;
+  async function syncPredict(): Promise<void> {
+    if (predictSyncing) return;
+    predictSyncing = true;
+    try {
+      for (const s of predictSeasons) {
+        // Older seasons are complete: download once, then leave them alone.
+        if (s < currentFtcSeason() - 1 && predictStore.hasSeason(s)) continue;
+        const n = await predictStore.syncScout(s);
+        const a = await predictStore.syncAdvancement(s);
+        if (n || a) console.log(`[predict] ${s}: ${n} events, ${a} advancement lists updated`);
+      }
+      await predictEngine.rebuild();
+      predictCache.clear();
+      console.log(`[predict] ratings rebuilt (${predictSeasons.join(", ")})`);
+    } catch (e) {
+      console.error("[predict] sync failed:", (e as Error).message);
+    } finally {
+      predictSyncing = false;
+    }
+  }
+  const predictCache = new Map<string, { at: number; ttl: number; data: unknown }>();
+  async function cachedPredict<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
+    const hit = predictCache.get(key);
+    if (hit && Date.now() - hit.at < hit.ttl) return hit.data as T;
+    const data = await fn();
+    predictCache.set(key, { at: Date.now(), ttl, data });
+    if (predictCache.size > 500) predictCache.delete(predictCache.keys().next().value!);
+    return data;
+  }
+  if (process.env.NODE_ENV !== "test") {
+    // Build from whatever is on disk right away (PREDICT_SYNC=off skips the
+    // background download, e.g. for local testing), then keep it fresh.
+    setTimeout(() => { predictEngine.rebuild().catch((e) => console.warn("[predict] initial build failed:", (e as Error).message)); }, 5_000);
+    if (process.env.PREDICT_SYNC !== "off") {
+      setTimeout(() => void syncPredict(), 30_000);
+      setInterval(() => void syncPredict(), 2 * 60 * 60 * 1000);
+    }
+  }
+
+  async function myFtcTeam(teamId: number | null): Promise<number | null> {
+    const row = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
+    return parseInt(row?.ftc_team_number, 10) || null;
+  }
+
+  app.get("/api/predict/status", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy });
+  });
+
+  app.get("/api/predict/event", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const code = String(req.query.code || "");
+    if (season == null || !EVENT_CODE_RE.test(code)) return res.status(400).json({ error: "Season and event code are required" });
+    if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+    try {
+      const ev = await cachedEventFull(season, code);
+      if (!ev) return res.status(404).json({ error: "Event not found" });
+      const myTeam = await myFtcTeam(auth.teamId);
+      const live = !ev.matches.length || ev.matches.some((m) => !m.played);
+      const why = predictEngine.unsupportedReason(ev);
+      if (why) return res.status(422).json({ error: why });
+      const fc = await cachedPredict<Forecast | null>(`event:${season}:${code}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => predictEngine.forecast(ev, myTeam));
+      if (!fc) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+      res.json({ ...fc, eventName: ev.name, eventStart: ev.start, eventEnd: ev.end, myTeam });
+    } catch (e) {
+      if (e instanceof FtcUnavailableError) return res.status(503).json({ error: "FTC data is temporarily unavailable." });
+      throw e;
+    }
+  });
+
+  app.get("/api/predict/partners", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const code = String(req.query.code || "");
+    if (season == null || !EVENT_CODE_RE.test(code)) return res.status(400).json({ error: "Season and event code are required" });
+    if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+    const myTeam = await myFtcTeam(auth.teamId);
+    if (!myTeam) return res.status(400).json({ error: "Connect your FTC team number in Settings first." });
+    try {
+      const ev = await cachedEventFull(season, code);
+      if (!ev) return res.status(404).json({ error: "Event not found" });
+      const live = ev.matches.some((m) => !m.played);
+      const out = await cachedPredict<Partners | null>(`partners:${season}:${code}:${myTeam}`, live ? 2 * 60_000 : 10 * 60_000, () => predictEngine.partners(ev, myTeam));
+      if (!out) return res.status(404).json({ error: "Your team isn't registered for this event." });
+      res.json(out);
+    } catch (e) {
+      if (e instanceof FtcUnavailableError) return res.status(503).json({ error: "FTC data is temporarily unavailable." });
+      throw e;
+    }
+  });
+
+  app.get("/api/predict/match", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const list = (v: unknown) => String(v || "").split(",").map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 999999);
+    const red = list(req.query.red), blue = list(req.query.blue);
+    if (season == null || !red.length || !blue.length || red.length > 3 || blue.length > 3) return res.status(400).json({ error: "Season plus 1–3 red and blue team numbers are required" });
+    if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+    const p = predictEngine.match(season, red, blue);
+    if (!p) return res.status(404).json({ error: "No ratings for that season yet." });
+    res.json({ season, red: { teams: red, ...p.red }, blue: { teams: blue, ...p.blue }, pRedWin: p.pRedWin });
   });
 
   /**
