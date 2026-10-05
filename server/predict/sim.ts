@@ -183,15 +183,24 @@ export function simulateEvent(input: SimInput): Map<number, TeamOutcome> {
       const A = allianceCount(n);
       const taken = new Set<number>();
       alliances = [];
+      const fpair = input.forcePartner;
       for (let k = 0; k < A; k++) {
-        const captain = ranked.find((t) => !taken.has(t));
+        let captain = ranked.find((t) => !taken.has(t));
+        // A forced pair must get an alliance: if it is still unplaced when the
+        // last alliance is formed, its higher-seeded team captains it.
+        if (fpair && k === A - 1 && !taken.has(fpair.team) && !taken.has(fpair.partner)) {
+          captain = (rankOf.get(fpair.team) ?? Infinity) <= (rankOf.get(fpair.partner) ?? Infinity) ? fpair.team : fpair.partner;
+        }
         if (captain == null) break;
         taken.add(captain);
         let partner: number | undefined;
         const fp = input.forcePartner;
-        if (fp && (fp.team === captain) && !taken.has(fp.partner)) partner = fp.partner;
+        // Partner scenario: the pair is protected — whichever of the two is
+        // seeded first captains and takes the other; no one else can pick them.
+        const forced = fp && (captain === fp.team || captain === fp.partner) ? (captain === fp.team ? fp.partner : fp.team) : undefined;
+        if (forced != null && !taken.has(forced)) partner = forced;
         else {
-          const cands = ranked.filter((t) => !taken.has(t) && !(fp && t === fp.partner && fp.team !== captain && !taken.has(fp.team)));
+          const cands = ranked.filter((t) => !taken.has(t) && !(fp && (t === fp.team || t === fp.partner)));
           if (cands.length) {
             const w = cands.map((t) => Math.exp(str.get(t)!.np / pick.tau - pick.rankWeight * (rankOf.get(t)! / n)));
             const sum = w.reduce((a, b) => a + b, 0);
@@ -203,9 +212,6 @@ export function simulateEvent(input: SimInput): Map<number, TeamOutcome> {
         if (partner != null) taken.add(partner);
         alliances.push(partner != null ? [captain, partner] : [captain]);
       }
-      // A forced partnership with a non-captain: they end up together on the
-      // alliance of whichever is picked first — approximate by merging if the
-      // forced team was picked by someone else (rare in practice).
     }
     alliances.forEach((al, i) => {
       const c = acc.get(al[0]); if (c) c.cap++;

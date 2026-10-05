@@ -29,6 +29,8 @@ export interface Row {
   opr: number;           // baseline: last-event OPR difference (points)
   y: number;             // 1 red won, 0 blue won, 0.5 tie
   muR: number; muB: number; sdR: number; sdB: number; actR: number; actB: number;
+  /** Live rating uncertainty summed over each alliance's robots (points²). */
+  uncR: number; uncB: number;
 }
 
 /** Ridge-regularised OPR (non-penalty) from an event's qualification matches. */
@@ -95,7 +97,7 @@ export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseP
       if (opts.report.has(season)) {
         const exp = (teams: number[], src?: Map<number, TeamRating>) => {
           let np = 0, pen = 0, unc = 0;
-          for (const t of teams) { const r = src?.get(t) ?? book.get(t); np += npOf(r); pen += r.pen; unc += r.uncertainty; }
+          for (const t of teams) { const r = src?.get(t) ?? book.get(t); np += npOf(r); pen += r.pen; unc += r.uncertainty + (src ? opts.noise.preExtra ?? 0 : 0); }
           return { np, pen, unc };
         };
         const prob = (src?: Map<number, TeamRating>) => {
@@ -103,7 +105,7 @@ export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseP
           const muR = r.np + b.pen, muB = b.np + r.pen;
           const sR = Math.hypot(opts.noise.a + opts.noise.b * Math.max(0, muR), Math.sqrt(r.unc));
           const sB = Math.hypot(opts.noise.a + opts.noise.b * Math.max(0, muB), Math.sqrt(b.unc));
-          return { p: phi((muR - muB) / Math.hypot(sR, sB)), muR, muB, sR, sB };
+          return { p: phi((muR - muB) / Math.hypot(sR, sB)), muR, muB, sR, sB, uncR: r.unc, uncB: b.unc };
         };
         const live = prob();
         const pre = prob(preSnap.get(m.eventCode));
@@ -117,7 +119,7 @@ export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseP
           live: live.p, pre: pre.p,
           avg: sum(m.red.teams, avgOf) - sum(m.blue.teams, avgOf),
           opr: sum(m.red.teams, oprOf) - sum(m.blue.teams, oprOf),
-          y, muR: live.muR, muB: live.muB, sdR: live.sR, sdB: live.sB, actR: m.red.total, actB: m.blue.total,
+          y, muR: live.muR, muB: live.muB, sdR: live.sR, sdB: live.sB, actR: m.red.total, actB: m.blue.total, uncR: live.uncR, uncB: live.uncB,
         });
       }
       // Fold the result in (ratings + baselines).

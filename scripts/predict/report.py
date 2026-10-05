@@ -43,6 +43,12 @@ add(
     f"{s25['interval80Coverage'] * 100:.0f}%. Accuracy rises from {first * 100:.0f}% in a team's first match of the "
     f"season to {late * 100:.0f}% after 10+ matches.\n"
 )
+add(
+    "Score uncertainty (σ = a + b·mean, plus each robot's rating uncertainty) was refitted on 2024–25 by likelihood so "
+    "score ranges are honest; predictions made from an event-start snapshot add extra per-robot variance "
+    f"({tuned.get('preExtra', 0)} pts², also fitted on 2024–25) because a team's level moves during an event. These "
+    "were fitted after the first 2025–26 test run, so the 2025–26 numbers here are a second look at the test season.\n"
+)
 
 e25 = ev[(2025, "model")]
 add(f"## 2. Whole-event advancement odds (2025–26 test, {e25['events']} events, {e25['advancement']['pre']['n']:,} team-events)\n")
@@ -56,7 +62,21 @@ add(f"| Naive: top-ranked eligible teams advance (needs quals results) | {bl['br
 add("\nCalibration before the event (predicted → actual): "
     + ", ".join(f"{b['meanP'] * 100:.0f}%→{b['rate'] * 100:.0f}%" for b in e25["calibrationPre"] if b["n"]) + ".\n")
 
-add("## 3. Components\n")
+pt = e25.get("partners")
+if pt:
+    add("## 3. Partner scenarios (\"if we pick…\")\n")
+    add(
+        "Each real alliance was simulated from the end of quals with its actual pairing forced, then compared with what "
+        "happened. Knowing the partner should beat the general after-quals odds, which average over every possible partner.\n"
+    )
+    add("| Prediction | With the real partner forced | General after-quals odds |\n|---|---|---|")
+    for key, label, base in (("win", "Alliance wins the event", "winUnconditional"), ("advCaptain", "Captain advances", "advCaptainUnconditional"), ("advPartner", "First pick advances", None)):
+        x = pt[key]
+        other = f"Brier {pt[base]['brier']:.3f}, calibration error {pt[base]['ece']:.3f}" if base else "—"
+        add(f"| {label} ({x['n']:,}) | Brier {x['brier']:.3f}, calibration error {x['ece']:.3f} | {other} |")
+    add("")
+
+add("## 4. Components\n")
 add(
     f"- **Alliance selection:** captains pick by a softmax over strength and rank (τ={pk['pick']['tau']}, rank weight "
     f"{pk['pick']['rankWeight']}, fitted on 2024–25). The real first pick was in the model's top 3 for "
@@ -73,7 +93,7 @@ add(
     "season), awards earlier this season, robot strength. One judged award per team per event."
 )
 
-add("\n## 4. Rules (read off official data)\n")
+add("\n## 5. Rules (read off official data)\n")
 add("- 2025–26 advancement points = quals + alliance selection + playoffs + awards (1,786/1,786 totals). Quals: "
     "`ceil(erfinv((N−2R+2)/(1.07N))·7/erfinv(1/1.07) + 9)` (780/789; the 9 misses are a team-count mismatch at two "
     "events). Alliance: captain and 1st pick get 21 − alliance #. Playoffs 40/20/10/5. Awards: Inspire 60/30/15, other "
@@ -83,10 +103,27 @@ add("- Ranking: 2025–26 RP = 3 win / 1 tie + movement, goal, pattern bonuses; 
 add("- Alliances: ≤10 teams 2, ≤20 4, ≤40 6, else 8. Double-elimination brackets for 4/6/8 alliances with a grand-final "
     "rematch; 2 alliances play a best-of-3.")
 
-add("\n## 5. Tuned settings (2024–25)\n")
+add("\n## 6. Tuned settings (2024–25)\n")
 add("```json\n" + json.dumps(tuned, indent=1) + "\n```")
 
-add("\n## 6. Known limits\n")
+add("\n## 7. How to reproduce\n")
+add("Run from the repo root (FIRST API credentials in `FTC_EVENTS_USERNAME` / `FTC_EVENTS_TOKEN` for step 2):\n")
+add("```bash\n"
+    "npx tsx scripts/predict/ingest.mts 2025 2024 2023 2022                 # 1. FTC Scout matches → .cache/predict/scout\n"
+    "npx tsx scripts/predict/ingest-first.mts 2025 2024                     # 2. FIRST advancement data → .cache/predict/first\n"
+    "npx tsx scripts/predict/tune.mts --tune 2024 --rounds 2                # 3. rating settings (2024–25)\n"
+    "npx tsx scripts/predict/fit-noise.mts --tune 2024                      # 4. score uncertainty a, b, preExtra (2024–25)\n"
+    "npx tsx scripts/predict/backtest-matches.mts --seasons 2022,2023,2024,2025 --report 2024,2025 \\\n"
+    "  --params '<rating settings>' --noise '<a, b, preExtra>' --quiet --json .cache/predict/final-test.json   # 5. match test\n"
+    "npx tsx scripts/predict/backtest-events.mts --season 2024 --fit-pick --awards none --runs 50 --limit 1   # 6. pick model (2024–25)\n"
+    "npx tsx scripts/predict/fit-awards.mts                                  # 7. award model (fit 2024–25, test 2025–26)\n"
+    "npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards model --partners   # 8. event test\n"
+    "npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards none\n"
+    "python scripts/predict/report.py                                       # 9. this report\n"
+    "```")
+add("\nSteps 3–4 write `.cache/predict/tuned-2024.json`; steps 5–8 read it.")
+
+add("\n## 8. Known limits\n")
 add("- Robot changes between events only show up once a team plays again.\n"
     "- Bonus-RP chances (2025–26) were fitted on the season's earliest 20% of matches (bonuses didn't exist before).\n"
     "- Alliance declines and 3-team championship alliances aren't modelled.\n"

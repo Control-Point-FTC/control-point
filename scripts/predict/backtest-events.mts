@@ -28,8 +28,9 @@ const awardMode = (arg("awards") ?? "actual") as "actual" | "model" | "none";
 const awardModel: AwardModel | null = awardMode === "model" ? JSON.parse(readFileSync(".cache/predict/awards-model.json", "utf8")).model : null;
 const awardRecords: AwardRecord[] = [];
 const tuned = JSON.parse(readFileSync(".cache/predict/tuned-2024.json", "utf8")).best;
-const { a, b, ...ratingParams } = tuned;
-const noise = { a, b };
+const { a, b, preExtra, noiseFit: _nf, ...ratingParams } = tuned;
+const noise = { a, b, preExtra };
+const partnerCheck = process.argv.includes("--partners");
 
 // ---------------------------------------------------------------------------
 // Replay the rating timeline, snapshotting each event at start and after quals.
@@ -184,6 +185,7 @@ const rankChecks: { pred: number; p10: number; p90: number; actual: number }[] =
 const capOut: ProbOutcome[] = [], pickedOut: ProbOutcome[] = [];
 const baselineTopN: ProbOutcome[] = [];
 let simulated = 0;
+const partnerOut = { win: [] as ProbOutcome[], winUnconditional: [] as ProbOutcome[], advCaptain: [] as ProbOutcome[], advCaptainUnconditional: [] as ProbOutcome[], advPartner: [] as ProbOutcome[] };
 const awardsByTeam = indexAwards(awardRecords);
 const t0 = Date.now();
 for (const { e, off } of limit ? work.slice(0, limit) : work) {
@@ -214,7 +216,8 @@ for (const { e, off } of limit ? work.slice(0, limit) : work) {
   }
   const common = { season, noise, bonus, pick, awards: awardsInput, prequalified: o.prequalified, ineligible: o.ineligible, slots: o.slots, runs, seed: 7 };
   const stages: [Stage, Parameters<typeof simulateEvent>[0]][] = [
-    ["pre", { ...common, ratings: snapPre.get(e.code)!, quals }],
+    // Predicting ahead from the event start: widen each robot's uncertainty (fitted on 2024–25).
+    ["pre", { ...common, ratings: new Map([...snapPre.get(e.code)!].map(([t, r]) => [t, { ...r, uncertainty: r.uncertainty + (preExtra ?? 0) }])), quals }],
     ["quals", { ...common, ratings: snapQuals.get(e.code)!, quals: playedQuals, ranks: e.ranks }],
     ["selected", { ...common, ratings: snapQuals.get(e.code)!, quals: playedQuals, ranks: e.ranks, alliances: o.alliances.length ? o.alliances : undefined }],
   ];
@@ -231,6 +234,25 @@ for (const { e, off } of limit ? work.slice(0, limit) : work) {
         capOut.push({ p: r.pCaptain, y: caps.has(t) ? 1 : 0 });
         pickedOut.push({ p: r.pPicked, y: picked.has(t) ? 1 : 0 });
       }
+    }
+  }
+  // Partner scenario check: force each real alliance at the end of quals.
+  if (partnerCheck && o.alliances.length) {
+    const winners = new Set(e.awards.filter((x) => x.type === "Winner").map((x) => x.team));
+    const base = simulateEvent({ ...common, ratings: snapQuals.get(e.code)!, quals: playedQuals, ranks: e.ranks, runs: 500 });
+    for (const al of o.alliances) {
+      if (al.length < 2) continue;
+      const [cap, pk] = al;
+      const res = simulateEvent({ ...common, ratings: snapQuals.get(e.code)!, quals: playedQuals, ranks: e.ranks, runs: 500, forcePartner: { team: cap, partner: pk } });
+      const rc = res.get(cap), rp = res.get(pk), bc = base.get(cap);
+      if (!rc || !rp || !bc) continue;
+      partnerOut.win.push({ p: rc.pWin, y: winners.has(cap) && winners.has(pk) ? 1 : 0 });
+      partnerOut.winUnconditional.push({ p: bc.pWin, y: winners.has(cap) ? 1 : 0 });
+      if (!o.prequalified.has(cap) && !o.ineligible.has(cap)) {
+        partnerOut.advCaptain.push({ p: rc.pAdvance, y: o.advanced.has(cap) ? 1 : 0 });
+        partnerOut.advCaptainUnconditional.push({ p: bc.pAdvance, y: o.advanced.has(cap) ? 1 : 0 });
+      }
+      if (!o.prequalified.has(pk) && !o.ineligible.has(pk)) partnerOut.advPartner.push({ p: rp.pAdvance, y: o.advanced.has(pk) ? 1 : 0 });
     }
   }
   // Naive baseline after quals: the top-`slots` eligible teams by rank advance.
@@ -252,6 +274,8 @@ const report = {
   calibrationPre: calibration(outcomes.pre), calibrationQuals: calibration(outcomes.quals), calibrationSelected: calibration(outcomes.selected),
   ranks: spearman,
   selection: { captain: summary(capOut), picked: summary(pickedOut) },
+  partners: partnerCheck ? Object.fromEntries(Object.entries(partnerOut).map(([k, v]) => [k, summary(v)])) : undefined,
+  partnerCalibrationWin: partnerCheck ? calibration(partnerOut.win) : undefined,
 };
 writeFileSync(`.cache/predict/events-${season}-${awardMode}.json`, JSON.stringify(report, null, 1));
-console.log(JSON.stringify(report.advancement, null, 1), "\nranks", JSON.stringify(report.ranks), "\nselection", JSON.stringify(report.selection));
+console.log(JSON.stringify(report.advancement, null, 1), "\nranks", JSON.stringify(report.ranks), "\nselection", JSON.stringify(report.selection), partnerCheck ? "\npartners " + JSON.stringify(report.partners, null, 1) : "");
