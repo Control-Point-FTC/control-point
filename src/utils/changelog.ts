@@ -13,6 +13,36 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.4.0',
+    date: '2026-10-05',
+    title: 'Mini FTC Scout + Owner controls + Polish',
+    added: [
+      'Compete tab: deep-dive team performance — full match history with alliance scores, penalties, and point breakdowns',
+      'Analyze tab: search any team, compare up to 4 side-by-side with stat deltas vs event average',
+      'Event field rankings: every team at an event, sortable by OPR/rank, tap any row for full detail',
+      'Scouting shortlist: save and organize teams you\'re watching for alliance selection',
+      'Bruno AI now knows what you\'re looking at — asks smarter questions in Analyze mode',
+      'Owner portal: move users between workspaces silently (no notification sent)',
+      'Live dashboard preview in Appearance settings — see theme changes in real time, expandable',
+      'All emails now share the same polished template (OTP, task assignments, and future emails)',
+    ],
+    improved: [
+      'Bruno AI colors fixed in light mode — readable everywhere now',
+      'All dropdowns replaced with custom themed menus (no more boxy native Windows dropdowns)',
+      'Appearance sliders: click any value to type it directly, snaps to valid steps',
+      'NavGPT toggle moved to Bruno AI settings (admin-only)',
+      'One signature logo everywhere: hexagon favicon, app icons, and logo unified',
+      'Dashboard preview shows live grid effects as you customize',
+      'Moved users get the destination workspace\'s default Member role automatically',
+    ],
+    fixed: [
+      'Concurrent workspace moves can\'t strand a team without an admin',
+      'Moving a user with an existing account in the target workspace is blocked with a clear message',
+      'Preview panel no longer squeezes settings on smaller screens',
+      'Network errors during user moves show clear inline feedback',
+    ],
+  },
+  {
     version: '1.3.0',
     date: '2026-10-05',
     title: 'Bruno AI upgrades + FTC data overhaul',
