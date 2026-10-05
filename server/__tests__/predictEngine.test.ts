@@ -121,6 +121,21 @@ describe("PredictEngine", () => {
     expect(s(after)).toBeGreaterThan(s(before) + 20);
   });
 
+  it("doesn't fold live matches with 3-robot alliances (who sat out is unknown)", () => {
+    const base = engine.forecast(liveEvent({ played: 0 }), 100, 100)!.teams.find((t) => t.team === 110)!.strength.np;
+    const ev = liveEvent({ played: 99, ranks: true });
+    // A playoff with a 3-team alliance listing 110 (who may have sat out) and a huge score.
+    ev.matches.push({
+      key: "playoff:1:1", level: "playoff", series: 1, number: 1, label: "M-1", description: null, time: null, played: true, breakdownSource: null,
+      red: { teams: [100, 101, 110].map((t) => ({ number: t, name: "" })), score: { total: 900, totalNp: 900, auto: 100, teleop: 700, endgame: 100, penaltiesCommitted: 0, penaltiesByOpp: 0 } },
+      blue: { teams: [102, 103].map((t) => ({ number: t, name: "" })), score: { total: 50, totalNp: 50, auto: 0, teleop: 50, endgame: 0, penaltiesCommitted: 0, penaltiesByOpp: 0 } },
+    });
+    const withPlayoff = engine.forecast(ev, 100, 100)!.teams.find((t) => t.team === 110)!.strength.np;
+    const quals = engine.forecast(liveEvent({ played: 99, ranks: true }), 100, 100)!.teams.find((t) => t.team === 110)!.strength.np;
+    expect(withPlayoff).toBeCloseTo(quals, 9);
+    expect(quals).not.toBeCloseTo(base, 3);
+  });
+
   it("keeps played playoff results: an eliminated alliance can't win", () => {
     const ev = liveEvent({ played: 99, ranks: true, alliances: true });
     // 4-alliance bracket: match 1 is A1 v A4, match 2 A2 v A3, match 3 L1 v L2.

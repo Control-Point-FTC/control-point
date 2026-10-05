@@ -243,6 +243,11 @@ export class PredictEngine {
       };
       const red = side(m.red), blue = side(m.blue);
       if (!red || !blue) continue;
+      // Only 2 robots per alliance play. The live payload doesn't say which
+      // robots of a 3-team playoff alliance sat out, so skip those matches
+      // rather than crediting a robot that didn't play (the next background
+      // sync, which knows who was on the field, includes them).
+      if (red.teams.length > 2 || blue.teams.length > 2) continue;
       const order = (m.level === "playoff" ? 1e6 : 0) + (m.series ?? 0) * 1e3 + m.number;
       fresh.push({ season: ev.season, eventCode: ev.code, level: m.level, series: m.series ?? 0, number: m.number, time: Date.parse(m.time ?? "") || base + order, red, blue });
     }
