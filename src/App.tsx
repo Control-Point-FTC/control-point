@@ -98,7 +98,8 @@ import {
   Clock3,
   ListTodo,
   Smile,
-  ImageOff
+  ImageOff,
+  Menu
 } from 'lucide-react';
 import { ContextMenuProvider, useContextMenu } from './components/contextmenu/ContextMenuProvider';
 import { motion, AnimatePresence } from 'motion/react';
@@ -192,6 +193,7 @@ import {
 } from './components/voice';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import SettingsModal from './components/SettingsModal';
+import CrosshairIcon from './components/CrosshairIcon';
 import Landing from './Landing';
 import LegalPage from './Legal';
 import { cn, Card, Button, Input, Switch } from './components/ui';
@@ -3052,7 +3054,7 @@ export default function App() {
               {isSidebarOpen && (
                 <>
                   <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-text-base transition-colors flex-shrink-0" title="Settings">
-                    <Settings className="w-4 h-4" />
+                    <CrosshairIcon className="w-4 h-4" />
                   </button>
                   <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
                     <LogOut className="w-4 h-4" />
@@ -3371,7 +3373,7 @@ export default function App() {
                           onClick={() => { setShowUserMenu(false); setSettingsOpen(true); }}
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
-                          <Settings className="w-[18px] h-[18px] text-accent" />
+                          <CrosshairIcon className="w-[18px] h-[18px] text-accent" />
                           {t('settings.title')}
                         </button>
                         {(currentUser as any)?.account_type === 'admin' && (
@@ -9370,9 +9372,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className="h-12 px-3 sm:px-4 border-b border-text-base/[0.06] flex items-center gap-2 flex-shrink-0">
           <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-2 -ml-1 text-text-muted hover:text-text-base" aria-label="Open channels">
-            <Hash className="w-5 h-5" />
+            <Menu className="w-5 h-5" />
           </button>
-          <Hash className="w-5 h-5 text-text-muted/70 flex-shrink-0" />
+          <img src="/logo.png" alt="" className="w-5 h-5 rounded-md flex-shrink-0" />
           <h3 className="text-[15px] font-bold text-text-base truncate">{activeChannel?.name || 'general'}</h3>
           {activeChannel?.topic && (
             <p className="hidden sm:block text-xs text-text-muted truncate border-l border-text-base/10 pl-2 ml-1">{activeChannel.topic}</p>

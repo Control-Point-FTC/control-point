@@ -11,9 +11,17 @@ export interface AttachedImage {
   data: string; // base64, no data: prefix
 }
 
-export const MAX_BRUNO_IMAGES = 2;
+export interface AttachedPdf {
+  mimeType: 'application/pdf';
+  data: string; // base64, no data: prefix
+  name: string; // original filename for display
+}
+
+export const MAX_BRUNO_IMAGES = 5;
+export const MAX_BRUNO_PDFS = 5;
 const MAX_EDGE = 1600;
 const JPEG_QUALITY = 0.85;
+const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10MB per PDF
 
 function fileToImage(file: File): Promise<AttachedImage | null> {
   return new Promise((resolve) => {
@@ -58,6 +66,29 @@ export async function filesToAttachedImages(files: FileList | File[]): Promise<A
   return out;
 }
 
+/** Read a PDF file as base64 (skips non-PDFs and oversized files). */
+export async function filesToAttachedPdfs(files: FileList | File[]): Promise<AttachedPdf[]> {
+  const list = Array.from(files || []);
+  const out: AttachedPdf[] = [];
+  for (const f of list) {
+    if (out.length >= MAX_BRUNO_PDFS) break;
+    if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) continue;
+    if (f.size > MAX_PDF_BYTES) continue;
+    const data = await new Promise<string | null>((resolve) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const url = String(r.result || '');
+        const b64 = url.split(',')[1] || '';
+        resolve(b64 || null);
+      };
+      r.onerror = () => resolve(null);
+      r.readAsDataURL(f);
+    });
+    if (data) out.push({ mimeType: 'application/pdf', data, name: f.name });
+  }
+  return out;
+}
+
 /** Pull images out of a paste event (screenshots land in clipboardData.items). */
 export async function imagesFromPaste(e: React.ClipboardEvent): Promise<AttachedImage[]> {
   const items = e.clipboardData?.items;
@@ -73,6 +104,31 @@ export async function imagesFromPaste(e: React.ClipboardEvent): Promise<Attached
   return filesToAttachedImages(files);
 }
 
+/** Thumbnail strip for attached PDFs with per-file remove buttons. */
+export function AttachedPdfStrip({ pdfs, onRemove }: {
+  pdfs: AttachedPdf[];
+  onRemove: (idx: number) => void;
+}) {
+  if (!pdfs.length) return null;
+  return (
+    <div className="flex gap-2 px-1 pb-2 flex-wrap">
+      {pdfs.map((pdf, i) => (
+        <div key={i} className="relative flex items-center gap-2 pl-2 pr-7 py-1.5 rounded-lg border border-text-base/15 bg-text-base/5 shrink-0 max-w-[180px]">
+          <span className="text-[10px] font-bold text-rose-400 bg-rose-500/15 rounded px-1 py-0.5 shrink-0">PDF</span>
+          <span className="text-xs text-text-base truncate">{pdf.name}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(i)}
+            aria-label="Remove PDF"
+            className="absolute top-1/2 -translate-y-1/2 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-black/90"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 /** Thumbnail strip with per-image remove buttons. */
 export function AttachedImageStrip({ images, onRemove }: {
   images: AttachedImage[];

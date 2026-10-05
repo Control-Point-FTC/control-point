@@ -191,6 +191,8 @@ export interface BuildHelperMessage {
   /** Screenshots attached to a user message: sent to the AI in-memory only,
       never persisted (see /api/ai/build-helper). */
   images?: { mimeType: string; data: string }[];
+  /** PDFs attached to a user message: same in-memory-only handling. */
+  pdfs?: { mimeType: string; data: string; name: string }[];
 }
 
 /** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
@@ -328,8 +330,14 @@ export function streamBuildHelper(
   if (lastUser?.images?.length) {
     body.images = lastUser.images
       .filter((im) => im && typeof im.mimeType === 'string' && typeof im.data === 'string')
-      .slice(0, 2)
+      .slice(0, 5)
       .map((im) => ({ mimeType: im.mimeType.slice(0, 64), data: im.data.slice(0, 6 * 1024 * 1024) }));
+  }
+  if (lastUser?.pdfs?.length) {
+    body.pdfs = lastUser.pdfs
+      .filter((p) => p && p.mimeType === 'application/pdf' && typeof p.data === 'string')
+      .slice(0, 5)
+      .map((p) => ({ mimeType: 'application/pdf', data: p.data.slice(0, 15 * 1024 * 1024), name: String(p.name || 'document.pdf').slice(0, 128) }));
   }
   return postStream('/api/ai/build-helper', body, onChunk);
 }

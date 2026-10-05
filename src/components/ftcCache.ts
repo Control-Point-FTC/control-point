@@ -77,3 +77,42 @@ export async function fetchFtcTeam(
   cache.set(key as any, { expiresAt: Date.now() + TTL_MS, data });
   return data;
 }
+
+export interface FtcMatchTeam { number: number; name: string }
+export interface FtcMatch {
+  num: number; label: string; level: string | null; series: number | null;
+  played: boolean;
+  red: FtcMatchTeam[]; blue: FtcMatchTeam[];
+  redScore: number | null; blueScore: number | null;
+  result: 'win' | 'loss' | 'tie' | null;
+}
+export interface FtcEventDetail {
+  code: string; season: number; name: string;
+  start: string | null; end: string | null; type: string | null;
+  venue: string | null; city: string | null; state: string | null; country: string | null;
+  timezone: string | null;
+  rank: number | null; wins: number | null; losses: number | null; ties: number | null;
+  oprNp: number | null; awards: string[];
+  matches: FtcMatch[]; qualsCount: number; playoffsCount: number;
+}
+
+const eventCache = new Map<string, { expiresAt: number; data: FtcEventDetail }>();
+
+/** Fetch a single event's detail (matches, alliances, scores). Cached 10 min. */
+export async function fetchFtcEvent(
+  season: number,
+  code: string,
+  signal?: AbortSignal
+): Promise<FtcEventDetail> {
+  const key = `${season}:${code}`;
+  const hit = eventCache.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  if (hit) eventCache.delete(key);
+
+  const res = await apiFetch(`/api/ftc/event?season=${season}&code=${encodeURIComponent(code)}`, { signal });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || `Event request failed (${res.status})`);
+  const data = body as FtcEventDetail;
+  eventCache.set(key, { expiresAt: Date.now() + TTL_MS, data });
+  return data;
+}

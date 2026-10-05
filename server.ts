@@ -1522,14 +1522,14 @@ function getSessionId(req: any): string | null {
 
 /**
  * Validate screenshot payloads for Bruno chat. Returns clean
- * { mimeType, data } pairs (base64, no data: prefix), capped at 2 images and
- * ~4MB each so the request stays under the 5MB JSON body limit. Anything
+ * { mimeType, data } pairs (base64, no data: prefix), capped at 5 images and
+ * ~4MB each so the request stays under the JSON body limit. Anything
  * malformed is dropped rather than failing the whole message.
  */
 function sanitizeBrunoImages(input: any): { mimeType: string; data: string }[] {
   if (!Array.isArray(input)) return [];
   const out: { mimeType: string; data: string }[] = [];
-  for (const im of input.slice(0, 2)) {
+  for (const im of input.slice(0, 5)) {
     try {
       const mimeType = String(im?.mimeType || "");
       let data = String(im?.data || "").replace(/^data:image\/\w+;base64,/, "");
@@ -1538,6 +1538,27 @@ function sanitizeBrunoImages(input: any): { mimeType: string; data: string }[] {
       if (data.length > 4 * 1024 * 1024) continue;
       if (data.length < 100) continue;
       out.push({ mimeType: mimeType.slice(0, 64), data });
+    } catch { /* skip malformed entries */ }
+  }
+  return out;
+}
+
+/**
+ * Sanitize attached PDFs for Bruno: { mimeType, data, name } tuples, capped at
+ * 5 PDFs and ~14MB base64 each. Only application/pdf is accepted.
+ */
+function sanitizeBrunoPdfs(input: any): { mimeType: string; data: string; name: string }[] {
+  if (!Array.isArray(input)) return [];
+  const out: { mimeType: string; data: string; name: string }[] = [];
+  for (const p of input.slice(0, 5)) {
+    try {
+      const mimeType = String(p?.mimeType || "");
+      let data = String(p?.data || "").replace(/^data:application\/pdf;base64,/, "");
+      if (mimeType !== "application/pdf") continue;
+      if (!/^[A-Za-z0-9+/=]+$/.test(data)) continue;
+      if (data.length > 14 * 1024 * 1024) continue;
+      if (data.length < 100) continue;
+      out.push({ mimeType: "application/pdf", data, name: String(p?.name || "document.pdf").slice(0, 128) });
     } catch { /* skip malformed entries */ }
   }
   return out;
@@ -3692,7 +3713,7 @@ async function startServer() {
     const data = await ftcQuery(
       `query TeamData($number: Int!, $season: Int!) {
         teamByNumber(number: $number) {
-          number name schoolName rookieYear activeSeasons
+          number name schoolName rookieYear activeSeasons sponsors
           location { city state country }
           quickStats(season: $season) {
             season
@@ -3704,6 +3725,7 @@ async function startServer() {
             awards { type }
           }
         }
+        activeTeamsCount(season: $season)
       }`,
       { number, season }
     );
@@ -3715,10 +3737,12 @@ async function startServer() {
       number: t.number,
       name: t.name,
       school: t.schoolName,
+      sponsors: (t.sponsors || []).filter(Boolean),
       city: t.location?.city, state: t.location?.state, country: t.location?.country,
       rookieYear: t.rookieYear,
       seasons: [...new Set((t.activeSeasons || []).filter((s: number) => s >= 2022 && s <= 2025))].sort((a: number, b: number) => b - a),
       season,
+      totalTeams: data?.data?.activeTeamsCount ?? null,
       opr: { tot: norm(qs.tot), auto: norm(qs.auto), dc: norm(qs.dc), eg: norm(qs.eg) },
       events: (t.events || []).map((e: any) => ({
         code: e.event?.code,
@@ -3750,6 +3774,125 @@ async function startServer() {
     try {
       const payload = await getFtcTeamPayload(number, season);
       if (!payload) return res.status(404).json({ error: "FTC Scout has no record of that team number" });
+      ftcCache.set(cacheKey, { at: Date.now(), data: payload });
+      res.json(payload);
+    } catch (e: any) {
+      res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+    }
+  });
+
+  // Single event detail: venue info + full match list (quals + playoffs) with
+  // alliance breakdowns, for the connected team's event history drill-down.
+  async function getFtcEventPayload(number: number, season: number, code: string): Promise<any> {
+    const data = await ftcQuery(
+      `query EventDetail($number: Int!, $season: Int!, $code: String!) {
+        eventByCode(season: $season, code: $code) {
+          name start end type timezone address
+          location { city state country }
+          teams { teamNumber team { name } }
+          matches {
+            matchNum tournamentLevel series description hasBeenPlayed
+            scores {
+              __typename
+              ... on MatchScores2022 { red { totalPoints } blue { totalPoints } }
+              ... on MatchScores2023 { red { totalPoints } blue { totalPoints } }
+              ... on MatchScores2024 { red { totalPoints } blue { totalPoints } }
+              ... on MatchScores2025 { red { totalPoints } blue { totalPoints } }
+            }
+            teams { teamNumber station }
+          }
+        }
+        teamByNumber(number: $number) {
+          events(season: $season) {
+            event { code }
+            stats { __typename ... on TeamEventStats${season} { rank wins losses ties opr { totalPointsNp } } }
+            awards { type }
+          }
+        }
+      }`,
+      { number, season, code }
+    );
+    const ev = data?.data?.eventByCode;
+    if (!ev) return null;
+    // Team name lookup for alliance display
+    const names: Record<number, string> = {};
+    for (const t of ev.teams || []) {
+      if (t?.teamNumber) names[t.teamNumber] = t.team?.name || `Team ${t.teamNumber}`;
+    }
+    const nameOf = (n: number) => names[n] || `Team ${n}`;
+    // FTC Scout orders match.teams as red1, red2, blue1, blue2
+    const matches = (ev.matches || [])
+      .map((m: any) => {
+        const teams = (m.teams || []).map((t: any) => ({ number: t.teamNumber, name: nameOf(t.teamNumber) }));
+        const red = teams.slice(0, 2);
+        const blue = teams.slice(2, 4);
+        const redScore = m.scores?.red?.totalPoints ?? null;
+        const blueScore = m.scores?.blue?.totalPoints ?? null;
+        const onRed = red.some((t: any) => t.number === number);
+        const onBlue = blue.some((t: any) => t.number === number);
+        let result: "win" | "loss" | "tie" | null = null;
+        if (m.hasBeenPlayed && redScore != null && blueScore != null && (onRed || onBlue)) {
+          const mine = onRed ? redScore : blueScore;
+          const theirs = onRed ? blueScore : redScore;
+          result = mine > theirs ? "win" : mine < theirs ? "loss" : "tie";
+        }
+        return {
+          num: m.matchNum,
+          label: m.description || `Match ${m.matchNum}`,
+          level: m.tournamentLevel || null, // "Quals" | "Semis" | "Finals"
+          series: m.series ?? null,
+          played: !!m.hasBeenPlayed,
+          red, blue, redScore, blueScore, result,
+        };
+      })
+      .sort((a: any, b: any) => {
+        // Quals first (by match num), then playoffs (by match num)
+        const rank = (l: string | null) => (l === "Quals" ? 0 : 1);
+        return rank(a.level) - rank(b.level) || a.num - b.num;
+      });
+    // The connected team's stats + awards at this event
+    const teamEvents = data?.data?.teamByNumber?.events || [];
+    const mine = teamEvents.find((e: any) => e?.event?.code === code);
+    return {
+      code,
+      season,
+      name: ev.name,
+      start: ev.start ? String(ev.start).slice(0, 10) : null,
+      end: ev.end ? String(ev.end).slice(0, 10) : null,
+      type: ev.type || null,
+      venue: ev.address || null,
+      city: ev.location?.city || null, state: ev.location?.state || null, country: ev.location?.country || null,
+      timezone: ev.timezone || null,
+      rank: mine?.stats?.rank ?? null,
+      wins: mine?.stats?.wins ?? null, losses: mine?.stats?.losses ?? null, ties: mine?.stats?.ties ?? null,
+      oprNp: mine?.stats?.opr?.totalPointsNp != null ? Math.round(mine.stats.opr.totalPointsNp * 10) / 10 : null,
+      awards: (mine?.awards || []).map((a: any) => a.type).filter(Boolean),
+      matches,
+      qualsCount: matches.filter((m: any) => m.level === "Quals").length,
+      playoffsCount: matches.filter((m: any) => m.level !== "Quals").length,
+    };
+  }
+
+  app.get("/api/ftc/event", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseInt(String(req.query.season || "2025"), 10);
+    if (![2022, 2023, 2024, 2025].includes(season)) {
+      return res.status(400).json({ error: "Season data is available for 2022–2025" });
+    }
+    const code = String(req.query.code || "").trim().slice(0, 32);
+    if (!code) return res.status(400).json({ error: "Missing event code" });
+    const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+    const number = team?.ftc_team_number;
+    if (!number) return res.status(404).json({ error: "No FTC team connected — set your team number in Settings" });
+
+    const cacheKey = `ftcevent:${number}:${season}:${code}`;
+    const cached = ftcCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < FTC_CACHE_TTL) return res.json(cached.data);
+
+    try {
+      const payload = await getFtcEventPayload(number, season, code);
+      if (!payload) return res.status(404).json({ error: "FTC Scout has no record of that event" });
       ftcCache.set(cacheKey, { at: Date.now(), data: payload });
       res.json(payload);
     } catch (e: any) {
@@ -8011,6 +8154,8 @@ Rules:
       // "[screenshot attached]" marker instead). This keeps screenshots from
       // accumulating and eating server space.
       const images = sanitizeBrunoImages(req.body?.images);
+      const pdfs = sanitizeBrunoPdfs(req.body?.pdfs);
+      // Merge PDFs into the file list for the AI (Gemini inlineData handles both).
       // Misuse heuristics run async (never blocks the reply); flags land in the owner review queue.
       // The owner's own testing is never flagged — reviewing your own flags is noise.
       const reqChatId = parseInt(req.body?.chatId, 10) || null;
@@ -8096,7 +8241,7 @@ Rules:
         if (!chat || !canViewBrunoChat(chat, auth.memberId)) {
           return res.status(403).json({ error: "Chat not found" });
         }
-        const userText = messages[messages.length - 1].text + (images.length ? " 📷 [screenshot attached]" : "");
+        const userText = messages[messages.length - 1].text + (images.length ? " 📷 [screenshot attached]" : "") + (pdfs.length ? ` 📄 [${pdfs.length} PDF${pdfs.length > 1 ? 's' : ''} attached: ${pdfs.map(p => p.name).join(', ')}]` : "");
         const msgCount = (await dbGet("SELECT COUNT(*) AS n FROM bruno_messages WHERE chat_id = ?", chat.id)) as any;
         // The NavGPT -> Bruno handoff re-sends the same coding question under the
         // Bruno persona — don't persist a duplicate user message for it.
@@ -8129,7 +8274,7 @@ Rules:
             maxTokens,
             stream: true,
             webSearch: req.body?.webSearch === true,
-            images: images.length ? images : undefined,
+            images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
             onChunk: (chunk) => res.write(chunk),
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
@@ -8166,7 +8311,7 @@ Rules:
         maxTokens,
         stream: false,
         webSearch: req.body?.webSearch === true,
-        images: images.length ? images : undefined,
+        images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
         onUsage: (u) => { nonStreamUsage = u; },
         signal: nonStreamAbort.signal,
       });

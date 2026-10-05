@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import {
-  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus,
+  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus, FileText,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
 import { streamBuildHelper, stripEventBlocks, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
-import { AttachedImageStrip, filesToAttachedImages, imagesFromPaste, MAX_BRUNO_IMAGES, type AttachedImage } from './BrunoImageAttach';
+import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
 import { type ProposalStatus } from './ActionProposalCard';
 import { BrunoMessageRow } from './BrunoMessageRow';
 import BrunoIcon from './BrunoIcon';
@@ -62,8 +62,10 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
   // Screenshots attached to the next message — cleared on send, never saved.
   const [attached, setAttached] = useState<AttachedImage[]>([]);
+  const [attachedPdfs, setAttachedPdfs] = useState<AttachedPdf[]>([]);
   const addAttached = (imgs: AttachedImage[]) => {
     if (!imgs.length) return;
     setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
@@ -160,10 +162,12 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
 
   const send = async (text?: string) => {
     const content = (text ?? input).trim();
-    if ((!content && !attached.length) || busy) return;
+    if ((!content && !attached.length && !attachedPdfs.length) || busy) return;
     setInput('');
     const outgoing = attached;
+    const outgoingPdfs = attachedPdfs;
     setAttached([]);
+    setAttachedPdfs([]);
     let chatId = activeId;
     try {
       if (!chatId) {
@@ -177,7 +181,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
         chatId = created.id;
         setActiveId(chatId);
       }
-      const next: BuildHelperMessage[] = [...messages, { role: 'user', text: content || 'What do you see in this screenshot?', ...(outgoing.length ? { images: outgoing } : {}) }];
+      const next: BuildHelperMessage[] = [...messages, { role: 'user', text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?'), ...(outgoing.length ? { images: outgoing } : {}), ...(outgoingPdfs.length ? { pdfs: outgoingPdfs } : {}) }];
       setMessages(next);
       setBusy(true);
       busyRef.current = true;
@@ -542,6 +546,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
           className="p-3 border-t border-text-base/10 bg-text-base/[0.02]"
         >
           <AttachedImageStrip images={attached} onRemove={(idx) => setAttached((p) => p.filter((_, j) => j !== idx))} />
+          <AttachedPdfStrip pdfs={attachedPdfs} onRemove={(idx) => setAttachedPdfs((p) => p.filter((_, j) => j !== idx))} />
           <div className="flex gap-2 items-end">
             <input
               ref={fileRef}
@@ -551,6 +556,19 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
               className="hidden"
               onChange={(e) => {
                 filesToAttachedImages(e.target.files || []).then(addAttached);
+                e.target.value = '';
+              }}
+            />
+            <input
+              ref={pdfRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                filesToAttachedPdfs(e.target.files || []).then((pdfs) => {
+                  setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS));
+                });
                 e.target.value = '';
               }}
             />
@@ -564,13 +582,23 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
             >
               <ImagePlus className="w-4 h-4" />
             </button>
+            <button
+              type="button"
+              onClick={() => pdfRef.current?.click()}
+              disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS}
+              aria-label="Attach a PDF"
+              title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'}
+              className="w-10 h-10 shrink-0 rounded-xl border border-text-base/10 text-text-muted hover:text-accent hover:border-accent/40 flex items-center justify-center transition disabled:opacity-40"
+            >
+              <FileText className="w-4 h-4" />
+            </button>
             <div className="flex-1 min-w-0">
               <ChatInput
                 value={input}
                 onChange={setInput}
                 onSend={() => send()}
                 disabled={busy}
-                canSend={attached.length > 0}
+                canSend={attached.length > 0 || attachedPdfs.length > 0}
                 placeholder="Ask about mechanisms, code, strategy…"
               />
             </div>

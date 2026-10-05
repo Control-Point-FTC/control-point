@@ -16,9 +16,10 @@ export interface FtcEvent {
   awards: string[];
 }
 export interface FtcTeamPayload {
-  number: number; name: string; school?: string;
+  number: number; name: string; school?: string; sponsors?: string[];
   city?: string; state?: string; country?: string;
   rookieYear?: number; seasons: number[]; season: number;
+  totalTeams?: number | null;
   opr: { tot: FtcOprStat | null; auto: FtcOprStat | null; dc: FtcOprStat | null; eg: FtcOprStat | null };
   events: FtcEvent[];
 }
@@ -102,7 +103,8 @@ function SeasonPills({ seasons, active, onPick, small }: { seasons: number[]; ac
   );
 }
 
-function OprTile({ label, stat, icon: Icon, accent }: { label: string; stat: FtcOprStat | null; icon: any; accent?: boolean }) {
+function OprTile({ label, stat, icon: Icon, accent, totalTeams }: { label: string; stat: FtcOprStat | null; icon: any; accent?: boolean; totalTeams?: number | null }) {
+  const pct = percentileLine(stat?.rank ?? null, totalTeams);
   return (
     <div className="p-4 card-surface flex flex-col gap-1">
       <div className="flex items-center gap-1.5">
@@ -114,6 +116,7 @@ function OprTile({ label, stat, icon: Icon, accent }: { label: string; stat: Ftc
       </p>
       <p className="text-[11px] text-text-muted">
         {stat?.rank != null ? <span className="text-text-base/80 font-semibold">Rank #{stat.rank.toLocaleString()}</span> : 'Unranked'}
+        {pct && <span className="text-text-muted/70"> · {pct}</span>}
       </p>
     </div>
   );
@@ -122,6 +125,21 @@ function OprTile({ label, stat, icon: Icon, accent }: { label: string; stat: Ftc
 function recordLine(e: FtcEvent) {
   if (e.wins == null && e.losses == null) return null;
   return `${e.wins ?? 0}W – ${e.losses ?? 0}L${e.ties ? ` – ${e.ties}T` : ''}`;
+}
+
+// Placement badge: 1st gold, 2nd silver, 3rd bronze, everything else light grey.
+function placementBadgeClass(rank: number | null): string {
+  if (rank === 1) return 'bg-[#FFD54A] text-black shadow-[0_4px_16px_rgba(255,213,74,0.35)]';
+  if (rank === 2) return 'bg-[#C9D2DC] text-black shadow-[0_4px_16px_rgba(201,210,220,0.25)]';
+  if (rank === 3) return 'bg-[#E0A266] text-black shadow-[0_4px_16px_rgba(224,162,102,0.25)]';
+  return 'bg-text-base/[0.14] text-text-base';
+}
+
+// Worldwide percentile for a rank, e.g. rank 616 of 8868 -> "93rd percentile".
+function percentileLine(rank: number | null, total: number | null | undefined): string | null {
+  if (rank == null || !total || total <= 0) return null;
+  const pct = Math.max(0, Math.min(100, (1 - rank / total) * 100));
+  return `${Math.round(pct)}th percentile`;
 }
 
 // Compact card for the dashboard: connected team at a glance.
