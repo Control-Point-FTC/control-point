@@ -106,7 +106,24 @@ add("- Alliances: ≤10 teams 2, ≤20 4, ≤40 6, else 8. Double-elimination br
 add("\n## 6. Tuned settings (2024–25)\n")
 add("```json\n" + json.dumps(tuned, indent=1) + "\n```")
 
-add("\n## 7. Known limits\n")
+add("\n## 7. How to reproduce\n")
+add("Run from the repo root (FIRST API credentials in `FTC_EVENTS_USERNAME` / `FTC_EVENTS_TOKEN` for step 2):\n")
+add("```bash\n"
+    "npx tsx scripts/predict/ingest.mts 2025 2024 2023 2022                 # 1. FTC Scout matches → .cache/predict/scout\n"
+    "npx tsx scripts/predict/ingest-first.mts 2025 2024                     # 2. FIRST advancement data → .cache/predict/first\n"
+    "npx tsx scripts/predict/tune.mts --tune 2024 --rounds 2                # 3. rating settings (2024–25)\n"
+    "npx tsx scripts/predict/fit-noise.mts --tune 2024                      # 4. score uncertainty a, b, preExtra (2024–25)\n"
+    "npx tsx scripts/predict/backtest-matches.mts --seasons 2022,2023,2024,2025 --report 2024,2025 \\\n"
+    "  --params '<rating settings>' --noise '<a, b, preExtra>' --quiet --json .cache/predict/final-test.json   # 5. match test\n"
+    "npx tsx scripts/predict/backtest-events.mts --season 2024 --fit-pick --awards none --runs 50 --limit 1   # 6. pick model (2024–25)\n"
+    "npx tsx scripts/predict/fit-awards.mts                                  # 7. award model (fit 2024–25, test 2025–26)\n"
+    "npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards model --partners   # 8. event test\n"
+    "npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards none\n"
+    "python scripts/predict/report.py                                       # 9. this report\n"
+    "```")
+add("\nSteps 3–4 write `.cache/predict/tuned-2024.json`; steps 5–8 read it.")
+
+add("\n## 8. Known limits\n")
 add("- Robot changes between events only show up once a team plays again.\n"
     "- Bonus-RP chances (2025–26) were fitted on the season's earliest 20% of matches (bonuses didn't exist before).\n"
     "- Alliance declines and 3-team championship alliances aren't modelled.\n"

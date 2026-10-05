@@ -183,8 +183,14 @@ export function simulateEvent(input: SimInput): Map<number, TeamOutcome> {
       const A = allianceCount(n);
       const taken = new Set<number>();
       alliances = [];
+      const fpair = input.forcePartner;
       for (let k = 0; k < A; k++) {
-        const captain = ranked.find((t) => !taken.has(t));
+        let captain = ranked.find((t) => !taken.has(t));
+        // A forced pair must get an alliance: if it is still unplaced when the
+        // last alliance is formed, its higher-seeded team captains it.
+        if (fpair && k === A - 1 && !taken.has(fpair.team) && !taken.has(fpair.partner)) {
+          captain = (rankOf.get(fpair.team) ?? Infinity) <= (rankOf.get(fpair.partner) ?? Infinity) ? fpair.team : fpair.partner;
+        }
         if (captain == null) break;
         taken.add(captain);
         let partner: number | undefined;

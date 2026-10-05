@@ -10,9 +10,9 @@ All numbers below come from replaying real seasons in time order: every predicti
 | Last-event OPR (baseline) | 65.6% | 0.208 | 0.030 |
 | Season-average score (baseline, live) | 71.5% | 0.188 | 0.034 |
 | **Rating — frozen at event start** | 68.7% | 0.199 | 0.017 |
-| **Rating — live** | 72.7% | 0.179 | 0.014 |
+| **Rating — live** | 72.7% | 0.179 | 0.017 |
 
-Score error (MAE) 27.95 pts, bias -2.14 pts. The 80% score range covers 83%. Accuracy rises from 65% in a team's first match of the season to 75% after 10+ matches.
+Score error (MAE) 27.95 pts, bias -2.14 pts. The 80% score range covers 82%. Accuracy rises from 65% in a team's first match of the season to 75% after 10+ matches.
 
 Score uncertainty (σ = a + b·mean, plus each robot's rating uncertainty) was refitted on 2024–25 by likelihood so score ranges are honest; predictions made from an event-start snapshot add extra per-robot variance (500 pts², also fitted on 2024–25) because a team's level moves during an event. These were fitted after the first 2025–26 test run, so the 2025–26 numbers here are a second look at the test season.
 
@@ -22,12 +22,12 @@ Awards are predicted from team history (nothing about the event's results is kno
 
 | Starting point | Brier ↓ | Calibration error ↓ | Matches only (no awards) |
 |---|---|---|---|
-| Before the event | 0.129 | 0.016 | 0.134 / 0.017 |
-| After quals | 0.086 | 0.012 | 0.096 / 0.033 |
-| After alliance selection | 0.064 | 0.010 | 0.077 / 0.043 |
+| Before the event | 0.129 | 0.016 | 0.133 / 0.017 |
+| After quals | 0.086 | 0.012 | 0.096 / 0.034 |
+| After alliance selection | 0.064 | 0.010 | 0.077 / 0.044 |
 | Naive: top-ranked eligible teams advance (needs quals results) | 0.151 | 0.151 | |
 
-Calibration before the event (predicted → actual): 5%→5%, 14%→13%, 25%→23%, 34%→33%, 45%→49%, 55%→58%, 64%→74%, 75%→76%, 85%→86%, 97%→96%.
+Calibration before the event (predicted → actual): 5%→4%, 14%→13%, 25%→23%, 34%→35%, 45%→50%, 55%→57%, 65%→73%, 75%→78%, 85%→84%, 97%→96%.
 
 ## 3. Partner scenarios ("if we pick…")
 
@@ -35,14 +35,14 @@ Each real alliance was simulated from the end of quals with its actual pairing f
 
 | Prediction | With the real partner forced | General after-quals odds |
 |---|---|---|
-| Alliance wins the event (2,550) | Brier 0.072, calibration error 0.024 | Brier 0.085, calibration error 0.057 |
-| Captain advances (2,289) | Brier 0.127, calibration error 0.036 | Brier 0.129, calibration error 0.022 |
-| First pick advances (2,321) | Brier 0.125, calibration error 0.039 | — |
+| Alliance wins the event (2,550) | Brier 0.072, calibration error 0.025 | Brier 0.086, calibration error 0.058 |
+| Captain advances (2,289) | Brier 0.119, calibration error 0.022 | Brier 0.129, calibration error 0.019 |
+| First pick advances (2,321) | Brier 0.119, calibration error 0.019 | — |
 
 ## 4. Components
 
 - **Alliance selection:** captains pick by a softmax over strength and rank (τ=18, rank weight 3, fitted on 2024–25). The real first pick was in the model's top 3 for **70%** of 2,072 picks. Declines aren't recorded anywhere, so they aren't modelled.
-- **Quals ranks (before the event):** mean error 5.14 places; the 10–90% range contains the real rank 86% of the time.
+- **Quals ranks (before the event):** mean error 5.13 places; the 10–90% range contains the real rank 86% of the time.
 - **Awards (2025–26 test):** P(award worth ≥12 pts) Brier 0.1696 vs 0.2119 for a team-agnostic rate; Inspire 1st 0.0319 vs 0.036; any Inspire 0.0676 vs 0.0849. Inputs: past Inspire / judged awards (decay 0.4 per season), awards earlier this season, robot strength. One judged award per team per event.
 
 ## 5. Rules (read off official data)
@@ -70,12 +70,32 @@ Each real alliance was simulated from the end of quals with its actual pairing f
  "growthPerWeek": 0.05,
  "growthMaxWeeks": 8,
  "a": 14,
- "b": 0.21,
+ "b": 0.2,
  "preExtra": 500
 }
 ```
 
-## 7. Known limits
+## 7. How to reproduce
+
+Run from the repo root (FIRST API credentials in `FTC_EVENTS_USERNAME` / `FTC_EVENTS_TOKEN` for step 2):
+
+```bash
+npx tsx scripts/predict/ingest.mts 2025 2024 2023 2022                 # 1. FTC Scout matches → .cache/predict/scout
+npx tsx scripts/predict/ingest-first.mts 2025 2024                     # 2. FIRST advancement data → .cache/predict/first
+npx tsx scripts/predict/tune.mts --tune 2024 --rounds 2                # 3. rating settings (2024–25)
+npx tsx scripts/predict/fit-noise.mts --tune 2024                      # 4. score uncertainty a, b, preExtra (2024–25)
+npx tsx scripts/predict/backtest-matches.mts --seasons 2022,2023,2024,2025 --report 2024,2025 \
+  --params '<rating settings>' --noise '<a, b, preExtra>' --quiet --json .cache/predict/final-test.json   # 5. match test
+npx tsx scripts/predict/backtest-events.mts --season 2024 --fit-pick --awards none --runs 50 --limit 1   # 6. pick model (2024–25)
+npx tsx scripts/predict/fit-awards.mts                                  # 7. award model (fit 2024–25, test 2025–26)
+npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards model --partners   # 8. event test
+npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards none
+python scripts/predict/report.py                                       # 9. this report
+```
+
+Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 5–8 read it.
+
+## 8. Known limits
 
 - Robot changes between events only show up once a team plays again.
 - Bonus-RP chances (2025–26) were fitted on the season's earliest 20% of matches (bonuses didn't exist before).
