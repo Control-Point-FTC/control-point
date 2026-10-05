@@ -37,6 +37,8 @@ export interface EventRecord {
   season: number;
   code: string;
   type: string;
+  /** FTC region code (e.g. "USNJ"), when known. */
+  region?: string;
   start: string; // YYYY-MM-DD
   end: string;
   /** Epoch ms of the event start (UTC midnight of `start`). */

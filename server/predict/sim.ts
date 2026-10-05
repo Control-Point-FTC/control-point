@@ -87,6 +87,12 @@ export interface SimInput {
   slots: number;
   /** Partner scenario: force `team`'s alliance to include `partner`. */
   forcePartner?: { team: number; partner: number };
+  /**
+   * Playoff matches already played: bracket match number (1-based; for a
+   * 2-alliance final, the game number) → winning alliance number. These keep
+   * their real result; only the rest of the bracket is simulated.
+   */
+  playoffPlayed?: Map<number, number>;
   runs: number;
   seed?: number;
 }
@@ -227,23 +233,26 @@ export function simulateEvent(input: SimInput): Map<number, TeamOutcome> {
       const sa = playScore(strengthOf(a), strengthOf(b)), sb = playScore(strengthOf(b), strengthOf(a));
       return sa.total === sb.total ? (r() < 0.5 ? a : b) : sa.total > sb.total ? a : b;
     };
+    const played = input.playoffPlayed;
     if (A === 2) {
-      let w1 = 0, w2 = 0;
-      while (w1 < 2 && w2 < 2) (playMatch(1, 2) === 1 ? w1++ : w2++);
+      let w1 = 0, w2 = 0, game = 0;
+      while (w1 < 2 && w2 < 2) { game++; ((played?.get(game) ?? playMatch(1, 2)) === 1 ? w1++ : w2++); }
       place.set(w1 === 2 ? 1 : 2, 1); place.set(w1 === 2 ? 2 : 1, 2);
     } else if (BRACKETS[A]) {
       const br = BRACKETS[A];
       const win: number[] = [], lose: number[] = [];
       const who = (s: Slot) => ("seed" in s ? s.seed : "winnerOf" in s ? win[s.winnerOf] : lose[s.loserOf]);
+      // A played match keeps its real winner (if it's one of the two alliances in that slot).
+      const decide = (k: number, a: number, b: number) => { const real = played?.get(k); return real === a || real === b ? real : playMatch(a, b); };
       br.matches.forEach((m, i) => {
         const a = who(m.red), b = who(m.blue);
-        const w = playMatch(a, b);
+        const w = decide(i + 1, a, b);
         win[i + 1] = w; lose[i + 1] = w === a ? b : a;
       });
       const gf = br.matches.length;
       const upper = who(br.matches[gf - 1].red);
       let champ = win[gf], runner = lose[gf];
-      if (champ !== upper) { const w = playMatch(upper, champ); champ = w; runner = w === upper ? win[gf] : upper; }
+      if (champ !== upper) { const w = decide(gf + 1, upper, champ); champ = w; runner = w === upper ? win[gf] : upper; }
       place.set(champ, 1); place.set(runner, 2);
       br.places.forEach((ms, i) => { for (const m of ms) place.set(lose[m], 3 + i); });
     }

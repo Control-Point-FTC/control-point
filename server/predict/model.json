@@ -1,0 +1,165 @@
+{
+ "version": 1,
+ "fittedOn": "2024–25 (settings), tested on 2025–26",
+ "rating": {
+  "k0": 0.65,
+  "n0": 10,
+  "kMin": 0.33,
+  "playoffWeight": 0.5,
+  "rho1": 0.6,
+  "rho2": 0.2,
+  "rookieZ": -0.7,
+  "uncKnown": 150,
+  "uncRookie": 350,
+  "uncDecay": 0.45,
+  "uncMin": 10,
+  "baseAlpha": 0.002,
+  "growthPerWeek": 0.05,
+  "growthMaxWeeks": 8
+ },
+ "noise": {
+  "a": 14,
+  "b": 0.2,
+  "preExtra": 500
+ },
+ "pick": {
+  "tau": 18,
+  "rankWeight": 3
+ },
+ "bonus": {
+  "2025": {
+   "movement": [
+    -1.7057392636101876,
+    0.028573128470855545
+   ],
+   "goal": [
+    -25.697264648149673,
+    0.18652263117782306
+   ],
+   "pattern": [
+    -3.3047492740472624,
+    0.0286526553477257
+   ]
+  }
+ },
+ "awards": {
+  "decay": 0.4,
+  "inspire": [
+   1.7387322912685947,
+   0.8965486109909682,
+   -0.1639496322812036,
+   -0.16526530208720122,
+   0.4248386060930159
+  ],
+  "judged": [
+   -0.2623452167857783,
+   0.7249404516054273,
+   1.6052994322595928,
+   0.7779838995930317,
+   0.2796122104084902
+  ]
+ },
+ "accuracy": {
+  "testSeason": "2025–26",
+  "matches": {
+   "count": 37395,
+   "liveAccuracy": 0.7269,
+   "liveBrier": 0.1791,
+   "preEventAccuracy": 0.6865,
+   "oprAccuracy": 0.6565,
+   "oprBrier": 0.208,
+   "scoreRange80Coverage": 0.82
+  },
+  "advancement": {
+   "events": 508,
+   "pre": {
+    "brier": 0.1286,
+    "calibrationError": 0.016
+   },
+   "quals": {
+    "brier": 0.0855,
+    "calibrationError": 0.0122
+   },
+   "selected": {
+    "brier": 0.0639,
+    "calibrationError": 0.0104
+   },
+   "matchesOnlyPre": {
+    "brier": 0.1333,
+    "calibrationError": 0.0171
+   },
+   "naiveTopRanked": {
+    "brier": 0.1515
+   },
+   "calibrationPre": [
+    {
+     "predicted": 0.053,
+     "actual": 0.044,
+     "n": 3358
+    },
+    {
+     "predicted": 0.145,
+     "actual": 0.135,
+     "n": 2522
+    },
+    {
+     "predicted": 0.246,
+     "actual": 0.23,
+     "n": 1561
+    },
+    {
+     "predicted": 0.345,
+     "actual": 0.35,
+     "n": 999
+    },
+    {
+     "predicted": 0.449,
+     "actual": 0.496,
+     "n": 693
+    },
+    {
+     "predicted": 0.548,
+     "actual": 0.572,
+     "n": 512
+    },
+    {
+     "predicted": 0.645,
+     "actual": 0.733,
+     "n": 371
+    },
+    {
+     "predicted": 0.751,
+     "actual": 0.782,
+     "n": 284
+    },
+    {
+     "predicted": 0.849,
+     "actual": 0.844,
+     "n": 243
+    },
+    {
+     "predicted": 0.968,
+     "actual": 0.964,
+     "n": 357
+    }
+   ]
+  },
+  "partners": {
+   "allianceWin": {
+    "n": 2550,
+    "brier": 0.0719,
+    "logLoss": 0.2365,
+    "ece": 0.0255,
+    "baseRate": 0.1839
+   },
+   "allianceWinGeneral": {
+    "n": 2550,
+    "brier": 0.0855,
+    "logLoss": 0.2793,
+    "ece": 0.0576,
+    "baseRate": 0.1839
+   }
+  },
+  "pickTop3": 0.696911196911197
+ }
+}
