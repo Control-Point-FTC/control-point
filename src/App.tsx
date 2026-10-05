@@ -150,6 +150,7 @@ function ChatImage({ src, href, alt }: { src: string | null | undefined; href: s
 import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
 import BrunoPanel from './components/BrunoPanel';
+import { BRUNO_OPEN_EVENT } from './services/brunoContext';
 import BrunoIcon from './components/BrunoIcon';
 import FeedbackIcon from './components/FeedbackIcon';
 import EmailImportModal from './components/EmailImport';
@@ -170,6 +171,7 @@ import {
 } from './components/onboarding';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { clearFtcCache } from './components/ftcCache';
+import { clearScoutCache } from './services/ftcScoutApi';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
 import { WhatsNewAutoPopup } from './components/WhatsNewModal';
@@ -1080,6 +1082,12 @@ export default function App() {
   // the same conversation instead of an unrelated chat. Ref, not state —
   // it's only read at expand time.
   const brunoPanelChatRef = useRef<number | null>(null);
+  // Pages (Team Stats → Analyze, "Scout with Bruno") can open the sidebar.
+  useEffect(() => {
+    const open = () => setBrunoPanelOpen(true);
+    window.addEventListener(BRUNO_OPEN_EVENT, open);
+    return () => window.removeEventListener(BRUNO_OPEN_EVENT, open);
+  }, []);
 
   // ---- Onboarding (welcome, tour, setup wizard, dashboard checklist) ----
   // Persisted per account (email-keyed) on the server so progress survives
@@ -1936,6 +1944,7 @@ export default function App() {
   // so the newly active team's data is fetched fresh.
   const clearTeamCaches = () => {
     clearFtcCache();
+    clearScoutCache();
     if (typeof localStorage === 'undefined') return;
     [
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',

@@ -256,10 +256,10 @@ export function sortMatches(ms: FtcMatchFull[]): FtcMatchFull[] {
   );
 }
 
-/** Parse FTC Scout team search results. */
 /** FTC team numbers are at most 6 digits; FTC Scout search also returns junk ids. */
 const MAX_TEAM_NUMBER = 999999;
 
+/** Parse FTC Scout team search results. */
 export function parseScoutSearch(resp: unknown): FtcTeamSearchHit[] {
   const list = isObj(resp) && isObj(resp.data) ? arr(resp.data.teamsSearch) : [];
   const out: FtcTeamSearchHit[] = [];

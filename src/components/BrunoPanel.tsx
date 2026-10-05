@@ -9,6 +9,7 @@ import BrunoIcon from './BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
 import { cn } from './ui';
+import { getScoutingContext, subscribeScoutingContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../services/brunoContext';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
@@ -22,6 +23,14 @@ const STARTERS = [
   'Mecanum vs tank drive — which should we pick?',
   'Help me write a TeleOp OpMode in Java',
   'How do I tune PID for our lift?',
+];
+
+// Analyze mode (Team Stats → Analyze) starters.
+const SCOUT_STARTERS = [
+  'Who is our best potential alliance partner here?',
+  'Who should we scout next?',
+  'What is our biggest weakness compared with the event average?',
+  'What information is missing before we make a scouting decision?',
 ];
 
 export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId, onUserSaved }: {
@@ -53,6 +62,22 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   };
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // Analyze mode (Team Stats): the page publishes what it's looking at; the
+  // panel forwards it with each message and swaps in scouting starters.
+  const [scoutCtx, setScoutCtx] = useState(getScoutingContext);
+  useEffect(() => subscribeScoutingContext(() => setScoutCtx(getScoutingContext())), []);
+  const [greeting, setGreeting] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<BrunoOpenDetail>).detail || {};
+      if (d.greeting) setGreeting(d.greeting);
+      if (d.prompt) setPendingPrompt(d.prompt);
+    };
+    window.addEventListener(BRUNO_OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(BRUNO_OPEN_EVENT, onOpen);
+  }, []);
+  useEffect(() => { if (!scoutCtx) setGreeting(null); }, [scoutCtx]);
   const [chatId, setChatId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -179,7 +204,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
         if (renderTimer === null) renderTimer = window.setTimeout(pushRender, 90);
-      }, id || undefined);
+      }, id || undefined, { scouting: getScoutingContext() ?? undefined });
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       setMessages([...next, { role: 'model', text: agg }]);
       if (!agg.trim()) {
@@ -194,6 +219,16 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       setBusy(false);
     }
   };
+
+  // "Scout with Bruno" buttons queue a prompt; send it once the panel is open.
+  useEffect(() => {
+    if (open && pendingPrompt && !busy) {
+      const p = pendingPrompt;
+      setPendingPrompt(null);
+      void send(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pendingPrompt, busy]);
 
   return (
     <AnimatePresence>
@@ -223,7 +258,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-text-base font-bold text-sm leading-tight">{name}</p>
-                  <p className="text-text-muted text-[11px] leading-tight">FTC Java mentor · BIOBUZZ season</p>
+                  <p className="text-text-muted text-[11px] leading-tight">
+                    {scoutCtx ? <span className="text-accent font-semibold">Scouting · Analyze mode</span> : 'FTC Java mentor · BIOBUZZ season'}
+                  </p>
                 </div>
                 <button
                   onClick={newChat}
@@ -313,15 +350,19 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   <div className="rounded-xl bg-text-base/[0.04] border border-text-base/[0.07] p-3">
                     <p className="text-[13px] text-text-base/85 leading-relaxed flex gap-2">
                       <Sparkles className="w-4 h-4 text-accent shrink-0 mt-0.5" />
-                      <span>
-                        Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
-                        your FTC robot: mechanisms, code, strategy, or scheduling.
-                      </span>
+                      {scoutCtx && greeting ? (
+                        <span data-testid="bruno-analyze-greeting">{greeting}</span>
+                      ) : (
+                        <span>
+                          Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
+                          your FTC robot: mechanisms, code, strategy, or scheduling.
+                        </span>
+                      )}
                     </p>
                   </div>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">Try one</p>
                   <div className="flex flex-col gap-1.5">
-                    {STARTERS.map((s) => (
+                    {(scoutCtx ? SCOUT_STARTERS : STARTERS).map((s) => (
                       <button
                         key={s}
                         onClick={() => send(s)}
