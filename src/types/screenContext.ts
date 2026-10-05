@@ -16,4 +16,7 @@ export interface ScreenContextRequest {
   channelId?: number | null;
   /** File open in the Code editor. */
   codeFileId?: number | null;
+  /** Event open on the Predict page (season + FTC event code). */
+  predictSeason?: number | null;
+  predictEvent?: string | null;
 }

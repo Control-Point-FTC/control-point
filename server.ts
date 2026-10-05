@@ -4850,6 +4850,24 @@ async function startServer() {
       const f = (await dbGet("SELECT id, file_path, language, file_size, updated_at FROM code_files WHERE id = ? AND team_id = ?", req.codeFileId, auth.teamId)) as any;
       if (f) found.codeFile = { id: f.id, file_path: String(f.file_path || ""), language: f.language || null, file_size: f.file_size ?? null, updated_at: f.updated_at || null };
     }
+    if (req.predictEvent && req.predictSeason && predictEngine.ready) {
+      try {
+        const ev = await cachedEventFull(req.predictSeason, req.predictEvent);
+        if (ev && !predictEngine.unsupportedReason(ev)) {
+          const myTeam = await myFtcTeam(auth.teamId);
+          const live = !ev.matches.length || ev.matches.some((m) => !m.played);
+          const fc = await cachedPredict<Forecast | null>(`event:${req.predictSeason}:${req.predictEvent}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => predictEngine.forecast(ev, myTeam));
+          if (fc) {
+            const me = myTeam ? fc.teams.find((t) => t.team === myTeam) : undefined;
+            found.predict = {
+              event: fc.event, eventName: ev.name, stage: fc.stage, myTeam, slots: fc.slots, assumptions: fc.assumptions,
+              mine: me ? { pAdvance: me.pAdvance, matchesOnly: fc.matchesOnly?.pAdvance ?? null, pWin: me.pWin, pCaptain: me.pCaptain, rankP10: me.rank.p10, rankP90: me.rank.p90, points: { quals: me.points.quals, alliance: me.points.alliance, playoffs: me.points.playoffs, awards: me.points.awards } } : null,
+              top: fc.teams.slice(0, 6).map((t) => ({ team: t.team, pAdvance: t.pAdvance })),
+            };
+          }
+        }
+      } catch { /* best-effort: the rest of the screen context still goes out */ }
+    }
     return formatScreenContext(req, found);
   }
 

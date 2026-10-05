@@ -170,8 +170,10 @@ import {
   type OnboardingState,
 } from './components/onboarding';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
+import { PredictView } from './components/predict/PredictView';
 import { clearFtcCache } from './components/ftcCache';
 import { clearScoutCache } from './services/ftcScoutApi';
+import { clearPredictCache } from './services/predictApi';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
 import { WhatsNewAutoPopup } from './components/WhatsNewModal';
@@ -874,6 +876,7 @@ const navItems = [
   { id: 'dashboard', path: 'dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, pinned: true },
   { id: 'chat', path: 'chat', labelKey: 'nav.messaging', icon: MessageSquare, pinned: true },
   { id: 'stats', path: 'stats', labelKey: 'nav.teamStats', icon: Trophy, group: 'Compete' },
+  { id: 'predict', path: 'predict', labelKey: 'nav.predict', icon: Sparkles, group: 'Compete', badge: 'beta' },
   {
     id: 'teams', path: 'teams', labelKey: 'nav.teamsMembers', icon: Users, group: 'Team',
     children: [
@@ -1947,6 +1950,7 @@ export default function App() {
     clearFtcCache();
     clearScoutCache();
     clearScreenContext();
+    clearPredictCache();
     if (typeof localStorage === 'undefined') return;
     [
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',
@@ -2270,6 +2274,16 @@ export default function App() {
     if (isAdmin) return !t.scope || hasScope(t.scope);
     return studentTabIds.includes(t.id);
   };
+  // "NEW" badge on Predict until the user first opens it (per browser).
+  const [predictSeen, setPredictSeen] = useState(() => {
+    try { return localStorage.getItem('cp-predict-seen') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    if (activeTab !== 'predict' || predictSeen) return;
+    setPredictSeen(true);
+    try { localStorage.setItem('cp-predict-seen', '1'); } catch { /* storage unavailable */ }
+  }, [activeTab, predictSeen]);
+
   const visibleTabs = navItems
     .map((t) => {
       const kids = (t as any).children?.filter(tabVisible);
@@ -2589,6 +2603,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={dashboardEl} />
         <Route path="/stats" element={<TeamStatsView />} />
+        <Route path="/predict" element={<PredictView />} />
         <Route path="/teams" element={<TeamsView {...viewProps} />} />
         <Route path="/roles" element={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />
         <Route path="/attendance" element={<AttendanceView {...viewProps} />} />
@@ -3007,6 +3022,14 @@ export default function App() {
                 >
                   <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
                   {isSidebarOpen && <span className="truncate">{t(item.labelKey)}</span>}
+                  {(item as any).badge === 'beta' && (isSidebarOpen ? (
+                    <span className="ml-auto flex items-center gap-1 shrink-0">
+                      {!predictSeen && <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black tracking-wider leading-none">NEW</span>}
+                      <span className={cn("px-1.5 py-0.5 rounded-full border text-[9px] font-black tracking-wider leading-none", isActive ? "border-accent-ink/40 text-accent-ink" : "border-text-base/20 text-text-muted")}>BETA</span>
+                    </span>
+                  ) : !predictSeen && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-secondary" aria-label="New" />
+                  ))}
                   {item.id === 'chat' && unreadMentions > 0 && (
                     <span
                       className={cn(

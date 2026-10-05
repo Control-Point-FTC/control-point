@@ -58,7 +58,22 @@ export interface Forecast {
   teams: ForecastTeam[];
   /** The asking team's odds with match results only (no award points), for comparison. */
   matchesOnly: { team: number; pAdvance: number } | null;
+  /** Every scheduled/played match at the event with its prediction (from current ratings). */
+  matches: ForecastMatch[];
   generatedAt: string;
+}
+
+export interface ForecastMatch {
+  key: string;
+  label: string;
+  level: "qual" | "playoff";
+  red: number[];
+  blue: number[];
+  pRedWin: number;
+  redMean: number;
+  blueMean: number;
+  /** Real final scores once played. */
+  played: { red: number; blue: number } | null;
 }
 
 export interface PartnerOption { team: number; pAdvance: number; pWin: number }
@@ -368,10 +383,18 @@ export class PredictEngine {
       matchesOnly = { team: myTeam, pAdvance: mo.get(myTeam)?.pAdvance ?? 0 };
     }
     const teams: ForecastTeam[] = [...res.values()].map((o) => this.teamView(o, book, o.team === myTeam));
+    const matches: ForecastMatch[] = ev.matches.filter((m) => m.red.teams.length && m.blue.teams.length).slice(0, 400).map((m) => {
+      const red = m.red.teams.map((t) => t.number), blue = m.blue.teams.map((t) => t.number);
+      const p = predictMatch(book, red, blue, M.noise);
+      return {
+        key: m.key, label: m.label, level: m.level, red, blue, pRedWin: p.pRedWin, redMean: p.red.mean, blueMean: p.blue.mean,
+        played: m.played && m.red.score?.total != null && m.blue.score?.total != null ? { red: m.red.score.total, blue: m.blue.score.total } : null,
+      };
+    });
     teams.sort((a, b) => b.pAdvance - a.pAdvance || a.rank.mean - b.rank.mean);
     return {
       season: ev.season, event: ev.code, stage, runs, slots: adv.slots, slotsSource: adv.source,
-      prequalified: adv.prequalified.filter((t) => res.has(t)), assumptions, teams, matchesOnly,
+      prequalified: adv.prequalified.filter((t) => res.has(t)), assumptions, teams, matchesOnly, matches,
       generatedAt: new Date().toISOString(),
     };
   }
