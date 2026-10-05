@@ -78,16 +78,32 @@ export function useFtcTeam() {
     setLoading(true);
     setError(null);
     setNotConnected(false);
+    // Set when this load hands off to a different season: the spinner stays
+    // up until that reload finishes (no flash of an empty/error state).
+    let handedOff = false;
     try {
       const payload = await fetchFtcTeam(s, controller.signal);
       if (requestId !== requestIdRef.current || controller.signal.aborted) return;
-      setData(payload);
       if (payload?.seasons?.length) setKnownSeasons(payload.seasons);
+      // A season that hasn't started can still come back as a profile with
+      // no events and no OPR — on the first load, step back to the team's
+      // most recent earlier season instead of opening on an empty view.
+      if (autoFallbackRef.current && !payload?.events?.length && payload?.opr?.tot?.value == null) {
+        const prev = (payload?.seasons || []).filter((x: number) => x < s).sort((a: number, b: number) => b - a)[0];
+        autoFallbackRef.current = false;
+        if (prev) {
+          handedOff = true;
+          setSeason(prev); // effect reloads with that season
+          return;
+        }
+      }
       autoFallbackRef.current = false;
+      setData(payload);
     } catch (e: any) {
       if (requestId !== requestIdRef.current || controller.signal.aborted) return;
       if (autoFallbackRef.current && isNoSeasonData(e?.message || null) && s > 2022) {
         autoFallbackRef.current = false;
+        handedOff = true;
         setSeason(s - 1); // effect reloads with the previous season
         return;
       }
@@ -100,7 +116,7 @@ export function useFtcTeam() {
         setData(null);
       }
     } finally {
-      if (requestId === requestIdRef.current && !controller.signal.aborted) setLoading(false);
+      if (!handedOff && requestId === requestIdRef.current && !controller.signal.aborted) setLoading(false);
     }
   }, []);
 
