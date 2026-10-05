@@ -9541,6 +9541,21 @@ Rules:
     }
   })();
 
+  // One-time force logout: clear all sessions so everyone signs in fresh.
+  // This triggers the OAuth avatar migration for each user on their next login.
+  (async () => {
+    try {
+      const done = (await dbGet("SELECT value FROM settings WHERE key = 'force_logout_v1'")) as any;
+      if (!done) {
+        const r = await dbRun("DELETE FROM sessions");
+        await dbRun("INSERT OR REPLACE INTO settings (key, value) VALUES ('force_logout_v1', '1')");
+        console.log(`[auth] force logout: cleared ${r.changes} sessions — all users must sign in again`);
+      }
+    } catch (e) {
+      console.warn('[auth] force logout failed:', (e as any)?.message);
+    }
+  })();
+
   // Boot backfill: migrate external avatar URLs to local storage. Broken
   // (expired) ones get cleared so they fall back to initials instead of
   // showing broken images.
