@@ -11502,6 +11502,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
                   );
                 })}
               </div>
+              </div>
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setShowMemberEdit(null)}>Cancel</Button>
                 <Button onClick={() => updateMember(showMemberEdit.id, showMemberEdit)}>Save Changes</Button>

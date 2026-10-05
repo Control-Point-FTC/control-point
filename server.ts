@@ -1652,25 +1652,49 @@ function parsePerms(json: any): string[] {
 
 // Seed the system roles for a team and backfill existing members:
 // account_type 'admin' -> Admin role, everyone else -> Member role.
+// Ensures all three default roles exist (Admin, Member, Verified Member) —
+// creates any that are missing, so existing teams get new defaults too.
 async function ensureRolesSeeded(teamId: number) {
-  const has = (await dbGet("SELECT id FROM roles WHERE team_id = ? LIMIT 1", teamId)) as any;
-  if (has) return;
-  const adminRole = (await dbRun(
-    "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-    teamId, "Admin", "#FFC700", JSON.stringify(["*"]), 0
-  )) as any;
-  const memberRole = (await dbRun(
-    "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-    teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach"]), 1
-  )) as any;
-  const members = (await dbAll(
-    "SELECT id, account_type FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId
-  )) as any[];
-  for (const m of members) {
+  const existing = (await dbAll("SELECT name FROM roles WHERE team_id = ?", teamId)) as any[];
+  const names = new Set(existing.map((r: any) => r.name));
+
+  let adminRoleId: number | null = null;
+  let memberRoleId: number | null = null;
+
+  if (!names.has("Admin")) {
+    const adminRole = (await dbRun(
+      "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
+      teamId, "Admin", "#FFC700", JSON.stringify(["*"]), 0
+    )) as any;
+    adminRoleId = Number(adminRole.lastInsertRowid);
+  }
+  if (!names.has("Member")) {
+    const memberRole = (await dbRun(
+      "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
+      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach"]), 1
+    )) as any;
+    memberRoleId = Number(memberRole.lastInsertRowid);
+  }
+  if (!names.has("Verified Member")) {
     await dbRun(
-      "INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)",
-      m.id, m.account_type === "admin" ? adminRole.lastInsertRowid : memberRole.lastInsertRowid
+      "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
+      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget"]), 2
     );
+  }
+
+  // Backfill role assignments for members (only when we just created the roles).
+  if (adminRoleId || memberRoleId) {
+    const adminId = adminRoleId || (await systemRoleId(teamId, "Admin"));
+    const memberId = memberRoleId || (await systemRoleId(teamId, "Member"));
+    const members = (await dbAll(
+      "SELECT id, account_type FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId
+    )) as any[];
+    for (const m of members) {
+      const roleId = m.account_type === "admin" ? adminId : memberId;
+      if (roleId) {
+        await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", m.id, roleId);
+      }
+    }
   }
 }
 
@@ -9503,6 +9527,19 @@ Rules:
 
   // One-time boot cleanup: remove duplicate voice channels for every team.
   dedupeVoiceChannels(voiceDeps).catch((e) => console.warn('[voice] boot dedupe failed:', e?.message));
+
+  // Boot backfill: ensure every team has the default role set
+  // (Admin, Member, Verified Member) — creates any that are missing.
+  (async () => {
+    try {
+      const teams = (await dbAll("SELECT id FROM teams")) as any[];
+      for (const t of teams) {
+        try { await ensureRolesSeeded(t.id); } catch { /* per-team errors shouldn't block boot */ }
+      }
+    } catch (e) {
+      console.warn('[roles] boot backfill failed:', (e as any)?.message);
+    }
+  })();
 
   // Boot backfill: migrate external avatar URLs to local storage. Broken
   // (expired) ones get cleared so they fall back to initials instead of
