@@ -10,7 +10,8 @@ C = ".cache/predict"
 m = json.load(open(f"{C}/final-test.json", encoding="utf-8"))["result"]
 aw = json.load(open(f"{C}/awards-model.json", encoding="utf-8"))
 pk = json.load(open(f"{C}/pick-2024.json", encoding="utf-8"))
-ev = {(s, a): json.load(open(f"{C}/events-{s}-{a}.json", encoding="utf-8")) for s in (2024, 2025) for a in ("model", "none")}
+# Only the 2025–26 (test) event reports are reported.
+ev = {(s, a): json.load(open(f"{C}/events-{s}-{a}.json", encoding="utf-8")) for s in (2025,) for a in ("model", "none")}
 tuned = json.load(open(f"{C}/tuned-2024.json", encoding="utf-8"))["best"]
 
 L = []
@@ -45,7 +46,7 @@ add(
 
 e25 = ev[(2025, "model")]
 add(f"## 2. Whole-event advancement odds (2025–26 test, {e25['events']} events, {e25['advancement']['pre']['n']:,} team-events)\n")
-add("Awards are predicted from team history (nothing about the event's results is known). 1,000 simulations per event and starting point.\n")
+add(f"Awards are predicted from team history (nothing about the event's results is known). {e25['runs']:,} simulations per event and starting point.\n")
 add("| Starting point | Brier ↓ | Calibration error ↓ | Matches only (no awards) |\n|---|---|---|---|")
 for st, name in (("pre", "Before the event"), ("quals", "After quals"), ("selected", "After alliance selection")):
     a, b = e25["advancement"][st], ev[(2025, "none")]["advancement"][st]
