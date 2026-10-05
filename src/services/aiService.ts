@@ -3,6 +3,7 @@
 // carry the user's session id, exactly like every other authenticated request.
 
 import { apiFetch } from './api';
+import { getScreenContext } from './brunoContext';
 import type { ScoutingContextRequest } from '../types/ftcScout';
 
 const CACHE_KEY = 'ftcNewsCache';
@@ -327,6 +328,9 @@ export function streamBuildHelper(
   if (opts?.persona) body.persona = opts.persona;
   // Analyze mode: only identifiers travel; the server builds the scouting pack.
   if (opts?.scouting) body.scouting = opts.scouting;
+  // What the user is looking at (page + open record) rides along with every message.
+  const screen = getScreenContext();
+  if (screen) body.screen = screen;
   // Screenshots ride on the latest user message; the server validates them
   // and routes the request to the Gemini vision path.
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');

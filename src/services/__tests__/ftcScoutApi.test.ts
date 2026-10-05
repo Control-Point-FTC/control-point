@@ -213,3 +213,21 @@ describe('shortlist write ordering (server merge)', () => {
     expect(mergeStampedDelete({ ...live(edit.stamps), entry: edit.entry }, B(1))).not.toBeNull();
   });
 });
+
+describe('Bruno screen context store', () => {
+  it('combines the page with records pages report, and clears them independently', async () => {
+    const m = await import('../brunoContext');
+    m.clearScreenContext();
+    // Children report before App sets the route (React effect order): kept.
+    m.setScreenEntity('codeFileId', 9);
+    expect(m.getScreenContext()).toBeNull();
+    m.setScreenRoute('/code', 'Code');
+    expect(m.getScreenContext()).toEqual({ route: '/code', view: 'Code', codeFileId: 9 });
+    m.setScreenEntity('codeFileId', null);
+    m.setScreenRoute('/tasks', 'Tasks');
+    m.setScreenEntity('taskId', 12);
+    expect(m.getScreenContext()).toEqual({ route: '/tasks', view: 'Tasks', taskId: 12 });
+    m.clearScreenContext();
+    expect(m.getScreenContext()).toBeNull();
+  });
+});

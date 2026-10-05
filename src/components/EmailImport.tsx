@@ -3,6 +3,7 @@ import { Upload, FileText, Sparkles, Check, X, Loader2, Mail } from 'lucide-reac
 import { format } from 'date-fns';
 import { streamBuildHelper, extractActionProposals } from '../services/aiService';
 import { apiUrl, apiFetch } from '../services/api';
+import { Select as ThemedSelect } from './Select';
 
 export interface ParsedEmail {
   recipient: string;
@@ -259,12 +260,12 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
     }
   };
 
-  const inputCls = 'w-full rounded-lg border border-text-base/10 bg-black/30 px-3 py-2 text-sm text-text-base placeholder:text-text-base/30 focus:outline-none focus:border-accent/60';
+  const inputCls = 'w-full rounded-lg border border-text-base/10 bg-text-base/[0.04] px-3 py-2 text-sm text-text-base placeholder:text-text-base/30 focus:outline-none focus:border-accent/60';
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-xl rounded-2xl border border-text-base/10 bg-[#101014] p-5 shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-xl rounded-2xl border border-text-base/10 bg-elevated p-5 shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Import saved email"
@@ -344,10 +345,10 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
             </label>
             <label className="block">
               <span className="text-xs font-semibold text-text-base/60">Type</span>
-              <select value={type} onChange={(e) => setType(e.target.value)} className={inputCls + ' mt-1'}>
+              <ThemedSelect value={type} onChange={(e) => setType(e.target.value)} className={inputCls + ' mt-1'}>
                 <option value="email">Email</option>
                 <option value="announcement">Announcement</option>
-              </select>
+              </ThemedSelect>
             </label>
             <label className="block">
               <span className="text-xs font-semibold text-text-base/60">Body</span>

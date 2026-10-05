@@ -243,7 +243,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
             animate={{ width: 400, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 380, damping: 40 }}
-            className="flex flex-col overflow-hidden bg-[#101014]/98 backdrop-blur-xl border-text-base/10 shadow-2xl
+            className="flex flex-col overflow-hidden bg-secondary/98 backdrop-blur-xl border-text-base/10 shadow-2xl
               max-md:fixed max-md:right-0 max-md:top-0 max-md:z-50 max-md:h-full max-md:w-[400px] max-md:max-w-[94vw] max-md:border-l
               md:relative md:z-30 md:h-full md:shrink-0 md:border-l"
             role="complementary"

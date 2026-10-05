@@ -124,6 +124,8 @@ export function Sheet({ open, onClose, title, subtitle, children, wide }: {
     // sheets underneath), and only the topmost sheet handles the key.
     const onKey = (e: KeyboardEvent) => {
       if (sheetStack[sheetStack.length - 1] !== token) return;
+      // An open dropdown (or other [data-esc-owner]) handles its own Escape.
+      if (e.key === 'Escape' && e.target instanceof Element && e.target.closest('[data-esc-owner]')) return;
       if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); return; }
       if (e.key !== 'Tab' || !panelRef.current) return;
       // Focus trap: Tab / Shift+Tab cycle inside the panel.
