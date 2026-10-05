@@ -5,7 +5,8 @@
 // Everything is no-op (with a hint) when not in a call.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronUp, Headphones, Mic, MicOff, Settings, TriangleAlert, VolumeX } from 'lucide-react';
+import { ChevronUp, Headphones, Mic, MicOff, TriangleAlert, VolumeX } from 'lucide-react';
+import CrosshairIcon from '../CrosshairIcon';
 import { cn } from '../ui';
 import { useVoice } from '../../voice';
 import { MicLevelMeter, VoiceIconButton } from './shared';
@@ -160,7 +161,7 @@ export function UserVoiceControls({
             }}
             className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm font-semibold text-text-muted hover:text-text-base hover:bg-text-base/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
-            <Settings className="w-4 h-4" aria-hidden="true" /> Voice settings
+            <CrosshairIcon className="w-4 h-4" /> Voice settings
           </button>
         </Dropdown>
       </div>

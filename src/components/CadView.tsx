@@ -466,9 +466,14 @@ function CadSnapshots({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bo
   }, [snaps]);
   const remove = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete snapshot?', message: 'The 3D file is removed for everyone.', confirmLabel: 'Delete' }))) return;
-    const r = await apiFetch(`/api/cad/snapshots/${id}`, { method: 'DELETE' });
-    if (r.ok) { setSnaps((p) => p.filter((x) => x.id !== id)); notify('Snapshot deleted.', 'success'); }
-    else notify('Could not delete.', 'error');
+    try {
+      const r = await apiFetch(`/api/cad/snapshots/${id}`, { method: 'DELETE' });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { setSnaps((p) => p.filter((x) => x.id !== id)); notify('Snapshot deleted.', 'success'); }
+      else notify(d.error || `Could not delete (HTTP ${r.status}).`, 'error');
+    } catch (e: any) {
+      notify(`Delete failed: ${e?.message || 'network error'}`, 'error');
+    }
   };
   return (
     <div className="space-y-6">

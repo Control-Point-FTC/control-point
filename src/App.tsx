@@ -2484,7 +2484,7 @@ export default function App() {
       onContinueSetup: openSetupGuide,
       onDismissChecklist: handleChecklistDismiss,
       // Discord-style chat channels
-      channels, activeChannelId, setActiveChannelId,
+      channels, setChannels, activeChannelId, setActiveChannelId,
       msgExhausted,      chatCategories,
       // Shared task-completion proof dialog — every Done transition opens it.
       onRequestComplete: openCompleteDialog,
@@ -3301,9 +3301,9 @@ export default function App() {
               data-onboard="header-bruno"
               title={`${botName} — click for quick chat, double-click for full view`}
               aria-label={`Open ${botName}`}
-              className="w-10 h-10 rounded-full bg-accent/15 border border-accent/40 hover:bg-accent/25 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0"
+              className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#FFD84D] to-[#E0A800] border border-accent/40 hover:scale-105 active:scale-95 transition-all flex items-center justify-center flex-shrink-0 shadow-[0_2px_10px_rgba(255,199,0,0.25)]"
             >
-              <BrunoIcon className="w-6 h-6 text-accent" animate thinking={isAiLoading} />
+              <BrunoIcon className="w-6 h-6 text-accent-ink" animate thinking={isAiLoading} />
             </button>
             {currentUser && (
               <div className="relative">
@@ -5948,6 +5948,13 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
   const [bulkRoster, setBulkRoster] = useState<any[]>([]);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkSaving, setBulkSaving] = useState(false);
+  // AI quick-add: type natural language, Bruno parses it into task fields.
+  // One task fills the form; several get a pick-list to choose from.
+  const [aiTaskOpen, setAiTaskOpen] = useState(false);
+  const [aiTaskText, setAiTaskText] = useState('');
+  const [aiTaskBusy, setAiTaskBusy] = useState(false);
+  const [aiTaskNote, setAiTaskNote] = useState<string | null>(null);
+  const [aiTaskProposals, setAiTaskProposals] = useState<any[]>([]);
   const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
     const s = new Set(prev);
     if (on) s.add(id); else s.delete(id);
@@ -5988,6 +5995,8 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
     setEditingTaskId(null);
     setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', status });
     setIsBoardTask(false);
+    resetAiTask();
+    setAiTaskOpen(false);
     setShowAddTask(true);
   };
 
@@ -6119,6 +6128,52 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
     setBulkText('');
     setBulkPreview(null);
     setBulkError(null);
+  };
+
+  // ---- AI quick-add for the task form ----
+  const resetAiTask = () => { setAiTaskText(''); setAiTaskNote(null); setAiTaskProposals([]); };
+
+  const applyAiTaskToForm = (t: any) => {
+    setNewTask(prev => ({
+      ...prev,
+      title: t.title || prev.title,
+      description: t.description || prev.description,
+      due_date: t.due_date || prev.due_date,
+      status: ['todo', 'in-progress', 'done'].includes(t.status) ? t.status : prev.status,
+      assignee_ids: t.assigned_to ? [t.assigned_to] : prev.assignee_ids,
+    }));
+  };
+
+  const handleAiTaskParse = async () => {
+    const text = aiTaskText.trim();
+    if (!text || aiTaskBusy) return;
+    setAiTaskBusy(true);
+    setAiTaskNote(null);
+    setAiTaskProposals([]);
+    try {
+      const res = await apiFetch('/api/tasks/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || 'Could not read tasks');
+      const list = Array.isArray(d.items) ? d.items : [];
+      if (list.length === 1) {
+        applyAiTaskToForm(list[0]);
+        setAiTaskNote('Bruno filled in the form below — review it and hit Create Task.');
+        setAiTaskOpen(false);
+      } else if (list.length > 1) {
+        setAiTaskProposals(list);
+        setAiTaskNote(`Bruno found ${list.length} tasks — pick one to fill the form, or use bulk import for all of them.`);
+      } else {
+        setAiTaskNote('Bruno could not find any tasks in that text — try adding an action and a date.');
+      }
+    } catch (e: any) {
+      setAiTaskNote(e?.message || "Bruno isn't reachable right now — try again in a moment.");
+    } finally {
+      setAiTaskBusy(false);
+    }
   };
 
   const filteredTasks = tasks.filter((t: any) => {
@@ -6352,6 +6407,63 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <Card title={editingTaskId ? 'Edit Task' : 'New Task'} className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
+              {!editingTaskId && (
+                <div className="rounded-xl border border-accent/20 bg-accent/[0.04] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAiTaskOpen(!aiTaskOpen)}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-left"
+                  >
+                    <Sparkles className="w-4 h-4 text-accent shrink-0" />
+                    <span className="text-sm font-bold text-text-base flex-1">AI quick-add</span>
+                    <span className="text-[11px] text-text-muted">Describe it, Bruno fills the form</span>
+                    {aiTaskOpen ? <ChevronUp className="w-4 h-4 text-text-muted" /> : <ChevronDown className="w-4 h-4 text-text-muted" />}
+                  </button>
+                  {aiTaskOpen && (
+                    <div className="px-4 pb-4 space-y-2.5">
+                      <textarea
+                        className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base text-sm focus:outline-none focus:border-accent/50 transition-colors h-20"
+                        placeholder="e.g. Finish robot CAD by Friday, assign to Sushil and Heman"
+                        value={aiTaskText}
+                        onChange={(e: any) => setAiTaskText(e.target.value)}
+                      />
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-text-muted">Same Bruno AI, right here in the form.</p>
+                        <Button variant="secondary" className="!text-xs !py-1.5" onClick={handleAiTaskParse} disabled={aiTaskBusy || !aiTaskText.trim()}>
+                          {aiTaskBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
+                        </Button>
+                      </div>
+                      {aiTaskNote && <p className="text-xs text-text-base/80">{aiTaskNote}</p>}
+                      {aiTaskProposals.length > 1 && (
+                        <div className="space-y-1.5 max-h-44 overflow-y-auto custom-scrollbar">
+                          {aiTaskProposals.map((t: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-text-base/[0.04] border border-text-base/10 px-3 py-1.5">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-text-base truncate">{t.title}</p>
+                                <p className="text-[11px] text-text-muted">
+                                  {t.due_date || 'No due date'}{t.assignee_name ? ` • ${t.assignee_name}` : ''}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  applyAiTaskToForm(t);
+                                  setAiTaskProposals([]);
+                                  setAiTaskNote('Bruno filled in the form below — review it and hit Create Task.');
+                                  setAiTaskOpen(false);
+                                }}
+                                className="text-xs font-bold text-accent hover:underline shrink-0"
+                              >
+                                Use
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <Select 
                 options={[
                   { label: 'Select Team', value: '' },
@@ -8288,7 +8400,7 @@ function LinkPreview({ url }: { url: string }) {
 // Discord-style messaging: channel list on the left, conversation in the
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
-function ChatView({ messages, setMessages, msgCache, msgExhausted, members, currentUser, socket, channels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
+function ChatView({ messages, setMessages, msgCache, msgExhausted, members, currentUser, socket, channels, setChannels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
   const [content, setContent] = useState('');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
@@ -8307,6 +8419,8 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
   const [newCategoryName, setNewCategoryName] = useState('');
   const [renamingCat, setRenamingCat] = useState<number | null>(null);
   const [renameCatName, setRenameCatName] = useState('');
+  const [renamingChannel, setRenamingChannel] = useState<number | null>(null);
+  const [renameChannelName, setRenameChannelName] = useState('');
   const [moveMenuFor, setMoveMenuFor] = useState<number | null>(null); // channel id with the move-to-category menu open
   const [dragChannelId, setDragChannelId] = useState<number | null>(null); // admin drag-and-drop between categories
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null); // 'cat:<id>' | 'uncat'
@@ -8671,6 +8785,25 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
     }
   };
 
+  const handleRenameChannelSubmit = async () => {
+    if (renamingChannel == null) return;
+    const name = renameChannelName.trim();
+    if (!name) return;
+    const res = await apiFetch(`/api/chat/channels/${renamingChannel}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { notify(data.error || 'Could not rename channel.', 'error'); return; }
+    if (data.channel) {
+      setChannels((prev: any[]) => prev.map((c: any) => (c.id === data.channel.id ? data.channel : c)));
+    }
+    setRenamingChannel(null);
+    setRenameChannelName('');
+    notify('Channel renamed.', 'success');
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape' && replyTo) {
       e.preventDefault();
@@ -8877,6 +9010,16 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               <span
                 role="button"
                 tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); setRenameChannelName(c.name); setRenamingChannel(renamingChannel === c.id ? null : c.id); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setRenameChannelName(c.name); setRenamingChannel(renamingChannel === c.id ? null : c.id); } }}
+                className="p-1 rounded text-text-muted/60 hover:text-text-base"
+                title={`Rename #${c.name}`}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
                 onClick={(e) => { e.stopPropagation(); setMoveMenuFor(moveMenuFor === c.id ? null : c.id); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMoveMenuFor(moveMenuFor === c.id ? null : c.id); } }}
                 className="p-1 rounded text-text-muted/60 hover:text-text-base"
@@ -8946,6 +9089,20 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
               </button>
             </div>
           </>
+        )}
+        {renamingChannel === c.id && isAdmin && (
+          <div className="mx-1 mt-1 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <input
+              value={renameChannelName}
+              onChange={(e) => setRenameChannelName(e.target.value)}
+              maxLength={40}
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Enter') handleRenameChannelSubmit(); if (e.key === 'Escape') setRenamingChannel(null); }}
+              className="flex-1 min-w-0 bg-secondary border border-text-base/10 rounded-lg px-2.5 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
+              aria-label="Channel name"
+            />
+            <button onClick={handleRenameChannelSubmit} disabled={!renameChannelName.trim()} className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink disabled:opacity-40">Save</button>
+          </div>
         )}
       </div>
     );

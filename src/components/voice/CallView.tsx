@@ -13,7 +13,6 @@ import {
   Shrink,
   MonitorUp,
   PhoneOff,
-  Settings,
   Users,
   Video,
   VideoOff,
@@ -21,6 +20,7 @@ import {
   Star,
   Pin,
 } from 'lucide-react';
+import CrosshairIcon from '../CrosshairIcon';
 import { cn } from '../ui';
 import { useVoice, type VoiceParticipant } from '../../voice';
 import { ParticipantMenu } from './ParticipantMenu';
@@ -235,7 +235,7 @@ export function CallView({ onOpenSettings }: { onOpenSettings?: () => void }) {
             <MonitorUp className="w-5 h-5" />
           </VoiceIconButton>
           <VoiceIconButton label="Call settings" onClick={() => onOpenSettings?.()} className="p-2.5 hidden md:inline-flex">
-            <Settings className="w-5 h-5" />
+            <CrosshairIcon className="w-5 h-5" />
           </VoiceIconButton>
           <VoiceIconButton label={listOpen ? 'Hide participant list' : 'Show participant list'} active={listOpen} onClick={() => setListOpen((v) => !v)} className="p-2.5">
             <Users className="w-5 h-5" />

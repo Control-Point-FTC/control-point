@@ -9,7 +9,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 // @ts-ignore — occt-import-js ships no types
 import occtimportjs from 'occt-import-js';
-import { X, RotateCw, Maximize2, Grid3X3, Box, AlertTriangle } from 'lucide-react';
+import { X, RotateCw, Maximize2, Grid3X3, Box, AlertTriangle, Download } from 'lucide-react';
+import { apiFetch } from '../services/api';
 
 interface CadModelViewerProps {
   fileUrl: string;
@@ -101,7 +102,7 @@ export default function CadModelViewer({ fileUrl, fileType, fileName, onClose }:
         groupRef.current = group;
         scene.add(group);
 
-        const res = await fetch(fileUrl);
+        const res = await apiFetch(fileUrl);
         if (!res.ok) throw new Error(`Could not download the model file (HTTP ${res.status})`);
         const buffer = await res.arrayBuffer();
         if (cancelled) return;
@@ -249,6 +250,27 @@ export default function CadModelViewer({ fileUrl, fileType, fileName, onClose }:
           className="p-2 rounded-xl border border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all"
         >
           <Maximize2 className="w-4 h-4" />
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              const res = await apiFetch(fileUrl);
+              if (!res.ok) throw new Error();
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = fileName;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              URL.revokeObjectURL(url);
+            } catch { /* download failed silently */ }
+          }}
+          title="Download model file"
+          className="p-2 rounded-xl border border-text-base/10 text-text-muted hover:text-text-base hover:bg-text-base/5 transition-all"
+        >
+          <Download className="w-4 h-4" />
         </button>
         <button
           onClick={onClose}

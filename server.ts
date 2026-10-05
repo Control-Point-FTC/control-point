@@ -4949,6 +4949,16 @@ async function startServer() {
     if (req.body?.post_restricted !== undefined) {
       await dbRun("UPDATE chat_channels SET post_restricted = ? WHERE id = ?", req.body.post_restricted ? 1 : 0, id);
     }
+    if (req.body?.name !== undefined) {
+      const name = String(req.body.name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+      if (!name) return res.status(400).json({ error: "Channel name can't be empty" });
+      try {
+        await dbRun("UPDATE chat_channels SET name = ? WHERE id = ?", name, id);
+      } catch (e: any) {
+        if (String(e?.message || '').includes('UNIQUE')) return res.status(409).json({ error: "A channel with that name already exists" });
+        throw e;
+      }
+    }
     const updated = (await dbGet("SELECT * FROM chat_channels WHERE id = ?", id)) as any;
     broadcastToTeam(auth.teamId!, { type: "channel_updated", channel: updated });
     res.json({ channel: updated });
@@ -7966,6 +7976,7 @@ Rules:
   // visible text. Returns { text, event } where event is null when absent/invalid.
   const EVENT_BLOCK_RE = /```event\s*\r?\n([\s\S]*?)\r?\n```/;
   const SCOUT_BLOCK_RE = /```scout-team\s*\r?\n([\s\S]*?)\r?\n```/;
+  const SCOUT_EVENT_RE = /```scout-event\s*\r?\n([\s\S]*?)\r?\n```/;
   // Bruno calendar skill: the model ends its reply with a fenced ```event block
   // (a JSON object OR array) when the user confirms calendar events. Parse,
   // validate, strip. Events are only PROPOSED here — the client shows a
@@ -8013,6 +8024,22 @@ Rules:
       if (valid.length && valid.length <= 3) numbers = valid;
     } catch { /* malformed JSON — treat as no scout request */ }
     return { text: src.replace(SCOUT_BLOCK_RE, "").trim(), numbers };
+  }
+
+  // Bruno scouting skill: the model ends its reply with a fenced ```scout-event
+  // block ({"code": "USNJCMP"}) when the user asks about an entire event's
+  // field. The backend fetches all teams at the event with their OPRs.
+  function extractScoutEventBlock(fullText: string): { text: string; code: string | null } {
+    const src = String(fullText || "");
+    const m = src.match(SCOUT_EVENT_RE);
+    if (!m) return { text: src, code: null };
+    let code: string | null = null;
+    try {
+      const raw = JSON.parse(m[1]);
+      const c = String(raw?.code || "").trim().slice(0, 32);
+      if (c) code = c;
+    } catch { /* malformed JSON — treat as no scout request */ }
+    return { text: src.replace(SCOUT_EVENT_RE, "").trim(), code };
   }
 
   // Bruno calendar skill: the model ends its reply with a fenced ```delete-event
@@ -8333,6 +8360,7 @@ Rules:
         t = extractTasksBlock(t).text;
         t = extractBudgetBlock(t).text;
         t = extractScoutBlock(t).text;
+        t = extractScoutEventBlock(t).text;
         return t;
       };
       // Optional chat persistence: validate access, store the user message now
@@ -8419,6 +8447,7 @@ Rules:
       });
       const result = aiReply.text;
       const scout = extractScoutBlock(String(result || ""));
+      const scoutEvent = extractScoutEventBlock(String(result || ""));
       let finalResult = stripActionBlocks(String(result || ""));
       // If Bruno requested team scouting, fetch the stats and append a summary.
       if (scout.numbers?.length) {
@@ -8442,6 +8471,34 @@ Rules:
         if (summaries.length) {
           finalResult += `\n\n---\n**Scouting data** (FTC Scout, ${season} season):\n\n${summaries.join('\n\n')}`;
         }
+      }
+      // If Bruno requested event-wide scouting, fetch all teams at the event.
+      if (scoutEvent.code) {
+        const season = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+        try {
+          const teamRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+          const myNum = parseInt(teamRow?.ftc_team_number, 10) || 0;
+          const evPayload = await getFtcEventPayload(myNum, season, scoutEvent.code).catch(() => null);
+          if (evPayload?.teams?.length) {
+            // Get OPR for each team at the event (top 20 by expected strength)
+            const teamNums = evPayload.teams.map((t: any) => t.teamNumber).filter((n: number) => n !== myNum).slice(0, 30);
+            const rows: string[] = [];
+            for (const n of teamNums) {
+              try {
+                const p = await getFtcTeamPayload(n, season).catch(() => null);
+                if (p?.opr?.tot?.value != null) {
+                  rows.push(`${p.number} ${p.name} — OPR ${p.opr.tot.value}${p.opr.tot.rank ? ` (#${p.opr.tot.rank})` : ''}`);
+                }
+              } catch { /* skip */ }
+            }
+            rows.sort((a, b) => {
+              const va = parseFloat(a.split('OPR ')[1] || '0');
+              const vb = parseFloat(b.split('OPR ')[1] || '0');
+              return vb - va;
+            });
+            finalResult += `\n\n---\n**Event scouting: ${evPayload.name}** (${teamNums.length} teams, FTC Scout ${season}):\n\nTop teams by OPR:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+          }
+        } catch { /* event scouting is best-effort */ }
       }
       const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
       logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
@@ -9315,7 +9372,7 @@ Rules:
             const opr = payload.opr || {};
             const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
             const evts = (payload.events || []).slice(0, 5).map((e: any) =>
-              `${e.name} (${e.date || '?'})${e.rank ? ` — quals #${e.rank}` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}${e.awards?.length ? ` [${e.awards.join(', ')}]` : ''}`
+              `${e.name} (${e.date || '?'})${e.code ? ` [code: ${e.code}]` : ''}${e.rank ? ` — quals #${e.rank}` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}${e.awards?.length ? ` [${e.awards.join(', ')}]` : ''}`
             );
             parts.push(`FTC STATS (team #${payload.number}, ${season} season):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}\nRecent events:\n${evts.join('\n') || '(none)'}`);
           }

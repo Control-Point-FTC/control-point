@@ -3,7 +3,8 @@
 // the routed views. Hidden when idle.
 
 import React from 'react';
-import { Expand, Mic, MicOff, MonitorUp, PhoneOff, Settings, Video, VideoOff, VolumeX, Headphones } from 'lucide-react';
+import { Expand, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff, VolumeX, Headphones } from 'lucide-react';
+import CrosshairIcon from '../CrosshairIcon';
 import { cn } from '../ui';
 import { useVoice } from '../../voice';
 import { CallStatusPill, VoiceAvatar, VoiceIconButton } from './shared';
@@ -106,7 +107,7 @@ export function CallBar({ onOpenSettings }: { onOpenSettings?: () => void }) {
               <MonitorUp className="w-4 h-4" />
             </VoiceIconButton>
             <VoiceIconButton label="Call settings" onClick={() => onOpenSettings?.()} className="p-2 hidden sm:inline-flex">
-              <Settings className="w-4 h-4" />
+              <CrosshairIcon className="w-4 h-4" />
             </VoiceIconButton>
             <VoiceIconButton label="Expand call view" onClick={() => setExpanded(true)} className="p-2">
               <Expand className="w-4 h-4" />

@@ -2,12 +2,13 @@
 // styling (same padding, hover, active states) so it feels native.
 
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, Video, VideoOff, Volume2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, Pencil, Video, VideoOff, Volume2 } from 'lucide-react';
 import { cn } from '../ui';
 import { useVoice, type VoiceChannelSummary } from '../../voice';
 import { VoiceAvatar } from './shared';
 import { confirmDialog } from '../dialog';
 import { getCameraDefault } from '../SettingsModal';
+import { voiceAdminApi } from '../../voice/api';
 
 function JoinedRow({ p, isSelf }: { p: VoiceChannelSummary['participants'][number]; isSelf: boolean }) {
   return (
@@ -34,9 +35,12 @@ function JoinedRow({ p, isSelf }: { p: VoiceChannelSummary['participants'][numbe
 }
 
 export function VoiceChannelList({ className }: { className?: string }) {
-  const { channels, session, joinChannel, participants, error, clearError } = useVoice();
+  const { channels, session, joinChannel, participants, error, clearError, canManageVoice, refreshChannels } = useVoice();
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [joiningId, setJoiningId] = useState<number | null>(null);
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renameBusy, setRenameBusy] = useState(false);
   const selfId = participants.find((p) => p.isSelf)?.memberId;
 
   // Auto-expand channels that have participants, so users can see who's
@@ -80,6 +84,23 @@ export function VoiceChannelList({ className }: { className?: string }) {
       await joinChannel(channel.id, withVideo ? { video: true } : undefined);
     } finally {
       setJoiningId(null);
+    }
+  };
+
+  const handleRenameSubmit = async () => {
+    if (renamingId == null || renameBusy) return;
+    const name = renameName.trim();
+    if (!name) return;
+    setRenameBusy(true);
+    try {
+      await voiceAdminApi.patchChannel(renamingId, { name } as any);
+      await refreshChannels();
+      setRenamingId(null);
+      setRenameName('');
+    } catch (e: any) {
+      // Error surfaced via voice context error state
+    } finally {
+      setRenameBusy(false);
     }
   };
 
@@ -166,6 +187,22 @@ export function VoiceChannelList({ className }: { className?: string }) {
                       <Video className="w-[18px] h-[18px]" aria-hidden="true" />
                     </button>
                   )}
+                  {/* Rename — voice admins only */}
+                  {canManageVoice && !c.isTemporary && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setRenameName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}
+                      title={`Rename ${c.name}`}
+                      aria-label={`Rename voice channel ${c.name}`}
+                      className={cn(
+                        'flex-shrink-0 p-2 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/[0.06] transition-all',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                        'opacity-100 md:opacity-0 md:group-hover/channel:opacity-100'
+                      )}
+                    >
+                      <Pencil className="w-[16px] h-[16px]" aria-hidden="true" />
+                    </button>
+                  )}
                   {liveCount > 0 && (
                     <button
                       type="button"
@@ -188,6 +225,27 @@ export function VoiceChannelList({ className }: { className?: string }) {
                 )}
                 {c.locked && (
                   <span className="sr-only">This channel is locked.</span>
+                )}
+                {renamingId === c.id && canManageVoice && (
+                  <div className="mt-1 mx-1 flex gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      value={renameName}
+                      onChange={(e) => setRenameName(e.target.value)}
+                      maxLength={40}
+                      autoFocus
+                      disabled={renameBusy}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSubmit(); if (e.key === 'Escape') setRenamingId(null); }}
+                      className="flex-1 min-w-0 bg-secondary border border-text-base/10 rounded-lg px-2.5 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
+                      aria-label="Voice channel name"
+                    />
+                    <button
+                      onClick={handleRenameSubmit}
+                      disabled={!renameName.trim() || renameBusy}
+                      className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-accent text-accent-ink disabled:opacity-40"
+                    >
+                      {renameBusy ? '…' : 'Save'}
+                    </button>
+                  </div>
                 )}
               </div>
             );
