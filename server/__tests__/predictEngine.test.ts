@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,6 +122,8 @@ describe("PredictEngine", () => {
   });
 
   it("doesn't fold live matches with 3-robot alliances (who sat out is unknown)", () => {
+    // Ratings grow with wall-clock time; pin it so the two forecasts compare exactly.
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now());
     const base = engine.forecast(liveEvent({ played: 0 }), 100, 100)!.teams.find((t) => t.team === 110)!.strength.np;
     const ev = liveEvent({ played: 99, ranks: true });
     // A playoff with a 3-team alliance listing 110 (who may have sat out) and a huge score.
@@ -134,6 +136,7 @@ describe("PredictEngine", () => {
     const quals = engine.forecast(liveEvent({ played: 99, ranks: true }), 100, 100)!.teams.find((t) => t.team === 110)!.strength.np;
     expect(withPlayoff).toBeCloseTo(quals, 9);
     expect(quals).not.toBeCloseTo(base, 3);
+    now.mockRestore();
   });
 
   it("keeps played playoff results: an eliminated alliance can't win", () => {
