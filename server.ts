@@ -2581,47 +2581,62 @@ async function startServer() {
     const rows = (await dbAll("SELECT id, name, avatar_url FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email)) as any[];
     const cleanName = (name || '').trim();
     const emailPrefix = email.split('@')[0];
+
+    // Download a provider avatar and store it locally. Returns the local
+    // file URL, or null if the download failed.
+    const downloadAvatar = async (url: string, memberId: number): Promise<string | null> => {
+      try {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const ctype = resp.headers.get('content-type') || '';
+        if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
+          const fid = await storeFile({
+            teamId: null, memberId, kind: 'avatar',
+            filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
+          });
+          return fileUrl(fid);
+        }
+      } catch { /* download failed */ }
+      return null;
+    };
+
+    // Check if a local /api/files/:id avatar actually exists in storage.
+    const localAvatarExists = async (url: string | null): Promise<boolean> => {
+      const m = /^\/api\/files\/(\d+)$/.exec(String(url || ''));
+      if (!m) return false;
+      try {
+        const f = (await dbGet("SELECT id FROM stored_files WHERE id = ?", Number(m[1]))) as any;
+        return !!f;
+      } catch { return false; }
+    };
+
     for (const r of rows) {
       const nameIsDefault = !r.name || r.name === emailPrefix;
-      const avatarIsEmpty = !r.avatar_url;
       const newName = cleanName && nameIsDefault ? cleanName : r.name;
       let newAvatar = r.avatar_url;
-      if (avatarUrl && avatarIsEmpty) {
-        // Try to download and store locally; fall back to the external URL.
-        try {
-          const resp = await fetch(avatarUrl, { signal: AbortSignal.timeout(8000) });
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const ctype = resp.headers.get('content-type') || '';
-          if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
-            const fid = await storeFile({
-              teamId: null, memberId: r.id, kind: 'avatar',
-              filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
-            });
-            newAvatar = fileUrl(fid);
-          } else {
-            newAvatar = avatarUrl;
-          }
-        } catch {
-          newAvatar = avatarUrl;
+
+      const storedIsLocal = typeof r.avatar_url === 'string' && r.avatar_url.startsWith('/api/files/');
+      const storedIsExternal = typeof r.avatar_url === 'string' && /^https?:\/\//.test(r.avatar_url);
+      const localOk = storedIsLocal ? await localAvatarExists(r.avatar_url) : false;
+
+      if (storedIsLocal && localOk) {
+        // Working local avatar — never touch it.
+      } else if (avatarUrl) {
+        // Missing, broken, or external avatar: (re)download the fresh provider URL.
+        const local = await downloadAvatar(avatarUrl, r.id);
+        if (local) {
+          newAvatar = local;
+        } else if (!storedIsExternal) {
+          // Download failed and nothing usable stored — clear it so the UI
+          // falls back to initials instead of a broken image.
+          newAvatar = null;
         }
-      } else if (avatarUrl && r.avatar_url && /^https?:\/\//.test(r.avatar_url)) {
-        // Existing external OAuth avatar: migrate it to local storage so it
-        // can't break later when the provider URL expires. Fetch the FRESH
-        // provider URL (avatarUrl), not the stored one — the stored one may
-        // already be dead, which is why we're migrating.
-        try {
-          const resp = await fetch(avatarUrl, { signal: AbortSignal.timeout(8000) });
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const ctype = resp.headers.get('content-type') || '';
-          if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
-            const fid = await storeFile({
-              teamId: null, memberId: r.id, kind: 'avatar',
-              filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
-            });
-            newAvatar = fileUrl(fid);
-          }
-        } catch { /* keep the external URL */ }
+        // else: keep the existing external URL (might still work).
+      } else if (storedIsLocal && !localOk) {
+        // Local file is gone and no fresh URL — clear it.
+        newAvatar = null;
       }
+
       if (newName !== r.name || newAvatar !== r.avatar_url) {
         await dbRun("UPDATE members SET name = ?, avatar_url = ? WHERE id = ?", newName, newAvatar, r.id);
       }
