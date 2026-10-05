@@ -102,13 +102,25 @@ export interface FirstRanking {
   rankingPoints: number | null;
 }
 
+export interface FirstAllianceResult {
+  teams: number[];
+  /** Final score (null until played / on schedule entries). */
+  score: number | null;
+  /** Auto points (results only). */
+  auto?: number | null;
+  /** Foul points awarded to this alliance (results only). */
+  foul?: number | null;
+}
+
 export interface FirstMatch {
   matchNumber: number;
   level: "qual" | "playoff";
   series: number | null;
   description: string | null;
-  red: { teams: number[]; score: number | null };
-  blue: { teams: number[]; score: number | null };
+  /** Actual start time (results) or scheduled start (schedule). */
+  time?: string | null;
+  red: FirstAllianceResult;
+  blue: FirstAllianceResult;
 }
 
 export interface FirstAlliance {
@@ -240,8 +252,9 @@ function validateMatch(raw: unknown): FirstMatch | null {
     level,
     series: num(raw.series),
     description: str(raw.description),
-    red: { teams: red, score: num(raw.scoreRedFinal) },
-    blue: { teams: blue, score: num(raw.scoreBlueFinal) },
+    time: str(raw.actualStartTime) || str(raw.startTime),
+    red: { teams: red, score: num(raw.scoreRedFinal), auto: num(raw.scoreRedAuto), foul: num(raw.scoreRedFoul) },
+    blue: { teams: blue, score: num(raw.scoreBlueFinal), auto: num(raw.scoreBlueAuto), foul: num(raw.scoreBlueFoul) },
   };
 }
 
