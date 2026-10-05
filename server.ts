@@ -5311,6 +5311,31 @@ Rules:
     res.json({ success: true });
   });
 
+  app.post("/api/notifications/unread", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) return res.status(400).json({ error: "Invalid" });
+    await dbBatch(ids.map((id: any) => ({ sql: "UPDATE notifications SET is_read = 0 WHERE id = ? AND user_id = ?", args: [id, auth.memberId] })));
+    res.json({ success: true });
+  });
+
+  // Delete a single notification (must belong to the requester).
+  app.delete("/api/notifications/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    await dbRun("DELETE FROM notifications WHERE id = ? AND user_id = ?", req.params.id, auth.memberId);
+    res.json({ success: true });
+  });
+
+  // Clear all notifications for the requester.
+  app.delete("/api/notifications", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    await dbRun("DELETE FROM notifications WHERE user_id = ?", auth.memberId);
+    res.json({ success: true });
+  });
+
   // --- Link preview: fetch OpenGraph metadata for chat embeds ---
   // Server-side fetch avoids CORS issues. 8s timeout, 1MB cap, HTML only.
   app.get("/api/link-preview", async (req, res) => {

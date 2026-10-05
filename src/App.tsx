@@ -16,6 +16,7 @@ import {
   Play,
   ExternalLink,
   Mail,
+  MailOpen,
   Settings,
   X,
   ChevronLeft,
@@ -3135,13 +3136,35 @@ export default function App() {
                         : "absolute right-0 mt-2 w-80"
                     )}
                   >
-                    <div className="p-4 border-b border-text-base/10 bg-text-base/5">
+                    <div className="p-4 border-b border-text-base/10 bg-text-base/5 flex items-center justify-between">
                       <h4 className="text-sm font-bold text-text-base">Notifications</h4>
+                      {notifications.length > 0 && (
+                        <button
+                          onClick={async () => {
+                            if (!(await confirmDialog({ title: 'Clear all notifications?', message: 'This will delete all your notifications.', confirmLabel: 'Clear all' }))) return;
+                            const res = await apiFetch('/api/notifications', { method: 'DELETE' });
+                            if (res.ok) {
+                              setNotifications([]);
+                              notify('Notifications cleared', 'success');
+                            } else {
+                              notify('Could not clear notifications', 'error');
+                            }
+                          }}
+                          className="text-[11px] font-semibold text-text-muted hover:text-rose-400 transition-colors"
+                        >
+                          Clear all
+                        </button>
+                      )}
                     </div>
                     <div className="max-h-96 overflow-y-auto custom-scrollbar">
                       {notifications.length > 0 ? (
                         notifications.map(n => (
-                          <div key={n.id} className={cn("p-4 border-b border-text-base/5 hover:bg-text-base/5 transition-colors", !n.is_read && "bg-accent/5")}>
+                          <div
+                            key={n.id}
+                            data-cm-type="notification"
+                            data-cm-id={n.id}
+                            className={cn("p-4 border-b border-text-base/5 hover:bg-text-base/5 transition-colors", !n.is_read && "bg-accent/5")}
+                          >
                             <p className="text-xs text-text-base leading-relaxed">{n.content}</p>
                             <p className="text-[10px] text-text-muted/70 mt-1">{format(new Date(n.timestamp), 'MMM d, h:mm a')}</p>
                           </div>
@@ -5907,6 +5930,38 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
     const label = status === 'todo' ? 'To-Do' : status === 'in-progress' ? 'In Progress' : 'Done';
     return [
       { label: `Add task to ${label}`, icon: Plus, action: () => openNewTask(status) },
+    ];
+  });
+
+  // Right-click a notification: mark read/unread, delete.
+  useContextMenu('notification', (el) => {
+    const id = Number(el.dataset.cmId);
+    const n = notifications.find((x: any) => x.id === id);
+    if (!n) return null;
+    const toggleRead = async () => {
+      const res = await apiFetch(n.is_read ? '/api/notifications/unread' : '/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [n.id] }),
+      });
+      if (res.ok) {
+        setNotifications(prev => prev.map((x: any) => x.id === n.id ? { ...x, is_read: n.is_read ? 0 : 1 } : x));
+      }
+    };
+    const deleteOne = async () => {
+      const res = await apiFetch(`/api/notifications/${n.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setNotifications(prev => prev.filter((x: any) => x.id !== n.id));
+      } else {
+        notify('Could not delete notification', 'error');
+      }
+    };
+    return [
+      n.is_read
+        ? { label: 'Mark as unread', icon: Mail, action: () => void toggleRead() }
+        : { label: 'Mark as read', icon: MailOpen, action: () => void toggleRead() },
+      { separator: true },
+      { label: 'Delete notification', icon: Trash2, danger: true, action: () => void deleteOne() },
     ];
   });
 
