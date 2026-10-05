@@ -3705,9 +3705,8 @@ async function startServer() {
         body: JSON.stringify({ query, variables }),
         signal: ctrl.signal,
       });
-      // Keep the status: a 4xx means FTC Scout rejected the query (e.g. a
-      // season it doesn't support yet), which callers treat as "no data",
-      // not as an outage.
+      // Keep the status: callers treat 400/404 (query rejected, e.g. an
+      // unsupported season) as "no data" and everything else as an outage.
       if (!res.ok) throw Object.assign(new Error(`FTC Scout responded with HTTP ${res.status}`), { status: res.status });
       return await res.json();
     } finally {
@@ -3975,9 +3974,13 @@ async function startServer() {
 
   /** Every data source errored (vs. answering "no such team/event"). */
   class FtcUnavailableError extends Error {}
-  /** FTC Scout rejected the request (4xx) — "no data", not an outage. */
+  /**
+   * FTC Scout said the data doesn't exist: 400 (query rejected — e.g. a
+   * season it doesn't support yet) or 404. Anything else (401/403/429/5xx,
+   * network, timeout) is "temporarily unavailable", never "no data".
+   */
   function isFtcScoutClientError(e: any): boolean {
-    return typeof e?.status === "number" && e.status >= 400 && e.status < 500;
+    return e?.status === 400 || e?.status === 404;
   }
 
   const SUPPORTED_SEASONS = [2022, 2023, 2024, 2025, 2026];
@@ -4020,8 +4023,8 @@ async function startServer() {
     try {
       scout = await getFtcTeamPayload(number, season);
     } catch (e: any) {
-      // 4xx = FTC Scout has no data for this request (e.g. unsupported
-      // season); only 5xx / network / timeout count as unreachable.
+      // 400/404 = FTC Scout has no data for this request (e.g. unsupported
+      // season); rate limits, auth errors, 5xx, network = unreachable.
       if (!isFtcScoutClientError(e)) {
         scoutFailed = true;
         console.error(`[ftc] FTC Scout team lookup failed for ${number}/${season}`);
