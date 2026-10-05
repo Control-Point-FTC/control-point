@@ -22,7 +22,11 @@ export interface FtcTeamPayload {
   rookieYear?: number; seasons: number[]; season: number;
   totalTeams?: number | null;
   opr: { tot: FtcOprStat | null; auto: FtcOprStat | null; dc: FtcOprStat | null; eg: FtcOprStat | null };
+  oprSource?: string | null;
   events: FtcEvent[];
+  source?: 'first-events' | 'ftc-scout' | 'cache';
+  fetchedAt?: string;
+  cached?: boolean;
 }
 
 // FTC season number -> game name (season N = the N–N+1 school year)
@@ -31,6 +35,7 @@ export const FTC_SEASON_NAMES: Record<number, string> = {
   2023: 'CENTERSTAGE',
   2024: 'INTO THE DEEP',
   2025: 'DECODE',
+  2026: 'BIOBUZZ',
 };
 export const seasonLabel = (s: number) =>
   `${s}–${String(s + 1).slice(2)}${FTC_SEASON_NAMES[s] ? ` · ${FTC_SEASON_NAMES[s]}` : ''}`;
@@ -454,6 +459,15 @@ export function TeamStatsView() {
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-2xl font-display font-bold text-text-base tracking-tight">Team {data.number}</h2>
                 <span className="text-[10px] font-bold uppercase tracking-widest bg-accent/15 text-accent px-2 py-1 rounded-full">{seasonLabel(season)}</span>
+                {data.source && (
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border border-text-base/15 text-text-muted"
+                    title={data.fetchedAt ? `Last updated ${new Date(data.fetchedAt).toLocaleString()}` : undefined}
+                  >
+                    {data.source === 'first-events' ? '● Live · FIRST' : data.source === 'ftc-scout' ? '● FTC Scout' : '● Cached'}
+                    {data.cached ? ' (cached)' : ''}
+                  </span>
+                )}
               </div>
               <p className="text-lg text-text-base/80 font-semibold mt-0.5">{data.name}</p>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-text-muted">

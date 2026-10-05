@@ -98,6 +98,18 @@ import {
   scheduleVoiceDisconnectCleanup,
   cancelVoiceDisconnectCleanup,
 } from "./server/voice.js";
+import {
+  isFirstEventsConfigured,
+  getFirstEventsTeam,
+  getFirstEventsTeamEvents,
+  getFirstEventsEvent,
+  getFirstEventsEventTeams,
+  getFirstEventsRankings,
+  getFirstEventsMatches,
+  getFirstEventsSchedule,
+  getFirstEventsAlliances,
+  FirstEventsError,
+} from "./server/ftcEvents.js";
 
 // Last-resort safety net: a single malformed request must never take the
 // whole server down for every team. Log it and keep serving; Render's
@@ -3802,7 +3814,7 @@ async function startServer() {
       sponsors: (t.sponsors || []).filter(Boolean),
       city: t.location?.city, state: t.location?.state, country: t.location?.country,
       rookieYear: t.rookieYear,
-      seasons: [...new Set((t.activeSeasons || []).filter((s: number) => s >= 2022 && s <= 2025))].sort((a: number, b: number) => b - a),
+      seasons: [...new Set((t.activeSeasons || []).filter((s: number) => s >= 2022 && s <= 2026))].sort((a: number, b: number) => b - a),
       season,
       totalTeams: data?.data?.activeTeamsCount ?? null,
       opr: { tot: norm(qs.tot), auto: norm(qs.auto), dc: norm(qs.dc), eg: norm(qs.eg) },
@@ -3822,8 +3834,8 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const season = parseInt(String(req.query.season || "2025"), 10);
-    if (![2022, 2023, 2024, 2025].includes(season)) {
-      return res.status(400).json({ error: "Season data is available for 2022–2025" });
+    if (!SUPPORTED_SEASONS.includes(season)) {
+      return res.status(400).json({ error: "Season data is available for 2022–2026" });
     }
     const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
     const number = team?.ftc_team_number;
@@ -3831,15 +3843,17 @@ async function startServer() {
 
     const cacheKey = `ftc:${number}:${season}`;
     const cached = ftcCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < FTC_CACHE_TTL) return res.json(cached.data);
+    if (cached && Date.now() - cached.at < FTC_CACHE_TTL) {
+      return res.json({ ...cached.data.data, source: cached.data.source, fetchedAt: cached.data.fetchedAt, cached: true });
+    }
 
     try {
-      const payload = await getFtcTeamPayload(number, season);
-      if (!payload) return res.status(404).json({ error: "FTC Scout has no record of that team number" });
+      const payload = await getTeamData(number, season);
+      if (!payload) return res.status(404).json({ error: "No record of that team number this season" });
       ftcCache.set(cacheKey, { at: Date.now(), data: payload });
-      res.json(payload);
+      res.json({ ...payload.data, source: payload.source, fetchedAt: payload.fetchedAt });
     } catch (e: any) {
-      res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+      res.status(502).json({ error: "Could not reach FTC data sources — try again in a moment" });
     }
   });
 
@@ -3935,12 +3949,209 @@ async function startServer() {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // FTC data-source layer: FIRST Events (primary) -> FTC Scout (fallback) ->
+  // server cache. Every result carries source + fetchedAt metadata so the UI
+  // and Bruno can say where the data came from and how fresh it is.
+  // -------------------------------------------------------------------------
+
+  type FtcSource = "first-events" | "ftc-scout" | "cache";
+
+  interface FtcSourced<T> {
+    source: FtcSource;
+    fetchedAt: string; // ISO timestamp of when the data was fetched
+    data: T;
+  }
+
+  const SUPPORTED_SEASONS = [2022, 2023, 2024, 2025, 2026];
+
+  /**
+   * Team payload merged from both sources:
+   *  - identity (name/school/location/rookie/sponsors): FIRST Events first
+   *  - OPR: FTC Scout only (FIRST Events has no OPR)
+   *  - events: merged by event code, deduped
+   */
+  async function getTeamData(number: number, season: number): Promise<FtcSourced<any>> {
+    const fetchedAt = new Date().toISOString();
+    const firstOk = isFirstEventsConfigured();
+
+    // Try FIRST Events for identity + event list (best-effort, never throws out).
+    let firstTeam: any = null;
+    let firstEvents: any[] = [];
+    if (firstOk) {
+      try {
+        firstTeam = await getFirstEventsTeam(season, number);
+        if (firstTeam) {
+          firstEvents = await getFirstEventsTeamEvents(season, number).catch(() => []);
+        }
+      } catch (e) {
+        console.error(`[ftc] FIRST Events team lookup failed for ${number}/${season}, falling back to FTC Scout`);
+      }
+    }
+
+    // FTC Scout for OPR + per-event stats (rank/W-L-T/awards).
+    let scout: any = null;
+    try {
+      scout = await getFtcTeamPayload(number, season);
+    } catch (e) {
+      console.error(`[ftc] FTC Scout team lookup failed for ${number}/${season}`);
+    }
+
+    if (!firstTeam && !scout) return null as any;
+
+    // Merge events by code: FIRST Events gives names/dates/types, FTC Scout
+    // gives rank/wins/losses/ties/awards. Dedupe by code (case-insensitive).
+    const byCode = new Map<string, any>();
+    for (const e of firstEvents) {
+      byCode.set(e.eventCode.toLowerCase(), {
+        code: e.eventCode,
+        name: e.name,
+        date: e.dateStart,
+        type: e.eventType,
+        rank: null, wins: null, losses: null, ties: null, awards: [],
+      });
+    }
+    for (const e of scout?.events || []) {
+      const key = String(e.code || "").toLowerCase();
+      if (!key) continue;
+      const existing = byCode.get(key);
+      if (existing) {
+        existing.rank = e.rank ?? existing.rank;
+        existing.wins = e.wins ?? existing.wins;
+        existing.losses = e.losses ?? existing.losses;
+        existing.ties = e.ties ?? existing.ties;
+        existing.awards = e.awards?.length ? e.awards : existing.awards;
+      } else {
+        byCode.set(key, { ...e });
+      }
+    }
+    const events = [...byCode.values()].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+    const source: FtcSource = firstTeam ? "first-events" : "ftc-scout";
+    // Always include the current season in the picker so 2026-27 BIOBUZZ is
+    // selectable as soon as FIRST Events has data, even before FTC Scout does.
+    const currentSeason = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+    const seasonSet = new Set<number>(scout?.seasons || []);
+    if (currentSeason >= 2022 && currentSeason <= 2026) seasonSet.add(currentSeason);
+    seasonSet.add(season); // the requested season is always viewable
+    const seasons = [...seasonSet].sort((a, b) => b - a);
+    const data = {
+      number,
+      name: firstTeam?.name || scout?.name || `Team ${number}`,
+      school: firstTeam?.schoolName || scout?.school || null,
+      sponsors: firstTeam?.sponsors?.length ? firstTeam.sponsors : scout?.sponsors || [],
+      city: firstTeam?.city || scout?.city || null,
+      state: firstTeam?.state || scout?.state || null,
+      country: firstTeam?.country || scout?.country || null,
+      rookieYear: firstTeam?.rookieYear ?? scout?.rookieYear ?? null,
+      seasons,
+      season,
+      totalTeams: scout?.totalTeams ?? null,
+      opr: scout?.opr || { tot: null, auto: null, dc: null, eg: null },
+      oprSource: scout?.opr?.tot ? "ftc-scout" : null,
+      events,
+    };
+    return { source, fetchedAt, data };
+  }
+
+  /**
+   * Event detail merged from both sources:
+   *  - FIRST Events: venue, teams, rankings, matches, alliances (live)
+   *  - FTC Scout: fallback for the whole payload + team stats at event
+   */
+  async function getEventData(number: number, season: number, code: string): Promise<FtcSourced<any>> {
+    const fetchedAt = new Date().toISOString();
+    const firstOk = isFirstEventsConfigured();
+
+    if (firstOk) {
+      try {
+        const ev = await getFirstEventsEvent(season, code);
+        if (ev) {
+          // Fetch teams, rankings, matches, alliances in parallel — each is
+          // best-effort so one failing endpoint doesn't kill the whole view.
+          const [teams, rankings, qualSched, playoffSched, results, alliances] = await Promise.all([
+            getFirstEventsEventTeams(season, code).catch(() => []),
+            getFirstEventsRankings(season, code).catch(() => []),
+            getFirstEventsSchedule(season, code, "qual").catch(() => []),
+            getFirstEventsSchedule(season, code, "playoff").catch(() => []),
+            getFirstEventsMatches(season, code).catch(() => []),
+            getFirstEventsAlliances(season, code).catch(() => []),
+          ]);
+          const nameOf = (n: number) => teams.find((t) => t.teamNumber === n)?.name || `Team ${n}`;
+          const rankOf = (n: number) => rankings.find((r) => r.teamNumber === n) || null;
+
+          // Prefer scored results; fall back to schedule for unplayed matches.
+          const resultKey = new Set(results.map((m) => `${m.level}:${m.matchNumber}`));
+          const allMatches = [...results];
+          for (const s of [...qualSched, ...playoffSched]) {
+            if (!resultKey.has(`${s.level}:${s.matchNumber}`)) allMatches.push(s);
+          }
+          const matches = allMatches
+            .map((m) => {
+              const onRed = m.red.teams.includes(number);
+              const onBlue = m.blue.teams.includes(number);
+              let result: "win" | "loss" | "tie" | null = null;
+              if (m.red.score != null && m.blue.score != null && (onRed || onBlue)) {
+                const mine = onRed ? m.red.score : m.blue.score;
+                const theirs = onRed ? m.blue.score : m.red.score;
+                result = mine > theirs ? "win" : mine < theirs ? "loss" : "tie";
+              }
+              return {
+                num: m.matchNumber,
+                label: m.description || `Match ${m.matchNumber}`,
+                level: m.level === "qual" ? "Quals" : "Playoffs",
+                series: m.series,
+                played: m.red.score != null && m.blue.score != null,
+                red: m.red.teams.map((n) => ({ number: n, name: nameOf(n) })),
+                blue: m.blue.teams.map((n) => ({ number: n, name: nameOf(n) })),
+                redScore: m.red.score,
+                blueScore: m.blue.score,
+                result,
+              };
+            })
+            .sort((a, b) => (a.level === b.level ? a.num - b.num : a.level === "Quals" ? -1 : 1));
+
+          const myRank = rankOf(number);
+          const data = {
+            code: ev.eventCode,
+            season,
+            name: ev.name,
+            start: ev.dateStart,
+            end: ev.dateEnd,
+            type: ev.eventType,
+            venue: ev.venue || ev.address,
+            city: ev.city, state: ev.state, country: ev.country,
+            timezone: ev.timezone,
+            rank: myRank?.rank ?? null,
+            wins: myRank?.wins ?? null, losses: myRank?.losses ?? null, ties: myRank?.ties ?? null,
+            oprNp: null,
+            awards: [],
+            teams: teams.map((t) => ({ teamNumber: t.teamNumber, name: t.name })),
+            rankings: rankings.map((r) => ({ ...r })),
+            alliances: alliances.map((a) => ({ ...a })),
+            matches,
+            qualsCount: matches.filter((m) => m.level === "Quals").length,
+            playoffsCount: matches.filter((m) => m.level !== "Quals").length,
+          };
+          return { source: "first-events" as FtcSource, fetchedAt, data };
+        }
+      } catch (e) {
+        console.error(`[ftc] FIRST Events event lookup failed for ${code}/${season}, falling back to FTC Scout`);
+      }
+    }
+
+    // FTC Scout fallback (also enriches with the team's own stats at the event).
+    const scout = await getFtcEventPayload(number, season, code).catch(() => null);
+    if (!scout) return null as any;
+    return { source: "ftc-scout" as FtcSource, fetchedAt, data: scout };
+  }
+
   app.get("/api/ftc/event", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const season = parseInt(String(req.query.season || "2025"), 10);
-    if (![2022, 2023, 2024, 2025].includes(season)) {
-      return res.status(400).json({ error: "Season data is available for 2022–2025" });
+    if (!SUPPORTED_SEASONS.includes(season)) {
+      return res.status(400).json({ error: "Season data is available for 2022–2026" });
     }
     const code = String(req.query.code || "").trim().slice(0, 32);
     if (!code) return res.status(400).json({ error: "Missing event code" });
@@ -3950,15 +4161,17 @@ async function startServer() {
 
     const cacheKey = `ftcevent:${number}:${season}:${code}`;
     const cached = ftcCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < FTC_CACHE_TTL) return res.json(cached.data);
+    if (cached && Date.now() - cached.at < FTC_CACHE_TTL) {
+      return res.json({ ...cached.data.data, source: cached.data.source, fetchedAt: cached.data.fetchedAt, cached: true });
+    }
 
     try {
-      const payload = await getFtcEventPayload(number, season, code);
-      if (!payload) return res.status(404).json({ error: "FTC Scout has no record of that event" });
+      const payload = await getEventData(number, season, code);
+      if (!payload) return res.status(404).json({ error: "No record of that event" });
       ftcCache.set(cacheKey, { at: Date.now(), data: payload });
-      res.json(payload);
+      res.json({ ...payload.data, source: payload.source, fetchedAt: payload.fetchedAt });
     } catch (e: any) {
-      res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+      res.status(502).json({ error: "Could not reach FTC data sources — try again in a moment" });
     }
   });
 
@@ -8450,13 +8663,17 @@ Rules:
       const scoutEvent = extractScoutEventBlock(String(result || ""));
       let finalResult = stripActionBlocks(String(result || ""));
       // If Bruno requested team scouting, fetch the stats and append a summary.
+      // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
       if (scout.numbers?.length) {
         const season = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
         const summaries: string[] = [];
+        let usedSource = "FTC Scout";
         for (const num of scout.numbers) {
           try {
-            const p = await getFtcTeamPayload(num, season).catch(() => null);
+            const payload = await getTeamData(num, season).catch(() => null);
+            const p = payload?.data;
             if (p) {
+              usedSource = payload.source === "first-events" ? "FIRST Events" : "FTC Scout";
               const opr = p.opr || {};
               const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
               const evts = (p.events || []).slice(0, 3).map((e: any) =>
@@ -8469,34 +8686,43 @@ Rules:
           } catch { summaries.push(`**Team ${num}**: lookup failed`); }
         }
         if (summaries.length) {
-          finalResult += `\n\n---\n**Scouting data** (FTC Scout, ${season} season):\n\n${summaries.join('\n\n')}`;
+          finalResult += `\n\n---\n**Scouting data** (${usedSource}, ${season} season):\n\n${summaries.join('\n\n')}`;
         }
       }
       // If Bruno requested event-wide scouting, fetch all teams at the event.
+      // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
       if (scoutEvent.code) {
         const season = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
         try {
           const teamRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
           const myNum = parseInt(teamRow?.ftc_team_number, 10) || 0;
-          const evPayload = await getFtcEventPayload(myNum, season, scoutEvent.code).catch(() => null);
-          if (evPayload?.teams?.length) {
-            // Get OPR for each team at the event (top 20 by expected strength)
-            const teamNums = evPayload.teams.map((t: any) => t.teamNumber).filter((n: number) => n !== myNum).slice(0, 30);
-            const rows: string[] = [];
+          const evPayload = await getEventData(myNum, season, scoutEvent.code).catch(() => null);
+          const ev = evPayload?.data;
+          if (ev?.teams?.length) {
+            const srcLabel = evPayload.source === "first-events" ? "FIRST Events" : "FTC Scout";
+            // Rank teams: prefer event rankings when available, else OPR.
+            const rankMap = new Map<number, number>();
+            for (const r of ev.rankings || []) {
+              if (r.teamNumber && r.rank) rankMap.set(r.teamNumber, r.rank);
+            }
+            const teamNums = ev.teams.map((t: any) => t.teamNumber).filter((n: number) => n !== myNum).slice(0, 30);
+            const rows: { text: string; sort: number }[] = [];
             for (const n of teamNums) {
               try {
-                const p = await getFtcTeamPayload(n, season).catch(() => null);
-                if (p?.opr?.tot?.value != null) {
-                  rows.push(`${p.number} ${p.name} — OPR ${p.opr.tot.value}${p.opr.tot.rank ? ` (#${p.opr.tot.rank})` : ''}`);
-                }
+                const p = await getTeamData(n, season).catch(() => null);
+                const d = p?.data;
+                if (!d) continue;
+                const er = rankMap.get(n);
+                const oprV = d.opr?.tot?.value;
+                const label = er ? `event #${er}` : oprV != null ? `OPR ${oprV}` : "no data";
+                rows.push({
+                  text: `${d.number} ${d.name} — ${label}`,
+                  sort: er ?? (oprV != null ? 1000 - oprV : 9999),
+                });
               } catch { /* skip */ }
             }
-            rows.sort((a, b) => {
-              const va = parseFloat(a.split('OPR ')[1] || '0');
-              const vb = parseFloat(b.split('OPR ')[1] || '0');
-              return vb - va;
-            });
-            finalResult += `\n\n---\n**Event scouting: ${evPayload.name}** (${teamNums.length} teams, FTC Scout ${season}):\n\nTop teams by OPR:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+            rows.sort((a, b) => a.sort - b.sort);
+            finalResult += `\n\n---\n**Event scouting: ${ev.name}** (${teamNums.length} teams, ${srcLabel} ${season}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
           }
         } catch { /* event scouting is best-effort */ }
       }
@@ -9362,19 +9588,22 @@ Rules:
 
       // FTC competition data so Bruno can answer "who should we pick for
       // alliances?" and similar strategy questions. Best-effort; never blocks.
+      // Uses the data-source layer: FIRST Events primary, FTC Scout fallback.
       try {
         const ftcRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
         const ftcNum = parseInt(ftcRow?.ftc_team_number, 10);
         if (Number.isFinite(ftcNum) && ftcNum > 0) {
           const season = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
-          const payload = await getFtcTeamPayload(ftcNum, season).catch(() => null);
-          if (payload) {
-            const opr = payload.opr || {};
+          const payload = await getTeamData(ftcNum, season).catch(() => null);
+          if (payload?.data) {
+            const d = payload.data;
+            const opr = d.opr || {};
             const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
-            const evts = (payload.events || []).slice(0, 5).map((e: any) =>
+            const evts = (d.events || []).slice(0, 5).map((e: any) =>
               `${e.name} (${e.date || '?'})${e.code ? ` [code: ${e.code}]` : ''}${e.rank ? ` — quals #${e.rank}` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}${e.awards?.length ? ` [${e.awards.join(', ')}]` : ''}`
             );
-            parts.push(`FTC STATS (team #${payload.number}, ${season} season):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}\nRecent events:\n${evts.join('\n') || '(none)'}`);
+            const srcLabel = payload.source === 'first-events' ? 'FIRST Events' : payload.source === 'ftc-scout' ? 'FTC Scout' : 'cache';
+            parts.push(`FTC STATS (team #${d.number}, ${season} season, via ${srcLabel}, fetched ${payload.fetchedAt.slice(0, 10)}):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}${d.oprSource ? ` (OPR via ${d.oprSource === 'ftc-scout' ? 'FTC Scout' : d.oprSource})` : ''}\nRecent events:\n${evts.join('\n') || '(none)'}`);
           }
         }
       } catch { /* FTC context is best-effort */ }
