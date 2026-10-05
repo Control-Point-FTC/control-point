@@ -1,14 +1,16 @@
 // FTC team statistics: shared hook + dashboard card + dedicated stats page.
 // Match data comes from the backend's FTC Scout proxy (credited to ftcscout.org).
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { TeamScoutView } from './scout/CompeteView';
+import { AnalyzeView } from './scout/AnalyzeView';
+import { fetchScoutTeam } from '../services/ftcScoutApi';
 import {
-  Trophy, MapPin, GraduationCap, CalendarDays, Target, Bot,
-  Cog, Flag, Medal, ChevronRight, RefreshCw, Settings as SettingsIcon,
-  ExternalLink, CircleAlert, X,
+  Trophy, MapPin, GraduationCap, Target, Bot,
+  Cog, Flag, ChevronRight, RefreshCw, Settings as SettingsIcon,
+  CircleAlert, Search,
 } from 'lucide-react';
-import { fetchFtcTeam, fetchFtcEvent, invalidateFtcSeason, FtcNotConnectedError } from './ftcCache';
-import type { FtcEventDetail, FtcMatch, FtcMatchTeam } from './ftcCache';
+import { fetchFtcTeam, invalidateFtcSeason, FtcNotConnectedError } from './ftcCache';
 
 export interface FtcOprStat { value: number | null; rank: number | null }
 export interface FtcEvent {
@@ -127,15 +129,6 @@ export function useFtcTeam() {
   }, [season]);
 
   return { season, setSeason, data, loading, error, notConnected, knownSeasons, refresh: () => load(season, { refresh: true }) };
-}
-
-function sourceBadgeText(d: { source?: string; origin?: string; cached?: boolean; stale?: boolean }): string {
-  const name = (s?: string) => (s === 'first-events' ? 'FIRST' : s === 'ftc-scout' ? 'FTC Scout' : null);
-  if (d.cached || d.source === 'cache') {
-    const from = name(d.origin);
-    return `● ${d.stale ? 'Offline copy' : 'Cached'}${from ? ` · ${from}` : ''}`;
-  }
-  return d.source === 'first-events' ? '● Live · FIRST' : '● FTC Scout';
 }
 
 // The API's 404 for a season the team hasn't competed in (yet).
@@ -301,338 +294,56 @@ export function FtcTeamCard() {
   );
 }
 
-// Event detail modal: venue info + full match list with alliance breakdowns.
-function FtcEventDetailModal({ event, season, teamNumber, onClose }: {
-  event: FtcEvent; season: number; teamNumber: number; onClose: () => void;
-}) {
-  const [detail, setDetail] = useState<FtcEventDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
+// Dedicated stats page: /stats — Compete (our team, in depth) and Analyze
+// (event scouting workspace). Mode lives in ?mode= so links/back work.
+export function TeamStatsView() {
+  const [params, setParams] = useSearchParams();
+  const mode: 'compete' | 'analyze' = params.get('mode') === 'analyze' ? 'analyze' : 'compete';
+  const [season, setSeason] = useState(currentFtcSeason);
+  const [myTeam, setMyTeam] = useState<number | null>(null);
+  const [focusTeam, setFocusTeam] = useState<{ number: number; name: string } | null>(null);
+  // Our team number (for Analyze). On a direct ?mode=analyze visit before the
+  // new season has data, step back once to the latest season we played.
+  const stepBack = useRef(params.get('mode') === 'analyze');
   useEffect(() => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    setError(null);
-    setDetail(null);
-    fetchFtcEvent(season, event.code || '', ctrl.signal)
-      .then((d) => { if (!ctrl.signal.aborted) { setDetail(d); setLoading(false); } })
-      .catch((e: any) => { if (!ctrl.signal.aborted) { setError(e?.message || 'Could not load event details'); setLoading(false); } });
-    return () => ctrl.abort();
-  }, [season, event.code]);
+    let alive = true;
+    fetchScoutTeam(season).then((p) => {
+      if (!alive) return;
+      setMyTeam(p.number);
+      const prev = p.seasons.filter((s) => s < season).sort((a, b) => b - a)[0];
+      if (stepBack.current && !p.events.length && prev) setSeason(prev);
+      stepBack.current = false;
+    }).catch(() => { stepBack.current = false; /* not connected / no data: Analyze still works by search */ });
+    return () => { alive = false; };
+  }, [season]);
+  const setMode = (m: 'compete' | 'analyze') => setParams((p) => { const n = new URLSearchParams(p); if (m === 'analyze') n.set('mode', 'analyze'); else n.delete('mode'); return n; });
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const quals = (detail?.matches || []).filter((m) => m.level === 'Quals');
-  const playoffs = (detail?.matches || []).filter((m) => m.level !== 'Quals');
-
-  const resultBadge = (r: FtcMatch['result']) => {
-    if (r === 'win') return <span className="text-[10px] font-bold uppercase tracking-wide bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full">Win</span>;
-    if (r === 'loss') return <span className="text-[10px] font-bold uppercase tracking-wide bg-rose-500/15 text-rose-400 px-2 py-0.5 rounded-full">Loss</span>;
-    if (r === 'tie') return <span className="text-[10px] font-bold uppercase tracking-wide bg-text-base/10 text-text-muted px-2 py-0.5 rounded-full">Tie</span>;
-    return null;
-  };
-
-  const matchRow = (m: FtcMatch) => {
-    const redWon = m.played && m.redScore != null && m.blueScore != null && m.redScore > m.blueScore;
-    const blueWon = m.played && m.redScore != null && m.blueScore != null && m.blueScore > m.redScore;
-    const alliance = (teams: FtcMatchTeam[], color: 'red' | 'blue') => (
-      <div className="flex-1 min-w-0">
-        {teams.map((t) => (
-          <p key={t.number} className={`text-xs truncate ${t.number === teamNumber ? 'font-bold text-text-base' : 'text-text-muted'}`}>
-            <span className={`font-mono ${color === 'red' ? 'text-rose-400/90' : 'text-sky-400/90'}`}>{t.number}</span>
-            {' '}{t.name}
-          </p>
-        ))}
-      </div>
-    );
-    return (
-      <div key={`${m.level}-${m.num}`} className="flex items-center gap-3 py-2.5 border-b border-text-base/5 last:border-0">
-        <span className="w-12 shrink-0 text-xs font-mono font-bold text-text-base">{m.label}</span>
-        {alliance(m.red, 'red')}
-        <div className="shrink-0 text-center">
-          {m.played && m.redScore != null ? (
-            <p className="text-sm font-mono font-bold">
-              <span className={redWon ? 'text-text-base' : 'text-text-muted'}>{m.redScore}</span>
-              <span className="text-text-muted/50 mx-1">–</span>
-              <span className={blueWon ? 'text-text-base' : 'text-text-muted'}>{m.blueScore}</span>
-            </p>
-          ) : (
-            <p className="text-[11px] text-text-muted/60 italic">scheduled</p>
-          )}
-        </div>
-        {alliance(m.blue, 'blue')}
-        <div className="w-14 shrink-0 flex justify-end">{resultBadge(m.result)}</div>
-      </div>
-    );
-  };
-
-  const dateRange = detail?.start
-    ? detail.end && detail.end !== detail.start ? `${detail.start} → ${detail.end}` : detail.start
-    : event.date;
-
-  return (
-    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label="Event details">
-      <button className="absolute inset-0 bg-black/70 backdrop-blur-sm cursor-default" onClick={onClose} aria-label="Close event details" />
-      <div className="relative w-full sm:max-w-2xl max-h-[88vh] overflow-hidden flex flex-col card-surface rounded-t-2xl sm:rounded-2xl border border-text-base/10 shadow-2xl">
-        {/* Header */}
-        <div className="p-5 sm:p-6 border-b border-text-base/10 shrink-0">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 font-display font-bold text-lg ${placementBadgeClass(event.rank)}`}>
-                {event.rank ?? '–'}
-              </div>
-              <div className="min-w-0">
-                <h3 className="text-lg font-display font-bold text-text-base leading-tight">{detail?.name || event.name}</h3>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-text-muted">
-                  {dateRange && <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5" />{dateRange}</span>}
-                  {detail?.type && <span className="uppercase tracking-wide">{detail.type}</span>}
-                </div>
-                {(detail?.venue || detail?.city) && (
-                  <p className="text-xs text-text-muted mt-0.5 flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 shrink-0" />
-                    {[detail.venue, [detail.city, detail.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}
-                  </p>
-                )}
-              </div>
-            </div>
-            <button onClick={onClose} aria-label="Close" className="p-2 rounded-full hover:bg-text-base/10 text-text-muted hover:text-text-base transition-colors shrink-0">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-          {/* Team's result at this event */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-4 text-xs">
-            {event.rank != null && <span className="text-text-muted">Quals rank <span className="text-text-base font-bold">#{event.rank}</span></span>}
-            {recordLine(event) && <span className="text-text-base/80 font-bold">{recordLine(event)}</span>}
-            {detail?.oprNp != null && <span className="text-text-muted">Event OPR <span className="text-text-base font-bold">{detail.oprNp}</span></span>}
-            {(detail?.awards || event.awards).length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {(detail?.awards?.length ? detail.awards : event.awards).map((a) => (
-                  <span key={a} className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide bg-accent/15 text-accent px-2 py-0.5 rounded-full">
-                    <Medal className="w-3 h-3" />{a}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        {/* Matches */}
-        <div className="overflow-y-auto p-5 sm:p-6 custom-scrollbar">
-          {loading && (
-            <div className="flex items-center justify-center gap-3 py-12">
-              <div className="w-8 h-8 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-              <p className="text-sm text-text-muted animate-pulse">Loading matches…</p>
-            </div>
-          )}
-          {error && !loading && (
-            <div className="flex flex-col items-center gap-3 py-12 text-center">
-              <CircleAlert className="w-8 h-8 text-rose-400" />
-              <p className="text-sm text-text-muted">{error}</p>
-            </div>
-          )}
-          {!loading && !error && detail && (
-            <div className="space-y-6">
-              {quals.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-text-muted mb-2">Qualification matches ({quals.length})</h4>
-                  <div>{quals.map(matchRow)}</div>
-                </div>
-              )}
-              {playoffs.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-widest text-text-muted mb-2">Playoff matches ({playoffs.length})</h4>
-                  <div>{playoffs.map(matchRow)}</div>
-                </div>
-              )}
-              {quals.length === 0 && playoffs.length === 0 && (
-                <p className="text-sm text-text-muted text-center py-8">No match data reported for this event yet.</p>
-              )}
-            </div>
-          )}
-        </div>
-        <p className="px-5 py-3 border-t border-text-base/10 text-center text-[11px] text-text-muted/60 shrink-0">
-          Match data courtesy of <a href="https://ftcscout.org" target="_blank" rel="noreferrer" className="underline hover:text-accent">ftcscout.org</a>
-        </p>
-      </div>
+  const tabs = (
+    <div className="inline-flex rounded-2xl card-surface p-1 gap-1" role="tablist" aria-label="Team stats mode">
+      {([['compete', 'Compete', Trophy], ['analyze', 'Analyze', Search]] as const).map(([k, label, Icon]) => (
+        <button key={k} role="tab" aria-selected={mode === k} onClick={() => setMode(k)}
+          className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${mode === k ? 'bg-accent text-accent-ink' : 'text-text-muted hover:text-text-base'}`}>
+          <Icon className="w-4 h-4" />{label}
+        </button>
+      ))}
     </div>
   );
-}
-
-// Dedicated stats page: /stats
-export function TeamStatsView() {
-  const navigate = useNavigate();
-  const { season, setSeason, data, loading, error, notConnected, knownSeasons, refresh } = useFtcTeam();
-  const [selectedEvent, setSelectedEvent] = useState<FtcEvent | null>(null);
-
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 gap-4">
-        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-        <p className="text-text-muted animate-pulse">Loading team statistics…</p>
-      </div>
-    );
-  }
-
-  if (notConnected) {
-    return (
-      <div className="card-surface p-10 flex flex-col items-center text-center gap-4 max-w-xl mx-auto">
-        <div className="rounded-2xl bg-accent/12 p-4">
-          <Trophy className="w-10 h-10 text-accent" />
-        </div>
-        <h3 className="text-xl font-display font-bold text-text-base">No FTC team connected yet</h3>
-        <p className="text-sm text-text-muted">Connect your FTC team number in Settings to see live stats, OPR rankings, and event history from FTC Scout.</p>
-        <button
-          onClick={() => navigate('/settings')}
-          className="flex items-center gap-2 bg-accent text-accent-ink font-bold px-6 py-3 rounded-xl hover:brightness-105"
-        >
-          <SettingsIcon className="w-4 h-4" /> Go to Settings
-        </button>
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div className="card-surface p-10 flex flex-col items-center text-center gap-4 max-w-xl mx-auto">
-        <CircleAlert className="w-10 h-10 text-rose-400" />
-        <h3 className="text-xl font-display font-bold text-text-base">{isNoSeasonData(error) ? `No ${seasonLabel(season)} data yet` : "Couldn't load stats"}</h3>
-        <p className="text-sm text-text-muted">{seasonErrorText(error, season)}</p>
-        <button onClick={refresh} className="flex items-center gap-2 bg-accent text-accent-ink font-bold px-6 py-3 rounded-xl hover:brightness-105">
-          <RefreshCw className="w-4 h-4" /> Try again
-        </button>
-        {knownSeasons.length > 1 && <SeasonPills seasons={knownSeasons} active={season} onPick={setSeason} />}
-      </div>
-    );
-  }
-
-  const sortedEvents = [...data.events].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-8">
-      {/* Team header */}
-      <div className="card-surface p-6 sm:p-8 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-accent flex items-center justify-center shrink-0">
-              <Trophy className="w-7 h-7 text-accent-ink" strokeWidth={2.5} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-2xl font-display font-bold text-text-base tracking-tight">Team {data.number}</h2>
-                <span className="text-[10px] font-bold uppercase tracking-widest bg-accent/15 text-accent px-2 py-1 rounded-full">{seasonLabel(season)}</span>
-                {data.source && (
-                  <span
-                    className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border border-text-base/15 text-text-muted"
-                    title={data.fetchedAt ? `Last updated ${new Date(data.fetchedAt).toLocaleString()}` : undefined}
-                  >
-                    {sourceBadgeText(data)}
-                  </span>
-                )}
-              </div>
-              <p className="text-lg text-text-base/80 font-semibold mt-0.5">{data.name}</p>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-text-muted">
-                {data.school && <span className="flex items-center gap-1"><GraduationCap className="w-3.5 h-3.5" />{data.school}</span>}
-                {(data.city || data.state) && <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{[data.city, data.state, data.country].filter(Boolean).join(', ')}</span>}
-                {data.rookieYear && <span>Rookie year {data.rookieYear}</span>}
-              </div>
-              {data.sponsors && data.sponsors.length > 0 && (
-                <p className="text-[11px] text-text-muted/80 mt-1.5">
-                  <span className="font-bold uppercase tracking-wide text-text-muted/60">Sponsors: </span>
-                  {data.sponsors.join(' · ')}
-                </p>
-              )}
-            </div>
-          </div>
-          <a
-            href={`https://ftcscout.org/teams/${data.number}`}
-            target="_blank" rel="noreferrer"
-            className="flex items-center gap-1.5 text-xs font-bold text-text-muted hover:text-accent transition-colors"
-          >
-            View on FTC Scout <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </div>
-        <div className="mt-5">
-          <SeasonPills seasons={data.seasons} active={season} onPick={setSeason} />
-        </div>
-      </div>
-
-      {/* OPR cards */}
-      <div>
-        <h3 className="text-sm font-bold text-text-base uppercase tracking-widest mb-3 flex items-center gap-2">
-          <Target className="w-4 h-4 text-accent" /> Offensive Power Rating
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <OprTile label="Total OPR" stat={data.opr.tot} icon={Target} accent />
-          <OprTile label="Autonomous" stat={data.opr.auto} icon={Bot} />
-          <OprTile label="TeleOp" stat={data.opr.dc} icon={Cog} />
-          <OprTile label="Endgame" stat={data.opr.eg} icon={Flag} />
-        </div>
-        <p className="text-[11px] text-text-muted/70 mt-2">OPR estimates a team's average point contribution per match. Ranks are worldwide for the selected season.</p>
-      </div>
-
-      {/* Event history */}
-      <div>
-        <h3 className="text-sm font-bold text-text-base uppercase tracking-widest mb-3 flex items-center gap-2">
-          <CalendarDays className="w-4 h-4 text-accent" /> Event History
-        </h3>
-        {sortedEvents.length === 0 ? (
-          <div className="card-surface p-8 text-center text-sm text-text-muted">No events recorded for this season.</div>
-        ) : (
-          <div className="space-y-3">
-            {sortedEvents.map((e, i) => (
-              <button
-                key={e.code || i}
-                onClick={() => e.code && setSelectedEvent(e)}
-                className="w-full text-left card-surface p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5 hover:border-accent/30 transition-colors cursor-pointer group"
-              >
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 font-display font-bold text-lg ${placementBadgeClass(e.rank)}`}>
-                  {e.rank ?? '–'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-text-base font-bold truncate group-hover:text-accent transition-colors">{e.name}</p>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-text-muted">
-                    {e.date && <span>{e.date}</span>}
-                    {e.type && <span className="uppercase tracking-wide">{e.type}</span>}
-                    {recordLine(e) && <span className="text-text-base/70 font-semibold">{recordLine(e)}</span>}
-                  </div>
-                  {e.awards.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {e.awards.map((a) => (
-                        <span key={a} className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide bg-accent/15 text-accent px-2 py-0.5 rounded-full">
-                          <Medal className="w-3 h-3" />{a}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  {e.rank != null && (
-                    <span className="text-xs text-text-muted whitespace-nowrap">Rank <span className="text-text-base font-bold">#{e.rank}</span></span>
-                  )}
-                  {e.code && (
-                    <span className="hidden sm:flex items-center gap-1 text-xs font-bold text-accent opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                      See details <ChevronRight className="w-3.5 h-3.5" />
-                    </span>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <p className="text-center text-[11px] text-text-muted/60">Match data courtesy of <a href="https://ftcscout.org" target="_blank" rel="noreferrer" className="underline hover:text-accent">ftcscout.org</a> · OPR & rankings update as events report results</p>
-
-      {selectedEvent && (
-        <FtcEventDetailModal
-          event={selectedEvent}
+    <div className="space-y-4 sm:space-y-5 pb-8 min-w-0">
+      {tabs}
+      {mode === 'compete' ? (
+        <TeamScoutView
+          number={null}
           season={season}
-          teamNumber={data.number}
-          onClose={() => setSelectedEvent(null)}
+          onSeasonChange={setSeason}
+          autoSeason
+          actions={{
+            onViewTeam: (n, name) => { setFocusTeam({ number: n, name }); setMode('analyze'); },
+          }}
         />
+      ) : (
+        <AnalyzeView key={focusTeam?.number ?? 'none'} season={season} onSeasonChange={setSeason} myTeam={myTeam} initialTeam={focusTeam} />
       )}
     </div>
   );

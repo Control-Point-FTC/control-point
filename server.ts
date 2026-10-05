@@ -112,6 +112,22 @@ import {
   FirstEventsError,
   matchKey,
 } from "./server/ftcEvents.js";
+import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
+import {
+  SCOUT_SEASONS,
+  SCOUT_SEARCH_QUERY,
+  scoutEventQuery,
+  scoutTeamEventsQuery,
+  parseScoutEvent,
+  parseScoutSearch,
+  parseScoutTeamEvents,
+  mergeEventFull,
+  type FirstEventPieces,
+  type ScoutEventParsed,
+} from "./server/ftcScout.js";
+import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
+import { buildScoutingContextPack } from "./server/scoutingContext.js";
+import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
 // whole server down for every team. Log it and keep serving; Render's
@@ -4267,6 +4283,436 @@ async function startServer() {
       res.status(502).json({ error: "Could not reach FTC data sources — try again in a moment" });
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Scouting (Team Stats → Compete / Analyze). FIRST Events is primary for
+  // teams, rankings, matches and alliances; FTC Scout supplies OPR, score
+  // breakdowns, per-event stats, team search, and is the fallback. All
+  // payloads carry source/fetchedAt/partial and share the 10-minute cache.
+  // -------------------------------------------------------------------------
+
+  function scoutCachedBody<T extends { source: string }>(p: T, stale = false) {
+    return { ...p, source: "cache", origin: p.source, cached: true, ...(stale ? { stale: true } : {}) };
+  }
+
+  /** Full event (field + matches + alliances), merged. Null = unknown event. */
+  async function getEventFull(season: number, code: string): Promise<FtcEventFull | null> {
+    const fetchedAt = new Date().toISOString();
+    let firstFailed = false;
+    let scoutFailed = false;
+    let partial = false;
+
+    const scoutP: Promise<ScoutEventParsed | null> = SCOUT_SEASONS.includes(season)
+      ? ftcQuery(scoutEventQuery(season), { season, code })
+          .then((r) => parseScoutEvent(r, season))
+          .catch((e: unknown) => {
+            if (!isFtcScoutClientError(e)) scoutFailed = true;
+            return null;
+          })
+      : Promise.resolve(null);
+
+    let first: FirstEventPieces | null = null;
+    if (isFirstEventsConfigured()) {
+      try {
+        const event = await getFirstEventsEvent(season, code);
+        if (event) {
+          const settled = await Promise.allSettled([
+            getFirstEventsEventTeams(season, code),
+            getFirstEventsRankings(season, code),
+            getFirstEventsMatches(season, code),
+            getFirstEventsSchedule(season, code, "qual"),
+            getFirstEventsSchedule(season, code, "playoff"),
+            getFirstEventsAlliances(season, code),
+          ]);
+          partial = settled.some((r) => r.status === "rejected");
+          const val = <T,>(i: number): T[] =>
+            settled[i].status === "fulfilled" ? ((settled[i] as PromiseFulfilledResult<T[]>).value) : [];
+          first = {
+            event,
+            teams: val<{ teamNumber: number; name: string }>(0),
+            rankings: val<FirstRanking>(1),
+            results: val<FirstMatch>(2),
+            schedule: [...val<FirstMatch>(3), ...val<FirstMatch>(4)],
+            alliances: val<FirstAlliance>(5),
+          };
+        }
+      } catch {
+        firstFailed = true;
+        console.error(`[scout] FIRST Events event lookup failed for ${code}/${season}`);
+      }
+    }
+    const scout = await scoutP;
+    if (!first && !scout) {
+      if (firstFailed || scoutFailed) throw new FtcUnavailableError("FTC data sources unreachable");
+      return null;
+    }
+    return mergeEventFull(season, code, first, scout, { fetchedAt, partial: partial || firstFailed || scoutFailed });
+  }
+
+  // Concurrent cold-cache requests (several users, Bruno's context builder)
+  // share one upstream fetch per key; the entry is dropped once it settles.
+  const scoutInflight = new Map<string, Promise<unknown>>();
+  function sharedFetch<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const hit = scoutInflight.get(key);
+    if (hit) return hit as Promise<T>;
+    const p = load().finally(() => scoutInflight.delete(key));
+    scoutInflight.set(key, p);
+    return p;
+  }
+
+  async function cachedEventFull(season: number, code: string): Promise<FtcEventFull | null> {
+    const key = `scoutevent:${season}:${code.toUpperCase()}`;
+    const cached = ftcCache.get(key);
+    if (cached && ftcCacheFresh(cached)) return scoutCachedBody(cached.data as FtcEventFull) as FtcEventFull;
+    try {
+      const ev = await sharedFetch(key, () => getEventFull(season, code));
+      if (ev) ftcCache.set(key, { at: Date.now(), data: ev });
+      return ev;
+    } catch (e) {
+      if (cached) return scoutCachedBody(cached.data as FtcEventFull, true) as FtcEventFull;
+      throw e;
+    }
+  }
+
+  /**
+   * Per-event stats for a team profile: FIRST Events rank / W-L-T / awards
+   * are primary, FTC Scout adds RP, OPR and averages. Seasons FTC Scout
+   * doesn't cover (e.g. 2026) still get FIRST's results instead of nothing.
+   */
+  function firstEventStats(number: number, name: string, e: any, scout: FtcTeamEventStats | null): FtcTeamEventStats | null {
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const rank = n(e.rank), wins = n(e.wins), losses = n(e.losses), ties = n(e.ties);
+    const awards: string[] = Array.isArray(e.awards) ? e.awards.filter((a: unknown) => typeof a === "string") : [];
+    if (!scout && rank == null && wins == null && !awards.length) return null;
+    const base: FtcTeamEventStats = scout ?? { teamNumber: number, name, rank: null, rp: null, wins: null, losses: null, ties: null, qualMatchesPlayed: null, opr: null, avg: null, awards: [] };
+    return {
+      ...base,
+      rank: rank ?? base.rank,
+      wins: wins ?? base.wins,
+      losses: wins != null ? losses : base.losses,
+      ties: wins != null ? ties : base.ties,
+      awards: awards.length ? awards : base.awards,
+    };
+  }
+
+  /** Any team's season profile + per-event stats. Null = unknown team. */
+  async function getTeamProfile(number: number, season: number): Promise<FtcTeamProfile | null> {
+    const base = await getTeamData(number, season); // throws FtcUnavailableError on outage
+    if (!base) return null;
+    const d = base.data as any;
+    let partial = !!base.partial;
+    let scoutEvents: ReturnType<typeof parseScoutTeamEvents> = [];
+    if (SCOUT_SEASONS.includes(season)) {
+      try {
+        scoutEvents = parseScoutTeamEvents(await ftcQuery(scoutTeamEventsQuery(season), { number, season }), season, d.name);
+      } catch (e) {
+        if (!isFtcScoutClientError(e)) partial = true;
+      }
+    }
+    const byCode = new Map(scoutEvents.map((e) => [e.code.toLowerCase(), e]));
+    const events: FtcTeamEventSummary[] = (d.events || []).map((e: any) => {
+      const s = byCode.get(String(e.code || "").toLowerCase());
+      byCode.delete(String(e.code || "").toLowerCase());
+      return {
+        code: String(e.code),
+        name: String(e.name || e.code),
+        date: e.date ?? s?.date ?? null,
+        type: e.type ?? s?.type ?? null,
+        city: s?.city ?? null,
+        state: s?.state ?? null,
+        stats: firstEventStats(number, d.name, e, s?.stats ?? null),
+      };
+    });
+    for (const s of byCode.values()) events.push({ code: s.code, name: s.name, date: s.date, type: s.type, city: s.city, state: s.state, stats: s.stats });
+    events.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    return {
+      number,
+      name: d.name,
+      school: d.school ?? null,
+      sponsors: d.sponsors ?? [],
+      city: d.city ?? null,
+      state: d.state ?? null,
+      country: d.country ?? null,
+      rookieYear: d.rookieYear ?? null,
+      season,
+      seasons: d.seasons ?? [],
+      totalTeams: d.totalTeams ?? null,
+      opr: d.opr,
+      oprSource: d.oprSource ?? null,
+      events,
+      source: base.source === "first-events" ? "first-events" : "ftc-scout",
+      fetchedAt: base.fetchedAt,
+      partial,
+    };
+  }
+
+  async function cachedTeamProfile(number: number, season: number): Promise<FtcTeamProfile | null> {
+    const key = `scoutteam:${number}:${season}`;
+    const cached = ftcCache.get(key);
+    if (cached && ftcCacheFresh(cached)) return scoutCachedBody(cached.data as FtcTeamProfile) as FtcTeamProfile;
+    try {
+      const p = await sharedFetch(key, () => getTeamProfile(number, season));
+      if (p) ftcCache.set(key, { at: Date.now(), data: p });
+      return p;
+    } catch (e) {
+      if (cached) return scoutCachedBody(cached.data as FtcTeamProfile, true) as FtcTeamProfile;
+      throw e;
+    }
+  }
+
+  function parseSeason(raw: unknown): number | null {
+    const s = parseInt(String(raw ?? currentFtcSeason()), 10);
+    return SUPPORTED_SEASONS.includes(s) ? s : null;
+  }
+
+  const EVENT_CODE_RE = /^[A-Za-z0-9]{2,32}$/;
+
+  app.get("/api/ftc/scout/event", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    if (season == null) return res.status(400).json({ error: "Season data is available for 2022–2026" });
+    const code = String(req.query.code || "").trim();
+    if (!EVENT_CODE_RE.test(code)) return res.status(400).json({ error: "Invalid event code" });
+    try {
+      const ev = await cachedEventFull(season, code);
+      if (!ev) return res.status(404).json({ error: "No data for that event yet" });
+      res.json(ev);
+    } catch {
+      res.status(502).json({ error: "Could not reach FTC data sources — try again in a moment" });
+    }
+  });
+
+  app.get("/api/ftc/scout/team", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    if (season == null) return res.status(400).json({ error: "Season data is available for 2022–2026" });
+    let number = parseInt(String(req.query.number || ""), 10);
+    if (!number) {
+      const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+      number = parseInt(team?.ftc_team_number, 10) || 0;
+      if (!number) return res.status(404).json({ error: "No FTC team connected — set your team number in Settings" });
+    }
+    if (number < 1 || number > 999999) return res.status(400).json({ error: "Invalid team number" });
+    try {
+      const p = await cachedTeamProfile(number, season);
+      if (!p) return res.status(404).json({ error: "No record of that team number this season" });
+      res.json(p);
+    } catch {
+      res.status(502).json({ error: "Could not reach FTC data sources — try again in a moment" });
+    }
+  });
+
+  app.get("/api/ftc/scout/search", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const q = String(req.query.q || "").trim().slice(0, 40);
+    const season = parseSeason(req.query.season) ?? currentFtcSeason();
+    if (q.length < 2 && !/^\d+$/.test(q)) return res.json({ results: [] });
+    const key = `scoutsearch:${season}:${q.toLowerCase()}`;
+    const cached = ftcCache.get(key);
+    if (cached && ftcCacheFresh(cached)) return res.json({ results: cached.data, cached: true });
+    const results: FtcTeamSearchHit[] = [];
+    let anyOk = false;
+    try {
+      if (/^\d{1,6}$/.test(q)) {
+        const n = parseInt(q, 10);
+        if (isFirstEventsConfigured()) {
+          try {
+            const t = await getFirstEventsTeam(season, n);
+            anyOk = true;
+            if (t) results.push({ number: t.teamNumber, name: t.name, city: t.city, state: t.state });
+          } catch { /* fall through to FTC Scout */ }
+        }
+        if (!results.length) {
+          try {
+            const r: any = await ftcQuery(`query One($n: Int!) { teamByNumber(number: $n) { number name location { city state } } }`, { n });
+            anyOk = true;
+            const t = r?.data?.teamByNumber;
+            if (t?.number) results.push({ number: t.number, name: t.name || `Team ${t.number}`, city: t.location?.city ?? null, state: t.location?.state ?? null });
+          } catch { /* reported below if nothing worked */ }
+        }
+      } else {
+        const r = await ftcQuery(SCOUT_SEARCH_QUERY, { q });
+        anyOk = true;
+        results.push(...parseScoutSearch(r));
+      }
+    } catch { /* handled below */ }
+    if (!anyOk) {
+      if (cached) return res.json({ results: cached.data, cached: true, stale: true });
+      return res.status(502).json({ error: "Team search is unavailable right now — try again in a moment" });
+    }
+    ftcCache.set(key, { at: Date.now(), data: results });
+    res.json({ results });
+  });
+
+  // ---- Scouting shortlist (shared per workspace + season) ----
+  const SHORTLIST_PRIORITIES = new Set(["high", "medium", "low"]);
+  function cleanTags(v: unknown): string[] {
+    return (Array.isArray(v) ? v : [])
+      .filter((t): t is string => typeof t === "string")
+      .map((t) => t.trim().slice(0, 40))
+      .filter(Boolean)
+      .slice(0, 10);
+  }
+  function shortlistRow(r: any): ShortlistEntry {
+    const tags = (s: unknown): string[] => { try { return cleanTags(JSON.parse(String(s || "[]"))); } catch { return []; } };
+    return {
+      teamNumber: Number(r.team_number),
+      teamName: String(r.team_name || ""),
+      season: Number(r.season),
+      eventCode: r.event_code || null,
+      notes: String(r.notes || ""),
+      priority: SHORTLIST_PRIORITIES.has(r.priority) ? r.priority : "medium",
+      scoutNext: Number(r.scout_next) === 1,
+      strengths: tags(r.strengths),
+      weaknesses: tags(r.weaknesses),
+      updatedAt: String(r.updated_at || ""),
+    };
+  }
+  async function loadShortlist(teamId: number, season: number): Promise<ShortlistEntry[]> {
+    const rows = (await dbAll(
+      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND deleted = 0 ORDER BY scout_next DESC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, team_number",
+      teamId, season
+    )) as any[];
+    return rows.map(shortlistRow);
+  }
+
+  app.get("/api/ftc/shortlist", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    if (season == null) return res.status(400).json({ error: "Invalid season" });
+    res.json({ entries: await loadShortlist(auth.teamId!, season) });
+  });
+
+  // Shortlist writes (see src/utils/shortlist.ts): field-level patches merged
+  // into the stored row. Each entry's read-merge-write runs under a lock, and
+  // per-field write origins stop a client's own delayed request from
+  // overwriting its newer edit or resurrecting a team it deleted.
+  const shortlistLocks = new Map<string, Promise<unknown>>();
+  function withShortlistLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = shortlistLocks.get(key) ?? Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tail = run.catch(() => {});
+    shortlistLocks.set(key, tail);
+    void tail.then(() => { if (shortlistLocks.get(key) === tail) shortlistLocks.delete(key); });
+    return run;
+  }
+  async function storedShortlist(teamId: number, season: number, teamNumber: number): Promise<StoredShortlistEntry> {
+    const rows = (await dbAll(
+      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND team_number = ?",
+      teamId, season, teamNumber
+    )) as any[];
+    const r = rows[0];
+    if (!r) return { entry: null, stamps: {}, deleted: false };
+    let stamps: FieldStamps = {};
+    try {
+      const parsed = JSON.parse(String(r.field_ts || "{}"));
+      if (parsed && typeof parsed === "object") {
+        for (const [k, byClient] of Object.entries(parsed as Record<string, any>)) {
+          if (!byClient || typeof byClient !== "object" || k === "__proto__") continue;
+          const clean: Record<string, number> = {};
+          for (const [c, n] of Object.entries(byClient)) if (c !== "__proto__" && typeof n === "number" && Number.isSafeInteger(n)) clean[c] = n;
+          stamps[k] = clean;
+        }
+      }
+    } catch { stamps = {}; }
+    return { entry: shortlistRow(r), stamps, deleted: Number(r.deleted) === 1 };
+  }
+
+  /** Write origin from the request; without one, the write always applies. */
+  function writeOrigin(client: unknown, seq: unknown): WriteOrigin {
+    const c = typeof client === "string" && /^[A-Za-z0-9-]{8,64}$/.test(client) ? client : `anon-${crypto.randomUUID()}`;
+    const n = typeof seq === "number" ? seq : parseInt(String(seq ?? ""), 10);
+    return { client: c, seq: Number.isSafeInteger(n) && n >= 0 ? n : 0 };
+  }
+
+  async function writeShortlistRow(teamId: number, memberId: number | null, e: ShortlistEntry, stamps: FieldStamps, deleted: boolean) {
+    await dbRun(
+      `INSERT INTO scouting_shortlist (team_id, season, team_number, team_name, event_code, notes, priority, scout_next, strengths, weaknesses, updated_by, updated_at, field_ts, deleted)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, season, team_number) DO UPDATE SET
+         team_name = excluded.team_name, event_code = excluded.event_code, notes = excluded.notes,
+         priority = excluded.priority, scout_next = excluded.scout_next, strengths = excluded.strengths,
+         weaknesses = excluded.weaknesses, updated_by = excluded.updated_by, updated_at = excluded.updated_at,
+         field_ts = excluded.field_ts, deleted = excluded.deleted`,
+      teamId, e.season, e.teamNumber, e.teamName, e.eventCode, e.notes, e.priority, e.scoutNext ? 1 : 0,
+      JSON.stringify(e.strengths), JSON.stringify(e.weaknesses), memberId, e.updatedAt, JSON.stringify(stamps), deleted ? 1 : 0
+    );
+  }
+
+  app.put("/api/ftc/shortlist", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const b = req.body || {};
+    const season = parseSeason(b.season);
+    const teamNumber = parseInt(b.teamNumber, 10);
+    if (season == null || !teamNumber || teamNumber < 1 || teamNumber > 999999) return res.status(400).json({ error: "Season and team number are required" });
+    if (b.priority !== undefined && !SHORTLIST_PRIORITIES.has(b.priority)) return res.status(400).json({ error: "Invalid priority" });
+    const tagList = (v: unknown) => (Array.isArray(v) ? v.slice(0, 10) : undefined);
+    const patch: ShortlistPatch = {
+      season,
+      teamNumber,
+      teamName: typeof b.teamName === "string" ? b.teamName : undefined,
+      eventCode: b.eventCode === undefined ? undefined : typeof b.eventCode === "string" && EVENT_CODE_RE.test(b.eventCode) ? b.eventCode : null,
+      notes: typeof b.notes === "string" ? b.notes : undefined,
+      priority: b.priority,
+      scoutNext: typeof b.scoutNext === "boolean" ? b.scoutNext : undefined,
+      addStrengths: tagList(b.addStrengths),
+      removeStrengths: tagList(b.removeStrengths),
+      addWeaknesses: tagList(b.addWeaknesses),
+      removeWeaknesses: tagList(b.removeWeaknesses),
+    };
+    const origin = writeOrigin(b.clientId, b.seq);
+    await withShortlistLock(`${auth.teamId}:${season}:${teamNumber}`, async () => {
+      const stored = await storedShortlist(auth.teamId!, season, teamNumber);
+      const merged = mergeStampedPatch(stored, patch, origin, new Date().toISOString());
+      // null = an older request from a client that has since deleted the entry.
+      if (merged) await writeShortlistRow(auth.teamId!, auth.memberId, merged.entry, merged.stamps, false);
+    });
+    res.json({ entries: await loadShortlist(auth.teamId!, season) });
+  });
+
+  app.delete("/api/ftc/shortlist", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const teamNumber = parseInt(String(req.query.team || ""), 10);
+    if (season == null || !teamNumber) return res.status(400).json({ error: "Season and team number are required" });
+    const origin = writeOrigin(req.query.clientId, req.query.seq);
+    await withShortlistLock(`${auth.teamId}:${season}:${teamNumber}`, async () => {
+      const stored = await storedShortlist(auth.teamId!, season, teamNumber);
+      if (!stored.entry || stored.deleted) return;
+      const stamps = mergeStampedDelete(stored, origin);
+      // null = the same client already made a newer edit (late delete): keep it.
+      if (stamps) await writeShortlistRow(auth.teamId!, auth.memberId, stored.entry, stamps, true);
+    });
+    res.json({ entries: await loadShortlist(auth.teamId!, season) });
+  });
+
+  /**
+   * Bruno scouting context (Analyze mode): the client sends only what it is
+   * looking at; the server builds the pack from its own cached FTC data.
+   */
+  async function scoutingContextFor(auth: { teamId: number | null }, raw: unknown): Promise<string> {
+    if (!raw || typeof raw !== "object") return "";
+    const r = raw as Record<string, unknown>;
+    if (r.mode !== "analyze") return "";
+    const season = parseSeason(r.season);
+    if (season == null || !auth.teamId) return "";
+    const eventCode = typeof r.eventCode === "string" && EVENT_CODE_RE.test(r.eventCode) ? r.eventCode : null;
+    const selectedTeam = Number.isInteger(r.selectedTeam) && (r.selectedTeam as number) > 0 ? (r.selectedTeam as number) : null;
+    const teamRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+    const myTeam = parseInt(teamRow?.ftc_team_number, 10) || null;
+    const [event, selected, shortlist] = await Promise.all([
+      eventCode ? cachedEventFull(season, eventCode).catch(() => null) : Promise.resolve(null),
+      selectedTeam ? cachedTeamProfile(selectedTeam, season).catch(() => null) : Promise.resolve(null),
+      loadShortlist(auth.teamId, season).catch(() => []),
+    ]);
+    return buildScoutingContextPack({ season, myTeam, event, selected, shortlist });
+  }
 
   // Members — scoped to the caller's workspace
   app.get("/api/members/presence", async (req, res) => {
@@ -8667,7 +9113,13 @@ Rules:
           teachCtx = "TEACHING MODE (this member's saved preference): they want to learn, not just receive finished code. Explain the concepts first, walk through the logic step by step, and guide them to write it themselves. Only write out full code when they explicitly ask you to.";
         }
       } catch (err) { console.error("[bruno] teach-mode pref lookup failed:", err); /* best-effort — never block the reply */ }
-      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext].filter(Boolean).join("\n\n");
+      // Analyze mode (Team Stats): structured scouting pack built server-side
+      // from cached FTC data. Best-effort — never blocks the reply.
+      const scoutingCtx = await scoutingContextFor(auth, req.body?.scouting).catch((err: unknown) => {
+        console.error("[bruno] scouting context failed:", err);
+        return "";
+      });
+      const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, scoutingCtx].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls

@@ -3,6 +3,7 @@
 // carry the user's session id, exactly like every other authenticated request.
 
 import { apiFetch } from './api';
+import type { ScoutingContextRequest } from '../types/ftcScout';
 
 const CACHE_KEY = 'ftcNewsCache';
 const TS_KEY = 'ftcNewsTimestamp';
@@ -320,10 +321,12 @@ export function streamBuildHelper(
   messages: BuildHelperMessage[],
   onChunk: (chunk: string) => void,
   chatId?: number,
-  opts?: { persona?: string }
+  opts?: { persona?: string; scouting?: ScoutingContextRequest }
 ) {
   const body: any = chatId ? { messages, chatId } : { messages };
   if (opts?.persona) body.persona = opts.persona;
+  // Analyze mode: only identifiers travel; the server builds the scouting pack.
+  if (opts?.scouting) body.scouting = opts.scouting;
   // Screenshots ride on the latest user message; the server validates them
   // and routes the request to the Gemini vision path.
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');

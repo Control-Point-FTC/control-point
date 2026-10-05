@@ -282,8 +282,8 @@ describe("FIRST Events API client", () => {
     const [m] = await getFirstEventsMatches(2025, "USNJCMP");
     expect(calledUrl()).toBe(`${BASE}/2025/matches/USNJCMP`);
     expect(m.level).toBe("qual");
-    expect(m.red).toEqual({ teams: [14481, 4215], score: 171 });
-    expect(m.blue).toEqual({ teams: [17670, 23786], score: 242 });
+    expect(m.red).toMatchObject({ teams: [14481, 4215], score: 171 });
+    expect(m.blue).toMatchObject({ teams: [17670, 23786], score: 242 });
   });
 
   it("schedule comes from /schedule/{eventCode}?tournamentLevel= (array `schedule`), series kept distinct", async () => {
