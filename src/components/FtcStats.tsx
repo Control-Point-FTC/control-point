@@ -22,7 +22,15 @@ export interface FtcTeamPayload {
   rookieYear?: number; seasons: number[]; season: number;
   totalTeams?: number | null;
   opr: { tot: FtcOprStat | null; auto: FtcOprStat | null; dc: FtcOprStat | null; eg: FtcOprStat | null };
+  oprSource?: string | null;
   events: FtcEvent[];
+  source?: 'first-events' | 'ftc-scout' | 'cache';
+  /** For a cached response: where the data originally came from. */
+  origin?: 'first-events' | 'ftc-scout';
+  fetchedAt?: string;
+  cached?: boolean;
+  /** Served from cache because every live source was unreachable. */
+  stale?: boolean;
 }
 
 // FTC season number -> game name (season N = the N–N+1 school year)
@@ -31,16 +39,31 @@ export const FTC_SEASON_NAMES: Record<number, string> = {
   2023: 'CENTERSTAGE',
   2024: 'INTO THE DEEP',
   2025: 'DECODE',
+  2026: 'BIOBUZZ',
 };
 export const seasonLabel = (s: number) =>
   `${s}–${String(s + 1).slice(2)}${FTC_SEASON_NAMES[s] ? ` · ${FTC_SEASON_NAMES[s]}` : ''}`;
 
+// Season that started most recently (FTC seasons start in September),
+// clamped to the seasons the server supports.
+export function currentFtcSeason(): number {
+  const now = new Date();
+  const s = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  return Math.min(Math.max(s, 2022), 2026);
+}
+
 export function useFtcTeam() {
-  const [season, setSeason] = useState(2025);
+  const [season, setSeason] = useState(currentFtcSeason);
+  // Only the very first load may auto-step back a season; after that the
+  // user's explicit pick always sticks (and shows "no data yet").
+  const autoFallbackRef = useRef(true);
   const [data, setData] = useState<FtcTeamPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notConnected, setNotConnected] = useState(false);
+  // Last season list we saw, so a season that fails to load (e.g. a new
+  // season with no data yet) can still show the pills to switch back.
+  const [knownSeasons, setKnownSeasons] = useState<number[]>([]);
   // Guards against out-of-order responses when the season changes quickly:
   // only the latest load may write state.
   const requestIdRef = useRef(0);
@@ -55,12 +78,36 @@ export function useFtcTeam() {
     setLoading(true);
     setError(null);
     setNotConnected(false);
+    // Set when this load hands off to a different season: the spinner stays
+    // up until that reload finishes (no flash of an empty/error state).
+    let handedOff = false;
     try {
       const payload = await fetchFtcTeam(s, controller.signal);
       if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+      if (payload?.seasons?.length) setKnownSeasons(payload.seasons);
+      // A season that hasn't started can still come back as a profile with
+      // no events and no OPR — on the first load, step back to the team's
+      // most recent earlier season instead of opening on an empty view.
+      if (autoFallbackRef.current && !payload?.events?.length && payload?.opr?.tot?.value == null) {
+        const prev = (payload?.seasons || []).filter((x: number) => x < s).sort((a: number, b: number) => b - a)[0];
+        autoFallbackRef.current = false;
+        if (prev) {
+          handedOff = true;
+          setSeason(prev); // effect reloads with that season
+          return;
+        }
+      }
+      autoFallbackRef.current = false;
       setData(payload);
     } catch (e: any) {
       if (requestId !== requestIdRef.current || controller.signal.aborted) return;
+      if (autoFallbackRef.current && isNoSeasonData(e?.message || null) && s > 2022) {
+        autoFallbackRef.current = false;
+        handedOff = true;
+        setSeason(s - 1); // effect reloads with the previous season
+        return;
+      }
+      autoFallbackRef.current = false;
       if (e instanceof FtcNotConnectedError) {
         setNotConnected(true);
         setData(null);
@@ -69,7 +116,7 @@ export function useFtcTeam() {
         setData(null);
       }
     } finally {
-      if (requestId === requestIdRef.current && !controller.signal.aborted) setLoading(false);
+      if (!handedOff && requestId === requestIdRef.current && !controller.signal.aborted) setLoading(false);
     }
   }, []);
 
@@ -79,7 +126,25 @@ export function useFtcTeam() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season]);
 
-  return { season, setSeason, data, loading, error, notConnected, refresh: () => load(season, { refresh: true }) };
+  return { season, setSeason, data, loading, error, notConnected, knownSeasons, refresh: () => load(season, { refresh: true }) };
+}
+
+function sourceBadgeText(d: { source?: string; origin?: string; cached?: boolean; stale?: boolean }): string {
+  const name = (s?: string) => (s === 'first-events' ? 'FIRST' : s === 'ftc-scout' ? 'FTC Scout' : null);
+  if (d.cached || d.source === 'cache') {
+    const from = name(d.origin);
+    return `● ${d.stale ? 'Offline copy' : 'Cached'}${from ? ` · ${from}` : ''}`;
+  }
+  return d.source === 'first-events' ? '● Live · FIRST' : '● FTC Scout';
+}
+
+// The API's 404 for a season the team hasn't competed in (yet).
+function isNoSeasonData(error: string | null): boolean {
+  return !!error && /no record of that team number this season/i.test(error);
+}
+function seasonErrorText(error: string | null, season: number): string {
+  if (isNoSeasonData(error)) return `There's no ${seasonLabel(season)} data for your team yet — pick another season.`;
+  return error || 'Something went wrong.';
 }
 
 function SeasonPills({ seasons, active, onPick, small }: { seasons: number[]; active: number; onPick: (s: number) => void; small?: boolean }) {
@@ -146,7 +211,7 @@ function percentileLine(rank: number | null, total: number | null | undefined): 
 // Compact card for the dashboard: connected team at a glance.
 export function FtcTeamCard() {
   const navigate = useNavigate();
-  const { season, setSeason, data, loading, error, notConnected, refresh } = useFtcTeam();
+  const { season, setSeason, data, loading, error, notConnected, knownSeasons, refresh } = useFtcTeam();
 
   if (loading) {
     return (
@@ -179,12 +244,15 @@ export function FtcTeamCard() {
 
   if (error || !data) {
     return (
-      <div className="card-surface p-6 lg:col-span-3 flex items-center gap-4">
-        <CircleAlert className="w-6 h-6 text-rose-400 shrink-0" />
-        <p className="text-sm text-text-muted flex-1">{error || 'Stats unavailable.'}</p>
-        <button onClick={refresh} className="flex items-center gap-1.5 text-sm text-accent font-bold hover:opacity-80">
-          <RefreshCw className="w-4 h-4" /> Retry
-        </button>
+      <div className="card-surface p-6 lg:col-span-3 flex flex-col gap-3">
+        <div className="flex items-center gap-4">
+          <CircleAlert className="w-6 h-6 text-rose-400 shrink-0" />
+          <p className="text-sm text-text-muted flex-1">{seasonErrorText(error, season)}</p>
+          <button onClick={refresh} className="flex items-center gap-1.5 text-sm text-accent font-bold hover:opacity-80">
+            <RefreshCw className="w-4 h-4" /> Retry
+          </button>
+        </div>
+        {knownSeasons.length > 1 && <SeasonPills seasons={knownSeasons} active={season} onPick={setSeason} small />}
       </div>
     );
   }
@@ -396,7 +464,7 @@ function FtcEventDetailModal({ event, season, teamNumber, onClose }: {
 // Dedicated stats page: /stats
 export function TeamStatsView() {
   const navigate = useNavigate();
-  const { season, setSeason, data, loading, error, notConnected, refresh } = useFtcTeam();
+  const { season, setSeason, data, loading, error, notConnected, knownSeasons, refresh } = useFtcTeam();
   const [selectedEvent, setSelectedEvent] = useState<FtcEvent | null>(null);
 
   if (loading) {
@@ -430,11 +498,12 @@ export function TeamStatsView() {
     return (
       <div className="card-surface p-10 flex flex-col items-center text-center gap-4 max-w-xl mx-auto">
         <CircleAlert className="w-10 h-10 text-rose-400" />
-        <h3 className="text-xl font-display font-bold text-text-base">Couldn't load stats</h3>
-        <p className="text-sm text-text-muted">{error || 'Something went wrong.'}</p>
+        <h3 className="text-xl font-display font-bold text-text-base">{isNoSeasonData(error) ? `No ${seasonLabel(season)} data yet` : "Couldn't load stats"}</h3>
+        <p className="text-sm text-text-muted">{seasonErrorText(error, season)}</p>
         <button onClick={refresh} className="flex items-center gap-2 bg-accent text-accent-ink font-bold px-6 py-3 rounded-xl hover:brightness-105">
           <RefreshCw className="w-4 h-4" /> Try again
         </button>
+        {knownSeasons.length > 1 && <SeasonPills seasons={knownSeasons} active={season} onPick={setSeason} />}
       </div>
     );
   }
@@ -454,6 +523,14 @@ export function TeamStatsView() {
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-2xl font-display font-bold text-text-base tracking-tight">Team {data.number}</h2>
                 <span className="text-[10px] font-bold uppercase tracking-widest bg-accent/15 text-accent px-2 py-1 rounded-full">{seasonLabel(season)}</span>
+                {data.source && (
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border border-text-base/15 text-text-muted"
+                    title={data.fetchedAt ? `Last updated ${new Date(data.fetchedAt).toLocaleString()}` : undefined}
+                  >
+                    {sourceBadgeText(data)}
+                  </span>
+                )}
               </div>
               <p className="text-lg text-text-base/80 font-semibold mt-0.5">{data.name}</p>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-text-muted">

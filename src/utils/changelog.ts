@@ -13,6 +13,38 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.3.0',
+    date: '2026-10-05',
+    title: 'Bruno AI upgrades + FTC data overhaul',
+    added: [
+      'Bruno AI can now read PDF attachments (up to 5 per message — great for invoices)',
+      'Bruno AI supports up to 5 images per message',
+      'AI quick-add on task creation — describe it, Bruno fills the form',
+      'FTC data now comes from the official FIRST Events API (fresher data, quicker updates)',
+      '2026–27 BIOBUZZ season in Team Stats',
+      'Clickable event history — tap any event for full match breakdowns (quals + playoffs, alliances, scores)',
+      'Ask Bruno to scout teams: "who should we pair with for this event?" or "how is team 23375 doing?"',
+      'Event-wide scouting — Bruno ranks the field by event standings, or by OPR (up to 40 teams) before rankings exist',
+      'Channel renaming for admins (text + voice channels)',
+      'Download button in the 3D model viewer',
+    ],
+    improved: [
+      'Team Stats shows data source (Live via FIRST / FTC Scout / Cached) with last-updated time',
+      'Event placement badges: gold/silver/bronze for 1st/2nd/3rd',
+      'OPR tiles now show percentile ranks',
+      'Team header shows sponsors',
+      'Bruno logo consistent between sidebar and chat header',
+      'Settings icon is now a crosshair (matches the app aesthetic)',
+      'Control Point logo is now the browser tab icon',
+      'Mobile chat header fixed (no more duplicate #)',
+    ],
+    fixed: [
+      '3D viewer now authenticates correctly when loading models',
+      'Snapshot delete errors show the real reason instead of a generic message',
+      'Popups and dropdowns reliably close when clicking outside',
+    ],
+  },
+  {
     version: '1.2.0',
     date: '2026-10-04',
     title: 'Settings makeover + sounds + PWA',
@@ -71,4 +103,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const CURRENT_VERSION = '1.2.0';
+export const CURRENT_VERSION = '1.3.0';
