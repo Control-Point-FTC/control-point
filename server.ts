@@ -4716,8 +4716,8 @@ async function startServer() {
     predictSyncing = true;
     try {
       for (const s of predictSeasons) {
-        // Older seasons are complete: download once, then leave them alone.
-        if (s < currentFtcSeason() - 1 && predictStore.hasSeason(s)) continue;
+        // Older seasons don't change: stop once a sync completed without failures.
+        if (s < currentFtcSeason() - 1 && predictStore.isComplete(s)) continue;
         const n = await predictStore.syncScout(s);
         const a = await predictStore.syncAdvancement(s);
         if (n || a) console.log(`[predict] ${s}: ${n} events, ${a} advancement lists updated`);

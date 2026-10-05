@@ -30,13 +30,14 @@ function histEvent(code: string, day: number): EventRecord {
 const hist = { M1: histEvent("M1", 1), M2: histEvent("M2", 8) } as Record<string, EventRecord>;
 const fakeStore = {
   hasSeason: (s: number) => s === 2025,
+  index: () => ({ M1: { code: "M1", type: "LeagueMeet", start: null, end: null, region: "USXX", updatedAt: null }, OTHER: { code: "OTHER", type: "Qualifier", start: null, end: null, region: "USYY", updatedAt: null } }),
   eventFiles: () => [{ code: "M1", path: "M1", mtimeMs: 1 }, { code: "M2", path: "M2", mtimeMs: 1 }],
   parseEventFile: (path: string) => hist[path],
   loadAdvancement: () => [{ code: "QPAST", type: "Qualifier", region: "USXX", end: "2025-11-20", advancement: { advancesTo: "STATE", slots: 3, rows: [{ team: 111, status: "FIRST", declined: false }] } }],
 } as unknown as PredictStore;
 
 /** A live event payload (FtcEventFull) with a 4-round schedule. */
-function liveEvent(opts: { played: number; ranks?: boolean; alliances?: boolean; type?: string } = { played: 0 }): FtcEventFull {
+function liveEvent(opts: { played: number; ranks?: boolean; alliances?: boolean; type?: string; code?: string } = { played: 0 }): FtcEventFull {
   const matches: FtcMatchFull[] = [];
   let n = 0;
   for (let r = 0; r < 4; r++) for (let i = 0; i < 12; i += 4) {
@@ -47,7 +48,7 @@ function liveEvent(opts: { played: number; ranks?: boolean; alliances?: boolean;
     matches.push({ key: `qual:0:${n}`, level: "qual", series: 0, number: n, label: `Q-${n}`, description: null, time: null, played, red: side([o[i], o[i + 1]]), blue: side([o[i + 2], o[i + 3]]), breakdownSource: null });
   }
   return {
-    code: "QNOW", season: 2025, name: "Test Qualifier", type: opts.type ?? "Qualifier", start: "2025-12-01", end: "2025-12-01",
+    code: opts.code ?? "USXXQNOW", season: 2025, name: "Test Qualifier", type: opts.type ?? "Qualifier", start: "2025-12-01", end: "2025-12-01",
     venue: null, city: null, state: null, country: null,
     field: TEAMS.map((t, i) => ({ teamNumber: t, name: `T${t}`, rank: opts.ranks ? i + 1 : null, rp: null, wins: null, losses: null, ties: null, qualMatchesPlayed: null, opr: null, avg: null, awards: [] })),
     matches, alliances: opts.alliances ? [{ number: 1, name: null, captain: 100, picks: [101] }, { number: 2, name: null, captain: 102, picks: [103] }, { number: 3, name: null, captain: 104, picks: [105] }, { number: 4, name: null, captain: 106, picks: [107] }] : [],
@@ -85,18 +86,60 @@ describe("PredictEngine", () => {
     const expected = fc.teams.reduce((s, t) => s + t.pAdvance, 0);
     expect(expected).toBeGreaterThan(fc.slots - 0.5);
     expect(expected).toBeLessThanOrEqual(fc.slots + 1e-9);
-    // Award points are only revealed for the asking team.
-    expect(fc.teams.find((t) => t.team === 100)!.points.awards).not.toBeNull();
-    expect(fc.teams.find((t) => t.team === 101)!.points.awards).toBeNull();
+    // Award points (and the award-inclusive total) are only revealed for the asking team.
+    const mine = fc.teams.find((t) => t.team === 100)!.points, other = fc.teams.find((t) => t.team === 101)!.points;
+    expect(mine.awards).not.toBeNull();
+    expect(mine.total).not.toBeNull();
+    expect(other.awards).toBeNull();
+    expect(other.total).toBeNull();
+    expect(other.matchPoints).toBeCloseTo(other.quals + other.alliance + other.playoffs, 9);
     expect(fc.matchesOnly?.team).toBe(100);
   });
 
-  it("infers slots and already-qualified teams from earlier same-type events", () => {
+  it("infers slots and already-qualified teams from earlier same-type events in the event's region", () => {
     const fc = engine.forecast(liveEvent({ played: 0 }), 100, 200)!;
     expect(fc.slotsSource).toBe("estimated");
     expect(fc.slots).toBe(3);
     expect(fc.prequalified).toContain(111);
     expect(fc.teams.find((t) => t.team === 111)!.pAdvance).toBe(0);
+  });
+
+  it("falls back honestly when the region has no history: slot count only, no already-qualified teams", () => {
+    const fc = engine.forecast(liveEvent({ played: 0, code: "USYYNEW" }), 100, 200)!;
+    expect(fc.slotsSource).toBe("estimated-broad");
+    expect(fc.prequalified).toEqual([]);
+    expect(fc.assumptions.join(" ")).toMatch(/all regions/);
+  });
+
+  it("folds freshly played matches into ratings before the next background sync", () => {
+    const before = engine.forecast(liveEvent({ played: 0 }), 100, 200)!;
+    // Team 111 (weakest) suddenly scores 400 in every played match.
+    const ev = liveEvent({ played: 12 });
+    for (const m of ev.matches) for (const side of [m.red, m.blue]) if (side.score && side.teams.some((t) => t.number === 111)) side.score = { ...side.score, total: 400, totalNp: 400, teleop: 300, auto: 80, endgame: 20 };
+    const after = engine.forecast(ev, 100, 200)!;
+    const s = (fc: typeof before) => fc.teams.find((t) => t.team === 111)!.strength.np;
+    expect(s(after)).toBeGreaterThan(s(before) + 20);
+  });
+
+  it("keeps played playoff results: an eliminated alliance can't win", () => {
+    const ev = liveEvent({ played: 99, ranks: true, alliances: true });
+    // 4-alliance bracket: match 1 is A1 v A4, match 2 A2 v A3, match 3 L1 v L2.
+    // A4 beats A1, A3 beats A2, then A2 beats A1 → A1 (losses 2) is out.
+    const pm = (series: number, red: number[], blue: number[], redWins: boolean): FtcMatchFull => ({
+      key: `playoff:${series}:1`, level: "playoff", series, number: 1, label: `M-${series}`, description: null, time: null, played: true, breakdownSource: null,
+      red: { teams: red.map((t) => ({ number: t, name: "" })), score: { total: redWins ? 200 : 100, totalNp: redWins ? 200 : 100, auto: 0, teleop: 0, endgame: 0, penaltiesCommitted: 0, penaltiesByOpp: 0 } },
+      blue: { teams: blue.map((t) => ({ number: t, name: "" })), score: { total: redWins ? 100 : 200, totalNp: redWins ? 100 : 200, auto: 0, teleop: 0, endgame: 0, penaltiesCommitted: 0, penaltiesByOpp: 0 } },
+    });
+    ev.matches.push(pm(1, [100, 101], [106, 107], false), pm(2, [102, 103], [104, 105], false), pm(3, [100, 101], [102, 103], false));
+    const fc = engine.forecast(ev, 100, 400)!;
+    expect(fc.teams.find((t) => t.team === 100)!.pWin).toBe(0);
+    expect(fc.assumptions.join(" ")).toMatch(/real results/);
+  });
+
+  it("isn't ready until there are real ratings", async () => {
+    const empty = new PredictEngine({ hasSeason: () => false, index: () => ({}), eventFiles: () => [], loadAdvancement: () => [] } as unknown as PredictStore, [2025]);
+    await empty.rebuild();
+    expect(empty.ready).toBe(false);
   });
 
   it("ranks partners for a likely captain, and returns none once alliances are set", async () => {
@@ -142,6 +185,45 @@ describe("PredictStore sync", () => {
     expect(await store.syncAdvancement(2025, Date.UTC(2026, 0, 1))).toBe(1);
     expect(existsSync(join(dir, "first", "2025", "A.json"))).toBe(true);
     expect(JSON.parse(readFileSync(join(dir, "first", "2025", "A.json"), "utf8")).advancement.slots).toBe(2);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("never writes error responses and keeps retrying an unfinished season", async () => {
+    const listed = [{ code: "A", type: "Qualifier", start: "2025-11-01", end: "2025-11-01", updatedAt: "1" }];
+    let fail = true;
+    const store = new PredictStore(dir, {
+      scout: async (q) => (q.includes("eventsSearch") ? { data: { eventsSearch: listed } } : fail ? { errors: [{ message: "boom" }], data: { eventByCode: null } } : { data: { eventByCode: { code: "A" } } }),
+      advancement: async () => null,
+      gapMs: 0,
+    });
+    expect(await store.syncScout(2025)).toBe(0);
+    expect(existsSync(join(dir, "scout", "2025", "A.json"))).toBe(false);
+    expect(store.isComplete(2025)).toBe(false);
+    fail = false;
+    expect(await store.syncScout(2025)).toBe(1);
+    expect(store.isComplete(2025)).toBe(true);
+    // A failed event-list request throws instead of wiping the index.
+    const broken = new PredictStore(dir, { scout: async () => ({ errors: [{ message: "down" }] }), advancement: async () => null, gapMs: 0 });
+    await expect(broken.syncScout(2025)).rejects.toThrow(/event list unavailable/);
+    expect(Object.keys(store.index(2025))).toEqual(["A"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("retries a missing advancement list after a day", async () => {
+    let published: { advancesTo: string; slots: number; rows: never[] } | null = null;
+    const store = new PredictStore(dir, {
+      scout: async (q) => (q.includes("eventsSearch") ? { data: { eventsSearch: [{ code: "A", type: "Qualifier", start: "2025-11-01", end: "2025-11-01", updatedAt: "1" }] } } : { data: { eventByCode: { code: "A" } } }),
+      advancement: async () => published,
+      gapMs: 0,
+    });
+    await store.syncScout(2025);
+    const t0 = Date.UTC(2026, 0, 1);
+    expect(await store.syncAdvancement(2025, t0)).toBe(1); // saved as missing
+    published = { advancesTo: "S", slots: 4, rows: [] };
+    expect(await store.syncAdvancement(2025, t0 + 3600e3)).toBe(0); // within a day: not retried
+    expect(await store.syncAdvancement(2025, t0 + 2 * 864e5)).toBe(1); // retried
+    expect(await store.syncAdvancement(2025, t0 + 3 * 864e5)).toBe(0); // now final
+    expect(JSON.parse(readFileSync(join(dir, "first", "2025", "A.json"), "utf8")).advancement.slots).toBe(4);
     rmSync(dir, { recursive: true, force: true });
   });
 });

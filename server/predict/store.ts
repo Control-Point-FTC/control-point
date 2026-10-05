@@ -48,13 +48,22 @@ export class PredictStore {
     return existsSync(join(this.seasonDir("scout", season), "_index.json"));
   }
 
+  /** True once a sync of the season finished with every event downloaded. */
+  isComplete(season: number): boolean {
+    return this.readJson(join(this.seasonDir("scout", season), "_status.json"), { complete: false }).complete === true;
+  }
+
   /**
    * Download events that are new or changed since the last sync.
    * Returns how many were fetched.
    */
   async syncScout(season: number): Promise<number> {
     const dir = this.seasonDir("scout", season);
-    const list = ((await this.deps.scout(SCOUT_EVENT_LIST_QUERY, { season }))?.data?.eventsSearch ?? []) as any[];
+    // Never act on an error response: a GraphQL error (HTTP 200) must not
+    // wipe the index or overwrite good event files.
+    const listResp = await this.deps.scout(SCOUT_EVENT_LIST_QUERY, { season });
+    const list = listResp?.data?.eventsSearch;
+    if (!Array.isArray(list) || listResp?.errors?.length) throw new Error(`event list unavailable${listResp?.errors?.length ? `: ${JSON.stringify(listResp.errors).slice(0, 200)}` : ""}`);
     const old = this.index(season);
     const next: Record<string, EventMeta> = {};
     const todo: EventMeta[] = [];
@@ -63,14 +72,16 @@ export class PredictStore {
       next[e.code] = old[e.code] && old[e.code].updatedAt === meta.updatedAt && existsSync(join(dir, `${e.code}.json`)) ? old[e.code] : meta;
       if (next[e.code] === meta && !meta.remote) todo.push(meta);
     }
-    let fetched = 0;
+    let fetched = 0, failed = 0;
     const q = scoutEventQuery(season);
     for (const e of todo) {
       try {
         const body = await this.deps.scout(q, { season, code: e.code });
+        if (body?.errors?.length || !body?.data?.eventByCode) throw new Error(body?.errors?.length ? JSON.stringify(body.errors).slice(0, 200) : "no event in response");
         writeFileSync(join(dir, `${e.code}.json`), JSON.stringify(body));
         fetched++;
       } catch (err) {
+        failed++;
         // Keep the old index entry (or none) so it's retried next sync.
         if (old[e.code]) next[e.code] = old[e.code]; else delete next[e.code];
         this.deps.log?.(`[predict] ${season} ${e.code} fetch failed: ${(err as Error).message}`);
@@ -79,12 +90,17 @@ export class PredictStore {
       await sleep(this.deps.gapMs ?? 150);
     }
     writeFileSync(join(dir, "_index.json"), JSON.stringify(next));
+    // Only a sync with no failures marks the season complete (older seasons
+    // stop syncing once complete; unfinished ones keep retrying).
+    writeFileSync(join(dir, "_status.json"), JSON.stringify({ complete: failed === 0, lastSync: new Date().toISOString(), failed }));
     return fetched;
   }
 
   /**
    * Fetch FIRST advancement for finished advancing events we don't have yet,
    * and refresh recent ones (lists can change for a few days after an event).
+   * A missing result (not published yet, credentials absent, request failed)
+   * is never final: it's retried at most once a day.
    */
   async syncAdvancement(season: number, now = Date.now()): Promise<number> {
     const dir = this.seasonDir("first", season);
@@ -95,7 +111,9 @@ export class PredictStore {
       if (end > now) continue;
       const file = join(dir, `${e.code}.json`);
       const recent = now - end < 7 * 864e5;
-      if (existsSync(file) && !recent) continue;
+      const saved = existsSync(file) ? this.readJson<{ advancement: unknown; fetchedAt?: string } | null>(file, null) : null;
+      if (saved?.advancement && !recent) continue;
+      if (saved && !saved.advancement && saved.fetchedAt && now - Date.parse(saved.fetchedAt) < 864e5) continue;
       try {
         const adv = await this.deps.advancement(season, e.code);
         writeFileSync(file, JSON.stringify({ code: e.code, type: e.type, region: e.region, end: e.end, advancement: adv, fetchedAt: new Date(now).toISOString() }));

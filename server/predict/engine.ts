@@ -16,7 +16,7 @@ import { rng, simulateEvent, type AwardInput, type BonusModel, type PickModel, t
 import { awardFeatures, indexAwards, sampleAwards, MODELLED_AWARDS, type AwardModel, type AwardRecord } from "./awards.js";
 import { ADVANCING_TYPES } from "./scoutData.js";
 import type { PredictStore } from "./store.js";
-import type { EventRecord } from "./types.js";
+import type { AllianceResult, EventRecord, MatchRecord } from "./types.js";
 import type { FtcEventFull } from "../../src/types/ftcScout.js";
 
 // Fitted model (scripts/predict/export-model.mts), read at runtime.
@@ -36,8 +36,12 @@ export interface ForecastTeam {
   pWin: number;
   pFinalist: number;
   rank: { mean: number; p10: number; p90: number };
-  /** Expected advancement points; the awards part is only filled in for the asking team. */
-  points: { quals: number; alliance: number; playoffs: number; awards: number | null; total: number };
+  /**
+   * Expected advancement points. `matchPoints` (quals + alliance + playoffs)
+   * is shown for everyone; award points and the award-inclusive total only
+   * for the asking team.
+   */
+  points: { quals: number; alliance: number; playoffs: number; matchPoints: number; awards: number | null; total: number | null };
   /** Rating: expected non-penalty contribution and how sure we are (± points, 1 sd). */
   strength: { np: number; auto: number; teleop: number; endgame: number; sd: number; matches: number };
 }
@@ -48,7 +52,7 @@ export interface Forecast {
   stage: Stage;
   runs: number;
   slots: number;
-  slotsSource: "official" | "estimated" | "default";
+  slotsSource: "official" | "estimated" | "estimated-broad" | "default";
   prequalified: number[];
   assumptions: string[];
   teams: ForecastTeam[];
@@ -76,6 +80,9 @@ export class PredictEngine {
   private events = new Map<number, EventRecord[]>();
   private awardsByTeam = new Map<number, AwardRecord[]>();
   private advancement = new Map<number, ReturnType<PredictStore["loadAdvancement"]>>();
+  /** Event code → FTC region code (from FTC Scout's event list), and all known regions. */
+  private regionByCode = new Map<string, string>();
+  private regions = new Set<string>();
   /** Parsed events by season and code, re-parsed only when the file changes. */
   private parsed = new Map<number, Map<string, { mtimeMs: number; rec: EventRecord | null }>>();
   readyAt: string | null = null;
@@ -95,6 +102,7 @@ export class PredictEngine {
     const records: AwardRecord[] = [];
     for (const s of [...this.seasons].sort((a, b) => a - b)) {
       if (!this.store.hasSeason(s)) continue;
+      for (const meta of Object.values(this.store.index(s))) if (meta.region) { this.regionByCode.set(meta.code, meta.region); this.regions.add(meta.region); }
       const cache = this.parsed.get(s) ?? new Map();
       const files = this.store.eventFiles(s);
       const seen = new Set<string>();
@@ -117,7 +125,8 @@ export class PredictEngine {
       await yieldLoop();
     }
     this.awardsByTeam = indexAwards(records);
-    this.readyAt = new Date().toISOString();
+    // Ready only once there are real ratings (a fresh install has no data yet).
+    if (this.books.size && [...this.events.values()].some((evs) => evs.length)) this.readyAt = new Date().toISOString();
   }
 
   /** Ratings book for a season, with the clock set to now. */
@@ -156,20 +165,38 @@ export class PredictEngine {
     return quals.some((m) => m.played) ? "live" : "pre";
   }
 
+  /**
+   * An event's region: from FTC Scout's event list when we have it, otherwise
+   * the longest known region code that prefixes the event code (FTC event
+   * codes start with their region, e.g. USNJNOLT2 → USNJ).
+   */
+  private regionOf(code: string): string | null {
+    const known = this.regionByCode.get(code);
+    if (known) return known;
+    let best: string | null = null;
+    for (const r of this.regions) if (code.startsWith(r) && (!best || r.length > best.length)) best = r;
+    return best;
+  }
+
   /** Slots + already-qualified teams: official when published, otherwise inferred. */
   private advancementFor(ev: FtcEventFull, startTime: number) {
     const all = this.advancement.get(ev.season) ?? [];
     const own = all.find((a) => a.code === ev.code)?.advancement;
     if (own) {
       return {
-        slots: own.slots, source: "official" as const,
+        slots: own.slots, source: "official" as const, region: null as string | null,
         prequalified: own.rows.filter((r) => r.status === "ALREADY_ADVANCING").map((r) => r.team),
         ineligible: own.rows.filter((r) => r.status === "INELIGIBLE").map((r) => r.team),
       };
     }
-    // Infer from same-region events of the same type: their usual destination and slot count.
-    const region = this.events.get(ev.season)?.find((e) => e.code === ev.code)?.region ?? null;
-    const peers = [...all, ...(this.advancement.get(ev.season - 1) ?? [])].filter((a) => a.advancement && normType(a.type) === normType(ev.type) && (!region || a.region === region));
+    // Infer from same-region events of the same type: their usual destination
+    // and slot count. If the region is unknown or has none, fall back to every
+    // region for the slot count only (and say so) — never borrow another
+    // region's destination for already-qualified teams.
+    const region = this.regionOf(ev.code);
+    const sameType = [...all, ...(this.advancement.get(ev.season - 1) ?? [])].filter((a) => a.advancement && normType(a.type) === normType(ev.type));
+    const regional = region ? sameType.filter((a) => a.region === region) : [];
+    const peers = regional.length ? regional : [];
     const dest = new Map<string, number>();
     for (const p of peers) if (p.advancement?.advancesTo) dest.set(p.advancement.advancesTo, (dest.get(p.advancement.advancesTo) ?? 0) + 1);
     const advancesTo = [...dest.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
@@ -179,8 +206,9 @@ export class PredictEngine {
       if (a.advancement?.advancesTo !== advancesTo || Date.parse(`${a.end}T23:59:59Z`) >= startTime) continue;
       for (const r of a.advancement.rows) if (r.status === "FIRST") already.add(r.team);
     }
-    if (slotSamples.length) return { slots: median(slotSamples), source: "estimated" as const, prequalified: [...already], ineligible: [] };
-    return { slots: ev.field.length > 20 ? 6 : 4, source: "default" as const, prequalified: [...already], ineligible: [] };
+    if (slotSamples.length) return { slots: median(slotSamples), source: "estimated" as const, prequalified: [...already], ineligible: [], region };
+    if (sameType.length) return { slots: median(sameType.map((p) => p.advancement!.slots)), source: "estimated-broad" as const, prequalified: [], ineligible: [], region };
+    return { slots: ev.field.length > 20 ? 6 : 4, source: "default" as const, prequalified: [], ineligible: [], region };
   }
 
   /** Typical award line-up for an event type (awards given at ≥ half of such events). */
@@ -193,6 +221,52 @@ export class PredictEngine {
       return [...count.entries()].filter(([, c]) => c >= evs.length / 2).map(([k]) => { const [t, p] = k.split(":"); return { type: t, placement: Number(p) }; });
     }
     return [{ type: "Inspire", placement: 1 }, { type: "Inspire", placement: 2 }];
+  }
+
+  /**
+   * Ratings for an event right now: the season book plus this event's played
+   * matches that the last background sync hasn't folded in yet.
+   */
+  private eventBook(ev: FtcEventFull, book: RatingBook): RatingBook {
+    const stored = this.events.get(ev.season)?.find((e) => e.code === ev.code);
+    const have = new Set((stored?.matches ?? []).map((m) => `${m.level}:${m.series}:${m.number}`));
+    const fresh: MatchRecord[] = [];
+    const base = Date.parse(`${ev.start ?? "1970-01-01"}T00:00:00Z`);
+    for (const m of ev.matches) {
+      if (!m.played || have.has(m.key)) continue;
+      const side = (a: FtcEventFull["matches"][number]["red"]): AllianceResult | null => {
+        const sc = a.score;
+        if (!sc || sc.total == null) return null;
+        const np = sc.totalNp ?? sc.total;
+        const auto = sc.auto ?? 0, endgame = sc.endgame ?? 0;
+        return { teams: a.teams.map((t) => t.number), auto, endgame, teleop: sc.teleop ?? Math.max(0, np - auto - endgame), np, penCommitted: sc.penaltiesCommitted ?? 0, total: sc.total };
+      };
+      const red = side(m.red), blue = side(m.blue);
+      if (!red || !blue) continue;
+      const order = (m.level === "playoff" ? 1e6 : 0) + (m.series ?? 0) * 1e3 + m.number;
+      fresh.push({ season: ev.season, eventCode: ev.code, level: m.level, series: m.series ?? 0, number: m.number, time: Date.parse(m.time ?? "") || base + order, red, blue });
+    }
+    if (!fresh.length) return book;
+    const b = book.clone();
+    for (const m of fresh.sort((x, y) => x.time - y.time)) b.update(m);
+    b.setTime(Date.now());
+    return b;
+  }
+
+  /** Played playoff matches → winning alliance number, keyed by bracket match (or final game) number. */
+  private playoffResults(ev: FtcEventFull): Map<number, number> | undefined {
+    const allianceOf = new Map<number, number>();
+    for (const a of ev.alliances) for (const t of [a.captain, ...a.picks]) if (t) allianceOf.set(t, a.number);
+    const out = new Map<number, number>();
+    const twoAlliance = ev.alliances.length === 2;
+    for (const m of ev.matches) {
+      if (m.level !== "playoff" || !m.played || m.red.score?.total == null || m.blue.score?.total == null || m.red.score.total === m.blue.score.total) continue;
+      const winner = m.red.score.total > m.blue.score.total ? m.red : m.blue;
+      const k = allianceOf.get(winner.teams[0]?.number ?? -1);
+      if (k == null) continue;
+      out.set(twoAlliance ? m.number : (m.series ?? m.number), k);
+    }
+    return out.size ? out : undefined;
   }
 
   private simInput(ev: FtcEventFull, stage: Stage, book: RatingBook, runs: number): { input: SimInput; assumptions: string[]; adv: ReturnType<PredictEngine["advancementFor"]> } {
@@ -236,9 +310,9 @@ export class PredictEngine {
       for (const side of [q.result.red, q.result.blue]) side.bonus = { movement: lg(bonus.movement, side.np) > 0.5, goal: lg(bonus.goal, side.np) > 0.5, pattern: lg(bonus.pattern, side.np) > 0.5 };
     }
     const adv = this.advancementFor(ev, startTime);
-    if (adv.source !== "official") assumptions.push(adv.source === "estimated"
-      ? `Advancement slots (${adv.slots}) and already-qualified teams are estimated from similar events in the region.`
-      : `Advancement slots (${adv.slots}) are a default guess — no similar events found.`);
+    if (adv.source === "estimated") assumptions.push(`Advancement slots (${adv.slots}) and already-qualified teams are estimated from earlier ${ev.type ?? ""} events in ${adv.region}.`);
+    else if (adv.source === "estimated-broad") assumptions.push(`Advancement slots (${adv.slots}) are estimated from ${ev.type ?? "similar"} events in all regions (none found for this region yet); already-qualified teams aren't known, so none are assumed.`);
+    else if (adv.source === "default") assumptions.push(`Advancement slots (${adv.slots}) are a default guess — no similar events found; already-qualified teams aren't known.`);
     // Awards: sampled from team history (the event's award winners aren't known in advance).
     const vals = teams.map((t) => npOf(ratings.get(t)!));
     const mu = vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length);
@@ -248,8 +322,10 @@ export class PredictEngine {
     const awards: AwardInput = { mode: "sample", sample: (r) => sampleAwards(slots, teams, feats, M.awards, r) };
     const ranks = stage === "quals" || stage === "selected" ? new Map(ev.field.filter((t) => t.rank != null).map((t) => [t.teamNumber, t.rank!])) : undefined;
     const alliances = stage === "selected" ? ev.alliances.filter((a) => a.captain).sort((a, b) => a.number - b.number).map((a) => [a.captain!, ...a.picks]) : undefined;
+    const playoffPlayed = stage === "selected" ? this.playoffResults(ev) : undefined;
+    if (playoffPlayed) assumptions.push("Playoff matches already played keep their real results.");
     const input: SimInput = {
-      season: ev.season, ratings, quals, noise: M.noise, bonus, pick: M.pick, ranks, alliances, awards,
+      season: ev.season, ratings, quals, noise: M.noise, bonus, pick: M.pick, ranks, alliances, awards, playoffPlayed,
       prequalified: new Set(adv.prequalified), ineligible: new Set(adv.ineligible), slots: adv.slots, runs, seed: 1,
     };
     return { input, assumptions, adv };
@@ -272,8 +348,9 @@ export class PredictEngine {
   }
 
   forecast(ev: FtcEventFull, myTeam: number | null, runs = 2000): Forecast | null {
-    const book = this.book(ev.season);
-    if (!book || this.unsupportedReason(ev)) return null;
+    const seasonBook = this.book(ev.season);
+    if (!seasonBook || this.unsupportedReason(ev)) return null;
+    const book = this.eventBook(ev, seasonBook);
     const stage = this.stageOf(ev);
     const { input, assumptions, adv } = this.simInput(ev, stage, book, runs);
     if (normType(ev.type) === "Championship" && adv.source !== "official") {
@@ -300,7 +377,7 @@ export class PredictEngine {
     return {
       team: o.team, pAdvance: o.pAdvance, pCaptain: o.pCaptain, pPicked: o.pPicked, pWin: o.pWin, pFinalist: o.pFinalist,
       rank: { mean: o.meanRank, p10: o.rankP10, p90: o.rankP90 },
-      points: { quals: p.quals, alliance: p.alliance, playoffs: p.playoffs, awards: mine ? p.awards : null, total: p.total },
+      points: { quals: p.quals, alliance: p.alliance, playoffs: p.playoffs, matchPoints: p.quals + p.alliance + p.playoffs, awards: mine ? p.awards : null, total: mine ? p.total : null },
       strength: { np: npOf(r), auto: r.auto, teleop: r.teleop, endgame: r.endgame, sd: Math.sqrt(r.uncertainty), matches: r.n },
     };
   }
@@ -310,8 +387,9 @@ export class PredictEngine {
    * us". Before alliance selection only; one forced-pair simulation per option.
    */
   async partners(ev: FtcEventFull, myTeam: number, runs = 600, maxOptions = 16): Promise<Partners | null> {
-    const book = this.book(ev.season);
-    if (!book || !ev.field.some((t) => t.teamNumber === myTeam)) return null;
+    const seasonBook = this.book(ev.season);
+    if (!seasonBook || !ev.field.some((t) => t.teamNumber === myTeam)) return null;
+    const book = this.eventBook(ev, seasonBook);
     const stage = this.stageOf(ev);
     if (stage === "selected") return { role: "none", myTeam, baseline: { pAdvance: 0, pWin: 0, pCaptain: 0 }, options: [] };
     const { input } = this.simInput(ev, stage, book, runs);
