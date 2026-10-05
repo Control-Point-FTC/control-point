@@ -548,6 +548,15 @@ export function TeamStatsView() {
       </div>
 
       <p className="text-center text-[11px] text-text-muted/60">Match data courtesy of <a href="https://ftcscout.org" target="_blank" rel="noreferrer" className="underline hover:text-accent">ftcscout.org</a> · OPR & rankings update as events report results</p>
+
+      {selectedEvent && (
+        <FtcEventDetailModal
+          event={selectedEvent}
+          season={season}
+          teamNumber={data.number}
+          onClose={() => setSelectedEvent(null)}
+        />
+      )}
     </div>
   );
 }

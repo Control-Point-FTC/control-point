@@ -9256,8 +9256,27 @@ Rules:
       if (docsCount?.n) links.push(`Onshape: ${docsCount.n} doc(s) linked`);
       if (links.length) parts.push(`LINKED ACCOUNTS:\n${links.join("\n")}`);
 
+      // FTC competition data so Bruno can answer "who should we pick for
+      // alliances?" and similar strategy questions. Best-effort; never blocks.
+      try {
+        const ftcRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
+        const ftcNum = parseInt(ftcRow?.ftc_team_number, 10);
+        if (Number.isFinite(ftcNum) && ftcNum > 0) {
+          const season = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1;
+          const payload = await getFtcTeamPayload(ftcNum, season).catch(() => null);
+          if (payload) {
+            const opr = payload.opr || {};
+            const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
+            const evts = (payload.events || []).slice(0, 5).map((e: any) =>
+              `${e.name} (${e.date || '?'})${e.rank ? ` — quals #${e.rank}` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}${e.awards?.length ? ` [${e.awards.join(', ')}]` : ''}`
+            );
+            parts.push(`FTC STATS (team #${payload.number}, ${season} season):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}\nRecent events:\n${evts.join('\n') || '(none)'}`);
+          }
+        }
+      } catch { /* FTC context is best-effort */ }
+
       const snap = parts.join("\n\n");
-      return snap.length > 2500 ? snap.slice(0, 2500) + "\n…(truncated)" : snap;
+      return snap.length > 3500 ? snap.slice(0, 3500) + "\n…(truncated)" : snap;
     } catch (err) {
       console.error("[bruno] team snapshot context query failed:", err);
       return "";
