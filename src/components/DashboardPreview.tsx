@@ -121,7 +121,16 @@ export function DashboardPreview({ onClose }: { onClose?: () => void }) {
           aria-modal="true"
           aria-label="Dashboard preview"
           data-esc-owner
-          onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setExpanded(false); } }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.stopPropagation(); setExpanded(false); return; }
+            // Focus trap: Tab / Shift+Tab stay inside the overlay.
+            if (e.key !== 'Tab') return;
+            const f = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),[href],[tabindex]:not([tabindex="-1"])')];
+            if (!f.length) return;
+            const first = f[0], last = f[f.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+          }}
         >
           <button className="absolute inset-0 bg-black/60 cursor-default" aria-label="Close preview" onClick={() => setExpanded(false)} />
           <div className="relative w-[min(1100px,94vw)] h-[min(680px,82vh)] flex flex-col gap-2">
