@@ -7,12 +7,12 @@ import { cn } from './onboarding/onboardingState';
  * Uses the app's real theme tokens so it reflects theme/grid changes live.
  */
 export function DashboardPreview({ onClose }: { onClose?: () => void }) {
-  const [fullscreen, setFullscreen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const preview = (
     <div className={cn(
-      'rounded-2xl border border-text-base/10 bg-primary overflow-hidden',
-      fullscreen ? 'w-full max-w-3xl' : 'w-full'
+      'rounded-2xl border border-text-base/10 bg-primary overflow-hidden app-volt-grid',
+      'w-full'
     )}>
       {/* Mini sidebar */}
       <div className="flex h-64">
@@ -64,39 +64,19 @@ export function DashboardPreview({ onClose }: { onClose?: () => void }) {
     </div>
   );
 
-  if (fullscreen) {
-    return (
-      <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8" onClick={() => setFullscreen(false)}>
-        <div className="relative w-full max-w-3xl" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-sm font-bold text-white">Dashboard preview</p>
-            <button
-              onClick={() => setFullscreen(false)}
-              className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
-              aria-label="Exit fullscreen preview"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
-          </div>
-          {preview}
-          <p className="text-xs text-white/50 mt-3 text-center">Tweak settings behind this overlay — the preview updates live</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="rounded-2xl border border-text-base/10 bg-secondary/50 p-3 space-y-2">
       <div className="flex items-center justify-between">
         <p className="text-xs font-bold text-text-base uppercase tracking-widest">Preview</p>
         <div className="flex gap-1">
           <button
-            onClick={() => setFullscreen(true)}
+            onClick={() => setExpanded((v) => !v)}
             className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10 transition-colors"
-            title="Fullscreen preview"
-            aria-label="Fullscreen preview"
+            title={expanded ? "Shrink preview" : "Expand preview"}
+            aria-label={expanded ? "Shrink preview" : "Expand preview"}
+            aria-expanded={expanded}
           >
-            <Maximize2 className="w-4 h-4" />
+            {expanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
           {onClose && (
             <button
@@ -110,7 +90,12 @@ export function DashboardPreview({ onClose }: { onClose?: () => void }) {
           )}
         </div>
       </div>
-      {preview}
+      <div className={cn(expanded && "scale-[1.02] origin-top")}>
+        {preview}
+      </div>
+      {expanded && (
+        <p className="text-[11px] text-text-muted text-center">Expanded — settings stay accessible while you tweak</p>
+      )}
     </div>
   );
 }

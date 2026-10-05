@@ -26,7 +26,14 @@ function EditableSliderValue({ value, min, max, step, unit, onChange, label }: {
 
   const commit = () => {
     const n = parseFloat(draft);
-    if (!isNaN(n)) onChange(Math.min(max, Math.max(min, n)));
+    if (!isNaN(n)) {
+      const clamped = Math.min(max, Math.max(min, n));
+      // Snap to the nearest valid step so typed values match slider positions
+      const snapped = Math.round(clamped / step) * step;
+      // Round to avoid floating-point artifacts (e.g. 0.1 + 0.2)
+      const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+      onChange(Number(snapped.toFixed(decimals)));
+    }
     setEditing(false);
   };
 
@@ -833,7 +840,7 @@ export default function SettingsModal({
             )}
 
             {section === 'appearance' && (
-              <div className="lg:grid lg:grid-cols-[1fr_320px] lg:gap-8 lg:items-start">
+              <div className="xl:grid xl:grid-cols-[1fr_340px] xl:gap-8 xl:items-start">
               <section className="space-y-6 min-w-0">
                 <ThemePicker />
 
@@ -1031,8 +1038,9 @@ export default function SettingsModal({
                   </>
                 )}
               </section>
-              {/* Sticky live preview — desktop only, stays visible while scrolling */}
-              <div className="hidden lg:block sticky top-0">
+              {/* Sticky live preview — xl screens only, stays visible while scrolling.
+                  Below xl the settings stack full-width so controls aren't squeezed. */}
+              <div className="hidden xl:block sticky top-0">
                 <DashboardPreview />
               </div>
               </div>
@@ -1202,8 +1210,8 @@ export default function SettingsModal({
                   ))}
                 </div>
 
-                {/* Chatbot Persona */}
-                {navGptQualifies(team?.name) && (
+                {/* Chatbot Persona — team setting, admins only */}
+                {isAdmin && navGptQualifies(team?.name) && (
                   <div>
                     <h4 className="text-sm font-bold text-text-base mb-1">Chatbot persona</h4>
                     <p className="text-xs text-text-muted leading-relaxed mb-2">

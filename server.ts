@@ -6273,19 +6273,36 @@ Rules:
     const destTeam = (await dbGet("SELECT id, name FROM teams WHERE id = ?", targetTeamId)) as any;
     if (!destTeam) return res.status(404).json({ error: "Target workspace not found" });
 
-    // Guard: don't strand their old team without an admin
+    // P1 fix: block if they already have a membership in the target workspace
+    // (same email, different member row) — moving would create a conflict.
+    const existing = (await dbGet(
+      "SELECT id FROM members WHERE lower(email) = lower(?) AND team_id = ? AND id != ?",
+      target.email, targetTeamId, target.id
+    )) as any;
+    if (existing) {
+      return res.status(400).json({ error: "They already have an account in that workspace. Delete the duplicate first." });
+    }
+
+    // Guard: don't strand their old team without an admin.
+    // Re-checked immediately before the write to minimize the concurrent-move race.
     const perms = await rolePerms(target.id, target.team_id);
     const isAdminish = target.account_type === "admin" || perms.has("*") || perms.has("manage_members");
     if (isAdminish && (await countAdmins(target.team_id)) <= 1) {
       return res.status(400).json({ error: "They're the last admin of their current team — promote someone else first." });
     }
 
-    // Move them: new team, default member role. Role assignments are team-scoped, so clear them.
+    // Atomic move: clear old roles/sessions, update team, all in one batch.
     // Sessions are invalidated so they re-auth into the new workspace. No notification is sent (silent move).
-    await dbRun("DELETE FROM member_roles WHERE member_id = ?", target.id);
-    await dbRun("DELETE FROM sessions WHERE member_id = ?", target.id);
-    await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", target.id);
-    await dbRun("UPDATE members SET team_id = ?, role = 'member', account_type = 'member' WHERE id = ?", targetTeamId, target.id);
+    await dbBatch([
+      { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [target.id] },
+      { sql: "DELETE FROM sessions WHERE member_id = ?", args: [target.id] },
+      { sql: "DELETE FROM stream_sessions WHERE member_id = ?", args: [target.id] },
+      { sql: "UPDATE members SET team_id = ?, role = 'member', account_type = 'member' WHERE id = ?", args: [targetTeamId, target.id] },
+    ]);
+
+    // P1 fix: give them the destination workspace's default Member system role
+    // so they aren't left permissionless.
+    await assignSystemRole(targetTeamId, target.id, "Member");
 
     res.json({ success: true, teamId: targetTeamId, teamName: destTeam.name });
   });

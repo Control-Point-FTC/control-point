@@ -10523,6 +10523,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
   const [busy, setBusy] = useState(false);
   const [moveTeamId, setMoveTeamId] = useState('');
   const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -10575,16 +10576,28 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
     });
     if (!ok) return;
     setMoving(true);
+    setMoveError('');
     try {
       const r = await apiFetch(`/api/owner/users/${userId}/move`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teamId: dest.id }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { notify(j.error || 'Move failed', 'error'); return; }
+      if (!r.ok) {
+        const msg = j.error || `Move failed (HTTP ${r.status})`;
+        setMoveError(msg);
+        notify(msg, 'error');
+        return;
+      }
       notify(`Moved to ${dest.name}`, 'success');
       setMoveTeamId('');
       await load(); onChanged();
+    } catch (e: any) {
+      const msg = e?.message?.includes('fetch') || e?.name === 'TypeError'
+        ? 'Network error — check your connection and try again.'
+        : (e?.message || 'Move failed unexpectedly.');
+      setMoveError(msg);
+      notify(msg, 'error');
     } finally { setMoving(false); }
   };
 
@@ -10795,7 +10808,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
               <div className="flex gap-2">
                 <select
                   value={moveTeamId}
-                  onChange={(e) => setMoveTeamId(e.target.value)}
+                  onChange={(e) => { setMoveTeamId(e.target.value); setMoveError(''); }}
                   disabled={moving || busy}
                   className="flex-1 min-w-0 bg-text-base/[0.04] border border-text-base/10 rounded-xl px-3 py-2.5 text-sm text-text-base focus:outline-none focus:border-accent/50 disabled:opacity-50"
                 >
@@ -10810,6 +10823,11 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                   {moving ? 'Moving…' : 'Move'}
                 </Button>
               </div>
+              {moveError && (
+                <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2" role="alert">
+                  {moveError}
+                </p>
+              )}
             </Card>
 
             <Card title="Danger zone" subtitle="Irreversible" className="!gap-2 !border-rose-500/20">
