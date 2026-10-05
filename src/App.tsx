@@ -10449,6 +10449,7 @@ function OwnerView(_props: any) {
           userId={selectedId}
           onClose={() => setSelectedId(null)}
           onChanged={() => { reloadUsers(); reloadAi(); reloadFlags(); }}
+          teams={overview?.teams || []}
         />
       )}
     </div>
@@ -10513,13 +10514,15 @@ function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: 
   );
 }
 
-function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClose: () => void; onChanged: () => void }) {
+function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number; onClose: () => void; onChanged: () => void; teams: any[] }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [dailyLimit, setDailyLimit] = useState('');
   const [replyMax, setReplyMax] = useState('');
   const [warnNote, setWarnNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [moveTeamId, setMoveTeamId] = useState('');
+  const [moving, setMoving] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -10559,6 +10562,30 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
       setWarnNote('');
       await load(); onChanged();
     } finally { setBusy(false); }
+  };
+
+  const doMoveUser = async () => {
+    const u = data?.user;
+    const dest = (teams || []).find((t: any) => String(t.id) === String(moveTeamId));
+    if (!dest) { notify('Pick a workspace first', 'error'); return; }
+    const ok = await confirmDialog({
+      title: 'Move user',
+      message: `Move ${u?.name} (${u?.email}) from ${u?.team_name || 'their team'} to ${dest.name}? They'll lose their current roles and be signed out. They won't be notified.`,
+      confirmLabel: 'Move',
+    });
+    if (!ok) return;
+    setMoving(true);
+    try {
+      const r = await apiFetch(`/api/owner/users/${userId}/move`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teamId: dest.id }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { notify(j.error || 'Move failed', 'error'); return; }
+      notify(`Moved to ${dest.name}`, 'success');
+      setMoveTeamId('');
+      await load(); onChanged();
+    } finally { setMoving(false); }
   };
 
   const doDeleteMembership = async () => {
@@ -10759,6 +10786,31 @@ function OwnerUserDrawer({ userId, onClose, onChanged }: { userId: number; onClo
                 })}
               </Card>
             )}
+
+            <Card title="Move workspace" subtitle="Silent — the user is not notified" className="!gap-3">
+              <p className="text-xs text-text-muted leading-relaxed">
+                Currently in <span className="text-text-base font-bold">{u.team_name || 'no workspace'}</span>.
+                Moving clears their roles and signs them out of all sessions.
+              </p>
+              <div className="flex gap-2">
+                <select
+                  value={moveTeamId}
+                  onChange={(e) => setMoveTeamId(e.target.value)}
+                  disabled={moving || busy}
+                  className="flex-1 min-w-0 bg-text-base/[0.04] border border-text-base/10 rounded-xl px-3 py-2.5 text-sm text-text-base focus:outline-none focus:border-accent/50 disabled:opacity-50"
+                >
+                  <option value="">Pick a workspace…</option>
+                  {(teams || [])
+                    .filter((t: any) => t.id !== u.team_id)
+                    .map((t: any) => (
+                      <option key={t.id} value={t.id}>{t.name}{t.number ? ` (${t.number})` : ''}</option>
+                    ))}
+                </select>
+                <Button variant="secondary" size="sm" className="!text-xs whitespace-nowrap" disabled={moving || busy || !moveTeamId} onClick={doMoveUser}>
+                  {moving ? 'Moving…' : 'Move'}
+                </Button>
+              </div>
+            </Card>
 
             <Card title="Danger zone" subtitle="Irreversible" className="!gap-2 !border-rose-500/20">
               <Button variant="secondary" size="sm" className="w-full !text-xs !border-rose-500/40 !text-rose-400" disabled={busy} onClick={doDeleteMembership}>

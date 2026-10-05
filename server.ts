@@ -6254,6 +6254,42 @@ Rules:
     return { ok: true };
   }
 
+  // Move a user's membership to a different workspace (silent — no notification)
+  app.post("/api/owner/users/:id/move", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const memberId = parseInt(req.params.id, 10);
+    const targetTeamId = parseInt((req.body || {}).teamId, 10);
+    if (!targetTeamId) return res.status(400).json({ error: "teamId is required" });
+
+    const target = (await dbGet("SELECT id, email, team_id, account_type FROM members WHERE id = ?", memberId)) as any;
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (ownerEmails().includes((target.email || "").toLowerCase())) {
+      return res.status(403).json({ error: "You can't move the app owner's account." });
+    }
+    if (target.team_id === targetTeamId) {
+      return res.status(400).json({ error: "User is already in that workspace." });
+    }
+    const destTeam = (await dbGet("SELECT id, name FROM teams WHERE id = ?", targetTeamId)) as any;
+    if (!destTeam) return res.status(404).json({ error: "Target workspace not found" });
+
+    // Guard: don't strand their old team without an admin
+    const perms = await rolePerms(target.id, target.team_id);
+    const isAdminish = target.account_type === "admin" || perms.has("*") || perms.has("manage_members");
+    if (isAdminish && (await countAdmins(target.team_id)) <= 1) {
+      return res.status(400).json({ error: "They're the last admin of their current team — promote someone else first." });
+    }
+
+    // Move them: new team, default member role. Role assignments are team-scoped, so clear them.
+    // Sessions are invalidated so they re-auth into the new workspace. No notification is sent (silent move).
+    await dbRun("DELETE FROM member_roles WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM sessions WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", target.id);
+    await dbRun("UPDATE members SET team_id = ?, role = 'member', account_type = 'member' WHERE id = ?", targetTeamId, target.id);
+
+    res.json({ success: true, teamId: targetTeamId, teamName: destTeam.name });
+  });
+
   // Delete one team membership (they keep their other teams)
   app.delete("/api/owner/users/:id", async (req, res) => {
     const auth = await requireOwner(req, res);
