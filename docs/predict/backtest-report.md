@@ -1,37 +1,37 @@
 # Predict — back-test report (research phase)
 
-All numbers below are from replaying real seasons in time order: every prediction uses only data that existed before it. Settings were tuned on **2024–25** and locked; **2025–26** was scored once as the test. Data: FTC Scout (all 2022–2026 matches, 5,175 events) and the FIRST Events API (official advancement lists, points breakdowns and alliance selections for 1,265 advancing events).
+All numbers below come from replaying real seasons in time order: every prediction uses only data that existed before it. Settings were tuned on **2024–25** and locked; **2025–26** is the test season. Data: FTC Scout (all 2022–2026 matches, 5,175 events) and the FIRST Events API (official advancement lists, points breakdowns and alliance selections for 1,265 advancing events).
 
-## 1. Single-match predictions (2025–26 test, 37,354 matches)
+## 1. Single-match predictions (2025–26 test, 37,395 matches)
 
 | Model | Accuracy | Brier ↓ | Calibration error ↓ |
 |---|---|---|---|
 | Coin flip | — | 0.248 | — |
-| Last-event OPR (baseline) | 65.4% | 0.209 | 0.030 |
-| Season-average score (baseline, live) | 71.1% | 0.190 | 0.031 |
-| **Rating — frozen at event start** | 68.5% | 0.200 | 0.019 |
-| **Rating — live** | 72.2% | 0.181 | 0.019 |
+| Last-event OPR (baseline) | 65.6% | 0.208 | 0.030 |
+| Season-average score (baseline, live) | 71.5% | 0.188 | 0.034 |
+| **Rating — frozen at event start** | 68.7% | 0.199 | 0.020 |
+| **Rating — live** | 72.7% | 0.179 | 0.021 |
 
-Score error (MAE) 28.61 pts, bias -2.55 pts. The 80% score range covers 89% (slightly too wide). Accuracy rises from ~65% in a team's first match of the season to ~74% after 10+ matches.
+Score error (MAE) 27.95 pts, bias -2.14 pts. The 80% score range covers 89%. Accuracy rises from 65% in a team's first match of the season to 75% after 10+ matches.
 
 ## 2. Whole-event advancement odds (2025–26 test, 508 events, 10,900 team-events)
 
 Awards are predicted from team history (nothing about the event's results is known). 1,000 simulations per event and starting point.
 
-| Starting point | Brier ↓ | Calibration error ↓ | Matches-only (no awards) |
+| Starting point | Brier ↓ | Calibration error ↓ | Matches only (no awards) |
 |---|---|---|---|
-| Before the event | 0.129 | 0.011 | 0.134 / 0.015 |
-| After quals | 0.087 | 0.010 | 0.098 / 0.032 |
-| After alliance selection | 0.064 | 0.013 | 0.077 / 0.040 |
+| Before the event | 0.129 | 0.015 | 0.133 / 0.021 |
+| After quals | 0.086 | 0.015 | 0.096 / 0.031 |
+| After alliance selection | 0.064 | 0.012 | 0.076 / 0.037 |
 | Naive: top-ranked eligible teams advance (needs quals results) | 0.151 | 0.151 | |
 
-Calibration before the event (predicted → actual): 5%→5%, 15%→16%, 25%→24%, 34%→34%, 45%→42%, 55%→56%, 65%→66%, 75%→73%, 85%→83%, 97%→93%.
+Calibration before the event (predicted → actual): 4%→5%, 14%→16%, 25%→25%, 35%→35%, 45%→40%, 55%→56%, 65%→62%, 75%→74%, 85%→80%, 97%→92%.
 
 ## 3. Components
 
-- **Alliance selection:** captains pick by a softmax over strength and rank (τ=25, rank weight 4, fitted on 2024–25). The real first pick was in the model's top 3 for **69%** of 2072 picks. Declines aren't recorded anywhere, so they aren't modelled.
-- **Quals ranks (before the event):** mean error 5.11 places; the 10–90% range contains the real rank 82% of the time.
-- **Awards (2025–26 test):** P(award worth ≥12 pts) Brier 0.169 vs 0.2119 for a team-agnostic rate; Inspire 1st 0.0319 vs 0.036; any Inspire 0.0677 vs 0.0849. Inputs: past Inspire / judged awards (decay 0.4 per season), awards earlier this season, robot strength. One judged award per team per event.
+- **Alliance selection:** captains pick by a softmax over strength and rank (τ=18, rank weight 3, fitted on 2024–25). The real first pick was in the model's top 3 for **70%** of 2,072 picks. Declines aren't recorded anywhere, so they aren't modelled.
+- **Quals ranks (before the event):** mean error 5.08 places; the 10–90% range contains the real rank 82% of the time.
+- **Awards (2025–26 test):** P(award worth ≥12 pts) Brier 0.1696 vs 0.2119 for a team-agnostic rate; Inspire 1st 0.0319 vs 0.036; any Inspire 0.0676 vs 0.0849. Inputs: past Inspire / judged awards (decay 0.4 per season), awards earlier this season, robot strength. One judged award per team per event.
 
 ## 4. Rules (read off official data)
 
@@ -45,14 +45,14 @@ Calibration before the event (predicted → actual): 5%→5%, 15%→16%, 25%→2
 {
  "k0": 0.65,
  "n0": 10,
- "kMin": 0.25,
- "playoffWeight": 0.75,
+ "kMin": 0.33,
+ "playoffWeight": 0.5,
  "rho1": 0.6,
  "rho2": 0.2,
  "rookieZ": -0.7,
- "uncKnown": 300,
- "uncRookie": 700,
- "uncDecay": 0.3,
+ "uncKnown": 150,
+ "uncRookie": 350,
+ "uncDecay": 0.45,
  "uncMin": 10,
  "baseAlpha": 0.002,
  "growthPerWeek": 0.05,

@@ -24,7 +24,8 @@ const runs = Number(arg("runs") ?? 2000);
 const limit = Number(arg("limit") ?? 0);
 /** actual = real award results (reference), model = award model (the honest number), none = matches only. */
 const awardMode = (arg("awards") ?? "actual") as "actual" | "model" | "none";
-const awardModel: AwardModel = JSON.parse(readFileSync(".cache/predict/awards-model.json", "utf8")).model;
+// Only the "model" mode needs the fitted award model (run fit-awards.mts first).
+const awardModel: AwardModel | null = awardMode === "model" ? JSON.parse(readFileSync(".cache/predict/awards-model.json", "utf8")).model : null;
 const awardRecords: AwardRecord[] = [];
 const tuned = JSON.parse(readFileSync(".cache/predict/tuned-2024.json", "utf8")).best;
 const { a, b, ...ratingParams } = tuned;
@@ -187,9 +188,10 @@ const awardsByTeam = indexAwards(awardRecords);
 const t0 = Date.now();
 for (const { e, off } of limit ? work.slice(0, limit) : work) {
   const o = off!;
-  const quals: QualMatch[] = e.matches.filter((m) => m.level === "qual").map((m) => ({ red: m.red.teams, blue: m.blue.teams }));
+  const noRank = (m: MatchRecord) => [...(m.red.surrogates ?? []), ...(m.blue.surrogates ?? [])];
+  const quals: QualMatch[] = e.matches.filter((m) => m.level === "qual").map((m) => ({ red: m.red.teams, blue: m.blue.teams, noRank: noRank(m) }));
   const playedQuals: QualMatch[] = e.matches.filter((m) => m.level === "qual").map((m) => ({
-    red: m.red.teams, blue: m.blue.teams,
+    red: m.red.teams, blue: m.blue.teams, noRank: noRank(m),
     result: {
       red: { total: m.red.total, np: m.red.np, auto: m.red.auto, endgame: m.red.endgame, bonus: m.red.bonusRp },
       blue: { total: m.blue.total, np: m.blue.np, auto: m.blue.auto, endgame: m.blue.endgame, bonus: m.blue.bonusRp },
@@ -199,7 +201,7 @@ for (const { e, off } of limit ? work.slice(0, limit) : work) {
   // Award input for this event.
   let awardsInput: Parameters<typeof simulateEvent>[0]["awards"] = { mode: "actual", awards: o.awards };
   if (awardMode === "none") awardsInput = { mode: "none" };
-  else if (awardMode === "model") {
+  else if (awardMode === "model" && awardModel) {
     const pre = snapPre.get(e.code)!;
     const ts = [...new Set([...e.ranks.keys(), ...pre.keys()])];
     const vals = ts.map((t) => (pre.get(t) ? npOf(pre.get(t)!) : 0));

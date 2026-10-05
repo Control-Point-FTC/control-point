@@ -51,9 +51,14 @@ export function loadSeason(season: number): EventRecord[] {
     const matches: MatchRecord[] = [];
     for (const m of ev.matches ?? []) {
       if (!m.hasBeenPlayed || !m.scores) continue;
-      const on = (al: string) => (m.teams ?? []).filter((t: any) => t.alliance === al && t.onField !== false && !t.surrogate).map((t: any) => t.teamNumber as number);
+      // Surrogates play and score, so they stay in the lineup; they're only
+      // flagged so ranking simulations don't count the match for them.
+      const on = (al: string) => (m.teams ?? []).filter((t: any) => t.alliance === al && t.onField !== false).map((t: any) => t.teamNumber as number);
+      const sur = (al: string) => (m.teams ?? []).filter((t: any) => t.alliance === al && t.onField !== false && t.surrogate).map((t: any) => t.teamNumber as number);
       const red = alliance(season, m.scores.red, on("Red"));
       const blue = alliance(season, m.scores.blue, on("Blue"));
+      if (red && sur("Red").length) red.surrogates = sur("Red");
+      if (blue && sur("Blue").length) blue.surrogates = sur("Blue");
       if (!red || !blue || !red.teams.length || !blue.teams.length) continue;
       const level = String(m.tournamentLevel || "").toLowerCase().startsWith("qual") ? "qual" : "playoff";
       const t = Date.parse(m.actualStartTime || m.scheduledStartTime || "") || startTime + (level === "playoff" ? 1e6 : 0) + (m.series ?? 0) * 1e3 + m.matchNum;

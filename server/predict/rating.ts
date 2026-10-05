@@ -111,13 +111,11 @@ export class RatingBook {
     if (ms > this.now) this.now = ms;
   }
 
-  /** Apply season growth for the time since this rating was last updated. */
-  private age(r: TeamRating): void {
-    if (r.asOf == null || this.now <= r.asOf) { r.asOf = Math.max(r.asOf ?? 0, this.now); return; }
-    const weeks = Math.min(this.params.growthMaxWeeks, (this.now - r.asOf) / (7 * 864e5));
-    const f = 1 + this.params.growthPerWeek * weeks;
-    r.auto *= f; r.teleop *= f; r.endgame *= f;
-    r.asOf = this.now;
+  /** Season-growth factor for a rating last updated at `asOf`, evaluated at `at`. */
+  private growth(asOf: number | undefined, at: number): number {
+    if (asOf == null || at <= asOf) return 1;
+    const weeks = Math.min(this.params.growthMaxWeeks, (at - asOf) / (7 * 864e5));
+    return 1 + this.params.growthPerWeek * weeks;
   }
 
   /** Spread of per-robot contributions in this season so far (per component). */
@@ -137,27 +135,40 @@ export class RatingBook {
     return { z: rho1 * rho2 * (z2 ?? 0) + (1 - rho1) * rookieZ, known: true };
   }
 
-  /** Current rating, creating the season prior on first sight. */
+  /** A new team's season prior (not stored until it plays). */
+  private prior(): TeamRating {
+    const p = this.params;
+    return { auto: 0, teleop: 0, endgame: 0, pen: this.base.pen, n: 0, uncertainty: this.baseReady ? p.uncKnown : p.uncRookie * 2, asOf: this.now };
+  }
+
+  private priorFor(team: number): TeamRating {
+    const { z, known } = this.priorZ(team);
+    const p = this.params;
+    // Scale the prior z into this season's units. Penalties are not
+    // carried over (z describes scoring strength); start at the baseline.
+    const r = this.prior();
+    r.auto = Math.max(0, this.base.auto + z * this.sd("auto"));
+    r.teleop = Math.max(0, this.base.teleop + z * this.sd("teleop"));
+    r.endgame = Math.max(0, this.base.endgame + z * this.sd("endgame"));
+    r.uncertainty = !this.baseReady ? p.uncRookie * 2 : known ? p.uncKnown : p.uncRookie;
+    return r;
+  }
+
+  /**
+   * Rating as of now, as a copy: the stored rating (as of the team's last
+   * match) grown for the time since. Reading never changes stored ratings,
+   * so ratings depend only on match history. Unknown teams get their prior.
+   */
   get(team: number): TeamRating {
+    const r = this.ratings.get(team) ?? this.priorFor(team);
+    const f = this.growth(r.asOf, this.now);
+    return { ...r, auto: r.auto * f, teleop: r.teleop * f, endgame: r.endgame * f };
+  }
+
+  /** Stored rating, created from the prior on a team's first match. */
+  private stored(team: number): TeamRating {
     let r = this.ratings.get(team);
-    if (!r) {
-      const { z, known } = this.priorZ(team);
-      const p = this.params;
-      // Scale the prior z into this season's units. Penalties are not
-      // carried over (z describes scoring strength); start at the baseline.
-      r = {
-        auto: Math.max(0, this.base.auto + z * this.sd("auto")),
-        teleop: Math.max(0, this.base.teleop + z * this.sd("teleop")),
-        endgame: Math.max(0, this.base.endgame + z * this.sd("endgame")),
-        pen: this.base.pen,
-        n: 0,
-        uncertainty: known ? p.uncKnown : p.uncRookie,
-        asOf: this.now,
-      };
-      if (!this.baseReady) r.uncertainty = p.uncRookie * 2; // very first matches of a season
-      this.ratings.set(team, r);
-    }
-    this.age(r);
+    if (!r) { r = this.priorFor(team); this.ratings.set(team, r); }
     return r;
   }
 
@@ -183,7 +194,10 @@ export class RatingBook {
       const actual: Vec = { auto: al.auto, teleop: al.teleop, endgame: al.endgame, pen: al.penCommitted };
       const share = 1 / al.teams.length;
       for (const t of al.teams) {
-        const r = this.get(t);
+        const r = this.stored(t);
+        // Fold growth since the team's last match into the stored rating.
+        const f = this.growth(r.asOf, this.now);
+        r.auto *= f; r.teleop *= f; r.endgame *= f; r.asOf = this.now;
         const k = Math.max(p.kMin, p.k0 / (1 + r.n / p.n0)) * weight;
         for (const c of COMPONENTS) {
           r[c] += k * (actual[c] - exp[c]) * share;
@@ -205,10 +219,10 @@ export class RatingBook {
     }
   }
 
-  /** Copy of current ratings (for "as of event start" snapshots). */
+  /** Copy of current ratings, grown to now (for "as of event start" snapshots). */
   snapshot(): Map<number, TeamRating> {
     const m = new Map<number, TeamRating>();
-    for (const [t, r] of this.ratings) m.set(t, { ...r });
+    for (const t of this.ratings.keys()) m.set(t, this.get(t));
     return m;
   }
 }

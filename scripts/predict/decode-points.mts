@@ -12,7 +12,8 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-const season = Number(process.argv[process.argv.indexOf("--season") + 1] || 2025);
+const seasonArg = process.argv.indexOf("--season");
+const season = Number(seasonArg === -1 ? 2025 : process.argv[seasonArg + 1] || 2025);
 const ROOT = join(process.cwd(), ".cache", "predict");
 
 interface Joined {

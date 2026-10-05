@@ -4,8 +4,10 @@
 
 /** One alliance's result in a played match. All points are non-penalty unless named. */
 export interface AllianceResult {
-  /** Robots that actually played (excludes the sitting-out third team). */
+  /** Robots that actually played (excludes the sitting-out third team; includes surrogates). */
   teams: number[];
+  /** Surrogate robots: they score with the alliance but the match doesn't count toward their rank. */
+  surrogates?: number[];
   auto: number;
   teleop: number;
   endgame: number;

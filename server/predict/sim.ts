@@ -48,7 +48,13 @@ export interface PlayedResult {
   blue: { total: number; np: number; auto: number; endgame: number; bonus?: { movement: boolean; goal: boolean; pattern: boolean } };
 }
 
-export interface QualMatch { red: number[]; blue: number[]; result?: PlayedResult }
+export interface QualMatch {
+  red: number[];
+  blue: number[];
+  result?: PlayedResult;
+  /** Surrogates: they play, but the match doesn't count toward their rank. */
+  noRank?: number[];
+}
 
 /** P(bonus RP) = logistic(c0 + c1 · alliance non-penalty score), per bonus (2025+). */
 export interface BonusModel { movement: [number, number]; goal: [number, number]; pattern: [number, number] }
@@ -152,7 +158,7 @@ export function simulateEvent(input: SimInput): Map<number, TeamOutcome> {
         }
         for (const [side, own, opp] of [[m.red, res.red, res.blue], [m.blue, res.blue, res.red]] as const) {
           const rp = rankingPoints(input.season, own, opp);
-          for (const t of side) { const s = st.get(t)!; s.rp += rp; s.n++; s.np += own.np; s.auto += own.auto; s.eg += own.endgame; }
+          for (const t of side) { if (m.noRank?.includes(t)) continue; const s = st.get(t)!; s.rp += rp; s.n++; s.np += own.np; s.auto += own.auto; s.eg += own.endgame; }
         }
       }
       const order = teams.filter((t) => st.get(t)!.n > 0).sort((x, y) => {
