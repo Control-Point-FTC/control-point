@@ -564,7 +564,9 @@ const MEMBERS_DDL = `CREATE TABLE IF NOT EXISTS members (
     subject TEXT NOT NULL,
     body TEXT NOT NULL,
     date TEXT NOT NULL,
-    type TEXT DEFAULT 'email' -- 'email', 'announcement'
+    type TEXT DEFAULT 'email', -- 'email', 'announcement'
+    parent_id INTEGER, -- NULL for thread roots; points at parent entry for replies
+    direction TEXT DEFAULT 'outbound' -- 'outbound' (we sent) or 'inbound' (they replied)
   );
 
   CREATE TABLE IF NOT EXISTS events (
@@ -934,6 +936,14 @@ if (!taskColumns.some((c: any) => c.name === 'completion_images')) {
 const notificationColumns = (await dbAll("PRAGMA table_info(notifications)"));
 if (!notificationColumns.some((c: any) => c.name === 'meta')) {
   (await dbExec("ALTER TABLE notifications ADD COLUMN meta TEXT"));
+}
+// Communications: threading — replies link to a parent entry, direction marks who sent it.
+const commColumns = (await dbAll("PRAGMA table_info(communications)"));
+if (!commColumns.some((c: any) => c.name === 'parent_id')) {
+  (await dbExec("ALTER TABLE communications ADD COLUMN parent_id INTEGER"));
+}
+if (!commColumns.some((c: any) => c.name === 'direction')) {
+  (await dbExec("ALTER TABLE communications ADD COLUMN direction TEXT DEFAULT 'outbound'"));
 }
 // Presence: user-chosen status mode (online = automatic from activity)
 const memberPresenceColumns = (await dbAll("PRAGMA table_info(members)"));
@@ -9858,8 +9868,18 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
-      const { recipient, subject, body, date, type } = req.body;
-      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id) VALUES (?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId));
+      const { recipient, subject, body, date, type, parent_id, direction } = req.body;
+      // Replies must attach to an entry in the same team. Threads are one level
+      // deep: a reply-to-a-reply is resolved to the thread root so it always
+      // appears in the thread instead of becoming invisible.
+      let parentId: number | null = null;
+      if (parent_id != null) {
+        const parent: any = (await dbGet("SELECT id, team_id, parent_id FROM communications WHERE id = ?", parent_id));
+        if (!parent || parent.team_id !== auth.teamId) return res.status(400).json({ error: "Invalid parent entry" });
+        parentId = parent.parent_id != null ? parent.parent_id : parent.id;
+      }
+      const dir = direction === 'inbound' ? 'inbound' : 'outbound';
+      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId, parentId, dir));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating communication:", error);
@@ -9873,7 +9893,20 @@ Rules:
       if (!auth) return;
       const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      (await dbRun("DELETE FROM communications WHERE id = ?", req.params.id));
+      // Delete the entry and every descendant in ONE statement (recursive CTE)
+      // so a reply saved concurrently cannot slip between a read and the
+      // delete and survive as an orphaned thread.
+      (await dbRun(
+        `WITH RECURSIVE descendants(id) AS (
+           SELECT id FROM communications WHERE id = ? AND team_id = ?
+           UNION
+           SELECT c.id FROM communications c
+           JOIN descendants d ON c.parent_id = d.id
+           WHERE c.team_id = ?
+         )
+         DELETE FROM communications WHERE id IN (SELECT id FROM descendants)`,
+        req.params.id, auth.teamId, auth.teamId
+      ));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting communication:", error);
