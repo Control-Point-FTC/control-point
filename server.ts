@@ -4612,9 +4612,9 @@ async function startServer() {
       const parsed = JSON.parse(String(r.field_ts || "{}"));
       if (parsed && typeof parsed === "object") {
         for (const [k, byClient] of Object.entries(parsed as Record<string, any>)) {
-          if (!byClient || typeof byClient !== "object") continue;
+          if (!byClient || typeof byClient !== "object" || k === "__proto__") continue;
           const clean: Record<string, number> = {};
-          for (const [c, n] of Object.entries(byClient)) if (typeof n === "number" && Number.isSafeInteger(n)) clean[c] = n;
+          for (const [c, n] of Object.entries(byClient)) if (c !== "__proto__" && typeof n === "number" && Number.isSafeInteger(n)) clean[c] = n;
           stamps[k] = clean;
         }
       }

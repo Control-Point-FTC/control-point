@@ -4,7 +4,7 @@ import { createTtlCache, readRecentTeams, pushRecentTeam, SCOUT_TTL_MS } from '.
 import { setScoutingContext, getScoutingContext, subscribeScoutingContext, openBruno, BRUNO_OPEN_EVENT, ANALYZE_GREETING, type BrunoOpenDetail } from '../brunoContext';
 import { useDebounced } from '../../hooks/useDebounced';
 import type { ShortlistEntry } from '../../types/ftcScout';
-import { applyShortlistPatch, mergeStampedDelete, mergeStampedPatch } from '../../utils/shortlist';
+import { applyShortlistPatch, mergeStampedDelete, mergeStampedPatch, MAX_CLIENTS_PER_FIELD, MAX_STAMP_KEYS } from '../../utils/shortlist';
 
 describe('createTtlCache', () => {
   it('caches for the TTL (10 minutes) and reloads after expiry', async () => {
@@ -162,6 +162,25 @@ describe('shortlist write ordering (server merge)', () => {
     const b1 = mergeStampedPatch({ ...live(a2.stamps), entry: a2.entry }, { ...P, notes: 'B1' }, B(1), 't')!;
     const a1 = mergeStampedPatch({ ...live(b1.stamps), entry: b1.entry }, { ...P, notes: 'A1' }, A(1), 't')!;
     expect(a1.entry.notes).toBe('B1');
+  });
+
+  it('client ids that match Object.prototype names are tracked like any other', () => {
+    const first = mergeStampedPatch(live(), { ...P, notes: 'one' }, { client: 'constructor', seq: 1 }, 't')!;
+    const second = mergeStampedPatch({ ...live(first.stamps), entry: first.entry }, { ...P, notes: 'two' }, { client: 'toString', seq: 1 }, 't')!;
+    expect(second.entry.notes).toBe('two');
+    const third = mergeStampedPatch({ ...live(second.stamps), entry: second.entry }, { ...P, notes: 'three' }, { client: 'constructor', seq: 2 }, 't')!;
+    expect(third.entry.notes).toBe('three');
+  });
+
+  it('keeps the stamp history bounded', () => {
+    let cur = { entry: e0, stamps: {}, deleted: false } as { entry: ShortlistEntry; stamps: Record<string, Record<string, number>>; deleted: boolean };
+    for (let i = 0; i < 50; i++) {
+      const r = mergeStampedPatch(cur, { ...P, notes: `n${i}`, addStrengths: [`t${i}`], removeStrengths: [`t${i}`] }, { client: `tab-${String(i).padStart(8, '0')}`, seq: 1 }, 't')!;
+      cur = { entry: r.entry, stamps: r.stamps, deleted: false };
+    }
+    expect(Object.keys(cur.stamps.notes)).toHaveLength(MAX_CLIENTS_PER_FIELD);
+    expect(Object.keys(cur.stamps).length).toBeLessThanOrEqual(MAX_STAMP_KEYS);
+    expect(cur.entry.notes).toBe('n49');
   });
 
   it('applies other members in arrival order, regardless of their sequence numbers', () => {
