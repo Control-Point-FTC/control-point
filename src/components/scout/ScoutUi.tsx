@@ -20,8 +20,11 @@ export function useIsNarrow(): boolean {
     if (typeof window.matchMedia !== 'function') return;
     const mq = window.matchMedia(q);
     const on = () => setNarrow(mq.matches);
+    on();
+    // 'resize' too: some embedded/emulated viewports don't fire 'change'.
     mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
+    window.addEventListener('resize', on);
+    return () => { mq.removeEventListener('change', on); window.removeEventListener('resize', on); };
   }, []);
   return narrow;
 }
@@ -94,6 +97,10 @@ export function SourceBadge({ f, className }: { f: FtcFreshness | null | undefin
 // Sheet: right side panel on desktop, bottom sheet on mobile
 // ---------------------------------------------------------------------------
 
+// Open sheets, bottom → top. Only the top one owns Escape / Tab.
+const sheetStack: object[] = [];
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
 export function Sheet({ open, onClose, title, subtitle, children, wide }: {
   open: boolean;
   onClose: () => void;
@@ -105,15 +112,39 @@ export function Sheet({ open, onClose, title, subtitle, children, wide }: {
   const narrow = useIsNarrow();
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  // Keep the latest onClose without re-running the open/close effect.
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => {
     if (!open) return;
+    const token = {};
+    sheetStack.push(token);
     const prev = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    window.addEventListener('keydown', onKey);
+    // Capture phase on window runs before any other keydown handler (Bruno,
+    // sheets underneath), and only the topmost sheet handles the key.
+    const onKey = (e: KeyboardEvent) => {
+      if (sheetStack[sheetStack.length - 1] !== token) return;
+      if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); return; }
+      if (e.key !== 'Tab' || !panelRef.current) return;
+      // Focus trap: Tab / Shift+Tab cycle inside the panel.
+      const f = [...panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+      if (!f.length) { e.preventDefault(); return; }
+      const first = f[0], last = f[f.length - 1];
+      const inside = panelRef.current.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+    };
+    window.addEventListener('keydown', onKey, true);
     // Move focus into the panel for keyboard users; restore on close.
     const t = window.setTimeout(() => panelRef.current?.querySelector<HTMLElement>('[data-autofocus],button')?.focus(), 30);
-    return () => { window.removeEventListener('keydown', onKey); window.clearTimeout(t); prev?.focus?.(); };
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      window.clearTimeout(t);
+      const i = sheetStack.indexOf(token);
+      if (i !== -1) sheetStack.splice(i, 1);
+      prev?.focus?.();
+    };
+  }, [open]);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-[80]" role="presentation">

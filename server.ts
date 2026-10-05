@@ -4349,12 +4349,23 @@ async function startServer() {
     return mergeEventFull(season, code, first, scout, { fetchedAt, partial: partial || firstFailed || scoutFailed });
   }
 
+  // Concurrent cold-cache requests (several users, Bruno's context builder)
+  // share one upstream fetch per key; the entry is dropped once it settles.
+  const scoutInflight = new Map<string, Promise<unknown>>();
+  function sharedFetch<T>(key: string, load: () => Promise<T>): Promise<T> {
+    const hit = scoutInflight.get(key);
+    if (hit) return hit as Promise<T>;
+    const p = load().finally(() => scoutInflight.delete(key));
+    scoutInflight.set(key, p);
+    return p;
+  }
+
   async function cachedEventFull(season: number, code: string): Promise<FtcEventFull | null> {
     const key = `scoutevent:${season}:${code.toUpperCase()}`;
     const cached = ftcCache.get(key);
     if (cached && ftcCacheFresh(cached)) return scoutCachedBody(cached.data as FtcEventFull) as FtcEventFull;
     try {
-      const ev = await getEventFull(season, code);
+      const ev = await sharedFetch(key, () => getEventFull(season, code));
       if (ev) ftcCache.set(key, { at: Date.now(), data: ev });
       return ev;
     } catch (e) {
@@ -4363,7 +4374,6 @@ async function startServer() {
     }
   }
 
-  /** Any team's season profile + per-event stats. Null = unknown team. */
   /**
    * Per-event stats for a team profile: FIRST Events rank / W-L-T / awards
    * are primary, FTC Scout adds RP, OPR and averages. Seasons FTC Scout
@@ -4385,6 +4395,7 @@ async function startServer() {
     };
   }
 
+  /** Any team's season profile + per-event stats. Null = unknown team. */
   async function getTeamProfile(number: number, season: number): Promise<FtcTeamProfile | null> {
     const base = await getTeamData(number, season); // throws FtcUnavailableError on outage
     if (!base) return null;
@@ -4440,7 +4451,7 @@ async function startServer() {
     const cached = ftcCache.get(key);
     if (cached && ftcCacheFresh(cached)) return scoutCachedBody(cached.data as FtcTeamProfile) as FtcTeamProfile;
     try {
-      const p = await getTeamProfile(number, season);
+      const p = await sharedFetch(key, () => getTeamProfile(number, season));
       if (p) ftcCache.set(key, { at: Date.now(), data: p });
       return p;
     } catch (e) {

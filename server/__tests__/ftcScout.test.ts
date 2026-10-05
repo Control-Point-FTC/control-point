@@ -213,6 +213,21 @@ describe("mergeEventFull", () => {
     expect(new Set(ev.matches.map((m) => m.key)).size).toBe(ev.matches.length);
   });
 
+  it("derives penalties received and the no-penalty total from FIRST fouls", () => {
+    const ev = mergeEventFull(2026, "USNJCMPPKWY", firstPieces(), null, meta);
+    const q1 = ev.matches.find((m) => m.key === "qual:0:1")!;
+    expect(q1.blue.score).toMatchObject({ total: 242, penaltiesByOpp: 15, totalNp: 227, penaltiesCommitted: 0 });
+    expect(q1.red.score).toMatchObject({ total: 171, penaltiesByOpp: 0, totalNp: 171, penaltiesCommitted: 15 });
+  });
+
+  it("Scout-only fallback orders the field by rank", () => {
+    const parsed = parseScoutEvent(scoutEventResp(), 2025);
+    parsed.field.reverse();
+    const ev = mergeEventFull(2025, "USNJCMPPKWY", null, parsed, meta);
+    const ranks = ev.field.map((t) => t.rank ?? 9999);
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+  });
+
   it("FIRST-only (2026, Scout unsupported) still yields a usable event", () => {
     const ev = mergeEventFull(2026, "USNJCMPPKWY", firstPieces(), null, meta);
     expect(ev.field.find((t) => t.teamNumber === 4215)?.opr).toBeNull();

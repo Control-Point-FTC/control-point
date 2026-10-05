@@ -31,6 +31,9 @@ export interface BrunoOpenDetail {
   greeting?: string;
   /** Optional message to send immediately (e.g. "Scout team 14481 with me"). */
   prompt?: string;
+  /** Scouting context for that one prompt (the team it's about), without
+   *  changing the page's own context. */
+  scouting?: ScoutingContextRequest;
 }
 
 /** Ask the app to open Bruno's sidebar (App listens for this). */

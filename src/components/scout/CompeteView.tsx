@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { cn } from '../ui';
 import type { FtcEventFull, FtcMatchFull, FtcPointSplit, FtcTeamEventSummary, FtcTeamProfile } from '../../types/ftcScout';
 import { fetchScoutEvent, fetchScoutTeam, ScoutHttpError } from '../../services/ftcScoutApi';
-import { openBruno } from '../../services/brunoContext';
+import { getScoutingContext, openBruno } from '../../services/brunoContext';
 import {
   eventAverages, missingFields, partnersAndOpponents, percentile, perspective, POINT_LABELS, recordOf, seasonTrend,
   strengthsWeaknesses, teamMatches, trendDirection, winRate, type MatchPerspective, type PartnerRow, type TrendPoint,
@@ -33,8 +33,14 @@ export interface TeamActions {
   pinned?: (n: number) => boolean;
 }
 
+/** Ask Bruno about one team; the request carries that team as the scouting
+ *  context (keeping the page's event) so the server loads its profile. */
 export function scoutWithBruno(n: number, name: string, season: number) {
-  openBruno({ prompt: `Scout team ${n} (${name}) for the ${seasonShort(season)} season: strengths, risks, penalty trends, and what to watch for in their next match. Cite the stats you use.` });
+  const page = getScoutingContext();
+  openBruno({
+    prompt: `Scout team ${n} (${name}) for the ${seasonShort(season)} season: strengths, risks, penalty trends, and what to watch for in their next match. Cite the stats you use.`,
+    scouting: { mode: 'analyze', season, eventCode: page?.season === season ? page.eventCode : null, selectedTeam: n },
+  });
 }
 
 function TeamActionRow({ n, name, season, actions, onViewMatches, compact }: { n: number; name: string; season: number; actions: TeamActions; onViewMatches?: () => void; compact?: boolean }) {
@@ -58,8 +64,14 @@ function TeamActionRow({ n, name, season, actions, onViewMatches, compact }: { n
 // Data hooks
 // ---------------------------------------------------------------------------
 
-function isEmptySeason(p: FtcTeamProfile): boolean {
+/** No results yet (used only to step back from a not-started current season). */
+function hasNoResults(p: FtcTeamProfile): boolean {
   return !p.events.some((e) => e.stats && (e.stats.rank != null || e.stats.wins != null || e.stats.opr)) && p.opr?.tot?.value == null;
+}
+
+/** Nothing to show at all. Events without stats (e.g. FIRST-only seasons) still render. */
+function isEmptySeason(p: FtcTeamProfile): boolean {
+  return !p.events.length && p.opr?.tot?.value == null;
 }
 
 /** Team profile with BIOBUZZ-style empty-season handling (never an error). */
@@ -72,8 +84,12 @@ export function useScoutProfile(number: number | null, season: number, opts?: { 
   const autoRef = useRef(!!opts?.onAutoSeason);
   const reqRef = useRef(0);
 
+  const identity = `${number ?? 'me'}:${season}`;
+  const shownRef = useRef<string | null>(null);
   const load = useCallback(async (force?: boolean) => {
     const id = ++reqRef.current;
+    // A different team/season must never show the previous one's stats.
+    if (shownRef.current !== identity) { setProfile(null); shownRef.current = null; }
     setLoading(true);
     setError(null);
     setNoSeasonData(false);
@@ -82,13 +98,14 @@ export function useScoutProfile(number: number | null, season: number, opts?: { 
       const p = await fetchScoutTeam(season, number, { force });
       if (id !== reqRef.current) return;
       // First load of the current season with nothing yet → step back once.
-      if (autoRef.current && isEmptySeason(p)) {
+      if (autoRef.current && hasNoResults(p)) {
         const prev = p.seasons.filter((s) => s < season).sort((a, b) => b - a)[0];
         autoRef.current = false;
         if (prev && opts?.onAutoSeason) { opts.onAutoSeason(prev); return; }
       }
       autoRef.current = false;
       setProfile(p);
+      shownRef.current = identity;
       setNoSeasonData(isEmptySeason(p));
     } catch (e) {
       if (id !== reqRef.current) return;
@@ -107,7 +124,8 @@ export function useScoutProfile(number: number | null, season: number, opts?: { 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [number, season]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Invalidate in-flight requests when the identity changes or on unmount.
+  useEffect(() => { void load(); return () => { reqRef.current++; }; }, [load]);
   return { profile, loading, error, notConnected, noSeasonData, reload: () => load(true) };
 }
 
@@ -200,7 +218,7 @@ export function TeamScoutView({ number, season, onSeasonChange, actions = {}, au
         {p.events.length ? (
           <div className="space-y-3">
             {[...p.events].reverse().map((e) => (
-              <EventCard key={e.code} e={e} team={p.number} season={season} actions={actions} onMatch={(m, ev) => setMatch({ m, ev })} />
+              <EventCard key={`${season}:${e.code}`} e={e} team={p.number} season={season} actions={actions} onMatch={(m, ev) => setMatch({ m, ev })} />
             ))}
           </div>
         ) : <EmptyState title="No events found" body={`${p.name} has no events in ${seasonShort(season)} yet.`} />}
@@ -666,7 +684,7 @@ export function MatchRow({ p, team, onOpen, eventName }: { p: MatchPerspective; 
 // Match detail sheet (alliance scoring breakdown)
 // ---------------------------------------------------------------------------
 
-function MatchSheet({ sel, team, onClose, actions, season }: { sel: { m: FtcMatchFull; ev: FtcEventFull } | null; team: number; onClose: () => void; actions: TeamActions; season: number }) {
+export function MatchSheet({ sel, team, onClose, actions, season }: { sel: { m: FtcMatchFull; ev: FtcEventFull } | null; team: number; onClose: () => void; actions: TeamActions; season: number }) {
   if (!sel) return null;
   const { m, ev } = sel;
   const p = perspective(m, team);

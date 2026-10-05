@@ -348,7 +348,8 @@ export function mergeEventFull(
     return {
       code: scout.code, season, name: scout.name, type: scout.type, start: scout.start, end: scout.end,
       venue: scout.venue, city: scout.city, state: scout.state, country: scout.country,
-      field: scout.field, matches: scout.matches, alliances: [],
+      field: [...scout.field].sort((a, b) => (a.rank ?? 9999) - (b.rank ?? 9999) || a.teamNumber - b.teamNumber),
+      matches: scout.matches, alliances: [],
       source: "ftc-scout", fetchedAt: meta.fetchedAt, partial: meta.partial,
     };
   }
@@ -385,7 +386,7 @@ export function mergeEventFull(
     const key = matchKey(m);
     const sm = scoutMatches.get(key);
     const played = m.red.score != null && m.blue.score != null;
-    const side = (teams: number[], final: number | null, scoutSide: FtcAllianceScore | undefined, auto: number | null, foul: number | null): FtcAllianceScore => {
+    const side = (teams: number[], final: number | null, scoutSide: FtcAllianceScore | undefined, auto: number | null, foul: number | null, oppFoul: number | null): FtcAllianceScore => {
       let score: FtcPointSplit | null = null;
       if (played) {
         score = scoutSide?.score ? { ...scoutSide.score } : emptySplit();
@@ -396,6 +397,12 @@ export function mergeEventFull(
         score.total = final;
         if (auto != null) score.auto = auto;
         if (foul != null) score.penaltiesCommitted = foul;
+        // Points received = the other alliance's committed fouls, so the
+        // no-penalty total stays consistent with FIRST's final score.
+        if (oppFoul != null) {
+          score.penaltiesByOpp = oppFoul;
+          if (final != null) score.totalNp = final - oppFoul;
+        }
       }
       return {
         teams: teams.map((n) => ({ number: n, name: nameOf(n), surrogate: scoutSide?.teams.find((t) => t.number === n)?.surrogate, dq: scoutSide?.teams.find((t) => t.number === n)?.dq })),
@@ -411,8 +418,8 @@ export function mergeEventFull(
       description: m.description,
       time: m.time ?? sm?.time ?? null,
       played,
-      red: side(m.red.teams, m.red.score, sm?.red, m.red.auto ?? null, m.red.foul ?? null),
-      blue: side(m.blue.teams, m.blue.score, sm?.blue, m.blue.auto ?? null, m.blue.foul ?? null),
+      red: side(m.red.teams, m.red.score, sm?.red, m.red.auto ?? null, m.red.foul ?? null, m.blue.foul ?? null),
+      blue: side(m.blue.teams, m.blue.score, sm?.blue, m.blue.auto ?? null, m.blue.foul ?? null, m.red.foul ?? null),
       breakdownSource: played ? (sm?.red.score ? "ftc-scout" : "first-events") : null,
     };
   });

@@ -10,6 +10,7 @@ import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
 import { cn } from './ui';
 import { getScoutingContext, subscribeScoutingContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../services/brunoContext';
+import type { ScoutingContextRequest } from '../types/ftcScout';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
@@ -67,12 +68,12 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   const [scoutCtx, setScoutCtx] = useState(getScoutingContext);
   useEffect(() => subscribeScoutingContext(() => setScoutCtx(getScoutingContext())), []);
   const [greeting, setGreeting] = useState<string | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<{ text: string; scouting?: ScoutingContextRequest } | null>(null);
   useEffect(() => {
     const onOpen = (e: Event) => {
       const d = (e as CustomEvent<BrunoOpenDetail>).detail || {};
       if (d.greeting) setGreeting(d.greeting);
-      if (d.prompt) setPendingPrompt(d.prompt);
+      if (d.prompt) setPendingPrompt({ text: d.prompt, scouting: d.scouting });
     };
     window.addEventListener(BRUNO_OPEN_EVENT, onOpen);
     return () => window.removeEventListener(BRUNO_OPEN_EVENT, onOpen);
@@ -176,7 +177,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     }
   };
 
-  const send = async (text?: string) => {
+  const send = async (text?: string, scoutingOverride?: ScoutingContextRequest) => {
     const content = (text ?? input).trim();
     if ((!content && !attached.length && !attachedPdfs.length) || busy) return;
     setInput('');
@@ -204,7 +205,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
         if (renderTimer === null) renderTimer = window.setTimeout(pushRender, 90);
-      }, id || undefined, { scouting: getScoutingContext() ?? undefined });
+      }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined });
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       setMessages([...next, { role: 'model', text: agg }]);
       if (!agg.trim()) {
@@ -225,7 +226,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     if (open && pendingPrompt && !busy) {
       const p = pendingPrompt;
       setPendingPrompt(null);
-      void send(p);
+      void send(p.text, p.scouting);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pendingPrompt, busy]);
