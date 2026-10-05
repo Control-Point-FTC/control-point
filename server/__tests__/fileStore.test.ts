@@ -250,6 +250,17 @@ describe("durable file store", () => {
     expect(res.headers.get("content-disposition")).toMatch(/^attachment;/);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    // SVG renders inline (fine in <img>), but under the sandbox CSP so a
+    // direct open can't run its scripts.
+    const db2 = createClient({ url: `file:${dbPath}` });
+    const sv = await db2.execute({
+      sql: "INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, data) VALUES (NULL, ?, 'avatar', 'a.svg', 'image/svg+xml', ?)",
+      args: [(globalThis as any).__fsAdminId, Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')],
+    });
+    await db2.close();
+    const svg = await api(`/api/files/${Number(sv.lastInsertRowid)}`, SESS.admin);
+    expect(svg.headers.get("content-type")).toBe("image/svg+xml");
+    expect(svg.headers.get("content-security-policy")).toContain("sandbox");
     // Raster images still render inline.
     const img = await api((globalThis as any).__avatarUrl, SESS.admin);
     expect(img.headers.get("content-type")).toBe("image/png");
