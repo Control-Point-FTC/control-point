@@ -125,8 +125,9 @@ import {
   type FirstEventPieces,
   type ScoutEventParsed,
 } from "./server/ftcScout.js";
+import { applyShortlistPatch, type ShortlistPatch } from "./src/utils/shortlist.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
-import type { FtcEventFull, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
+import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
 // Last-resort safety net: a single malformed request must never take the
 // whole server down for every team. Log it and keep serving; Render's
@@ -4363,6 +4364,27 @@ async function startServer() {
   }
 
   /** Any team's season profile + per-event stats. Null = unknown team. */
+  /**
+   * Per-event stats for a team profile: FIRST Events rank / W-L-T / awards
+   * are primary, FTC Scout adds RP, OPR and averages. Seasons FTC Scout
+   * doesn't cover (e.g. 2026) still get FIRST's results instead of nothing.
+   */
+  function firstEventStats(number: number, name: string, e: any, scout: FtcTeamEventStats | null): FtcTeamEventStats | null {
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const rank = n(e.rank), wins = n(e.wins), losses = n(e.losses), ties = n(e.ties);
+    const awards: string[] = Array.isArray(e.awards) ? e.awards.filter((a: unknown) => typeof a === "string") : [];
+    if (!scout && rank == null && wins == null && !awards.length) return null;
+    const base: FtcTeamEventStats = scout ?? { teamNumber: number, name, rank: null, rp: null, wins: null, losses: null, ties: null, qualMatchesPlayed: null, opr: null, avg: null, awards: [] };
+    return {
+      ...base,
+      rank: rank ?? base.rank,
+      wins: wins ?? base.wins,
+      losses: wins != null ? losses : base.losses,
+      ties: wins != null ? ties : base.ties,
+      awards: awards.length ? awards : base.awards,
+    };
+  }
+
   async function getTeamProfile(number: number, season: number): Promise<FtcTeamProfile | null> {
     const base = await getTeamData(number, season); // throws FtcUnavailableError on outage
     if (!base) return null;
@@ -4387,7 +4409,7 @@ async function startServer() {
         type: e.type ?? s?.type ?? null,
         city: s?.city ?? null,
         state: s?.state ?? null,
-        stats: s?.stats ?? null,
+        stats: firstEventStats(number, d.name, e, s?.stats ?? null),
       };
     });
     for (const s of byCode.values()) events.push({ code: s.code, name: s.name, date: s.date, type: s.type, city: s.city, state: s.state, stats: s.stats });
@@ -4554,6 +4576,8 @@ async function startServer() {
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 
+  // Field-level patch (see src/utils/shortlist.ts): read the stored row, apply
+  // only the fields this request changes, write it back.
   app.put("/api/ftc/shortlist", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -4561,8 +4585,26 @@ async function startServer() {
     const season = parseSeason(b.season);
     const teamNumber = parseInt(b.teamNumber, 10);
     if (season == null || !teamNumber || teamNumber < 1 || teamNumber > 999999) return res.status(400).json({ error: "Season and team number are required" });
-    const priority = SHORTLIST_PRIORITIES.has(b.priority) ? b.priority : "medium";
-    const eventCode = typeof b.eventCode === "string" && EVENT_CODE_RE.test(b.eventCode) ? b.eventCode : null;
+    if (b.priority !== undefined && !SHORTLIST_PRIORITIES.has(b.priority)) return res.status(400).json({ error: "Invalid priority" });
+    const tagList = (v: unknown) => (Array.isArray(v) ? v.slice(0, 10) : undefined);
+    const patch: ShortlistPatch = {
+      season,
+      teamNumber,
+      teamName: typeof b.teamName === "string" ? b.teamName : undefined,
+      eventCode: b.eventCode === undefined ? undefined : typeof b.eventCode === "string" && EVENT_CODE_RE.test(b.eventCode) ? b.eventCode : null,
+      notes: typeof b.notes === "string" ? b.notes : undefined,
+      priority: b.priority,
+      scoutNext: typeof b.scoutNext === "boolean" ? b.scoutNext : undefined,
+      addStrengths: tagList(b.addStrengths),
+      removeStrengths: tagList(b.removeStrengths),
+      addWeaknesses: tagList(b.addWeaknesses),
+      removeWeaknesses: tagList(b.removeWeaknesses),
+    };
+    const row = (await dbAll(
+      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND team_number = ?",
+      auth.teamId, season, teamNumber
+    )) as any[];
+    const e = applyShortlistPatch(row[0] ? shortlistRow(row[0]) : null, patch, new Date().toISOString());
     await dbRun(
       `INSERT INTO scouting_shortlist (team_id, season, team_number, team_name, event_code, notes, priority, scout_next, strengths, weaknesses, updated_by, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -4570,16 +4612,8 @@ async function startServer() {
          team_name = excluded.team_name, event_code = excluded.event_code, notes = excluded.notes,
          priority = excluded.priority, scout_next = excluded.scout_next, strengths = excluded.strengths,
          weaknesses = excluded.weaknesses, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-      auth.teamId, season, teamNumber,
-      String(b.teamName || `Team ${teamNumber}`).slice(0, 120),
-      eventCode,
-      String(b.notes || "").slice(0, 2000),
-      priority,
-      b.scoutNext ? 1 : 0,
-      JSON.stringify(cleanTags(b.strengths)),
-      JSON.stringify(cleanTags(b.weaknesses)),
-      auth.memberId,
-      new Date().toISOString()
+      auth.teamId, season, teamNumber, e.teamName, e.eventCode, e.notes, e.priority, e.scoutNext ? 1 : 0,
+      JSON.stringify(e.strengths), JSON.stringify(e.weaknesses), auth.memberId, e.updatedAt
     );
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });

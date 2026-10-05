@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { createTtlCache, upsertLocal, readRecentTeams, pushRecentTeam, SCOUT_TTL_MS } from '../ftcScoutApi';
+import { createTtlCache, readRecentTeams, pushRecentTeam, SCOUT_TTL_MS } from '../ftcScoutApi';
 import { setScoutingContext, getScoutingContext, subscribeScoutingContext, openBruno, BRUNO_OPEN_EVENT, ANALYZE_GREETING, type BrunoOpenDetail } from '../brunoContext';
 import { useDebounced } from '../../hooks/useDebounced';
 import type { ShortlistEntry } from '../../types/ftcScout';
+import { applyShortlistPatch } from '../../utils/shortlist';
 
 describe('createTtlCache', () => {
   it('caches for the TTL (10 minutes) and reloads after expiry', async () => {
@@ -60,15 +61,30 @@ describe('createTtlCache', () => {
   });
 });
 
-describe('upsertLocal (shortlist optimistic update)', () => {
-  const e = (n: number, notes = ''): ShortlistEntry => ({ teamNumber: n, teamName: `T${n}`, season: 2025, eventCode: null, notes, priority: 'medium', scoutNext: false, strengths: [], weaknesses: [], updatedAt: '' });
-  it('adds new teams and replaces existing ones in place', () => {
-    const list = upsertLocal(upsertLocal([], e(1)), e(2));
-    expect(list.map((x) => x.teamNumber)).toEqual([1, 2]);
-    const next = upsertLocal(list, e(1, 'fast auto'));
-    expect(next.map((x) => x.teamNumber)).toEqual([1, 2]);
-    expect(next[0].notes).toBe('fast auto');
-    expect(list[0].notes).toBe('');
+describe('applyShortlistPatch (field-level shortlist edits)', () => {
+  const base: ShortlistEntry = { teamNumber: 7, teamName: 'T7', season: 2025, eventCode: null, notes: 'fast auto', priority: 'medium', scoutNext: false, strengths: ['Auto'], weaknesses: [], updatedAt: '' };
+  it('creates an entry with defaults', () => {
+    const e = applyShortlistPatch(null, { season: 2025, teamNumber: 9, teamName: 'Nine' }, 'now');
+    expect(e).toMatchObject({ teamNumber: 9, teamName: 'Nine', priority: 'medium', notes: '', strengths: [], updatedAt: 'now' });
+  });
+  it('changes only the fields in the patch, so concurrent edits of different fields both survive', () => {
+    const a = applyShortlistPatch(base, { season: 2025, teamNumber: 7, priority: 'high' }, 't1');
+    const b = applyShortlistPatch(a, { season: 2025, teamNumber: 7, notes: 'drops samples' }, 't2');
+    expect(b).toMatchObject({ priority: 'high', notes: 'drops samples', strengths: ['Auto'] });
+  });
+  it('adds and removes tags without clobbering other tags (deduped, max 10, trimmed)', () => {
+    const a = applyShortlistPatch(base, { season: 2025, teamNumber: 7, addStrengths: [' Endgame ', 'Auto'] }, 't');
+    expect(a.strengths).toEqual(['Auto', 'Endgame']);
+    const b = applyShortlistPatch(a, { season: 2025, teamNumber: 7, removeStrengths: ['Auto'], addWeaknesses: ['Penalties'] }, 't');
+    expect(b.strengths).toEqual(['Endgame']);
+    expect(b.weaknesses).toEqual(['Penalties']);
+    const many = applyShortlistPatch(base, { season: 2025, teamNumber: 7, addStrengths: Array.from({ length: 20 }, (_, i) => `t${i}`) }, 't');
+    expect(many.strengths).toHaveLength(10);
+  });
+  it('ignores invalid priorities and caps notes', () => {
+    const e = applyShortlistPatch(base, { season: 2025, teamNumber: 7, priority: 'urgent' as never, notes: 'x'.repeat(3000) }, 't');
+    expect(e.priority).toBe('medium');
+    expect(e.notes).toHaveLength(2000);
   });
 });
 

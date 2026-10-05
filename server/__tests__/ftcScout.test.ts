@@ -203,6 +203,16 @@ describe("mergeEventFull", () => {
     expect(ev.matches.map((m) => m.key)).toContain("playoff:2:1");
   });
 
+  it("fills unscored FIRST schedule rows with Scout results when FIRST results failed", () => {
+    const pieces = { ...firstPieces(), results: [] };
+    const ev = mergeEventFull(2025, "USNJCMPPKWY", pieces, parseScoutEvent(scoutEventResp(), 2025), meta);
+    const q1 = ev.matches.find((m) => m.key === "qual:0:1");
+    expect(q1?.played).toBe(true);
+    expect(q1?.red.score?.total).toBe(171);
+    expect(ev.matches.map((m) => m.key)).toContain("playoff:2:1");
+    expect(new Set(ev.matches.map((m) => m.key)).size).toBe(ev.matches.length);
+  });
+
   it("FIRST-only (2026, Scout unsupported) still yields a usable event", () => {
     const ev = mergeEventFull(2026, "USNJCMPPKWY", firstPieces(), null, meta);
     expect(ev.field.find((t) => t.teamNumber === 4215)?.opr).toBeNull();

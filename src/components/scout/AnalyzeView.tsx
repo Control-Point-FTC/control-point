@@ -1,16 +1,17 @@
 // Team Stats → Analyze: event scouting & alliance-planning workspace.
 // Individual team scouting, event context and partner-fit help — there is
 // intentionally NO compare mode, comparison table or compare action here.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Search, X, CalendarDays, Users, Star, Bookmark, Eye, List as ListIcon, Trash2, Bot, Pin, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Sparkles, History } from 'lucide-react';
 import { cn } from '../ui';
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamSearchHit, ShortlistEntry, ShortlistPriority } from '../../types/ftcScout';
 import {
-  fetchScoutEvent, fetchScoutTeam, fetchShortlist, saveShortlistEntry, removeShortlistEntry, searchScoutTeams, upsertLocal,
+  fetchScoutEvent, fetchScoutTeam, fetchShortlist, saveShortlistPatch, removeShortlistEntry, searchScoutTeams,
   readRecentTeams, pushRecentTeam, type RecentTeam,
 } from '../../services/ftcScoutApi';
 import { setScoutingContext, openBruno, ANALYZE_GREETING } from '../../services/brunoContext';
 import { useDebounced } from '../../hooks/useDebounced';
+import { applyShortlistPatch, type ShortlistPatch } from '../../utils/shortlist';
 import { eventAverages, partnerFit, scoutingPriorities, strengthsWeaknesses, teamMatches, winRate } from '../../utils/ftcAnalysis';
 import { TeamScoutView, MatchRow, scoutWithBruno, type TeamActions } from './CompeteView';
 import { ALL_SEASONS, EmptyState, ErrorState, QuickPop, SeasonChip, SeasonPicker, Sheet, Skeleton, SourceBadge, fmt, placementClass, relTime, useIsNarrow } from './ScoutUi';
@@ -83,12 +84,39 @@ export function AnalyzeView({ season, onSeasonChange, myTeam, initialTeam = null
   }, []);
 
   const listed = useCallback((n: number) => shortlist.some((s) => s.teamNumber === n), [shortlist]);
-  const addToShortlist = useCallback(async (n: number, name: string) => {
+  // Shortlist edits: optimistic local patch, then the server's list — but
+  // only from the newest request, so an older response can't undo a newer
+  // edit or bring back a removed team.
+  const opSeq = useRef(0);
+  const syncShortlist = useCallback(async (req: () => Promise<ShortlistEntry[]>) => {
+    const id = ++opSeq.current;
+    try {
+      const list = await req();
+      if (id === opSeq.current) { setShortlist(list); setShortlistErr(null); }
+    } catch (e) {
+      if (id !== opSeq.current) return;
+      setShortlistErr(e instanceof Error ? e.message : 'Could not save the shortlist');
+      fetchShortlist(season).then((l) => { if (id === opSeq.current) setShortlist(l); }).catch(() => {});
+    }
+  }, [season]);
+  const patchShortlist = useCallback((patch: Omit<ShortlistPatch, 'season'>) => {
+    const full: ShortlistPatch = { ...patch, season };
+    const now = new Date().toISOString();
+    setShortlist((list) => {
+      const i = list.findIndex((x) => x.teamNumber === patch.teamNumber);
+      const next = applyShortlistPatch(i === -1 ? null : list[i], full, now);
+      return i === -1 ? [...list, next] : list.map((x, j) => (j === i ? next : x));
+    });
+    void syncShortlist(() => saveShortlistPatch(full));
+  }, [season, syncShortlist]);
+  const removeFromShortlist = useCallback((n: number) => {
+    setShortlist((list) => list.filter((x) => x.teamNumber !== n));
+    void syncShortlist(() => removeShortlistEntry(season, n));
+  }, [season, syncShortlist]);
+  const addToShortlist = useCallback((n: number, name: string) => {
     if (listed(n)) { setView('shortlist'); return; }
-    const entry: ShortlistEntry = { teamNumber: n, teamName: name || `Team ${n}`, season, eventCode, notes: '', priority: 'medium', scoutNext: false, strengths: [], weaknesses: [], updatedAt: new Date().toISOString() };
-    setShortlist((s) => upsertLocal(s, entry));
-    try { setShortlist(await saveShortlistEntry(entry)); } catch (e) { setShortlistErr(e instanceof Error ? e.message : 'Could not save'); }
-  }, [listed, season, eventCode]);
+    patchShortlist({ teamNumber: n, teamName: name || `Team ${n}`, eventCode });
+  }, [listed, eventCode, patchShortlist]);
   const pinned = useCallback((n: number) => pins.some((p) => p.number === n), [pins]);
   const togglePin = useCallback((n: number, name: string) => {
     setPins((cur) => { const next = cur.some((p) => p.number === n) ? cur.filter((p) => p.number !== n) : [{ number: n, name }, ...cur]; writePins(next); return next; });
@@ -128,7 +156,7 @@ export function AnalyzeView({ season, onSeasonChange, myTeam, initialTeam = null
         {view === 'team' && (selected
           ? <TeamScoutView number={selected.number} season={season} onSeasonChange={onSeasonChange} actions={actions} />
           : <EmptyState title="Search for a team" body="Use the search on the left (team number or name) to open a full team scouting profile." />)}
-        {view === 'shortlist' && <ShortlistView season={season} entries={shortlist} setEntries={setShortlist} error={shortlistErr} eventCode={eventCode} myTeam={myTeam} onOpenTeam={peekTeam} />}
+        {view === 'shortlist' && <ShortlistView season={season} entries={shortlist} onPatch={patchShortlist} onRemove={removeFromShortlist} error={shortlistErr} eventCode={eventCode} myTeam={myTeam} onOpenTeam={peekTeam} />}
       </div>
 
       <Sheet open={!!panelTeam} onClose={() => setPanelTeam(null)} wide title={panelTeam ? `${panelTeam.number} ${panelTeam.name}` : ''} subtitle="Team scouting profile">
@@ -254,10 +282,17 @@ function EventField({ season, code, myTeam, shortlist, actions, onOpenTeam }: { 
   const [page, setPage] = useState(0);
   const [matchesOf, setMatchesOf] = useState<FtcTeamEventStats | null>(null);
 
+  // Only the latest request may update the view (season/event can change
+  // while an older request is still in flight).
+  const reqId = useRef(0);
   const load = useCallback((force?: boolean) => {
     if (!code) return;
+    const id = ++reqId.current;
     setLoading(true); setErr(null);
-    fetchScoutEvent(season, code, { force }).then(setEv).catch((e) => setErr(e instanceof Error ? e.message : 'Could not load the event')).finally(() => setLoading(false));
+    fetchScoutEvent(season, code, { force })
+      .then((r) => { if (id === reqId.current) setEv(r); })
+      .catch((e) => { if (id === reqId.current) setErr(e instanceof Error ? e.message : 'Could not load the event'); })
+      .finally(() => { if (id === reqId.current) setLoading(false); });
   }, [season, code]);
   useEffect(() => { setEv(null); setPage(0); load(); }, [load]);
 
@@ -449,19 +484,16 @@ function FieldActions({ t, season, listed, actions, onMatches, onOpen, compact }
 // Scouting shortlist (notes, priority, scout-next, tags — no comparisons)
 // ---------------------------------------------------------------------------
 
-function ShortlistView({ season, entries, setEntries, error, eventCode, myTeam, onOpenTeam }: {
-  season: number; entries: ShortlistEntry[]; setEntries: (e: ShortlistEntry[]) => void; error: string | null; eventCode: string | null; myTeam: number | null; onOpenTeam: (n: number, name: string) => void;
+function ShortlistView({ season, entries, onPatch, onRemove, error, eventCode, myTeam, onOpenTeam }: {
+  season: number; entries: ShortlistEntry[]; onPatch: (p: Omit<ShortlistPatch, 'season'>) => void; onRemove: (n: number) => void; error: string | null; eventCode: string | null; myTeam: number | null; onOpenTeam: (n: number, name: string) => void;
 }) {
   const [ev, setEv] = useState<FtcEventFull | null>(null);
-  useEffect(() => { if (eventCode) fetchScoutEvent(season, eventCode).then(setEv).catch(() => setEv(null)); }, [season, eventCode]);
-  const save = async (e: ShortlistEntry) => {
-    setEntries(upsertLocal(entries, e));
-    try { setEntries(await saveShortlistEntry(e)); } catch { /* optimistic; next load reconciles */ }
-  };
-  const remove = async (n: number) => {
-    setEntries(entries.filter((x) => x.teamNumber !== n));
-    try { setEntries(await removeShortlistEntry(season, n)); } catch { /* reconciled on next load */ }
-  };
+  useEffect(() => {
+    let alive = true;
+    if (eventCode) fetchScoutEvent(season, eventCode).then((r) => { if (alive) setEv(r); }).catch(() => { if (alive) setEv(null); });
+    else setEv(null);
+    return () => { alive = false; };
+  }, [season, eventCode]);
   const priorities = ev ? scoutingPriorities(ev.field, entries, myTeam, 5) : [];
   const fit = ev && myTeam ? partnerFit(ev.field, myTeam, 3) : [];
   if (error && !entries.length) return <ErrorState message={error} />;
@@ -477,14 +509,15 @@ function ShortlistView({ season, entries, setEntries, error, eventCode, myTeam, 
       )}
       {!entries.length ? <EmptyState title="No scouting shortlist teams" body="Add teams from the event field, a team profile, or partner history. Your whole workspace shares this list." /> : (
         <div className="grid xl:grid-cols-2 gap-3">
-          {entries.map((e) => <ShortlistCard key={e.teamNumber} e={e} ev={ev} onSave={save} onRemove={() => remove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} season={season} />)}
+          {error && entries.length > 0 && <p className="text-xs text-rose-300">{error}</p>}
+          {entries.map((e) => <ShortlistCard key={e.teamNumber} e={e} ev={ev} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} season={season} />)}
         </div>
       )}
     </div>
   );
 }
 
-function ShortlistCard({ e, ev, onSave, onRemove, onOpen, season }: { e: ShortlistEntry; ev: FtcEventFull | null; onSave: (e: ShortlistEntry) => void; onRemove: () => void; onOpen: () => void; season: number }) {
+function ShortlistCard({ e, ev, onPatch, onRemove, onOpen, season }: { e: ShortlistEntry; ev: FtcEventFull | null; onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void; onRemove: () => void; onOpen: () => void; season: number }) {
   const [notes, setNotes] = useState(e.notes);
   const [tagDraft, setTagDraft] = useState('');
   useEffect(() => setNotes(e.notes), [e.notes]);
@@ -495,8 +528,9 @@ function ShortlistCard({ e, ev, onSave, onRemove, onOpen, season }: { e: Shortli
   const addTag = (kind: 'strengths' | 'weaknesses', tag: string) => {
     const t = tag.trim().slice(0, 40);
     if (!t || e[kind].includes(t)) return;
-    onSave({ ...e, [kind]: [...e[kind], t].slice(0, 10) });
+    onPatch(kind === 'strengths' ? { addStrengths: [t] } : { addWeaknesses: [t] });
   };
+  const removeTag = (kind: 'strengths' | 'weaknesses', t: string) => onPatch(kind === 'strengths' ? { removeStrengths: [t] } : { removeWeaknesses: [t] });
   const prioClass: Record<ShortlistPriority, string> = { high: 'bg-rose-500/15 text-rose-300 border-rose-500/40', medium: 'bg-amber-500/15 text-amber-300 border-amber-500/40', low: 'bg-text-base/10 text-text-muted border-text-base/20' };
   return (
     <div className={cn('card-surface p-4 space-y-3', e.scoutNext && '!border-accent/50')}>
@@ -510,17 +544,17 @@ function ShortlistCard({ e, ev, onSave, onRemove, onOpen, season }: { e: Shortli
       <div className="flex flex-wrap items-center gap-2">
         <div role="radiogroup" aria-label="Scouting priority" className="flex gap-1">
           {(['high', 'medium', 'low'] as const).map((p) => (
-            <button key={p} role="radio" aria-checked={e.priority === p} onClick={() => onSave({ ...e, priority: p })} className={cn('text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border', e.priority === p ? prioClass[p] : 'border-text-base/10 text-text-muted hover:text-text-base')}>{p}</button>
+            <button key={p} role="radio" aria-checked={e.priority === p} onClick={() => onPatch({ priority: p })} className={cn('text-[10px] font-black uppercase tracking-wider px-2 py-1 rounded-md border', e.priority === p ? prioClass[p] : 'border-text-base/10 text-text-muted hover:text-text-base')}>{p}</button>
           ))}
         </div>
         <label className="inline-flex items-center gap-1.5 text-xs font-bold text-text-base cursor-pointer">
-          <input type="checkbox" checked={e.scoutNext} onChange={(x) => onSave({ ...e, scoutNext: x.target.checked })} className="accent-[var(--color-accent)]" /> <Star className="w-3.5 h-3.5 text-accent" /> Scout next
+          <input type="checkbox" checked={e.scoutNext} onChange={(x) => onPatch({ scoutNext: x.target.checked })} className="accent-[var(--color-accent)]" /> <Star className="w-3.5 h-3.5 text-accent" /> Scout next
         </label>
         <button onClick={() => scoutWithBruno(e.teamNumber, e.teamName, season)} className="ml-auto inline-flex items-center gap-1 text-[11px] font-bold text-accent hover:opacity-80"><Bot className="w-3.5 h-3.5" />Scout with Bruno</button>
       </div>
       <div>
         <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted" htmlFor={`notes-${e.teamNumber}`}>Notes</label>
-        <textarea id={`notes-${e.teamNumber}`} value={notes} onChange={(x) => setNotes(x.target.value)} onBlur={() => notes !== e.notes && onSave({ ...e, notes })} rows={2} maxLength={2000} placeholder="What did you see? Intake, auto routine, driver, reliability…"
+        <textarea id={`notes-${e.teamNumber}`} value={notes} onChange={(x) => setNotes(x.target.value)} onBlur={() => notes !== e.notes && onPatch({ notes })} rows={2} maxLength={2000} placeholder="What did you see? Intake, auto routine, driver, reliability…"
           className="mt-1 w-full rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base placeholder:text-text-muted/70 focus:outline-none focus:border-accent/60 resize-y" />
       </div>
       {(['strengths', 'weaknesses'] as const).map((kind) => (
@@ -528,7 +562,7 @@ function ShortlistCard({ e, ev, onSave, onRemove, onOpen, season }: { e: Shortli
           <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">{kind}</p>
           <div className="flex flex-wrap gap-1">
             {e[kind].map((t) => (
-              <button key={t} onClick={() => onSave({ ...e, [kind]: e[kind].filter((x) => x !== t) })} title="Remove tag" className={cn('text-[11px] font-bold px-2 py-0.5 rounded-md border', kind === 'strengths' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border-rose-500/30')}>{t} ×</button>
+              <button key={t} onClick={() => removeTag(kind, t)} title="Remove tag" className={cn('text-[11px] font-bold px-2 py-0.5 rounded-md border', kind === 'strengths' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/10 text-rose-300 border-rose-500/30')}>{t} ×</button>
             ))}
             {suggested.filter((s) => (kind === 'strengths' ? s.kind === 'strength' : s.kind === 'weakness') && !e[kind].includes(s.label)).map((s) => (
               <button key={s.label} onClick={() => addTag(kind, s.label)} title={`Suggested from data: ${s.detail}`} className="text-[11px] font-semibold px-2 py-0.5 rounded-md border border-dashed border-text-base/20 text-text-muted hover:text-text-base">+ {s.label}</button>

@@ -130,6 +130,9 @@ export function normalizePointSplit(raw: unknown, season: number): FtcPointSplit
     auto: round1(auto),
     teleop: round1(teleop),
     endgame: round1(eg),
+    // Same convention as FIRST's scoreRedFoul: positive points the alliance
+    // committed (Q-1 USNJCMPPKWY: 15 in both sources). Only OPR values can be
+    // negative — that's regression noise, and the analysis uses averages.
     penaltiesCommitted: round1(num(raw.penaltyPointsCommitted)),
     penaltiesByOpp: round1(num(raw.penaltyPointsByOpp)),
   };
@@ -413,8 +416,18 @@ export function mergeEventFull(
       breakdownSource: played ? (sm?.red.score ? "ftc-scout" : "first-events") : null,
     };
   });
-  // FIRST published no matches (or the request failed): use FTC Scout's.
-  if (!matches.length && scout?.matches.length) matches = scout.matches;
+  // Fill gaps from FTC Scout: if FIRST's results request failed (or lags)
+  // while its schedule loaded, scheduled rows have no scores — use Scout's
+  // played copy of those matches, and add any matches only Scout has.
+  if (scout?.matches.length) {
+    const scoutByKey = new Map(scout.matches.map((m) => [m.key, m]));
+    matches = matches.map((m) => {
+      const sm = scoutByKey.get(m.key);
+      return !m.played && sm?.played ? { ...sm, time: m.time ?? sm.time } : m;
+    });
+    const have = new Set(matches.map((m) => m.key));
+    for (const sm of scout.matches) if (!have.has(sm.key)) matches.push(sm);
+  }
 
   const alliances: FtcAllianceSelection[] = first.alliances.map((a) => ({
     number: a.number,

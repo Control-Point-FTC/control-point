@@ -4,6 +4,7 @@
 // (and several components on one screen) share a single request.
 import { apiFetch } from './api';
 import type { FtcEventFull, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from '../types/ftcScout';
+import type { ShortlistPatch } from '../utils/shortlist';
 
 export const SCOUT_TTL_MS = 10 * 60 * 1000;
 
@@ -111,11 +112,12 @@ export async function fetchShortlist(season: number): Promise<ShortlistEntry[]> 
   return (await getJson<{ entries: ShortlistEntry[] }>(`/api/ftc/shortlist?season=${season}`)).entries || [];
 }
 
-export async function saveShortlistEntry(entry: Omit<ShortlistEntry, 'updatedAt'>): Promise<ShortlistEntry[]> {
+/** Save a field-level shortlist edit; returns the workspace's whole list. */
+export async function saveShortlistPatch(patch: ShortlistPatch): Promise<ShortlistEntry[]> {
   const res = await apiFetch('/api/ftc/shortlist', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(entry),
+    body: JSON.stringify(patch),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ScoutHttpError(body?.error || 'Could not save to the shortlist', res.status);
@@ -127,15 +129,6 @@ export async function removeShortlistEntry(season: number, teamNumber: number): 
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ScoutHttpError(body?.error || 'Could not remove from the shortlist', res.status);
   return body.entries || [];
-}
-
-/** Pure helper (tested): upsert an entry into a local list (optimistic UI). */
-export function upsertLocal(list: ShortlistEntry[], entry: ShortlistEntry): ShortlistEntry[] {
-  const i = list.findIndex((e) => e.teamNumber === entry.teamNumber && e.season === entry.season);
-  if (i === -1) return [...list, entry];
-  const next = [...list];
-  next[i] = entry;
-  return next;
 }
 
 // ---- Recently viewed teams (per browser) ----

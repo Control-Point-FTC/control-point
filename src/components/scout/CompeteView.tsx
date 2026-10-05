@@ -59,7 +59,7 @@ function TeamActionRow({ n, name, season, actions, onViewMatches, compact }: { n
 // ---------------------------------------------------------------------------
 
 function isEmptySeason(p: FtcTeamProfile): boolean {
-  return !p.events.some((e) => e.stats && (e.stats.rank != null || e.stats.opr)) && p.opr?.tot?.value == null;
+  return !p.events.some((e) => e.stats && (e.stats.rank != null || e.stats.wins != null || e.stats.opr)) && p.opr?.tot?.value == null;
 }
 
 /** Team profile with BIOBUZZ-style empty-season handling (never an error). */
@@ -455,7 +455,9 @@ function EventCard({ e, team, season, actions, onMatch }: { e: FtcTeamEventSumma
       .catch((x) => setErr(x instanceof Error ? x.message : 'Could not load event'))
       .finally(() => setLoading(false));
   }, [season, e.code]);
-  useEffect(() => { if (open && !ev && !loading) load(); }, [open, ev, loading, load]);
+  // Load once when first opened; after a failure the error stays up with a
+  // Retry button instead of re-requesting in a loop.
+  useEffect(() => { if (open && !ev && !loading && !err) load(); }, [open, ev, loading, err, load]);
   const panelId = `ev-${e.code}`;
   return (
     <div className={cn('card-surface overflow-hidden transition-colors', open && '!border-accent/30')}>
