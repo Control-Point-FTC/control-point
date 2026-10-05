@@ -1246,6 +1246,7 @@ export default function App() {
   // while disconnected — refresh the roster on reconnect).
   const socketWasConnected = useRef(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifMenu, setNotifMenu] = useState<{ x: number; y: number; id: number; isRead: boolean } | null>(null);
   // Slide-in mention toast: { notification } | null. Shown when a mention
   // arrives for a channel the user isn't currently viewing.
   const [mentionToast, setMentionToast] = useState<any | null>(null);
@@ -3161,8 +3162,10 @@ export default function App() {
                         notifications.map(n => (
                           <div
                             key={n.id}
-                            data-cm-type="notification"
-                            data-cm-id={n.id}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setNotifMenu({ x: e.clientX, y: e.clientY, id: n.id, isRead: !!n.is_read });
+                            }}
                             className={cn("p-4 border-b border-text-base/5 hover:bg-text-base/5 transition-colors", !n.is_read && "bg-accent/5")}
                           >
                             <p className="text-xs text-text-base leading-relaxed">{n.content}</p>
@@ -3175,6 +3178,52 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                    {/* Right-click menu for notifications */}
+                    {notifMenu && (
+                      <>
+                        <button
+                          className="fixed inset-0 z-[60] cursor-default"
+                          onClick={() => setNotifMenu(null)}
+                          aria-label="Close menu"
+                        />
+                        <div
+                          className="fixed z-[61] min-w-[180px] rounded-xl border border-text-base/10 bg-elevated shadow-xl shadow-black/40 overflow-hidden"
+                          style={{ left: Math.min(notifMenu.x, window.innerWidth - 190), top: Math.min(notifMenu.y, window.innerHeight - 120) }}
+                        >
+                          <button
+                            onClick={async () => {
+                              const res = await apiFetch(notifMenu.isRead ? '/api/notifications/unread' : '/api/notifications/read', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ ids: [notifMenu.id] }),
+                              });
+                              if (res.ok) {
+                                setNotifications(prev => prev.map(x => x.id === notifMenu.id ? { ...x, is_read: notifMenu.isRead ? 0 : 1 } : x));
+                              }
+                              setNotifMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-text-base hover:bg-text-base/[0.06] transition-colors flex items-center gap-2"
+                          >
+                            {notifMenu.isRead ? <Mail className="w-4 h-4" /> : <MailOpen className="w-4 h-4" />}
+                            {notifMenu.isRead ? 'Mark as unread' : 'Mark as read'}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const res = await apiFetch(`/api/notifications/${notifMenu.id}`, { method: 'DELETE' });
+                              if (res.ok) {
+                                setNotifications(prev => prev.filter(x => x.id !== notifMenu.id));
+                              } else {
+                                notify('Could not delete notification', 'error');
+                              }
+                              setNotifMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors flex items-center gap-2"
+                          >
+                            <Trash2 className="w-4 h-4" /> Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -5930,38 +5979,6 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
     const label = status === 'todo' ? 'To-Do' : status === 'in-progress' ? 'In Progress' : 'Done';
     return [
       { label: `Add task to ${label}`, icon: Plus, action: () => openNewTask(status) },
-    ];
-  });
-
-  // Right-click a notification: mark read/unread, delete.
-  useContextMenu('notification', (el) => {
-    const id = Number(el.dataset.cmId);
-    const n = notifications.find((x: any) => x.id === id);
-    if (!n) return null;
-    const toggleRead = async () => {
-      const res = await apiFetch(n.is_read ? '/api/notifications/unread' : '/api/notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: [n.id] }),
-      });
-      if (res.ok) {
-        setNotifications(prev => prev.map((x: any) => x.id === n.id ? { ...x, is_read: n.is_read ? 0 : 1 } : x));
-      }
-    };
-    const deleteOne = async () => {
-      const res = await apiFetch(`/api/notifications/${n.id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setNotifications(prev => prev.filter((x: any) => x.id !== n.id));
-      } else {
-        notify('Could not delete notification', 'error');
-      }
-    };
-    return [
-      n.is_read
-        ? { label: 'Mark as unread', icon: Mail, action: () => void toggleRead() }
-        : { label: 'Mark as read', icon: MailOpen, action: () => void toggleRead() },
-      { separator: true },
-      { label: 'Delete notification', icon: Trash2, danger: true, action: () => void deleteOne() },
     ];
   });
 
