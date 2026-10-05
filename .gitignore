@@ -10,3 +10,5 @@ api.key
 models/*.gguf
 nexus.dbdashboard.db
 dashboard.db
+# Predict research data cache (downloaded, not committed)
+.cache/
