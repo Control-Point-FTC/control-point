@@ -11452,9 +11452,29 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
 
       {showMemberEdit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card title={`Edit Scopes: ${showMemberEdit.name}`} className="w-full max-w-md">
+          <Card title={`Edit Member: ${showMemberEdit.name}`} className="w-full max-w-md">
             <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Name</label>
+                <Input
+                  value={showMemberEdit.name || ''}
+                  onChange={(e: any) => setShowMemberEdit({ ...showMemberEdit, name: e.target.value })}
+                  maxLength={80}
+                  placeholder="Member name"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Role / title</label>
+                <Input
+                  value={showMemberEdit.role || ''}
+                  onChange={(e: any) => setShowMemberEdit({ ...showMemberEdit, role: e.target.value })}
+                  maxLength={80}
+                  placeholder="e.g. Build Captain"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Scopes</label>
+                <div className="flex flex-wrap gap-2">
                 {['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'].map(s => {
                   const currentScopes = (() => {
                     try {
