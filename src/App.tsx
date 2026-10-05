@@ -8252,6 +8252,25 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [replyingTo, setReplyingTo] = useState<any>(null);
+  const [replyForm, setReplyForm] = useState({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction: 'inbound' });
+  const [askResponded, setAskResponded] = useState<any>(null);
+
+  // Group entries into threads: roots (no parent_id) + their replies, chronological.
+  const threads = useMemo(() => {
+    const list = communications || [];
+    const byId = new Map(list.map((c: any) => [c.id, c]));
+    const roots = list.filter((c: any) => c.parent_id == null || !byId.has(c.parent_id));
+    return roots.map((root: any) => {
+      const replies = list
+        .filter((c: any) => c.parent_id === root.id)
+        .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)));
+      const all = [root, ...replies];
+      const lastDate = all[all.length - 1].date;
+      return { root, replies, all, count: all.length, lastDate };
+    }).sort((a: any, b: any) => String(b.lastDate).localeCompare(String(a.lastDate)));
+  }, [communications]);
 
   // Right-click on a log entry: delete.
   useContextMenu('comm', (el) => {
@@ -8259,36 +8278,69 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
     const id = Number(el.dataset.cmId);
     const comm = (communications || []).find((x: any) => x.id === id);
     if (!comm) return null;
+    const isRoot = comm.parent_id == null;
     return [
-      { label: 'Delete entry', icon: Trash2, danger: true, action: () => handleDelete(comm.id) },
+      { label: isRoot ? 'Delete thread' : 'Delete reply', icon: Trash2, danger: true, action: () => handleDelete(comm.id, isRoot) },
     ];
   });
 
   const handleAdd = async () => {
-    await apiFetch('/api/communications', {
+    const res = await apiFetch('/api/communications', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newComm)
     });
+    const data = await res.json().catch(() => ({}));
     setShowAdd(false);
+    setNewComm({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
+    refresh.communications();
+    // Ask whether they responded so the reply can be logged right away.
+    if (data && data.id) {
+      setAskResponded({ id: data.id, recipient: newComm.recipient, subject: newComm.subject });
+    }
+  };
+
+  const handleReply = async () => {
+    if (!replyingTo || !replyForm.body.trim()) return;
+    await apiFetch('/api/communications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipient: replyingTo.root.recipient,
+        subject: replyingTo.root.subject,
+        body: replyForm.body.trim(),
+        date: replyForm.date,
+        type: replyingTo.root.type,
+        parent_id: replyingTo.root.id,
+        direction: replyForm.direction,
+      })
+    });
+    setReplyingTo(null);
+    setReplyForm({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction: 'inbound' });
     refresh.communications();
   };
 
-  const handleDelete = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete log', message: 'Delete this log?', confirmLabel: 'Delete', danger: true }))) return;
+  const openReply = (thread: any, direction: string) => {
+    setReplyingTo(thread);
+    setReplyForm({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction });
+  };
+
+  const handleDelete = async (id: number, isRoot: boolean) => {
+    const msg = isRoot ? 'Delete this entire thread including all replies?' : 'Delete this reply?';
+    if (!(await confirmDialog({ title: isRoot ? 'Delete thread' : 'Delete reply', message: msg, confirmLabel: 'Delete', danger: true }))) return;
     // Optimistic: remove instantly, restore on failure.
     const prev = communications;
-    setCommunications((cs: any[]) => cs.filter((c: any) => c.id !== id));
+    setCommunications((cs: any[]) => cs.filter((c: any) => c.id !== id && c.parent_id !== id));
     try {
       const res = await apiFetch(`/api/communications/${id}`, { method: 'DELETE' });
       if (res.ok) refresh.communications();
       else {
         setCommunications(prev);
-        notify('Could not delete log — try again.', 'error');
+        notify('Could not delete — try again.', 'error');
       }
     } catch {
       setCommunications(prev);
-      notify('Could not delete log — try again.', 'error');
+      notify('Could not delete — try again.', 'error');
     }
   };
 
@@ -8317,33 +8369,103 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
       )}
 
       <div className="space-y-3 sm:space-y-4">
-        {communications.map((comm: any) => (
-          <Card key={comm.id} className="relative overflow-hidden" data-cm-type="comm" data-cm-id={comm.id}>
-            <div className={cn(
-              "absolute top-0 left-0 w-1 h-full",
-              comm.type === 'email' ? 'bg-blue-500' : 'bg-accent'
-            )} />
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={cn(
-                    "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-                    comm.type === 'email' ? 'bg-blue-500/20 text-blue-400' : 'bg-accent/20 text-accent'
-                  )}>{comm.type}</span>
-                  <p className="text-xs text-text-muted">{comm.date}</p>
+        {threads.map((thread: any) => {
+          const { root, replies, all, count } = thread;
+          const expanded = expandedId === root.id;
+          const latest = all[all.length - 1];
+          return (
+            <Card key={root.id} className="relative overflow-hidden" data-cm-type="comm" data-cm-id={root.id}>
+              <div className={cn(
+                "absolute top-0 left-0 w-1 h-full",
+                root.type === 'email' ? 'bg-blue-500' : 'bg-accent'
+              )} />
+              <button
+                className="w-full text-left"
+                onClick={() => setExpandedId(expanded ? null : root.id)}
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+                        root.type === 'email' ? 'bg-blue-500/20 text-blue-400' : 'bg-accent/20 text-accent'
+                      )}>{root.type}</span>
+                      {count > 1 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-text-base/10 text-text-muted">
+                          {count} messages
+                        </span>
+                      )}
+                      <p className="text-xs text-text-muted">{latest.date}</p>
+                    </div>
+                    <h4 className="text-text-base font-bold text-lg truncate">{root.subject}</h4>
+                    <p className="text-sm text-text-muted mb-1">To: {root.recipient}</p>
+                    <p className="text-sm text-text-base/60 line-clamp-2">{latest.body}</p>
+                  </div>
+                  <ChevronDown className={cn("w-5 h-5 text-text-muted shrink-0 transition-transform mt-1", expanded && "rotate-180")} />
                 </div>
-                <h4 className="text-text-base font-bold text-lg">{comm.subject}</h4>
-                <p className="text-sm text-text-muted mb-3">To: {comm.recipient}</p>
-                <p className="text-sm text-text-base/80 whitespace-pre-wrap">{comm.body}</p>
-              </div>
-              {canManage && (
-                <button onClick={() => handleDelete(comm.id)} className="text-text-muted hover:text-rose-400 transition-colors">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              </button>
+
+              {expanded && (
+                <div className="mt-4 pt-4 border-t border-text-base/10">
+                  <div className="relative pl-5 space-y-4 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-text-base/15">
+                    {all.map((entry: any) => {
+                      const inbound = entry.direction === 'inbound';
+                      return (
+                        <div key={entry.id} className="relative">
+                          <div className={cn(
+                            "absolute -left-5 top-1.5 w-[15px] h-[15px] rounded-full border-2",
+                            inbound ? "bg-blue-500 border-blue-500/40" : "bg-accent border-accent/40"
+                          )} />
+                          <div className={cn(
+                            "rounded-xl px-4 py-3 border",
+                            inbound ? "bg-blue-500/[0.07] border-blue-500/20" : "bg-text-base/[0.03] border-text-base/10"
+                          )}>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className={cn(
+                                "text-[11px] font-bold uppercase tracking-wide",
+                                inbound ? "text-blue-400" : "text-accent"
+                              )}>
+                                {inbound ? `Reply from ${root.recipient}` : "You / Team"}
+                              </span>
+                              <span className="text-[11px] text-text-muted">{entry.date}</span>
+                            </div>
+                            <p className="text-sm text-text-base/85 whitespace-pre-wrap">{entry.body}</p>
+                            {canManage && entry.parent_id != null && (
+                              <button
+                                onClick={() => handleDelete(entry.id, false)}
+                                className="mt-2 text-[11px] text-text-muted hover:text-rose-400 transition-colors"
+                              >
+                                Delete reply
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {canManage && (
+                    <div className="flex gap-2 mt-4">
+                      <Button variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={() => openReply(thread, 'inbound')}>
+                        <Reply className="w-3.5 h-3.5" /> They replied
+                      </Button>
+                      <Button variant="secondary" className="!px-3 !py-1.5 !text-xs" onClick={() => openReply(thread, 'outbound')}>
+                        <MessageSquare className="w-3.5 h-3.5" /> We followed up
+                      </Button>
+                      <button onClick={() => handleDelete(root.id, true)} className="ml-auto text-text-muted hover:text-rose-400 transition-colors" title="Delete thread">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
-            </div>
+            </Card>
+          );
+        })}
+        {threads.length === 0 && (
+          <Card className="text-center py-10">
+            <p className="text-text-muted text-sm">No communications logged yet.</p>
           </Card>
-        ))}
+        )}
       </div>
 
       {showAdd && (
@@ -8374,6 +8496,66 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
                 <Button variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Button>
                 <Button onClick={handleAdd}>Log Message</Button>
               </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {replyingTo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title={replyForm.direction === 'inbound' ? `Reply from ${replyingTo.root.recipient}` : "Follow-up message"} className="w-full max-w-lg">
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Button
+                  variant={replyForm.direction === 'inbound' ? 'primary' : 'secondary'}
+                  className="flex-1"
+                  onClick={() => setReplyForm({ ...replyForm, direction: 'inbound' })}
+                >They replied</Button>
+                <Button
+                  variant={replyForm.direction === 'outbound' ? 'primary' : 'secondary'}
+                  className="flex-1"
+                  onClick={() => setReplyForm({ ...replyForm, direction: 'outbound' })}
+                >We followed up</Button>
+              </div>
+              <p className="text-xs text-text-muted">Re: {replyingTo.root.subject} — To: {replyingTo.root.recipient}</p>
+              <textarea
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-40"
+                placeholder={replyForm.direction === 'inbound' ? "Paste their response…" : "Write your follow-up…"}
+                value={replyForm.body}
+                onChange={(e: any) => setReplyForm({ ...replyForm, body: e.target.value })}
+              />
+              <Input
+                type="text"
+                value={replyForm.date}
+                onChange={(e: any) => setReplyForm({ ...replyForm, date: e.target.value })}
+              />
+              <div className="flex gap-3 justify-end">
+                <Button variant="secondary" onClick={() => setReplyingTo(null)}>Cancel</Button>
+                <Button onClick={handleReply} disabled={!replyForm.body.trim()}>Add Reply</Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {askResponded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title="Did they respond?" className="w-full max-w-sm">
+            <p className="text-sm text-text-muted mb-4">
+              Did <span className="text-text-base font-bold">{askResponded.recipient || 'the recipient'}</span> respond to "{askResponded.subject}"? You can log their reply now.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <Button variant="secondary" onClick={() => setAskResponded(null)}>Not yet</Button>
+              <Button onClick={() => {
+                const thread = threads.find((t: any) => t.root.id === askResponded.id);
+                setAskResponded(null);
+                if (thread) {
+                  setExpandedId(thread.root.id);
+                  openReply(thread, 'inbound');
+                } else {
+                  refresh.communications();
+                }
+              }}>Yes, log reply</Button>
             </div>
           </Card>
         </div>
