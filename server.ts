@@ -6700,6 +6700,78 @@ Rules:
     return { ok: true };
   }
 
+  // Owner moves run one at a time, so the last-admin check and the move can't
+  // interleave with another move (two admins moved out at once would both see
+  // an admin count of 2 and leave the team with none).
+  let ownerMoveChain: Promise<unknown> = Promise.resolve();
+  function serializeOwnerMove<T>(fn: () => Promise<T>): Promise<T> {
+    const run = ownerMoveChain.catch(() => {}).then(fn);
+    ownerMoveChain = run.catch(() => {});
+    return run;
+  }
+
+  // Move a user's membership to a different workspace (silent — no notification)
+  app.post("/api/owner/users/:id/move", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const memberId = parseInt(req.params.id, 10);
+    const targetTeamId = parseInt((req.body || {}).teamId, 10);
+    if (!targetTeamId) return res.status(400).json({ error: "teamId is required" });
+
+    const target = (await dbGet("SELECT id, email, team_id, account_type FROM members WHERE id = ?", memberId)) as any;
+    if (!target) return res.status(404).json({ error: "User not found" });
+    if (ownerEmails().includes((target.email || "").toLowerCase())) {
+      return res.status(403).json({ error: "You can't move the app owner's account." });
+    }
+    if (target.team_id === targetTeamId) {
+      return res.status(400).json({ error: "User is already in that workspace." });
+    }
+    const destTeam = (await dbGet("SELECT id, name FROM teams WHERE id = ?", targetTeamId)) as any;
+    if (!destTeam) return res.status(404).json({ error: "Target workspace not found" });
+
+    // P1 fix: block if they already have a membership in the target workspace
+    // (same email, different member row) — moving would create a conflict.
+    const existing = (await dbGet(
+      "SELECT id FROM members WHERE lower(email) = lower(?) AND team_id = ? AND id != ?",
+      target.email, targetTeamId, target.id
+    )) as any;
+    if (existing) {
+      return res.status(400).json({ error: "They already have an account in that workspace. Delete the duplicate first." });
+    }
+
+    // Resolve the destination's Member role first, so granting it can be part
+    // of the same atomic batch as the move (never moved-but-permissionless).
+    await ensureRolesSeeded(targetTeamId);
+    const memberRoleId = await systemRoleId(targetTeamId, "Member");
+    if (!memberRoleId) return res.status(500).json({ error: "The target workspace has no Member role." });
+
+    const result = await serializeOwnerMove(async () => {
+      // Guard: don't strand their old team without an admin. Checked inside
+      // the serialized section, against fresh data.
+      const fresh = (await dbGet("SELECT team_id, account_type FROM members WHERE id = ?", target.id)) as any;
+      if (!fresh || fresh.team_id !== target.team_id) return { error: "That user's workspace just changed — refresh and try again." };
+      const perms = await rolePerms(target.id, fresh.team_id);
+      const isAdminish = fresh.account_type === "admin" || perms.has("*") || perms.has("manage_members");
+      if (isAdminish && (await countAdmins(fresh.team_id)) <= 1) {
+        return { error: "They're the last admin of their current team — promote someone else first." };
+      }
+      // Atomic move: clear old roles/sessions, update team, grant the
+      // destination Member role — one batch. Sessions are invalidated so they
+      // re-auth into the new workspace. No notification is sent (silent move).
+      await dbBatch([
+        { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [target.id] },
+        { sql: "DELETE FROM sessions WHERE member_id = ?", args: [target.id] },
+        { sql: "DELETE FROM stream_sessions WHERE member_id = ?", args: [target.id] },
+        { sql: "UPDATE members SET team_id = ?, role = 'member', account_type = 'member' WHERE id = ?", args: [targetTeamId, target.id] },
+        { sql: "INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [target.id, memberRoleId] },
+      ]);
+      return { error: null };
+    });
+    if (result.error) return res.status(400).json({ error: result.error });
+
+    res.json({ success: true, teamId: targetTeamId, teamName: destTeam.name });
+  });
+
   // Delete one team membership (they keep their other teams)
   app.delete("/api/owner/users/:id", async (req, res) => {
     const auth = await requireOwner(req, res);

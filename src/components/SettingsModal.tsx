@@ -13,6 +13,54 @@ import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
 import { soundsEnabled, setSoundsEnabled } from '../utils/sounds';
 import { WhatsNewModal } from './WhatsNewModal';
 import { CURRENT_VERSION } from '../utils/changelog';
+import { DashboardPreview } from './DashboardPreview';
+
+/** Click-to-edit numeric value for appearance sliders. */
+function EditableSliderValue({ value, min, max, step, unit, onChange, label }: {
+  value: number; min: number; max: number; step: number; unit: string;
+  onChange: (v: number) => void; label: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const display = step >= 1 ? String(Math.round(value)) : String(Math.round(value * 100) / 100);
+
+  const commit = () => {
+    const n = parseFloat(draft);
+    if (!isNaN(n)) {
+      const clamped = Math.min(max, Math.max(min, n));
+      // Snap to the nearest valid step so typed values match slider positions
+      const snapped = Math.round(clamped / step) * step;
+      // Round to avoid floating-point artifacts (e.g. 0.1 + 0.2)
+      const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+      onChange(Number(snapped.toFixed(decimals)));
+    }
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        className="w-16 text-xs text-text-base font-mono bg-text-base/[0.06] border border-accent/40 rounded-lg px-2 py-1 text-right focus:outline-none"
+        aria-label={`Edit ${label}`}
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => { setDraft(display); setEditing(true); }}
+      className="text-xs text-text-muted font-mono hover:text-accent hover:underline underline-offset-2 transition-colors cursor-text"
+      title={`Click to type a value (${min}–${max}${unit})`}
+      aria-label={`${label}: ${display}${unit}. Click to edit.`}
+    >
+      {display}{unit}
+    </button>
+  );
+}
 import { DEFAULT_PULSE_ORIGINS, PULSE_ORIGIN_OPTIONS, applyPulseOrigins, readPulseOrigins, writePulseOrigins, type PulseOrigins } from '../utils/gridPulse';
 
 export interface SettingsModalProps {
@@ -347,6 +395,8 @@ export default function SettingsModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // Overlays opened from Settings (e.g. the expanded preview) own their Escape.
+      if (e.target instanceof Element && e.target.closest('[data-esc-owner]')) return;
       if (e.key === 'Escape') { e.stopPropagation(); requestClose(); }
     };
     window.addEventListener('keydown', onKey, true);
@@ -792,7 +842,8 @@ export default function SettingsModal({
             )}
 
             {section === 'appearance' && (
-              <section className="space-y-6">
+              <div className="xl:grid xl:grid-cols-[1fr_340px] xl:gap-8 xl:items-start">
+              <section className="space-y-6 min-w-0">
                 <ThemePicker />
 
                 <div className="flex items-start justify-between">
@@ -831,7 +882,8 @@ export default function SettingsModal({
                     <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-sm font-semibold text-text-base">Grid size</p>
-                        <span className="text-xs text-text-muted font-mono">{gridSize}px</span>
+                        <EditableSliderValue value={gridSize} min={16} max={64} step={2} unit="px"
+                          label="Grid size" onChange={(v) => updateGrid({ size: Math.round(v) })} />
                       </div>
                       <input
                         type="range" min={16} max={64} step={2} value={gridSize}
@@ -846,7 +898,8 @@ export default function SettingsModal({
                     <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-sm font-semibold text-text-base">Grid brightness</p>
-                        <span className="text-xs text-text-muted font-mono">{Math.round(gridOpacity * 100)}%</span>
+                        <EditableSliderValue value={Math.round(gridOpacity * 100)} min={2} max={40} step={1} unit="%"
+                          label="Grid brightness" onChange={(v) => updateGrid({ opacity: v / 100 })} />
                       </div>
                       <input
                         type="range" min={0.02} max={0.4} step={0.01} value={gridOpacity}
@@ -879,7 +932,8 @@ export default function SettingsModal({
                     <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-sm font-semibold text-text-base">Pulse speed</p>
-                        <span className="text-xs text-text-muted font-mono">{gridPulseSpeed}s</span>
+                        <EditableSliderValue value={gridPulseSpeed} min={2} max={15} step={0.5} unit="s"
+                          label="Pulse speed" onChange={(v) => updateGrid({ pulseSpeed: v })} />
                       </div>
                       <input
                         type="range" min={2} max={15} step={0.5} value={gridPulseSpeed}
@@ -893,7 +947,8 @@ export default function SettingsModal({
                     <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-sm font-semibold text-text-base">Pulse intensity</p>
-                        <span className="text-xs text-text-muted font-mono">{Math.round(gridPulseOpacity * 100)}%</span>
+                        <EditableSliderValue value={Math.round(gridPulseOpacity * 100)} min={2} max={40} step={1} unit="%"
+                          label="Pulse intensity" onChange={(v) => updateGrid({ pulseOpacity: v / 100 })} />
                       </div>
                       <input
                         type="range" min={0.02} max={0.4} step={0.01} value={gridPulseOpacity}
@@ -956,7 +1011,8 @@ export default function SettingsModal({
                     <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-sm font-semibold text-text-base">Glow size</p>
-                        <span className="text-xs text-text-muted font-mono">{gridGlowSize}px</span>
+                        <EditableSliderValue value={gridGlowSize} min={120} max={500} step={10} unit="px"
+                          label="Glow size" onChange={(v) => updateGrid({ glowSize: Math.round(v) })} />
                       </div>
                       <input
                         type="range" min={120} max={500} step={10} value={gridGlowSize}
@@ -970,7 +1026,8 @@ export default function SettingsModal({
                     <div className="p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-sm font-semibold text-text-base">Glow intensity</p>
-                        <span className="text-xs text-text-muted font-mono">{Math.round(gridGlowOpacity * 100)}%</span>
+                        <EditableSliderValue value={Math.round(gridGlowOpacity * 100)} min={5} max={60} step={1} unit="%"
+                          label="Glow intensity" onChange={(v) => updateGrid({ glowOpacity: v / 100 })} />
                       </div>
                       <input
                         type="range" min={0.05} max={0.6} step={0.01} value={gridGlowOpacity}
@@ -983,6 +1040,12 @@ export default function SettingsModal({
                   </>
                 )}
               </section>
+              {/* Sticky live preview — xl screens only, stays visible while scrolling.
+                  Below xl the settings stack full-width so controls aren't squeezed. */}
+              <div className="hidden xl:block sticky top-0">
+                <DashboardPreview />
+              </div>
+              </div>
             )}
 
             {section === 'voice' && (
@@ -1148,6 +1211,32 @@ export default function SettingsModal({
                     </div>
                   ))}
                 </div>
+
+                {/* Chatbot Persona — team setting, admins only */}
+                {isAdmin && navGptQualifies(team?.name) && (
+                  <div>
+                    <h4 className="text-sm font-bold text-text-base mb-1">Chatbot persona</h4>
+                    <p className="text-xs text-text-muted leading-relaxed mb-2">
+                      Who answers in the team chatbot.
+                    </p>
+                    <div className="flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4">
+                      <Switch
+                        checked={!!navGptOn}
+                        label="NavGPT ❤️"
+                        disabled={savingPersona}
+                        onChange={() => void togglePersona()}
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
+                        <p className="text-xs text-text-muted leading-relaxed">
+                          {navGptOn
+                            ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
+                            : 'Off — the chatbot is the normal Bruno. Flip the switch to bring back NavGPT ❤️.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* FTC Coding Preferences */}
                 <div className="rounded-2xl border border-text-base/10 overflow-hidden">
@@ -1316,28 +1405,6 @@ export default function SettingsModal({
                   </div>
                 </section>
 
-                {navGptQualifies(team?.name) && (
-                  <section>
-                    <h3 className="text-sm font-bold text-text-base mb-1">Chatbot Persona</h3>
-                    <p className="text-xs text-text-muted mb-3">Who answers in the team chatbot.</p>
-                    <div className="flex items-center gap-4 bg-secondary border border-text-base/10 rounded-2xl p-4">
-                      <Switch
-                        checked={!!navGptOn}
-                        label="NavGPT ❤️"
-                        disabled={savingPersona}
-                        onChange={() => void togglePersona()}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-sm font-bold text-text-base">NavGPT ❤️</p>
-                        <p className="text-xs text-text-muted leading-relaxed">
-                          {navGptOn
-                            ? 'On — the chatbot answers as NavGPT ❤️. Turn it off to go back to the normal Bruno persona.'
-                            : 'Off — the chatbot is the normal Bruno. Flip the switch to bring back NavGPT ❤️.'}
-                        </p>
-                      </div>
-                    </div>
-                  </section>
-                )}
               </>
             )}
 

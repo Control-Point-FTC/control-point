@@ -38,19 +38,30 @@ export function hashCode(code: string): string {
   return crypto.createHash("sha256").update(code, "utf8").digest("hex");
 }
 
-function verificationEmailHtml(code: string): string {
+/**
+ * Shared email template — dark card, yellow Control Point badge, volt theme.
+ * All app emails use this so they look consistent.
+ */
+function emailTemplate(title: string, bodyHtml: string): string {
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#09090b;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
 <div style="max-width:480px;margin:0 auto;padding:40px 24px;">
 <div style="text-align:center;margin-bottom:24px;">
 <div style="display:inline-block;background:#ffc700;color:#09090b;font-weight:800;font-size:20px;padding:10px 18px;border-radius:12px;">Control Point</div>
 </div>
 <div style="background:#141419;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:32px;text-align:center;">
-<h1 style="color:#fff;font-size:20px;margin:0 0 8px;">Verify your email</h1>
-<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">Enter this code in Control Point to finish creating your account. It expires in ${VERIFY_CODE_TTL_MINUTES} minutes.</p>
-<div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#ffc700;margin:8px 0 20px;">${code}</div>
-<p style="color:#71717a;font-size:12px;margin:0;">If you didn't ask for this, you can ignore this email.</p>
+<h1 style="color:#fff;font-size:20px;margin:0 0 8px;">${title}</h1>
+${bodyHtml}
 </div>
 </div></body></html>`;
+}
+
+function verificationEmailHtml(code: string): string {
+  return emailTemplate(
+    'Verify your email',
+    `<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">Enter this code in Control Point to finish creating your account. It expires in ${VERIFY_CODE_TTL_MINUTES} minutes.</p>
+<div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#ffc700;margin:8px 0 20px;">${code}</div>
+<p style="color:#71717a;font-size:12px;margin:0;">If you didn't ask for this, you can ignore this email.</p>`
+  );
 }
 
 export async function sendVerificationEmail(to: string, code: string): Promise<void> {
@@ -216,20 +227,16 @@ export function taskAssignedEmailHtml(rawTitle: string, rawDescription: string, 
   const dueDate = escapeHtml(rawDueDate);
   const teamName = escapeHtml(rawTeamName);
   const assignerName = escapeHtml(rawAssignerName);
-  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#09090b;font-family:system-ui,-apple-system,sans-serif;">
-<div style="max-width:560px;margin:0 auto;padding:32px 24px;">
-<div style="background:#131316;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:32px;">
-<div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#ffc700;text-transform:uppercase;margin-bottom:16px;">Control Point</div>
-<h1 style="color:#fafafa;font-size:20px;margin:0 0 8px;">New task assigned</h1>
-<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">${assignerName} assigned you a task in ${teamName}:</p>
-<div style="background:#09090b;border:1px solid rgba(255,199,0,0.2);border-radius:12px;padding:20px;margin-bottom:20px;">
+  return emailTemplate(
+    'New task assigned',
+    `<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">${assignerName} assigned you a task in ${teamName}:</p>
+<div style="background:#09090b;border:1px solid rgba(255,199,0,0.2);border-radius:12px;padding:20px;margin-bottom:20px;text-align:left;">
 <div style="color:#fafafa;font-size:16px;font-weight:700;margin-bottom:8px;">${taskTitle}</div>
 ${taskDescription ? `<div style="color:#a1a1aa;font-size:14px;margin-bottom:12px;">${taskDescription}</div>` : ''}
 ${dueDate ? `<div style="color:#ffc700;font-size:13px;font-weight:600;">Due: ${dueDate}</div>` : ''}
 </div>
-<p style="color:#71717a;font-size:12px;margin:0;">Open Control Point to view and update this task.</p>
-</div>
-</div></body></html>`;
+<p style="color:#71717a;font-size:12px;margin:0;">Open Control Point to view and update this task.</p>`
+  );
 }
 
 /**
