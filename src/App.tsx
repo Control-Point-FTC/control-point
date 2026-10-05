@@ -8265,11 +8265,15 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
     return roots.map((root: any) => {
       const replies = list
         .filter((c: any) => c.parent_id === root.id)
-        .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)));
-      const all = [root, ...replies];
-      const lastDate = all[all.length - 1].date;
-      return { root, replies, all, count: all.length, lastDate };
-    }).sort((a: any, b: any) => String(b.lastDate).localeCompare(String(a.lastDate)));
+        .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)) || a.id - b.id);
+      // Sort the whole chain (root included) chronologically: reply dates are
+      // editable, so a backdated reply must not reorder the root to the end or
+      // masquerade as the latest activity.
+      const allSorted = [root, ...replies].sort((a: any, b: any) =>
+        String(a.date).localeCompare(String(b.date)) || a.id - b.id);
+      const lastDate = allSorted[allSorted.length - 1].date;
+      return { root, replies, all: allSorted, count: allSorted.length, lastDate };
+    }).sort((a: any, b: any) => String(b.lastDate).localeCompare(String(a.lastDate)) || b.root.id - a.root.id);
   }, [communications]);
 
   // Right-click on a log entry: delete.
@@ -8285,36 +8289,51 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   });
 
   const handleAdd = async () => {
-    const res = await apiFetch('/api/communications', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newComm)
-    });
+    let res: any = null;
+    try {
+      res = await apiFetch('/api/communications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newComm)
+      });
+    } catch { res = null; }
+    if (!res || !res.ok) {
+      notify('Could not log message — try again. Your draft is kept.', 'error');
+      return;
+    }
     const data = await res.json().catch(() => ({}));
     setShowAdd(false);
+    const saved = { ...newComm };
     setNewComm({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
     refresh.communications();
     // Ask whether they responded so the reply can be logged right away.
     if (data && data.id) {
-      setAskResponded({ id: data.id, recipient: newComm.recipient, subject: newComm.subject });
+      setAskResponded({ id: data.id, recipient: saved.recipient, subject: saved.subject, type: saved.type });
     }
   };
 
   const handleReply = async () => {
     if (!replyingTo || !replyForm.body.trim()) return;
-    await apiFetch('/api/communications', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: replyingTo.root.recipient,
-        subject: replyingTo.root.subject,
-        body: replyForm.body.trim(),
-        date: replyForm.date,
-        type: replyingTo.root.type,
-        parent_id: replyingTo.root.id,
-        direction: replyForm.direction,
-      })
-    });
+    let res: any = null;
+    try {
+      res = await apiFetch('/api/communications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: replyingTo.root.recipient,
+          subject: replyingTo.root.subject,
+          body: replyForm.body.trim(),
+          date: replyForm.date,
+          type: replyingTo.root.type,
+          parent_id: replyingTo.root.id,
+          direction: replyForm.direction,
+        })
+      });
+    } catch { res = null; }
+    if (!res || !res.ok) {
+      notify('Could not save reply — try again. Your draft is kept.', 'error');
+      return;
+    }
     setReplyingTo(null);
     setReplyForm({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction: 'inbound' });
     refresh.communications();
@@ -8547,14 +8566,12 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
             <div className="flex gap-3 justify-end">
               <Button variant="secondary" onClick={() => setAskResponded(null)}>Not yet</Button>
               <Button onClick={() => {
-                const thread = threads.find((t: any) => t.root.id === askResponded.id);
+                const saved = askResponded;
                 setAskResponded(null);
-                if (thread) {
-                  setExpandedId(thread.root.id);
-                  openReply(thread, 'inbound');
-                } else {
-                  refresh.communications();
-                }
+                // Open the editor straight from the saved message's id and
+                // details — don't depend on the list refresh having finished.
+                setExpandedId(saved.id);
+                openReply({ root: { id: saved.id, recipient: saved.recipient, subject: saved.subject, type: saved.type } }, 'inbound');
               }}>Yes, log reply</Button>
             </div>
           </Card>

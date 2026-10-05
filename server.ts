@@ -9725,12 +9725,14 @@ Rules:
       const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
       const { recipient, subject, body, date, type, parent_id, direction } = req.body;
-      // Replies must attach to an entry in the same team.
+      // Replies must attach to an entry in the same team. Threads are one level
+      // deep: a reply-to-a-reply is resolved to the thread root so it always
+      // appears in the thread instead of becoming invisible.
       let parentId: number | null = null;
       if (parent_id != null) {
-        const parent: any = (await dbGet("SELECT id, team_id FROM communications WHERE id = ?", parent_id));
+        const parent: any = (await dbGet("SELECT id, team_id, parent_id FROM communications WHERE id = ?", parent_id));
         if (!parent || parent.team_id !== auth.teamId) return res.status(400).json({ error: "Invalid parent entry" });
-        parentId = parent.id;
+        parentId = parent.parent_id != null ? parent.parent_id : parent.id;
       }
       const dir = direction === 'inbound' ? 'inbound' : 'outbound';
       const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId, parentId, dir));
@@ -9745,10 +9747,21 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
-      const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
-      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      // Deleting a thread root removes its replies too.
-      (await dbRun("DELETE FROM communications WHERE id = ? OR parent_id = ?", req.params.id, req.params.id));
+      const targetId = Number(req.params.id);
+      const rows: any[] = (await dbAll("SELECT id, parent_id FROM communications WHERE team_id = ?", auth.teamId));
+      if (!rows.some((r: any) => r.id === targetId)) return res.status(404).json({ error: "Not found" });
+      // Collect the entry plus every descendant at any depth so no orphaned
+      // replies survive a thread delete.
+      const toDelete = new Set<number>();
+      const stack: number[] = [targetId];
+      while (stack.length) {
+        const cur = stack.pop()!;
+        if (toDelete.has(cur)) continue;
+        toDelete.add(cur);
+        for (const r of rows) if (r.parent_id === cur) stack.push(r.id);
+      }
+      const ids = [...toDelete];
+      (await dbRun(`DELETE FROM communications WHERE id IN (${ids.map(() => "?").join(",")})`, ...ids));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting communication:", error);
