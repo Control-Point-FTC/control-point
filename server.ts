@@ -32,6 +32,7 @@ import {
   markEmailVerified,
   issueVerificationCode,
   checkVerificationCode,
+  notifyTaskAssignees,
 } from "./email-verify.js";
 import {
   ONBOARDING_DDL,
@@ -6144,6 +6145,8 @@ Rules:
       for (const mid of validIds) {
         createNotification(mid, `New task assigned: ${title}`, 'task');
       }
+      // Email the assignees (best-effort, never blocks the response).
+      void notifyTaskAssignees(taskId, title || "", description || "", due_date || "", auth.teamId, auth.memberId, validIds);
 
       const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", taskId)) as any;
       created.assignee_ids = validIds;

@@ -174,3 +174,75 @@ export async function pendingCodeCount(email: string): Promise<number> {
   const rows = (await dbAll("SELECT id FROM email_verification_codes WHERE email = ?", email)) as any[];
   return rows.length;
 }
+
+/**
+ * Send a general email via Resend. Used for task assignment notifications.
+ * No-op (logs) when RESEND_API_KEY is not configured.
+ */
+export async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) {
+    console.log(`[email] (no RESEND_API_KEY) to ${to}: ${subject}`);
+    return;
+  }
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: emailFrom(),
+      to: [to],
+      subject,
+      html,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Email send failed (${res.status}): ${body.slice(0, 200)}`);
+  }
+}
+
+function taskAssignedEmailHtml(taskTitle: string, taskDescription: string, dueDate: string, teamName: string, assignerName: string): string {
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#09090b;font-family:system-ui,-apple-system,sans-serif;">
+<div style="max-width:560px;margin:0 auto;padding:32px 24px;">
+<div style="background:#131316;border:1px solid rgba(255,255,255,0.08);border-radius:16px;padding:32px;">
+<div style="font-size:12px;font-weight:700;letter-spacing:2px;color:#ffc700;text-transform:uppercase;margin-bottom:16px;">Control Point</div>
+<h1 style="color:#fafafa;font-size:20px;margin:0 0 8px;">New task assigned</h1>
+<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">${assignerName} assigned you a task in ${teamName}:</p>
+<div style="background:#09090b;border:1px solid rgba(255,199,0,0.2);border-radius:12px;padding:20px;margin-bottom:20px;">
+<div style="color:#fafafa;font-size:16px;font-weight:700;margin-bottom:8px;">${taskTitle}</div>
+${taskDescription ? `<div style="color:#a1a1aa;font-size:14px;margin-bottom:12px;">${taskDescription}</div>` : ''}
+${dueDate ? `<div style="color:#ffc700;font-size:13px;font-weight:600;">Due: ${dueDate}</div>` : ''}
+</div>
+<p style="color:#71717a;font-size:12px;margin:0;">Open Control Point to view and update this task.</p>
+</div>
+</div></body></html>`;
+}
+
+/**
+ * Notify assignees by email when a task is assigned. Best-effort — failures
+ * are logged, never block task creation.
+ */
+export async function notifyTaskAssignees(taskId: number, taskTitle: string, taskDescription: string, dueDate: string, teamId: number, assignerMemberId: number, assigneeIds: number[]): Promise<void> {
+  try {
+    if (!assigneeIds.length) return;
+    const team = (await dbGet("SELECT name FROM teams WHERE id = ?", teamId)) as any;
+    const assigner = (await dbGet("SELECT name FROM members WHERE id = ?", assignerMemberId)) as any;
+    const teamName = team?.name || "your team";
+    const assignerName = assigner?.name || "Someone";
+    for (const mid of assigneeIds) {
+      if (mid === assignerMemberId) continue; // don't email self
+      const m = (await dbGet("SELECT email, name FROM members WHERE id = ?", mid)) as any;
+      if (!m?.email) continue;
+      await sendEmail(
+        m.email,
+        `New task assigned: ${taskTitle}`,
+        taskAssignedEmailHtml(taskTitle, taskDescription || "", dueDate || "", teamName, assignerName)
+      ).catch((e) => console.error(`[email] task notify failed for ${m.email}:`, e.message));
+    }
+  } catch (e: any) {
+    console.error("[email] notifyTaskAssignees failed:", e.message);
+  }
+}
