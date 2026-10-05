@@ -69,12 +69,14 @@ export function applyShortlistPatch(existing: ShortlistEntry | null, patch: Shor
 // retried request (e.g. a save that timed out but still arrives) overwriting
 // a newer edit that client already made. So every write carries an origin:
 // a random per-tab client id plus a sequence number that only ever goes up
-// in that tab. For each field (and each tag) the server remembers the origin
-// of the last write it applied, and ignores a write from the same client
-// with a lower sequence. No device clocks are involved.
+// in that tab. For each field (and each tag) the server remembers the highest
+// sequence it has applied from every client, and ignores a write that isn't
+// newer than that client's previous one — even if other members wrote the
+// field in between. No device clocks are involved.
 
 export interface WriteOrigin { client: string; seq: number }
-export type FieldStamps = Record<string, WriteOrigin>;
+/** field/tag key → client id → highest sequence applied from that client. */
+export type FieldStamps = Record<string, Record<string, number>>;
 
 export interface StoredShortlistEntry {
   entry: ShortlistEntry | null;
@@ -84,10 +86,14 @@ export interface StoredShortlistEntry {
 
 const SCALAR_FIELDS = ['teamName', 'eventCode', 'notes', 'priority', 'scoutNext'] as const;
 
-/** Is `o` allowed to overwrite whatever wrote `key` last? */
+/** Is `o` newer than anything this client already wrote to `key`? */
 function supersedes(stamps: FieldStamps, key: string, o: WriteOrigin): boolean {
-  const last = stamps[key];
-  return !last || last.client !== o.client || o.seq > last.seq;
+  const seen = stamps[key]?.[o.client];
+  return seen === undefined || o.seq > seen;
+}
+
+function stamp(stamps: FieldStamps, key: string, o: WriteOrigin): void {
+  stamps[key] = { ...stamps[key], [o.client]: o.seq };
 }
 
 /**
@@ -108,11 +114,11 @@ export function mergeStampedPatch(
   for (const k of SCALAR_FIELDS) {
     if (patch[k] === undefined || !supersedes(stamps, k, origin)) continue;
     (allowed as unknown as Record<string, unknown>)[k] = patch[k];
-    stamps[k] = origin;
+    stamp(stamps, k, origin);
   }
   const tagOps = (list: string[] | undefined, prefix: string) => {
     const out = (list ?? []).map(cleanTag).filter((t) => t && supersedes(stamps, `${prefix}:${t}`, origin));
-    out.forEach((t) => { stamps[`${prefix}:${t}`] = origin; });
+    out.forEach((t) => stamp(stamps, `${prefix}:${t}`, origin));
     return out.length ? out : undefined;
   };
   allowed.addStrengths = tagOps(patch.addStrengths, 's');
@@ -128,7 +134,9 @@ export function mergeStampedPatch(
  * newer edit to this entry (its delete request arrived late).
  */
 export function mergeStampedDelete(stored: StoredShortlistEntry, origin: WriteOrigin): FieldStamps | null {
-  const newerOwnEdit = Object.values(stored.stamps).some((s) => s.client === origin.client && s.seq > origin.seq);
+  const newerOwnEdit = Object.values(stored.stamps).some((byClient) => (byClient[origin.client] ?? -1) > origin.seq);
   if (newerOwnEdit) return null;
-  return { ...stored.stamps, _deleted: origin };
+  const stamps = { ...stored.stamps };
+  stamp(stamps, '_deleted', origin);
+  return stamps;
 }

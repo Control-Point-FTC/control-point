@@ -157,6 +157,13 @@ describe('shortlist write ordering (server merge)', () => {
     expect(late.entry.priority).toBe('high');
   });
 
+  it('A#2, B#1, A#1: a delayed save stays ignored even after another member wrote in between', () => {
+    const a2 = mergeStampedPatch(live(), { ...P, notes: 'A2' }, A(2), 't')!;
+    const b1 = mergeStampedPatch({ ...live(a2.stamps), entry: a2.entry }, { ...P, notes: 'B1' }, B(1), 't')!;
+    const a1 = mergeStampedPatch({ ...live(b1.stamps), entry: b1.entry }, { ...P, notes: 'A1' }, A(1), 't')!;
+    expect(a1.entry.notes).toBe('B1');
+  });
+
   it('applies other members in arrival order, regardless of their sequence numbers', () => {
     const a = mergeStampedPatch(live(), { ...P, notes: 'from A' }, A(50), 't')!;
     const b = mergeStampedPatch({ ...live(a.stamps), entry: a.entry }, { ...P, notes: 'from B' }, B(1), 't')!;
