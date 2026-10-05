@@ -6254,6 +6254,16 @@ Rules:
     return { ok: true };
   }
 
+  // Owner moves run one at a time, so the last-admin check and the move can't
+  // interleave with another move (two admins moved out at once would both see
+  // an admin count of 2 and leave the team with none).
+  let ownerMoveChain: Promise<unknown> = Promise.resolve();
+  function serializeOwnerMove<T>(fn: () => Promise<T>): Promise<T> {
+    const run = ownerMoveChain.catch(() => {}).then(fn);
+    ownerMoveChain = run.catch(() => {});
+    return run;
+  }
+
   // Move a user's membership to a different workspace (silent — no notification)
   app.post("/api/owner/users/:id/move", async (req, res) => {
     const auth = await requireOwner(req, res);
@@ -6283,26 +6293,35 @@ Rules:
       return res.status(400).json({ error: "They already have an account in that workspace. Delete the duplicate first." });
     }
 
-    // Guard: don't strand their old team without an admin.
-    // Re-checked immediately before the write to minimize the concurrent-move race.
-    const perms = await rolePerms(target.id, target.team_id);
-    const isAdminish = target.account_type === "admin" || perms.has("*") || perms.has("manage_members");
-    if (isAdminish && (await countAdmins(target.team_id)) <= 1) {
-      return res.status(400).json({ error: "They're the last admin of their current team — promote someone else first." });
-    }
+    // Resolve the destination's Member role first, so granting it can be part
+    // of the same atomic batch as the move (never moved-but-permissionless).
+    await ensureRolesSeeded(targetTeamId);
+    const memberRoleId = await systemRoleId(targetTeamId, "Member");
+    if (!memberRoleId) return res.status(500).json({ error: "The target workspace has no Member role." });
 
-    // Atomic move: clear old roles/sessions, update team, all in one batch.
-    // Sessions are invalidated so they re-auth into the new workspace. No notification is sent (silent move).
-    await dbBatch([
-      { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [target.id] },
-      { sql: "DELETE FROM sessions WHERE member_id = ?", args: [target.id] },
-      { sql: "DELETE FROM stream_sessions WHERE member_id = ?", args: [target.id] },
-      { sql: "UPDATE members SET team_id = ?, role = 'member', account_type = 'member' WHERE id = ?", args: [targetTeamId, target.id] },
-    ]);
-
-    // P1 fix: give them the destination workspace's default Member system role
-    // so they aren't left permissionless.
-    await assignSystemRole(targetTeamId, target.id, "Member");
+    const result = await serializeOwnerMove(async () => {
+      // Guard: don't strand their old team without an admin. Checked inside
+      // the serialized section, against fresh data.
+      const fresh = (await dbGet("SELECT team_id, account_type FROM members WHERE id = ?", target.id)) as any;
+      if (!fresh || fresh.team_id !== target.team_id) return { error: "That user's workspace just changed — refresh and try again." };
+      const perms = await rolePerms(target.id, fresh.team_id);
+      const isAdminish = fresh.account_type === "admin" || perms.has("*") || perms.has("manage_members");
+      if (isAdminish && (await countAdmins(fresh.team_id)) <= 1) {
+        return { error: "They're the last admin of their current team — promote someone else first." };
+      }
+      // Atomic move: clear old roles/sessions, update team, grant the
+      // destination Member role — one batch. Sessions are invalidated so they
+      // re-auth into the new workspace. No notification is sent (silent move).
+      await dbBatch([
+        { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [target.id] },
+        { sql: "DELETE FROM sessions WHERE member_id = ?", args: [target.id] },
+        { sql: "DELETE FROM stream_sessions WHERE member_id = ?", args: [target.id] },
+        { sql: "UPDATE members SET team_id = ?, role = 'member', account_type = 'member' WHERE id = ?", args: [targetTeamId, target.id] },
+        { sql: "INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [target.id, memberRoleId] },
+      ]);
+      return { error: null };
+    });
+    if (result.error) return res.status(400).json({ error: result.error });
 
     res.json({ success: true, teamId: targetTeamId, teamName: destTeam.name });
   });

@@ -395,6 +395,8 @@ export default function SettingsModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // Overlays opened from Settings (e.g. the expanded preview) own their Escape.
+      if (e.target instanceof Element && e.target.closest('[data-esc-owner]')) return;
       if (e.key === 'Escape') { e.stopPropagation(); requestClose(); }
     };
     window.addEventListener('keydown', onKey, true);
