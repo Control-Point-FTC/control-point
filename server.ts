@@ -3705,7 +3705,10 @@ async function startServer() {
         body: JSON.stringify({ query, variables }),
         signal: ctrl.signal,
       });
-      if (!res.ok) throw new Error(`FTC Scout responded with HTTP ${res.status}`);
+      // Keep the status: a 4xx means FTC Scout rejected the query (e.g. a
+      // season it doesn't support yet), which callers treat as "no data",
+      // not as an outage.
+      if (!res.ok) throw Object.assign(new Error(`FTC Scout responded with HTTP ${res.status}`), { status: res.status });
       return await res.json();
     } finally {
       clearTimeout(t);
@@ -3972,6 +3975,10 @@ async function startServer() {
 
   /** Every data source errored (vs. answering "no such team/event"). */
   class FtcUnavailableError extends Error {}
+  /** FTC Scout rejected the request (4xx) — "no data", not an outage. */
+  function isFtcScoutClientError(e: any): boolean {
+    return typeof e?.status === "number" && e.status >= 400 && e.status < 500;
+  }
 
   const SUPPORTED_SEASONS = [2022, 2023, 2024, 2025, 2026];
   // Last season list seen per team, so the picker keeps historical seasons
@@ -4012,9 +4019,13 @@ async function startServer() {
     let scout: any = null;
     try {
       scout = await getFtcTeamPayload(number, season);
-    } catch {
-      scoutFailed = true;
-      console.error(`[ftc] FTC Scout team lookup failed for ${number}/${season}`);
+    } catch (e: any) {
+      // 4xx = FTC Scout has no data for this request (e.g. unsupported
+      // season); only 5xx / network / timeout count as unreachable.
+      if (!isFtcScoutClientError(e)) {
+        scoutFailed = true;
+        console.error(`[ftc] FTC Scout team lookup failed for ${number}/${season}`);
+      }
     }
 
     if (!firstTeam && !scout) {
@@ -4097,8 +4108,8 @@ async function startServer() {
     let scoutFailed = false;
 
     // FTC Scout runs in parallel either way: it fills gaps in FIRST's data.
-    const scoutP = getFtcEventPayload(number, season, code).catch(() => {
-      scoutFailed = true;
+    const scoutP = getFtcEventPayload(number, season, code).catch((e: any) => {
+      if (!isFtcScoutClientError(e)) scoutFailed = true;
       return null;
     });
 
