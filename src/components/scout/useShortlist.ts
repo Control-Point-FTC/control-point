@@ -1,6 +1,6 @@
 // Workspace scouting shortlist for one season, with optimistic edits.
 //
-// Writes are serialized (one request in flight) so each server response
+// Writes are serialized per season (one request in flight) so each server response
 // reflects every earlier edit; edits still queued behind it are re-applied
 // on top of that snapshot, so nothing pending flickers away. A season change
 // starts a new epoch: the list is cleared and responses for the old season
@@ -20,7 +20,9 @@ export function useShortlist(season: number) {
   const [error, setError] = useState<string | null>(null);
   const epoch = useRef(0);
   const pending = useRef<Op[]>([]);
-  const chain = useRef<Promise<void>>(Promise.resolve());
+  // One write chain per season: an old season's slow write never holds up
+  // the current season's edits.
+  const chains = useRef(new Map<number, Promise<void>>());
   // Last list the server confirmed for the current season (rollback target).
   const confirmed = useRef<ShortlistEntry[]>([]);
 
@@ -43,7 +45,8 @@ export function useShortlist(season: number) {
     const ep = epoch.current;
     pending.current.push(op);
     setEntries((l) => op.apply(l));
-    chain.current = chain.current.then(async () => {
+    const prev = chains.current.get(season) ?? Promise.resolve();
+    const next = prev.then(async () => {
       try {
         const list = await op.send();
         if (ep !== epoch.current) return;
@@ -64,6 +67,7 @@ export function useShortlist(season: number) {
         } catch { /* already rolled back; the error is shown */ }
       }
     });
+    chains.current.set(season, next);
   }, [season]);
 
   const patch = useCallback((p: Omit<ShortlistPatch, 'season'>) => {

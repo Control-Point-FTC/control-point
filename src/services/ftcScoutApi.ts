@@ -108,6 +108,9 @@ export async function searchScoutTeams(q: string, season: number): Promise<FtcTe
 
 // ---- Scouting shortlist (server-persisted, shared by the workspace) ----
 
+/** Writes are queued, so a hung request must fail rather than block the queue. */
+const SHORTLIST_TIMEOUT_MS = 15_000;
+
 export async function fetchShortlist(season: number): Promise<ShortlistEntry[]> {
   return (await getJson<{ entries: ShortlistEntry[] }>(`/api/ftc/shortlist?season=${season}`)).entries || [];
 }
@@ -116,6 +119,7 @@ export async function fetchShortlist(season: number): Promise<ShortlistEntry[]> 
 export async function saveShortlistPatch(patch: ShortlistPatch): Promise<ShortlistEntry[]> {
   const res = await apiFetch('/api/ftc/shortlist', {
     method: 'PUT',
+    timeoutMs: SHORTLIST_TIMEOUT_MS,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   });
@@ -125,7 +129,7 @@ export async function saveShortlistPatch(patch: ShortlistPatch): Promise<Shortli
 }
 
 export async function removeShortlistEntry(season: number, teamNumber: number): Promise<ShortlistEntry[]> {
-  const res = await apiFetch(`/api/ftc/shortlist?season=${season}&team=${teamNumber}`, { method: 'DELETE' });
+  const res = await apiFetch(`/api/ftc/shortlist?season=${season}&team=${teamNumber}`, { method: 'DELETE', timeoutMs: SHORTLIST_TIMEOUT_MS });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ScoutHttpError(body?.error || 'Could not remove from the shortlist', res.status);
   return body.entries || [];
