@@ -5,6 +5,8 @@
 import type { ShortlistEntry, ShortlistPriority } from '../types/ftcScout';
 
 export interface ShortlistPatch {
+  /** Client edit time (ms since epoch); orders concurrent or delayed saves. */
+  editedAt?: number;
   season: number;
   teamNumber: number;
   teamName?: string;
@@ -59,4 +61,60 @@ export function applyShortlistPatch(existing: ShortlistEntry | null, patch: Shor
     weaknesses: applyTags(base.weaknesses, patch.addWeaknesses, patch.removeWeaknesses),
     updatedAt,
   };
+}
+
+// ---- Server-side merge with per-field edit times ----
+//
+// Each patch carries the client's edit time. A field (or a single tag) only
+// changes if this edit is at least as new as the last one applied to it, so
+// a delayed or retried save can't overwrite a newer edit no matter when it
+// arrives. Deletes leave a tombstone with their time: older saves can't
+// resurrect the entry, newer ones re-add it.
+
+export type FieldStamps = Record<string, number>;
+
+export interface StoredShortlistEntry {
+  entry: ShortlistEntry | null;
+  stamps: FieldStamps;
+  deleted: boolean;
+}
+
+const SCALAR_FIELDS = ['teamName', 'eventCode', 'notes', 'priority', 'scoutNext'] as const;
+
+/** Result of a stamped merge, or null when the patch is older than a delete. */
+export function mergeStampedPatch(
+  stored: StoredShortlistEntry,
+  patch: ShortlistPatch,
+  editedAt: number,
+  updatedAt: string
+): { entry: ShortlistEntry; stamps: FieldStamps } | null {
+  const deletedAt = stored.stamps._deleted ?? 0;
+  if (stored.deleted && editedAt < deletedAt) return null;
+  const reviving = stored.deleted || !stored.entry;
+  const stamps: FieldStamps = reviving ? { _deleted: deletedAt } : { ...stored.stamps };
+  const newer = (key: string) => editedAt >= (stamps[key] ?? 0);
+  const allowed: ShortlistPatch = { season: patch.season, teamNumber: patch.teamNumber };
+  for (const k of SCALAR_FIELDS) {
+    if (patch[k] === undefined || !newer(k)) continue;
+    (allowed as unknown as Record<string, unknown>)[k] = patch[k];
+    stamps[k] = editedAt;
+  }
+  const tagOps = (list: string[] | undefined, prefix: string) => {
+    const out = (list ?? []).map(cleanTag).filter((t) => t && newer(`${prefix}:${t}`));
+    out.forEach((t) => { stamps[`${prefix}:${t}`] = editedAt; });
+    return out.length ? out : undefined;
+  };
+  allowed.addStrengths = tagOps(patch.addStrengths, 's');
+  allowed.removeStrengths = tagOps(patch.removeStrengths, 's');
+  allowed.addWeaknesses = tagOps(patch.addWeaknesses, 'w');
+  allowed.removeWeaknesses = tagOps(patch.removeWeaknesses, 'w');
+  const entry = applyShortlistPatch(reviving ? null : stored.entry, allowed, updatedAt);
+  return { entry, stamps };
+}
+
+/** Stamps after a delete, or null when an edit newer than the delete exists. */
+export function mergeStampedDelete(stored: StoredShortlistEntry, editedAt: number): FieldStamps | null {
+  const newest = Math.max(0, ...Object.entries(stored.stamps).filter(([k]) => k !== '_deleted').map(([, v]) => v));
+  if (!stored.deleted && newest > editedAt) return null;
+  return { ...stored.stamps, _deleted: Math.max(editedAt, stored.stamps._deleted ?? 0) };
 }

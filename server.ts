@@ -125,7 +125,7 @@ import {
   type FirstEventPieces,
   type ScoutEventParsed,
 } from "./server/ftcScout.js";
-import { applyShortlistPatch, type ShortlistPatch } from "./src/utils/shortlist.js";
+import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry } from "./src/utils/shortlist.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
@@ -4573,7 +4573,7 @@ async function startServer() {
   }
   async function loadShortlist(teamId: number, season: number): Promise<ShortlistEntry[]> {
     const rows = (await dbAll(
-      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? ORDER BY scout_next DESC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, team_number",
+      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND deleted = 0 ORDER BY scout_next DESC, CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, team_number",
       teamId, season
     )) as any[];
     return rows.map(shortlistRow);
@@ -4587,8 +4587,45 @@ async function startServer() {
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 
-  // Field-level patch (see src/utils/shortlist.ts): read the stored row, apply
-  // only the fields this request changes, write it back.
+  // Shortlist writes (see src/utils/shortlist.ts): field-level patches merged
+  // into the stored row using per-field client edit times, so delayed or
+  // retried requests can't overwrite newer edits or resurrect deleted teams.
+  async function storedShortlist(teamId: number, season: number, teamNumber: number): Promise<StoredShortlistEntry> {
+    const rows = (await dbAll(
+      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND team_number = ?",
+      teamId, season, teamNumber
+    )) as any[];
+    const r = rows[0];
+    if (!r) return { entry: null, stamps: {}, deleted: false };
+    let stamps: FieldStamps = {};
+    try {
+      const parsed = JSON.parse(String(r.field_ts || "{}"));
+      if (parsed && typeof parsed === "object") for (const [k, v] of Object.entries(parsed)) if (typeof v === "number" && Number.isFinite(v)) stamps[k] = v;
+    } catch { stamps = {}; }
+    return { entry: shortlistRow(r), stamps, deleted: Number(r.deleted) === 1 };
+  }
+
+  /** Client edit time, clamped so a skewed clock can't lock fields far into the future. */
+  function editTime(raw: unknown): number {
+    const now = Date.now();
+    const t = typeof raw === "number" ? raw : parseInt(String(raw ?? ""), 10);
+    return Number.isFinite(t) && t > 0 ? Math.min(t, now + 60_000) : now;
+  }
+
+  async function writeShortlistRow(teamId: number, memberId: number | null, e: ShortlistEntry, stamps: FieldStamps, deleted: boolean) {
+    await dbRun(
+      `INSERT INTO scouting_shortlist (team_id, season, team_number, team_name, event_code, notes, priority, scout_next, strengths, weaknesses, updated_by, updated_at, field_ts, deleted)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, season, team_number) DO UPDATE SET
+         team_name = excluded.team_name, event_code = excluded.event_code, notes = excluded.notes,
+         priority = excluded.priority, scout_next = excluded.scout_next, strengths = excluded.strengths,
+         weaknesses = excluded.weaknesses, updated_by = excluded.updated_by, updated_at = excluded.updated_at,
+         field_ts = excluded.field_ts, deleted = excluded.deleted`,
+      teamId, e.season, e.teamNumber, e.teamName, e.eventCode, e.notes, e.priority, e.scoutNext ? 1 : 0,
+      JSON.stringify(e.strengths), JSON.stringify(e.weaknesses), memberId, e.updatedAt, JSON.stringify(stamps), deleted ? 1 : 0
+    );
+  }
+
   app.put("/api/ftc/shortlist", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -4611,21 +4648,10 @@ async function startServer() {
       addWeaknesses: tagList(b.addWeaknesses),
       removeWeaknesses: tagList(b.removeWeaknesses),
     };
-    const row = (await dbAll(
-      "SELECT * FROM scouting_shortlist WHERE team_id = ? AND season = ? AND team_number = ?",
-      auth.teamId, season, teamNumber
-    )) as any[];
-    const e = applyShortlistPatch(row[0] ? shortlistRow(row[0]) : null, patch, new Date().toISOString());
-    await dbRun(
-      `INSERT INTO scouting_shortlist (team_id, season, team_number, team_name, event_code, notes, priority, scout_next, strengths, weaknesses, updated_by, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(team_id, season, team_number) DO UPDATE SET
-         team_name = excluded.team_name, event_code = excluded.event_code, notes = excluded.notes,
-         priority = excluded.priority, scout_next = excluded.scout_next, strengths = excluded.strengths,
-         weaknesses = excluded.weaknesses, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-      auth.teamId, season, teamNumber, e.teamName, e.eventCode, e.notes, e.priority, e.scoutNext ? 1 : 0,
-      JSON.stringify(e.strengths), JSON.stringify(e.weaknesses), auth.memberId, e.updatedAt
-    );
+    const stored = await storedShortlist(auth.teamId!, season, teamNumber);
+    const merged = mergeStampedPatch(stored, patch, editTime(b.editedAt), new Date().toISOString());
+    // null = this save is older than a delete of the entry: ignore it.
+    if (merged) await writeShortlistRow(auth.teamId!, auth.memberId, merged.entry, merged.stamps, false);
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 
@@ -4635,7 +4661,12 @@ async function startServer() {
     const season = parseSeason(req.query.season);
     const teamNumber = parseInt(String(req.query.team || ""), 10);
     if (season == null || !teamNumber) return res.status(400).json({ error: "Season and team number are required" });
-    await dbRun("DELETE FROM scouting_shortlist WHERE team_id = ? AND season = ? AND team_number = ?", auth.teamId, season, teamNumber);
+    const stored = await storedShortlist(auth.teamId!, season, teamNumber);
+    if (stored.entry) {
+      const stamps = mergeStampedDelete(stored, editTime(req.query.editedAt));
+      // null = someone edited the entry after this delete was issued: keep it.
+      if (stamps) await writeShortlistRow(auth.teamId!, auth.memberId, stored.entry, stamps, true);
+    }
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 

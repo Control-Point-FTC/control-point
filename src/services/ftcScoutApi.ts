@@ -128,8 +128,8 @@ export async function saveShortlistPatch(patch: ShortlistPatch): Promise<Shortli
   return body.entries || [];
 }
 
-export async function removeShortlistEntry(season: number, teamNumber: number): Promise<ShortlistEntry[]> {
-  const res = await apiFetch(`/api/ftc/shortlist?season=${season}&team=${teamNumber}`, { method: 'DELETE', timeoutMs: SHORTLIST_TIMEOUT_MS });
+export async function removeShortlistEntry(season: number, teamNumber: number, editedAt: number = Date.now()): Promise<ShortlistEntry[]> {
+  const res = await apiFetch(`/api/ftc/shortlist?season=${season}&team=${teamNumber}&editedAt=${editedAt}`, { method: 'DELETE', timeoutMs: SHORTLIST_TIMEOUT_MS });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ScoutHttpError(body?.error || 'Could not remove from the shortlist', res.status);
   return body.entries || [];

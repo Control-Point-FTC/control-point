@@ -106,7 +106,7 @@ export function useShortlist(season: number) {
   }, [season]);
 
   const patch = useCallback((p: Omit<ShortlistPatch, 'season'>) => {
-    const full: ShortlistPatch = { ...p, season };
+    const full: ShortlistPatch = { ...p, season, editedAt: Date.now() };
     const now = new Date().toISOString();
     enqueue({
       apply: (list) => {
@@ -119,7 +119,8 @@ export function useShortlist(season: number) {
   }, [season, enqueue]);
 
   const remove = useCallback((teamNumber: number) => {
-    enqueue({ apply: (list) => list.filter((x) => x.teamNumber !== teamNumber), send: () => removeShortlistEntry(season, teamNumber) });
+    const editedAt = Date.now();
+    enqueue({ apply: (list) => list.filter((x) => x.teamNumber !== teamNumber), send: () => removeShortlistEntry(season, teamNumber, editedAt) });
   }, [season, enqueue]);
 
   return { entries, loaded, error, patch, remove };

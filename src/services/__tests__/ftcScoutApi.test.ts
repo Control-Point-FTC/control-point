@@ -4,7 +4,7 @@ import { createTtlCache, readRecentTeams, pushRecentTeam, SCOUT_TTL_MS } from '.
 import { setScoutingContext, getScoutingContext, subscribeScoutingContext, openBruno, BRUNO_OPEN_EVENT, ANALYZE_GREETING, type BrunoOpenDetail } from '../brunoContext';
 import { useDebounced } from '../../hooks/useDebounced';
 import type { ShortlistEntry } from '../../types/ftcScout';
-import { applyShortlistPatch } from '../../utils/shortlist';
+import { applyShortlistPatch, mergeStampedDelete, mergeStampedPatch } from '../../utils/shortlist';
 
 describe('createTtlCache', () => {
   it('caches for the TTL (10 minutes) and reloads after expiry', async () => {
@@ -140,5 +140,36 @@ describe('Bruno scouting context', () => {
     openBruno({ greeting: ANALYZE_GREETING });
     window.removeEventListener(BRUNO_OPEN_EVENT, h);
     expect(seen[0].greeting).toMatch(/analyze teams, identify scouting priorities/);
+  });
+});
+
+describe('stamped shortlist merge (server ordering)', () => {
+  const e0: ShortlistEntry = { teamNumber: 7, teamName: 'T7', season: 2025, eventCode: null, notes: 'old', priority: 'medium', scoutNext: false, strengths: [], weaknesses: [], updatedAt: '' };
+  const live = (stamps: Record<string, number> = {}) => ({ entry: e0, stamps, deleted: false });
+
+  it('a delayed older save cannot overwrite a newer edit of the same field', () => {
+    const newer = mergeStampedPatch(live(), { season: 2025, teamNumber: 7, notes: 'new' }, 200, 't')!;
+    const late = mergeStampedPatch({ entry: newer.entry, stamps: newer.stamps, deleted: false }, { season: 2025, teamNumber: 7, notes: 'stale', priority: 'high' }, 100, 't')!;
+    expect(late.entry.notes).toBe('new');
+    expect(late.entry.priority).toBe('high'); // untouched field still applies
+  });
+
+  it('per-tag stamps: a late add cannot undo a newer remove', () => {
+    const add = mergeStampedPatch(live(), { season: 2025, teamNumber: 7, addStrengths: ['Auto'] }, 100, 't')!;
+    const rm = mergeStampedPatch({ entry: add.entry, stamps: add.stamps, deleted: false }, { season: 2025, teamNumber: 7, removeStrengths: ['Auto'] }, 300, 't')!;
+    const lateAdd = mergeStampedPatch({ entry: rm.entry, stamps: rm.stamps, deleted: false }, { season: 2025, teamNumber: 7, addStrengths: ['Auto'] }, 200, 't')!;
+    expect(lateAdd.entry.strengths).toEqual([]);
+  });
+
+  it('deletes leave a tombstone: older saves are ignored, newer saves re-add', () => {
+    const stamps = mergeStampedDelete(live({ notes: 100 }), 200)!;
+    const dead = { entry: e0, stamps, deleted: true };
+    expect(mergeStampedPatch(dead, { season: 2025, teamNumber: 7, notes: 'late' }, 150, 't')).toBeNull();
+    const revived = mergeStampedPatch(dead, { season: 2025, teamNumber: 7, teamName: 'T7' }, 250, 't')!;
+    expect(revived.entry.notes).toBe('');
+  });
+
+  it('a delete issued before a newer edit is ignored', () => {
+    expect(mergeStampedDelete(live({ notes: 300 }), 200)).toBeNull();
   });
 });
