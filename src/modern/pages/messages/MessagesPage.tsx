@@ -2,7 +2,7 @@
 // useChatController (same socket protocol, upload, mentions, reply/forward,
 // reactions, paging and admin channel actions as Legacy ChatView).
 // Three panes: channels · conversation · people (sheets on small screens).
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { ArrowUp, CornerUpLeft, Hash, Lock, Menu, Paperclip, Phone, Users, Video, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
@@ -37,6 +37,14 @@ export function MessagesPage(props: any) {
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
   const memberNames = useMemo(() => Object.fromEntries(members.map((m: any) => [m.id, m.name])), [members]);
   const ch = ctl.activeChannel;
+  // Fit the composer to its text whenever it changes: typing, a send that
+  // clears it, or a restored multiline draft on mount / channel switch.
+  useLayoutEffect(() => {
+    const el = ctl.composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [ctl.content, ctl.composerRef, ch?.id]);
   const list = ctl.visibleMessages;
 
   const select = (id: number) => { setActiveChannelId(id); setChannelsOpen(false); };
@@ -212,7 +220,6 @@ export function MessagesPage(props: any) {
                     placeholder={`Message #${ch?.name || 'general'}`}
                     aria-label={`Message #${ch?.name || 'general'}`}
                     className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
-                    onInput={(e) => { const el = e.currentTarget; el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 160)}px`; }}
                   />
                   <Button size="icon" className="shrink-0 rounded-full max-sm:size-11" aria-label="Send message" onClick={() => void ctl.handleSend()} disabled={ctl.uploading || (!ctl.content.trim() && !ctl.pendingFile)}><ArrowUp /></Button>
                 </div>

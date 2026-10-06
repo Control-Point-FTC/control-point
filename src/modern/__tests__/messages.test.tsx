@@ -164,5 +164,14 @@ describe('Modern Messages', () => {
     expect(screen.getAllByLabelText('Channel name')[0]).toBeInTheDocument();
     localStorage.removeItem('cp-collapsed-cats-1');
   });
-});
 
+  it('the composer shrinks back after its text is cleared', () => {
+    setup();
+    const box = screen.getByLabelText('Message #general') as HTMLTextAreaElement;
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, get: () => (box.value.length > 3 ? 120 : 36) });
+    fireEvent.change(box, { target: { value: 'one\ntwo\nthree' } });
+    expect(box.style.height).toBe('120px');
+    fireEvent.change(box, { target: { value: '' } });
+    expect(box.style.height).toBe('36px');
+  });
+});
