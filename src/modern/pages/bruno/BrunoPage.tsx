@@ -3,7 +3,7 @@
 // chats API, streaming, proposals, NavGPT handoff as Legacy). Thinking steps,
 // a streaming caret and Stop are always on here.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { motion } from 'motion/react';
 import { Globe, History, Lock, MoreHorizontal, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
@@ -98,7 +98,7 @@ export function BrunoPage(props: any) {
   const canDelete = !!chat && (c.isOwner || c.isAdmin);
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex min-h-0 flex-1">
       {!narrow && <aside className="hidden w-64 shrink-0 border-r border-border bg-card/40 lg:block">{history}</aside>}
 
       <section className="flex min-w-0 flex-1 flex-col">
@@ -134,9 +134,8 @@ export function BrunoPage(props: any) {
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
-            <AnimatePresence mode="wait" initial={false}>
               {empty ? (
-                <motion.div key="empty" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex flex-col items-center pt-6 text-center sm:pt-14">
+                <motion.div key="empty" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center pt-6 text-center sm:pt-14">
                   <BrunoAvatar className="size-12 [&_svg]:size-6" />
                   <h1 className="mt-4 font-display text-2xl font-semibold tracking-tight sm:text-3xl">What are we working on?</h1>
                   <p className="mt-2 max-w-md text-sm text-muted-foreground">{c.name} knows your team’s tasks, calendar and scouting, and can do things for you — it always asks before changing anything.</p>
@@ -157,7 +156,7 @@ export function BrunoPage(props: any) {
                   <Button variant="ghost" size="sm" className="mt-3" onClick={refreshStarters}><RefreshCw /> More ideas</Button>
                 </motion.div>
               ) : (
-                <motion.div key={`chat-${c.activeId ?? 'new'}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6">
+                <motion.div key={`chat-${c.activeId ?? 'new'}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
                   {c.messages.map((m, i) => (m.role === 'user'
                     ? <UserTurn key={i} text={m.text} images={(m as any).images?.length} pdfs={(m as any).pdfs?.length} />
                     : <BrunoReply
@@ -169,7 +168,6 @@ export function BrunoPage(props: any) {
                   {c.stream.active && <LiveReply text={c.stream.text} liveThink={c.liveThink} />}
                 </motion.div>
               )}
-            </AnimatePresence>
           </div>
         </div>
 
