@@ -610,3 +610,46 @@ Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both 
   - 390 dark: Field, Matches and the accuracy sheet. No overflow, and every target is ≥44 px (the switch uses the kit's 44 px hit area).
   - No real phone was available.
 - Screenshots: `docs/redesign/screenshots/phase7/`.
+
+## Phase 8a: Budget and Inventory
+
+### Shared controllers
+- **`useBudgetController`** (`src/components/budget/`): extracted from Legacy `BudgetView` with unchanged JSX.
+  - Same `/api/budget` POST / PATCH / DELETE bodies, optimistic delete with rollback, duplicate-as-new, right-click menu (`budget-tx`) and totals.
+  - The entry form is **drafted** (`budget:open`, `budget:editing`, `budget:form`). A save closes only the form it submitted.
+  - Save and delete now have separate locks (Legacy shared one).
+- **`useInventoryController`** (`src/components/inventory/`): extracted from Legacy `InventoryView` with unchanged JSX.
+  - Same endpoints: add, edit, optimistic delete, REV link scrape, invoice parse → review → confirm, auto-categorize.
+  - The add / edit forms and the invoice review are **drafted** (`inv:*`), with the same close-only-what-you-submitted guard.
+  - REV and invoice results are dropped after a sign-out or workspace switch (`inEpoch`).
+  - REV fills use a functional update, so typing during the fetch isn't lost.
+  - Search tolerates parts with no part number.
+- Kit: `SheetFooter`.
+
+### Modern Budget (`src/modern/pages/budget/BudgetPage.tsx`)
+- **Balance hero:** an animated net balance (red when negative), income and expense figures with an income-vs-expense split bar, and a new **cash-flow-by-month** bar chart (last six months with activity).
+- **"Where the money goes":** the top expense categories, with bars.
+- **Transactions:** All / Income / Expenses toggle and a search box, plus a **month-grouped ledger** with sticky month headers and each month's net.
+  - Each row has an in/out icon, a category badge and a signed amount (with screen-reader text), and an actions menu (Edit / Duplicate / Delete).
+- **Log / edit sheet:** Income / Expense toggle, `$` amount, description, category (suggested from past categories), date and team.
+- Read-only without the `budget` permission.
+
+### Modern Inventory (`src/modern/pages/inventory/InventoryPage.tsx`)
+- **Header actions:** Import invoice and Add part.
+- **Stats:** parts, units on hand and inventory value (animated).
+- **Finding parts:** search, Auto-categorize (shown when anything is uncategorized), a card / table layout toggle, and category chips.
+- **Part cards:** name, SKU and part number, quantity on hand and location, category badge, value and an actions menu. The table layout is a dense kit table.
+- **Add / edit sheet:** REV import panel (when adding), a fields grid with kit Selects for category and team, and a description.
+- **Invoice review dialog:** a checkbox per line, editable name / quantity / unit price, a category select, and "Import N items".
+- Read-only without the `inventory` permission.
+
+### Tests
+- **New (17 tests):**
+  - Budget: hero / ledger, filters, read-only, log (POST), edit (PATCH) / duplicate / delete, delete rollback, **draft survives remount**, and a slow save that doesn't close an edited form.
+  - Inventory: cards / filters, read-only, required fields + POST, REV fill, edit (PATCH) / delete, invoice parse → untick → confirm body, auto-categorize, **draft survives remount**, table layout.
+- **Totals:** 514 frontend tests pass. The failures are the 2 known Windows-only ftcCache tests, plus one Bruno Stop test that is known to be flaky under full-suite load (8/8 pass on their own three times). `tsc` is clean.
+- **Local QA:** with local-only seed rows (6 transactions, 6 parts) in the dev DB:
+  - Desktop dark: hero, chart, ledger, part grid, add sheet.
+  - 768 light: Budget.
+  - 390: both pages have no overflow, and every target is ≥44 px.
+  - No real phone was available.

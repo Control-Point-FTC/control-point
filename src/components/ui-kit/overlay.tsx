@@ -117,6 +117,7 @@ export function SheetContent({ className, children, side = 'right', ...props }: 
 export const SheetHeader = DialogHeader;
 export const SheetTitle = DialogTitle;
 export const SheetDescription = DialogDescription;
+export const SheetFooter = DialogFooter;
 
 // --- DropdownMenu -----------------------------------------------------------
 
