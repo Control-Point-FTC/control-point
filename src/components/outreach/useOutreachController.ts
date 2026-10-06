@@ -15,7 +15,7 @@ import { Pencil, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { extractActionProposals, streamBuildHelper } from '../../services/aiService';
 import { confirmDialog, notify } from '../dialog';
-import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
+import { getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { parseOutreachRows } from './parseOutreachRows';
 
@@ -25,6 +25,8 @@ export const emptyOutreachForm = (): OutreachForm => ({ title: '', description: 
 const FORM_KEY = 'outreach:form';
 const BULK_ROWS_KEY = 'outreach:bulk-rows';
 const SAVING_KEY = 'outreach:saving';
+const BULK_BUSY_KEY = 'outreach:bulk-busy';
+const PARSE_SEQ_KEY = 'outreach:bulk-parse-seq';
 const BULK_SAVING_KEY = 'outreach:bulk-saving';
 
 /** Put a row back at (about) its old position unless the list already has it. */
@@ -53,7 +55,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
   const [bulkOpen, setBulkOpen] = useDraft<boolean>('outreach:bulk-open', false);
   const [bulkText, setBulkText] = useDraft<string>('outreach:bulk-text', '');
   const [bulkRows, setBulkRows] = useDraft<any[]>(BULK_ROWS_KEY, []);
-  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkBusy, setBulkBusy] = useDraft<boolean>(BULK_BUSY_KEY, false);
   const [bulkSaving, setBulkSaving] = useDraft<boolean>(BULK_SAVING_KEY, false);
   const [bulkNote, setBulkNote] = useState<string | null>(null);
 
@@ -169,7 +171,16 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
   // linked TikTok profiles from the UI (their data stays in the DB).
   const profiles = (socialProfiles || []).filter((p: any) => p.platform !== 'tiktok');
 
+  /** Start a parse: newer parses win, and nothing re-parses while a batch is logging. */
+  const nextParse = () => {
+    const seq = getDraft<number>(PARSE_SEQ_KEY, 0) + 1;
+    setDraft(PARSE_SEQ_KEY, seq);
+    return () => getDraft<number>(PARSE_SEQ_KEY, 0) === seq;
+  };
+
   const handleBulkParse = () => {
+    if (getDraft(BULK_SAVING_KEY, false)) return;
+    nextParse(); // supersedes any Bruno parse still running
     const rows = parseOutreachRows(bulkText);
     setBulkRows(rows);
     setBulkNote(rows.length
@@ -179,12 +190,18 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
 
   const handleBulkAiParse = async () => {
     const text = bulkText.trim();
-    if (!text || bulkBusy) return;
+    if (!text || getDraft(BULK_BUSY_KEY, false) || getDraft(BULK_SAVING_KEY, false)) return;
+    // Bruno's rows land only if this is still the newest parse (a quick
+    // parse or a remount + new parse may have replaced it) and nobody signed
+    // out / switched workspace meanwhile. The busy flag is drafted, so a
+    // returning page can't start a second Bruno parse on top.
+    const latest = nextParse();
     setBulkBusy(true);
+    const done = inEpoch(() => setBulkBusy(false));
     setBulkNote(null);
     setBulkRows([]);
-    // Bruno's rows land only if nobody signed out / switched workspace meanwhile.
-    const showRows = inEpoch((rows: any[]) => setBulkRows(rows));
+    const showRows = inEpoch((rows: any[]) => { if (latest()) setBulkRows(rows); });
+    const note = (n: string) => { if (latest()) setBulkNote(n); };
     let agg = '';
     try {
       await streamBuildHelper([
@@ -192,7 +209,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
       ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
       const proposals = extractActionProposals(agg);
       const items = proposals.find((p) => p.kind === 'outreach')?.items || [];
-      const note = agg.replace(/```outreach[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
+      const reply = agg.replace(/```outreach[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
       if (items.length) {
         showRows(items.map((e: any) => ({
           title: e.title || '', description: e.description || '', date: e.date || '',
@@ -200,14 +217,14 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
           location: e.location || '', attendees: e.attendees != null && e.attendees !== '' ? String(e.attendees) : '',
           funds_raised: e.funds_raised != null && e.funds_raised !== '' ? String(e.funds_raised) : '',
         })));
-        setBulkNote(`Bruno found ${items.length} event${items.length === 1 ? '' : 's'} — review and log them all.`);
+        note(`Bruno found ${items.length} event${items.length === 1 ? '' : 's'} — review and log them all.`);
       } else {
-        setBulkNote(note || 'Bruno could not find any events in that text — try adding dates.');
+        note(reply || 'Bruno could not find any events in that text — try adding dates.');
       }
     } catch (e: any) {
-      setBulkNote(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
+      note(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
     } finally {
-      setBulkBusy(false);
+      done();
     }
   };
 
@@ -221,6 +238,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     // save may hold it.
     const unlock = inEpoch(() => setBulkSaving(false));
     let done = 0;
+    const failed: any[] = [];
     try {
       for (const r of submitted) {
         const payload = {
@@ -232,13 +250,17 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
         };
         const res = await apiFetch('/api/outreach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => null);
         if (res?.ok) done++;
+        else failed.push(r);
       }
       notify(`Logged ${done} of ${submitted.length} outreach events.`, done === submitted.length ? 'success' : 'error');
-      // Only clear the box these rows came from (not one re-parsed meanwhile).
+      // Only touch the box these rows came from (not one re-parsed meanwhile):
+      // all saved → clear it; some failed → keep just those rows (and the
+      // pasted text) so they can be retried.
       if (getDraft(BULK_ROWS_KEY, submitted) === submitted) {
-        setBulkRows([]); setBulkText(''); setBulkNote(null); setBulkOpen(false);
+        if (!failed.length) { setBulkRows([]); setBulkText(''); setBulkNote(null); setBulkOpen(false); }
+        else { setBulkRows(failed); setBulkNote(`${failed.length} event${failed.length === 1 ? '' : 's'} couldn't be logged — try again.`); }
       }
-      refresh.outreach();
+      if (done) refresh.outreach();
     } finally {
       unlock();
     }
@@ -289,7 +311,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
         title: submitted.title.trim(),
         description: submitted.description.trim(),
         date: submitted.date,
-        hours: Math.max(0, parseInt(submitted.hours) || 0),
+        hours: Math.max(0, Math.round((parseFloat(submitted.hours) || 0) * 100) / 100),
         location: submitted.location.trim(),
         attendees: Math.max(0, parseInt(submitted.attendees) || 0),
         funds_raised: Math.max(0, Math.round((parseFloat(submitted.funds_raised) || 0) * 100) / 100),

@@ -294,7 +294,7 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {num('hours', 'Hours', 'hours', { placeholder: '2', step: '1', inputMode: 'numeric' })}
+            {num('hours', 'Hours', 'hours', { placeholder: '2', step: 'any' })}
             {num('attendees', 'Attendees', 'attendees', { placeholder: '0', step: '1', inputMode: 'numeric' })}
             {num('funds', 'Funds ($)', 'funds_raised', { step: 'any', placeholder: '0' })}
           </div>
@@ -332,8 +332,8 @@ function BulkSheet({ ctl }: { ctl: Ctl }) {
             />
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={ctl.handleBulkParse} disabled={!ctl.bulkText.trim()} className="max-sm:h-11">Quick parse</Button>
-            <Button variant="outline" onClick={() => void ctl.handleBulkAiParse()} disabled={ctl.bulkBusy || !ctl.bulkText.trim()} className="max-sm:h-11">
+            <Button variant="outline" onClick={ctl.handleBulkParse} disabled={!ctl.bulkText.trim() || ctl.bulkSaving} className="max-sm:h-11">Quick parse</Button>
+            <Button variant="outline" onClick={() => void ctl.handleBulkAiParse()} disabled={ctl.bulkBusy || ctl.bulkSaving || !ctl.bulkText.trim()} className="max-sm:h-11">
               {ctl.bulkBusy ? <Loader2 className="animate-spin" /> : <Sparkles />} {ctl.bulkBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
             </Button>
           </div>

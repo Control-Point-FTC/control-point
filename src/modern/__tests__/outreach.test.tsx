@@ -196,5 +196,55 @@ describe('Modern Outreach', () => {
     await act(async () => { pending[1]({ ok: true, json: async () => ({}) }); });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
+
+  it('a partly failed batch keeps just the failed rows for a retry', async () => {
+    let n = 0;
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/outreach' && init?.method === 'POST') { n++; return n === 2 ? Promise.reject(new Error('offline')) : json({}); }
+      return json({});
+    });
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Bruno AI/ }));
+    fireEvent.change(await screen.findByLabelText('Events'), { target: { value: ['Demo A | 2026-09-12 | 2', 'Demo B | 2026-09-13 | 2'].join(String.fromCharCode(10)) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Quick parse' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Log all 2 events' }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Logged 1 of 2 outreach events.', 'error'));
+    expect(screen.queryByText('Demo A')).not.toBeInTheDocument();
+    expect(screen.getByText('Demo B')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent("1 event couldn't be logged");
+    expect(screen.getByLabelText('Events')).not.toHaveValue('');
+  });
+
+  it("can't re-parse while a batch is logging, and a late Bruno reply never replaces a newer parse", async () => {
+    let stream: (v?: any) => void = () => {};
+    ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => new Promise<void>((r) => { stream = () => { onChunk('x'); r(); }; }));
+    ai.extractActionProposals.mockReturnValue([{ kind: 'outreach', items: [{ title: 'Stale Bruno row', date: '2026-10-02' }] }]);
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Bruno AI/ }));
+    fireEvent.change(await screen.findByLabelText('Events'), { target: { value: 'Fresh row | 2026-09-12 | 2' } });
+    fireEvent.click(screen.getByRole('button', { name: /Parse with Bruno/ }));
+    // A quick parse supersedes the running Bruno parse.
+    fireEvent.click(screen.getByRole('button', { name: 'Quick parse' }));
+    expect(screen.getByText('Fresh row')).toBeInTheDocument();
+    await act(async () => { stream(); });
+    expect(screen.queryByText('Stale Bruno row')).not.toBeInTheDocument();
+    expect(screen.getByText('Fresh row')).toBeInTheDocument();
+    // While logging, both parse buttons are off.
+    let finish: (v: any) => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/outreach' && init?.method === 'POST' ? new Promise((r) => { finish = r; }) : json({})));
+    fireEvent.click(screen.getByRole('button', { name: 'Log all 1 event' }));
+    expect(screen.getByRole('button', { name: 'Quick parse' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Parse with Bruno/ })).toBeDisabled();
+    await act(async () => { finish({ ok: true, json: async () => ({}) }); });
+  });
+
+  it('events with fractional hours can be edited and keep their hours', async () => {
+    setup({ outreach: [{ ...EVENTS[0], hours: 1.5 }] });
+    await menu('Actions for Library demo', /Edit event/);
+    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'Library demo (renamed)' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(calls('/api/outreach/1', 'PATCH')).toHaveLength(1));
+    expect(body('/api/outreach/1', 'PATCH')).toMatchObject({ hours: 1.5, title: 'Library demo (renamed)' });
+  });
 });
 
