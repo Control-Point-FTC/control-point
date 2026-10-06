@@ -1,7 +1,8 @@
 import { useMemo, memo } from 'react';
 import { format } from 'date-fns';
 import { TrendingUp } from 'lucide-react';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, AreaChart, Area } from 'recharts';
+import { useChartStyle } from '../../modern/chartStyle';
 import { useTranslation } from 'react-i18next';
 import '../../i18n';
 import { useTheme } from '../../hooks/useTheme';
@@ -86,6 +87,48 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
   const endDotFill = theme === 'light' ? '#09090b' : '#ffffff';
   const axisColor = theme === 'light' ? '#71717a' : '#94a3b8';
   const tooltipBorder = theme === 'light' ? '#09090b20' : '#ffffff20';
+  const cs = useChartStyle();
+
+  // Modern experience: gradient area that draws in, quiet horizontal grid,
+  // a softly pulsing "today" dot and the next meeting marked.
+  if (cs.modern) {
+    const gradId = 'cp-att-grad';
+    return (
+      <div className={`${className} w-full min-h-44`}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 12, right: 8, left: -8, bottom: 0 }}>
+            <defs>
+              <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={cs.accent} stopOpacity={0.32} />
+                <stop offset="100%" stopColor={cs.accent} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke={cs.grid} vertical={false} />
+            <XAxis dataKey="date" {...cs.axisProps} interval="preserveStartEnd" minTickGap={20} />
+            <YAxis {...cs.axisProps} allowDecimals={false} width={32} domain={[0, Math.max(2, dataMax + 1)]} />
+            <Tooltip {...cs.tooltip} formatter={(v: any) => [v, 'Checked in']} />
+            {nextDate && (
+              <ReferenceLine x={nextDate} stroke={cs.axis} strokeDasharray="3 4" strokeOpacity={0.7}
+                label={{ value: 'Next meet', position: 'insideTopRight', fill: cs.axis, fontSize: 12 }} />
+            )}
+            <Area
+              type="monotone" dataKey="count" stroke={cs.accent} strokeWidth={2} fill={`url(#${gradId})`} connectNulls={false}
+              activeDot={{ r: 5, strokeWidth: 2, stroke: cs.accent, fill: endDotFill }}
+              {...cs.animation}
+              dot={(p: any) => p.index === lastIdx
+                ? (
+                  <g key={`end-${p.index}`}>
+                    <circle cx={p.cx} cy={p.cy} r={9} fill={cs.accent} opacity={0.25} className="cp-pulse-dot" />
+                    <circle cx={p.cx} cy={p.cy} r={4.5} fill={endDotFill} stroke={cs.accent} strokeWidth={2} />
+                  </g>
+                )
+                : <g key={`d-${p.index}`} />}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    );
+  }
 
   return (
     <div className={`${className} w-full min-h-44`}>

@@ -1,0 +1,182 @@
+/* ==========================================================================
+   Control Point — Modern design language (2026 redesign)
+
+   Applies to every page while the Modern experience is active
+   (html[data-ui="modern"], set by InterfaceModeProvider). Legacy never
+   matches these selectors, so it stays exactly as it was.
+
+   Unlayered on purpose: Tailwind v4 utilities live in @layer utilities, so
+   these rules win over them without !important.
+
+   Principles: calm graphite surfaces, hairlines instead of shadows, one
+   accent used sparingly, Inter for everything (tight headings), no text
+   under 12px, restrained motion that respects prefers-reduced-motion.
+   ========================================================================== */
+
+/* ---------- tokens ---------- */
+html[data-ui="modern"] {
+  --color-primary: #0a0a0c;      /* page */
+  --color-secondary: #101013;    /* sidebar, wells */
+  --color-elevated: #151519;     /* panels, popovers */
+  --color-line: #ffffff12;       /* hairlines */
+  --color-text-muted: #9a9aa3;
+  --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --m-panel: #121216;
+  --m-panel-hover: #16161b;
+  --m-radius: 14px;
+  --m-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --m-glow: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  background: var(--color-primary);
+}
+html.light[data-ui="modern"] {
+  --color-primary: #fbfbfa;
+  --color-secondary: #f4f4f3;
+  --color-elevated: #ffffff;
+  --color-line: #0a0a0c14;
+  --color-text-muted: #5b5b63;
+  --m-panel: #ffffff;
+  --m-panel-hover: #fdfdfc;
+}
+
+/* ---------- type ---------- */
+html[data-ui="modern"] body {
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+}
+html[data-ui="modern"] .font-display {
+  font-family: var(--font-sans);
+  letter-spacing: -0.022em;
+  font-weight: 650;
+}
+html[data-ui="modern"] :is(h1, h2, h3).font-display { letter-spacing: -0.028em; }
+/* Nothing under 12px. */
+html[data-ui="modern"] :is(.text-\[8px\], .text-\[9px\], .text-\[10px\], .text-\[11px\]) {
+  font-size: 12px;
+  line-height: 1.35;
+}
+/* Uppercase micro-labels: calmer tracking. */
+html[data-ui="modern"] :is(.tracking-widest, .tracking-\[0\.2em\], .tracking-\[0\.18em\], .tracking-\[0\.15em\], .tracking-\[0\.14em\], .tracking-\[0\.12em\]) {
+  letter-spacing: 0.06em;
+}
+html[data-ui="modern"] .uppercase.font-bold:is(.text-\[10px\], .text-\[11px\], .text-xs) { font-weight: 600; }
+html[data-ui="modern"] .tabular-nums, html[data-ui="modern"] .font-display { font-variant-numeric: tabular-nums; }
+
+/* ---------- surfaces ---------- */
+html[data-ui="modern"] .card-surface {
+  background: var(--m-panel);
+  border: 1px solid var(--color-line);
+  border-radius: var(--m-radius);
+  box-shadow: none;
+  transition: border-color 160ms var(--m-ease), background-color 160ms var(--m-ease), transform 180ms var(--m-ease), box-shadow 180ms var(--m-ease);
+}
+html.light[data-ui="modern"] .card-surface {
+  box-shadow: 0 1px 0 rgb(10 10 12 / 0.03);
+}
+/* Clickable cards lift and brighten their edge. */
+html[data-ui="modern"] :is(a, button, [role="button"]).card-surface:hover,
+html[data-ui="modern"] .card-surface.cursor-pointer:hover {
+  background: var(--m-panel-hover);
+  border-color: color-mix(in srgb, var(--color-text-base) 16%, transparent);
+  transform: translateY(-1px);
+}
+html[data-ui="modern"] .glass,
+html[data-ui="modern"] .dropdown-surface {
+  background: var(--color-elevated);
+  border-color: var(--color-line);
+  backdrop-filter: none;
+}
+/* Heavy legacy shadows and gold glows are retired. */
+html[data-ui="modern"] :is(.gold-glow, [class*="shadow-[0_8px_30px"], [class*="shadow-[0_4px_16px_rgba(255,199,0"]) {
+  box-shadow: none;
+}
+html[data-ui="modern"] .volt-text-glow { text-shadow: none; }
+
+/* Rounder, quieter radii across the board. */
+html[data-ui="modern"] :is(.rounded-2xl, .rounded-3xl) { border-radius: var(--m-radius); }
+html[data-ui="modern"] .rounded-xl { border-radius: 10px; }
+
+/* Primary buttons: crisp, no glow; every button has a pressed state. */
+html[data-ui="modern"] :is(button, a)[class*="bg-accent"]:not([class*="bg-accent/"]) {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 2px rgb(0 0 0 / 0.25);
+}
+html[data-ui="modern"] button:not(:disabled):active { transform: scale(0.97); }
+html[data-ui="modern"] button { transition-property: color, background-color, border-color, box-shadow, opacity, transform; transition-duration: 140ms; transition-timing-function: var(--m-ease); }
+
+/* Form fields: one look everywhere. */
+html[data-ui="modern"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), textarea, select) {
+  border-radius: 10px;
+}
+html[data-ui="modern"] :is(input, textarea, select):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--m-glow);
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+html[data-ui="modern"] input[type="range"] { accent-color: var(--color-accent); }
+
+/* Tables: quieter headers and dividers. */
+html[data-ui="modern"] thead tr { background: transparent; }
+html[data-ui="modern"] th { font-weight: 600; letter-spacing: 0.04em; }
+
+/* Scrollbars */
+html[data-ui="modern"] .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+html[data-ui="modern"] .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-base) 14%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Focus ring everywhere (keyboard only). */
+html[data-ui="modern"] :focus-visible { outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent); outline-offset: 2px; }
+
+/* ---------- motion ---------- */
+@keyframes cp-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes cp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cp-shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* Page enter: the page fades up, then its top-level sections rise in, staggered.
+   (.m-page wraps the routed page; its child is the page root.) */
+html[data-ui="modern"] .m-page > * { animation: cp-fade 240ms var(--m-ease) both; }
+html[data-ui="modern"] .m-page > * > * { animation: cp-rise 420ms var(--m-ease) both; }
+html[data-ui="modern"] .m-page > * > *:nth-child(2) { animation-delay: 45ms; }
+html[data-ui="modern"] .m-page > * > *:nth-child(3) { animation-delay: 90ms; }
+html[data-ui="modern"] .m-page > * > *:nth-child(4) { animation-delay: 135ms; }
+html[data-ui="modern"] .m-page > * > *:nth-child(5) { animation-delay: 180ms; }
+html[data-ui="modern"] .m-page > * > *:nth-child(n + 6) { animation-delay: 220ms; }
+/* Grids of cards inside a page stagger too. */
+html[data-ui="modern"] .m-page :is(.grid) > .card-surface { animation: cp-rise 420ms var(--m-ease) both; }
+html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(2) { animation-delay: 50ms; }
+html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(3) { animation-delay: 100ms; }
+html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(4) { animation-delay: 150ms; }
+html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(n + 5) { animation-delay: 200ms; }
+
+/* Skeletons shimmer instead of pulsing. */
+html[data-ui="modern"] .animate-pulse.rounded-xl,
+html[data-ui="modern"] [data-slot="skeleton"] {
+  animation: cp-shimmer 1.6s linear infinite;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--color-text-base) 5%, transparent) 0%,
+    color-mix(in srgb, var(--color-text-base) 10%, transparent) 50%,
+    color-mix(in srgb, var(--color-text-base) 5%, transparent) 100%);
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui="modern"] *,
+  html[data-ui="modern"] *::before,
+  html[data-ui="modern"] *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* Chart "today" dot breathes gently. */
+@keyframes cp-pulse { 0%, 100% { transform: scale(1); opacity: 0.25; } 50% { transform: scale(1.5); opacity: 0.08; } }
+html[data-ui="modern"] .cp-pulse-dot { transform-box: fill-box; transform-origin: center; animation: cp-pulse 2.4s ease-in-out infinite; }

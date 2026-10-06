@@ -177,3 +177,13 @@ describe('buildModernNav', () => {
     expect(flattenNav(buildModernNav(noRoles)).some((i) => i.id === 'roles')).toBe(false);
   });
 });
+
+import { interpolateNumbers } from '../AnimatedValue';
+describe('interpolateNumbers', () => {
+  it('keeps the format while counting', () => {
+    expect(interpolateNumbers('12 / 18', 0.5)).toBe('6 / 9');
+    expect(interpolateNumbers('$1,250', 1)).toBe('$1,250');
+    expect(interpolateNumbers('$1,250', 0)).toBe('$0');
+    expect(interpolateNumbers('Nothing', 0.3)).toBe('Nothing');
+  });
+});

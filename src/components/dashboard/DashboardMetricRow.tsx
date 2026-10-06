@@ -3,8 +3,9 @@ import { CalendarCheck, CheckSquare, Calendar, Wallet } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import '../../i18n';
 import { cn } from '../ui';
+import { AnimatedValue } from '../../modern/AnimatedValue';
 
-function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: any) {
+function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default', count = false }: any) {
   return (
     <button
       onClick={onClick}
@@ -20,7 +21,8 @@ function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default' }: a
         "text-xl sm:text-2xl font-display font-bold tracking-tight truncate",
         tone === 'warn' ? 'text-rose-400' : tone === 'ok' ? 'text-emerald-400' : 'text-text-base'
       )}>
-        {value}
+        {/* Numeric KPIs count up in the Modern experience. */}
+        {count ? <AnimatedValue value={value} /> : value}
       </p>
       <p className="text-[11px] text-text-muted mt-0.5 truncate">{sub}</p>
     </button>
@@ -58,6 +60,7 @@ function DashboardMetricRow({
       <KpiCard
         icon={CalendarCheck}
         label={t('dashboard.todayAttendance')}
+        count
         value={hasSessionToday ? `${presentCount} / ${memberCount}` : `${memberCount} ${memberCount === 1 ? t('dashboard.member') : t('dashboard.members')}`}
         sub={hasSessionToday ? t('dashboard.checkedInSoFar') : t('dashboard.noSessionToday')}
         onClick={() => onNavigate('/attendance')}
@@ -65,6 +68,7 @@ function DashboardMetricRow({
       <KpiCard
         icon={CheckSquare}
         label={t('dashboard.openTasks')}
+        count
         value={activeTaskCount}
         sub={overdueCount > 0 ? t('dashboard.overdue', { count: overdueCount }) : t('dashboard.everythingOnTrack')}
         tone={overdueCount > 0 ? 'warn' : 'default'}
@@ -80,6 +84,7 @@ function DashboardMetricRow({
       <KpiCard
         icon={Wallet}
         label={t('nav.budget')}
+        count
         value={`$${totalBudget.toLocaleString()}`}
         sub={t('dashboard.netBalance')}
         tone={totalBudget < 0 ? 'warn' : 'ok'}
