@@ -1,14 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { X, ArrowLeft, ArrowRight, Check, Compass, UserCircle, AlertTriangle, Sun, Moon, Palette } from 'lucide-react';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
-import {
-  cn,
-  buildProfilePatch,
-  validateProfileInput,
-  type OnboardingState,
-} from './onboardingState';
-import { confirmDialog } from '../dialog';
-import { useTheme } from '../../hooks/useTheme';
+import { cn, type OnboardingState } from './onboardingState';
+import { useSetupWizard } from './useSetupWizard';
 
 export interface SetupWizardProps {
   user: { name?: string; role?: string };
@@ -50,32 +44,11 @@ export default function SetupWizard({
   onStartTour,
   onClose,
 }: SetupWizardProps) {
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(initialStep);
-  const [name, setName] = useState(user.name || '');
-  const [role, setRole] = useState(user.role || '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [fieldError, setFieldError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<{ profile: string; tour: string }>(() => ({
-    profile: state.steps.profile.status,
-    tour: state.steps.tour.status,
-  }));
-  const { theme, setTheme } = useTheme();
+  const {
+    step, setStep, dir, name, setName, role, setRole, busy, error, setError, fieldError, summary, theme, setTheme,
+    handleClose, finish, saveProfile, skipTour,
+  } = useSetupWizard({ user, initialStep, state, onPatchState, onSaveProfile, onProfileChanged, onStartTour, onClose });
   const dialogRef = useRef<HTMLDivElement>(null);
-  const dirtyRef = useRef(false);
-
-  // Direction-aware transitions, derived from step changes so every
-  // navigation path (save, skip, back buttons) glides the right way.
-  const stepRef = useRef(step);
-  const [dir, setDir] = useState(1);
-  useEffect(() => {
-    setDir(step >= stepRef.current ? 1 : -1);
-    stepRef.current = step;
-  }, [step]);
-
-  useEffect(() => {
-    dirtyRef.current = name.trim() !== (user.name || '').trim() || role.trim() !== (user.role || '').trim();
-  }, [name, role, user.name, user.role]);
 
   // Focus the dialog on open / step change; Esc asks before abandoning.
   useEffect(() => {
@@ -93,76 +66,6 @@ export default function SetupWizard({
     return () => window.removeEventListener('keydown', onKey, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, role]);
-
-  const handleClose = async () => {
-    if (dirtyRef.current && step === 0) {
-      const ok = await confirmDialog({
-        title: 'Leave setup?',
-        message: 'Your profile changes haven\u2019t been saved yet. You can finish setup anytime from your account menu.',
-        confirmLabel: 'Leave',
-        cancelLabel: 'Keep editing',
-      });
-      if (!ok) return;
-    }
-    onClose();
-  };
-
-  const markStep = async (id: 'profile' | 'tour', status: 'done' | 'skipped') => {
-    const now = new Date().toISOString();
-    await onPatchState({ steps: { [id]: { status, updatedAt: now } } });
-  };
-
-  const saveProfile = async (skip: boolean) => {
-    setError(null);
-    setFieldError(null);
-    if (skip) {
-      setBusy(true);
-      try {
-        await markStep('profile', 'skipped');
-        setSummary((s) => ({ ...s, profile: 'skipped' }));
-        setStep(1);
-      } catch (e: any) {
-        setError(e?.message || 'Could not save. Please try again.');
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-    const v = validateProfileInput(name);
-    if (v) {
-      setFieldError(v);
-      return;
-    }
-    setBusy(true);
-    try {
-      const patch = buildProfilePatch({ name: user.name, role: user.role }, { name, role });
-      if (patch) {
-        await onSaveProfile(patch);
-        onProfileChanged(patch.name, patch.role);
-      }
-      await markStep('profile', 'done');
-      setSummary((s) => ({ ...s, profile: 'done' }));
-      setStep(1);
-    } catch (e: any) {
-      setError(e?.message || 'Could not save your profile. Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const skipTour = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await markStep('tour', 'skipped');
-      setSummary((s) => ({ ...s, tour: 'skipped' }));
-      setStep(3);
-    } catch (e: any) {
-      setError(e?.message || 'Could not save. Please try again.');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <MotionConfig reducedMotion="user">
@@ -489,7 +392,7 @@ export default function SetupWizard({
               </p>
             )}
             <button
-              onClick={onClose}
+              onClick={finish}
               className="mt-6 w-full py-3 rounded-xl font-bold text-[15px] bg-accent text-accent-ink hover:brightness-105 active:scale-[0.99] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-secondary"
             >
               Start using Control Point
