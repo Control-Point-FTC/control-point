@@ -442,6 +442,143 @@ The ⌘J side panel (`BrunoPanel`) is shared by both modes and still uses the Le
   - 1440 px: the empty state, and a live send. The server error ("AI not configured" locally) is shown.
   - 375 px: no overflow, every target ≥44 px, the composer sits above the tab bar, and the middle scrolls.
 
+## Phase 6b: Bruno side panel (⌘J)
+
+**Shared logic:** `src/components/bruno/useBrunoPanelChat.ts` holds all of `BrunoPanel`'s behaviour:
+- Lazy chat creation, throttled streaming (90 ms), thinking steps and Stop.
+- Proposals.
+- Analyze mode (the scouting context), page-aware rotating starters, and queued "Scout with Bruno" prompts.
+- The output-length picker (now one save at a time).
+- Escape to close, and the expand-to-chat id.
+
+Legacy `BrunoPanel` uses the hook with its markup unchanged.
+
+**The conversation survives a mode switch.** Messages, chat id, composer text, proposal and thinking state, and the busy flag live in the draft store. The in-flight AbortController is module-scoped. So switching between Legacy and Modern with the panel open keeps the conversation, and a reply that is still streaming keeps going and can still be stopped.
+
+### Modern dock (`src/modern/BrunoDock.tsx`)
+`BrunoPanelSwitch` renders the dock in Modern and `BrunoPanel` in Legacy. The dock keeps the same docking behaviour: it pushes the page aside on desktop and overlays it on phones.
+- **Header:** avatar, name, Analyze-mode badge, and icon actions with tooltips (New chat, Open full Bruno, Close).
+- **Toolbar:** an "answer length" dropdown with checkmarks, and a Resources dropdown (GM0, FTC Docs, REV Docs, Game & Season).
+- **Body:** the greeting card and "Try one" starters with refresh. Replies reuse the Bruno page's parts: live thinking → streamed text with a caret → a finished reply with "Thought for Ns", and the proposal card.
+- **Composer:** the same as the page, with attachments, paste and Stop.
+- It brings its own `TooltipProvider`, since it renders outside the shell.
+
+### Tests
+- **New (5 dock tests):**
+  - A fresh chat streams and reports its id for expand.
+  - **The conversation is kept when the interface switches Modern → Legacy.**
+  - Stop keeps the partial reply.
+  - Answer length sends the same profile PATCH.
+  - A queued "Scout with Bruno" prompt sends, and Escape closes.
+- **Totals:** Modern suite green, plus the existing Legacy panel tests. `tsc` is clean.
+- **Local QA:** ⌘J on Tasks at 1440 px docks the panel beside the page.
+- **Screenshot:** `docs/redesign/screenshots/phase6/bruno-dock-1440-dark.jpg`.
+
+## Phase 6c: Messages
+
+**Shared logic:** `src/components/chat/useChatController.ts` holds `ChatView`'s state and handlers, moved mechanically. Every name `ChatView` declared is returned, so the Legacy JSX is untouched. It covers:
+- Optimistic socket sends, reconciled by `client_id`.
+- File upload (10 MB limit, paste and drop).
+- Mentions: `@Name` → `@[Name]`, plus `@everyone` and `@here`.
+- Reply, forward, copy and delete (optimistic, with rollback).
+- Reactions and the reaction picker.
+- Paging with the `before=` cursor.
+- Collapsed categories.
+- Admin actions: create, rename, move and drag-to-category for channels; create and rename for categories; and a `togglePostRestricted` with the same PATCH as Legacy's inline menu.
+
+The composer text and the pending file stay drafted. Pure formatters (mention pills, linkify, first URL, day dividers, file size) live in `components/chat/chatFormat.tsx`.
+
+### Modern Messages (`src/modern/pages/messages/`)
+Three panes (channels · conversation · people). On phones the side panes become sheets.
+- **Channels:**
+  - A workspace switcher, and an admin "+" menu for a new channel or category.
+  - Collapsible categories; channel rows with a lock for admin-only posting.
+  - Admin menus. Channels: rename inline, Move to (submenu), Admin-only posting, Delete (not `#general`). Categories: new channel here, rename, delete.
+  - Drag a channel onto a category.
+  - Voice channels below.
+- **Conversation:**
+  - Header with the channel name and topic, and a people toggle.
+  - "Load older messages".
+  - Sticky day pills.
+  - **Grouped runs:** consecutive messages from one sender within 5 minutes share one avatar and name; hovering a grouped line shows its time.
+  - Reply quotes jump to the original. Forwarded labels, mention pills and links.
+  - Images with a "no longer available" fallback; file cards.
+  - Rebuilt link-preview cards (same `/api/link-preview`).
+  - Reactions.
+  - A floating action bar (React · Reply · Forward · Copy · Delete) on hover, keyboard focus, or tap on touch devices.
+  - A "Drop to attach" overlay.
+- **Composer:**
+  - An @-mention suggestion list (Tab inserts the first).
+  - Reply banner and attachment preview chip.
+  - Auto-growing input, paperclip, Send.
+  - In admin-only channels, members see an "Only admins can post" banner instead.
+- **Forward:** a Command dialog listing channels.
+- **People:** online and offline lists with voice and video call buttons.
+
+### Permissions (unchanged)
+- Delete is offered for your own messages or to admins. The server now enforces this too (Control-Point-FTC/control-point#37).
+- The channel and category admin menus need admin.
+- The client's "can post in a restricted channel" check still uses `isAdmin`, as in Legacy; the server uses `manage_members`.
+
+### Tests
+- **New (8 Modern Messages tests):**
+  - Same socket payload as Legacy, with the optimistic message.
+  - Mention suggestion, Tab to insert, and `@[Name]` conversion.
+  - Reply sends `reply_to_id`; forward sends `is_forwarded`, `forwarded_from` and the target channel.
+  - Members can delete only their own messages (optimistic DELETE).
+  - Admin-only channels block members from posting.
+  - **A half-typed message survives a remount.**
+  - The admin-only toggle sends the Legacy PATCH.
+  - Loading older messages uses the `before=` cursor.
+- **Totals:** frontend suite green apart from the known Windows-only ftcCache failures. `tsc` is clean.
+- **Local QA:**
+  - 1440 px three-pane layout.
+  - 375 px: no overflow, every target ≥44 px.
+  - A **live socket round trip** on the local server: the message appears once, as one row, confirmed by the server echo.
+- **Screenshots:** `docs/redesign/screenshots/phase6/messages-*.jpg`.
+
+## Phase 6d: Communication
+
+**Shared logic:** `src/components/communication/useCommunicationController.ts` holds `CommunicationView`'s logic:
+- Threading: roots plus replies, the chain sorted by date, threads sorted by latest activity.
+- The same `POST`/`PUT`/`DELETE /api/communications` bodies.
+- Optimistic delete (a root deletes its replies), with rollback.
+- The right-click delete menu.
+- The "did they respond?" follow-up.
+
+Changes from Legacy:
+- **Drafted forms.** The open forms (new log, reply, edit) live in the draft store.
+- **No more lost edits from a late save.** A save now only clears the form it submitted, so edits made while a save is in flight are kept.
+
+Legacy keeps its markup and the edit dialog's focus trap.
+
+### Modern Communication (`src/modern/pages/communication/`)
+- **Header:** "Conversations", with counts of threads and of those awaiting a reply. **Log message** is a split button; its menu adds "Paste it to Bruno" (BrunoQuickAdd) and "Import an email file" (EmailImport).
+- **Toolbar:** search across people, subjects and text, plus All / Awaiting reply / Email / Announcements filters.
+- **Thread list:** cards with recipient, subject, last line, last activity, an Awaiting reply or Replied badge, and an entry count.
+- **Thread view:**
+  - A timeline of entries: their messages are blue and left-aligned ("From X"); ours are neutral and right-aligned ("You / Team").
+  - Hover shows edit and delete. On phones the thread opens in a bottom sheet.
+  - Buttons: **Log their reply** / **Follow up**.
+- **Forms:**
+  - Log a message is a sheet with a type toggle, To, Subject, a datetime-local Sent field, and the message.
+  - Reply and Edit are dialogs. Recipient and subject can be edited only on the first entry, as in Legacy.
+  - "Did they reply?" is a dialog that opens the reply form for the new thread.
+- **Permissions (unchanged):** writes need the `communications` scope; everyone can read.
+
+### Tests
+- **New (5 Modern Communication tests):**
+  - Threading order and the awaiting-reply filter.
+  - The log body matches Legacy, followed by the did-they-reply → reply flow (`parent_id`, `direction`).
+  - Edit sends PUT; deleting a thread waits for confirm.
+  - Read-only without the scope.
+  - **A half-written log survives a remount.**
+- **Totals:** frontend suite green apart from the known Windows-only ftcCache failures. `tsc` is clean.
+- **Local QA:**
+  - Logged a real message on the local test workspace, saw the "Did they reply?" prompt, and found the thread listed as "Awaiting reply".
+  - 375 px: no overflow, every target ≥44 px.
+- **Screenshots:** `docs/redesign/screenshots/phase6/communication-*.jpg`.
+
 ## Phase 7a: Predict
 
 ### Shared controller (`src/components/predict/usePredictController.ts`)
