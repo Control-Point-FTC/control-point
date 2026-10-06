@@ -1,14 +1,14 @@
 // Interface mode (2026 redesign): Legacy vs Modern experience.
 //
 // Resolution: the user's own choice (members.interface_mode) → the workspace
-// default (teams.default_interface_mode) → 'legacy'. Switching is instant: the
+// default (teams.default_interface_mode) → 'modern' (since phase 9e). Switching is instant: the
 // mode lives in React state above both shells, saves optimistically and rolls
 // back if the save fails. Business data stays in App state, so nothing reloads.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { apiFetch } from '../services/api';
 
 export type InterfaceMode = 'legacy' | 'modern';
-export const DEFAULT_INTERFACE_MODE: InterfaceMode = 'legacy';
+export const DEFAULT_INTERFACE_MODE: InterfaceMode = 'modern';
 
 export function isInterfaceMode(v: unknown): v is InterfaceMode {
   return v === 'legacy' || v === 'modern';

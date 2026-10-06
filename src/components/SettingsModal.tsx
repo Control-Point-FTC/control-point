@@ -827,7 +827,7 @@ export default function SettingsModal({
                   <div>
                     <h3 className="text-sm font-bold text-text-base">Background Effects</h3>
                     <p className="text-xs text-text-muted leading-relaxed mt-1">
-                      Customize the animated background grid. These effects belong to the Legacy experience.
+                      Customize the animated background grid. These effects belong to the Classic experience.
                     </p>
                   </div>
                   <button

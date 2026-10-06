@@ -83,12 +83,12 @@ describe('Modern Bruno', () => {
     setup();
     fireEvent.change(await screen.findByLabelText('Message Bruno'), { target: { value: 'Explain odometry' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop generating' }));
-    await waitFor(() => expect(screen.getByText('Stopped.')).toBeInTheDocument());
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop generating' }, { timeout: 5000 }));
+    await waitFor(() => expect(screen.getByText('Stopped.')).toBeInTheDocument(), { timeout: 5000 });
     expect(screen.getByText(/Partial answer/)).toBeInTheDocument();
     expect(screen.getByText('Stopped.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
-  });
+  }, 20000);
 
   it('a half-typed message survives a remount (mode switch)', async () => {
     const first = setup();

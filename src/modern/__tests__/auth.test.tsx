@@ -8,6 +8,7 @@ vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...a
 import { ModernLanding } from '../pages/auth/ModernLanding';
 import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from '../pages/auth/AuthPages';
 import { CodeRevealDialog } from '../pages/auth/CodeRevealDialog';
+import { TeamlessPage } from '../pages/auth/TeamlessPage';
 import { AuthLayout } from '../pages/auth/AuthLayout';
 import { notify } from '../../components/dialog';
 import { readDeviceMode, useSignedOutMode } from '../signedOut';
@@ -36,11 +37,11 @@ const providers = { google: true, discord: false, github: true };
 
 describe('Modern signed-out look', () => {
   it('follows the look this device last used, else the default', () => {
+    expect(readDeviceMode()).toBe('modern'); // the app default since 9e
+    localStorage.setItem('cp-interface-mode', 'legacy');
     expect(readDeviceMode()).toBe('legacy');
-    localStorage.setItem('cp-interface-mode', 'modern');
-    expect(readDeviceMode()).toBe('modern');
     localStorage.setItem('cp-interface-mode', 'nonsense');
-    expect(readDeviceMode()).toBe('legacy');
+    expect(readDeviceMode()).toBe('modern');
   });
 
   it('switching to Classic is remembered, and signing out picks up the session look', () => {
@@ -288,6 +289,43 @@ describe('signed-out toasts', () => {
     render(<AuthLayout><p>form</p></AuthLayout>);
     act(() => notify('Password updated — sign in with your new password', 'success'));
     expect(await screen.findByText('Password updated — sign in with your new password')).toBeInTheDocument();
+  });
+});
+
+describe('Modern zero-team screen', () => {
+  const mount = () => {
+    const p = { onCreateTeam: vi.fn(async () => {}), onJoinTeam: vi.fn(async () => {}), onDeleteAccount: vi.fn(async () => {}), onSignOut: vi.fn(), onClassic: vi.fn() };
+    render(<TeamlessPage user={{ email: 'ada@x.test' }} {...p} />);
+    return p;
+  };
+
+  it('creates or joins from the option cards', async () => {
+    const p = mount();
+    fireEvent.click(screen.getByRole('button', { name: /Create a workspace/ }));
+    fireEvent.change(await screen.findByLabelText('Team name'), { target: { value: '  Gears  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    await waitFor(() => expect(p.onCreateTeam).toHaveBeenCalledWith('Gears'));
+    fireEvent.click(screen.getByRole('button', { name: /Join with a code/ }));
+    fireEvent.change(await screen.findByLabelText('Access code'), { target: { value: 'CP-1234' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Join team' }));
+    await waitFor(() => expect(p.onJoinTeam).toHaveBeenCalledWith('CP-1234'));
+    fireEvent.click(screen.getByRole('button', { name: /Sign out/ }));
+    expect(p.onSignOut).toHaveBeenCalled();
+  });
+
+  it('deleting the account needs the email typed, then a confirmation', async () => {
+    const dialogMod = await import('../../components/dialog');
+    const confirm = vi.spyOn(dialogMod, 'confirmDialog').mockResolvedValue(true);
+    const p = mount();
+    fireEvent.click(screen.getByRole('button', { name: /Delete my account/ }));
+    const del = await screen.findByRole('button', { name: 'Delete account' });
+    expect(del).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Your email'), { target: { value: 'ADA@x.test' } });
+    expect(del).toBeEnabled();
+    fireEvent.click(del);
+    await waitFor(() => expect(p.onDeleteAccount).toHaveBeenCalled());
+    expect(confirm).toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });
 

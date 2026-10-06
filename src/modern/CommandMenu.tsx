@@ -89,8 +89,8 @@ export function CommandMenu({ open, onOpenChange, visibleTabs, onNavigate, teams
           <CommandItem value="theme toggle dark light" onSelect={() => run(toggle)}>
             {theme === 'light' ? <Moon /> : <Sun />} {theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
           </CommandItem>
-          <CommandItem value="legacy experience interface old" onSelect={() => run(() => void setMode('legacy'))}>
-            <ArrowLeftRight /> Switch to Legacy experience
+          <CommandItem value="classic legacy experience interface old" onSelect={() => run(() => void setMode('legacy'))}>
+            <ArrowLeftRight /> Switch to Classic experience
           </CommandItem>
         </CommandGroup>
       </CommandList>

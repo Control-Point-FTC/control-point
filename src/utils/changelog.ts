@@ -13,6 +13,29 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '2.0.0',
+    date: '2026-10-06',
+    title: 'Control Point, redesigned',
+    added: [
+      'A brand-new Modern experience, now the default: a calmer sidebar, ⌘K search and an Inbox for everything that needs you',
+      'Every page rebuilt: Home, Tasks, Calendar, Attendance, People, Settings, Messages, Communication, Bruno, Team Stats, Predict, Budget, Inventory, Outreach, Resources, CAD, Code and the Owner console',
+      'Bruno docks beside any page (⌘J) and shows its thinking steps; Stop ends a reply and keeps what it wrote',
+      'New landing page and sign-in screens, a guided first-run setup, and a fresh interactive tour',
+      'Pick Modern or Classic during setup, from the account menu or in Settings → Appearance; your choice follows you to every device',
+      'Smooth animations throughout (turned off when your device asks for reduced motion)',
+      'Refreshed emails, with a separate password-reset email and an "Open your tasks" button on task emails',
+    ],
+    improved: [
+      'Unsent text survives switching looks: drafts, half-filled forms and in-progress saves carry over',
+      'Phones get full-width sheets, bottom tabs and tap targets of at least 44 px',
+      'Charts share one style and animate their numbers',
+    ],
+    fixed: [
+      'Many race conditions where a slow save or reply could overwrite newer work',
+      'Copying a resource link or your workspace access code works on plain-HTTP local networks and says when it fails',
+    ],
+  },
+  {
     version: '1.5.0',
     date: '2026-10-06',
     title: 'Predict (beta) + email-style threads',

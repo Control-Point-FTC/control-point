@@ -99,8 +99,8 @@ export function WhatsNewModal({ open, onClose }: { open: boolean; onClose: () =>
   );
 }
 
-// Auto-popup on version change
-export function WhatsNewAutoPopup() {
+/** Opens once per new version (shared by the Classic and Modern dialogs). */
+export function useWhatsNewAutoOpen() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -111,6 +111,12 @@ export function WhatsNewAutoPopup() {
     return () => clearTimeout(t);
   }, []);
 
+  return [open, setOpen] as const;
+}
+
+// Auto-popup on version change
+export function WhatsNewAutoPopup() {
+  const [open, setOpen] = useWhatsNewAutoOpen();
   return <WhatsNewModal open={open} onClose={() => setOpen(false)} />;
 }
 
