@@ -187,8 +187,10 @@ import { HomePage } from './modern/pages/HomePage';
 import { InboxPage } from './modern/pages/InboxPage';
 import { TasksPage } from './modern/pages/tasks/TasksPage';
 import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
+import { CalendarPage } from './modern/pages/calendar/CalendarPage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
+import { useCalendarController, toDateKey, fmtTime } from './components/calendar/useCalendarController';
 import type { CommandAction } from './modern/CommandMenu';
 import type { NotificationActions } from './modern/notifications';
 import { useDraft, clearDrafts } from './modern/drafts';
@@ -2639,7 +2641,7 @@ export default function App() {
         <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />} />
         <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} />} />
         <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} modern={<TasksPage {...viewProps} />} />} />
-        <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} />} />
+        <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} modern={<CalendarPage {...viewProps} />} />} />
         <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} />} />
         <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} />} />
         <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} />} />
@@ -5614,7 +5616,12 @@ function AttendanceView({ members, attendance, events, onRefresh, refresh, setLo
 }
 
 function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUser, hasScope }: any) {
-  const canManageCalendar = hasScope ? hasScope('calendar') : false;
+  // All Calendar state + handlers are shared with the Modern Calendar page.
+  const {
+    canManageCalendar, cursor, setCursor, todayKey, byDate, upcoming, isEventFinished,
+    showModal, editingId, form, setForm, openNew, openEdit, closeEditor, handleSave, handleDelete, deleteEvent,
+    aiOpen, setAiOpen, aiText, setAiText, aiBusy, aiNote, aiProposals, setAiProposals, aiCreating, handleAiParse, handleAiCreateAll,
+  } = useCalendarController({ events, setEvents, refresh, currentUser, hasScope });
 
   // Right-click on a calendar event: edit or delete without opening the card.
   useContextMenu('cal-event', (el) => {
@@ -5626,11 +5633,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
       { label: 'Edit event', icon: Pencil, action: () => openEdit(ev) },
       { label: 'Add event on this day', icon: Plus, action: () => openNew(ev.date) },
       {
-        label: 'Delete event', icon: Trash2, danger: true, action: async () => {
-          if (!(await confirmDialog({ title: 'Delete event', message: `Delete "${ev.title}"?`, confirmLabel: 'Delete', danger: true }))) return;
-          await apiFetch(`/api/events/${id}`, { method: 'DELETE' });
-          refresh.events();
-        },
+        label: 'Delete event', icon: Trash2, danger: true, action: () => { void deleteEvent(id, ev.title); },
       },
     ];
   });
@@ -5644,98 +5647,6 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
       { label: `Add event · ${fmtDate(date)}`, icon: Plus, action: () => openNew(date) },
     ];
   });
-  const [cursor, setCursor] = useState(() => new Date());
-  const [showModal, setShowModal] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState({ title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
-  // Bruno screen context: the event open in the editor.
-  useEffect(() => {
-    setScreenEntity('eventId', showModal ? editingId : null);
-    return () => setScreenEntity('eventId', null);
-  }, [showModal, editingId]);
-
-  // AI quick-add: paste/type natural language, Bruno parses it into event
-  // proposals. One proposal fills the form; several get a bulk-create preview.
-  const [aiOpen, setAiOpen] = useState(false);
-  const [aiText, setAiText] = useState('');
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiNote, setAiNote] = useState<string | null>(null);
-  const [aiProposals, setAiProposals] = useState<any[]>([]);
-  const [aiCreating, setAiCreating] = useState(false);
-
-  const resetAi = () => { setAiText(''); setAiNote(null); setAiProposals([]); };
-
-  const handleAiParse = async () => {
-    const text = aiText.trim();
-    if (!text || aiBusy) return;
-    setAiBusy(true);
-    setAiNote(null);
-    setAiProposals([]);
-    let agg = '';
-    try {
-      await streamBuildHelper([
-        { role: 'user', text: `You are helping fill in a calendar event form. The user pasted the text below into the "AI quick-add" box and clicked Parse — that click is their confirmation that they want the events proposed. Extract EVERY calendar event mentioned and propose them with the \`\`\`event block exactly as your team calendar skill specifies. Resolve relative dates (tomorrow, this Friday, etc.) against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
-      ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
-      const proposals = extractActionProposals(agg);
-      const items = proposals.find(p => p.kind === 'event')?.items || [];
-      // Strip fenced blocks for the human-readable note
-      const note = agg.replace(/```event[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
-      if (items.length === 1) {
-        const e = items[0];
-        setForm(f => ({
-          ...f,
-          title: e.title || f.title,
-          description: e.notes || f.description,
-          date: e.date || f.date,
-          start_time: e.time || f.start_time,
-        }));
-        setAiNote('Bruno filled in the form below — review it and hit Create Event.');
-        setAiOpen(false);
-      } else if (items.length > 1) {
-        setAiProposals(items);
-        setAiNote(`Bruno found ${items.length} events — review and create them all at once.`);
-      } else {
-        setAiNote(note || 'Bruno could not find any events in that text — try adding dates and times.');
-      }
-    } catch (e: any) {
-      setAiNote(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
-  const handleAiCreateAll = async () => {
-    if (!aiProposals.length || aiCreating) return;
-    setAiCreating(true);
-    try {
-      const applied = await applyActionProposals([{ kind: 'event', items: aiProposals } as ActionProposal]);
-      notifyBrunoDataChanged(['calendar']);
-      notify(`Created ${applied.event || aiProposals.length} events.`, 'success');
-      resetAi();
-      setAiOpen(false);
-      setShowModal(false);
-      refresh.events();
-    } catch (e: any) {
-      setAiNote(e?.message || "Couldn't create those events — please try again.");
-    } finally {
-      setAiCreating(false);
-    }
-  };
-
-  const toKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const todayKey = toKey(new Date());
-
-  const byDate = useMemo(() => {
-    const map: Record<string, any[]> = {};
-    for (const e of events) {
-      (map[e.date] = map[e.date] || []).push(e);
-    }
-    for (const k of Object.keys(map)) {
-      map[k].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
-    }
-    return map;
-  }, [events]);
-
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const startDay = new Date(year, month, 1).getDay();
@@ -5754,110 +5665,12 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
     meeting: 'Meeting', competition: 'Competition', deadline: 'Deadline', social: 'Social', other: 'Other',
   };
 
-  const openNew = (dateKey: string) => {
-    setEditingId(null);
-    setForm({ title: '', description: '', date: dateKey, start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' });
-    resetAi();
-    setAiOpen(false);
-    setShowModal(true);
-  };
-
-  const openEdit = (e: any) => {
-    setEditingId(e.id);
-    resetAi();
-    setAiOpen(false);
-    setForm({
-      title: e.title, description: e.description || '', date: e.date,
-      start_time: e.start_time || '', end_time: e.end_time || '',
-      location: e.location || '', event_type: e.event_type || 'meeting',
-      team_id: e.team_id ? String(e.team_id) : '',
-    });
-    setShowModal(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.title.trim() || !form.date) return;
-    const payload = { ...form, team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id };
-    setShowModal(false);
-    // Optimistic: upsert immediately, reconcile with server in background.
-    const prev = events;
-    if (editingId) {
-      const id = editingId;
-      setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, ...payload } : e)));
-      try {
-        const res = await apiFetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error();
-        refresh.events();
-      } catch {
-        setEvents(prev);
-        notify('Could not save event — try again.', 'error');
-      }
-    } else {
-      const tempId = `temp-${Date.now()}`;
-      setEvents((es: any[]) => [...es, { ...payload, id: tempId }]);
-      try {
-        const res = await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error();
-        refresh.events();
-      } catch {
-        setEvents((es: any[]) => es.filter((e: any) => e.id !== tempId));
-        notify('Could not save event — try again.', 'error');
-      }
-    }
-  };
-
-  const handleDelete = async () => {
-    if (!editingId) return;
-    if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return;
-    const id = editingId;
-    setShowModal(false);
-    // Optimistic: remove instantly, restore on failure.
-    const prev = events;
-    setEvents((es: any[]) => es.filter((e: any) => e.id !== id));
-    try {
-      const res = await apiFetch(`/api/events/${id}`, { method: 'DELETE' });
-      if (res.ok) refresh.events();
-      else {
-        setEvents(prev);
-        notify('Could not delete event — try again.', 'error');
-      }
-    } catch {
-      setEvents(prev);
-      notify('Could not delete event — try again.', 'error');
-    }
-  };
-
-  const fmtTime = (t: string) => {
-    if (!t) return '';
-    const [h, m] = t.split(':').map(Number);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
-  };
-
   const fmtDate = (key: string) => {
     const [y, m, d] = key.split('-').map(Number);
     return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   };
 
   const monthLabel = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-
-  const now = new Date();
-  const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  // An event is finished if its date is past, or it's today and the end time (or start time) has passed.
-  const isEventFinished = (e: any) => {
-    if (!e) return false;
-    if (e.date < todayKey) return true;
-    if (e.date === todayKey) {
-      const endTime = e.end_time || e.start_time || '';
-      if (endTime && endTime <= nowTime) return true;
-    }
-    return false;
-  };
-
-  const upcoming = [...events]
-    .filter((e: any) => e.date >= todayKey && !isEventFinished(e))
-    .sort((a: any, b: any) => (a.date + (a.start_time || '')).localeCompare(b.date + (b.start_time || '')))
-    .slice(0, 8);
 
   return (
     <div className="space-y-6">
@@ -5887,7 +5700,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
           <div className="grid grid-cols-7 gap-1">
             {cells.map((day, i) => {
               if (day === null) return <div key={'blank-' + i} />;
-              const key = toKey(new Date(year, month, day));
+              const key = toDateKey(new Date(year, month, day));
               const dayEvents = byDate[key] || [];
               const isToday = key === todayKey;
               return (
@@ -5987,7 +5800,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                         </Button>
                       </div>
                       {aiNote && <p className="text-xs text-text-base/80">{aiNote}</p>}
-                      {aiProposals.length > 1 && (
+                      {aiProposals.length > 0 && (
                         <div className="space-y-1.5 max-h-44 overflow-y-auto">
                           {aiProposals.map((e: any, i: number) => (
                             <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-text-base/[0.04] border border-text-base/10 px-3 py-1.5">
@@ -6067,7 +5880,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                   {editingId && <Button variant="danger" onClick={handleDelete}><Trash2 className="w-4 h-4" /> Delete</Button>}
                 </div>
                 <div className="flex gap-3">
-                  <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+                  <Button variant="secondary" onClick={closeEditor}>Cancel</Button>
                   <Button onClick={handleSave}>{editingId ? 'Save' : 'Create Event'}</Button>
                 </div>
               </div>
