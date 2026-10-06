@@ -125,13 +125,20 @@ Email to parse:
   const inputCls = 'w-full rounded-lg border border-text-base/10 bg-text-base/[0.04] px-3 py-2 text-sm text-text-base placeholder:text-text-base/30 focus:outline-none focus:border-accent/60';
 
   // Thread picker: search across ALL threads; the AI prompt still gets a
-  // capped list to keep the prompt small.
+  // capped list to keep the prompt small. The selected thread is always kept
+  // visible so the user can see where the message will be saved.
   const threadOptions = (() => {
     const q = threadSearch.trim().toLowerCase();
-    if (!q) return threads;
-    return threads.filter((t) =>
-      t.subject.toLowerCase().includes(q) || t.recipient.toLowerCase().includes(q)
-    );
+    const base = q
+      ? threads.filter((t) =>
+          t.subject.toLowerCase().includes(q) || t.recipient.toLowerCase().includes(q)
+        )
+      : threads;
+    if (parentId != null && !base.some((t) => t.id === parentId)) {
+      const selected = threads.find((t) => t.id === parentId);
+      if (selected) return [selected, ...base];
+    }
+    return base;
   })();
 
   const showFields = parsed || manual;
