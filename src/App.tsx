@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5Qrcode } from 'html5-qrcode';
 import { 
   LayoutDashboard, 
   Users, 
@@ -188,9 +187,12 @@ import { InboxPage } from './modern/pages/InboxPage';
 import { TasksPage } from './modern/pages/tasks/TasksPage';
 import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
 import { CalendarPage } from './modern/pages/calendar/CalendarPage';
+import { AttendancePage } from './modern/pages/attendance/AttendancePage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
 import { useCalendarController, toDateKey, fmtTime } from './components/calendar/useCalendarController';
+import { useQrScanner } from './components/attendance/useQrScanner';
+import { useAttendanceController, useQrSession, useStudentCheckin, QR_DURATIONS, parseLocalDate, weekdayOf, formatCountdown } from './components/attendance/useAttendanceController';
 import type { CommandAction } from './modern/CommandMenu';
 import type { NotificationActions } from './modern/notifications';
 import { useDraft, clearDrafts } from './modern/drafts';
@@ -2639,7 +2641,7 @@ export default function App() {
         <Route path="/predict" element={<ByMode legacy={<PredictView />} />} />
         <Route path="/teams" element={<ByMode legacy={<TeamsView {...viewProps} />} />} />
         <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />} />
-        <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} />} />
+        <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} modern={<AttendancePage {...viewProps} />} />} />
         <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} modern={<TasksPage {...viewProps} />} />} />
         <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} modern={<CalendarPage {...viewProps} />} />} />
         <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} />} />
@@ -4612,54 +4614,9 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
 }
 
 // ---------- QR check-in ----------
-function formatCountdown(ms: number): string {
-  if (ms <= 0) return 'Expired';
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return (h > 0 ? `${h}:` : '') + `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
-
 // Full-screen in-app camera scanner — students point it at the projected QR.
 function QrScannerModal({ onClose, onToken }: { onClose: () => void; onToken: (token: string) => void }) {
-  const [error, setError] = useState('');
-  const handledRef = useRef(false);
-  useEffect(() => {
-    let scanner: Html5Qrcode | null = null;
-    let cancelled = false;
-    (async () => {
-      try {
-        scanner = new Html5Qrcode('qr-reader-region');
-        await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 240, height: 240 } },
-          (decodedText: string) => {
-            if (handledRef.current) return;
-            const m = decodedText.match(/\/checkin\/([A-Za-z0-9]+)/i) || decodedText.trim().match(/^([a-f0-9]{24,})$/i);
-            if (m) {
-              handledRef.current = true;
-              onToken(m[1]);
-            }
-          },
-          () => { /* per-frame miss — ignore */ }
-        );
-      } catch (e) {
-        if (!cancelled) setError("Couldn't access the camera. Type the day's code instead.");
-      }
-    })();
-    return () => {
-      cancelled = true;
-      try {
-        const stopP = scanner?.stop() as unknown as Promise<void> | undefined;
-        if (stopP && typeof stopP.then === 'function') {
-          stopP.then(() => { try { scanner?.clear(); } catch { /* noop */ } }).catch(() => {});
-        } else {
-          try { scanner?.clear(); } catch { /* noop */ }
-        }
-      } catch { /* noop */ }
-    };
-  }, []);
+  const error = useQrScanner('qr-reader-region', onToken);
   return (
     <div className="fixed inset-0 z-[90] bg-black/95 flex flex-col">
       <div className="flex items-center justify-between px-4 py-4">
@@ -4688,69 +4645,10 @@ function QrScannerModal({ onClose, onToken }: { onClose: () => void; onToken: (t
 
 // Admin panel: start a session, show the QR + day code, project fullscreen.
 function QrSessionPanel({ teamName }: { teamName: string }) {
-  const [session, setSession] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [duration, setDuration] = useState<number | 'today'>(60);
+  const { session, loading, busy, duration, setDuration, start, stop: stopSession, remaining } = useQrSession();
   const [presenting, setPresenting] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-
-  const load = async () => {
-    try {
-      const res = await apiFetch('/api/attendance/qr-session');
-      const data = await res.json();
-      if (res.ok) setSession(data.session);
-    } catch { /* offline — leave as-is */ }
-    finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
-  useEffect(() => {
-    if (!session) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [session?.token]);
-
-  const start = async () => {
-    setBusy(true);
-    try {
-      const res = await apiFetch('/api/attendance/qr-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ durationMinutes: duration }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not start session');
-      setSession(data.session);
-      notify('Check-in session is live — project the QR.', 'success');
-    } catch (e: any) {
-      notify(e.message || 'Could not start session', 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-  const stop = async () => {
-    setBusy(true);
-    try {
-      await apiFetch('/api/attendance/qr-session/stop', { method: 'POST' });
-      setSession(null);
-      setPresenting(false);
-      notify('Check-in session ended.', 'info');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const durations: { label: string; value: number | 'today' }[] = [
-    { label: '15 min', value: 15 },
-    { label: '30 min', value: 30 },
-    { label: '1 hour', value: 60 },
-    { label: '3 hours', value: 180 },
-    { label: 'Rest of today', value: 'today' },
-  ];
-  const remaining = session ? new Date(session.expiresAt).getTime() - now : 0;
-  useEffect(() => {
-    if (session && remaining <= 0) setSession(null);
-  }, [remaining]);
+  const stop = async () => { await stopSession(); setPresenting(false); };
+  const durations = QR_DURATIONS;
 
   return (
     <>
@@ -4918,16 +4816,9 @@ function QrCheckinPage({ currentUser, onRefresh }: any) {
 }
 
 function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any) {
+  const { code, setCode, codeBusy, submitCode, checkinWithToken: checkin, myRecords, todayRecord, checkedIn } = useStudentCheckin({ attendance, currentUser, refresh, onRefresh });
   const [scanOpen, setScanOpen] = useState(false);
-  const [codeMode, setCodeMode] = useState(false);
-  const [code, setCode] = useState('');
-  const [codeBusy, setCodeBusy] = useState(false);
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const myRecords = (attendance || [])
-    .filter((r: any) => r.member_id === currentUser?.id)
-    .sort((a: any, b: any) => (a.date < b.date ? 1 : -1));
-  const todayRecord = myRecords.find((r: any) => r.date === today);
-  const checkedIn = todayRecord && (todayRecord.status === 'P' || todayRecord.status === 'L');
+  const [codeMode, setCodeMode] = useState(() => !!code); // a drafted code reopens the field
 
   const statusMeta: any = {
     P: { label: 'Present', cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
@@ -4937,40 +4828,11 @@ function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any
     S: { label: 'Sick', cls: 'bg-purple-500/15 text-purple-400 border-purple-500/30' },
   };
 
-  const checkinWithToken = async (token: string) => {
-    setScanOpen(false);
-    try {
-      const res = await apiFetch(`/api/attendance/checkin/${token}`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Check-in failed');
-      notify(data.already ? 'You were already checked in.' : 'Checked in — welcome!', 'success');
-      await await refresh.attendance();
-    } catch (e: any) {
-      notify(e.message || 'Check-in failed', 'error');
-    }
-  };
+  const checkinWithToken = (token: string) => { setScanOpen(false); void checkin(token); };
 
   const handleCodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!code.trim()) return;
-    setCodeBusy(true);
-    try {
-      const res = await apiFetch('/api/attendance/checkin-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Check-in failed');
-      notify(data.already ? 'You were already checked in.' : 'Checked in — welcome!', 'success');
-      setCode('');
-      setCodeMode(false);
-      await await refresh.attendance();
-    } catch (e: any) {
-      notify(e.message || 'Check-in failed', 'error');
-    } finally {
-      setCodeBusy(false);
-    }
+    if (await submitCode()) setCodeMode(false);
   };
 
   return (
@@ -5013,7 +4875,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any
               <form onSubmit={handleCodeSubmit} className="mt-3 flex gap-2 max-w-xs mx-auto">
                 <input
                   value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                  onChange={(e) => setCode(e.target.value)}
                   placeholder="Day code"
                   autoComplete="off"
                   className="flex-1 min-w-0 bg-text-base/5 border border-text-base/10 rounded-xl px-4 py-3 text-center text-lg font-bold tracking-[0.2em] text-text-base placeholder:text-text-muted/50 uppercase focus:outline-none focus:border-accent/60"
@@ -5050,233 +4912,13 @@ function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any
 
 function AttendanceView({ members, attendance, events, onRefresh, refresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'grid' | 'history' | 'summary'>('grid');
-  const [sessions, setSessions] = useState<string[]>([]);
-  const [summary, setSummary] = useState<any[]>([]);
-  const [hiddenDates, setHiddenDates] = useState<string[]>([]);
-  const [calendarStart, setCalendarStart] = useState(0); // weeks from today
   const [showHideMenu, setShowHideMenu] = useState(false);
-  const [savingStatus, setSavingStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [pendingChanges, setPendingChanges] = useState<Map<number, { date: string; status: string }>>(new Map());
-
-  const isAdmin = hasScope('attendance');
-
-  useEffect(() => {
-    const fetchExtraData = async () => {
-      const [sess, summ, hidden] = await Promise.all([
-        apiFetch('/api/attendance/sessions').then(r => r.json()),
-        apiFetch('/api/attendance/summary').then(r => r.json()),
-        apiFetch('/api/hidden-dates').then(r => r.json())
-      ]);
-      if (Array.isArray(sess)) setSessions(sess);
-      if (Array.isArray(summ)) setSummary(summ);
-      if (Array.isArray(hidden)) setHiddenDates(hidden);
-    };
-    fetchExtraData();
-  }, [attendance]);
-
-  // Generate dates: 2-week chunks starting from today
-  // Parse a 'yyyy-MM-dd' string as a LOCAL date. Plain new Date(str) parses as
-  // UTC midnight, which shifts the weekday back a day in US timezones and
-  // broke the day-of-week hide/show toggles.
-  const parseLocalDate = (dateStr: string): Date => {
-    const [y, m, d] = dateStr.split('-').map(Number);
-    return new Date(y, (m || 1) - 1, d || 1);
-  };
-  const weekdayOf = (dateStr: string): number => parseLocalDate(dateStr).getDay();
-
-  // The grid always shows at least MIN_VISIBLE_DATES columns: it scans the
-  // 14-day window as before, then keeps scanning forward (skipping hidden
-  // days) until it has enough. Sunday-only teams see 5 consecutive Sundays;
-  // Mon–Fri teams see their weekdays in order with weekends skipped.
-  const MIN_VISIBLE_DATES = 5;
-  const MAX_LOOKAHEAD_DAYS = 365;
-
-  const visibleDates = useMemo(() => {
-    const dates: string[] = [];
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() + calendarStart * 14);
-
-    const d = new Date(startDate);
-    for (let i = 0; i < MAX_LOOKAHEAD_DAYS && (i < 14 || dates.length < MIN_VISIBLE_DATES); i++) {
-      const dateStr = format(d, 'yyyy-MM-dd');
-      if (!hiddenDates.includes(dateStr)) {
-        dates.push(dateStr);
-      }
-      d.setDate(d.getDate() + 1);
-    }
-    return dates;
-  }, [calendarStart, hiddenDates]);
-
-  // Date-range label follows the dates actually shown (the window may extend
-  // past 14 days when hidden days are skipped).
-  const rangeLabel = useMemo(() => {
-    if (visibleDates.length > 0) {
-      const first = parseLocalDate(visibleDates[0]);
-      const last = parseLocalDate(visibleDates[visibleDates.length - 1]);
-      return `${format(first, 'MMM dd')} - ${format(last, 'MMM dd')}`;
-    }
-    const s = new Date();
-    s.setDate(s.getDate() + calendarStart * 14);
-    const e = new Date(s);
-    e.setDate(e.getDate() + 13);
-    return `${format(s, 'MMM dd')} - ${format(e, 'MMM dd')}`;
-  }, [visibleDates, calendarStart]);
-
-  // Check if there are more dates to load
-  const hasMoreDates = useMemo(() => {
-    const nextStartDate = new Date();
-    nextStartDate.setDate(nextStartDate.getDate() + (calendarStart + 1) * 14);
-    return nextStartDate < new Date(new Date().getFullYear() + 1, 0, 1); // Can load up to next year
-  }, [calendarStart]);
-
-  const getStatus = (memberId: number, date: string) => {
-    const changeKey = memberId;
-    if (pendingChanges.has(changeKey) && pendingChanges.get(changeKey)!.date === date) {
-      return pendingChanges.get(changeKey)!.status;
-    }
-    return attendance.find((r: any) => r.member_id === memberId && r.date === date)?.status || '-';
-  };
-
-  const toggleStatus = async (memberId: number, date: string) => {
-    if (!isAdmin) return;
-    
-    const current = getStatus(memberId, date);
-    const statuses = ['-', 'P', 'L', 'E', 'U', 'S'];
-    const nextIndex = (statuses.indexOf(current) + 1) % statuses.length;
-    const nextStatus = statuses[nextIndex];
-
-    // Optimistic update
-    const changeKey = memberId;
-    const newChanges = new Map(pendingChanges);
-    newChanges.set(changeKey, { date, status: nextStatus });
-    setPendingChanges(newChanges);
-    setSavingStatus('saving');
-
-    try {
-      const res = await apiFetch('/api/attendance/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          date, 
-          records: [{ member_id: memberId, status: nextStatus === '-' ? null : nextStatus }] 
-        })
-      });
-      if (res.ok) {
-        setSavingStatus('saved');
-        setTimeout(() => setSavingStatus('idle'), 2000);
-        // Keep optimistic update, refresh data in background
-        refresh.attendance();
-      } else {
-        setSavingStatus('idle');
-        notify('Failed to save attendance', 'error');
-      }
-    } catch (error) {
-      setSavingStatus('idle');
-      notify('Error saving attendance', 'error');
-    }
-  };
-
-  const hideDate = async (dateStr: string) => {
-    setHiddenDates([...hiddenDates, dateStr]);
-    try {
-      await apiFetch('/api/hidden-dates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: dateStr })
-      });
-    } catch (error) {
-      console.error('Error hiding date:', error);
-      setHiddenDates(hiddenDates.filter(d => d !== dateStr));
-    }
-  };
-
-  const unhideDate = async (dateStr: string) => {
-    setHiddenDates(hiddenDates.filter(d => d !== dateStr));
-    try {
-      await apiFetch(`/api/hidden-dates/${dateStr}`, { method: 'DELETE' });
-    } catch (error) {
-      console.error('Error unhiding date:', error);
-      setHiddenDates([...hiddenDates, dateStr]);
-    }
-  };
-
-  const hideByDayOfWeek = async (dayIndex: number) => {
-    // dayIndex: 0=Sunday, 1=Monday, ..., 6=Saturday
-    const newHidden = [...hiddenDates];
-    const toAdd: string[] = [];
-    const checkDate = new Date();
-    checkDate.setDate(checkDate.getDate() - 365); // Check past year too for cleanup
-
-    for (let i = 0; i < 730; i++) { // Check ~2 years
-      checkDate.setDate(checkDate.getDate() + 1);
-      if (checkDate.getDay() === dayIndex) {
-        const dateStr = format(checkDate, 'yyyy-MM-dd');
-        if (!newHidden.includes(dateStr)) {
-          newHidden.push(dateStr);
-          toAdd.push(dateStr);
-        }
-      }
-    }
-
-    setHiddenDates(newHidden);
-    // Single bulk request instead of ~100 sequential ones.
-    if (toAdd.length > 0) {
-      await apiFetch('/api/hidden-dates/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates: toAdd })
-      }).catch(console.error);
-    }
-  };
-
-  const unhideByDayOfWeek = async (dayIndex: number) => {
-    const removed = hiddenDates.filter(dateStr => weekdayOf(dateStr) === dayIndex);
-    const newHidden = hiddenDates.filter(dateStr => weekdayOf(dateStr) !== dayIndex);
-
-    setHiddenDates(newHidden);
-    // Single bulk request instead of ~100 sequential ones.
-    if (removed.length > 0) {
-      await apiFetch('/api/hidden-dates/bulk-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates: removed })
-      }).catch(console.error);
-    }
-  };
-
-  const hideAll = async () => {
-    const allDates = new Set<string>();
-    const checkDate = new Date();
-    checkDate.setDate(checkDate.getDate() - 365);
-    
-    for (let i = 0; i < 730; i++) {
-      checkDate.setDate(checkDate.getDate() + 1);
-      allDates.add(format(checkDate, 'yyyy-MM-dd'));
-    }
-    
-    const newHidden = Array.from(allDates);
-    const toAdd = newHidden.filter(d => !hiddenDates.includes(d));
-    setHiddenDates(newHidden);
-    if (toAdd.length > 0) {
-      await apiFetch('/api/hidden-dates/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates: toAdd })
-      }).catch(console.error);
-    }
-  };
-
-  const unhideAll = async () => {
-    const removed = [...hiddenDates];
-    setHiddenDates([]);
-    if (removed.length > 0) {
-      await apiFetch('/api/hidden-dates/bulk-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates: removed })
-      }).catch(console.error);
-    }
-  };
+  // Grid, meeting days and summaries are shared with the Modern Attendance page.
+  const {
+    isAdmin, sessions, summary, hiddenDates, calendarStart, setCalendarStart, savingStatus,
+    visibleDates, rangeLabel, hasMoreDates, getStatus, toggleStatus,
+    hideDate, hideByDayOfWeek, unhideByDayOfWeek, hideAll, unhideAll,
+  } = useAttendanceController({ attendance, refresh, hasScope });
 
   const statusColors: any = {
     'P': 'bg-emerald-500 text-emerald-950',
@@ -5291,7 +4933,7 @@ function AttendanceView({ members, attendance, events, onRefresh, refresh, setLo
 
   // Students get a personal check-in view instead of the admin grid
   if (!isAdmin) {
-    return <StudentCheckinView attendance={attendance} currentUser={currentUser} onRefresh={onRefresh} />;
+    return <StudentCheckinView attendance={attendance} currentUser={currentUser} onRefresh={onRefresh} refresh={refresh} />;
   }
 
   const renderGrid = () => (
