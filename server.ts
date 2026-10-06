@@ -2530,6 +2530,59 @@ async function startServer() {
     }
   });
 
+  // ---- Forgot password (OTP via Resend) ----
+  // Step 1: request a reset code. Always returns generic success so the
+  // endpoint can't be used to enumerate accounts.
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const email = (((req.body || {}).email) || "").trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: "Email is required" });
+    try {
+      const exists = (await dbGet("SELECT id FROM members WHERE email = ?", email)) as any;
+      if (exists) {
+        const result = await issueVerificationCode(email);
+        if (result.sent === false) {
+          return res.status(429).json({
+            error: `Wait ${result.cooldownSeconds}s before requesting a new code`,
+            cooldownSeconds: result.cooldownSeconds,
+          });
+        }
+      }
+      return res.json({ sent: true });
+    } catch (e: any) {
+      console.error("forgot password failed:", e);
+      return res.status(500).json({ error: "Couldn't send the code — try again" });
+    }
+  });
+
+  // Step 2: verify the code + set a new password. The code proves email
+  // ownership, so this also marks the email verified.
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const email = (((req.body || {}).email) || "").trim().toLowerCase();
+    const code = String((req.body || {}).code || "");
+    const newPassword = String((req.body || {}).newPassword || "");
+    if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+    const check = await checkVerificationCode(email, code);
+    if (check.ok === false) {
+      const msg = check.reason === "expired"
+        ? "That code expired — request a new one"
+        : check.reason === "locked"
+          ? "Too many wrong attempts — request a new code"
+          : "That code doesn't match — try again";
+      return res.status(400).json({ error: msg, reason: check.reason });
+    }
+    const exists = (await dbGet("SELECT id FROM members WHERE email = ?", email)) as any;
+    if (!exists) return res.status(400).json({ error: "No account found for that email" });
+    const hashedPassword = bcrypt.hashSync(newPassword, 10);
+    // The password is account-wide: set it on every membership row for this email.
+    await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email);
+    await markEmailVerified(email);
+    await dbRun("DELETE FROM email_verification_codes WHERE email = ?", email);
+    res.json({ success: true });
+  });
+
   // ---- OAuth (Google, Discord, GitHub) ----
   const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
   const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";

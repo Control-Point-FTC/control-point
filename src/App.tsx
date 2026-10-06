@@ -201,6 +201,7 @@ import LegalPage from './Legal';
 import { cn, Card, Button, Input, Switch } from './components/ui';
 import { AuthShell } from './components/auth/AuthShell';
 import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
+import ForgotPasswordScreen from './components/auth/ForgotPasswordScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import ThemeToggle from './components/ThemeToggle';
@@ -1124,6 +1125,9 @@ export default function App() {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [signupTeam, setSignupTeam] = useState<{ id: number; name: string; access_code: string } | null>(null);
 
   // Data State
@@ -2100,28 +2104,37 @@ export default function App() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await apiFetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: loginEmail, password: loginPassword })
-    });
-    const data = await res.json();
-    if (data.needsVerification) {
-      setVerifyState({ email: data.email, mode: 'login' });
-      return;
-    }
-    if (data.needsSetup) {
-      setNeedsSetup(true);
-      setCurrentUser(data.user);
-      if (data.sessionId) {
-        if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', data.sessionId);
-        setSessionId(data.sessionId);
+    setLoginError(null);
+    setLoggingIn(true);
+    try {
+      const res = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      if (data.needsVerification) {
+        setVerifyState({ email: data.email, mode: 'login' });
+        return;
       }
-    } else if (data.user) {
-      persistSession(data.sessionId, data.user);
-      setNeedsSetup(false);
-    } else {
-      notify(data.error || "Login failed", 'error');
+      if (data.needsSetup) {
+        setNeedsSetup(true);
+        setCurrentUser(data.user);
+        if (data.sessionId) {
+          if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', data.sessionId);
+          setSessionId(data.sessionId);
+        }
+      } else if (data.user) {
+        persistSession(data.sessionId, data.user);
+        setNeedsSetup(false);
+      } else {
+        throw new Error(data.error || 'Login failed');
+      }
+    } catch (err: any) {
+      setLoginError(err.message || 'Login failed — try again');
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -2723,13 +2736,38 @@ export default function App() {
                 </div>
               )}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Password</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Password</label>
+                  {!needsSetup && (
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotPassword(true)}
+                      className="text-[11px] font-semibold text-accent hover:brightness-110"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
                 <Input type="password" required value={loginPassword} onChange={(e: any) => setLoginPassword(e.target.value)} placeholder="••••••••" />
               </div>
-              <Button type="submit" className="w-full py-3 mt-2 text-[15px]">
-                {needsSetup ? "Complete Setup" : "Sign In"}
+              {loginError && (
+                <p className="text-sm text-rose-400 text-center" role="alert">{loginError}</p>
+              )}
+              <Button type="submit" disabled={loggingIn} className="w-full py-3 mt-2 text-[15px]">
+                {loggingIn ? 'Signing in…' : needsSetup ? "Complete Setup" : "Sign In"}
               </Button>
             </form>
+            {showForgotPassword && !needsSetup && (
+              <ForgotPasswordScreen
+                initialEmail={loginEmail}
+                onBack={() => setShowForgotPassword(false)}
+                onDone={() => {
+                  setShowForgotPassword(false);
+                  setLoginPassword('');
+                  notify('Password updated — sign in with your new password', 'success');
+                }}
+              />
+            )}
             {oauthError && !needsSetup && (
               <p className="text-sm text-rose-400 text-center mt-4">{oauthError}</p>
             )}
