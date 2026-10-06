@@ -55,6 +55,9 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     }
     if (getDraft('inv:saving', false)) return;
     setBusy(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it.
+    const unlock = inEpoch(() => setBusy(false));
     try {
       const res = await apiFetch('/api/inventory', {
         method: 'POST',
@@ -81,7 +84,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     } catch (error) {
       notify('Error adding part: ' + error, 'error');
     } finally {
-      setBusy(false);
+      unlock();
     }
   };
 
@@ -90,6 +93,9 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     if (!submitted) return;
     if (getDraft('inv:saving', false)) return;
     setBusy(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it.
+    const unlock = inEpoch(() => setBusy(false));
     try {
       const res = await apiFetch(`/api/inventory/${submitted.id}`, {
         method: 'PATCH',
@@ -111,7 +117,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     } catch (error) {
       notify('Error updating part: ' + error, 'error');
     } finally {
-      setBusy(false);
+      unlock();
     }
   };
 
@@ -240,6 +246,9 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     }
     if (getDraft('inv:invoice-confirming', false)) return;
     setInvoiceConfirming(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it.
+    const unlock = inEpoch(() => setInvoiceConfirming(false));
     try {
       const res = await apiFetch('/api/inventory/import-invoice/confirm', {
         method: 'POST',
@@ -270,7 +279,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     } catch (error) {
       notify('Error importing: ' + error, 'error');
     } finally {
-      setInvoiceConfirming(false);
+      unlock();
     }
   };
 

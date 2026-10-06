@@ -138,6 +138,25 @@ describe('Modern Budget', () => {
     expect(await screen.findByLabelText('Description')).toHaveValue('Field tiles');
   });
 
+  it("an old save finishing after a workspace switch doesn't unlock the new save", async () => {
+    const pending: ((v: any) => void)[] = [];
+    api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'POST' ? new Promise((r) => { pending.push(r); }) : json({})));
+    budgetSetup();
+    fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
+    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
+    act(() => clearDrafts()); // sign-out / workspace switch
+    fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
+    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
+    expect(pending).toHaveLength(2);
+    await act(async () => { pending[0]({ ok: true, json: async () => ({}) }); });
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByLabelText('Amount')).toBeDisabled();
+    await act(async () => { pending[1]({ ok: true, json: async () => ({}) }); });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
   it('freezes the form while saving, and the lock survives leaving and coming back', async () => {
     let resolve: (v: any) => void = () => {};
     api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'POST' ? new Promise((r) => { resolve = r; }) : json({})));

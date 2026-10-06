@@ -10,7 +10,7 @@ import { format } from 'date-fns';
 import { Copy, Pencil, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
-import { getDraft, useDraft } from '../../modern/drafts';
+import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { defaultTeamId } from '../tasks/useTasksController';
 
@@ -72,6 +72,9 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
   const handleAdd = async () => {
     if (getDraft('budget:saving', false)) return;
     setBusy(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it.
+    const unlock = inEpoch(() => setBusy(false));
     const submitted = getDraft<BudgetForm>(FORM_KEY, newItem);
     const id = editingId;
     // Only close the form this save came from (not one opened or edited since).
@@ -90,7 +93,7 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
         notify(id ? 'Could not save entry — try again.' : 'Could not log entry — try again.', 'error');
       }
     } finally {
-      setBusy(false);
+      unlock();
     }
   };
 
