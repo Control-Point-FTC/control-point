@@ -265,3 +265,58 @@ One section per phase, added when the phase's PR merges. See [README.md](README.
   - 1440 px: Today, Grid and Insights.
 - **Not covered:** no real phone was available for camera scanning. The scanner reuses the Legacy html5-qrcode logic unchanged.
 - **Screenshots:** `docs/redesign/screenshots/phase4/attendance-*.jpg`.
+
+## Phase 5a: People (Members, Roles, Workspaces)
+
+**Shared logic** lives in `src/components/people/`:
+- **`useMembersController`:** member add/edit/remove, password reset, and workspace create/edit.
+  - Same endpoints and bodies as Legacy: `POST`/`PATCH /api/members`, `DELETE /api/members/:id`, `/api/auth/reset`, `PATCH /api/teams/:id`, and `onAddTeam`.
+  - The member and workspace editors are drafted (`members:*`, `teams:*`), with a generation guard so a late save never closes a newer session.
+  - **Fix:** a failed member save now shows the server's error and keeps the editor open. Before, the editor closed silently.
+- **`useRolesController`:** roles, the permission catalogue, create/edit/delete, and per-member role toggles (optimistic, with rollback).
+  - The role editor (which role is open, and its form) is drafted (`roles:*`).
+- Legacy `TeamsView` and `RolesView` use the controllers. `RoleForm` is now controlled by the draft. Markup is unchanged.
+
+### Modern People (`src/modern/pages/people/`)
+One page with route-driven tabs: **Members** (`/teams`), **Roles** (`/roles`) and **Workspaces** (`/teams?tab=workspaces`). Both existing nav entries still land on the right tab.
+
+- **Members:**
+  - Search across names, emails, titles and roles, plus All / Online / Board filters.
+  - Rows are sorted by presence, with presence dots, You and Board badges, and role chips.
+  - Each row has an action menu: voice or video call (the same public team call), email, copy ID, manage roles, edit, reset password, remove.
+  - A **member sheet** shows roles, details and scopes, with call buttons.
+  - **Editor sheet:** name, email, title, team, a Board switch, and scope checkboxes that animate in.
+  - **Remove** dialog shows the server error inline.
+- **Roles:**
+  - Cards show a colour stripe, holder count and names, and permission badges.
+  - Hover reveals edit and delete on desktop; on phones they are always visible at 44px.
+  - **Role editor sheet:** name with a live colour preview, swatch radios, and permission switches.
+  - **Manage roles:** a Command list with search and checkmarks.
+  - Without `manage_roles` the tab is read-only, with a note.
+- **Workspaces:**
+  - Cards show initials in the team accent, member count, and a **copyable join code**.
+  - Actions: switch, edit or delete (admins), leave (others), and a "New workspace" tile.
+  - The editor dialog shows number and accent only when editing, because create sends only the name, as in Legacy.
+
+### Permissions
+- Add, edit, remove, password reset and workspace edit/delete need the `admin` scope. This matches the server.
+  - Legacy showed "Add Member" to everyone and the server then rejected it; Modern hides it.
+- Role editing needs `manage_roles`, the same permission the Roles nav item requires.
+
+### Tests
+- **New (10 Modern People tests):**
+  - Members without admin get no admin actions.
+  - Calls go through the voice context.
+  - Add member sends the Legacy POST body.
+  - Edit member sends PATCH, and **the half-edited form survives a remount**.
+  - Remove shows the server error.
+  - Role assignment sends `POST /api/members/:id/roles`.
+  - Role create sends the Legacy body, and **the half-written role survives a remount**.
+  - System roles can't be edited, and without `manage_roles` the page is read-only.
+  - Delete role waits for confirmation.
+  - Workspace edit sends the Legacy PATCH body; switch and leave work.
+- **Totals:** 440 frontend tests pass; the only failures are the known Windows-only ftcCache ones. `tsc` is clean.
+- **Local QA:**
+  - 1440 px: Members.
+  - 375 px: Roles and Workspaces, with no overflow, every target ≥44px, and the tabs fitting once their icons are hidden.
+- **Screenshots:** `docs/redesign/screenshots/phase5/`.

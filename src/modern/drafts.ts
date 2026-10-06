@@ -25,6 +25,16 @@ export function setDraft<T>(key: string, value: T): void {
   emit(key);
 }
 
+// Editor-session ids. Controllers stamp each editor session (open/close) with
+// one and check it before a late save closes or clears anything. Module-level
+// and never reused, so ids stay unique even after clearDrafts() resets the
+// stored values (sign-out / workspace switch).
+let sessionSeq = 0;
+export function newSessionId(): number {
+  sessionSeq += 1;
+  return sessionSeq;
+}
+
 export function clearDrafts(): void {
   const keys = [...store.keys()];
   store.clear();

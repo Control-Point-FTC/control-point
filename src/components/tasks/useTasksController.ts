@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
-import { useDraft, getDraft, setDraft } from '../../modern/drafts';
+import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 
 export interface TaskForm {
   team_id: any;
@@ -112,7 +112,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   // Each editor / bulk session gets a generation number. A save only cleans
   // up its draft if its session is still the current one, so a request that
   // finishes late can never wipe a newer draft.
-  const bumpGen = (key: string) => setDraft(key, getDraft<number>(key, 0) + 1);
+  const bumpGen = (key: string) => setDraft(key, newSessionId());
   const EDITOR_GEN = 'tasks:editor-gen';
   const BULK_GEN = 'tasks:bulk-gen';
   // AI quick-add: type natural language, Bruno parses it into task fields.

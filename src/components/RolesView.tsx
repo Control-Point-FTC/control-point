@@ -1,26 +1,7 @@
-import { useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil, X, ShieldCheck, Users } from 'lucide-react';
-import { apiFetch } from '../services/api';
-import { confirmDialog, notify } from './dialog';
+import { ROLE_COLOR_SWATCHES as COLOR_SWATCHES, useRolesController, type RoleDraft, type RoleRef } from './people/useRolesController';
 
-export interface RoleRef {
-  id: number;
-  name: string;
-  color: string;
-}
-
-interface Role extends RoleRef {
-  team_id: number;
-  permissions: string[];
-  position: number;
-  is_system: number;
-  member_count: number;
-}
-
-const COLOR_SWATCHES = [
-  '#FFC700', '#F97316', '#EF4444', '#EC4899',
-  '#8B5CF6', '#3B82F6', '#22C55E', '#14B8A6', '#71717A',
-];
+export type { RoleRef };
 
 export function RoleBadge({ role }: { role: RoleRef }) {
   return (
@@ -38,25 +19,28 @@ export function RoleBadge({ role }: { role: RoleRef }) {
   );
 }
 
+// The form's values live in the shared draft store (useRolesController), so a
+// half-edited role survives a Legacy/Modern switch.
 function RoleForm({
-  initial,
+  form,
+  setForm,
+  togglePerm,
   permKeys,
   onSave,
   onCancel,
   saving,
 }: {
-  initial: { name: string; color: string; permissions: string[] };
+  form: RoleDraft;
+  setForm: (f: RoleDraft) => void;
+  togglePerm: (key: string) => void;
   permKeys: { key: string; label: string }[];
-  onSave: (draft: { name: string; color: string; permissions: string[] }) => void;
+  onSave: (draft: RoleDraft) => void;
   onCancel: () => void;
   saving: boolean;
 }) {
-  const [name, setName] = useState(initial.name);
-  const [color, setColor] = useState(initial.color);
-  const [permissions, setPermissions] = useState<string[]>(initial.permissions);
-
-  const togglePerm = (key: string) =>
-    setPermissions((prev) => (prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]));
+  const { name, color, permissions } = form;
+  const setName = (v: string) => setForm({ ...form, name: v });
+  const setColor = (v: string) => setForm({ ...form, color: v });
 
   return (
     <div className="space-y-4">
@@ -131,120 +115,12 @@ function RoleForm({
   );
 }
 
-export default function RolesView({ members, onRefresh }: any) {
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [permKeys, setPermKeys] = useState<{ key: string; label: string }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState<number | 'new' | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [managingMember, setManagingMember] = useState<any>(null);
-  const [memberRoles, setMemberRoles] = useState<number[]>([]);
-  const [toggling, setToggling] = useState(false);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [rRes, pRes] = await Promise.all([apiFetch('/api/roles'), apiFetch('/api/role-permissions')]);
-      const rData = await rRes.json();
-      const pData = await pRes.json();
-      if (rRes.ok) setRoles(Array.isArray(rData) ? rData : []);
-      if (pRes.ok) setPermKeys(Array.isArray(pData) ? pData : []);
-    } catch {
-      notify('Could not load roles', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-    // Live role sync: another admin's role changes refresh this view too.
-    const onRolesChanged = () => load();
-    window.addEventListener('roles-changed', onRolesChanged);
-    return () => window.removeEventListener('roles-changed', onRolesChanged);
-  }, []);
-
-  const saveRole = async (draft: { name: string; color: string; permissions: string[] }) => {
-    if (!draft.name) {
-      notify('Role name is required', 'error');
-      return;
-    }
-    setSaving(true);
-    try {
-      const url = editingId === 'new' ? '/api/roles' : `/api/roles/${editingId}`;
-      const res = await apiFetch(url, {
-        method: editingId === 'new' ? 'POST' : 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        notify(data.error || 'Could not save role', 'error');
-        return;
-      }
-      notify(editingId === 'new' ? 'Role created' : 'Role updated', 'success');
-      setEditingId(null);
-      await load();
-      onRefresh?.();
-    } catch {
-      notify('Could not save role', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const deleteRole = async (role: Role) => {
-    const ok = await confirmDialog({
-      title: 'Delete role',
-      message: `Delete the "${role.name}" role? Members who have it will lose those permissions.`,
-      confirmLabel: 'Delete',
-      danger: true,
-    });
-    if (!ok) return;
-    const res = await apiFetch(`/api/roles/${role.id}`, { method: 'DELETE' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      notify(data.error || 'Could not delete role', 'error');
-      return;
-    }
-    notify('Role deleted', 'success');
-    await load();
-    onRefresh?.();
-  };
-
-  const openMemberRoles = (m: any) => {
-    setManagingMember(m);
-    setMemberRoles((m.roles || []).map((r: RoleRef) => r.id));
-  };
-
-  const toggleMemberRole = async (role: Role) => {
-    if (!managingMember || toggling) return;
-    const has = memberRoles.includes(role.id);
-    // Optimistic: flip the chip instantly, roll back on failure.
-    const prev = memberRoles;
-    setMemberRoles((prev) => (has ? prev.filter((id) => id !== role.id) : [...prev, role.id]));
-    setToggling(true);
-    try {
-      const url = has
-        ? `/api/members/${managingMember.id}/roles/${role.id}`
-        : `/api/members/${managingMember.id}/roles`;
-      const res = await apiFetch(url, {
-        method: has ? 'DELETE' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: has ? undefined : JSON.stringify({ role_id: role.id }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setMemberRoles(prev);
-        notify(data.error || 'Could not update roles', 'error');
-        return;
-      }
-      await load();
-      onRefresh?.();
-    } finally {
-      setToggling(false);
-    }
-  };
+export default function RolesView({ members, currentUser, onRefresh }: any) {
+  // Roles state + handlers are shared with the Modern People page.
+  const {
+    roles, permKeys, loading, editingId, form, setForm, togglePerm, openRole, closeRole, saving, saveRole, deleteRole,
+    managingMember, setManagingMember, memberRoles, openMemberRoles, toggleMemberRole,
+  } = useRolesController({ onRefresh, teamId: currentUser?.team_id });
 
   if (loading) {
     return (
@@ -272,7 +148,7 @@ export default function RolesView({ members, onRefresh }: any) {
           </p>
         </div>
         <button
-          onClick={() => setEditingId('new')}
+          onClick={() => openRole('new')}
           className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-bold transition-all active:scale-95 shrink-0 w-full sm:w-auto"
           style={{ backgroundColor: '#FFC700', color: '#231A00' }}
         >
@@ -287,17 +163,12 @@ export default function RolesView({ members, onRefresh }: any) {
               {editingId === 'new' ? 'New role' : `Edit ${roles.find((r) => r.id === editingId)?.name || 'role'}`}
             </h3>
             <RoleForm
-              initial={
-                editingId === 'new'
-                  ? { name: '', color: '#71717A', permissions: ['view_ai'] }
-                  : (() => {
-                      const r = roles.find((x) => x.id === editingId)!;
-                      return { name: r.name, color: r.color, permissions: r.permissions };
-                    })()
-              }
+              form={form}
+              setForm={setForm}
+              togglePerm={togglePerm}
               permKeys={permKeys}
               onSave={saveRole}
-              onCancel={() => setEditingId(null)}
+              onCancel={closeRole}
               saving={saving}
             />
           </div>
@@ -324,7 +195,7 @@ export default function RolesView({ members, onRefresh }: any) {
                 {!role.is_system && (
                   <>
                     <button
-                      onClick={() => setEditingId(role.id)}
+                      onClick={() => openRole(role.id)}
                       className="p-2 text-text-muted/70 hover:text-accent transition-colors"
                       title="Edit role"
                     >

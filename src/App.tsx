@@ -188,9 +188,11 @@ import { TasksPage } from './modern/pages/tasks/TasksPage';
 import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
 import { CalendarPage } from './modern/pages/calendar/CalendarPage';
 import { AttendancePage } from './modern/pages/attendance/AttendancePage';
+import { PeoplePage } from './modern/pages/people/PeoplePage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
 import { useCalendarController, toDateKey, fmtTime } from './components/calendar/useCalendarController';
+import { useMembersController } from './components/people/useMembersController';
 import { useQrScanner } from './components/attendance/useQrScanner';
 import { useAttendanceController, useQrSession, useStudentCheckin, QR_DURATIONS, parseLocalDate, weekdayOf, formatCountdown } from './components/attendance/useAttendanceController';
 import type { CommandAction } from './modern/CommandMenu';
@@ -2646,8 +2648,8 @@ export default function App() {
         <Route path="/inbox" element={<ByMode legacy={<Navigate to="/dashboard" replace />} modern={<InboxPage notifications={notifications} actions={notificationActions} onOpenChannel={(id) => setActiveChannelId(id)} />} />} />
         <Route path="/stats" element={<ByMode legacy={<TeamStatsView />} />} />
         <Route path="/predict" element={<ByMode legacy={<PredictView />} />} />
-        <Route path="/teams" element={<ByMode legacy={<TeamsView {...viewProps} />} />} />
-        <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />} />
+        <Route path="/teams" element={<ByMode legacy={<TeamsView {...viewProps} />} modern={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />} />
+        <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} modern={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />} />
         <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} modern={<AttendancePage {...viewProps} />} />} />
         <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} modern={<TasksPage {...viewProps} />} />} />
         <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} modern={<CalendarPage {...viewProps} />} />} />
@@ -4100,39 +4102,14 @@ function StudentDashboardView({ teams, members, attendance, tasks, setTasks, eve
 
 
 function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam }: any) {
-  const [showAddTeam, setShowAddTeam] = useState(false);
-  const [showAddMember, setShowAddMember] = useState(false);
-  const [editingTeam, setEditingTeam] = useState<any>(null);
-  const [editingMember, setEditingMember] = useState<any>(null);
-  const [newTeam, setNewTeam] = useState<any>({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
-  const [newMember, setNewMember] = useState({ team_id: '', name: '', role: '', email: '', is_board: false, scopes: [] });
-  const [memberToRemove, setMemberToRemove] = useState<any>(null);
-  const [removeError, setRemoveError] = useState('');
-  const [removingMember, setRemovingMember] = useState(false);
-  const [savingTeam, setSavingTeam] = useState(false);
-
-  const isAdmin = hasScope('admin');
-  const activeTeamId = currentUser?.team_id;
+  // Members + workspace state/handlers are shared with the Modern People page.
+  const {
+    isAdmin, activeTeamId,
+    showAddMember, editingMember, newMember, setNewMember, openNewMember, openEditMember, closeMemberEditor, handleAddMember,
+    memberToRemove, setMemberToRemove, askRemoveMember, removeError, removingMember, handleDeleteMember, handleResetPassword,
+    showAddTeam, editingTeam, newTeam, setNewTeam, openNewTeam, openEditTeam, closeTeamEditor, handleAddTeam,
+  } = useMembersController({ members, refresh, onRefresh, currentUser, hasScope, onAddTeam });
   const voice = useVoice();
-
-  const openEditMember = (m: any) => {
-    setEditingMember(m);
-    let scopes = m.scopes;
-    try {
-      if (typeof scopes === 'string') scopes = JSON.parse(scopes);
-    } catch {
-      scopes = [];
-    }
-    setNewMember({
-      team_id: m.team_id || '',
-      name: m.name,
-      role: m.role,
-      email: m.email,
-      is_board: m.is_board === 1,
-      scopes: Array.isArray(scopes) ? scopes : []
-    });
-    setShowAddMember(true);
-  };
 
   // Right-click a member in the roster: call, copy ID, edit, remove.
   // (No friending/DMs — calls open a public team voice channel.)
@@ -4146,96 +4123,9 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
       canCall: true,
       onCall: (memberId, media) => voice.startCall([memberId], media),
       onEdit: isAdmin ? () => openEditMember(m) : undefined,
-      onRemove: isAdmin && m.id !== currentUser?.id ? () => { setMemberToRemove(m); setRemoveError(''); } : undefined,
+      onRemove: isAdmin && m.id !== currentUser?.id ? () => askRemoveMember(m) : undefined,
     });
   });
-
-  const handleResetPassword = async (email: string) => {
-    if (!(await confirmDialog({ title: 'Reset password', message: `Reset password for ${email}? They will need to set it up again on next login.`, confirmLabel: 'Reset', danger: true }))) return;
-    await apiFetch('/api/auth/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-    notify('Password reset successfully.', 'success');
-  };
-
-  const handleAddTeam = async () => {
-    if (savingTeam) return;
-    setSavingTeam(true);
-    try {
-      if (editingTeam) {
-        const { name, number, accent_color } = newTeam;
-        const res = await apiFetch(`/api/teams/${editingTeam.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, number, accent_color })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Could not save team');
-        notify('Team updated', 'success');
-        setShowAddTeam(false);
-        setEditingTeam(null);
-        setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
-        onRefresh();
-      } else {
-        // Creating a new workspace switches the session to it
-        const data = await onAddTeam(newTeam.name);
-        notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
-        setShowAddTeam(false);
-        setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
-      }
-    } catch (e: any) {
-      notify(e.message || 'Could not save team', 'error');
-    } finally {
-      setSavingTeam(false);
-    }
-  };
-
-  const handleDeleteMember = async () => {
-    if (!memberToRemove) return;
-    setRemovingMember(true);
-    setRemoveError('');
-    try {
-      const res = await apiFetch(`/api/members/${memberToRemove.id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setRemoveError(err.error || 'Could not remove member');
-        return;
-      }
-      setMemberToRemove(null);
-      refresh.members();
-    } catch (error) {
-      setRemoveError('Could not remove member: ' + error);
-    } finally {
-      setRemovingMember(false);
-    }
-  };
-
-  const handleAddMember = async () => {
-    const url = editingMember ? `/api/members/${editingMember.id}` : '/api/members';
-    const method = editingMember ? 'PATCH' : 'POST';
-    
-    // Robust scope handling
-    let scopes = newMember.scopes;
-    if (typeof scopes === 'string') {
-      try {
-        scopes = JSON.parse(scopes);
-      } catch {
-        scopes = [];
-      }
-    }
-
-    await apiFetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newMember, scopes })
-    });
-    setShowAddMember(false);
-    setEditingMember(null);
-    setNewMember({ team_id: '', name: '', role: '', email: '', is_board: false, scopes: [] });
-    refresh.members();
-  };
 
   return (
     <div className="space-y-4 sm:space-y-8">
@@ -4245,10 +4135,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
           <p className="text-sm text-text-muted mt-1">Your workspaces — create teams, tweak their look, and share access codes so students can join.</p>
         </div>
         {isAdmin && (
-          <Button onClick={() => {
-            setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' });
-            setShowAddTeam(true);
-          }}><Plus className="w-4 h-4" /> Add Team</Button>
+          <Button onClick={openNewTeam}><Plus className="w-4 h-4" /> Add Team</Button>
         )}
       </div>
 
@@ -4290,17 +4177,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
                     variant="secondary"
                     size="sm"
                     className="flex-1 h-8 text-[10px]"
-                    onClick={() => {
-                      setEditingTeam(team);
-                      setNewTeam({
-                        name: team.name,
-                        number: team.number,
-                        accent_color: team.accent_color || '',
-                        primary_color: team.primary_color || '',
-                        text_color: team.text_color || ''
-                      });
-                      setShowAddTeam(true);
-                    }}
+                    onClick={() => openEditTeam(team)}
                   >
                     <Edit2 className="w-3 h-3 mr-1" /> Edit
                   </Button>
@@ -4356,7 +4233,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
           <h3 className="text-lg sm:text-xl font-display font-bold text-text-base">All Members</h3>
           <p className="text-sm text-text-muted mt-1">Everyone on this team — manage the roster, roles, and permissions.</p>
         </div>
-        <Button onClick={() => setShowAddMember(true)}><Plus className="w-4 h-4" /> Add Member</Button>
+        <Button onClick={openNewMember}><Plus className="w-4 h-4" /> Add Member</Button>
       </div>
 
       {/* Mobile: stacked cards. A wide table inside an overflow-x container
@@ -4393,7 +4270,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
                     <Lock className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => { setMemberToRemove(m); setRemoveError(''); }}
+                    onClick={() => askRemoveMember(m)}
                     className="p-2.5 text-text-muted/70 hover:text-rose-400 transition-colors"
                     title="Remove Member"
                     aria-label="Remove member"
@@ -4496,7 +4373,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
                     )}
                     {isAdmin && (
                       <button 
-                        onClick={() => { setMemberToRemove(m); setRemoveError(''); }}
+                        onClick={() => askRemoveMember(m)}
                         className="p-2 text-text-muted/70 hover:text-rose-400 transition-colors"
                         title="Remove Member"
                       >
@@ -4556,7 +4433,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
               </div>
 
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => { setShowAddTeam(false); setEditingTeam(null); setNewTeam({ name: '', number: '', accent_color: '', primary_color: '', text_color: '' }); }}>Cancel</Button>
+                <Button variant="secondary" onClick={closeTeamEditor}>Cancel</Button>
                 <Button onClick={handleAddTeam}>{editingTeam ? "Save Changes" : "Create Team"}</Button>
               </div>
             </div>
@@ -4592,14 +4469,14 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
                         key={s}
                         type="button"
                         onClick={() => {
-                          const scopes = newMember.scopes.includes(s as never) 
-                            ? newMember.scopes.filter(x => x !== s) 
+                          const scopes = newMember.scopes.includes(s)
+                            ? newMember.scopes.filter(x => x !== s)
                             : [...newMember.scopes, s];
-                          setNewMember({...newMember, scopes: scopes as never[]});
+                          setNewMember({...newMember, scopes});
                         }}
                         className={cn(
                           "px-3 py-1 rounded-full text-[10px] font-bold uppercase border transition-all",
-                          newMember.scopes.includes(s as never) ? "bg-accent border-accent text-accent-ink" : "border-text-base/10 text-text-muted"
+                          newMember.scopes.includes(s) ? "bg-accent border-accent text-accent-ink" : "border-text-base/10 text-text-muted"
                         )}
                       >
                         {s}
@@ -4609,7 +4486,7 @@ function TeamsView({ teams, members, onRefresh, refresh, currentUser, hasScope, 
                 </div>
               )}
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => { setShowAddMember(false); setEditingMember(null); setNewMember({ team_id: '', name: '', role: '', email: '', is_board: false, scopes: [] }); }}>Cancel</Button>
+                <Button variant="secondary" onClick={closeMemberEditor}>Cancel</Button>
                 <Button onClick={handleAddMember}>{editingMember ? "Save Changes" : "Add Member"}</Button>
               </div>
             </div>
