@@ -193,6 +193,10 @@ import { SetupDialog } from './modern/pages/onboarding/SetupDialog';
 import { TourCard } from './modern/pages/onboarding/TourCard';
 import { clearSetupDrafts } from './components/onboarding/useSetupWizard';
 import { clearTourDraft } from './components/onboarding/useWalkthrough';
+import { useSignedOutMode } from './modern/signedOut';
+import { ModernLanding } from './modern/pages/auth/ModernLanding';
+import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from './modern/pages/auth/AuthPages';
+import { CodeRevealDialog } from './modern/pages/auth/CodeRevealDialog';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { InboxPage } from './modern/pages/InboxPage';
@@ -252,6 +256,8 @@ import { cn, Card, Button, Input, Switch } from './components/ui';
 import { AuthShell } from './components/auth/AuthShell';
 import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import ForgotPasswordScreen from './components/auth/ForgotPasswordScreen';
+import { useOAuthSignup, useSignupForm, useTeamLookup } from './components/auth/useAuthForms';
+import { DiscordIcon, GithubIcon, GoogleIcon } from './components/auth/ProviderIcons';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import ThemeToggle from './components/ThemeToggle';
@@ -450,27 +456,6 @@ function VoiceSocketBridge({ voiceRef }: { voiceRef: { current: VoiceSocketApi |
 
 // (AuthShell lives in ./components/auth/AuthShell so auth screens can be tested standalone.)
 
-const GoogleIcon = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24">
-    <path fill="#4285F4" d="M23.5 12.3c0-.9-.1-1.5-.3-2.3H12v4.3h6.5c-.1 1.1-.8 2.7-2.4 3.8l3.7 2.9c2.2-2 3.7-5 3.7-8.7z"/>
-    <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.9-2.9l-3.8-2.9c-1 .7-2.4 1.2-4.1 1.2-3.1 0-5.8-2.1-6.8-5l-3.9 3C3.5 21.3 7.5 24 12 24z"/>
-    <path fill="#FBBC05" d="M5.2 14.4c-.2-.7-.4-1.5-.4-2.4s.1-1.7.4-2.4l-3.9-3C.5 8.2 0 10 0 12s.5 3.8 1.3 5.4l3.9-3z"/>
-    <path fill="#EA4335" d="M12 4.7c1.8 0 3 .8 3.7 1.4l3.3-3.2C17.9 1.1 15.2 0 12 0 7.5 0 3.5 2.7 1.3 6.6l3.9 3.1c1-2.9 3.7-5 6.8-5z"/>
-  </svg>
-);
-
-const DiscordIcon = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M20.317 4.37a19.79 19.79 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.873-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.009c.12.099.246.198.373.292a.077.077 0 01-.006.127 12.3 12.3 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.84 19.84 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.331c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
-  </svg>
-);
-
-const GithubIcon = () => (
-  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
-  </svg>
-);
-
 const RoleScreen = ({ onBack, onSelect, googleEnabled, discordEnabled, githubEnabled }: { onBack: () => void; onSelect: (mode: 'admin' | 'student') => void; googleEnabled: boolean; discordEnabled: boolean; githubEnabled: boolean }) => (
   <AuthShell>
     <button
@@ -564,50 +549,7 @@ const AdminTeamFields = ({ teamNumber, setTeamNumber, teamName, setTeamName, lab
   teamName: string; setTeamName: (v: string) => void;
   label: (t: string) => React.ReactNode;
 }) => {
-  const [lookup, setLookup] = useState<'idle' | 'loading' | 'found' | 'notfound' | 'error'>('idle');
-  const [foundName, setFoundName] = useState('');
-  const [foundSchool, setFoundSchool] = useState<string | null>(null);
-  const [manual, setManual] = useState(false);
-  const timer = useRef<any>(null);
-
-  const doLookup = async (num: string) => {
-    const n = num.trim();
-    if (!/^\d+$/.test(n)) {
-      setLookup('idle'); setFoundName(''); setFoundSchool(null);
-      return;
-    }
-    setLookup('loading');
-    try {
-      const res = await fetch(apiUrl(`/api/ftc/lookup-public?number=${encodeURIComponent(n)}`));
-      if (res.ok) {
-        const data = await res.json();
-        setFoundName(data.name || '');
-        setFoundSchool(data.schoolName || null);
-        setLookup('found');
-        setManual(false);
-        setTeamName(data.name || '');
-      } else {
-        setLookup('notfound');
-        setFoundName('');
-        setTeamName('');
-      }
-    } catch {
-      setLookup('error');
-      setTeamName('');
-    }
-  };
-
-  const onNumChange = (v: string) => {
-    setTeamNumber(v);
-    if (timer.current) clearTimeout(timer.current);
-    if (!v.trim()) {
-      setLookup('idle'); setFoundName(''); setFoundSchool(null); setTeamName('');
-      return;
-    }
-    timer.current = setTimeout(() => doLookup(v), 600);
-  };
-
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const { lookup, foundName, foundSchool, manual, setManual, onNumChange, retry } = useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName });
 
   return (
     <>
@@ -656,7 +598,7 @@ const AdminTeamFields = ({ teamNumber, setTeamNumber, teamName, setTeamName, lab
       )}
       {manual && lookup !== 'idle' && (
         <p className="text-xs text-text-muted -mt-2">
-          <button type="button" onClick={() => { setManual(false); setTeamName(''); doLookup(teamNumber); }} className="text-accent font-semibold hover:underline">
+          <button type="button" onClick={retry} className="text-accent font-semibold hover:underline">
             Try the team number lookup again
           </button>
         </p>
@@ -671,32 +613,11 @@ const SignupScreen = ({ mode, onBack, onDone, onSignup }: {
   onDone: (data: any) => void;
   onSignup: (payload: any) => Promise<any>;
 }) => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPw, setShowPw] = useState(false);
-  const [teamName, setTeamName] = useState('');
-  const [teamNumber, setTeamNumber] = useState('');
-  const [accessCode, setAccessCode] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      const data = await onSignup({
-        accountType: mode, name, email, password,
-        teamName, teamNumber, accessCode,
-      });
-      onDone(data);
-    } catch (err: any) {
-      setError(err.message || 'Signup failed');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const {
+    name, setName, email, setEmail, password, setPassword, showPw, setShowPw,
+    teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
+    error, busy, submit,
+  } = useSignupForm({ mode, onSignup, onDone });
 
   const label = (t: string) => (
     <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">{t}</label>
@@ -766,34 +687,11 @@ const OAuthSignupScreen = ({ token, intent, provider, onBack, onDone }: {
   token: string; intent: 'admin_signup' | 'student_signup' | 'signup'; provider: 'google' | 'discord' | 'github';
   onBack: () => void; onDone: (data: any) => void;
 }) => {
-  const needsRole = intent === 'signup';
-  const [pickedRole, setPickedRole] = useState<'admin' | 'student'>('student');
-  const isAdmin = intent === 'admin_signup' || (needsRole && pickedRole === 'admin');
-  const [teamName, setTeamName] = useState('');
-  const [teamNumber, setTeamNumber] = useState('');
-  const [accessCode, setAccessCode] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      const res = await apiFetch('/api/auth/oauth/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, token, teamName, teamNumber, accessCode, role: needsRole ? pickedRole : undefined }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Signup failed');
-      onDone(data);
-    } catch (err: any) {
-      setError(err.message || 'Signup failed');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const {
+    needsRole, pickedRole, setPickedRole, isAdmin,
+    teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
+    error, busy, submit,
+  } = useOAuthSignup({ token, intent, provider, onDone });
 
   const label = (t: string) => (
     <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">{t}</label>
@@ -1198,6 +1096,8 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+  // Landing / auth look: this device's last interface mode (phase 9b).
+  const [signedOutMode, setSignedOutMode] = useSignedOutMode(isLoggedIn);
   const [signupTeam, setSignupTeam] = useState<{ id: number; name: string; access_code: string } | null>(null);
 
   // Data State
@@ -2751,52 +2651,76 @@ export default function App() {
     // step first. This must come before the landing screen or the callback
     // bounces them back to the homepage.
     // Unverified email+password account: prove ownership before any session.
+    const modernOut = signedOutMode === 'modern';
+    const toClassic = () => setSignedOutMode('legacy');
+    const providers = { google: googleEnabled, discord: discordEnabled, github: githubEnabled };
     if (verifyState) {
-      return (
-        <VerifyEmailScreen
-          email={verifyState.email}
-          onBack={() => setVerifyState(null)}
-          onVerified={(data) => {
-            persistSession(data.sessionId, data.user);
-            setVerifyState(null);
-            if (verifyState.mode === 'admin' && data?.team) setSignupTeam(data.team);
-            if (verifyState.mode === 'setup') setNeedsSetup(false);
-          }}
-        />
-      );
+      const onVerified = (data: any) => {
+        persistSession(data.sessionId, data.user);
+        setVerifyState(null);
+        if (verifyState.mode === 'admin' && data?.team) setSignupTeam(data.team);
+        if (verifyState.mode === 'setup') setNeedsSetup(false);
+      };
+      return modernOut
+        ? <VerifyEmailPage email={verifyState.email} onBack={() => setVerifyState(null)} onVerified={onVerified} onClassic={toClassic} />
+        : <VerifyEmailScreen email={verifyState.email} onBack={() => setVerifyState(null)} onVerified={onVerified} />;
     }
     if (oauthSignup) {
-      return (
-        <OAuthSignupScreen
-          token={oauthSignup.token}
-          intent={oauthSignup.intent}
-          provider={oauthSignup.provider}
-          onBack={() => { setOauthSignup(null); setAuthScreen('landing'); }}
-          onDone={(data) => {
-            persistSession(data.sessionId, data.user);
-            setOauthSignup(null);
-            if (data?.team) setSignupTeam(data.team);
-          }}
-        />
-      );
+      const onBack = () => { setOauthSignup(null); setAuthScreen('landing'); };
+      const onDone = (data: any) => {
+        persistSession(data.sessionId, data.user);
+        setOauthSignup(null);
+        if (data?.team) setSignupTeam(data.team);
+      };
+      return modernOut
+        ? <OAuthSignupPage token={oauthSignup.token} intent={oauthSignup.intent} provider={oauthSignup.provider} onBack={onBack} onDone={onDone} onClassic={toClassic} />
+        : <OAuthSignupScreen token={oauthSignup.token} intent={oauthSignup.intent} provider={oauthSignup.provider} onBack={onBack} onDone={onDone} />;
     }
     if (authScreen === 'landing') {
-      return <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
+      return modernOut
+        ? <ModernLanding onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} onClassic={toClassic} />
+        : <Landing onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
     }
     if (authScreen === 'role') {
-      return <RoleScreen googleEnabled={googleEnabled} discordEnabled={discordEnabled} githubEnabled={githubEnabled} onBack={() => setAuthScreen('landing')} onSelect={(m) => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student')} />;
+      const onSelect = (m: 'admin' | 'student') => setAuthScreen(m === 'admin' ? 'signup-admin' : 'signup-student');
+      return modernOut
+        ? <RolePage providers={providers} onBack={() => setAuthScreen('landing')} onSelect={onSelect} onClassic={toClassic} />
+        : <RoleScreen googleEnabled={googleEnabled} discordEnabled={discordEnabled} githubEnabled={githubEnabled} onBack={() => setAuthScreen('landing')} onSelect={onSelect} />;
     }
 
     if (authScreen === 'signup-admin' || authScreen === 'signup-student') {
       const mode = authScreen === 'signup-admin' ? 'admin' : 'student';
+      const onDone = (data: any) => {
+        if (mode === 'admin' && data?.team) setSignupTeam(data.team);
+      };
+      return modernOut
+        ? <SignupPage mode={mode} onBack={() => setAuthScreen('role')} onSignup={handleSignup} onDone={onDone} onSignIn={() => setAuthScreen('login')} onClassic={toClassic} />
+        : (
+          <SignupScreen
+            mode={mode}
+            onBack={() => setAuthScreen('role')}
+            onSignup={handleSignup}
+            onDone={onDone}
+          />
+        );
+    }
+    if (modernOut) {
       return (
-        <SignupScreen
-          mode={mode}
-          onBack={() => setAuthScreen('role')}
-          onSignup={handleSignup}
-          onDone={(data) => {
-            if (mode === 'admin' && data?.team) setSignupTeam(data.team);
+        <SignInPage
+          email={loginEmail} setEmail={setLoginEmail}
+          password={loginPassword} setPassword={setLoginPassword}
+          needsSetup={needsSetup} error={loginError} busy={loggingIn}
+          onSubmit={needsSetup ? handleSetup : handleLogin}
+          oauthError={oauthError} providers={providers}
+          showForgot={showForgotPassword} setShowForgot={setShowForgotPassword}
+          onPasswordReset={() => {
+            setShowForgotPassword(false);
+            setLoginPassword('');
+            notify('Password updated — sign in with your new password', 'success');
           }}
+          onBack={() => setAuthScreen('landing')}
+          onCreateAccount={() => { setNeedsSetup(false); setAuthScreen('role'); }}
+          onClassic={toClassic}
         />
       );
     }
@@ -3095,7 +3019,12 @@ export default function App() {
           <div className="cp-refresh-bar h-full bg-accent" />
         </div>
       )}
-      {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
+      {signupTeam && (
+        <ByMode
+          legacy={<CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
+          modern={<CodeRevealDialog team={signupTeam} onEnter={() => setSignupTeam(null)} />}
+        />
+      )}
       <ShellSwitch
         legacy={<>
       {/* Sidebar Overlay for Mobile */}
