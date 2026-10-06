@@ -15,3 +15,7 @@ export * from './button';
 export * from './basic';
 export * from './overlay';
 export * from './tabs';
+export * from './controls';
+export * from './command';
+export * from './chart';
+export * from './sonner';

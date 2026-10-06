@@ -7279,7 +7279,7 @@ Rules:
       await setTaskAssignees(taskId, validIds, auth.teamId);
 
       for (const mid of validIds) {
-        createNotification(mid, `New task assigned: ${title}`, 'task');
+        createNotification(mid, `New task assigned: ${title}`, 'task', { task_id: taskId });
       }
       // Email the assignees (best-effort, never blocks the response).
       void notifyTaskAssignees(taskId, title || "", description || "", due_date || "", auth.teamId, auth.memberId, validIds);
@@ -7395,7 +7395,7 @@ Rules:
         saved.push(bulkTaskId);
         if (targetAssignedTo) {
           await setTaskAssignees(bulkTaskId, [targetAssignedTo], auth.teamId);
-          createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task');
+          createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task', { task_id: bulkTaskId });
         }
       }
       // Bulk import: receivers just refresh their task list.
@@ -7458,7 +7458,7 @@ Rules:
         // Notify newly added assignees
         for (const mid of valid) {
           if (!assigneeIds.includes(mid)) {
-            createNotification(mid, `New task assigned: ${task.title}`, 'task');
+            createNotification(mid, `New task assigned: ${task.title}`, 'task', { task_id: Number(req.params.id) });
           }
         }
       }
@@ -7471,7 +7471,7 @@ Rules:
         const note = status !== undefined && title === undefined
           ? `Task status updated to ${status}: ${task.title}`
           : `Task updated: ${title ?? task.title}`;
-        createNotification(mid, note, 'task');
+        createNotification(mid, note, 'task', { task_id: Number(req.params.id) });
       }
 
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
@@ -7546,7 +7546,7 @@ Rules:
       );
       if (task.assigned_to && task.assigned_to !== auth.memberId) {
         const completer = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
-        createNotification(task.assigned_to, `Task completed by ${completer?.name || "a teammate"}: ${task.title}`, 'task');
+        createNotification(task.assigned_to, `Task completed by ${completer?.name || "a teammate"}: ${task.title}`, 'task', { task_id: Number(req.params.id) });
       }
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
@@ -7669,7 +7669,7 @@ Rules:
       // Notify board members of budget changes
       const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1 AND team_id = ?", auth.teamId));
       boardMembers.forEach((m: any) => {
-        createNotification(m.id, `New budget ${type}: $$${amount} for ${category}`, 'system');
+        createNotification(m.id, `New budget ${type}: $$${amount} for ${category}`, 'system', { budget_id: Number(info.lastInsertRowid) });
       });
 
       res.json({ id: info.lastInsertRowid });
@@ -7738,7 +7738,7 @@ Rules:
       // Notify everyone of new outreach
       const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ?", auth.teamId));
       allMembers.forEach((m: any) => {
-        createNotification(m.id, `New outreach event: ${title} at ${location}`, 'system');
+        createNotification(m.id, `New outreach event: ${title} at ${location}`, 'system', { outreach_id: Number(info.lastInsertRowid) });
       });
 
       res.json({ id: info.lastInsertRowid });

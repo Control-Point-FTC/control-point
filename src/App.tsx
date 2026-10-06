@@ -181,8 +181,13 @@ import { WhatsNewAutoPopup, WhatsNewModal } from './components/WhatsNewModal';
 import { InterfaceModeProvider } from './modern/interfaceMode';
 import { ShellSwitch, TryModernBanner } from './modern/ShellSwitch';
 import { ModernShell } from './modern/ModernShell';
+import { ByMode } from './modern/ByMode';
+import { notifMeta } from './modern/notifications';
+import { HomePage } from './modern/pages/HomePage';
+import { InboxPage } from './modern/pages/InboxPage';
+import { useMyWork } from './components/dashboard/useMyWork';
 import type { CommandAction } from './modern/CommandMenu';
-import type { NotificationActions } from './modern/InboxSheet';
+import type { NotificationActions } from './modern/notifications';
 import { useDraft, clearDrafts } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
@@ -918,6 +923,7 @@ const navItems = [
 // Header titles for routes that aren't nav items (otherwise the header would
 // fall back to "Dashboard").
 const ROUTE_TITLE_KEYS: Record<string, string> = {
+  inbox: 'nav.inbox',
   profile: 'nav.profile',
   settings: 'nav.teamSettings',
 };
@@ -1277,10 +1283,6 @@ export default function App() {
   const [mentionToast, setMentionToast] = useState<any | null>(null);
   const mentionToastTimer = useRef<any>(null);
   /** Parsed JSON metadata on a notification (channel_id / message_id for mentions). */
-  const notifMeta = (n: any): any => {
-    try { return n?.meta ? JSON.parse(n.meta) : {}; }
-    catch { return {}; }
-  };
   const unreadMentions = useMemo(
     () => notifications.filter((n: any) => !n.is_read && n.type === 'mention').length,
     [notifications]
@@ -2346,6 +2348,7 @@ export default function App() {
     }
     ids.add('profile');
     ids.add('settings');
+    ids.add('inbox'); // Modern page; Legacy redirects it to the dashboard
     return ids;
   }, [visibleTabs]);
   useEffect(() => {
@@ -2624,31 +2627,33 @@ export default function App() {
     return (
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={dashboardEl} />
-        <Route path="/stats" element={<TeamStatsView />} />
-        <Route path="/predict" element={<PredictView />} />
-        <Route path="/teams" element={<TeamsView {...viewProps} />} />
-        <Route path="/roles" element={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />
-        <Route path="/attendance" element={<AttendanceView {...viewProps} />} />
-        <Route path="/tasks" element={<TasksView {...viewProps} />} />
-        <Route path="/calendar" element={<CalendarView {...viewProps} />} />
-        <Route path="/budget" element={<BudgetView {...viewProps} />} />
-        <Route path="/inventory" element={<InventoryView {...viewProps} />} />
-        <Route path="/outreach" element={<OutreachView {...viewProps} />} />
-        <Route path="/code" element={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />
-        <Route path="/cad" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
-        <Route path="/cad-docs" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
-        <Route path="/cad-reviews" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
-        <Route path="/cad-snapshots" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
-        <Route path="/cad-parts" element={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
-        <Route path="/comm" element={<CommunicationView {...viewProps} />} />
-        <Route path="/chat" element={<ChatView {...viewProps} />} />
-        <Route path="/resources" element={<ResourcesView />} />
-        <Route path="/bruno" element={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />
-        <Route path="/profile" element={<ProfileView {...viewProps} />} />
-        <Route path="/settings" element={<SettingsView {...viewProps} hasPerm={hasPerm} />} />
-        <Route path="/owner" element={<OwnerView {...viewProps} />} />
-        <Route path="/checkin/:token" element={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} />
+        <Route path="/dashboard" element={<ByMode legacy={dashboardEl} modern={<HomePage {...viewProps} notifications={notifications} unreadMentions={unreadMentions} />} />} />
+        {/* Inbox is a Modern page; Legacy keeps its bell dropdown. */}
+        <Route path="/inbox" element={<ByMode legacy={<Navigate to="/dashboard" replace />} modern={<InboxPage notifications={notifications} actions={notificationActions} onOpenChannel={(id) => setActiveChannelId(id)} />} />} />
+        <Route path="/stats" element={<ByMode legacy={<TeamStatsView />} />} />
+        <Route path="/predict" element={<ByMode legacy={<PredictView />} />} />
+        <Route path="/teams" element={<ByMode legacy={<TeamsView {...viewProps} />} />} />
+        <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />} />
+        <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} />} />
+        <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} />} />
+        <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} />} />
+        <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} />} />
+        <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} />} />
+        <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} />} />
+        <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />} />
+        <Route path="/cad" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-docs" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-reviews" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-snapshots" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-parts" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/comm" element={<ByMode legacy={<CommunicationView {...viewProps} />} />} />
+        <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} />} />
+        <Route path="/resources" element={<ByMode legacy={<ResourcesView />} />} />
+        <Route path="/bruno" element={<ByMode legacy={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />} />
+        <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} />} />
+        <Route path="/settings" element={<ByMode legacy={<SettingsView {...viewProps} hasPerm={hasPerm} />} />} />
+        <Route path="/owner" element={<ByMode legacy={<OwnerView {...viewProps} />} />} />
+        <Route path="/checkin/:token" element={<ByMode legacy={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     );
@@ -2881,26 +2886,6 @@ export default function App() {
     );
   }
 
-  // Routed page content (or the sync spinner / error). Shared by both shells.
-  const mainContent = loading ? (
-    loadError ? (
-      <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
-        <p className="text-text-base font-bold">Couldn't sync your data</p>
-        <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
-        <button
-          onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
-          className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
-        >
-          Try again
-        </button>
-      </div>
-    ) : (
-      <div className="flex flex-col items-center justify-center h-64 gap-4">
-        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-        <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
-      </div>
-    )
-  ) : renderContent();
 
   // Inbox actions for the Modern shell (same endpoints as the Legacy bell).
   const notificationActions: NotificationActions = {
@@ -2942,6 +2927,27 @@ export default function App() {
     { id: 'feedback', label: 'Send feedback', group: 'Actions', icon: MessageSquare, run: () => setShowFeedback(true) },
     { id: 'setup', label: 'Setup guide', group: 'Actions', icon: LayoutDashboard, run: () => openSetupGuide() },
   ];
+
+  // Routed page content (or the sync spinner / error). Shared by both shells.
+  const mainContent = loading ? (
+    loadError ? (
+      <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
+        <p className="text-text-base font-bold">Couldn't sync your data</p>
+        <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
+        <button
+          onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
+          className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
+        >
+          Try again
+        </button>
+      </div>
+    ) : (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+        <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
+      </div>
+    )
+  ) : renderContent();
 
   return (
     <VoiceProvider
@@ -3650,7 +3656,6 @@ export default function App() {
             onSwitchTeam={(id) => void handleSwitchTeam(id)}
             unreadMentions={unreadMentions}
             notifications={notifications}
-            notificationActions={notificationActions}
             onOpenSettings={() => setSettingsOpen(true)}
             onLogout={() => void handleLogout()}
             onOpenBruno={handleBrunoButton}
@@ -3940,58 +3945,11 @@ async function removeMemberFromTeam(m: any, onRefresh: () => void) {
 function StudentDashboardView({ teams, members, attendance, tasks, setTasks, events, currentUser, onRefresh, setLoading, onboardingState, onContinueSetup, onDismissChecklist, onRequestComplete }: any) {
   const navigate = useNavigate();
   const myTeam = teams?.find((t: any) => t.id === currentUser?.team_id);
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const tomorrow = format(new Date(Date.now() + 864e5), 'yyyy-MM-dd');
-  const myTasks = (tasks || []).filter((t: any) => {
-    const ids = Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
-    return ids.includes(currentUser?.id);
-  });
-  const openTasks = myTasks.filter((t: any) => t.status !== 'done');
-  const myAttendance = (attendance || []).filter((r: any) => r.member_id === currentUser?.id);
-  const todayRecord = myAttendance.find((r: any) => r.date === today);
-  const checkedIn = !!(todayRecord && (todayRecord.status === 'P' || todayRecord.status === 'L'));
-  const presentCount = myAttendance.filter((r: any) => r.status === 'P').length;
-  const lateCount = myAttendance.filter((r: any) => r.status === 'L').length;
-  const excusedCount = myAttendance.filter((r: any) => r.status === 'E').length;
-  const attendanceRate = myAttendance.length > 0
-    ? Math.round((presentCount + lateCount + excusedCount) / myAttendance.length * 100)
-    : null;
-  const upcomingEvents = (events || [])
-    .filter((e: any) => e.date >= today)
-    .sort((a: any, b: any) => a.date.localeCompare(b.date))
-    .slice(0, 5);
-
-  const toggleTask = async (task: any) => {
-    // Moving to done requires proof: open the shared completion dialog.
-    // (The server rejects direct PATCH transitions to done.)
-    const next = task.status === 'done' ? 'todo' : 'done';
-    if (next === 'done' && onRequestComplete) {
-      onRequestComplete(task);
-      return;
-    }
-    // Optimistic: flip instantly, roll back on failure. No global spinner.
-    const prev = tasks;
-    setTasks((ts: any[]) => ts.map((t: any) => t.id === task.id
-      ? { ...t, status: next, completed_at: next === 'done' ? new Date().toISOString() : null }
-      : t));
-    try {
-      const res = await apiFetch(`/api/tasks/${task.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: next })
-      });
-      if (!res.ok) {
-        setTasks(prev);
-        notify('Could not update task \u2014 try again.', 'error');
-      }
-    } catch {
-      setTasks(prev);
-      notify('Could not update task \u2014 try again.', 'error');
-    }
-  };
-
-  const dayLabel = (dateStr: string) =>
-    dateStr === today ? 'Today' : dateStr === tomorrow ? 'Tomorrow' : format(new Date(dateStr + 'T12:00:00'), 'EEEE');
+  // Shared "my work" logic (also used by the Modern Home).
+  const {
+    today, myTasks, openTasks, myAttendance, todayRecord, checkedIn, presentCount, lateCount,
+    excusedCount, attendanceRate, upcomingEvents, toggleTask, dayLabel,
+  } = useMyWork({ tasks, setTasks, attendance, events, currentUser, onRequestComplete });
 
   return (
     <>

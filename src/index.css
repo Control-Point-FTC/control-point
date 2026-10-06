@@ -99,6 +99,28 @@
   --color-warning: #fb923c;
   --color-text-base: #fafaf8;
   --color-text-muted: #a1a1aa;
+
+  /* shadcn/ui semantic tokens (used by the Modern experience). Names that
+     collide with ours (primary/secondary/accent) are intentionally absent:
+     Modern uses bg-accent for shadcn's "primary". Values are set per theme
+     in src/modern/modern.css. */
+  --color-background: var(--sh-background, #09090b);
+  --color-foreground: var(--sh-foreground, #fafaf8);
+  --color-card: var(--sh-card, #121215);
+  --color-card-foreground: var(--sh-card-foreground, #fafaf8);
+  --color-popover: var(--sh-popover, #18181b);
+  --color-popover-foreground: var(--sh-popover-foreground, #fafaf8);
+  --color-muted: var(--sh-muted, #18181b);
+  --color-muted-foreground: var(--sh-muted-foreground, #a1a1aa);
+  --color-border: var(--sh-border, #ffffff14);
+  --color-input: var(--sh-input, #ffffff1f);
+  --color-ring: var(--sh-ring, #ffc700);
+  --color-destructive: var(--sh-destructive, #f43f5e);
+  --color-chart-1: var(--sh-chart-1, #ffc700);
+  --color-chart-2: var(--sh-chart-2, #38bdf8);
+  --color-chart-3: var(--sh-chart-3, #34d399);
+  --color-chart-4: var(--sh-chart-4, #a78bfa);
+  --color-chart-5: var(--sh-chart-5, #fb923c);
 }
 
 @layer base {

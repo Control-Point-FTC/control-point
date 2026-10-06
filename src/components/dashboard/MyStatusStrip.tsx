@@ -3,8 +3,7 @@ import { format } from 'date-fns';
 import { CalendarCheck, CheckSquare, Clock, LogOut, User } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import '../../i18n';
-import { apiFetch } from '../../services/api';
-import { notify } from '../dialog';
+import { useSelfReport } from './useSelfReport';
 import { Card, Button, cn } from '../ui';
 
 interface MyStatusStripProps {
@@ -37,8 +36,11 @@ function MyStatusStrip({
   const [showOut, setShowOut] = useState(false);
   const [outReason, setOutReason] = useState('');
 
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const myStatus = attendance?.find((r: any) => r.member_id === currentUser?.id && r.date === today);
+  // Shared check-in logic (also used by the Modern Home).
+  const { myStatus, report } = useSelfReport({
+    currentUser, attendance, setAttendance, setLoading, onRefresh,
+    absenceLoggedMessage: t('dashboard.absenceLogged'),
+  });
 
   const statusLabel =
     myStatus?.status === 'P' ? t('dashboard.statusPresent')
@@ -48,46 +50,8 @@ function MyStatusStrip({
     : t('dashboard.statusOther');
 
   const handleSelfReport = async (status: string, reason?: string) => {
-    let finalStatus = status;
-    if (status === 'O' && reason) {
-      finalStatus = 'U';
-    }
-    // Optimistic: show the new status instantly, reconcile in background.
-    const prev = attendance;
-    if (setAttendance) {
-      const optimistic = { member_id: currentUser.id, date: today, status: finalStatus, reason: reason || '' };
-      setAttendance((prev: any[]) => {
-        const idx = prev.findIndex((r: any) => r.member_id === currentUser.id && r.date === today);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = { ...next[idx], ...optimistic };
-          return next;
-        }
-        return [...prev, optimistic];
-      });
-    }
-    setLoading(true);
-    try {
-      const res = await apiFetch('/api/attendance/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: today,
-          records: [{ member_id: currentUser.id, status: finalStatus, reason }]
-        })
-      });
-      if (res.ok) {
-        setShowOut(false);
-        onRefresh();
-        if (reason) notify(t('dashboard.absenceLogged'), 'success');
-      } else if (setAttendance) {
-        setAttendance(() => prev);
-      }
-    } catch {
-      if (setAttendance) setAttendance(() => prev);
-    } finally {
-      setLoading(false);
-    }
+    const ok = await report(status, reason);
+    if (ok) setShowOut(false);
   };
 
   return (

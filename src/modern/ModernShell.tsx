@@ -16,11 +16,10 @@ import { PRESENCE_META, PRESENCE_SETTINGS, PRESENCE_SETTING_META, PresenceDot } 
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuRadioGroup, DropdownMenuRadioItem,
-  Sheet, SheetContent, SheetTitle, SheetDescription, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Badge,
+  Sheet, SheetContent, SheetTitle, SheetDescription, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Badge, Toaster,
 } from '../components/ui-kit';
 import { buildModernNav, isActive, type ModernNavItem, type NavItemLike } from './nav';
 import { CommandMenu, type CommandAction } from './CommandMenu';
-import { InboxSheet, type NotificationActions } from './InboxSheet';
 import { useInterfaceMode } from './interfaceMode';
 
 export interface ModernShellProps {
@@ -40,7 +39,6 @@ export interface ModernShellProps {
   onSwitchTeam: (teamId: number) => void;
   unreadMentions: number;
   notifications: any[];
-  notificationActions: NotificationActions;
   onOpenSettings: () => void;
   onLogout: () => void;
   onOpenBruno: () => void;
@@ -77,7 +75,6 @@ export function ModernShell(props: ModernShellProps) {
   const { isMobile, immersive, content } = props;
   const [collapsed, setCollapsed] = useState<boolean>(() => readJSON(COLLAPSE_KEY, false));
   const [cmdOpen, setCmdOpen] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => writeJSON(COLLAPSE_KEY, collapsed), [collapsed]);
 
@@ -116,7 +113,7 @@ export function ModernShell(props: ModernShellProps) {
         collapsed={!isMobile && collapsed}
         unreadInbox={unreadInbox}
         onOpenSearch={then(() => setCmdOpen(true))}
-        onOpenInbox={then(() => setInboxOpen(true))}
+        onOpenInbox={then(() => props.onNavigate('/inbox'))}
         onToggleCollapsed={isMobile ? undefined : () => setCollapsed((c) => !c)}
       />
     );
@@ -153,11 +150,19 @@ export function ModernShell(props: ModernShellProps) {
               'relative flex min-h-0 flex-1 flex-col',
               immersive
                 ? 'overflow-hidden pb-[calc(64px+env(safe-area-inset-bottom))] md:pb-0'
-                : 'overflow-y-auto overflow-x-clip custom-scrollbar px-4 pt-5 pb-28 sm:px-6 lg:px-8 lg:pt-6 md:pb-10',
+                : 'm-canvas overflow-y-auto overflow-x-clip custom-scrollbar px-4 pt-8 pb-28 sm:px-6 md:pb-12 lg:px-8',
             )}
           >
-            {/* Keyed by route so each page plays its enter animation (modern.css .m-page). */}
-            <div key={props.activeTab} className={cn('m-page flex min-w-0 grow flex-col', !immersive && 'mx-auto w-full max-w-[1400px]')}>{content}</div>
+            {/* Keyed by route: each page mounts fresh and plays its own entrance motion. */}
+            <motion.div
+              key={props.activeTab}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="flex min-w-0 grow flex-col"
+            >
+              {content}
+            </motion.div>
           </main>
         </div>
 
@@ -177,6 +182,7 @@ export function ModernShell(props: ModernShellProps) {
           </Sheet>
         )}
 
+        <Toaster />
         <CommandMenu
           open={cmdOpen}
           onOpenChange={setCmdOpen}
@@ -187,16 +193,10 @@ export function ModernShell(props: ModernShellProps) {
           onSwitchTeam={props.onSwitchTeam}
           onOpenBruno={props.onOpenBruno}
           onOpenSettings={props.onOpenSettings}
-          onOpenInbox={() => setInboxOpen(true)}
+          onOpenInbox={() => props.onNavigate('/inbox')}
           actions={props.actions}
         />
-        <InboxSheet
-          open={inboxOpen}
-          onOpenChange={setInboxOpen}
-          notifications={props.notifications}
-          actions={props.notificationActions}
-          onNavigate={props.onNavigate}
-        />
+
       </div>
     </TooltipProvider>
     </MotionConfig>
@@ -244,7 +244,7 @@ function SidebarContent(props: ModernShellProps & {
             <NavLink key={item.id} item={item} {...props} label={t(item.labelKey)}
               count={item.id === 'chat' ? props.unreadMentions : 0} />
           ))}
-          <NavButton collapsed={collapsed} icon={Inbox} label="Inbox" onClick={props.onOpenInbox} count={props.unreadInbox} />
+          <NavButton collapsed={collapsed} icon={Inbox} label="Inbox" onClick={props.onOpenInbox} count={props.unreadInbox} active={props.activeTab === 'inbox'} />
           <NavButton collapsed={collapsed} icon={Bot} label={props.botName} onClick={props.onOpenBruno} hint="⌘J" onboard="header-bruno" />
         </div>
 
@@ -338,14 +338,15 @@ function NavLink({ item, label, activeTab, onNavigate, collapsed, predictSeen, c
   );
 }
 
-function NavButton({ collapsed, icon: Icon, label, onClick, hint, count = 0, onboard }: {
-  collapsed: boolean; icon: typeof Search; label: string; onClick: () => void; hint?: string; count?: number; onboard?: string;
+function NavButton({ collapsed, icon: Icon, label, onClick, hint, count = 0, onboard, active = false }: {
+  collapsed: boolean; icon: typeof Search; label: string; onClick: () => void; hint?: string; count?: number; onboard?: string; active?: boolean;
 }) {
   return (
     <WithTip collapsed={collapsed} label={label}>
-      <button type="button" onClick={onClick} aria-label={collapsed ? label : undefined} data-onboard={onboard} className={rowClass(false, collapsed)}>
-        <Icon className="size-4 shrink-0 text-text-muted group-hover:text-text-base" />
-        {!collapsed && <span className="truncate">{label}</span>}
+      <button type="button" onClick={onClick} aria-label={collapsed ? label : undefined} aria-current={active ? 'page' : undefined} data-onboard={onboard} className={rowClass(active, collapsed)}>
+        {active && <motion.span layoutId="m-nav-active" transition={{ type: 'spring', stiffness: 500, damping: 38 }} className="absolute inset-0 rounded-lg bg-text-base/[0.08]" aria-hidden="true" />}
+        <Icon className={cn('relative size-4 shrink-0', active ? 'text-accent' : 'text-text-muted group-hover:text-text-base')} />
+        {!collapsed && <span className="relative truncate">{label}</span>}
         {!collapsed && hint && count === 0 && <kbd className="ml-auto hidden md:inline rounded border border-line px-1.5 text-[11px] font-medium text-text-muted">{hint}</kbd>}
         {count > 0 && (
           collapsed
