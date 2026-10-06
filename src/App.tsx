@@ -189,6 +189,7 @@ import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
 import { CalendarPage } from './modern/pages/calendar/CalendarPage';
 import { AttendancePage } from './modern/pages/attendance/AttendancePage';
 import { PeoplePage } from './modern/pages/people/PeoplePage';
+import { SettingsPage } from './modern/pages/settings/SettingsPage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
 import { useCalendarController, toDateKey, fmtTime } from './components/calendar/useCalendarController';
@@ -1057,6 +1058,16 @@ export default function App() {
   /** Change my presence status (online / idle / dnd / invisible).
    *  Optimistic: the dot updates instantly; the server PATCH runs in the
    *  background and we roll back only if it fails. */
+  // Settings entry points: Modern opens the Settings page, Legacy the modal.
+  // (The mode lives in InterfaceModeProvider below App; it mirrors onto <html>.)
+  const openSettings = (section?: string) => {
+    if (typeof document !== 'undefined' && document.documentElement.dataset.ui === 'modern') {
+      navigate(section ? `/settings?section=${section}` : '/settings');
+    } else {
+      setSettingsOpen(true);
+    }
+  };
+
   const handleStatusPick = async (status: string) => {
     if (!currentUser) return;
     setStatusPickerOpen(false);
@@ -2535,6 +2546,11 @@ export default function App() {
   };
 
   const renderContent = () => {
+    const settingsCallbacks = {
+      onUserSaved: (u: any) => setCurrentUser((prev: any) => (prev ? { ...prev, ...u } : u)),
+      onTeamSaved: (t: any) => setTeams((prev) => prev.map((x: any) => (x.id === t.id ? { ...x, ...t } : x))),
+      onStatusPick: handleStatusPick,
+    };
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, socialProfiles, youtubeEnabled, tiktokEnabled, inventory, communications, events,
       messages, settings, hiddenDates, currentUser, onRefresh: fetchData, refresh, setLoading,
@@ -2666,8 +2682,8 @@ export default function App() {
         <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} />} />
         <Route path="/resources" element={<ByMode legacy={<ResourcesView />} />} />
         <Route path="/bruno" element={<ByMode legacy={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />} />
-        <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} />} />
-        <Route path="/settings" element={<ByMode legacy={<SettingsView {...viewProps} hasPerm={hasPerm} />} />} />
+        <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} modern={<Navigate to="/settings?section=profile" replace />} />} />
+        <Route path="/settings" element={<ByMode legacy={<SettingsView {...viewProps} hasPerm={hasPerm} />} modern={<SettingsPage {...viewProps} {...settingsCallbacks} hasPerm={hasPerm} />} />} />
         <Route path="/owner" element={<ByMode legacy={<OwnerView {...viewProps} />} />} />
         <Route path="/checkin/:token" element={<ByMode legacy={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
@@ -3218,7 +3234,7 @@ export default function App() {
           style={isMobile ? { paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' } : undefined}
         >
           {/* Voice controls sit with the user card, Discord-style (presence picker untouched) */}
-          <UserVoiceControls className={cn(!isSidebarOpen && 'justify-center')} onOpenSettings={() => setSettingsOpen(true)} />
+          <UserVoiceControls className={cn(!isSidebarOpen && 'justify-center')} onOpenSettings={() => openSettings()} />
           {/* Discord-style user card: avatar w/ presence, name, status picker, settings gear */}
           <div className="relative">
             {statusPickerOpen && (
@@ -3246,7 +3262,7 @@ export default function App() {
               )}
               {isSidebarOpen && (
                 <>
-                  <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-text-base transition-colors flex-shrink-0" title="Settings">
+                  <button onClick={() => openSettings()} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-text-base transition-colors flex-shrink-0" title="Settings">
                     <Settings className="w-4 h-4" />
                   </button>
                   <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
@@ -3563,7 +3579,7 @@ export default function App() {
                         {/* Personal settings popup (appearance, voice, Bruno…) — for
                             everyone; on phones this is the only easy way in. */}
                         <button
-                          onClick={() => { setShowUserMenu(false); setSettingsOpen(true); }}
+                          onClick={() => { setShowUserMenu(false); openSettings(); }}
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
                           <Settings className="w-[18px] h-[18px] text-accent" />
@@ -3671,7 +3687,7 @@ export default function App() {
           <ModernShell
             visibleTabs={visibleTabs as any}
             activeTab={activeTab}
-            pageTitle={pageTitle}
+            pageTitle={activeTab === 'settings' ? t('settings.title') : pageTitle}
             onNavigate={(path) => navigate(path)}
             content={mainContent}
             immersive={isImmersiveRoute}
@@ -3684,7 +3700,7 @@ export default function App() {
             onSwitchTeam={(id) => void handleSwitchTeam(id)}
             unreadMentions={unreadMentions}
             notifications={notifications}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => openSettings()}
             onLogout={() => void handleLogout()}
             onOpenBruno={handleBrunoButton}
             botName={botName}
@@ -3702,9 +3718,9 @@ export default function App() {
       {/* Voice calling surfaces — all driven by VoiceProvider context state.
           CallBar is fixed-bottom (above the mobile nav) and survives route
           navigation because it lives outside the routed views. */}
-      <CallBar onOpenSettings={() => setSettingsOpen(true)} />
+      <CallBar onOpenSettings={() => openSettings()} />
       <IncomingCallModal />
-      <CallView onOpenSettings={() => setSettingsOpen(true)} />
+      <CallView onOpenSettings={() => openSettings()} />
       <CookieConsent />
       <InstallPrompt />
       <WhatsNewAutoPopup />

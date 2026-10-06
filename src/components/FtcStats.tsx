@@ -226,7 +226,7 @@ export function FtcTeamCard() {
           <p className="text-sm text-text-muted mt-0.5">Link your team number to pull live stats, rankings, and event history from FTC Scout.</p>
         </div>
         <button
-          onClick={() => navigate('/settings')}
+          onClick={() => navigate('/settings?section=workspace')}
           className="flex items-center gap-2 bg-accent text-accent-ink font-bold px-5 py-2.5 rounded-xl hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)] whitespace-nowrap"
         >
           <SettingsIcon className="w-4 h-4" /> Connect team

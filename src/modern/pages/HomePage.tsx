@@ -433,7 +433,7 @@ function Season({ onNavigate, isAdmin }: { onNavigate: (p: string) => void; isAd
       ) : ftc.notConnected ? (
         <div className="text-sm text-muted-foreground">
           {isAdmin ? 'Connect your FTC team to see season stats.' : 'Your admin hasn’t connected an FTC team yet.'}
-          {isAdmin && <Button variant="link" className="ml-1 h-auto p-0" onClick={() => onNavigate('/settings')}>Connect</Button>}
+          {isAdmin && <Button variant="link" className="ml-1 h-auto p-0" onClick={() => onNavigate('/settings?section=workspace')}>Connect</Button>}
         </div>
       ) : ftc.data ? (
         <div>

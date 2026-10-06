@@ -320,3 +320,73 @@ One page with route-driven tabs: **Members** (`/teams`), **Roles** (`/roles`) an
   - 1440 px: Members.
   - 375 px: Roles and Workspaces, with no overflow, every target ≥44px, and the tabs fitting once their icons are hidden.
 - **Screenshots:** `docs/redesign/screenshots/phase5/`.
+
+## Phase 5b: Unified Settings
+
+**One Modern page** (`src/modern/pages/settings/`) now replaces the Settings modal, `/profile` and `/settings` in Modern mode. Sections are addressed by `?section=`.
+
+**Navigation:**
+- Modern entry points open the page instead of the modal: the user menu, the workspace switcher, ⌘K "Settings", the call bar and the voice controls. They all go through one `openSettings()`, which still opens the modal in Legacy.
+- `/profile` redirects to `?section=profile`.
+- "Connect your FTC team" deep links now go to `?section=workspace` (Legacy ignores the query).
+- The Google OAuth return (`?cal_linked=1`) lands on Workspace.
+
+**Sections:**
+- **Profile**
+  - Picture upload and remove (same endpoints as the modal).
+  - Display name (validated), title, and the **personal accent** with live preview. The accent was only in Legacy `/profile` before.
+  - Status picker.
+  - Account facts: email, account type, scopes.
+  - Volt & Carbon theme reset.
+  - The details form is **drafted** (`settings:profile:<id>`), with Unsaved / Discard / Saved states. Save sends `PATCH /api/profile {name, role, accent_color}`.
+- **Appearance**
+  - Interface mode (shared picker), theme, and language (Select).
+  - The Legacy background effects (grid, pulse, glow) sit in a collapsible on new shadcn Sliders. Their logic moved into the shared `useGridSettings` hook, which the modal now uses too.
+- **Calls & sounds**
+  - Sounds switch and camera default.
+  - The device panel is reused for now; it gets rebuilt with calls in phase 6.
+- **Bruno AI**
+  - Teaching mode and answer length (member row, optimistic with revert).
+  - Explanation, format and behaviour switches.
+  - FTC coding preferences.
+  - The NavGPT ❤️ persona for qualifying admins.
+  - Same localStorage keys and endpoints as before, via a shared `components/settings/prefs.ts`.
+- **Account & privacy**
+  - Password change. Passwords are deliberately **not** drafted, for security.
+  - Download my data, and cookie settings.
+  - Delete account. It is disabled while you belong to a workspace; otherwise it asks you to type your email, then confirms.
+- **Workspace**
+  - Team name plus FTC number, with **Verify** (FTC Scout lookup). This merges the modal's team tab and `/settings`' FTC card. Save sends the modal's body. The form is drafted.
+  - Invite code: copy, and regenerate with a two-step confirm.
+  - Roles link and the workspace default interface.
+  - Google Calendar: link or unlink, and team sync for `manage_calendar` / President.
+  - Members see the team details read-only.
+- **Admin** (admins, the owner, or `manage_voice`)
+  - Calls policy (reused panel, phase 6).
+  - AI absence criteria (drafted).
+  - AI limits and provider (owner only, drafted).
+  - Storage usage.
+  - Message moderation: edit, or silently delete (optimistic, with rollback).
+  - The President's "admin delegation" table (board flag and scopes) is covered by People → edit member, which sends the same `PATCH /api/members/:id`.
+
+**Kit changes:**
+- New shadcn `Slider`.
+- `Switch` now has an invisible 44 px hit area, which fixes every page's switches on phones.
+
+### Tests
+- **New (8 Settings tests):**
+  - Profile PATCH body and **draft survival across a remount**.
+  - Name validation and status pick.
+  - Password mismatch, then the same change-password request.
+  - Delete-account gating and email confirmation.
+  - Bruno teach-mode body and the localStorage style.
+  - Workspace verify, the Legacy team PATCH body, and two-step code regeneration.
+  - Members see read-only fields and no Admin section.
+  - Admin: drafted criteria, owner-only AI limits, message delete, and storage size.
+- **Totals:** 449 frontend tests pass; the only failures are the known Windows-only ftcCache ones. `tsc` is clean.
+- **Local QA at 375 px**, every section:
+  - Found and fixed a grid-column blow-out from the chip row (content was clipped at 963 px).
+  - Found and fixed the active chip scrolling out of view.
+  - Found and fixed the top bar saying "Team Settings".
+  - No overflow afterwards.
+- **Screenshots:** `docs/redesign/screenshots/phase5/settings-*.jpg`.
