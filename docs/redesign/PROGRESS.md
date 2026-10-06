@@ -1152,3 +1152,21 @@ The last Classic panels inside Modern Settings are rebuilt.
 - **Tests:**
   - 6 new: policy clamp and save, an edit during save kept, load failure; permissions, prefs, the camera preview acquiring and releasing.
   - The Classic voice suite still passes.
+
+## Phase 10c: Communication log dialogs
+
+- **Shared logic (Classic JSX unchanged, apart from closing through the hook):**
+  - `useBrunoQuickAdd` holds the paste, the same Bruno prompt, the form fields, the thread search and `POST /api/communications`.
+  - `useEmailImport` reads a saved file or pasted text with the deterministic parser, refines with Bruno, then logs.
+  - Both draft their paste and fields, so a look switch keeps them; closing the dialog discards them.
+  - Bruno's reply fills the form only if it's the newest parse, and never after a sign-out. A file read after a sign-out never writes back.
+  - The parser moved to `components/communication/emailParse.ts`, which `EmailImport` re-exports, so there is no circular import.
+- **Modern `QuickAddDialog` and `ImportEmailDialog`** (`src/modern/pages/communication/LogDialogs.tsx`):
+  - Each is a two-step kit dialog with a sliding step change.
+  - Quick add: a monospace paste box, Parse with Bruno, or fill in the fields yourself.
+  - Import: a drag-and-drop zone (it lifts while you drag), a file picker or a paste box.
+  - Both end in one shared review form: recipient, date, subject, message, segmented "Who sent it" (We did / They did) and Type controls. Quick add also gets a searchable **thread combobox** (kit Popover + Command).
+  - Import offers "Refine with Bruno" and Start over.
+- **Tests:**
+  - 5 new: Bruno fill, then the exact Classic POST body including the thread; a manual draft surviving a remount and discarded on close; recipient / subject required; paste, read, refine with Bruno, log; too-large file refused.
+  - The Classic `EmailImport` tests still pass.
