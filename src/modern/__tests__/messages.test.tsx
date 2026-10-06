@@ -7,7 +7,7 @@ const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
 const voice = vi.hoisted(() => ({ startCall: vi.fn() }));
 vi.mock('../../voice/VoiceContext', () => ({ useVoice: () => voice }));
-vi.mock('../../components/voice/VoiceChannelList', () => ({ VoiceChannelList: () => <div>voice-channels</div> }));
+vi.mock('../pages/messages/VoiceChannels', () => ({ VoiceChannels: () => <div>voice-channels</div> }));
 const dialog = vi.hoisted(() => ({ notify: vi.fn(), confirmDialog: vi.fn() }));
 vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()), ...dialog }));
 

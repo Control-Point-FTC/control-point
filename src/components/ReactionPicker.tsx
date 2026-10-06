@@ -109,23 +109,8 @@ interface ReactionPickerProps {
  * (see the ChatView integration snippet); the fixed backdrop below dismisses it.
  */
 export default function ReactionPicker({ onPick, onClose }: ReactionPickerProps) {
-  const [tab, setTab] = useState<string>('smileys');
-  const [query, setQuery] = useState('');
-  const [custom, setCustom] = useState<CustomEmoji[]>([]);
+  const { tab, setTab, query, setQuery, custom, filtered, grid } = useEmojiPicker();
   const searchRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    apiFetch('/api/chat/custom-emoji')
-      .then((r) => r.json())
-      .then((rows) => {
-        if (!cancelled && Array.isArray(rows)) setCustom(rows);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -137,22 +122,6 @@ export default function ReactionPicker({ onPick, onClose }: ReactionPickerProps)
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return null;
-    const out: EmojiEntry[] = [];
-    for (const cat of EMOJI_CATEGORIES) {
-      for (const em of cat.emojis) {
-        if (em.n.includes(q)) out.push(em);
-        if (out.length >= 64) return out;
-      }
-    }
-    return out;
-  }, [query]);
-
-  const activeCategory = EMOJI_CATEGORIES.find((c) => c.id === tab);
-  const grid: EmojiEntry[] | null = filtered ?? activeCategory?.emojis ?? null;
 
   return (
     <>
@@ -275,4 +244,46 @@ export default function ReactionPicker({ onPick, onClose }: ReactionPickerProps)
       </div>
     </>
   );
+}
+
+/**
+ * Shared emoji-picker state (Classic picker and the Modern one): the active
+ * category, search (up to 64 matches across categories) and the viewer's
+ * own custom reactions.
+ */
+export function useEmojiPicker() {
+  const [tab, setTab] = useState<string>('smileys');
+  const [query, setQuery] = useState('');
+  const [custom, setCustom] = useState<CustomEmoji[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/chat/custom-emoji')
+      .then((r) => r.json())
+      .then((rows) => {
+        if (!cancelled && Array.isArray(rows)) setCustom(rows);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return null;
+    const out: EmojiEntry[] = [];
+    for (const cat of EMOJI_CATEGORIES) {
+      for (const em of cat.emojis) {
+        if (em.n.includes(q)) out.push(em);
+        if (out.length >= 64) return out;
+      }
+    }
+    return out;
+  }, [query]);
+
+  const activeCategory = EMOJI_CATEGORIES.find((c) => c.id === tab);
+  const grid: EmojiEntry[] | null = filtered ?? activeCategory?.emojis ?? null;
+
+  return { tab, setTab, query, setQuery, custom, filtered, grid, categories: EMOJI_CATEGORIES };
 }
