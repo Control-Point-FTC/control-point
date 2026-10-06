@@ -1,7 +1,7 @@
 import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
 import type { ActionProposal } from '../services/aiService';
 
-const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; destructive?: boolean }> = {
+export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; destructive?: boolean }> = {
   event: { label: 'Calendar', icon: Calendar },
   'delete-event': { label: 'Delete from Calendar', icon: CalendarX, destructive: true },
   outreach: { label: 'Outreach log', icon: Megaphone },
@@ -10,7 +10,7 @@ const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; dest
   communication: { label: 'Communication log', icon: Mail },
 };
 
-function itemSummary(kind: ActionProposal['kind'], it: any): string {
+export function itemSummary(kind: ActionProposal['kind'], it: any): string {
   const title = String(it.title || it.description || it.category || 'Untitled').slice(0, 60);
   if (kind === 'event') {
     const when = it.time ? `${it.date} at ${it.time}` : it.date || '';
