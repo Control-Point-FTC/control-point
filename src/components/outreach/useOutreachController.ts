@@ -237,6 +237,10 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     // Release only our own lock: after a sign-out / workspace switch a new
     // save may hold it.
     const unlock = inEpoch(() => setBulkSaving(false));
+    // Clean up only in the same session/workspace: after clearDrafts() the
+    // identity check below would pass (getDraft falls back to `submitted`)
+    // and could write these rows into the next account's box.
+    const sameSession = inEpoch((fn: () => void) => fn());
     let done = 0;
     const failed: any[] = [];
     try {
@@ -256,10 +260,11 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
       // Only touch the box these rows came from (not one re-parsed meanwhile):
       // all saved → clear it; some failed → keep just those rows (and the
       // pasted text) so they can be retried.
-      if (getDraft(BULK_ROWS_KEY, submitted) === submitted) {
+      sameSession(() => {
+        if (getDraft(BULK_ROWS_KEY, submitted) !== submitted) return;
         if (!failed.length) { setBulkRows([]); setBulkText(''); setBulkNote(null); setBulkOpen(false); }
         else { setBulkRows(failed); setBulkNote(`${failed.length} event${failed.length === 1 ? '' : 's'} couldn't be logged — try again.`); }
-      }
+      });
       if (done) refresh.outreach();
     } finally {
       unlock();

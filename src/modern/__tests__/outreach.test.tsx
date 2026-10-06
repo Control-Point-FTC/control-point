@@ -246,5 +246,18 @@ describe('Modern Outreach', () => {
     await waitFor(() => expect(calls('/api/outreach/1', 'PATCH')).toHaveLength(1));
     expect(body('/api/outreach/1', 'PATCH')).toMatchObject({ hours: 1.5, title: 'Library demo (renamed)' });
   });
+
+  it('a batch that fails after a sign-out never writes its rows into the next session', async () => {
+    let fail: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/outreach' && init?.method === 'POST' ? new Promise((_r, j) => { fail = () => j(new Error('offline')); }) : json({})));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Bruno AI/ }));
+    fireEvent.change(await screen.findByLabelText('Events'), { target: { value: 'Secret demo | 2026-09-12 | 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Quick parse' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Log all 1 event' }));
+    act(() => clearDrafts()); // sign-out / workspace switch
+    await act(async () => { fail(); });
+    expect(screen.queryByText('Secret demo')).not.toBeInTheDocument();
+  });
 });
 
