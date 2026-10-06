@@ -58,25 +58,29 @@ function ReviewFields({ f, extra }: { f: Fields; extra?: React.ReactNode }) {
 
 function ThreadPicker({ threads, value, onChange }: { threads: QuickAddThread[]; value: number | null; onChange: (id: number | null) => void }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const selected = threads.find((t) => t.id === value);
+  // Search every thread, then cap what's shown (like Classic).
+  const q = query.trim().toLowerCase();
+  const matches = (q ? threads.filter((t) => t.subject.toLowerCase().includes(q) || t.recipient.toLowerCase().includes(q)) : threads).slice(0, 100);
   return (
     <div className="grid min-w-0 flex-1 gap-2">
       <Label id="log-thread">Thread</Label>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQuery(''); }}>
         <PopoverTrigger asChild>
           <Button variant="outline" role="combobox" aria-expanded={open} aria-labelledby="log-thread" className="h-11 justify-between font-normal sm:h-10">
             <span className="truncate">{selected ? selected.subject : 'New thread'}</span><ChevronsUpDown className="opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-80 p-0">
-          <Command>
-            <CommandInput placeholder="Search threads…" />
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="Search threads…" value={query} onValueChange={setQuery} />
             <CommandList>
               <CommandEmpty>No threads match.</CommandEmpty>
               <CommandGroup>
-                <CommandItem value="__new" onSelect={() => { onChange(null); setOpen(false); }}><Check className={cn(value == null ? 'opacity-100' : 'opacity-0')} /> New thread</CommandItem>
-                {threads.slice(0, 200).map((t) => (
-                  <CommandItem key={t.id} value={`${t.subject} ${t.recipient} ${t.id}`} onSelect={() => { onChange(t.id); setOpen(false); }}>
+                {!q && <CommandItem value="__new" onSelect={() => { onChange(null); setOpen(false); }}><Check className={cn(value == null ? 'opacity-100' : 'opacity-0')} /> New thread</CommandItem>}
+                {matches.map((t) => (
+                  <CommandItem key={t.id} value={String(t.id)} onSelect={() => { onChange(t.id); setOpen(false); setQuery(''); }}>
                     <Check className={cn(value === t.id ? 'opacity-100' : 'opacity-0')} />
                     <span className="min-w-0 flex-1"><span className="block truncate">{t.subject}</span><span className="block truncate text-xs text-muted-foreground">{t.recipient} · {t.date}</span></span>
                   </CommandItem>
@@ -96,8 +100,8 @@ function ErrorLine({ error }: { error: string | null }) {
 
 // ---------------------------------------------------------------------------
 
-export function QuickAddDialog({ threads, onClose, onLogged }: { threads: QuickAddThread[]; onClose: () => void; onLogged: () => void }) {
-  const q = useBrunoQuickAdd({ threads, onLogged });
+export function QuickAddDialog({ threads, onClose, onLogged, onRefresh }: { threads: QuickAddThread[]; onClose: () => void; onLogged: () => void; onRefresh?: () => void }) {
+  const q = useBrunoQuickAdd({ threads, onLogged, onRefresh });
   const close = () => { clearQuickAddDrafts(); onClose(); };
   return (
     <Dialog open onOpenChange={(o) => { if (!o) close(); }}>
@@ -136,8 +140,8 @@ export function QuickAddDialog({ threads, onClose, onLogged }: { threads: QuickA
 
 // ---------------------------------------------------------------------------
 
-export function ImportEmailDialog({ onClose, onLogged }: { onClose: () => void; onLogged: () => void }) {
-  const m = useEmailImport({ onLogged });
+export function ImportEmailDialog({ onClose, onLogged, onRefresh }: { onClose: () => void; onLogged: () => void; onRefresh?: () => void }) {
+  const m = useEmailImport({ onLogged, onRefresh });
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const close = () => { clearEmailImportDrafts(); onClose(); };

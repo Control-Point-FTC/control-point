@@ -12,16 +12,18 @@ export type { QuickAddThread } from './communication/useBrunoQuickAdd';
  * (inbound/outbound) and which existing thread it belongs to.
  * Everything is editable before logging.
  */
-export default function BrunoQuickAdd({ threads, onClose, onLogged }: {
+export default function BrunoQuickAdd({ threads, onClose, onLogged, onRefresh }: {
   threads: QuickAddThread[];
   onClose: () => void;
   onLogged: () => void;
+  /** Refresh the log when a save lands after this dialog was closed. */
+  onRefresh?: () => void;
 }) {
   const {
     paste, setPaste, aiBusy, setManual, saving, error, setError, threadSearch, setThreadSearch,
     recipient, setRecipient, subject, setSubject, body, setBody, date, setDate, type, setType, direction, setDirection,
     parentId, setParentId, threadOptions, showFields, handleParse, handleLog, back,
-  } = useBrunoQuickAdd({ threads, onLogged });
+  } = useBrunoQuickAdd({ threads, onLogged, onRefresh });
   // Closing discards the draft (a look switch, which only remounts, keeps it).
   const close = () => { clearQuickAddDrafts(); onClose(); };
 

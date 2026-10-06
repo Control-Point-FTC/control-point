@@ -6669,6 +6669,7 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
         <EmailImportModal
           onClose={() => setShowImport(false)}
           onLogged={() => { setShowImport(false); refresh.communications(); }}
+          onRefresh={() => refresh.communications()}
         />
       )}
 
@@ -6677,6 +6678,7 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
           threads={threads.map((t: any) => ({ id: t.root.id, subject: t.root.subject, recipient: t.root.recipient, date: t.root.date }))}
           onClose={() => setShowQuickAdd(false)}
           onLogged={() => { setShowQuickAdd(false); refresh.communications(); }}
+          onRefresh={() => refresh.communications()}
         />
       )}
 

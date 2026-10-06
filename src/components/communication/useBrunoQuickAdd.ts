@@ -3,11 +3,11 @@
 // subject, body, date, type, direction, thread), everything is editable, then
 // POST /api/communications. The paste and the fields are drafted, so a look
 // switch keeps them; only the newest parse may fill the form.
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { format } from 'date-fns';
 import { streamBuildHelper, extractActionProposals } from '../../services/aiService';
 import { apiFetch } from '../../services/api';
-import { deleteDraft, inEpoch, useDraft } from '../../modern/drafts';
+import { deleteDraft, getDraft, inEpoch, newSessionId, setDraft, useDraft } from '../../modern/drafts';
 
 export interface QuickAddThread {
   id: number;
@@ -17,14 +17,21 @@ export interface QuickAddThread {
 }
 
 const K = 'comm-quickadd:';
-const KEYS = ['paste', 'parsed', 'manual', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'parent'];
+const KEYS = ['session', 'parse-seq', 'paste', 'parsed', 'manual', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'parent'];
 /** Forget a logged or abandoned quick-add. */
 export function clearQuickAddDrafts() {
   KEYS.forEach((k) => deleteDraft(K + k));
 }
 
-export function useBrunoQuickAdd({ threads, onLogged }: { threads: QuickAddThread[]; onLogged: () => void }) {
-  const parseSeq = useRef(0);
+export function useBrunoQuickAdd({ threads, onLogged, onRefresh }: { threads: QuickAddThread[]; onLogged: () => void; onRefresh?: () => void }) {
+  // This dialog's session: kept across a look switch, gone once it closes, so
+  // a reply or save from an abandoned dialog never touches a reopened one.
+  const [session] = useState(() => {
+    let id = getDraft<number | null>(`${K}session`, null);
+    if (id == null) { id = newSessionId(); setDraft(`${K}session`, id); }
+    return id;
+  });
+  const current = () => getDraft<number | null>(`${K}session`, null) === session;
   const [paste, setPaste] = useDraft(`${K}paste`, '');
   const [aiBusy, setAiBusy] = useState(false);
   const [parsed, setParsed] = useDraft(`${K}parsed`, false);
@@ -49,10 +56,12 @@ export function useBrunoQuickAdd({ threads, onLogged }: { threads: QuickAddThrea
     }
     setAiBusy(true);
     setError(null);
-    const seq = ++parseSeq.current;
+    const seq = getDraft<number>(`${K}parse-seq`, 0) + 1;
+    setDraft(`${K}parse-seq`, seq);
     // Only the newest parse, in the same draft epoch (not after a sign-out),
     // may fill the form.
-    const apply = inEpoch((fn: () => void) => { if (seq === parseSeq.current) fn(); });
+    // Newest parse of this dialog session only (and never after a sign-out).
+    const apply = inEpoch((fn: () => void) => { if (current() && seq === getDraft<number>(`${K}parse-seq`, 0)) fn(); });
     let agg = '';
     try {
       const threadList = threads.slice(0, 30).map((t) =>
@@ -120,8 +129,13 @@ Email to parse:
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log it — try again.');
-      clearQuickAddDrafts();
-      onLogged();
+      // Saved either way; only the dialog that sent it is cleared and closed.
+      if (current()) {
+        clearQuickAddDrafts();
+        onLogged();
+      } else {
+        onRefresh?.();
+      }
     } catch (e: any) {
       setError(e?.message || 'Could not log it — try again.');
     } finally {

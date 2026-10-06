@@ -155,12 +155,13 @@ export function CommunicationPage(props: any) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {ctl.showImport && <ImportEmailDialog onClose={() => ctl.setShowImport(false)} onLogged={() => { ctl.setShowImport(false); props.refresh.communications(); }} />}
+      {ctl.showImport && <ImportEmailDialog onClose={() => ctl.setShowImport(false)} onLogged={() => { ctl.setShowImport(false); props.refresh.communications(); }} onRefresh={() => props.refresh.communications()} />}
       {ctl.showQuickAdd && (
         <QuickAddDialog
           threads={ctl.threads.map((t: any) => ({ id: t.root.id, subject: t.root.subject, recipient: t.root.recipient, date: t.root.date }))}
           onClose={() => ctl.setShowQuickAdd(false)}
           onLogged={() => { ctl.setShowQuickAdd(false); props.refresh.communications(); }}
+          onRefresh={() => props.refresh.communications()}
         />
       )}
     </Page>

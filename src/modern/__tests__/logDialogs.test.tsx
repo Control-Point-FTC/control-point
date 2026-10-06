@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
@@ -90,3 +90,55 @@ describe('Modern saved-email import', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('over 5 MB');
   });
 });
+
+describe('10c review fixes', () => {
+  it("a Bruno reply for a closed dialog never fills the reopened one", async () => {
+    let reply: () => void = () => {};
+    ai.streamBuildHelper.mockImplementation((_m: any, onChunk: (c: string) => void) => new Promise<void>((r) => {
+      reply = () => { onChunk('```communications\n[{"recipient":"old@x.test","subject":"Old","body":"","date":"2026-10-01","type":"email","direction":"outbound"}]\n```'); r(); };
+    }));
+    const first = render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Email to parse'), { target: { value: 'old email' } });
+    fireEvent.click(screen.getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.keyDown(screen.getByLabelText('Email to parse'), { key: 'Escape' }); // close: discards the session
+    first.unmount();
+    render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fill in the fields myself' }));
+    fireEvent.change(await screen.findByLabelText('Recipient'), { target: { value: 'new@x.test' } });
+    await act(async () => { reply(); });
+    expect(screen.getByLabelText('Recipient')).toHaveValue('new@x.test');
+  });
+
+  it('a save that lands after its dialog closed refreshes the log but leaves the new entry alone', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation(() => new Promise((r) => { finish = () => r({ ok: true, status: 200, json: async () => ({ id: 1 }) }); }));
+    const firstLogged = vi.fn();
+    const first = render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={firstLogged} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fill in the fields myself' }));
+    fireEvent.change(await screen.findByLabelText('Recipient'), { target: { value: 'a@x.test' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'First' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log it' }));
+    fireEvent.keyDown(screen.getByLabelText('Subject'), { key: 'Escape' });
+    first.unmount();
+    const onLogged = vi.fn(); const onRefresh = vi.fn();
+    render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={onLogged} onRefresh={onRefresh} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fill in the fields myself' }));
+    fireEvent.change(await screen.findByLabelText('Recipient'), { target: { value: 'b@x.test' } });
+    await act(async () => { finish(); });
+    expect(screen.getByLabelText('Recipient')).toHaveValue('b@x.test');
+    expect(onLogged).not.toHaveBeenCalled();
+    expect(firstLogged).not.toHaveBeenCalled();
+  });
+
+  it('the thread picker searches every thread, not just the first 200', async () => {
+    ai.streamBuildHelper.mockImplementation(async () => {});
+    const many = Array.from({ length: 260 }, (_, i) => ({ id: i + 1, subject: `Thread ${i + 1}`, recipient: `p${i + 1}@x.test`, date: '2026-09-01' }));
+    render(<QuickAddDialog threads={many} onClose={vi.fn()} onLogged={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fill in the fields myself' }));
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Thread' }));
+    fireEvent.change(await screen.findByPlaceholderText('Search threads…'), { target: { value: 'Thread 250' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Thread 250/ }));
+    expect(screen.getByRole('combobox', { name: 'Thread' })).toHaveTextContent('Thread 250');
+  });
+});
+

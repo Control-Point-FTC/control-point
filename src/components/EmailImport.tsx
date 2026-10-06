@@ -5,13 +5,13 @@ import { Select as ThemedSelect } from './Select';
 
 export { MAX_FILE_BYTES, parseEmailFile, type ParsedEmail } from './communication/emailParse';
 
-export default function EmailImportModal({ onClose, onLogged }: { onClose: () => void; onLogged: () => void }) {
+export default function EmailImportModal({ onClose, onLogged, onRefresh }: { onClose: () => void; onLogged: () => void; onRefresh?: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const {
     fileName, error, parsed, recipient, setRecipient, subject, setSubject, body, setBody, date, setDate, type, setType,
     direction, setDirection, aiBusy, saving, pasteMode, setPasteMode, pasteText, setPasteText,
     handleFile, handlePasteParse, handleAiParse, handleLog, startOver,
-  } = useEmailImport({ onLogged });
+  } = useEmailImport({ onLogged, onRefresh });
   // Closing discards the draft (a look switch, which only remounts, keeps it).
   const close = () => { clearEmailImportDrafts(); onClose(); };
 

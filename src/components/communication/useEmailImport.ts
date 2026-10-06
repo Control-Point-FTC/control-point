@@ -4,22 +4,29 @@
 // then POST /api/communications. Fields are drafted (a look switch keeps
 // them); a file read or Bruno reply after sign-out never writes back, and only
 // the newest Bruno reply may fill the form.
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { format } from 'date-fns';
 import { streamBuildHelper, extractActionProposals } from '../../services/aiService';
 import { apiUrl, apiFetch } from '../../services/api';
-import { deleteDraft, inEpoch, useDraft } from '../../modern/drafts';
+import { deleteDraft, getDraft, inEpoch, newSessionId, setDraft, useDraft } from '../../modern/drafts';
 import { MAX_FILE_BYTES, parseEmailFile, type ParsedEmail } from './emailParse';
 
 const K = 'comm-import:';
-const KEYS = ['fileName', 'parsed', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'pasteMode', 'pasteText'];
+const KEYS = ['session', 'parse-seq', 'fileName', 'parsed', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'pasteMode', 'pasteText'];
 /** Forget a logged or abandoned import. */
 export function clearEmailImportDrafts() {
   KEYS.forEach((k) => deleteDraft(K + k));
 }
 
-export function useEmailImport({ onLogged }: { onLogged: () => void }) {
-  const parseSeq = useRef(0);
+export function useEmailImport({ onLogged, onRefresh }: { onLogged: () => void; onRefresh?: () => void }) {
+  // This dialog's session: kept across a look switch, gone once it closes, so
+  // a reply or save from an abandoned dialog never touches a reopened one.
+  const [session] = useState(() => {
+    let id = getDraft<number | null>(`${K}session`, null);
+    if (id == null) { id = newSessionId(); setDraft(`${K}session`, id); }
+    return id;
+  });
+  const current = () => getDraft<number | null>(`${K}session`, null) === session;
   const [fileName, setFileName] = useDraft(`${K}fileName`, '');
   const [error, setError] = useState<string | null>(null);
   const [parsed, setParsed] = useDraft(`${K}parsed`, false);
@@ -53,7 +60,7 @@ export function useEmailImport({ onLogged }: { onLogged: () => void }) {
     }
     setError(null);
     const reader = new FileReader();
-    const live = inEpoch((fn: () => void) => fn());
+    const live = inEpoch((fn: () => void) => { if (current()) fn(); });
     reader.onload = () => live(() => {
       try {
         const p = parseEmailFile(f.name, String(reader.result || ''));
@@ -81,8 +88,10 @@ export function useEmailImport({ onLogged }: { onLogged: () => void }) {
     if (!source.trim() || aiBusy) return;
     setAiBusy(true);
     setError(null);
-    const seq = ++parseSeq.current;
-    const apply = inEpoch((fn: () => void) => { if (seq === parseSeq.current) fn(); });
+    const seq = getDraft<number>(`${K}parse-seq`, 0) + 1;
+    setDraft(`${K}parse-seq`, seq);
+    // Newest parse of this dialog session only (and never after a sign-out).
+    const apply = inEpoch((fn: () => void) => { if (current() && seq === getDraft<number>(`${K}parse-seq`, 0)) fn(); });
     let agg = '';
     try {
       await streamBuildHelper([
@@ -126,8 +135,13 @@ export function useEmailImport({ onLogged }: { onLogged: () => void }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log it — try again.');
-      clearEmailImportDrafts();
-      onLogged();
+      // Saved either way; only the dialog that sent it is cleared and closed.
+      if (current()) {
+        clearEmailImportDrafts();
+        onLogged();
+      } else {
+        onRefresh?.();
+      }
     } catch (e: any) {
       setError(e?.message || 'Could not log it — try again.');
     } finally {
