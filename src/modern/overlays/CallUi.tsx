@@ -65,7 +65,8 @@ function DockButton({ label, onClick, tone, children, className }: {
   );
 }
 
-function MediaButtons({ size = 'size-5' }: { size?: string }) {
+/** `compact` (the minimized dock on phones) hides camera and screen share; the expanded stage always offers the camera. */
+function MediaButtons({ size = 'size-5', compact = false }: { size?: string; compact?: boolean }) {
   const { self, toggleMute, toggleDeafen, toggleCamera, toggleScreenShare } = useVoice();
   return (
     <>
@@ -75,7 +76,7 @@ function MediaButtons({ size = 'size-5' }: { size?: string }) {
       <DockButton label={self.deafened ? 'Undeafen' : 'Deafen'} tone={self.deafened ? 'off' : undefined} onClick={toggleDeafen}>
         {self.deafened ? <VolumeX className={size} /> : <Headphones className={size} />}
       </DockButton>
-      <DockButton label={self.cameraOn ? 'Turn camera off' : 'Turn camera on'} tone={self.cameraOn ? 'on' : undefined} onClick={() => void toggleCamera()} className="max-sm:hidden">
+      <DockButton label={self.cameraOn ? 'Turn camera off' : 'Turn camera on'} tone={self.cameraOn ? 'on' : undefined} onClick={() => void toggleCamera()} className={compact ? 'max-sm:hidden' : undefined}>
         {self.cameraOn ? <Video className={size} /> : <VideoOff className={size} />}
       </DockButton>
       <DockButton label={self.sharingScreen ? 'Stop sharing screen' : 'Share screen'} tone={self.sharingScreen ? 'on' : undefined} onClick={() => void toggleScreenShare()} className="max-sm:hidden">
@@ -112,7 +113,7 @@ export function CallDock({ onOpenSettings }: { onOpenSettings?: () => void }) {
           {others.map((p) => <VoiceAvatar key={p.memberId} name={p.name} avatarUrl={p.avatarUrl} size={28} speaking={p.speaking} className="ring-2 ring-popover" />)}
         </div>
         <div className="flex items-center gap-1" role="toolbar" aria-label="Call controls">
-          <MediaButtons size="size-4" />
+          <MediaButtons size="size-4" compact />
           <DockButton label="Call settings" onClick={() => onOpenSettings?.()} className="max-md:hidden"><CrosshairIcon className="size-4" /></DockButton>
           <DockButton label="Expand call view" onClick={() => setExpanded(true)}><Expand className="size-4" /></DockButton>
           <DockButton label="Leave call" tone="danger" onClick={() => void leave()}><PhoneOff className="size-4" /></DockButton>
@@ -234,6 +235,12 @@ export function CallStage({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const v = useCallView(false);
   if (!v.session || !v.expanded) return null;
   const n = v.participants.length;
+  // The People sheet renders in a portal outside the stage, so leave
+  // fullscreen first or it would open out of sight.
+  const openPeople = async () => {
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch { /* not in fullscreen */ } }
+    v.setListOpen(true);
+  };
   const grid = n <= 1 ? 'grid-cols-1' : n <= 4 ? 'grid-cols-1 sm:grid-cols-2' : n <= 9 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 md:grid-cols-3 xl:grid-cols-4';
   return (
     <TooltipProvider>
@@ -251,7 +258,7 @@ export function CallStage({ onOpenSettings }: { onOpenSettings?: () => void }) {
           <h2 className="truncate font-display text-lg font-semibold">{v.session.name}</h2>
           <p className="flex items-center gap-2"><Status status={v.status} /><span className="text-xs text-muted-foreground">· {n} {n === 1 ? 'person' : 'people'}</span></p>
         </div>
-        <Button variant="ghost" onClick={() => v.setListOpen(true)} className="h-11"><Users /> <span className="max-sm:sr-only">People</span></Button>
+        <Button variant="ghost" onClick={() => void openPeople()} className="h-11"><Users /> <span className="max-sm:sr-only">People</span></Button>
         <Button variant="ghost" size="icon" onClick={() => void v.toggleFullscreen()} aria-label={v.isFullscreen ? 'Exit fullscreen' : 'Fullscreen'} className="size-11 max-sm:hidden">{v.isFullscreen ? <Shrink /> : <Maximize />}</Button>
         <Button variant="ghost" size="icon" onClick={() => v.setExpanded(false)} aria-label="Minimize call view" className="size-11"><Minimize /></Button>
       </header>
@@ -282,7 +289,8 @@ export function CallStage({ onOpenSettings }: { onOpenSettings?: () => void }) {
       <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="pointer-events-none fixed inset-x-0 bottom-[calc(16px+env(safe-area-inset-bottom))] flex justify-center px-3">
         <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border bg-popover/95 p-1.5 shadow-2xl backdrop-blur" role="toolbar" aria-label="Call controls">
           <MediaButtons />
-          <DockButton label="Call settings" onClick={() => onOpenSettings?.()} className="max-md:hidden"><CrosshairIcon className="size-5" /></DockButton>
+          {/* Settings is a page: minimize the stage so it isn't hidden behind the call. */}
+          <DockButton label="Call settings" onClick={() => { v.setExpanded(false); onOpenSettings?.(); }} className="max-md:hidden"><CrosshairIcon className="size-5" /></DockButton>
           <DockButton label="Leave call" tone="danger" onClick={() => void v.leave()}><PhoneOff className="size-5" /></DockButton>
         </div>
       </motion.div>
@@ -297,7 +305,12 @@ export function CallStage({ onOpenSettings }: { onOpenSettings?: () => void }) {
               <li key={p.memberId}>
                 <button
                   type="button"
-                  onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); v.openMenu(p, { x: Math.max(8, r.left - 248), y: r.top }); }}
+                  onClick={(e) => {
+                    // Close the sheet first: its overlay would sit over the menu.
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    v.setListOpen(false);
+                    v.openMenu(p, { x: Math.max(8, Math.min(r.left, window.innerWidth - 260)), y: r.top });
+                  }}
                   aria-label={`${p.name} options`}
                   className={cn('flex min-h-11 w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left hover:bg-muted', p.speaking && 'bg-success/10')}
                 >

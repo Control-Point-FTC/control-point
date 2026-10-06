@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { notify } from '../dialog';
-import { useDraft } from '../../modern/drafts';
+import { getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 
 // ---------------------------------------------------------------------------
 // Cookie / storage consent
@@ -59,7 +59,8 @@ export function useFeedbackForm() {
   const [category, setCategory] = useDraft('feedback:category', 'general');
   const [message, setMessage] = useDraft('feedback:message', '');
   const [attachment, setAttachment] = useDraft<File | null>('feedback:file', null);
-  const [sending, setSending] = useState(false);
+  // Drafted: reopening the dialog mid-send keeps the lock (no double send).
+  const [sending, setSending] = useDraft('feedback:sending', false);
   const [sent, setSent] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -114,18 +115,26 @@ export function useFeedbackForm() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!message.trim() || sending) return;
+    if (!message.trim() || getDraft('feedback:sending', false)) return;
     setSending(true);
+    const release = inEpoch(() => setSending(false));
+    // What this request sends; a newer note typed meanwhile must survive it.
+    const sentMessage = message;
+    const sentFile = attachment;
+    const sentCategory = category;
     try {
       const form = new FormData();
-      form.append('category', category);
-      form.append('message', message.trim());
-      if (attachment) form.append('attachment', attachment);
+      form.append('category', sentCategory);
+      form.append('message', sentMessage.trim());
+      if (sentFile) form.append('attachment', sentFile);
       const res = await apiFetch('/api/feedback', { method: 'POST', body: form });
       if (res.ok) {
-        clearAttachment();
-        setMessage('');
-        setCategory('general');
+        if (getDraft('feedback:message', '') === sentMessage && getDraft<File | null>('feedback:file', null) === sentFile) {
+          setDraft('feedback:message', '');
+          setDraft('feedback:file', null);
+          setDraft('feedback:category', 'general');
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }
         setSent(true);
       } else {
         const data = await res.json().catch(() => ({}));
@@ -134,7 +143,7 @@ export function useFeedbackForm() {
     } catch {
       notify('Could not send feedback — try again.', 'error');
     } finally {
-      setSending(false);
+      release();
     }
   };
 
@@ -175,10 +184,17 @@ function wasDismissedRecently(): boolean {
   }
 }
 
+// Kept at module level: a look switch remounts the banner, and the browser
+// fires beforeinstallprompt only once, so the captured offer must outlive it.
+let savedPrompt: BeforeInstallPromptEvent | null = null;
+let offerShown = false;
+
 export function useInstallPrompt() {
-  const [visible, setVisible] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [visible, setVisibleState] = useState(offerShown);
+  const [deferredPrompt, setDeferredPromptState] = useState<BeforeInstallPromptEvent | null>(savedPrompt);
   const [showIOSHelp, setShowIOSHelp] = useState(false);
+  const setVisible = (v: boolean) => { offerShown = v; setVisibleState(v); };
+  const setDeferredPrompt = (e: BeforeInstallPromptEvent | null) => { savedPrompt = e; setDeferredPromptState(e); };
 
   useEffect(() => {
     // Don't show if already installed or dismissed
@@ -196,7 +212,7 @@ export function useInstallPrompt() {
 
     // iOS has no beforeinstallprompt — show after a delay if not installed
     let timer: ReturnType<typeof setTimeout> | null = null;
-    if (isIOS()) {
+    if (isIOS() && !offerShown) {
       timer = setTimeout(() => setVisible(true), 10000);
     }
 

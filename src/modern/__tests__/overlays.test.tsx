@@ -171,3 +171,65 @@ describe('Modern call UI', () => {
     expect(screen.getByText('Waiting for Ash’s screen…'.replace('’', "'"))).toBeInTheDocument();
   });
 });
+
+describe('9f review fixes', () => {
+  it('the stage keeps the camera button on phones; settings minimizes the call first', () => {
+    const v = makeVoiceMock({ status: 'connected', session, participants, expanded: true });
+    setVoiceMock(v);
+    const onOpenSettings = vi.fn();
+    render(<CallStage onOpenSettings={onOpenSettings} />);
+    expect(screen.getByRole('button', { name: 'Turn camera on' }).className).not.toMatch(/max-sm:hidden/);
+    fireEvent.click(screen.getByRole('button', { name: 'Call settings' }));
+    expect(v.setExpanded).toHaveBeenCalledWith(false);
+    expect(onOpenSettings).toHaveBeenCalled();
+    cleanup();
+    render(<CallDock />);
+    expect(screen.getByRole('button', { name: 'Turn camera on' }).className).toMatch(/max-sm:hidden/);
+  });
+
+  it('choosing someone in People closes the sheet and opens their options; People leaves fullscreen first', async () => {
+    setVoiceMock(makeVoiceMock({ status: 'connected', session, participants, expanded: true }));
+    const exit = vi.fn(async () => {});
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => document.body });
+    (document as any).exitFullscreen = exit;
+    render(<CallStage />);
+    fireEvent.click(screen.getByRole('button', { name: /People/ }));
+    await waitFor(() => expect(exit).toHaveBeenCalled());
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => null });
+    const sheet = await screen.findByRole('dialog');
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Ash options' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('menu', { name: 'Options for Ash' })).toBeInTheDocument();
+  });
+
+  it('a feedback send that lands after reopening keeps the newer note, and the lock survives the reopen', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation(() => new Promise((r) => { finish = () => r({ ok: true, status: 200, json: async () => ({}) }); }));
+    const first = render(<FeedbackDialog onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'first note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Sushil' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledTimes(1));
+    first.unmount();
+    render(<FeedbackDialog onClose={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Sending…' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'second note' } });
+    await act(async () => { finish(); });
+    expect(screen.getByLabelText('Message')).toHaveValue('second note');
+    expect(api.apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a look switch keeps an install offer the browser already made', async () => {
+    const ua = vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 14) Mobile');
+    Object.defineProperty(window, 'matchMedia', { writable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+    const first = render(<InstallBanner />);
+    const prompt = vi.fn(async () => {});
+    act(() => { window.dispatchEvent(Object.assign(new Event('beforeinstallprompt'), { prompt, userChoice: Promise.resolve({ outcome: 'accepted' }) })); });
+    await screen.findByRole('button', { name: 'Install' });
+    first.unmount();
+    render(<InstallBanner />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Install' }));
+    await waitFor(() => expect(prompt).toHaveBeenCalled());
+    ua.mockRestore();
+  });
+});
+
