@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 import { makeVoiceMock, setVoiceMock } from '../../components/voice/__tests__/helpers';
 
 const media = vi.hoisted(() => ({
@@ -57,4 +57,35 @@ describe('Modern device settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Stop preview/ }));
     expect(media.stopStream).toHaveBeenCalledWith(stream);
   });
+
+  it('devices listed with an empty id (before access) do not break the page', () => {
+    setVoiceMock(makeVoiceMock({ devices: { audioinputs: [{ deviceId: '', label: '' }], videoinputs: [{ deviceId: '', label: '' }], audiooutputs: [] } }));
+    render(<DeviceSettings />);
+    expect(screen.getByRole('combobox', { name: 'Input device' })).toHaveTextContent('Default microphone');
+  });
+
+  it('leaving with the preview open releases the camera', async () => {
+    const stream = { getTracks: () => [] } as any;
+    media.getCameraStream.mockResolvedValue(stream);
+    setVoiceMock(makeVoiceMock({ devices }));
+    const r = render(<DeviceSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /Preview camera/ }));
+    await screen.findByRole('button', { name: /Stop preview/ });
+    r.unmount();
+    expect(media.stopStream).toHaveBeenCalledWith(stream);
+  });
+
+  it('a camera that finishes starting after you left is stopped at once', async () => {
+    const stream = { getTracks: () => [] } as any;
+    let give: (s: any) => void = () => {};
+    media.getCameraStream.mockImplementation(() => new Promise((r) => { give = r; }));
+    setVoiceMock(makeVoiceMock({ devices }));
+    const r = render(<DeviceSettings />);
+    fireEvent.click(screen.getByRole('button', { name: /Preview camera/ }));
+    await waitFor(() => expect(media.getCameraStream).toHaveBeenCalled());
+    r.unmount();
+    await act(async () => { give(stream); });
+    expect(media.stopStream).toHaveBeenCalledWith(stream);
+  });
 });
+

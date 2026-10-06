@@ -34,6 +34,11 @@ export function useDeviceSettings() {
     gain: null,
   });
 
+  // False once the panel is gone: a mic or camera that finishes starting
+  // after that is stopped straight away instead of staying on.
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+
   const refreshPerms = useCallback(() => {
     void queryPermission('microphone').then(setMicPerm);
     void queryPermission('camera').then(setCamPerm);
@@ -83,6 +88,7 @@ export function useDeviceSettings() {
     // Explicit user gesture — acquiring the mic here is allowed.
     try {
       const stream = await getMicStream(selectedDevices.micId, devicePrefs);
+      if (!alive.current) { stopStream(stream); return; }
       const AC = window.AudioContext || (window as any).webkitAudioContext;
       const ctx: AudioContext = new AC();
       const src = ctx.createMediaStreamSource(stream);
@@ -120,6 +126,7 @@ export function useDeviceSettings() {
   const startCamPreview = useCallback(async () => {
     try {
       const stream = await getCameraStream(selectedDevices.cameraId, devicePrefs.cameraQuality ?? 'medium');
+      if (!alive.current) { stopStream(stream); return; }
       setPreviewStream(stream);
       setPreviewingCam(true);
     } catch {

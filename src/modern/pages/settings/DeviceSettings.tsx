@@ -41,7 +41,8 @@ function DevicePicker({ id, value, onChange, devices, label, fallback, disabled 
       <SelectTrigger id={id} className="w-full sm:w-64 max-sm:h-11"><SelectValue /></SelectTrigger>
       <SelectContent>
         <SelectItem value={DEFAULT}>{fallback}</SelectItem>
-        {devices.map((d) => <SelectItem key={d.deviceId} value={d.deviceId}>{d.label || `${label} ${d.deviceId.slice(0, 6)}`}</SelectItem>)}
+        {/* Before access is granted browsers may list devices with an empty id; Radix can't hold that. */}
+        {devices.filter((d) => d.deviceId).map((d) => <SelectItem key={d.deviceId} value={d.deviceId}>{d.label || `${label} ${d.deviceId.slice(0, 6)}`}</SelectItem>)}
       </SelectContent>
     </Select>
   );
