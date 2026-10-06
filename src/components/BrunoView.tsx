@@ -1,23 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import {
   Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus, FileText, RefreshCw, Square,
 } from 'lucide-react';
-import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
-import { BrunoThinking, StreamingCaret, thinkingSteps, type ThinkingStep } from './bruno/BrunoThinking';
+import { BrunoThinking, StreamingCaret } from './bruno/BrunoThinking';
+import { useBrunoConversation } from './bruno/useBrunoConversation';
 import { useInterfaceMode } from '../modern/interfaceMode';
-import { getScreenContext } from '../services/brunoContext';
-import { streamBuildHelper, stripEventBlocks, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
+import { stripEventBlocks } from '../services/aiService';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
-import { type ProposalStatus } from './ActionProposalCard';
 import { BrunoMessageRow } from './BrunoMessageRow';
 import BrunoIcon from './BrunoIcon';
-import { useBatchedStream } from './useBatchedStream';
-import { confirmDialog } from './dialog';
-import type { BrunoChat, BrunoChatMessage } from '../types/bruno';
-import { BRUNO_TITLE, starterPoolForPath, nextStarters } from './brunoStarters';
+import { nextStarters } from './brunoStarters';
 
 /** Starter categories for the full-page empty state — rotating batches. */
 const STARTER_CATEGORIES: { label: string; prompts: string[] }[] = [
@@ -65,29 +59,17 @@ function timeAgo(iso?: string) {
 
 export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const name = botName || 'Bruno';
-  const [chats, setChats] = useState<BrunoChat[]>([]);
-  const location = useLocation();
-  const [activeId, setActiveId] = useState<number | null>(() => {
-    // Expanding the sidebar panel passes its chat through location state so
-    // the full view lands on the same conversation.
-    const s = (location.state as any)?.chatId;
-    return typeof s === 'number' && s > 0 ? s : null;
-  });
-  // Same, for expands that happen while the full view is already mounted.
-  useEffect(() => {
-    const s = (location.state as any)?.chatId;
-    if (typeof s === 'number' && s > 0 && s !== activeId) setActiveId(s);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state]);
-  const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  // Modern experience: live thinking steps for the in-flight reply, a caret
-  // while it streams, and a Stop button.
+  // Conversation state + handlers are shared with the Modern Bruno page.
+  const {
+    chats, myChats, teamChats, chatsHasMore, loading, fetchChats,
+    activeId, setActiveId, activeChat, isOwner, isAdmin, newChat,
+    messages, lastModelIdx, input, setInput, busy, liveThink, stream, send, stop,
+    attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
+    dismissedSwitch, proposalState, confirmProposals, dismissProposal, dismissSwitch, switchToBruno,
+    renameChat, togglePublic, removeChat,
+  } = useBrunoConversation({ currentUser, hasScope, botName });
+  // Modern experience bits (thinking steps, caret, Stop) — kept for parity.
   const modern = useInterfaceMode().mode === 'modern';
-  const [liveThink, setLiveThink] = useState<{ steps: ThinkingStep[]; startedAt: number; thoughtMs: number | null } | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const [loading, setLoading] = useState(true);
   // Rotating starter batches per category — never repeat until exhausted.
   const [starterBatches, setStarterBatches] = useState<Record<string, { batch: string[]; seen: number[] }>>(() => {
     const init: Record<string, { batch: string[]; seen: number[] }> = {};
@@ -105,263 +87,15 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   };
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  const saveTitle = () => { setEditingTitle(false); void renameChat(titleDraft); };
   const scrollRef = useRef<HTMLDivElement>(null);
-  const busyRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
-  // Screenshots attached to the next message — cleared on send, never saved.
-  const [attached, setAttached] = useState<AttachedImage[]>([]);
-  const [attachedPdfs, setAttachedPdfs] = useState<AttachedPdf[]>([]);
-  const addAttached = (imgs: AttachedImage[]) => {
-    if (!imgs.length) return;
-    setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
-  };
-  // NavGPT -> Bruno coding handoff: once the user accepts the switch, this chat
-  // stays on the plain Bruno persona (per chat id). Dismissed handoff offers are
-  // tracked by message index so "Nah" sticks.
-  const [personaByChat, setPersonaByChat] = useState<Record<number, string>>({});
-  const [dismissedSwitch, setDismissedSwitch] = useState<number[]>([]);
-  // Data-action proposals (```event/```outreach/```tasks/```budget blocks):
-  // pending until the user taps the confirm card's "Add all" button.
-  const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
-  // Batched streaming: chunks accumulate in a ref and flush to state at most
-  // every 40ms, so per-token setState calls don't re-render the whole chat.
-  // The in-flight reply renders separately from `messages` below.
-  const stream = useBatchedStream(40);
-
-  const confirmProposals = useCallback(async (idx: number, proposals: ActionProposal[]) => {
-    setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
-    try {
-      const applied = await applyActionProposals(proposals);
-      // Refresh any views the applied actions touch (calendar, tasks, ...).
-      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' ? 'calendar' : k));
-      notifyBrunoDataChanged(types);
-      setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
-    } catch (e: any) {
-      setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
-    }
-  }, []);
-
-  const dismissProposal = useCallback((idx: number) => {
-    setProposalState((s) => ({ ...s, [idx]: { status: 'dismissed' } }));
-  }, []);
-
-  const dismissSwitch = useCallback((idx: number) => {
-    setDismissedSwitch((d) => (d.includes(idx) ? d : [...d, idx]));
-  }, []);
-
-  const isAdmin = hasScope ? hasScope('admin') : false;
-  const activeChat = chats.find((c) => c.id === activeId) || null;
-  const isOwner = activeChat && currentUser && activeChat.member_id === currentUser.id;
-
-  const CHAT_PAGE = 30;
-  const [chatsHasMore, setChatsHasMore] = useState(false);
-
-  const fetchChats = async (selectId?: number | null, append = false) => {
-    try {
-      const offset = append ? chats.length : 0;
-      const res = await apiFetch(`/api/bruno/chats?limit=${CHAT_PAGE}&offset=${offset}`);
-      const list: BrunoChat[] = res.ok ? await res.json() : [];
-      setChats((prev) => (append ? [...prev, ...list] : list));
-      setChatsHasMore(list.length === CHAT_PAGE);
-      if (selectId !== undefined) {
-        setActiveId(selectId);
-      } else if (activeId === null && list.length > 0 && !append) {
-        setActiveId(list[0].id);
-      }
-    } catch {
-      /* offline — keep empty */
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchChats();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (activeId === null || busyRef.current) {
-      if (activeId === null) setMessages([]);
-      return;
-    }
-    setDismissedSwitch([]);
-    setProposalState({});
-    (async () => {
-      try {
-        const res = await apiFetch(`/api/bruno/chats/${activeId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setMessages(((data.messages || []) as BrunoChatMessage[]).map((m) => ({ role: m.role, text: m.text })));
-        }
-      } catch {
-        /* keep previous */
-      }
-    })();
-  }, [activeId]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, activeId, stream.text, stream.active]);
-
-  const send = async (text?: string) => {
-    const content = (text ?? input).trim();
-    if ((!content && !attached.length && !attachedPdfs.length) || busy) return;
-    setInput('');
-    const outgoing = attached;
-    const outgoingPdfs = attachedPdfs;
-    setAttached([]);
-    setAttachedPdfs([]);
-    let chatId = activeId;
-    try {
-      if (!chatId) {
-        const res = await apiFetch('/api/bruno/chats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        if (!res.ok) return;
-        const created = await res.json();
-        chatId = created.id;
-        setActiveId(chatId);
-      }
-      const next: BuildHelperMessage[] = [...messages, { role: 'user', text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?'), ...(outgoing.length ? { images: outgoing } : {}), ...(outgoingPdfs.length ? { pdfs: outgoingPdfs } : {}) }];
-      setMessages(next);
-      setBusy(true);
-      busyRef.current = true;
-      // The in-flight reply renders in its own bubble (batched); it only
-      // joins `messages` once complete, so memoized rows never re-render
-      // per chunk.
-      stream.start();
-      let agg = '';
-      const persona = chatId ? personaByChat[chatId] : undefined;
-      const startedAt = Date.now();
-      let gotFirst = false;
-      setLiveThink({
-        steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: outgoing.length, pdfs: outgoingPdfs.length, history: next.length }),
-        startedAt,
-        thoughtMs: null,
-      });
-      const ac = new AbortController();
-      abortRef.current = ac;
-      try {
-        await streamBuildHelper(next, (chunk) => {
-          agg += chunk;
-          if (!gotFirst && chunk.trim()) {
-            gotFirst = true;
-            const ms = Date.now() - startedAt;
-            setLiveThink((t) => (t ? { ...t, thoughtMs: ms } : t));
-          }
-          stream.push(chunk);
-        }, chatId || undefined, { ...(persona ? { persona } : {}), signal: ac.signal });
-        setMessages([...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
-      } catch (err: any) {
-        // Stopped by the user: keep what was generated so far.
-        if (err?.name !== 'AbortError') throw err;
-        setMessages([...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
-      } finally {
-        stream.finish();
-        abortRef.current = null;
-        setLiveThink(null);
-      }
-      // Note: data-action proposal blocks (```event etc.) are NOT auto-inserted
-      // anymore — the confirm card calls applyActionProposals + notify on tap.
-      fetchChats(chatId);
-    } catch (e: any) {
-      const blockedMsg = e?.serverError;
-      stream.finish();
-      setMessages((prev) => [
-        ...prev,
-        { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` },
-      ]);
-    } finally {
-      setBusy(false);
-      busyRef.current = false;
-    }
-  };
-
-  // NavGPT coding handoff: the user accepted the switch. Drop NavGPT's offer
-  // message, pin this chat to the plain Bruno persona, and have Bruno answer
-  // the pending coding question directly — one fluid switch, no re-asking.
-  // Stable identity so the memoized last message row doesn't re-render
-  // just because the parent did.
-  const switchToBruno = useCallback(async () => {
-    const cid = activeId;
-    if (!cid || busyRef.current) return;
-    const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user');
-    if (lastUserIdx < 0) return;
-    const base = messages.slice(0, lastUserIdx + 1); // ends with the coding question
-    setMessages(base);
-    setPersonaByChat((m) => ({ ...m, [cid]: 'bruno' }));
-    setBusy(true);
-    busyRef.current = true;
-    stream.start();
-    let agg = '';
-    try {
-      await streamBuildHelper(base, (chunk) => {
-        agg += chunk;
-        stream.push(chunk);
-      }, cid, { persona: 'bruno' });
-      setMessages([...base, { role: 'model', text: agg.trim() ? agg : `Bruno hit a snag — please try again in a moment.` }]);
-    } catch {
-      setMessages([...base, { role: 'model', text: `Bruno isn't reachable right now. Check your connection and try again.` }]);
-    } finally {
-      stream.finish();
-      setBusy(false);
-      busyRef.current = false;
-    }
-    fetchChats(cid);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, messages, personaByChat]);
-
-  const saveTitle = async () => {
-    if (!activeChat || !isOwner) return;
-    const t = titleDraft.trim();
-    setEditingTitle(false);
-    if (!t || t === activeChat.title) return;
-    try {
-      const res = await apiFetch(`/api/bruno/chats/${activeChat.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: t }),
-      });
-      if (res.ok) fetchChats(activeChat.id);
-    } catch { /* ignore */ }
-  };
-
-  const togglePublic = async () => {
-    if (!activeChat || !isOwner) return;
-    try {
-      const res = await apiFetch(`/api/bruno/chats/${activeChat.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_public: !activeChat.is_public }),
-      });
-      if (res.ok) fetchChats(activeChat.id);
-    } catch { /* ignore */ }
-  };
-
-  const removeChat = async (chat: any) => {
-    if (!chat) return;
-    if (!(await confirmDialog({ title: 'Delete chat', message: `Delete "${chat.title || 'Untitled chat'}"? This can't be undone.`, confirmLabel: 'Delete', danger: true }))) return;
-    try {
-      const res = await apiFetch(`/api/bruno/chats/${chat.id}`, { method: 'DELETE' });
-      if (res.ok) {
-        const remaining = chats.filter((c) => c.id !== chat.id);
-        setChats(remaining);
-        if (activeId === chat.id) {
-          setActiveId(remaining.length ? remaining[0].id : null);
-          setMessages([]);
-        }
-      }
-    } catch { /* ignore */ }
-  };
-
-  const myChats = chats.filter((c) => currentUser && c.member_id === currentUser.id);
-  const teamChats = chats.filter((c) => !(currentUser && c.member_id === currentUser.id));
-  const lastModelIdx = messages.map((m) => m.role).lastIndexOf('model');
 
   const renderRow = (chat: any) => {
     const mine = currentUser && chat.member_id === currentUser.id;
@@ -417,7 +151,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       {/* Chat list */}
       <div className={`${activeId ? 'hidden md:flex' : 'flex'} w-full md:w-80 shrink-0 flex-col gap-3 overflow-y-auto custom-scrollbar pr-1`} style={{ minHeight: 0 }}>
         <button
-          onClick={() => { setActiveId(null); setMessages([]); }}
+          onClick={newChat}
           className="flex items-center justify-center gap-2 w-full rounded-xl bg-accent text-accent-ink font-bold text-sm px-4 py-2.5 hover:brightness-110 active:scale-[0.98] transition shadow-[0_4px_16px_rgba(255,199,0,0.25)]"
         >
           <Plus className="w-4 h-4" /> New chat
@@ -693,7 +427,7 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
             {modern && busy && liveThink && (
               <button
                 type="button"
-                onClick={() => abortRef.current?.abort()}
+                onClick={stop}
                 aria-label="Stop generating"
                 title="Stop generating"
                 className="w-10 h-10 shrink-0 rounded-xl bg-text-base text-primary flex items-center justify-center hover:opacity-90 transition"

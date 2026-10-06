@@ -94,7 +94,7 @@ export function BrunoThinking({ steps, phase, startedAt, thoughtMs }: {
           <span className="absolute inset-0 animate-ping rounded-full bg-accent/30" />
           <Sparkles className="relative size-3.5 text-accent" />
         </span>
-        <span className="bruno-shimmer-text font-medium">Thinking</span>
+        <span className="cp-shimmer-text font-medium">Thinking</span>
         <span className="tabular-nums text-text-muted">{secs}s</span>
       </div>
       <ul className="mt-2 space-y-1.5 border-l border-line pl-3">
