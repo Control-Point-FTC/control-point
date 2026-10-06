@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import {
-  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus, FileText,
+  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus, FileText, RefreshCw,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
@@ -14,13 +14,36 @@ import BrunoIcon from './BrunoIcon';
 import { useBatchedStream } from './useBatchedStream';
 import { confirmDialog } from './dialog';
 import type { BrunoChat, BrunoChatMessage } from '../types/bruno';
+import { BRUNO_TITLE, starterPoolForPath, nextStarters } from './brunoStarters';
 
-/** Lightweight starter categories for the full-page empty state. */
-const STARTER_GROUPS: { label: string; prompts: string[] }[] = [
-  { label: 'Code', prompts: ['Help me write a TeleOp OpMode in Java', 'How do I use encoders in autonomous?'] },
-  { label: 'Build', prompts: ['How should we design an intake for BIOBUZZ pollen?', 'Mecanum vs tank drive — which should we pick?'] },
-  { label: 'Strategy', prompts: ['What should our BIOBUZZ match strategy be?', 'How do we prepare for the judges?'] },
-  { label: 'Debugging', prompts: ['How do I tune PID for our lift?', 'My robot drifts in autonomous — where do I start?'] },
+/** Starter categories for the full-page empty state — rotating batches. */
+const STARTER_CATEGORIES: { label: string; prompts: string[] }[] = [
+  { label: 'Do in the app', prompts: [
+    'Add a task for build session this Saturday',
+    'Schedule our next team meeting',
+    'Log the email I just sent to our sponsor',
+    'Log a follow-up message to the parents about practice',
+    'Create a task to order REV parts',
+    'Schedule build session this Saturday 10am to 4pm',
+    'Add our qualifier date to the calendar',
+    'Log the reply I got from the venue',
+  ] },
+  { label: 'Code', prompts: [
+    'Help me write a TeleOp OpMode in Java',
+    'How do I use encoders in autonomous?',
+    'How do I tune PID for our lift?',
+    'Write a simple autonomous that drives forward and parks',
+    'How do I read the color sensor in code?',
+    'How do I use the IMU for field-centric drive?',
+  ] },
+  { label: 'Build', prompts: [
+    'How should we design an intake for BIOBUZZ pollen?',
+    'Mecanum vs tank drive — which should we pick?',
+    'What should our BIOBUZZ match strategy be?',
+    'How do we prepare for the judges?',
+    'My robot drifts in autonomous — where do I start?',
+    'Explain the BIOBUZZ scoring to me',
+  ] },
 ];
 
 function timeAgo(iso?: string) {
@@ -57,6 +80,21 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Rotating starter batches per category — never repeat until exhausted.
+  const [starterBatches, setStarterBatches] = useState<Record<string, { batch: string[]; seen: number[] }>>(() => {
+    const init: Record<string, { batch: string[]; seen: number[] }> = {};
+    for (const g of STARTER_CATEGORIES) init[g.label] = nextStarters({ greeting: '', prompts: g.prompts }, [], 2);
+    return init;
+  });
+  const refreshStarters = () => {
+    setStarterBatches((prev) => {
+      const next = { ...prev };
+      for (const g of STARTER_CATEGORIES) {
+        next[g.label] = nextStarters({ greeting: '', prompts: g.prompts }, prev[g.label]?.seen ?? [], 2);
+      }
+      return next;
+    });
+  };
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -454,17 +492,28 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                   <BrunoIcon className="w-6 h-6 text-accent-ink" />
                 </div>
                 <p className="text-sm text-text-base/85 leading-relaxed">
-                  Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
-                  your FTC robot: mechanisms, code, strategy, or troubleshooting.
+                  Hey, I'm <span className="font-bold text-accent">{name}</span> — your FTC coach for the BIOBUZZ season.
+                  I can answer build questions, write code, and take action in the app.
                 </p>
               </div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70 text-center">Try one</p>
+              <div className="flex items-center justify-center gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">Try one</p>
+                <button
+                  onClick={refreshStarters}
+                  disabled={busy}
+                  title="Show more ideas"
+                  aria-label="Show more starter ideas"
+                  className="p-1 rounded-md text-text-muted hover:text-accent transition-colors disabled:opacity-40"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
               <div className="grid sm:grid-cols-2 gap-x-3 gap-y-4">
-                {STARTER_GROUPS.map((g) => (
+                {STARTER_CATEGORIES.map((g) => (
                   <div key={g.label}>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-accent/80 mb-1.5">{g.label}</p>
                     <div className="grid gap-1.5">
-                      {g.prompts.map((s) => (
+                      {(starterBatches[g.label]?.batch ?? []).map((s) => (
                         <button
                           key={s}
                           onClick={() => send(s)}

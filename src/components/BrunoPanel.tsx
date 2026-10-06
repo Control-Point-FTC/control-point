@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown, FileText } from 'lucide-react';
+import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown, FileText, RefreshCw } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
@@ -11,27 +11,13 @@ import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAtt
 import { cn } from './ui';
 import { getScoutingContext, subscribeScoutingContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../services/brunoContext';
 import type { ScoutingContextRequest } from '../types/ftcScout';
+import { BRUNO_TITLE, starterPoolForPath, nextStarters } from './brunoStarters';
 
 const RESOURCES = [
   { label: 'Game Manual 0', url: 'https://gm0.org' },
   { label: 'FTC Docs', url: 'https://ftc-docs.firstinspires.org' },
   { label: 'REV Docs', url: 'https://docs.revrobotics.com' },
   { label: 'Game & Season', url: 'https://www.firstinspires.org/resource-library/ftc/game-and-season-info' },
-];
-
-const STARTERS = [
-  'How should we design an intake for BIOBUZZ pollen?',
-  'Mecanum vs tank drive — which should we pick?',
-  'Help me write a TeleOp OpMode in Java',
-  'How do I tune PID for our lift?',
-];
-
-// Analyze mode (Team Stats → Analyze) starters.
-const SCOUT_STARTERS = [
-  'Who is our best potential alliance partner here?',
-  'Who should we scout next?',
-  'What is our biggest weakness compared with the event average?',
-  'What information is missing before we make a scouting decision?',
 ];
 
 export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId, onUserSaved }: {
@@ -67,6 +53,41 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   // panel forwards it with each message and swaps in scouting starters.
   const [scoutCtx, setScoutCtx] = useState(getScoutingContext);
   useEffect(() => subscribeScoutingContext(() => setScoutCtx(getScoutingContext())), []);
+  // Context-aware rotating starters: the pool follows the current page
+  // (Communication → email logging, Tasks → task creation, …), showing a
+  // fresh batch each time without repeating until the pool is exhausted.
+  const [starterPath, setStarterPath] = useState(() => window.location.pathname);
+  useEffect(() => {
+    const update = () => setStarterPath(window.location.pathname);
+    window.addEventListener('popstate', update);
+    // React-router navigations don't fire popstate; poll cheaply while open.
+    const t = setInterval(update, 1000);
+    return () => { window.removeEventListener('popstate', update); clearInterval(t); };
+  }, []);
+  const starterPool = scoutCtx
+    ? { greeting: 'Analyze mode — ask me about this scouting view.', prompts: [
+        'Who is our best potential alliance partner here?',
+        'Who should we scout next?',
+        'What is our biggest weakness compared with the event average?',
+        'What information is missing before we make a scouting decision?',
+        'Which teams have the most consistent autonomous?',
+        'Compare our cycle times to the top teams here',
+      ] }
+    : starterPoolForPath(starterPath);
+  const [starterSeen, setStarterSeen] = useState<number[]>([]);
+  const [starterBatch, setStarterBatch] = useState<string[]>(() => nextStarters(starterPoolForPath(window.location.pathname), []).batch);
+  // Reset rotation when the page (context) changes.
+  useEffect(() => {
+    const { batch, seen } = nextStarters(starterPool, []);
+    setStarterBatch(batch);
+    setStarterSeen(seen);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [starterPath, scoutCtx]);
+  const refreshStarters = () => {
+    const { batch, seen } = nextStarters(starterPool, starterSeen);
+    setStarterBatch(batch);
+    setStarterSeen(seen);
+  };
   const [greeting, setGreeting] = useState<string | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<{ text: string; scouting?: ScoutingContextRequest } | null>(null);
   useEffect(() => {
@@ -260,7 +281,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 <div className="flex-1 min-w-0">
                   <p className="text-text-base font-bold text-sm leading-tight">{name}</p>
                   <p className="text-text-muted text-[11px] leading-tight">
-                    {scoutCtx ? <span className="text-accent font-semibold">Scouting · Analyze mode</span> : 'FTC Java mentor · BIOBUZZ season'}
+                    {scoutCtx ? <span className="text-accent font-semibold">Scouting · Analyze mode</span> : BRUNO_TITLE}
                   </p>
                 </div>
                 <button
@@ -354,16 +375,24 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                       {scoutCtx && greeting ? (
                         <span data-testid="bruno-analyze-greeting">{greeting}</span>
                       ) : (
-                        <span>
-                          Hey, I'm <span className="font-bold text-accent">{name}</span> — ask me anything about building
-                          your FTC robot: mechanisms, code, strategy, or scheduling.
-                        </span>
+                        <span>{starterPool.greeting}</span>
                       )}
                     </p>
                   </div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">Try one</p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted/70">Try one</p>
+                    <button
+                      onClick={refreshStarters}
+                      disabled={busy}
+                      title="Show more ideas"
+                      aria-label="Show more starter ideas"
+                      className="p-1 rounded-md text-text-muted hover:text-accent transition-colors disabled:opacity-40"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                   <div className="flex flex-col gap-1.5">
-                    {(scoutCtx ? SCOUT_STARTERS : STARTERS).map((s) => (
+                    {starterBatch.map((s) => (
                       <button
                         key={s}
                         onClick={() => send(s)}
