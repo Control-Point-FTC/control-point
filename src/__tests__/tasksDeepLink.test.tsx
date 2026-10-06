@@ -1,10 +1,13 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { TasksView } from '../App';
 import { ContextMenuProvider } from '../components/contextmenu/ContextMenuProvider';
+import { clearDrafts } from '../modern/drafts';
 
 afterEach(cleanup);
+// The task editor lives in the shared draft store; start each case clean.
+beforeEach(() => clearDrafts());
 
 const tasks = [
   { id: 1, title: 'Mount the climber hooks', status: 'todo', assignee_ids: [7], team_id: 1 },

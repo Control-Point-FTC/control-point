@@ -185,7 +185,10 @@ import { ByMode } from './modern/ByMode';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { InboxPage } from './modern/pages/InboxPage';
+import { TasksPage } from './modern/pages/tasks/TasksPage';
+import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
 import { useMyWork } from './components/dashboard/useMyWork';
+import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
 import type { CommandAction } from './modern/CommandMenu';
 import type { NotificationActions } from './modern/notifications';
 import { useDraft, clearDrafts } from './modern/drafts';
@@ -2635,7 +2638,7 @@ export default function App() {
         <Route path="/teams" element={<ByMode legacy={<TeamsView {...viewProps} />} />} />
         <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />} />
         <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} />} />
-        <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} />} />
+        <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} modern={<TasksPage {...viewProps} />} />} />
         <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} />} />
         <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} />} />
         <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} />} />
@@ -2966,7 +2969,8 @@ export default function App() {
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
       {completingTask && (
-        <TaskCompletionDialog
+        <ByMode
+          legacy={<TaskCompletionDialog
           task={completingTask}
           notes={completionNotes}
           onNotesChange={setCompletionNotes}
@@ -2975,6 +2979,17 @@ export default function App() {
           completing={completing}
           onSubmit={handleCompleteTask}
           onClose={closeCompleteDialog}
+        />}
+          modern={<CompletionDialog
+          task={completingTask}
+          notes={completionNotes}
+          onNotesChange={setCompletionNotes}
+          files={completionFiles}
+          onFilesChange={setCompletionFiles}
+          completing={completing}
+          onSubmit={handleCompleteTask}
+          onClose={closeCompleteDialog}
+        />}
         />
       )}
       {/* Slide-in mention toast: appears when someone pings you in a channel
@@ -6067,47 +6082,21 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
 // Default a creation form's team to the user's currently-selected team, so the
 // "Select Team" dropdown in New Task / Log Transaction / Add Part modals is
 // already set when you're working inside a team.
-function defaultTeamId(teams: any[], currentUser: any): any {
-  const tid = currentUser?.team_id;
-  if (tid == null || tid === '') return '';
-  return teams.some((t: any) => String(t.id) === String(tid)) ? tid : '';
-}
 
-export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope, onRequestComplete }: any) {  const [showAddTask, setShowAddTask] = useState(false);
-  const [showAnalytics, setShowAnalytics] = useState(false);
-  const [isBoardTask, setIsBoardTask] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
-  // Bruno screen context: the task open in the editor.
-  useEffect(() => {
-    setScreenEntity('taskId', editingTaskId);
-    return () => setScreenEntity('taskId', null);
-  }, [editingTaskId]);
-  const [newTask, setNewTask] = useState({ team_id: '', title: '', description: '', assignee_ids: [] as number[], due_date: '', status: 'todo' });
-  const [filterTeam, setFilterTeam] = useState('all');
-  const [pendingIds, setPendingIds] = useState<Set<number>>(new Set());
-  // Bruno bulk import: paste notes/chat, AI extracts tasks, preview/edit, save all.
-  const [showBulk, setShowBulk] = useState(false);
-  const [bulkText, setBulkText] = useState('');
-  const [bulkParsing, setBulkParsing] = useState(false);
-  const [bulkPreview, setBulkPreview] = useState<any[] | null>(null);
-  const [bulkRoster, setBulkRoster] = useState<any[]>([]);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkSaving, setBulkSaving] = useState(false);
-  // AI quick-add: type natural language, Bruno parses it into task fields.
-  // One task fills the form; several get a pick-list to choose from.
-  const [aiTaskOpen, setAiTaskOpen] = useState(false);
-  const [aiTaskText, setAiTaskText] = useState('');
-  const [aiTaskBusy, setAiTaskBusy] = useState(false);
-  const [aiTaskNote, setAiTaskNote] = useState<string | null>(null);
-  const [aiTaskProposals, setAiTaskProposals] = useState<any[]>([]);
-  const markPending = (id: number, on: boolean) => setPendingIds((prev) => {
-    const s = new Set(prev);
-    if (on) s.add(id); else s.delete(id);
-    return s;
-  });
-
-  const isAdmin = hasScope('admin');
-  const canManageTasks = hasScope('tasks');
+export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope, onRequestComplete }: any) {
+  // All Tasks state + handlers are shared with the Modern Tasks page.
+  const {
+    isAdmin, canManageTasks,
+    showAddTask, editingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
+    openNewTask, openEditTask, closeTaskModal, handleAddTask,
+    showAnalytics, setShowAnalytics, filterTeam, setFilterTeam, pendingIds, filteredTasks,
+    showBulk, setShowBulk, bulkText, setBulkText, bulkParsing, bulkPreview, bulkRoster, bulkError,
+    bulkSaving, handleBulkParse, updateBulkRow, removeBulkRow, handleBulkSave, closeBulkModal,
+    aiTaskOpen, setAiTaskOpen, aiTaskText, setAiTaskText, aiTaskBusy, aiTaskNote, setAiTaskNote, aiTaskProposals, setAiTaskProposals,
+    resetAiTask, applyAiTaskToForm, handleAiTaskParse,
+    updateStatus, handleDeleteTask,
+    completionTrends, memberCapacity, avgCompletionTime,
+  } = useTasksController({ tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete });
 
   // Right-click menu on task cards: edit, quick status moves, add, delete.
   useContextMenu('task', (el) => {
@@ -6136,15 +6125,6 @@ export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh,
     ];
   });
 
-  const openNewTask = (status = 'todo') => {
-    setEditingTaskId(null);
-    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', status });
-    setIsBoardTask(false);
-    resetAiTask();
-    setAiTaskOpen(false);
-    setShowAddTask(true);
-  };
-
   // Deep link from a notification (/tasks?task=ID): managers get the task's
   // editor; everyone else gets the card scrolled into view and highlighted.
   const [taskParams, setTaskParams] = useSearchParams();
@@ -6165,285 +6145,6 @@ export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh,
     setTaskParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedTaskId, tasks]);
-
-  const openEditTask = (task: any) => {
-    setEditingTaskId(task.id);
-    setNewTask({
-      team_id: task.team_id?.toString() || '',
-      title: task.title || '',
-      description: task.description || '',
-      assignee_ids: Array.isArray(task.assignee_ids) && task.assignee_ids.length > 0
-        ? task.assignee_ids
-        : (task.assigned_to ? [task.assigned_to] : []),
-      due_date: task.due_date || '',
-      status: task.status || 'todo',
-    });
-    setIsBoardTask(!!task.is_board);
-    setShowAddTask(true);
-  };
-
-  const handleAddTask = async () => {
-    if (pendingIds.has(-1)) return;
-    markPending(-1, true);
-    try {
-      if (editingTaskId) {
-        const res = await apiFetch(`/api/tasks/${editingTaskId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: newTask.title,
-            description: newTask.description,
-            assignee_ids: newTask.assignee_ids,
-            due_date: newTask.due_date || null,
-            is_board: isBoardTask ? 1 : 0,
-          })
-        });
-        if (res.ok) {
-          closeTaskModal();
-          refresh.tasks();
-        } else {
-          notify('Could not save task — try again.', 'error');
-        }
-        return;
-      }
-      const res = await apiFetch('/api/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 })
-      });
-      if (res.ok) {
-        closeTaskModal();
-        refresh.tasks();
-      } else {
-        notify('Could not create task — try again.', 'error');
-      }
-    } finally {
-      markPending(-1, false);
-    }
-  };
-
-  const closeTaskModal = () => {
-    setShowAddTask(false);
-    setEditingTaskId(null);
-  };
-
-  // ---- Bruno bulk import ----
-  const handleBulkParse = async () => {
-    const text = bulkText.trim();
-    if (!text || bulkParsing) return;
-    setBulkParsing(true);
-    setBulkError(null);
-    try {
-      const res = await apiFetch('/api/tasks/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Could not read tasks');
-      const list = Array.isArray(d.items) ? d.items : [];
-      if (!list.length) {
-        setBulkError('No tasks found in that text — try pasting notes with actionable items.');
-        setBulkPreview(null);
-      } else {
-        setBulkPreview(list);
-        setBulkRoster(Array.isArray(d.roster) ? d.roster : members.map((m: any) => ({ id: m.id, name: m.name })));
-      }
-    } catch (e: any) {
-      setBulkError(e?.message || 'Could not extract tasks.');
-      setBulkPreview(null);
-    } finally {
-      setBulkParsing(false);
-    }
-  };
-
-  const updateBulkRow = (idx: number, patch: any) => {
-    setBulkPreview((prev) => (prev ? prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)) : prev));
-  };
-
-  const removeBulkRow = (idx: number) => {
-    setBulkPreview((prev) => (prev ? prev.filter((_, i) => i !== idx) : prev));
-  };
-
-  const handleBulkSave = async () => {
-    if (!bulkPreview?.length || bulkSaving) return;
-    setBulkSaving(true);
-    setBulkError(null);
-    try {
-      const res = await apiFetch('/api/tasks/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: bulkPreview }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Could not save tasks');
-      notify(`Saved ${d.count || 0} task${(d.count || 0) === 1 ? '' : 's'}.`, 'success');
-      setShowBulk(false);
-      setBulkText('');
-      setBulkPreview(null);
-      refresh.tasks();
-    } catch (e: any) {
-      setBulkError(e?.message || 'Could not save tasks.');
-    } finally {
-      setBulkSaving(false);
-    }
-  };
-
-  const closeBulkModal = () => {
-    setShowBulk(false);
-    setBulkText('');
-    setBulkPreview(null);
-    setBulkError(null);
-  };
-
-  // ---- AI quick-add for the task form ----
-  const resetAiTask = () => { setAiTaskText(''); setAiTaskNote(null); setAiTaskProposals([]); };
-
-  const applyAiTaskToForm = (t: any) => {
-    setNewTask(prev => ({
-      ...prev,
-      title: t.title || prev.title,
-      description: t.description || prev.description,
-      due_date: t.due_date || prev.due_date,
-      status: ['todo', 'in-progress', 'done'].includes(t.status) ? t.status : prev.status,
-      assignee_ids: t.assigned_to ? [t.assigned_to] : prev.assignee_ids,
-    }));
-  };
-
-  const handleAiTaskParse = async () => {
-    const text = aiTaskText.trim();
-    if (!text || aiTaskBusy) return;
-    setAiTaskBusy(true);
-    setAiTaskNote(null);
-    setAiTaskProposals([]);
-    try {
-      const res = await apiFetch('/api/tasks/parse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Could not read tasks');
-      const list = Array.isArray(d.items) ? d.items : [];
-      if (list.length === 1) {
-        applyAiTaskToForm(list[0]);
-        setAiTaskNote('Bruno filled in the form below — review it and hit Create Task.');
-        setAiTaskOpen(false);
-      } else if (list.length > 1) {
-        setAiTaskProposals(list);
-        setAiTaskNote(`Bruno found ${list.length} tasks — pick one to fill the form, or use bulk import for all of them.`);
-      } else {
-        setAiTaskNote('Bruno could not find any tasks in that text — try adding an action and a date.');
-      }
-    } catch (e: any) {
-      setAiTaskNote(e?.message || "Bruno isn't reachable right now — try again in a moment.");
-    } finally {
-      setAiTaskBusy(false);
-    }
-  };
-
-  const filteredTasks = tasks.filter((t: any) => {
-    const boardCheck = t.is_board ? isAdmin : true;
-    const teamCheck = filterTeam === 'all' || t.team_id?.toString() === filterTeam;
-    return boardCheck && teamCheck;
-  });
-
-  const updateStatus = async (id: number, status: string) => {
-    if (pendingIds.has(id)) return;
-    // Moving to done requires proof: open the shared completion dialog.
-    // (The server rejects direct PATCH transitions to done.)
-    if (status === 'done') {
-      const task = tasks.find((t: any) => t.id === id);
-      if (task && task.status !== 'done' && onRequestComplete) {
-        onRequestComplete(task);
-        return;
-      }
-    }
-    // Optimistic: flip the status instantly, roll back if the server rejects.
-    const prev = tasks;
-    setTasks((ts: any[]) => ts.map((t: any) => t.id === id
-      ? { ...t, status, completed_at: status === 'done' ? new Date().toISOString() : null }
-      : t));
-    markPending(id, true);
-    try {
-      const res = await apiFetch(`/api/tasks/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      if (!res.ok) {
-        setTasks(prev);
-        notify('Could not update task — try again.', 'error');
-      }
-    } catch {
-      setTasks(prev);
-      notify('Could not update task — try again.', 'error');
-    } finally {
-      markPending(id, false);
-    }
-  };
-
-  const handleDeleteTask = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete task', message: 'Delete this task?', confirmLabel: 'Delete', danger: true }))) return;
-    if (pendingIds.has(id)) return;
-    // Optimistic: remove instantly, restore on failure.
-    const prev = tasks;
-    setTasks((ts: any[]) => ts.filter((t: any) => t.id !== id));
-    markPending(id, true);
-    try {
-      const res = await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        setTasks(prev);
-        notify('Could not delete task — try again.', 'error');
-      }
-    } catch {
-      setTasks(prev);
-      notify('Could not delete task — try again.', 'error');
-    } finally {
-      markPending(id, false);
-    }
-  };
-
-  // Analytics Data
-  const completionTrends = useMemo(() => {
-    const last7Days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      return format(d, 'yyyy-MM-dd');
-    }).reverse();
-
-    return last7Days.map(date => ({
-      date: format(new Date(date), 'MMM dd'),
-      completed: tasks.filter((t: any) => t.status === 'done' && t.completed_at?.startsWith(date)).length
-    }));
-  }, [tasks]);
-
-  const memberCapacity = useMemo(() => {
-    return members.map((m: any) => {
-      const memberTasks = tasks.filter((t: any) => {
-        const ids = Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
-        return ids.includes(m.id);
-      });
-      return {
-        name: m.name,
-        total: memberTasks.length,
-        todo: memberTasks.filter((t: any) => t.status === 'todo').length,
-        inProgress: memberTasks.filter((t: any) => t.status === 'in-progress').length,
-        done: memberTasks.filter((t: any) => t.status === 'done').length,
-      };
-    }).filter(m => m.total > 0);
-  }, [tasks, members]);
-
-  const avgCompletionTime = useMemo(() => {
-    const completedTasks = tasks.filter((t: any) => t.status === 'done' && t.completed_at && t.created_at);
-    if (completedTasks.length === 0) return 0;
-    const totalTime = completedTasks.reduce((acc: number, t: any) => {
-      const start = new Date(t.created_at).getTime();
-      const end = new Date(t.completed_at).getTime();
-      return acc + (end - start);
-    }, 0);
-    return (totalTime / completedTasks.length / (1000 * 60 * 60 * 24)).toFixed(1); // in days
-  }, [tasks]);
 
   const columns = [
     { id: 'todo', label: 'To Do', color: 'bg-slate-500' },
