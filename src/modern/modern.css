@@ -89,18 +89,6 @@ html[data-ui="modern"] .m-canvas {
   animation: cp-shimmer 2s linear infinite;
 }
 
-/* ---------- interim: Legacy pages shown inside the Modern shell ----------
-   Screens not rebuilt yet render their Legacy page inside `.m-legacy`. This
-   block only softens them so the shell doesn't clash; it never applies to
-   rebuilt pages and is deleted once phase 9 lands. */
-html[data-ui="modern"] .m-legacy .card-surface {
-  background: var(--sh-card);
-  border-color: var(--sh-border);
-  box-shadow: none;
-}
-html[data-ui="modern"] .m-legacy :is(.gold-glow, [class*="shadow-[0_8px_30px"], [class*="shadow-[0_4px_16px_rgba(255,199,0"]) { box-shadow: none; }
-html[data-ui="modern"] .m-legacy :is(.text-\[8px\], .text-\[9px\], .text-\[10px\], .text-\[11px\]) { font-size: 12px; line-height: 1.35; }
-
 @media (prefers-reduced-motion: reduce) {
   html[data-ui="modern"] *,
   html[data-ui="modern"] *::before,
