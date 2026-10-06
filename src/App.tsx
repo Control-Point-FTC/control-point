@@ -951,6 +951,9 @@ function useIsMobile() {
   return isMobile;
 }
 
+// Sequence for refreshAttendance's latest-wins check (App is a singleton).
+let attendanceRefreshSeq = 0;
+
 export default function App() {
   const { t } = useTranslation();
   // Initialize grid appearance settings from localStorage
@@ -1808,8 +1811,12 @@ export default function App() {
       }
     }
   };
+  // Latest-wins: overlapping refreshes (save + socket broadcast) can resolve
+  // out of order; an older response must never overwrite a newer snapshot.
   const refreshAttendance = async () => {
+    const req = ++attendanceRefreshSeq;
     const a = await fetchJson('/api/attendance');
+    if (req !== attendanceRefreshSeq) return;
     if (Array.isArray(a)) setAttendance(a);
   };
   const refreshTasks = async () => {

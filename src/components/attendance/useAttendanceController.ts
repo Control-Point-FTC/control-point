@@ -147,6 +147,7 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
         if (confirmed.current.has(k)) n.set(k, confirmed.current.get(k)!); else n.delete(k);
         return n;
       });
+      refresh.attendance(); // reconcile with the server's truth either way
     };
     try {
       const res = await apiFetch('/api/attendance/batch', {
