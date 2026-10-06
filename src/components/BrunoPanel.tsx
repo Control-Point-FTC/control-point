@@ -12,6 +12,7 @@ import { BrunoThinking, StreamingCaret } from './bruno/BrunoThinking';
 import { useBrunoPanelChat, BRUNO_RESOURCES as RESOURCES } from './bruno/useBrunoPanelChat';
 import { useInterfaceMode } from '../modern/interfaceMode';
 import { BRUNO_TITLE } from './brunoStarters';
+import { inEpoch } from '../modern/drafts';
 
 
 export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId, onUserSaved }: {
@@ -282,9 +283,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
               }}
               onPaste={(e) => {
                 // Screenshots paste straight into the composer.
-                imagesFromPaste(e).then((imgs) => {
+                imagesFromPaste(e).then(inEpoch((imgs) => {
                   if (imgs.length) { e.preventDefault(); addAttached(imgs); }
-                });
+                }));
               }}
               className="p-3 border-t border-text-base/10 bg-text-base/[0.02] flex-shrink-0"
             >
@@ -298,7 +299,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   multiple
                   className="hidden"
                   onChange={(e) => {
-                    filesToAttachedImages(e.target.files || []).then(addAttached);
+                    filesToAttachedImages(e.target.files || []).then(inEpoch(addAttached));
                     e.target.value = '';
                   }}
                 />
@@ -309,9 +310,9 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                   multiple
                   className="hidden"
                   onChange={(e) => {
-                    filesToAttachedPdfs(e.target.files || []).then((pdfs) => {
+                    filesToAttachedPdfs(e.target.files || []).then(inEpoch((pdfs) => {
                       setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS));
-                    });
+                    }));
                     e.target.value = '';
                   }}
                 />

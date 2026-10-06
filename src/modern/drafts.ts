@@ -43,6 +43,16 @@ export function draftEpoch(): number {
   return epoch;
 }
 
+/**
+ * Wrap an async callback so it only runs if the store hasn't been cleared
+ * since the work started (e.g. a file still being read at sign-out must not
+ * put the previous user's attachment back).
+ */
+export function inEpoch<A extends unknown[]>(fn: (...args: A) => void): (...args: A) => void {
+  const started = epoch;
+  return (...args: A) => { if (epoch === started) fn(...args); };
+}
+
 export function clearDrafts(): void {
   epoch += 1;
   const keys = [...store.keys()];

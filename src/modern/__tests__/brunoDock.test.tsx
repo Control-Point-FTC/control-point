@@ -10,7 +10,7 @@ vi.mock('../../services/aiService', async (orig) => ({ ...(await orig<object>())
 import { InterfaceModeProvider } from '../interfaceMode';
 import { BrunoDock } from '../BrunoDock';
 import BrunoPanel from '../../components/BrunoPanel';
-import { clearDrafts } from '../drafts';
+import { clearDrafts, inEpoch } from '../drafts';
 import { BRUNO_OPEN_EVENT } from '../../services/brunoContext';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
@@ -134,6 +134,16 @@ describe('Modern Bruno dock', () => {
     await act(async () => { finish(); });
     await waitFor(() => expect(ai.streamBuildHelper).toHaveBeenCalledTimes(2));
     expect(ai.streamBuildHelper.mock.calls[1][0].at(-1)).toMatchObject({ role: 'user', text: 'Queued scouting question' });
+  });
+
+  it('file reads that finish after sign-out are dropped (inEpoch)', () => {
+    const seen: number[] = [];
+    const late = inEpoch((n: number) => seen.push(n));
+    const fresh = () => inEpoch((n: number) => seen.push(n));
+    clearDrafts();
+    late(1);
+    fresh()(2);
+    expect(seen).toEqual([2]);
   });
 });
 
