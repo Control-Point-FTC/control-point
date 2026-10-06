@@ -276,13 +276,18 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     try {
       setBusy(true);
       const file = getDraft<CodeFile | null>('code:file', null);
-      // Saves of this file still waiting are dropped; one already running
-      // finishes first, so the revert is the last write either way.
-      if (file) revertGen.set(file.id, genOf(file.id) + 1);
-      await saveQueue;
+      // Reverting drafts: saves of this file still waiting are dropped and one
+      // already running finishes first, so the revert is the last write.
+      // (Saves only ever write drafts, so a main revert leaves them alone.)
+      if (file && branch === 'drafts') {
+        revertGen.set(file.id, genOf(file.id) + 1);
+        await saveQueue;
+      }
       await revertCommit(commitId, branch, currentUser.id);
-      // The reverted content replaces the buffer (any unsaved edit is superseded).
-      setBuffer(null);
+      // The reverted content replaces that branch's buffer (an unsaved edit
+      // there is superseded); edits to the other branch are kept.
+      const cur = getDraft<Buffer | null>(BUFFER_KEY, null);
+      if (!cur || (cur.fileId === file?.id && cur.branch === branch)) setBuffer(null);
       if (file) contentChanged(file.id); // the mounted page (maybe not this one) reloads
     } catch (err) {
       setError(`Failed to revert: ${errText(err)}`);
@@ -336,12 +341,16 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       setError(null);
       // This file's unsaved edits (captured now) are saved first, after any
       // save already in flight, so they're part of the commit.
+      const gen = genOf(file.id);
       const b = getDraft<Buffer | null>(BUFFER_KEY, null);
       if (b && b.fileId === file.id && b.branch === 'drafts' && b.unsaved) {
         if (!(await saveNow())) throw new Error('Could not save your latest changes');
       } else {
         await saveQueue; // a save of this file may still be in flight
       }
+      // A drafts revert landed while we waited: the text this commit was for
+      // is gone, so publish nothing rather than something else.
+      if (genOf(file.id) !== gen) throw new Error('the drafts were reverted meanwhile, so nothing was committed. Check the file and commit again');
       await commitToMain(file.id, message, currentUser.id);
       done();
       contentChanged(file.id); // the mounted page (maybe not this one) reloads

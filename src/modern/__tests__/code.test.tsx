@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, renderHook, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('@monaco-editor/react', () => ({
@@ -18,6 +18,7 @@ vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()),
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { CodePage } from '../pages/code/CodePage';
+import { useCodeController } from '../../components/code/useCodeController';
 import { clearDrafts } from '../drafts';
 import { getScreenContext, setScreenRoute } from '../../services/brunoContext';
 
@@ -308,4 +309,55 @@ describe('Modern Code', () => {
     expect(code.saveDraft.mock.calls.map((c) => c[1])).toEqual(['v1']);
     expect(server[1].drafts).toBe('reverted');
   }, 15000);
+
+  describe('revert vs queued saves (controller)', () => {
+    const props = { teams: [{ id: 1, name: 'Robo', number: 4215 }], currentUser: { id: 7 }, hasScope: (x: string) => x === 'code', activeTeamId: 1 } as any;
+    const slowFirstSave = () => {
+      let release: () => void = () => {};
+      code.saveDraft.mockImplementation((id: number, text: string) => {
+        if (code.saveDraft.mock.calls.length === 1) return new Promise((r) => { release = () => { server[id].drafts = text; r({}); }; });
+        server[id].drafts = text; return Promise.resolve({});
+      });
+      return () => release();
+    };
+    const openDrive = async () => {
+      const h = renderHook(() => useCodeController(props));
+      await waitFor(() => expect(h.result.current.files.length).toBe(2));
+      act(() => h.result.current.setSelectedFile(FILES[0] as any));
+      await waitFor(() => expect(h.result.current.code).toBe('class Drive {}'));
+      return h;
+    };
+
+    it('a drafts revert while a commit waits stops the commit instead of publishing other text', async () => {
+      const release = slowFirstSave();
+      const { result } = await openDrive();
+      act(() => result.current.editCode('v1'));
+      await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+      act(() => { result.current.editCode('v2'); result.current.setCommitMessage('ship'); });
+      let commit!: Promise<void>;
+      let revert!: Promise<void>;
+      act(() => { commit = result.current.handleCommit(); });
+      act(() => { revert = result.current.handleRevert(101, 'drafts') as Promise<void>; });
+      await act(async () => { release(); await commit; await revert; });
+      expect(code.commitToMain).not.toHaveBeenCalled();
+      expect(code.saveDraft.mock.calls.map((c) => c[1])).toEqual(['v1']);
+      expect(code.revertCommit).toHaveBeenCalledWith(101, 'drafts', 7);
+      expect(result.current.error).toMatch(/reverted meanwhile/);
+    }, 15000);
+
+    it('a main revert leaves queued draft saves alone', async () => {
+      const release = slowFirstSave();
+      const { result } = await openDrive();
+      act(() => result.current.editCode('v1'));
+      await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+      act(() => result.current.editCode('v2'));
+      await act(async () => { await new Promise((r) => setTimeout(r, 3300)); }); // second auto-save queued
+      let revert!: Promise<void>;
+      act(() => { revert = result.current.handleRevert(101, 'main') as Promise<void>; });
+      await act(async () => { release(); await revert; });
+      await waitFor(() => expect(code.saveDraft.mock.calls.map((c) => c[1])).toEqual(['v1', 'v2']));
+      expect(server[1].drafts).toBe('v2');
+      expect(code.revertCommit).toHaveBeenCalledWith(101, 'main', 7);
+    }, 15000);
+  });
 });
