@@ -119,7 +119,9 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
       // snap back to the old saved accent.
       onUserSaved?.(data.user ?? { ...user, accent_color: null });
       refresh?.teams?.();
-      setDraft(null);
+      // Only the colours were reset — keep any unsaved name/title edits.
+      const cur = getDraft<ProfileDraft | null>(draftKey, null);
+      if (cur) setDraft({ ...cur, accent: '' });
       const root = document.documentElement;
       root.style.removeProperty('--color-accent');
       root.style.removeProperty('--color-primary');

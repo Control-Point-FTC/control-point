@@ -199,5 +199,29 @@ describe('Modern Settings — review regressions', () => {
       await act(async () => { await i18n.changeLanguage('en'); });
     }
   });
+
+  it('theme reset keeps unsaved name/title edits', async () => {
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/theme/reset' ? json({ ok: true }) : json({})));
+    setup();
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Ada Lovelace' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset theme' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/theme/reset', expect.anything()));
+    await waitFor(() => expect((screen.getByLabelText('Personal accent') as HTMLInputElement).value).toBe(''));
+    expect((screen.getByLabelText('Display name') as HTMLInputElement).value).toBe('Ada Lovelace');
+  });
+
+  it('teaching mode stays locked while its own save runs, even if answer length saves meanwhile', async () => {
+    const pending: (() => void)[] = [];
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/profile'
+      ? new Promise((res) => { pending.push(() => res({ ok: true, json: async () => ({ user: me }) })); })
+      : json({})));
+    setup({ section: 'bruno' });
+    fireEvent.click(screen.getByRole('switch', { name: 'Teaching mode' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Long' }));
+    await act(async () => { pending[1](); });
+    expect(screen.getByRole('switch', { name: 'Teaching mode' })).toBeDisabled();
+    await act(async () => { pending[0](); });
+    expect(screen.getByRole('switch', { name: 'Teaching mode' })).not.toBeDisabled();
+  });
 });
 

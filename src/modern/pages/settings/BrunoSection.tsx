@@ -16,7 +16,10 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
   const team = teams.find((t: any) => t.id === user.team_id);
   const [teach, setTeach] = useState(user.bruno_teach_mode === 1);
   const [level, setLevel] = useState<string>(user.bruno_output_level === 'max' ? 'high' : (user.bruno_output_level || 'medium'));
-  const [busy, setBusy] = useState<string | null>(null);
+  // One in-flight lock per control (as Legacy tracks teach/level/persona
+  // separately), so a save of one never unlocks another mid-request.
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const lock = (k: string, on: boolean) => setBusy((b) => ({ ...b, [k]: on }));
   const [explanation, setExplanation] = useStringPref(K.explanationStyle, 'balanced');
   const [format, setFormat] = useStringPref(K.responseFormat, 'detailed');
   const [autoExplain, setAutoExplain] = useBoolPref(K.autoExplain, true);
@@ -34,7 +37,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
 
   /** Optimistic member-row save with revert, same body as the Legacy modal. */
   const saveProfile = async (key: string, patch: Record<string, unknown>, revert: () => void, ok: string) => {
-    setBusy(key);
+    lock(key, true);
     try {
       const res = await apiFetch('/api/profile', {
         method: 'PATCH',
@@ -48,18 +51,19 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
       revert();
       notify('Could not save.', 'error');
     } finally {
-      setBusy(null);
+      lock(key, false);
     }
   };
 
   const toggleTeach = (next: boolean) => {
+    if (busy.teach) return;
     setTeach(next);
     void saveProfile('teach', { bruno_teach_mode: next ? 1 : 0 }, () => setTeach(!next),
       next ? 'Teaching mode on — Bruno will walk you through it.' : 'Teaching mode off — Bruno will write the code for you.');
   };
   const changeLevel = (next: string) => {
     // One save at a time (as in the Legacy modal), so replies can't land out of order.
-    if (!next || next === level || busy === 'level') return;
+    if (!next || next === level || busy.level) return;
     const prev = level;
     setLevel(next);
     void saveProfile('level', { bruno_output_level: next }, () => setLevel(prev), `Output length: ${next}.`);
@@ -68,13 +72,13 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
   const qualifies = isAdmin && navGptQualifies(team?.name);
   const navGptOn = navGptQualifies(team?.name) && (team?.navgpt_enabled ?? 1) === 1;
   const togglePersona = async () => {
-    if (busy) return;
+    if (busy.persona) return;
     if (navGptOn && !(await confirmDialog({
       title: 'Turn off NavGPT ❤️?',
       message: 'The team chatbot will go back to being Bruno — the normal persona. You can switch back to NavGPT ❤️ anytime.',
       confirmLabel: 'Turn off', cancelLabel: 'Keep NavGPT ❤️', danger: true,
     }))) return;
-    setBusy('persona');
+    lock('persona', true);
     try {
       const res = await apiFetch('/api/team/chat-persona', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !navGptOn }),
@@ -86,7 +90,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
     } catch (e: any) {
       notify(e?.message || 'Could not update persona', 'error');
     } finally {
-      setBusy(null);
+      lock('persona', false);
     }
   };
 
@@ -100,10 +104,10 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
     <div>
       <SettingsGroup title="How Bruno helps you" description="Saved to your account, on every device.">
         <SettingsRow label="Teaching mode" description="Bruno explains and guides you to write the code yourself instead of handing it over." htmlFor="bruno-teach">
-          <span className="flex items-center gap-2"><GraduationCap className={cn('size-4', teach ? 'text-accent' : 'text-muted-foreground')} /><Switch id="bruno-teach" checked={teach} disabled={busy === 'teach'} onCheckedChange={toggleTeach} /></span>
+          <span className="flex items-center gap-2"><GraduationCap className={cn('size-4', teach ? 'text-accent' : 'text-muted-foreground')} /><Switch id="bruno-teach" checked={teach} disabled={!!busy.teach} onCheckedChange={toggleTeach} /></span>
         </SettingsRow>
         <SettingsRow label="Answer length" description="Longer answers use more AI tokens — typically only a few dollars a month for a team.">
-          {seg(level, changeLevel, [['low', 'Short'], ['medium', 'Medium'], ['high', 'Long']], 'Output length', busy === 'level')}
+          {seg(level, changeLevel, [['low', 'Short'], ['medium', 'Medium'], ['high', 'Long']], 'Output length', !!busy.level)}
         </SettingsRow>
       </SettingsGroup>
 
@@ -149,7 +153,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
       {qualifies && (
         <SettingsGroup title="Chatbot persona">
           <SettingsRow label="NavGPT ❤️" description="Your team’s chatbot persona. Off means everyone talks to Bruno." htmlFor="navgpt">
-            <span className="flex items-center gap-2"><Heart className={cn('size-4', navGptOn ? 'fill-destructive text-destructive' : 'text-muted-foreground')} /><Switch id="navgpt" checked={navGptOn} disabled={busy === 'persona'} onCheckedChange={() => void togglePersona()} /></span>
+            <span className="flex items-center gap-2"><Heart className={cn('size-4', navGptOn ? 'fill-destructive text-destructive' : 'text-muted-foreground')} /><Switch id="navgpt" checked={navGptOn} disabled={!!busy.persona} onCheckedChange={() => void togglePersona()} /></span>
           </SettingsRow>
         </SettingsGroup>
       )}

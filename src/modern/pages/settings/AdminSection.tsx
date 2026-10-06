@@ -114,7 +114,8 @@ export function AdminSection({ settings = {}, isAdmin, isOwner, hasPerm, refresh
       )}
 
       {isAdmin && <StorageGroup />}
-      {isAdmin && <MessagesGroup />}
+      {/* Server requires manage_members to edit or silently delete messages. */}
+      {(hasPerm ? hasPerm('manage_members') : isAdmin) && <MessagesGroup />}
     </div>
   );
 }
