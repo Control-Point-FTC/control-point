@@ -188,6 +188,21 @@ describe('Modern Code', () => {
     expect(within(dlg).getByLabelText('Code editor')).toHaveAttribute('readonly');
   });
 
+  it("an auto-save that lands after a mode switch clears the new page's Unsaved badge", async () => {
+    let release: () => void = () => {};
+    code.saveDraft.mockImplementation((id: number, text: string) => new Promise((r) => { release = () => { server[id].drafts = text; r({}); }; }));
+    const first = setup();
+    await open('Drive.java');
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v1' } });
+    await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+    first.unmount();
+    setup();
+    await waitFor(() => expect(screen.getByLabelText('Code editor')).toHaveValue('v1'));
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument());
+  }, 15000);
+
   it('a repo connected while you switch modes shows on the page you return to', async () => {
     let linked = false;
     let finish: () => void = () => {};
@@ -378,6 +393,22 @@ describe('Modern Code', () => {
       expect(code.saveDraft.mock.calls.map((c) => c[1])).toEqual(['v1']);
       expect(code.revertCommit).toHaveBeenCalledWith(101, 'drafts', 7);
       expect(result.current.error).toMatch(/reverted meanwhile/);
+    }, 15000);
+
+    it('a failed drafts revert saves the newer text it had dropped', async () => {
+      const release = slowFirstSave();
+      code.revertCommit.mockRejectedValue(new Error('boom'));
+      const { result } = await openDrive();
+      act(() => result.current.editCode('v1'));
+      await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+      act(() => result.current.editCode('v2'));
+      await act(async () => { await new Promise((r) => setTimeout(r, 3300)); }); // second auto-save queued
+      let revert!: Promise<void>;
+      act(() => { revert = result.current.handleRevert(101, 'drafts') as Promise<void>; });
+      await act(async () => { release(); await revert; });
+      await waitFor(() => expect(code.saveDraft.mock.calls.map((c) => c[1])).toEqual(['v1', 'v2']));
+      expect(server[1].drafts).toBe('v2');
+      expect(result.current.error).toMatch(/Failed to revert/);
     }, 15000);
 
     it('a main revert leaves queued draft saves alone', async () => {

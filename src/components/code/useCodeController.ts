@@ -79,6 +79,11 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
   const code = ownsBuffer(buffer) ? buffer!.text : '';
   const unsavedChanges = ownsBuffer(buffer) ? buffer!.unsaved : false;
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>(unsavedChanges ? 'unsaved' : 'saved');
+  // A save that finished on another (unmounted) page marks the shared buffer
+  // saved; follow it so this page doesn't keep showing "Unsaved changes".
+  useEffect(() => {
+    if (!unsavedChanges) setAutoSaveStatus((st) => (st === 'unsaved' ? 'saved' : st));
+  }, [unsavedChanges]);
   const setCode = useCallback((text: string) => {
     if (!selectedFile) return;
     setBuffer((b) => ({ fileId: selectedFile.id, branch: currentBranch, text, unsaved: ownsBuffer(b) ? b!.unsaved : false }));
@@ -291,6 +296,11 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       if (file) contentChanged(file.id); // the mounted page (maybe not this one) reloads
     } catch (err) {
       setError(`Failed to revert: ${errText(err)}`);
+      // The revert didn't happen, but it dropped queued saves of this file:
+      // save the newer text still in the editor now.
+      const file = getDraft<CodeFile | null>('code:file', null);
+      const cur = getDraft<Buffer | null>(BUFFER_KEY, null);
+      if (branch === 'drafts' && file && cur && cur.fileId === file.id && cur.branch === 'drafts' && cur.unsaved) void saveNow();
     } finally {
       setBusy(false);
     }
