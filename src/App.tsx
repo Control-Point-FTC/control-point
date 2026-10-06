@@ -10965,8 +10965,11 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
   const canModerateMessages = hasPerm ? hasPerm('manage_members') : false;
   useEffect(() => {
     fetchStorageUsage();
-    if (canModerateMessages) fetchAllMessages();
   }, []);
+  // Load (or reload) the moderation list whenever the permission turns on.
+  useEffect(() => {
+    if (canModerateMessages) fetchAllMessages();
+  }, [canModerateMessages]);
 
   const formatBytes = (bytes: number, decimals = 2) => {
     if (!bytes || bytes === 0) return '0 Bytes';
