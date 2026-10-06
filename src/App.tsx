@@ -106,6 +106,7 @@ import { motion, AnimatePresence } from 'motion/react';
 // Monaco (via CodeView), and three.js (via CadModelViewer, already lazy).
 const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
 const CodeView = React.lazy(() => import('./components/CodeView').then(m => ({ default: m.CodeView })));
+const CodePage = React.lazy(() => import('./modern/pages/code/CodePage').then(m => ({ default: m.CodePage })));
 const AttendanceTrendChart = React.lazy(() => import('./components/dashboard/AttendanceTrend').then(m => ({ default: m.AttendanceTrendChart })));
 const AiUsageChart = React.lazy(() => import('./components/owner/AiUsageChart'));
 import { FLAG_REASONS, FLAG_STATUSES, aiStatusOf, fmtTokens, loginChips } from './components/owner/ownerUtils';
@@ -225,6 +226,7 @@ import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
 import { CadView } from './components/CadView';
 import ResourcesView from './components/ResourcesView';
 import { ResourcesPage } from './modern/pages/resources/ResourcesPage';
+import { CadPage } from './modern/pages/cad/CadPage';
 import MessageReactions, { postReactionToggle } from './components/MessageReactions';
 import ReactionPicker from './components/ReactionPicker';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
@@ -2694,12 +2696,12 @@ export default function App() {
         <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} modern={<BudgetPage {...viewProps} />} />} />
         <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} modern={<InventoryPage {...viewProps} />} />} />
         <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} modern={<OutreachPage {...viewProps} />} />} />
-        <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />} />
-        <Route path="/cad" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
-        <Route path="/cad-docs" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
-        <Route path="/cad-reviews" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
-        <Route path="/cad-snapshots" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
-        <Route path="/cad-parts" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} modern={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodePage {...viewProps} /></Suspense>} />} />
+        <Route path="/cad" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-docs" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-reviews" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-snapshots" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
+        <Route path="/cad-parts" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/comm" element={<ByMode legacy={<CommunicationView {...viewProps} />} modern={<CommunicationPage {...viewProps} />} />} />
         <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} modern={<MessagesPage {...viewProps} memberMenuItems={memberMenuItems} />} />} />
         <Route path="/resources" element={<ByMode legacy={<ResourcesView />} modern={<ResourcesPage />} />} />

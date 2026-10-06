@@ -1,26 +1,23 @@
 // CAD section: Onshape doc hub, design reviews, 3D snapshots, parts/BOM.
 // Team-scoped via the active team; every /api/cad/* call binds auth.teamId.
-import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import React, { useState, Suspense } from 'react';
 import {
   Box, FileBox, ClipboardCheck, Layers, Package, Plus, Trash2, ExternalLink,
   Upload, X, MessageSquare, Check, RotateCcw, Hammer, Eye, AlertCircle,
   ChevronDown, Wrench, CircleDollarSign, Users, Clock, ArrowRight, Sparkles,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { format } from 'date-fns';
-import { apiFetch } from '../services/api';
-import { notify, confirmDialog } from './dialog';
 import { cn } from './onboarding/onboardingState';
 import { Select as ThemedSelect } from './Select';
+import {
+  CAD_SECTIONS, REVIEW_STATUS_LABELS, PART_SOURCE_LABELS, PART_STATUS_LABELS, fmtDate, fmtSize,
+  useCadDashboard, useCadDocs, useCadReviews, useReviewForm, useReviewComments, useCadSnapshots, useSnapshotForm,
+  useCadParts, usePartForm, useCadInvoiceImport,
+} from './cad/useCad';
 
 const CadModelViewer = React.lazy(() => import('./CadModelViewer'));
 
-export const CAD_SECTIONS = ['Intake', 'Outtake', 'Drivetrain', 'Chassis', 'End Game', 'Electronics', 'Other'];
-export const REVIEW_STATUS_LABELS: Record<string, string> = {
-  concept: 'Concept', in_review: 'In Review', approved: 'Approved', changes_requested: 'Changes Requested', built: 'Built',
-};
-export const PART_SOURCE_LABELS: Record<string, string> = { printed: '3D Printed', purchased: 'Purchased', gobilda: 'goBILDA', other: 'Other' };
-export const PART_STATUS_LABELS: Record<string, string> = { to_order: 'To Order', ordered: 'Ordered', received: 'Received', printed: 'Printed', installed: 'Installed' };
+export { CAD_SECTIONS, REVIEW_STATUS_LABELS, PART_SOURCE_LABELS, PART_STATUS_LABELS } from './cad/useCad';
 
 const STATUS_STYLES: Record<string, string> = {
   concept: 'bg-text-base/10 text-text-muted border-text-base/15',
@@ -100,29 +97,9 @@ const Empty = ({ icon: Icon, title, hint }: any) => (
     {hint && <p className="text-sm text-text-muted">{hint}</p>}
   </div>
 );
-function fmtSize(bytes: any) {
-  const n = Number(bytes) || 0;
-  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${n} B`;
-}
-function fmtDate(iso: any) {
-  try { return format(new Date(iso), 'MMM d, yyyy'); } catch { return ''; }
-}
-
 // ================= Dashboard =================
 function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await apiFetch('/api/cad/dashboard');
-        if (r.ok) setData(await r.json());
-      } catch (e) { console.error(e); }
-      finally { setLoading(false); }
-    })();
-  }, []);
+  const { data, loading } = useCadDashboard();
 
   if (loading) return <div className="text-text-muted text-sm py-10 text-center">Loading CAD dashboard…</div>;
   if (!data) return <Empty icon={Box} title="Couldn't load the CAD dashboard" hint="Try refreshing the page." />;
@@ -203,31 +180,7 @@ function CadDashboard({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 // ================= Onshape Docs =================
 function CadDocs() {
-  const [docs, setDocs] = useState<any[]>([]);
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
-  const [busy, setBusy] = useState(false);
-  const load = async () => {
-    const r = await apiFetch('/api/cad/docs');
-    if (r.ok) setDocs(await r.json());
-  };
-  useEffect(() => { load(); }, []);
-  const add = async () => {
-    if (!name.trim() || !url.trim()) { notify('Give the document a name and URL.', 'error'); return; }
-    setBusy(true);
-    try {
-      const r = await apiFetch('/api/cad/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url }) });
-      const d = await r.json();
-      if (!r.ok) { notify(d.error || 'Could not link the document.', 'error'); return; }
-      setName(''); setUrl(''); await load(); notify('Onshape doc linked.', 'success');
-    } finally { setBusy(false); }
-  };
-  const remove = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Unlink document?', message: 'This removes the link for the whole team.', confirmLabel: 'Unlink' }))) return;
-    const r = await apiFetch(`/api/cad/docs/${id}`, { method: 'DELETE' });
-    if (r.ok) { setDocs((p) => p.filter((d) => d.id !== id)); notify('Document unlinked.', 'success'); }
-    else notify('Could not unlink.', 'error');
-  };
+  const { docs, name, setName, url, setUrl, busy, add, remove } = useCadDocs();
   return (
     <div className="space-y-4">
       <Card title="Link Onshape Document" subtitle="One shared home for every CAD document the team uses" icon={FileBox}>
@@ -264,37 +217,8 @@ function CadDocs() {
 
 // ================= Design Reviews =================
 function CadReviews({ currentUser, isAdmin }: { currentUser?: any; isAdmin: boolean }) {
-  const [reviews, setReviews] = useState<any[]>([]);
-  const [filter, setFilter] = useState('all');
-  const [showForm, setShowForm] = useState(false);
+  const { filter, setFilter, visible, setStatus, remove, canAct, showForm, setShowForm, load } = useCadReviews({ currentUser, isAdmin });
   const [openId, setOpenId] = useState<number | null>(null);
-  const load = async () => {
-    const r = await apiFetch('/api/cad/reviews');
-    if (r.ok) setReviews(await r.json());
-  };
-  useEffect(() => { load(); }, []);
-  const visible = useMemo(() => filter === 'all' ? reviews : reviews.filter((r) => r.status === filter), [reviews, filter]);
-
-  const setStatus = async (id: number, status: string) => {
-    const r = await apiFetch(`/api/cad/reviews/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) { notify(d.error || 'Status change failed.', 'error'); return; }
-    setReviews((p) => p.map((x) => (x.id === id ? { ...x, status } : x)));
-    notify(`Marked as ${REVIEW_STATUS_LABELS[status]}.`, 'success');
-  };
-  const remove = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete review?', message: 'This removes the review and its comments.', confirmLabel: 'Delete' }))) return;
-    const r = await apiFetch(`/api/cad/reviews/${id}`, { method: 'DELETE' });
-    if (r.ok) { setReviews((p) => p.filter((x) => x.id !== id)); notify('Review deleted.', 'success'); }
-    else notify('Could not delete.', 'error');
-  };
-  const canAct = (review: any, to: string) => {
-    if (review.status === to || review.status === 'built') return false;
-    if (isAdmin) return true;
-    const isAuthor = review.created_by === currentUser?.id;
-    if (!isAuthor) return false;
-    return (review.status === 'concept' && to === 'in_review') || (review.status === 'changes_requested' && to === 'in_review');
-  };
 
   return (
     <div className="space-y-4">
@@ -350,29 +274,13 @@ function CadReviews({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bool
 }
 
 function ReviewForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const [title, setTitle] = useState('');
-  const [section, setSection] = useState('Intake');
-  const [onshapeUrl, setOnshapeUrl] = useState('');
-  const [description, setDescription] = useState('');
-  const [shot, setShot] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    if (!title.trim()) { notify('Give the design a title.', 'error'); return; }
-    setBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append('title', title.trim());
-      fd.append('section', section);
-      fd.append('onshape_url', onshapeUrl.trim());
-      fd.append('description', description.trim());
-      if (shot) fd.append('screenshot', shot);
-      const r = await apiFetch('/api/cad/reviews', { method: 'POST', body: fd });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { notify(d.error || 'Could not submit the design.', 'error'); return; }
-      notify('Design submitted for review.', 'success');
-      onDone();
-    } finally { setBusy(false); }
-  };
+  const { form, set, busy, submit } = useReviewForm(onDone);
+  const { title, section, onshapeUrl, description } = form;
+  const setTitle = (v: string) => set({ title: v });
+  const setSection = (v: string) => set({ section: v });
+  const setOnshapeUrl = (v: string) => set({ onshapeUrl: v });
+  const setDescription = (v: string) => set({ description: v });
+  const setShot = (v: File | null) => set({ shot: v });
   return (
     <Modal title="Submit Design for Review" onClose={onClose} wide>
       <div className="space-y-4">
@@ -400,18 +308,7 @@ function ReviewForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 }
 
 function ReviewDetail({ review, isAdmin, canAct, onStatus, onDelete, onChanged }: any) {
-  const [comments, setComments] = useState<any[]>([]);
-  const [text, setText] = useState('');
-  const load = async () => {
-    const r = await apiFetch(`/api/cad/reviews/${review.id}/comments`);
-    if (r.ok) setComments(await r.json());
-  };
-  useEffect(() => { load(); }, []);
-  const send = async () => {
-    if (!text.trim()) return;
-    const r = await apiFetch(`/api/cad/reviews/${review.id}/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comment: text.trim() }) });
-    if (r.ok) { setText(''); await load(); onChanged(); }
-  };
+  const { comments, text, setText, send } = useReviewComments(review.id, onChanged);
   const actions: { to: string; label: string; icon: any; primary?: boolean }[] = [];
   if (canAct(review, 'in_review')) actions.push({ to: 'in_review', label: review.status === 'concept' ? 'Submit for Review' : 'Re-submit for Review', icon: Eye, primary: true });
   if (canAct(review, 'approved')) actions.push({ to: 'approved', label: 'Approve', icon: Check, primary: true });
@@ -452,30 +349,8 @@ function ReviewDetail({ review, isAdmin, canAct, onStatus, onDelete, onChanged }
 
 // ================= Snapshots =================
 function CadSnapshots({ currentUser, isAdmin }: { currentUser?: any; isAdmin: boolean }) {
-  const [snaps, setSnaps] = useState<any[]>([]);
-  const [showForm, setShowForm] = useState(false);
+  const { grouped, remove, showForm, setShowForm, load } = useCadSnapshots({ currentUser, isAdmin });
   const [viewer, setViewer] = useState<any>(null);
-  const load = async () => {
-    const r = await apiFetch('/api/cad/snapshots');
-    if (r.ok) setSnaps(await r.json());
-  };
-  useEffect(() => { load(); }, []);
-  const grouped = useMemo(() => {
-    const g: Record<string, any[]> = {};
-    for (const s of snaps) { (g[s.section] = g[s.section] || []).push(s); }
-    return CAD_SECTIONS.filter((s) => g[s]).map((s) => ({ section: s, items: g[s] }));
-  }, [snaps]);
-  const remove = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete snapshot?', message: 'The 3D file is removed for everyone.', confirmLabel: 'Delete' }))) return;
-    try {
-      const r = await apiFetch(`/api/cad/snapshots/${id}`, { method: 'DELETE' });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok) { setSnaps((p) => p.filter((x) => x.id !== id)); notify('Snapshot deleted.', 'success'); }
-      else notify(d.error || `Could not delete (HTTP ${r.status}).`, 'error');
-    } catch (e: any) {
-      notify(`Delete failed: ${e?.message || 'network error'}`, 'error');
-    }
-  };
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
@@ -529,31 +404,13 @@ function CadSnapshots({ currentUser, isAdmin }: { currentUser?: any; isAdmin: bo
 }
 
 function SnapshotForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const [title, setTitle] = useState('');
-  const [section, setSection] = useState('Intake');
-  const [model, setModel] = useState<File | null>(null);
-  const [shot, setShot] = useState<File | null>(null);
-  const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    if (!model) { notify('Choose a STEP or STL file.', 'error'); return; }
-    const ok = /\.(step|stp|stl)$/i.test(model.name);
-    if (!ok) { notify('Model must be .step/.stp or .stl.', 'error'); return; }
-    setBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append('model', model);
-      if (shot) fd.append('screenshot', shot);
-      fd.append('title', title.trim() || model.name);
-      fd.append('section', section);
-      fd.append('notes', notes.trim());
-      const r = await apiFetch('/api/cad/snapshots', { method: 'POST', body: fd });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { notify(d.error || 'Upload failed.', 'error'); return; }
-      notify('Snapshot uploaded.', 'success');
-      onDone();
-    } finally { setBusy(false); }
-  };
+  const { form, set, busy, submit } = useSnapshotForm(onDone);
+  const { title, section, model, notes } = form;
+  const setTitle = (v: string) => set({ title: v });
+  const setSection = (v: string) => set({ section: v });
+  const setModel = (v: File | null) => set({ model: v });
+  const setShot = (v: File | null) => set({ shot: v });
+  const setNotes = (v: string) => set({ notes: v });
   return (
     <Modal title="Upload Design Snapshot" onClose={onClose} wide>
       <div className="space-y-4">
@@ -584,27 +441,9 @@ function SnapshotForm({ onClose, onDone }: { onClose: () => void; onDone: () => 
 
 // ================= Parts / BOM =================
 function CadParts() {
-  const [parts, setParts] = useState<any[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [editing, setEditing] = useState<any>(null);
-  const [showInvoice, setShowInvoice] = useState(false);
-  const load = async () => {
-    const r = await apiFetch('/api/cad/parts');
-    if (r.ok) setParts(await r.json());
-  };
-  useEffect(() => { load(); }, []);
-  const grouped = useMemo(() => {
-    const g: Record<string, any[]> = {};
-    for (const p of parts) { (g[p.section] = g[p.section] || []).push(p); }
-    return CAD_SECTIONS.filter((s) => g[s]).map((s) => ({ section: s, items: g[s] }));
-  }, [parts]);
-  const total = parts.reduce((a, p) => a + (Number(p.quantity) || 0) * (Number(p.unit_cost) || 0), 0);
-  const remove = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete part?', message: 'Removes it from the BOM.', confirmLabel: 'Delete' }))) return;
-    const r = await apiFetch(`/api/cad/parts/${id}`, { method: 'DELETE' });
-    if (r.ok) { setParts((p) => p.filter((x) => x.id !== id)); notify('Part deleted.', 'success'); }
-    else notify('Could not delete.', 'error');
-  };
+  const { parts, grouped, total, remove, load, editing: open, setEditing: setOpen, showInvoice, setShowInvoice } = useCadParts();
+  const showForm = open !== null;
+  const editing = open && open !== 'new' ? open : null;
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -614,7 +453,7 @@ function CadParts() {
         </p>
         <div className="flex items-center gap-2">
           <Button variant="secondary" onClick={() => setShowInvoice(true)}><Sparkles className="w-4 h-4" /> Import Invoice with Bruno</Button>
-          <Button onClick={() => { setEditing(null); setShowForm(true); }}><Plus className="w-4 h-4" /> Add Part</Button>
+          <Button onClick={() => setOpen('new')}><Plus className="w-4 h-4" /> Add Part</Button>
         </div>
       </div>
       {grouped.length ? grouped.map(({ section, items }) => (
@@ -644,7 +483,7 @@ function CadParts() {
                     <td className="py-2.5 pr-3"><Badge className={cn('border', p.status === 'installed' ? 'bg-success/15 text-success border-success/30' : p.status === 'to_order' ? 'bg-warning/15 text-warning border-warning/30' : 'bg-info/15 text-info border-info/30')}>{PART_STATUS_LABELS[p.status] || p.status}</Badge></td>
                     <td className="py-2.5 pr-3 text-text-muted">{p.assignee || '—'}</td>
                     <td className="py-2.5 text-right whitespace-nowrap">
-                      <button onClick={() => { setEditing(p); setShowForm(true); }} className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10" title="Edit"><Wrench className="w-4 h-4" /></button>
+                      <button onClick={() => setOpen(p)} className="p-1.5 rounded-lg text-text-muted hover:text-text-base hover:bg-text-base/10" title="Edit"><Wrench className="w-4 h-4" /></button>
                       <button onClick={() => remove(p.id)} className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10" title="Delete"><Trash2 className="w-4 h-4" /></button>
                     </td>
                   </tr>
@@ -655,36 +494,24 @@ function CadParts() {
         </Card>
       )) : <Card><Empty icon={Package} title="BOM is empty" hint="Add every part the robot needs — printed, purchased, or goBILDA." /></Card>}
 
-      {showForm && <PartForm initial={editing} onClose={() => { setShowForm(false); setEditing(null); }} onDone={() => { setShowForm(false); setEditing(null); load(); }} />}
+      {showForm && <PartForm initial={editing} onClose={() => setOpen(null)} onDone={() => { setOpen(null); load(); }} />}
       {showInvoice && <InvoiceImportModal onClose={() => setShowInvoice(false)} onDone={() => { setShowInvoice(false); load(); }} />}
     </div>
   );
 }
 
-function PartForm({ initial, onClose, onDone }: { initial?: any; onClose: () => void; onDone: () => void }) {
-  const [name, setName] = useState(initial?.name || '');
-  const [section, setSection] = useState(initial?.section || 'Intake');
-  const [quantity, setQuantity] = useState(String(initial?.quantity ?? 1));
-  const [source, setSource] = useState(initial?.source || 'purchased');
-  const [unitCost, setUnitCost] = useState(String(initial?.unit_cost ?? 0));
-  const [status, setStatus] = useState(initial?.status || 'to_order');
-  const [assignee, setAssignee] = useState(initial?.assignee || '');
-  const [notes, setNotes] = useState(initial?.notes || '');
-  const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    if (!name.trim()) { notify('Part name is required.', 'error'); return; }
-    setBusy(true);
-    try {
-      const body = { name: name.trim(), section, quantity: Number(quantity) || 1, source, unit_cost: Number(unitCost) || 0, status, assignee: assignee.trim(), notes: notes.trim() };
-      const r = await apiFetch(initial ? `/api/cad/parts/${initial.id}` : '/api/cad/parts', {
-        method: initial ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { notify(d.error || 'Could not save the part.', 'error'); return; }
-      notify(initial ? 'Part updated.' : 'Part added.', 'success');
-      onDone();
-    } finally { setBusy(false); }
-  };
+function PartForm({ initial, onClose: close, onDone }: { initial?: any; onClose: () => void; onDone: () => void }) {
+  const { form, set, busy, submit, discard } = usePartForm(initial ?? null, onDone);
+  const { name, section, quantity, source, unitCost, status, assignee, notes } = form;
+  const setName = (v: string) => set({ name: v });
+  const setSection = (v: string) => set({ section: v });
+  const setQuantity = (v: string) => set({ quantity: v });
+  const setSource = (v: string) => set({ source: v });
+  const setUnitCost = (v: string) => set({ unitCost: v });
+  const setStatus = (v: string) => set({ status: v });
+  const setAssignee = (v: string) => set({ assignee: v });
+  const setNotes = (v: string) => set({ notes: v });
+  const onClose = () => { discard(); close(); };
   return (
     <Modal title={initial ? 'Edit Part' : 'Add Part'} onClose={onClose} wide>
       <div className="space-y-4">
@@ -716,85 +543,9 @@ function PartForm({ initial, onClose, onDone }: { initial?: any; onClose: () => 
 }
 
 // ================= Invoice import (Bruno) =================
-function InvoiceImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [parsing, setParsing] = useState<string | null>(null);
-  const [items, setItems] = useState<any[]>([]);
-  const [importing, setImporting] = useState(false);
-
-  const parse = async () => {
-    if (!files.length || parsing) return;
-    const found: any[] = [];
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setParsing(files.length > 1 ? `Reading ${i + 1} of ${files.length}…` : 'Bruno is reading the invoice…');
-        const form = new FormData();
-        form.append('file', file);
-        const r = await apiFetch('/api/cad/parts/import-invoice/parse', { method: 'POST', body: form });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) { notify(`Couldn't read ${file.name}: ` + (d.error || 'Unsupported file'), 'error'); continue; }
-        for (const it of d.items || []) {
-          found.push({
-            selected: true,
-            name: String(it.name || ''),
-            quantity: Number(it.quantity) || 1,
-            unitCost: Number(it.unitPrice) || 0,
-            section: 'Other',
-            source: 'purchased',
-            status: 'to_order',
-            notes: it.sku ? `SKU: ${it.sku}` : '',
-          });
-        }
-      }
-      if (!found.length) { notify('No line items found in the selected file(s).', 'error'); return; }
-      setItems(found);
-    } catch (e: any) {
-      notify('Error reading file: ' + (e?.message || e), 'error');
-    } finally {
-      setParsing(null);
-    }
-  };
-
-  const updateItem = (index: number, patch: any) => {
-    setItems((xs) => xs.map((it, i) => (i === index ? { ...it, ...patch } : it)));
-  };
-  const removeItem = (index: number) => setItems((xs) => xs.filter((_, i) => i !== index));
-  const toggleAll = (v: boolean) => setItems((xs) => xs.map((it) => ({ ...it, selected: v })));
-
-  const importSelected = async () => {
-    const selected = items.filter((it) => it.selected && String(it.name || '').trim());
-    if (!selected.length) { notify('Select at least one item with a name to import.', 'info'); return; }
-    if (importing) return;
-    setImporting(true);
-    try {
-      const results = await Promise.all(selected.map((it) =>
-        apiFetch('/api/cad/parts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: String(it.name).trim(),
-            section: it.section,
-            quantity: Math.max(1, Math.floor(Number(it.quantity) || 1)),
-            source: it.source,
-            unit_cost: Math.max(0, Number(it.unitCost) || 0),
-            status: it.status,
-            assignee: '',
-            notes: String(it.notes || '').trim(),
-          }),
-        }).then((r) => r.ok).catch(() => false)
-      ));
-      const ok = results.filter(Boolean).length;
-      if (ok === selected.length) notify(`Imported ${ok} part${ok === 1 ? '' : 's'} into the BOM.`, 'success');
-      else if (ok > 0) notify(`Imported ${ok} of ${selected.length} parts — ${selected.length - ok} failed.`, 'error');
-      else { notify('Import failed. Check the rows and try again.', 'error'); return; }
-      onDone();
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const selectedCount = items.filter((it) => it.selected).length;
+function InvoiceImportModal({ onClose: close, onDone }: { onClose: () => void; onDone: () => void }) {
+  const { files, setFiles, parsing, items, importing, parse, updateItem, removeItem, toggleAll, importSelected, discard, selectedCount } = useCadInvoiceImport(onDone);
+  const onClose = () => { discard(); close(); };
   const cellInput = 'w-full bg-elevated border border-text-base/10 rounded-lg px-2.5 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60 min-w-0';
 
   return (
