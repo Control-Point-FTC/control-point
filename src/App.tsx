@@ -183,7 +183,8 @@ import { clearScoutCache } from './services/ftcScoutApi';
 import { clearPredictCache } from './services/predictApi';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
-import { WhatsNewAutoPopup, WhatsNewModal } from './components/WhatsNewModal';
+import { WhatsNewModal, useWhatsNewAutoOpen } from './components/WhatsNewModal';
+import { WhatsNewDialog } from './modern/pages/WhatsNewDialog';
 import { InterfaceModeProvider } from './modern/interfaceMode';
 import { ShellSwitch, TryModernBanner } from './modern/ShellSwitch';
 import { ModernShell } from './modern/ModernShell';
@@ -197,6 +198,7 @@ import { useSignedOutMode } from './modern/signedOut';
 import { ModernLanding } from './modern/pages/auth/ModernLanding';
 import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from './modern/pages/auth/AuthPages';
 import { CodeRevealDialog } from './modern/pages/auth/CodeRevealDialog';
+import { TeamlessPage } from './modern/pages/auth/TeamlessPage';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { InboxPage } from './modern/pages/InboxPage';
@@ -257,6 +259,7 @@ import { AuthShell } from './components/auth/AuthShell';
 import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
 import ForgotPasswordScreen from './components/auth/ForgotPasswordScreen';
 import { useOAuthSignup, useSignupForm, useTeamLookup } from './components/auth/useAuthForms';
+import { useTeamless } from './components/auth/useTeamless';
 import { DiscordIcon, GithubIcon, GoogleIcon } from './components/auth/ProviderIcons';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
@@ -1082,6 +1085,8 @@ export default function App() {
   const [isOwner, setIsOwner] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [whatsNewAuto, setWhatsNewAuto] = useWhatsNewAutoOpen();
+  const closeWhatsNew = () => { setWhatsNewOpen(false); setWhatsNewAuto(false); };
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   // True once the initial session check has finished. Until then we show a
   // minimal splash — never the landing page — so a refresh never flashes the
@@ -2842,37 +2847,40 @@ export default function App() {
 
   // Zero-team empty state: create, join, or delete account.
   if (isLoggedIn && teamsLoaded && teams.length === 0) {
-    return (
-      <TeamlessScreen
-        user={currentUser}
-        onCreateTeam={async (name: string) => {
-          const data = await handleAddTeam(name);
-          notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
-        }}
-        onJoinTeam={async (accessCode: string) => {
-          const res = await apiFetch('/api/teams/join', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ access_code: accessCode })
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Could not join team');
-          clearTeamCaches();
-          persistSession(data.sessionId, data.user);
-          setTeams((data.user as any)?.teams || []);
-          await fetchData();
-          notify(`Joined "${data.team?.name || 'team'}"`, 'success');
-        }}
-        onDeleteAccount={async () => {
-          const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data.error || 'Could not delete your account.');
-          if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
-          window.location.reload();
-        }}
-        onSignOut={handleLogout}
-      />
-    );
+    // Outside the interface-mode provider (no workspace yet): follow this
+    // device's look, like the signed-out screens.
+    const teamless = {
+      user: currentUser,
+      onCreateTeam: async (name: string) => {
+        const data = await handleAddTeam(name);
+        notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
+      },
+      onJoinTeam: async (accessCode: string) => {
+        const res = await apiFetch('/api/teams/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_code: accessCode })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not join team');
+        clearTeamCaches();
+        persistSession(data.sessionId, data.user);
+        setTeams((data.user as any)?.teams || []);
+        await fetchData();
+        notify(`Joined "${data.team?.name || 'team'}"`, 'success');
+      },
+      onDeleteAccount: async () => {
+        const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not delete your account.');
+        if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+        window.location.reload();
+      },
+      onSignOut: handleLogout,
+    };
+    return signedOutMode === 'modern'
+      ? <TeamlessPage {...teamless} onClassic={() => setSignedOutMode('legacy')} />
+      : <TeamlessScreen {...teamless} />;
   }
 
 
@@ -3685,8 +3693,11 @@ export default function App() {
       <CallView onOpenSettings={() => openSettings()} />
       <CookieConsent />
       <InstallPrompt />
-      <WhatsNewAutoPopup />
-      <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
+      {/* One "seen this version" state for both looks, so switching never re-opens it. */}
+      <ByMode
+        legacy={<WhatsNewModal open={whatsNewOpen || whatsNewAuto} onClose={closeWhatsNew} />}
+        modern={<WhatsNewDialog open={whatsNewOpen || whatsNewAuto} onClose={closeWhatsNew} />}
+      />
       <BrunoPanelSwitch
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
@@ -7867,51 +7878,9 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
 // Empty state for accounts with zero team memberships: create a team, join
 // one with an access code, or delete the account.
 function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSignOut }: any) {
-  const [mode, setMode] = useState<'menu' | 'create' | 'join' | 'delete'>('menu');
-  const [teamName, setTeamName] = useState('');
-  const [code, setCode] = useState('');
-  const [confirmEmail, setConfirmEmail] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const doCreate = async () => {
-    if (!teamName.trim() || busy) return;
-    setBusy(true);
-    try {
-      await onCreateTeam(teamName.trim());
-    } catch (e: any) {
-      notify(e.message || 'Could not create team', 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doJoin = async () => {
-    if (!code.trim() || busy) return;
-    setBusy(true);
-    try {
-      await onJoinTeam(code.trim());
-    } catch (e: any) {
-      notify(e.message || 'Could not join team', 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const doDelete = async () => {
-    if (confirmEmail.trim().toLowerCase() !== (user?.email || '').toLowerCase()) {
-      notify('Type your email address exactly to confirm.', 'info');
-      return;
-    }
-    if (!(await confirmDialog({ title: 'Delete account', message: 'This is permanent. Delete your account and all of your personal data?', confirmLabel: 'Delete my account', danger: true }))) return;
-    setBusy(true);
-    try {
-      await onDeleteAccount();
-    } catch (e: any) {
-      notify(e.message || 'Could not delete your account.', 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
+  const {
+    mode, setMode, teamName, setTeamName, code, setCode, confirmEmail, setConfirmEmail, busy, doCreate, doJoin, doDelete,
+  } = useTeamless({ user, onCreateTeam, onJoinTeam, onDeleteAccount });
 
   return (
     <div className="min-h-screen bg-primary flex items-center justify-center p-4 relative overflow-hidden">
