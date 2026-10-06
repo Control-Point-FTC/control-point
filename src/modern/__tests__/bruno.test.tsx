@@ -68,7 +68,8 @@ describe('Modern Bruno', () => {
     fireEvent.change(screen.getByLabelText('Message Bruno'), { target: { value: 'How do encoders work?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/bruno/chats', expect.objectContaining({ method: 'POST' })));
-    expect(await screen.findByText('Use encoders with RUN_TO_POSITION.')).toBeInTheDocument();
+    // The live bubble is replaced by the final row, so assert on the settled DOM.
+    await waitFor(() => expect(screen.getByText('Use encoders with RUN_TO_POSITION.')).toBeInTheDocument());
     const [msgs, , chatId] = ai.streamBuildHelper.mock.calls[0];
     expect(chatId).toBe(99);
     expect(msgs.at(-1)).toMatchObject({ role: 'user', text: 'How do encoders work?' });
@@ -83,7 +84,8 @@ describe('Modern Bruno', () => {
     fireEvent.change(await screen.findByLabelText('Message Bruno'), { target: { value: 'Explain odometry' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Stop generating' }));
-    expect(await screen.findByText(/Partial answer/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Stopped.')).toBeInTheDocument());
+    expect(screen.getByText(/Partial answer/)).toBeInTheDocument();
     expect(screen.getByText('Stopped.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
   });
