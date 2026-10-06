@@ -92,7 +92,7 @@ export class PredictMonitor {
    * `storedPlayed` is the set of match keys the ratings already include
    * (the stored results); those are never recorded even if a stale event
    * payload still lists them as unplayed. A forecast of a finished event
-   * (every listed match played) records nothing, and advancement odds aren't
+   * (playoffs played, nothing left) records nothing, and advancement odds aren't
    * recorded once playoffs have started — both would use known answers.
    * Returns true when something new reached disk.
    */
@@ -101,8 +101,11 @@ export class PredictMonitor {
     const snap = this.snapshot(fc.season, fc.event);
     const at = now.toISOString();
     let changed = false;
-    const finished = fc.matches.length > 0 && fc.matches.every((m) => m.played);
+    // Finished = playoffs have been played and nothing is left. Completed
+    // quals alone (playoff schedule not out yet) is NOT finished: an
+    // after-quals or after-selection call made then is still a real forecast.
     const playoffsStarted = fc.matches.some((m) => m.level === "playoff" && (m.played || storedPlayed.has(m.key)));
+    const finished = playoffsStarted && fc.matches.every((m) => m.played || storedPlayed.has(m.key));
     for (const m of finished ? [] : fc.matches) {
       if (m.played || m.pRedWin == null || snap.matches[m.key] || storedPlayed.has(m.key)) continue;
       snap.matches[m.key] = { p: round(m.pRedWin), at };

@@ -89,8 +89,9 @@ describe("PredictMonitor", () => {
 
   it("never records known answers: finished events, stored results, or advancement after playoffs start", () => {
     const mon = new PredictMonitor(dir);
-    // Every listed match played → finished event → nothing recorded.
-    expect(mon.record(forecast("selected", [fm(1, null, { red: 1, blue: 2 })], [[1, 0.9]]))).toBe(false);
+    // Playoffs played and nothing left → finished event → nothing recorded.
+    const done: ForecastMatch = { ...fm(7, null, { red: 1, blue: 2 }), key: "playoff:1:7", level: "playoff" };
+    expect(mon.record(forecast("selected", [fm(1, null, { red: 1, blue: 2 }), done], [[1, 0.9]]))).toBe(false);
     expect(mon.snapshot(2025, "USXXQ1").advancement.selected).toBeUndefined();
     // A stale payload lists Q2 as unplayed, but the ratings already hold its result.
     mon.record(forecast("live", [fm(2, 0.6), fm(3, 0.55)]), new Date(), new Set(["qual:0:2"]));
@@ -120,5 +121,11 @@ describe("PredictMonitor", () => {
     mon.fail = false;
     expect(mon.flush()).toBe(1);
     expect(new PredictMonitor(dir).preMatch(2025, "USXXQ1", "qual:0:2")).toBe(0.4);
+  });
+
+  it("still records an after-quals call when quals are done but the playoff schedule isn't out", () => {
+    const mon = new PredictMonitor(dir);
+    expect(mon.record(forecast("quals", [fm(1, null, { red: 5, blue: 2 }), fm(2, null, { red: 1, blue: 9 })], [[1, 0.8]]))).toBe(true);
+    expect(mon.snapshot(2025, "USXXQ1").advancement.quals?.teams).toEqual({ 1: 0.8 });
   });
 });
