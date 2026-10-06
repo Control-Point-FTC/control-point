@@ -453,9 +453,11 @@ export default function SettingsModal({
     try {
       const body: any = { name: teamName.trim() };
       // One number: the FTC team number also becomes the workspace's display
-      // number ("Team #4215" in pickers). Sent only when the admin changed it,
-      // so renaming never touches an existing number.
-      if (ftcNumber.trim() !== initialNumber.current) {
+      // number ("Team #4215" in pickers). Sent when the admin changed it, or
+      // when a prefilled display number isn't linked as the FTC team yet;
+      // renaming alone never touches an existing number.
+      const v = ftcNumber.trim();
+      if (v !== initialNumber.current || (v && !team?.ftc_team_number)) {
         body.ftc_team_number = ftcNumber.trim() === '' ? null : parseInt(ftcNumber.trim(), 10);
         body.number = ftcNumber.trim();
       }
