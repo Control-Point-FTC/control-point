@@ -116,6 +116,7 @@ import {
 } from "./server/ftcEvents.js";
 import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
 import { PredictStore } from "./server/predict/store.js";
+import { isMessageModerator, messageActionAllowed } from "./server/messagePerms.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
 import {
   SCOUT_SEASONS,
@@ -1755,8 +1756,7 @@ async function requireAuth(req: any, res: any): Promise<{ memberId: number; team
 /** Message moderation (edit / delete others' / silent delete): manage_members. */
 async function canModerateMessages(memberId: number | null | undefined, teamId: number | null | undefined): Promise<boolean> {
   if (!memberId || !teamId) return false;
-  const perms = await getMemberPerms(memberId, teamId);
-  return perms.has("*") || perms.has("manage_members");
+  return isMessageModerator(await getMemberPerms(memberId, teamId));
 }
 
 async function requireAdmin(req: any, res: any) {
@@ -6339,7 +6339,7 @@ async function startServer() {
       // Authors may delete their own messages; anyone else's (and silent,
       // un-broadcast deletion) needs moderator rights.
       const moderator = await canModerateMessages(auth.memberId, auth.teamId);
-      if (!moderator && (silent || existing.sender_id !== auth.memberId)) {
+      if (!messageActionAllowed({ action: silent ? "silent-delete" : "delete", isAuthor: existing.sender_id === auth.memberId, moderator })) {
         return res.status(403).json({ error: "You can only delete your own messages" });
       }
       // Hard delete - permanently remove the message from database
@@ -6376,7 +6376,7 @@ async function startServer() {
       return res.status(404).json({ error: "Message not found" });
     }
     // Silent edits are a moderation tool (Settings → Admin).
-    if (!(await canModerateMessages(auth.memberId, auth.teamId))) {
+    if (!messageActionAllowed({ action: "edit", isAuthor: false, moderator: await canModerateMessages(auth.memberId, auth.teamId) })) {
       return res.status(403).json({ error: "Only moderators can edit messages" });
     }
 

@@ -10961,9 +10961,11 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
     }
   };
 
+  // Message moderation (silent edit/delete) needs manage_members on the server.
+  const canModerateMessages = hasPerm ? hasPerm('manage_members') : false;
   useEffect(() => {
     fetchStorageUsage();
-    fetchAllMessages();
+    if (canModerateMessages) fetchAllMessages();
   }, []);
 
   const formatBytes = (bytes: number, decimals = 2) => {
@@ -11143,7 +11145,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
         </div>
       </Card>
       
-      <Card title="Message Management" icon={Mail}>
+      {canModerateMessages && <Card title="Message Management" icon={Mail}>
         <div className="space-y-4">
           <p className="text-sm text-text-muted">Silently edit or delete messages.</p>
           <div className="max-h-96 overflow-y-auto glass p-2 rounded-xl">
@@ -11174,7 +11176,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
             )}
           </div>
         </div>
-      </Card>
+      </Card>}
 
       <Card title="AI Absence Evaluation" icon={Settings}>
         <div className="space-y-4">
