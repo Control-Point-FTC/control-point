@@ -160,5 +160,19 @@ describe('10c review fixes', () => {
     render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);
     expect(screen.getByLabelText('Email to parse')).toHaveValue(''); // the logged draft is gone
   });
+
+  it('a save that finishes while no dialog is mounted (mid look switch) still refreshes the log', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation(() => new Promise((r) => { finish = () => r({ ok: true, status: 200, json: async () => ({ id: 1 }) }); }));
+    const onRefresh = vi.fn();
+    const first = render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} onRefresh={onRefresh} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fill in the fields myself' }));
+    fireEvent.change(await screen.findByLabelText('Recipient'), { target: { value: 'a@x.test' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Hi' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log it' }));
+    first.unmount();
+    await act(async () => { finish(); });
+    expect(onRefresh).toHaveBeenCalled();
+  });
 });
 

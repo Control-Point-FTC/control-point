@@ -141,9 +141,11 @@ Email to parse:
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log it — try again.');
-      // Saved either way; only the dialog that sent it is cleared and closed.
-      if (current()) setDraft(`${K}logged`, session); // the mounted dialog finishes it
-      else onRefresh?.();
+      // Saved: always refresh the log (even if no dialog is mounted right now,
+      // e.g. mid look switch). Only the dialog that sent it is cleared and
+      // closed, by whichever instance is mounted for its session.
+      onRefresh?.();
+      if (current()) setDraft(`${K}logged`, session);
     } catch (e: any) {
       setError(e?.message || 'Could not log it — try again.');
     } finally {
