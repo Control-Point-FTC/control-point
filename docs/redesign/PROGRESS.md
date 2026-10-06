@@ -441,3 +441,45 @@ The ⌘J side panel (`BrunoPanel`) is shared by both modes and still uses the Le
 - **Local QA:**
   - 1440 px: the empty state, and a live send. The server error ("AI not configured" locally) is shown.
   - 375 px: no overflow, every target ≥44 px, the composer sits above the tab bar, and the middle scrolls.
+
+## Phase 6d: Communication
+
+**Shared logic:** `src/components/communication/useCommunicationController.ts` holds `CommunicationView`'s logic:
+- Threading: roots plus replies, the chain sorted by date, threads sorted by latest activity.
+- The same `POST`/`PUT`/`DELETE /api/communications` bodies.
+- Optimistic delete (a root deletes its replies), with rollback.
+- The right-click delete menu.
+- The "did they respond?" follow-up.
+
+Changes from Legacy:
+- **Drafted forms.** The open forms (new log, reply, edit) live in the draft store.
+- **No more lost edits from a late save.** A save now only clears the form it submitted, so edits made while a save is in flight are kept.
+
+Legacy keeps its markup and the edit dialog's focus trap.
+
+### Modern Communication (`src/modern/pages/communication/`)
+- **Header:** "Conversations", with counts of threads and of those awaiting a reply. **Log message** is a split button; its menu adds "Paste it to Bruno" (BrunoQuickAdd) and "Import an email file" (EmailImport).
+- **Toolbar:** search across people, subjects and text, plus All / Awaiting reply / Email / Announcements filters.
+- **Thread list:** cards with recipient, subject, last line, last activity, an Awaiting reply or Replied badge, and an entry count.
+- **Thread view:**
+  - A timeline of entries: their messages are blue and left-aligned ("From X"); ours are neutral and right-aligned ("You / Team").
+  - Hover shows edit and delete. On phones the thread opens in a bottom sheet.
+  - Buttons: **Log their reply** / **Follow up**.
+- **Forms:**
+  - Log a message is a sheet with a type toggle, To, Subject, a datetime-local Sent field, and the message.
+  - Reply and Edit are dialogs. Recipient and subject can be edited only on the first entry, as in Legacy.
+  - "Did they reply?" is a dialog that opens the reply form for the new thread.
+- **Permissions (unchanged):** writes need the `communications` scope; everyone can read.
+
+### Tests
+- **New (5 Modern Communication tests):**
+  - Threading order and the awaiting-reply filter.
+  - The log body matches Legacy, followed by the did-they-reply → reply flow (`parent_id`, `direction`).
+  - Edit sends PUT; deleting a thread waits for confirm.
+  - Read-only without the scope.
+  - **A half-written log survives a remount.**
+- **Totals:** frontend suite green apart from the known Windows-only ftcCache failures. `tsc` is clean.
+- **Local QA:**
+  - Logged a real message on the local test workspace, saw the "Did they reply?" prompt, and found the thread listed as "Awaiting reply".
+  - 375 px: no overflow, every target ≥44 px.
+- **Screenshots:** `docs/redesign/screenshots/phase6/communication-*.jpg`.
