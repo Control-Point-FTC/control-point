@@ -99,8 +99,20 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
     return next < new Date(new Date().getFullYear() + 1, 0, 1); // up to next year
   }, [calendarStart]);
 
+  // Per-cell request sequence, and the last value the server accepted for a
+  // cell whose refresh hasn't landed yet. A failed save rolls back to that
+  // confirmed value (or the server data) — never to another unsaved value.
+  const cellSeq = useRef(new Map<string, number>());
+  const confirmed = useRef(new Map<string, string>());
+  const confirmedSeq = useRef(new Map<string, number>());
+
   // Drop optimistic values once the server data agrees with them.
   useEffect(() => {
+    for (const [k, v] of confirmed.current) {
+      const [mid, date] = k.split('|');
+      const server = attendance.find((r: any) => r.member_id === Number(mid) && r.date === date)?.status || '-';
+      if (server === v) confirmed.current.delete(k);
+    }
     setPendingChanges((m) => {
       if (!m.size) return m;
       const n = new Map(m);
@@ -126,15 +138,18 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
   const setStatus = async (memberId: number, date: string, nextStatus: string) => {
     if (!isAdmin) return;
     const k = `${memberId}|${date}`;
-    const prevPending = pendingChanges.has(k) ? pendingChanges.get(k)! : undefined;
+    const seq = (cellSeq.current.get(k) ?? 0) + 1;
+    cellSeq.current.set(k, seq);
     setPendingChanges((m) => new Map(m).set(k, nextStatus));
     setSavingStatus('saving');
-    const rollback = () => setPendingChanges((m) => {
-      const n = new Map(m);
-      if (n.get(k) !== nextStatus) return n; // a newer change owns this cell
-      if (prevPending === undefined) n.delete(k); else n.set(k, prevPending);
-      return n;
-    });
+    const rollback = () => {
+      if (cellSeq.current.get(k) !== seq) return; // a newer edit owns this cell
+      setPendingChanges((m) => {
+        const n = new Map(m);
+        if (confirmed.current.has(k)) n.set(k, confirmed.current.get(k)!); else n.delete(k);
+        return n;
+      });
+    };
     try {
       const res = await apiFetch('/api/attendance/batch', {
         method: 'POST',
@@ -142,6 +157,10 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
         body: JSON.stringify({ date, records: [{ member_id: memberId, status: nextStatus === '-' ? null : nextStatus }] }),
       });
       if (res.ok) {
+        // Remember what the server accepted, unless an older save finished
+        // after a newer one already succeeded.
+        const ack = confirmedSeq.current.get(k) ?? 0;
+        if (seq >= ack) { confirmed.current.set(k, nextStatus); confirmedSeq.current.set(k, seq); }
         setSavingStatus('saved');
         if (savedTimer.current) clearTimeout(savedTimer.current);
         savedTimer.current = setTimeout(() => setSavingStatus('idle'), 2000);

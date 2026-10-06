@@ -30,12 +30,13 @@ export function StudentAttendance({ attendance, currentUser, refresh, onRefresh 
   const [scanOpen, setScanOpen] = useState(false);
 
   const stats = useMemo(() => {
-    const marked = s.myRecords.filter((r: any) => r.status && r.status !== '-');
+    // Admins can pre-mark upcoming days; only count days that have happened.
+    const marked = s.myRecords.filter((r: any) => r.date <= s.today && r.status && r.status !== '-');
     const here = marked.filter((r: any) => r.status === 'P' || r.status === 'L').length;
     let streak = 0;
     for (const r of marked) { if (r.status === 'P' || r.status === 'L') streak++; else break; }
     return { rate: marked.length ? Math.round((here / marked.length) * 100) : null, here, total: marked.length, streak };
-  }, [s.myRecords]);
+  }, [s.myRecords, s.today]);
 
   const months = useMemo(() => {
     const out: { label: string; items: any[] }[] = [];

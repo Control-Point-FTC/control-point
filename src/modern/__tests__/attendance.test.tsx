@@ -75,6 +75,38 @@ describe('Modern Attendance (admins)', () => {
     expect(within(row).getByRole('radio', { name: 'Late' })).toHaveAttribute('aria-checked', 'false');
   });
 
+  it('two overlapping failed saves never leave an unsaved mark showing', async () => {
+    const pending: ((ok: boolean) => void)[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/attendance/batch'
+      ? new Promise((res) => { pending.push((ok) => res({ ok, json: async () => ({}) })); })
+      : routeApi(url, init)));
+    setup();
+    const row = (await screen.findByText('Grace')).closest('li, div[class*="flex-wrap"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('radio', { name: 'Present' }));
+    fireEvent.click(within(row).getByRole('radio', { name: 'Late' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await act(async () => { pending[0](false); });
+    expect(within(row).getByRole('radio', { name: 'Late' })).toHaveAttribute('aria-checked', 'true');
+    await act(async () => { pending[1](false); });
+    await waitFor(() => expect(within(row).getByRole('radio', { name: 'Present' })).toHaveAttribute('aria-checked', 'false'));
+    expect(within(row).getByRole('radio', { name: 'Late' })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('a newer failed save falls back to the last saved value', async () => {
+    const pending: ((ok: boolean) => void)[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/attendance/batch'
+      ? new Promise((res) => { pending.push((ok) => res({ ok, json: async () => ({}) })); })
+      : routeApi(url, init)));
+    setup();
+    const row = (await screen.findByText('Grace')).closest('li, div[class*="flex-wrap"]') as HTMLElement;
+    fireEvent.click(within(row).getByRole('radio', { name: 'Present' }));
+    fireEvent.click(within(row).getByRole('radio', { name: 'Late' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await act(async () => { pending[0](true); });
+    await act(async () => { pending[1](false); });
+    await waitFor(() => expect(within(row).getByRole('radio', { name: 'Present' })).toHaveAttribute('aria-checked', 'true'));
+  });
+
   it('grid cells take keyboard shortcuts', async () => {
     setup();
     selectTab('Grid');
@@ -135,6 +167,12 @@ describe('Modern Attendance (members)', () => {
     await waitFor(() => expect(props.refresh.attendance).toHaveBeenCalled());
     expect(dialog.notify).toHaveBeenCalledWith('Checked in — welcome!', 'success');
     expect(dialog.notify).not.toHaveBeenCalledWith(expect.anything(), 'error');
+  });
+
+  it('ignores pre-marked future days in personal stats', async () => {
+    setup({ admin: false, attendance: [{ member_id: 7, date: '2999-01-01', status: 'E' }, { member_id: 7, date: '2020-01-02', status: 'P' }, { member_id: 7, date: '2020-01-01', status: 'P' }] });
+    expect(screen.getByText('2 of 2 days')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('days in a row').previousSibling).toHaveTextContent('2'));
   });
 
   it('shows checked-in state and stats from my records', () => {

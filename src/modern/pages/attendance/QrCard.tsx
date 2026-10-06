@@ -52,16 +52,16 @@ export function QrCard({ teamName }: { teamName: string }) {
             </Button>
           </motion.div>
         ) : (
-          <motion.div key="live" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center gap-5 p-5 sm:flex-row sm:items-center">
+          <motion.div key="live" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center gap-5 p-5">
             <div className="shrink-0 rounded-xl bg-white p-3 shadow-sm">
               <QRCodeSVG value={qr.session.url} size={168} level="M" />
             </div>
-            <div className="w-full min-w-0 space-y-4 text-center sm:text-left">
+            <div className="w-full min-w-0 space-y-4 text-center">
               <div>
                 <p className="text-xs text-muted-foreground">No camera? Day code</p>
                 <p className="font-mono text-3xl font-semibold tracking-[0.2em]">{qr.session.code}</p>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="flex flex-wrap justify-center gap-2">
                 <Button variant="outline" onClick={() => setPresenting(true)} className="max-sm:h-11"><Maximize2 /> Present</Button>
                 <Button variant="ghost" className="text-destructive hover:text-destructive max-sm:h-11" disabled={qr.busy} onClick={async () => { await qr.stop(); setPresenting(false); }}>
                   <Square /> End session
