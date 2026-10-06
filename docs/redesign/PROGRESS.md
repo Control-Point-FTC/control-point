@@ -823,3 +823,32 @@ Legacy `CadView` keeps its JSX: local aliases map onto the hooks. The only chang
 - **2 Legacy CadView smoke tests** on the hooks (parts add; the review form shares the Modern draft).
 - **Totals:** 529 + new tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
 - **Local QA** (local-only seeded docs, reviews and parts): desktop dark (overview, parts, review sheet); 390 px on all five tabs with no overflow and every target ≥44 px. No real phone was available.
+
+
+## Phase 8e: Code
+
+### Shared hooks (`src/components/code/`)
+- **`useCodeController`:** extracted from Legacy `CodeView`, whose JSX is unchanged.
+  - **Same behaviour:** codeService endpoints; files scoped to the active team; drafts → main commits; 3-second auto-save; paged history; compare and revert; Bruno's `codeFileId`; code-scope rules.
+  - **Drafted state:** the open file, branch, **editor buffer (with its unsaved flag)**, commit message and new-file form. **Unsaved code survives a mode switch**, and a remount keeps the unsaved buffer instead of reloading the server copy.
+  - **Fixes:**
+    - Loads are latest-wins, and the duplicate content load on every file change is gone.
+    - **Auto-save marks the buffer saved only if nothing changed while saving** (Legacy marked it saved even if you kept typing).
+    - **Commit first saves unsaved edits**, so they are part of the commit (Legacy committed only what had already auto-saved).
+    - The commit / create locks are drafted and released only by their own request.
+- **`useGitHubRepo`:** extracted from `GitHubRepoSection` (same endpoints, tree and helpers). Status and file loads are latest-wins, the repo URL is drafted, and a new `closePreview` closes the file preview.
+
+### Modern Code (`src/modern/pages/code/CodePage.tsx`, lazy-loaded like Legacy because Monaco is heavy)
+- **Layout:** a file rail (search when there are more than 6 files) and the **GitHub repo panel** underneath. Admins can connect, sync and unlink; the tree opens a **read-only preview dialog**.
+- **Editor card:**
+  - File name and language, a Drafts / Main toggle, and a **live save-status pill**.
+  - Format, Compare, History, Commit, and a menu (Download branch / Delete file).
+  - A Monaco editor sized to the viewport; it is read-only without the code scope.
+- **History sheet:** view a commit, revert it, or pick **Base / Head** to compare (shown in the diff editor).
+- **Dialogs:** a commit dialog (message required; says unsaved edits are saved first) and a new-file dialog with a language toggle.
+
+### Tests
+- **New (9 Modern tests):** open on drafts and switch to main (Bruno context); read-only rights; auto-save after 3 s; typing during a save stays unsaved; commit saves first, then promotes; **unsaved code survives a remount**; history view / revert / compare; create + delete; repo connect + tree preview.
+- **1 Legacy CodeView smoke test** (shares the editor-buffer draft).
+- **Totals:** 551 + new tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA:** a local test file was created through the UI; Monaco renders in dark mode on desktop. 390 px: no overflow, and every target is ≥44 px. No real phone was available.

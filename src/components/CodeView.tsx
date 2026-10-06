@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React from 'react';
 import { 
   Code2, 
   Save, 
@@ -18,25 +18,12 @@ import {
   Loader
 } from 'lucide-react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
-import { useRef } from 'react';
 import { format } from 'date-fns';
-import { confirmDialog } from './dialog';
 import { useTheme } from '../hooks/useTheme';
-import { CodeFile, CodeCommit, Member, Team, CodeContent } from '../types';
+import { Member, Team } from '../types';
 import { GitHubRepoSection } from './GitHubRepoSection';
-import {
-  getCodeFiles,
-  createCodeFile,
-  getCodeFileContent,
-  saveDraft,
-  commitToMain,
-  getCommitHistory,
-  getCommit,
-  downloadCodeFile,
-  deleteCodeFile
-} from '../services/codeService';
+import { useCodeController } from './code/useCodeController';
 import { Select as ThemedSelect } from './Select';
-import { setScreenEntity } from '../services/brunoContext';
 
 interface CodeViewProps {
   teams: Team[];
@@ -49,279 +36,18 @@ interface CodeViewProps {
 }
 
 export const CodeView: React.FC<CodeViewProps> = ({ teams, members, currentUser, onRefresh, setLoading, hasScope, activeTeamId }) => {
-  const canManageCode = hasScope ? hasScope('code') : false;
+  // Editor, branch, history and file state + handlers are shared with the Modern Code page.
+  const {
+    canManageCode, files, selectedFile, setSelectedFile, currentBranch, setCurrentBranch, code, setCode,
+    history, historyHasMore, loadHistory, showHistory, setShowHistory, compareMode, setCompareMode, comparePair, setComparePair,
+    showNewFileModal, setShowNewFileModal, newFileName, setNewFileName, newFileLanguage, setNewFileLanguage,
+    showCommitModal, setShowCommitModal, commitMessage, setCommitMessage, loading, error, setError,
+    selectedTeamId, currentTeam, unsavedChanges, setUnsavedChanges, autoSaveStatus, setAutoSaveStatus, selectedCommit, setSelectedCommit,
+    diffEditorRef, monacoRef, canCommit, handleEditorMount, formatDocument, handleRevert, handleCreateFile, handleCommit,
+    handleDownload, handleDeleteFile, handleViewCommit,
+  } = useCodeController({ teams, currentUser, hasScope, activeTeamId });
   const { theme } = useTheme();
   const monacoTheme = theme === 'light' ? 'light' : 'vs-dark';
-  const [files, setFiles] = useState<CodeFile[]>([]);
-  const [selectedFile, setSelectedFile] = useState<CodeFile | null>(null);
-  // Bruno screen context: the file open in the editor.
-  useEffect(() => {
-    setScreenEntity('codeFileId', selectedFile?.id ?? null);
-    return () => setScreenEntity('codeFileId', null);
-  }, [selectedFile?.id]);
-  const [currentBranch, setCurrentBranch] = useState<'main' | 'drafts'>('drafts');
-  const [code, setCode] = useState('');
-  const [history, setHistory] = useState<CodeCommit[]>([]);
-  const [fileContentObj, setFileContentObj] = useState<CodeContent | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [compareMode, setCompareMode] = useState(false);
-  const [comparePair, setComparePair] = useState<{ base?: number; head?: number }>({});
-  const [showNewFileModal, setShowNewFileModal] = useState(false);
-  const [commitMessage, setCommitMessage] = useState('');
-  const [loading, setLocalLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
-  const [newFileName, setNewFileName] = useState('');
-  const [newFileLanguage, setNewFileLanguage] = useState('java');
-  const [unsavedChanges, setUnsavedChanges] = useState(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'unsaved'>('saved');
-  const [selectedCommit, setSelectedCommit] = useState<CodeCommit | null>(null);
-  const [showCommitModal, setShowCommitModal] = useState(false);
-  const editorRef = useRef<any>(null);
-  const monacoRef = useRef<any>(null);
-  const diffEditorRef = useRef<any>(null);
-
-  const canCommit = useMemo(() => {
-    if (!fileContentObj) return false;
-    const drafts = fileContentObj.content?.drafts || '';
-    const main = fileContentObj.content?.main || '';
-    return drafts !== main && drafts.trim().length > 0;
-  }, [fileContentObj]);
-
-  const currentTeam = useMemo(() => {
-    return teams.find(t => t.id === selectedTeamId);
-  }, [teams, selectedTeamId]);
-
-  // The Code page is scoped to the active team (top-right switcher). There is
-  // no cross-team picker here — the API 403s other teams anyway.
-  useEffect(() => {
-    const next = activeTeamId ?? null;
-    if (next !== selectedTeamId) {
-      setSelectedTeamId(next);
-      setSelectedFile(null);
-      setCode('');
-      setFiles([]);
-      setError(null);
-    }
-  }, [activeTeamId]);
-
-  // Load files when team changes
-  useEffect(() => {
-    if (selectedTeamId) {
-      loadFiles();
-    }
-  }, [selectedTeamId]);
-
-  // Load file content when selected file changes
-  useEffect(() => {
-    if (selectedFile) {
-      loadFileContent();
-    }
-  }, [selectedFile]);
-
-  // Load history when branch changes
-  useEffect(() => {
-    if (selectedFile) {
-      loadHistory();
-      // ensure editor shows branch-appropriate content when switching branches
-      loadFileContent();
-    }
-  }, [currentBranch, selectedFile]);
-
-  // Auto-save timer
-  useEffect(() => {
-    if (!canManageCode || !unsavedChanges || !selectedFile || currentBranch !== 'drafts') {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      autoSave();
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [unsavedChanges, code]);
-
-  const loadFiles = async () => {
-    try {
-      setLocalLoading(true);
-      setError(null);
-      const fileList = await getCodeFiles(selectedTeamId!);
-      setFiles(fileList);
-    } catch (err) {
-      setError(`Failed to load files: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const loadFileContent = async () => {
-    if (!selectedFile) return;
-    try {
-      setLocalLoading(true);
-      const content = await getCodeFileContent(selectedFile.id);
-      setFileContentObj(content);
-      const branchContent = currentBranch === 'drafts' ? content.content.drafts : content.content.main;
-      setCode(branchContent);
-      setUnsavedChanges(false);
-      setAutoSaveStatus('saved');
-    } catch (err) {
-      setError(`Failed to load file content: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const HISTORY_PAGE = 50;
-  const [historyHasMore, setHistoryHasMore] = useState(false);
-
-  const loadHistory = async (append = false) => {
-    if (!selectedFile) return;
-    try {
-      const commits = await getCommitHistory(selectedFile.id, currentBranch, HISTORY_PAGE, append ? history.length : 0);
-      setHistory((prev) => (append ? [...prev, ...commits] : commits));
-      setHistoryHasMore(commits.length === HISTORY_PAGE);
-    } catch (err) {
-      setError(`Failed to load history: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
-
-  const autoSave = async () => {
-    if (!selectedFile || !currentUser || currentBranch !== 'drafts') {
-      return;
-    }
-    try {
-      setAutoSaveStatus('saving');
-      await saveDraft(selectedFile.id, code, currentUser.id);
-      setUnsavedChanges(false);
-      setAutoSaveStatus('saved');
-    } catch (err) {
-      setAutoSaveStatus('unsaved');
-      console.error('Auto-save failed:', err);
-    }
-  };
-
-  const handleEditorMount = (editor: any, monaco: any) => {
-    editorRef.current = editor;
-    monacoRef.current = monaco;
-  };
-
-  const formatDocument = () => {
-    try {
-      // prefer active editor if available
-      if (editorRef.current) {
-        const action = editorRef.current.getAction?.('editor.action.formatDocument');
-        if (action) action.run();
-        return;
-      }
-    } catch (e) {
-      console.error('Format failed', e);
-    }
-  };
-
-  const handleRevert = async (commitId: number, branch: 'main' | 'drafts') => {
-    if (!currentUser) return setError('Must be signed in to revert');
-    try {
-      setLocalLoading(true);
-      await (await import('../services/codeService')).revertCommit(commitId, branch, currentUser.id);
-      await loadHistory();
-      await loadFileContent();
-    } catch (err) {
-      setError(`Failed to revert: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const handleCreateFile = async () => {
-    if (!newFileName || !selectedTeamId || !currentUser) {
-      setError('Please fill in all fields');
-      return;
-    }
-
-    try {
-      setLocalLoading(true);
-      setError(null);
-      const filePath = `${newFileName}`;
-      const newFile = await createCodeFile(
-        selectedTeamId,
-        newFileName,
-        filePath,
-        newFileLanguage,
-        '',
-        currentUser.id
-      );
-      setFiles([...files, newFile]);
-      setSelectedFile(newFile);
-      setNewFileName('');
-      setShowNewFileModal(false);
-      setCode('');
-      setCurrentBranch('drafts');
-    } catch (err) {
-      setError(`Failed to create file: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const handleCommit = async () => {
-    if (!selectedFile || !currentUser || !commitMessage.trim()) {
-      setError('Please enter a commit message');
-      return;
-    }
-
-    try {
-      setLocalLoading(true);
-      setError(null);
-      await commitToMain(selectedFile.id, commitMessage, currentUser.id);
-      setCommitMessage('');
-      setShowCommitModal(false);
-      await loadHistory();
-      setCurrentBranch('main');
-      await loadFileContent();
-    } catch (err) {
-      setError(`Failed to commit: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!selectedFile) {
-      setError('No file selected');
-      return;
-    }
-    try {
-      setLocalLoading(true);
-      await downloadCodeFile(selectedFile.id, currentBranch);
-    } catch (err) {
-      setError(`Failed to download: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const handleDeleteFile = async () => {
-    if (!selectedFile) return;
-    if (!(await confirmDialog({ title: 'Delete file', message: 'Are you sure you want to delete this file?', confirmLabel: 'Delete', danger: true }))) {
-      return;
-    }
-    try {
-      setLocalLoading(true);
-      await deleteCodeFile(selectedFile.id);
-      setFiles(files.filter(f => f.id !== selectedFile.id));
-      setSelectedFile(null);
-      setCode('');
-    } catch (err) {
-      setError(`Failed to delete: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const handleViewCommit = async (commit: CodeCommit) => {
-    setSelectedCommit(commit);
-    setCode(commit.content);
-  };
 
   const renderAutoSaveIndicator = () => {
     if (currentBranch !== 'drafts') return null;

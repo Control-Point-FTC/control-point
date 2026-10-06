@@ -106,6 +106,7 @@ import { motion, AnimatePresence } from 'motion/react';
 // Monaco (via CodeView), and three.js (via CadModelViewer, already lazy).
 const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
 const CodeView = React.lazy(() => import('./components/CodeView').then(m => ({ default: m.CodeView })));
+const CodePage = React.lazy(() => import('./modern/pages/code/CodePage').then(m => ({ default: m.CodePage })));
 const AttendanceTrendChart = React.lazy(() => import('./components/dashboard/AttendanceTrend').then(m => ({ default: m.AttendanceTrendChart })));
 const AiUsageChart = React.lazy(() => import('./components/owner/AiUsageChart'));
 
@@ -2690,7 +2691,7 @@ export default function App() {
         <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} modern={<BudgetPage {...viewProps} />} />} />
         <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} modern={<InventoryPage {...viewProps} />} />} />
         <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} modern={<OutreachPage {...viewProps} />} />} />
-        <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />} />
+        <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} modern={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodePage {...viewProps} /></Suspense>} />} />
         <Route path="/cad" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/cad-docs" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/cad-reviews" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} modern={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
