@@ -135,7 +135,7 @@ export function PredictView() {
       <EmptyState
         title="Connect your FTC team"
         body="Predict works out your team's odds at its events. Add your FTC team number in Settings to get started."
-        action={<button onClick={() => navigate('/settings')} className="mt-2 inline-flex items-center gap-2 bg-accent text-accent-ink font-bold px-5 py-2.5 rounded-xl"><SettingsIcon className="w-4 h-4" /> Go to Settings</button>}
+        action={<button onClick={() => navigate('/settings?section=workspace')} className="mt-2 inline-flex items-center gap-2 bg-accent text-accent-ink font-bold px-5 py-2.5 rounded-xl"><SettingsIcon className="w-4 h-4" /> Go to Settings</button>}
       />
     );
   }

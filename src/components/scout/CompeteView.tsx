@@ -177,7 +177,7 @@ export function TeamScoutView({ number, season, onSeasonChange, actions = {}, au
       <EmptyState
         title="No FTC team connected yet"
         body="Connect your FTC team number in Settings to see live stats, OPR rankings and event history."
-        action={<button onClick={() => navigate('/settings')} className="mt-2 inline-flex items-center gap-2 bg-accent text-accent-ink font-bold px-5 py-2.5 rounded-xl"><SettingsIcon className="w-4 h-4" /> Go to Settings</button>}
+        action={<button onClick={() => navigate('/settings?section=workspace')} className="mt-2 inline-flex items-center gap-2 bg-accent text-accent-ink font-bold px-5 py-2.5 rounded-xl"><SettingsIcon className="w-4 h-4" /> Go to Settings</button>}
       />
     );
   }

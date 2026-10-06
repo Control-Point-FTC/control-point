@@ -62,7 +62,8 @@ function EditableSliderValue({ value, min, max, step, unit, onChange, label }: {
     </button>
   );
 }
-import { DEFAULT_PULSE_ORIGINS, PULSE_ORIGIN_OPTIONS, applyPulseOrigins, readPulseOrigins, writePulseOrigins, type PulseOrigins } from '../utils/gridPulse';
+import { PULSE_ORIGIN_OPTIONS } from '../utils/gridPulse';
+import { useGridSettings } from './settings/useGridSettings';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -221,77 +222,11 @@ export default function SettingsModal({
   open, onClose, user, team, isAdmin, onUserSaved, onTeamSaved, onOpenRoles, onStatusPick,
 }: SettingsModalProps) {
   const { t, i18n } = useTranslation();
-  // Grid appearance settings — all persisted to localStorage and applied as CSS vars
-  const [gridEnabled, setGridEnabled] = useState(() => localStorage.getItem('controlpoint-grid-enabled') !== '0');
-  const [gridSize, setGridSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-size')) || 32);
-  const [gridOpacity, setGridOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-opacity')) || 0.12);
-  const [gridPulseEnabled, setGridPulseEnabled] = useState(
-    () => localStorage.getItem('controlpoint-grid-pulse') !== '0'
-  );
-  const [gridPulseSpeed, setGridPulseSpeed] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-speed')) || 6);
-  const [gridPulseOpacity, setGridPulseOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-pulse-opacity')) || 0.22);
-  // Where the pulse glows from: any non-empty mix of centre, edges, corners.
-  const [gridPulseOrigins, setGridPulseOrigins] = useState<PulseOrigins>(() => readPulseOrigins(localStorage.getItem('controlpoint-grid-pulse-origins')));
-  const [gridGlowEnabled, setGridGlowEnabled] = useState(() => localStorage.getItem('controlpoint-grid-glow') !== '0');
-  const [gridGlowSize, setGridGlowSize] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-size')) || 280);
-  const [gridGlowOpacity, setGridGlowOpacity] = useState(() => Number(localStorage.getItem('controlpoint-grid-glow-opacity')) || 0.25);
-
-  // Apply grid settings to CSS variables and classes
-  const applyGridSettings = (s: {
-    enabled: boolean; size: number; opacity: number;
-    pulse: boolean; pulseSpeed: number; pulseOpacity: number; pulseOrigins: PulseOrigins;
-    glow: boolean; glowSize: number; glowOpacity: number;
-  }) => {
-    const root = document.documentElement;
-    root.classList.toggle('grid-off', !s.enabled);
-    root.classList.toggle('grid-pulse-off', !s.pulse);
-    root.classList.toggle('grid-glow-off', !s.glow);
-    root.style.setProperty('--grid-size', `${s.size}px`);
-    root.style.setProperty('--grid-opacity', String(s.opacity));
-    root.style.setProperty('--grid-pulse-speed', `${s.pulseSpeed}s`);
-    root.style.setProperty('--grid-pulse-opacity', String(s.pulseOpacity));
-    applyPulseOrigins(root, s.pulseOrigins);
-    root.style.setProperty('--grid-glow-size', `${s.glowSize}px`);
-    root.style.setProperty('--grid-glow-opacity', String(s.glowOpacity));
-  };
-
-  const updateGrid = (partial: Partial<{
-    enabled: boolean; size: number; opacity: number;
-    pulse: boolean; pulseSpeed: number; pulseOpacity: number; pulseOrigins: PulseOrigins;
-    glow: boolean; glowSize: number; glowOpacity: number;
-  }>) => {
-    const s = {
-      enabled: partial.enabled ?? gridEnabled,
-      size: partial.size ?? gridSize,
-      opacity: partial.opacity ?? gridOpacity,
-      pulse: partial.pulse ?? gridPulseEnabled,
-      pulseSpeed: partial.pulseSpeed ?? gridPulseSpeed,
-      pulseOpacity: partial.pulseOpacity ?? gridPulseOpacity,
-      pulseOrigins: partial.pulseOrigins ?? gridPulseOrigins,
-      glow: partial.glow ?? gridGlowEnabled,
-      glowSize: partial.glowSize ?? gridGlowSize,
-      glowOpacity: partial.glowOpacity ?? gridGlowOpacity,
-    };
-    if (partial.enabled !== undefined) { setGridEnabled(s.enabled); localStorage.setItem('controlpoint-grid-enabled', s.enabled ? '1' : '0'); }
-    if (partial.size !== undefined) { setGridSize(s.size); localStorage.setItem('controlpoint-grid-size', String(s.size)); }
-    if (partial.opacity !== undefined) { setGridOpacity(s.opacity); localStorage.setItem('controlpoint-grid-opacity', String(s.opacity)); }
-    if (partial.pulse !== undefined) { setGridPulseEnabled(s.pulse); localStorage.setItem('controlpoint-grid-pulse', s.pulse ? '1' : '0'); }
-    if (partial.pulseSpeed !== undefined) { setGridPulseSpeed(s.pulseSpeed); localStorage.setItem('controlpoint-grid-pulse-speed', String(s.pulseSpeed)); }
-    if (partial.pulseOpacity !== undefined) { setGridPulseOpacity(s.pulseOpacity); localStorage.setItem('controlpoint-grid-pulse-opacity', String(s.pulseOpacity)); }
-    if (partial.pulseOrigins !== undefined) { setGridPulseOrigins(s.pulseOrigins); localStorage.setItem('controlpoint-grid-pulse-origins', writePulseOrigins(s.pulseOrigins)); }
-    if (partial.glow !== undefined) { setGridGlowEnabled(s.glow); localStorage.setItem('controlpoint-grid-glow', s.glow ? '1' : '0'); }
-    if (partial.glowSize !== undefined) { setGridGlowSize(s.glowSize); localStorage.setItem('controlpoint-grid-glow-size', String(s.glowSize)); }
-    if (partial.glowOpacity !== undefined) { setGridGlowOpacity(s.glowOpacity); localStorage.setItem('controlpoint-grid-glow-opacity', String(s.glowOpacity)); }
-    applyGridSettings(s);
-  };
-
-  const resetGrid = () => {
-    updateGrid({
-      enabled: true, size: 32, opacity: 0.12,
-      pulse: true, pulseSpeed: 6, pulseOpacity: 0.22, pulseOrigins: { ...DEFAULT_PULSE_ORIGINS },
-      glow: true, glowSize: 280, glowOpacity: 0.25,
-    });
-  };
+  // Background effects (grid / pulse / glow) are shared with the Modern Settings page.
+  const {
+    gridEnabled, gridSize, gridOpacity, gridPulseEnabled, gridPulseSpeed, gridPulseOpacity, gridPulseOrigins,
+    gridGlowEnabled, gridGlowSize, gridGlowOpacity, updateGrid, resetGrid,
+  } = useGridSettings();
   const [section, setSection] = useState<Section>('account');
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   // On phones the nav and content can't sit side-by-side — drill in instead.
