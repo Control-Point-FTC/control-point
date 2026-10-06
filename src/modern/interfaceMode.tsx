@@ -4,7 +4,7 @@
 // default (teams.default_interface_mode) → 'legacy'. Switching is instant: the
 // mode lives in React state above both shells, saves optimistically and rolls
 // back if the save fails. Business data stays in App state, so nothing reloads.
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { apiFetch } from '../services/api';
 
 export type InterfaceMode = 'legacy' | 'modern';
@@ -48,11 +48,16 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
   // Optimistic override while a save is in flight (or after it fails we drop it).
   const [pending, setPending] = useState<InterfaceMode | null>(null);
   useEffect(() => { setPending(null); }, [serverMode]);
+  // The membership currently shown. A save that finishes after a workspace
+  // switch answers for the OLD membership and must not be merged into the new one.
+  const memberIdRef = useRef<number | null>(user?.id ?? null);
+  memberIdRef.current = user?.id ?? null;
 
   const mode = pending ?? resolveInterfaceMode(serverMode, teamDefault);
 
   const setMode = useCallback(async (next: InterfaceMode) => {
     if (!user?.id) return false;
+    const requestedFor = user.id;
     setPending(next);
     try {
       const res = await apiFetch('/api/profile', {
@@ -62,6 +67,12 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.user) throw new Error(data.error || 'save failed');
+      // Stale answer (the user switched workspaces meanwhile): the choice is
+      // saved per account on the server, so only adopt the mode, not the row.
+      if (memberIdRef.current !== requestedFor || data.user.id !== requestedFor) {
+        if (memberIdRef.current != null) onUserSaved({ id: memberIdRef.current, interface_mode: next });
+        return true;
+      }
       onUserSaved({ ...data.user, interface_mode: next });
       return true;
     } catch {

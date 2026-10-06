@@ -55,6 +55,19 @@ describe('InterfaceModeProvider', () => {
     await waitFor(() => expect(screen.getByTestId('mode').textContent).toBe('legacy'));
   });
 
+  it('does not merge a stale save into a different membership', async () => {
+    let resolve!: (v: any) => void;
+    api.apiFetch.mockReturnValue(new Promise((r) => { resolve = r; }));
+    const saved = vi.fn();
+    const { rerender } = render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={{}} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
+    fireEvent.click(screen.getByText('modern'));
+    // The user switches workspace (new membership row) before the save returns.
+    rerender(<InterfaceModeProvider user={{ id: 2, name: 'A' }} team={{}} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
+    await act(async () => { resolve({ ok: true, json: async () => ({ user: { id: 1, team_id: 10, interface_mode: 'modern' } }) }); });
+    expect(saved).toHaveBeenCalledTimes(1);
+    expect(saved).toHaveBeenCalledWith({ id: 2, interface_mode: 'modern' });
+  });
+
   it('uses the team default when the user has not chosen', () => {
     render(<InterfaceModeProvider user={{ id: 1 }} team={{ default_interface_mode: 'modern' }} onUserSaved={() => {}}><Probe /></InterfaceModeProvider>);
     expect(screen.getByTestId('mode').textContent).toBe('modern');

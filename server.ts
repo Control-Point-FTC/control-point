@@ -149,6 +149,20 @@ process.on("uncaughtException", (err) => {
 /** Redesign interface modes (members.interface_mode / teams.default_interface_mode). */
 const INTERFACE_MODES = ["legacy", "modern"];
 
+/** A membership row without an interface mode takes the account's choice from
+ *  its other rows (newest first) and keeps it. Called wherever a member row is
+ *  handed to the client: /api/auth/me, workspace switch, join and create. */
+async function inheritInterfaceMode(row: any): Promise<void> {
+  if (!row || row.interface_mode != null || !row.email) return;
+  const other = (await dbGet(
+    "SELECT interface_mode FROM members WHERE email = ? AND id != ? AND interface_mode IS NOT NULL ORDER BY id DESC LIMIT 1",
+    row.email, row.id,
+  )) as any;
+  if (!other?.interface_mode) return;
+  row.interface_mode = other.interface_mode;
+  await dbRun("UPDATE members SET interface_mode = ? WHERE id = ?", other.interface_mode, row.id);
+}
+
 function sanitizeMember<T>(row: T): T {
   if (!row || typeof row !== "object") return row;
   const r: any = { ...(row as any) };
@@ -2357,6 +2371,7 @@ async function startServer() {
       return res.json({ needsVerification: true, email });
     }
     const sessionId = await createSession(picked.id);
+    await inheritInterfaceMode(picked);
     res.json({ user: sanitizeMember(picked), sessionId });
   });
 
@@ -2377,6 +2392,7 @@ async function startServer() {
       return res.json({ needsVerification: true, email });
     }
     const sessionId = await createSession(existing.id);
+    await inheritInterfaceMode(user);
     res.json({ user: sanitizeMember(user), sessionId });
   });
 
@@ -2448,6 +2464,7 @@ async function startServer() {
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
@@ -2482,6 +2499,7 @@ async function startServer() {
         await assignSystemRole(team.id, memberId, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -2672,16 +2690,7 @@ async function startServer() {
     }
     // Memberships created or reactivated after the user picked an interface
     // mode inherit it from their other rows (and keep it from then on).
-    if (user && user.interface_mode == null && user.email) {
-      const other = (await dbGet(
-        "SELECT interface_mode FROM members WHERE email = ? AND id != ? AND interface_mode IS NOT NULL ORDER BY id DESC LIMIT 1",
-        user.email, user.id,
-      )) as any;
-      if (other?.interface_mode) {
-        user.interface_mode = other.interface_mode;
-        await dbRun("UPDATE members SET interface_mode = ? WHERE id = ?", other.interface_mode, user.id);
-      }
-    }
+    await inheritInterfaceMode(user);
     // Every workspace this account belongs to (for the team switcher)
     (user as any).teams = user?.email ? await userTeams(user.email) : [];
     if (user?.id) {
@@ -2859,6 +2868,7 @@ async function startServer() {
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
@@ -2877,6 +2887,7 @@ async function startServer() {
         await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -3481,6 +3492,7 @@ async function startServer() {
     await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
     const sessionId = await createSession(mInfo.lastInsertRowid);
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+    await inheritInterfaceMode(user);
     (user as any).teams = me?.email ? await userTeams(me.email) : [];
     res.json({ team: { id: teamId, name: cleanName, number: (number || "").trim(), access_code: code }, user: sanitizeMember(user), sessionId });
   });
@@ -3516,6 +3528,7 @@ async function startServer() {
       me?.email || "", teamId
     )) as any;
     if (!row) return res.status(403).json({ error: "You're not a member of that team" });
+    await inheritInterfaceMode(row);
     const sessionId = await createSession(row.id);
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
     res.json({ user: sanitizeMember(row), sessionId, team });
@@ -3556,6 +3569,7 @@ async function startServer() {
       await ensureRolesSeeded(team.id);
       await assignSystemRole(team.id, row.id, "Member");
     }
+    await inheritInterfaceMode(row);
     const sessionId = await createSession(row.id);
     const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
     const wasNew = !existing || (existing.is_active ?? 1) !== 1;

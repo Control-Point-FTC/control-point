@@ -35,7 +35,11 @@ export function InboxSheet({ open, onOpenChange, notifications, actions }: {
             <Button variant="ghost" size="sm" disabled={!unread.length} onClick={() => void actions.markRead(unread.map((n) => n.id))}>
               <CheckCheck /> Mark all read
             </Button>
-            <Button variant="ghost" size="sm" className="ml-auto hover:text-rose-500" onClick={() => void actions.clearAll()}>
+            <Button variant="ghost" size="sm" className="ml-auto hover:text-rose-500" onClick={() => {
+              // Close the sheet first: the confirmation can't be used on top of a modal sheet.
+              onOpenChange(false);
+              void actions.clearAll();
+            }}>
               <Trash2 /> Clear all
             </Button>
           </div>

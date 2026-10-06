@@ -96,17 +96,30 @@ export function ModernShell(props: ModernShellProps) {
   useEffect(() => { setMenuOpen(false); }, [props.activeTab]);
 
   const unreadInbox = props.notifications.filter((n) => !n.is_read).length;
-  const sidebar = (inSheet = false) => (
-    <SidebarContent
-      inSheet={inSheet}
-      {...props}
-      collapsed={!isMobile && collapsed}
-      unreadInbox={unreadInbox}
-      onOpenSearch={() => setCmdOpen(true)}
-      onOpenInbox={() => setInboxOpen(true)}
-      onToggleCollapsed={isMobile ? undefined : () => setCollapsed((c) => !c)}
-    />
-  );
+  const sidebar = (inSheet = false) => {
+    // In the mobile menu sheet, every action first closes the sheet so the
+    // screen or dialog it opens (Settings, Inbox, search…) isn't covered by it.
+    const then = <A extends unknown[]>(fn: (...a: A) => void) => (inSheet ? (...a: A) => { setMenuOpen(false); fn(...a); } : fn);
+    return (
+      <SidebarContent
+        inSheet={inSheet}
+        {...props}
+        onOpenSettings={then(props.onOpenSettings)}
+        onOpenBruno={then(props.onOpenBruno)}
+        onOpenFeedback={then(props.onOpenFeedback)}
+        onSetupGuide={then(props.onSetupGuide)}
+        onOpenWhatsNew={then(props.onOpenWhatsNew)}
+        onLogout={then(props.onLogout)}
+        onSwitchTeam={then(props.onSwitchTeam)}
+        onNavigate={then(props.onNavigate)}
+        collapsed={!isMobile && collapsed}
+        unreadInbox={unreadInbox}
+        onOpenSearch={then(() => setCmdOpen(true))}
+        onOpenInbox={then(() => setInboxOpen(true))}
+        onToggleCollapsed={isMobile ? undefined : () => setCollapsed((c) => !c)}
+      />
+    );
+  };
 
   return (
     <TooltipProvider>
@@ -231,7 +244,8 @@ function SidebarContent(props: ModernShellProps & {
         </div>
 
         {nav.sections.map((sec) => {
-          const isClosed = closed.includes(sec.id) && !sec.items.some((i) => isActive(i, props.activeTab));
+          // The compact rail has no section headers to reopen, so it always shows every icon.
+          const isClosed = !collapsed && closed.includes(sec.id) && !sec.items.some((i) => isActive(i, props.activeTab));
           return (
             <div key={sec.id} className="mt-4">
               {collapsed ? (
