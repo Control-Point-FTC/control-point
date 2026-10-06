@@ -32,6 +32,7 @@ import {
   markEmailVerified,
   issueVerificationCode,
   checkVerificationCode,
+  consumeVerificationCode,
   notifyTaskAssignees,
 } from "./email-verify.js";
 import {
@@ -2537,15 +2538,13 @@ async function startServer() {
     const email = (((req.body || {}).email) || "").trim().toLowerCase();
     if (!email) return res.status(400).json({ error: "Email is required" });
     try {
-      const exists = (await dbGet("SELECT id FROM members WHERE email = ?", email)) as any;
+      // Case-insensitive lookup: signup preserves the user's original casing.
+      const exists = (await dbGet("SELECT id FROM members WHERE LOWER(email) = ?", email)) as any;
       if (exists) {
-        const result = await issueVerificationCode(email);
-        if (result.sent === false) {
-          return res.status(429).json({
-            error: `Wait ${result.cooldownSeconds}s before requesting a new code`,
-            cooldownSeconds: result.cooldownSeconds,
-          });
-        }
+        // Fire and forget the cooldown: the public response is identical
+        // whether the account exists, is cooling down, or is unknown, so
+        // the endpoint never reveals registered addresses.
+        await issueVerificationCode(email).catch((e) => console.error("forgot password code issue failed:", e));
       }
       return res.json({ sent: true });
     } catch (e: any) {
@@ -2564,7 +2563,9 @@ async function startServer() {
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ error: "Password must be at least 6 characters" });
     }
-    const check = await checkVerificationCode(email, code);
+    // Atomic: validate + consume the code in one step so overlapping
+    // requests with the same code can't both succeed.
+    const check = await consumeVerificationCode(email, code);
     if (check.ok === false) {
       const msg = check.reason === "expired"
         ? "That code expired — request a new one"
@@ -2573,13 +2574,20 @@ async function startServer() {
           : "That code doesn't match — try again";
       return res.status(400).json({ error: msg, reason: check.reason });
     }
-    const exists = (await dbGet("SELECT id FROM members WHERE email = ?", email)) as any;
-    if (!exists) return res.status(400).json({ error: "No account found for that email" });
+    // Case-insensitive: match the account regardless of stored casing.
+    const members = (await dbAll("SELECT id FROM members WHERE LOWER(email) = ?", email)) as any[];
+    if (!members.length) return res.status(400).json({ error: "No account found for that email" });
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
     // The password is account-wide: set it on every membership row for this email.
-    await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email);
+    await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE LOWER(email) = ?", hashedPassword, email);
     await markEmailVerified(email);
-    await dbRun("DELETE FROM email_verification_codes WHERE email = ?", email);
+    // The code is already consumed; clear any stragglers.
+    await dbRun("DELETE FROM email_verification_codes WHERE LOWER(email) = ?", email);
+    // Kill every existing session on all membership rows: a password reset
+    // must log out everything, including a possibly-stolen session.
+    const memberIds = members.map((m) => m.id);
+    const placeholders = memberIds.map(() => "?").join(",");
+    await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders})`, ...memberIds);
     res.json({ success: true });
   });
 

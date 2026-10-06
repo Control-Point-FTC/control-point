@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, Mail, KeyRound } from 'lucide-react';
 import { Card, Button, Input } from '../ui';
 import { apiFetch } from '../../services/api';
@@ -20,11 +20,52 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
   const [cooldown, setCooldown] = useState(0);
   const [resending, setResending] = useState(false);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
     return () => clearTimeout(t);
   }, [cooldown]);
+
+  // Focus management: move focus into the dialog on open and on step change,
+  // trap Tab inside while open, and restore focus to the trigger on close.
+  useEffect(() => {
+    triggerRef.current = document.activeElement as HTMLElement | null;
+    const node = dialogRef.current;
+    if (!node) return;
+    const focusables = () =>
+      Array.from(node.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((el) => el.offsetParent !== null);
+    // Focus the first input (or button) on each step change.
+    const first = focusables()[0];
+    if (first) first.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onBack(); return; }
+      if (e.key !== 'Tab') return;
+      const els = focusables();
+      if (!els.length) return;
+      const firstEl = els[0];
+      const lastEl = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && document.activeElement === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (triggerRef.current && document.contains(triggerRef.current)) {
+        triggerRef.current.focus();
+      }
+    };
+  }, [step, onBack]);
 
   const sendCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,10 +110,24 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
     }
   };
 
-  const resetPassword = async (e: React.FormEvent) => {
+  // Code step: require all 6 digits before advancing. The server still
+  // validates the code together with the new password.
+  const continueFromCode = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = code.replace(/\D/g, '').slice(0, 6);
     if (clean.length !== 6) { setError('Enter the 6-digit code from the email.'); return; }
+    setError(null);
+    setStep('password');
+  };
+
+  const resetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = code.replace(/\D/g, '').slice(0, 6);
+    if (clean.length !== 6) {
+      setError('Enter the 6-digit code from the email.');
+      setStep('code');
+      return;
+    }
     if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     if (password !== confirm) { setError("Passwords don't match."); return; }
     setError(null);
@@ -98,9 +153,9 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Reset password">
+    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Reset password">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onBack} aria-hidden="true" />
-      <div className="relative w-full max-w-md">
+      <div ref={dialogRef} className="relative w-full max-w-md my-auto max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <button
           onClick={onBack}
           className="mb-5 inline-flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-text-base transition-colors"
@@ -120,7 +175,7 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
             <p className="text-text-muted text-sm">
               {step === 'email' && "Enter your account email and we'll send you a 6-digit code."}
               {step === 'code' && <>We sent a 6-digit code to <span className="text-text-base font-semibold">{email}</span>.</>}
-              {step === 'password' && 'Code confirmed — set a new password for your account.'}
+              {step === 'password' && "Enter the code from the email, then set a new password."}
             </p>
           </div>
 
@@ -138,7 +193,7 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
           )}
 
           {step === 'code' && (
-            <form onSubmit={(e) => { e.preventDefault(); setStep('password'); }} className="space-y-4">
+            <form onSubmit={continueFromCode} className="space-y-4">
               <Input
                 required
                 aria-label="Reset code"
@@ -167,6 +222,19 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
 
           {step === 'password' && (
             <form onSubmit={resetPassword} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Reset code</label>
+                <Input
+                  required
+                  aria-label="Reset code"
+                  value={code}
+                  onChange={(e: any) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="••••••"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="text-center text-xl font-mono tracking-[0.5em] py-2.5"
+                />
+              </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">New password</label>
                 <Input type="password" required value={password} onChange={(e: any) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="new-password" />

@@ -92,14 +92,15 @@ export async function sendVerificationEmail(to: string, code: string): Promise<v
 
 /** Is this address already verified (account-wide, by email)? */
 export async function isEmailVerified(email: string): Promise<boolean> {
-  const row = (await dbGet("SELECT email FROM verified_emails WHERE email = ?", email)) as any;
+  const row = (await dbGet("SELECT email FROM verified_emails WHERE LOWER(email) = LOWER(?)", email)) as any;
   return Boolean(row);
 }
 
 export async function markEmailVerified(email: string): Promise<void> {
+  const normalized = String(email || "").trim().toLowerCase();
   await dbRun(
     "INSERT INTO verified_emails (email, verified_at) VALUES (?, ?) ON CONFLICT(email) DO NOTHING",
-    email,
+    normalized,
     new Date().toISOString()
   );
   // Consume any outstanding codes for this address.
@@ -119,9 +120,10 @@ function codeExpiry(): string {
  * time in JS, which skews expiry/cooldown by the server's UTC offset.
  */
 export async function issueVerificationCode(email: string): Promise<{ sent: true } | { sent: false; cooldownSeconds: number }> {
+  const normalized = String(email || "").trim().toLowerCase();
   const recent = (await dbGet(
     "SELECT created_at FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
-    email
+    normalized
   )) as any;
   if (recent?.created_at) {
     const ageSec = (Date.now() - new Date(recent.created_at).getTime()) / 1000;
@@ -129,17 +131,17 @@ export async function issueVerificationCode(email: string): Promise<{ sent: true
     if (wait > 0) return { sent: false, cooldownSeconds: Math.ceil(wait) };
   }
   // Invalidate older outstanding codes; only the newest is valid.
-  await dbRun("DELETE FROM email_verification_codes WHERE email = ?", email);
+  await dbRun("DELETE FROM email_verification_codes WHERE email = ?", normalized);
   const code = generateCode();
   const nowIso = new Date().toISOString();
   await dbRun(
     "INSERT INTO email_verification_codes (email, code_hash, expires_at, attempts, created_at) VALUES (?, ?, ?, 0, ?)",
-    email,
+    normalized,
     hashCode(code),
     codeExpiry(),
     nowIso
   );
-  await sendVerificationEmail(email, code);
+  await sendVerificationEmail(normalized, code);
   return { sent: true };
 }
 
@@ -147,9 +149,10 @@ export type CodeCheck = { ok: true } | { ok: false; reason: "expired" | "invalid
 
 /** Validate a submitted code. Wrong guesses are counted; too many locks the code. */
 export async function checkVerificationCode(email: string, code: string): Promise<CodeCheck> {
+  const normalized = String(email || "").trim().toLowerCase();
   const row = (await dbGet(
     "SELECT id, code_hash, expires_at, attempts FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
-    email
+    normalized
   )) as any;
   if (!row) return { ok: false, reason: "invalid" };
   if (new Date(row.expires_at).getTime() < Date.now()) {
@@ -173,6 +176,47 @@ export async function checkVerificationCode(email: string, code: string): Promis
     await dbRun("UPDATE email_verification_codes SET attempts = ? WHERE id = ?", attempts, row.id);
     return { ok: false, reason: "invalid" };
   }
+  return { ok: true };
+}
+
+/**
+ * Validate AND atomically consume a code. The DELETE is the atomic gate:
+ * two overlapping requests with the same code can't both delete the row —
+ * the loser gets 0 changes and fails. Use this (not checkVerificationCode)
+ * when a successful check must immediately invalidate the code, e.g.
+ * password reset.
+ */
+export async function consumeVerificationCode(email: string, code: string): Promise<CodeCheck> {
+  const normalized = String(email || "").trim().toLowerCase();
+  const row = (await dbGet(
+    "SELECT id, code_hash, expires_at, attempts FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
+    normalized
+  )) as any;
+  if (!row) return { ok: false, reason: "invalid" };
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
+    return { ok: false, reason: "expired" };
+  }
+  if (row.attempts >= VERIFY_MAX_ATTEMPTS) {
+    await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
+    return { ok: false, reason: "locked" };
+  }
+  const guess = hashCode(String(code || "").trim());
+  const expected = Buffer.from(row.code_hash, "hex");
+  const actual = Buffer.from(guess, "hex");
+  const match = expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  if (!match) {
+    const attempts = row.attempts + 1;
+    if (attempts >= VERIFY_MAX_ATTEMPTS) {
+      await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
+      return { ok: false, reason: "locked" };
+    }
+    await dbRun("UPDATE email_verification_codes SET attempts = ? WHERE id = ?", attempts, row.id);
+    return { ok: false, reason: "invalid" };
+  }
+  // Atomic consume: only the request that actually deletes the row wins.
+  const del = await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
+  if (del.changes === 0) return { ok: false, reason: "invalid" };
   return { ok: true };
 }
 
