@@ -2,137 +2,22 @@
 // event, alliance-selection scenarios, the whole field and every match.
 // All numbers come from the server's simulation engine (/api/predict/*);
 // the "How accurate is this?" sheet shows the back-test results.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Sparkles, Target, Users, ListOrdered, Swords, Info, RefreshCw, Settings as SettingsIcon, Trophy, Crown, Gauge, BarChart3, CircleHelp, Activity } from 'lucide-react';
 import { cn } from '../ui';
 import { Select } from '../Select';
 import { EmptyState, ErrorState, Sheet, Skeleton, SeasonChip, SeasonPicker, relTime, seasonShort, useIsNarrow } from '../scout/ScoutUi';
-import { fetchScoutEvent, fetchScoutTeam } from '../../services/ftcScoutApi';
-import { fetchForecast, fetchPartners, fetchPredictStatus, PredictError, type ForecastView, type Partners, type PredictAccuracy, type LiveAccuracy } from '../../services/predictApi';
-import { setScreenEntity } from '../../services/brunoContext';
+import type { ForecastView, PredictAccuracy, LiveAccuracy } from '../../services/predictApi';
 import { currentFtcSeason } from '../FtcStats';
-import type { FtcTeamEventSummary } from '../../types/ftcScout';
-
-type Tab = 'odds' | 'alliance' | 'field' | 'matches';
-const ADVANCING = new Set(['LeagueTournament', 'Qualifier', 'Championship', 'SuperQualifier', 'Premier', 'FIRSTChampionship']);
-const normType = (t: string | null | undefined) => (t ?? '').replace(/\s+/g, '');
-const pct = (x: number | null | undefined) => (x == null ? '—' : `${Math.round(x * 100)}%`);
-/** "#3–#7", or "#5" when the range has collapsed (quals are over). */
-const rankRange = (lo: number, hi: number) => (Math.round(lo) === Math.round(hi) ? `#${Math.round(lo)}` : `#${Math.round(lo)}–#${Math.round(hi)}`);
-const STAGE_LABEL: Record<string, string> = {
-  pre: 'Before the event',
-  live: 'Quals in progress',
-  quals: 'Quals finished',
-  selected: 'Alliances selected',
-};
-
-/** Pick the event to open by default: ongoing/upcoming first, else the latest. */
-function defaultEvent(events: FtcTeamEventSummary[]): string | null {
-  if (!events.length) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  const upcoming = events.filter((e) => (e.date ?? '') >= today).sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
-  if (upcoming.length) return upcoming[0].code;
-  return [...events].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''))[0].code;
-}
+import { pct, preMatchCall, rankRange, STAGE_LABEL, usePartners, usePredictController } from './usePredictController';
 
 export function PredictView() {
   const navigate = useNavigate();
-  // ?season=&event= keep the choice across reloads and make it shareable.
-  const [params, setParams] = useSearchParams();
-  const [season, setSeason] = useState(() => {
-    const s = Number(params.get('season'));
-    return Number.isInteger(s) && s >= 2019 && s <= currentFtcSeason() ? s : currentFtcSeason();
-  });
-  const [events, setEvents] = useState<FtcTeamEventSummary[] | null>(null);
-  const [myTeam, setMyTeam] = useState<number | null>(null);
-  const [teamError, setTeamError] = useState<string | null>(null);
-  const [code, setCode] = useState<string | null>(() => params.get('event'));
-  const [tab, setTab] = useState<Tab>('odds');
-  const [fcState, setFc] = useState<ForecastView | null>(null);
-  // Never show one event's forecast under another event's picker.
-  const fc = fcState && code && fcState.season === season && fcState.event.toUpperCase() === code.toUpperCase() ? fcState : null;
-  const [fcError, setFcError] = useState<PredictError | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [names, setNames] = useState<Map<number, string>>(new Map());
-  const [accuracy, setAccuracy] = useState<PredictAccuracy | null>(null);
-  const [live, setLive] = useState<LiveAccuracy | null>(null);
-  // Status (back-test + live scores) loads on mount and again whenever the
-  // accuracy sheet opens, so a page left open through a sync isn't stale.
-  const loadStatus = () => { fetchPredictStatus().then((s) => { setAccuracy(s.accuracy); setLive(s.live ?? null); }).catch(() => {}); };
-  const [showAccuracy, setShowAccuracy] = useState(false);
-  const [autoStepped, setAutoStepped] = useState(() => params.has('season'));
-  const [teamReload, setTeamReload] = useState(0);
-  const [refreshKey, setRefreshKey] = useState(0);
-  // State -> URL.
-  useEffect(() => {
-    if (!code) return;
-    if (params.get('season') === String(season) && params.get('event') === code) return;
-    setParams({ season: String(season), event: code }, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season, code]);
-  // URL -> state (back/forward, or a link to another forecast while on the page).
-  useEffect(() => {
-    const s = Number(params.get('season')), e = params.get('event');
-    if (Number.isInteger(s) && s >= 2019 && s <= currentFtcSeason() && s !== season) { setAutoStepped(true); setSeason(s); }
-    if (e && e !== code) setCode(e);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params]);
-
-  // Our team's events this season (advancing types only).
-  useEffect(() => {
-    let alive = true;
-    setEvents(null); setTeamError(null);
-    fetchScoutTeam(season).then((p) => {
-      if (!alive) return;
-      setMyTeam(p.number);
-      // Advancing events only; drop a championship's parent event when the team
-      // also has its division (the parent has no quals of its own).
-      const evs = p.events.filter((e) => ADVANCING.has(normType(e.type))
-        && !p.events.some((d) => d.code !== e.code && d.code.startsWith(e.code) && d.date === e.date));
-      // A new season with no events yet: step back once to the previous season.
-      if (!evs.length && !autoStepped && season > 2022) { setAutoStepped(true); setSeason(season - 1); return; }
-      setEvents(evs);
-      setCode((c) => (c && evs.some((e) => e.code === c) ? c : defaultEvent(evs)));
-    }).catch((e) => {
-      if (!alive) return;
-      setTeamError(e?.status === 404 && /no ftc team/i.test(e?.message ?? '') ? 'not-connected' : e?.message ?? 'Could not load your events');
-      setEvents([]);
-    });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [season, teamReload]);
-
-  useEffect(() => { loadStatus(); }, []);
-
-  // Every request (initial, Refresh, Try again) gets an id and only the latest
-  // may update state, so a slow answer for an old selection can't overwrite it.
-  const reqId = useRef(0);
-  const load = useCallback((force?: boolean) => {
-    const id = ++reqId.current;
-    if (!code) return;
-    const latest = () => id === reqId.current;
-    setLoading(true); setFcError(null);
-    if (force) setRefreshKey((k) => k + 1); // re-runs the Alliance scenarios too
-    fetchForecast(season, code, { force }).then((f) => { if (latest()) setFc(f); })
-      .catch((e) => { if (latest()) { setFc(null); setFcError(e instanceof PredictError ? e : new PredictError(String(e?.message ?? e), 0)); } })
-      .finally(() => { if (latest()) setLoading(false); });
-    // Team names for the event (shared client cache with Team Stats).
-    fetchScoutEvent(season, code).then((ev) => { if (latest()) setNames(new Map(ev.field.map((t) => [t.teamNumber, t.name]))); }).catch(() => {});
-  }, [season, code]);
-  useEffect(() => {
-    load();
-    return () => { reqId.current++; };
-  }, [load]);
-
-  // Bruno sees the forecast on screen.
-  useEffect(() => {
-    setScreenEntity('predictSeason', code ? season : null);
-    setScreenEntity('predictEvent', code);
-    return () => { setScreenEntity('predictSeason', null); setScreenEntity('predictEvent', null); };
-  }, [season, code]);
-
-  const nameOf = useCallback((t: number) => names.get(t) ?? `Team ${t}`, [names]);
+  const {
+    season, chooseSeason, events, myTeam, teamError, retryTeam, code, chooseEvent, tab, setTab,
+    fc, fcError, loading, load, refreshKey, nameOf, accuracy, live, showAccuracy, setShowAccuracy,
+  } = usePredictController();
 
   if (teamError === 'not-connected') {
     return (
@@ -158,7 +43,7 @@ export function PredictView() {
             </div>
             <p className="text-sm text-text-muted mt-1">Your odds of advancing, simulated from every team's match history. Estimates, not guarantees.</p>
           </div>
-          <button onClick={() => { setShowAccuracy(true); loadStatus(); }} className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:opacity-80">
+          <button onClick={() => setShowAccuracy(true)} className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:opacity-80">
             <CircleHelp className="w-4 h-4" /> How accurate is this?
           </button>
         </div>
@@ -166,14 +51,14 @@ export function PredictView() {
           <div className="min-w-0">
             <label htmlFor="predict-event" className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">Event</label>
             {events == null ? <Skeleton className="h-10" /> : teamError ? (
-              <ErrorState message={teamError} onRetry={() => setTeamReload((n) => n + 1)} />
+              <ErrorState message={teamError} onRetry={retryTeam} />
             ) : events.length ? (
-              <Select id="predict-event" value={code ?? ''} onChange={(e) => { setCode(e.target.value); setTab('odds'); }} className="w-full">
+              <Select id="predict-event" value={code ?? ''} onChange={(e) => chooseEvent(e.target.value)} className="w-full">
                 {events.map((e) => <option key={e.code} value={e.code}>{e.name}{e.date ? ` · ${e.date}` : ''}</option>)}
               </Select>
             ) : <p className="text-sm text-text-muted py-2">No advancing events for team {myTeam ?? ''} in {seasonShort(season)} yet.</p>}
           </div>
-          <SeasonPicker seasons={[currentFtcSeason(), currentFtcSeason() - 1]} value={season} onChange={(s) => { setAutoStepped(true); setSeason(s); }} small />
+          <SeasonPicker seasons={[currentFtcSeason(), currentFtcSeason() - 1]} value={season} onChange={chooseSeason} small />
         </div>
         {fc && (
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-text-muted">
@@ -325,19 +210,7 @@ function OddsTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null }) {
 // ---------------------------------------------------------------------------
 
 function AllianceTab({ season, code, fc, nameOf, myTeam, refreshKey }: { season: number; code: string; fc: ForecastView; nameOf: (t: number) => string; myTeam: number | null; refreshKey: number }) {
-  const [data, setData] = useState<Partners | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  // Bypass the client cache only for a Refresh made while this tab exists, not
-  // on every later mount (switching tabs keeps using fresh cached choices).
-  const seenRefresh = useRef(refreshKey);
-  useEffect(() => {
-    let alive = true;
-    setData(null); setErr(null);
-    const force = refreshKey !== seenRefresh.current;
-    seenRefresh.current = refreshKey;
-    fetchPartners(season, code, { force }).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
-    return () => { alive = false; };
-  }, [season, code, refreshKey]);
+  const { data, err } = usePartners(season, code, refreshKey);
   if (!myTeam) return <EmptyState title="Connect your FTC team" body="Alliance scenarios are worked out for your team." />;
   if (err) return <ErrorState message={err} />;
   if (!data) return (
@@ -502,16 +375,13 @@ function MatchesTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null })
 
 /** Honest call for a played match, from odds recorded before it was played. */
 function PreMatchCall({ pre, played }: { pre: number | null; played: { red: number; blue: number } }) {
-  if (pre == null || played.red === played.blue || pre === 0.5) {
-    return pre == null ? <p className="text-[11px] text-text-muted" title="No forecast was recorded before this match">No pre-match call</p> : null;
-  }
-  const favRed = pre > 0.5;
-  const favP = favRed ? pre : 1 - pre;
-  const called = favRed === (played.red > played.blue);
-  return called ? (
-    <p className="text-[11px] font-bold text-emerald-500" title={`Before the match: ${favRed ? 'Red' : 'Blue'} ${pct(favP)}`}>Called it · {pct(favP)}</p>
+  const c = preMatchCall(pre, played);
+  if (c.kind === 'none') return <p className="text-[11px] text-text-muted" title="No forecast was recorded before this match">No pre-match call</p>;
+  if (c.kind === 'even') return null;
+  return c.kind === 'called' ? (
+    <p className="text-[11px] font-bold text-emerald-500" title={`Before the match: ${c.fav} ${pct(c.favP)}`}>Called it · {pct(c.favP)}</p>
   ) : (
-    <p className="text-[11px] font-bold text-amber-500" title={`Before the match the winner had ${pct(1 - favP)}`}>Upset · {pct(1 - favP)}</p>
+    <p className="text-[11px] font-bold text-amber-500" title={`Before the match the winner had ${pct(1 - c.favP)}`}>Upset · {pct(1 - c.favP)}</p>
   );
 }
 
