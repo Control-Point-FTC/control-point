@@ -39,6 +39,9 @@ let saveQueue: Promise<unknown> = Promise.resolve();
 // dropped when its turn comes, so it can't put the pre-revert text back.
 const revertGen = new Map<number, number>();
 const genOf = (fileId: number) => revertGen.get(fileId) ?? 0;
+// One revert at a time across every mounted page: a second click while one
+// runs is ignored, so a failed revert's retry can't race a later revert.
+let revertRunning = false;
 const filesBus = new EventTarget();
 const filesChanged = () => filesBus.dispatchEvent(new Event('changed'));
 // A file's content changed on the server (revert / commit): the mounted page
@@ -278,6 +281,8 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
 
   const handleRevert = async (commitId: number, branch: Branch) => {
     if (!currentUser) return setError('Must be signed in to revert');
+    if (revertRunning) return;
+    revertRunning = true;
     try {
       setBusy(true);
       const file = getDraft<CodeFile | null>('code:file', null);
@@ -302,6 +307,7 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       const cur = getDraft<Buffer | null>(BUFFER_KEY, null);
       if (branch === 'drafts' && file && cur && cur.fileId === file.id && cur.branch === 'drafts' && cur.unsaved) void saveNow();
     } finally {
+      revertRunning = false;
       setBusy(false);
     }
   };

@@ -411,6 +411,23 @@ describe('Modern Code', () => {
       expect(result.current.error).toMatch(/Failed to revert/);
     }, 15000);
 
+    it("a second revert while one runs is ignored, so a failed one can't race it", async () => {
+      let fail: () => void = () => {};
+      code.revertCommit.mockImplementation(() => new Promise((_r, rej) => { fail = () => rej(new Error('boom')); }));
+      const { result } = await openDrive();
+      let a!: Promise<void>;
+      let b!: Promise<void>;
+      act(() => { a = result.current.handleRevert(101, 'drafts') as Promise<void>; });
+      await waitFor(() => expect(code.revertCommit).toHaveBeenCalledTimes(1));
+      act(() => { b = result.current.handleRevert(102, 'drafts') as Promise<void>; });
+      await act(async () => { fail(); await a; await b; });
+      expect(code.revertCommit).toHaveBeenCalledTimes(1);
+      // …and once it has finished, reverting works again.
+      code.revertCommit.mockResolvedValue({});
+      await act(async () => { await result.current.handleRevert(102, 'drafts'); });
+      expect(code.revertCommit).toHaveBeenCalledTimes(2);
+    });
+
     it('a main revert leaves queued draft saves alone', async () => {
       const release = slowFirstSave();
       const { result } = await openDrive();
