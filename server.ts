@@ -1752,6 +1752,13 @@ async function requireAuth(req: any, res: any): Promise<{ memberId: number; team
   return auth;
 }
 
+/** Message moderation (edit / delete others' / silent delete): manage_members. */
+async function canModerateMessages(memberId: number | null | undefined, teamId: number | null | undefined): Promise<boolean> {
+  if (!memberId || !teamId) return false;
+  const perms = await getMemberPerms(memberId, teamId);
+  return perms.has("*") || perms.has("manage_members");
+}
+
 async function requireAdmin(req: any, res: any) {
   return requirePerm(req, res, "manage_members");
 }
@@ -6325,9 +6332,15 @@ async function startServer() {
     const silent = req.query.silent === 'true'; // Check for silent deletion
     
     try {
-      const existing: any = (await dbGet("SELECT team_id FROM messages WHERE id = ?", messageId));
+      const existing: any = (await dbGet("SELECT team_id, sender_id FROM messages WHERE id = ?", messageId));
       if (!existing || existing.team_id !== auth.teamId) {
         return res.status(404).json({ error: "Message not found" });
+      }
+      // Authors may delete their own messages; anyone else's (and silent,
+      // un-broadcast deletion) needs moderator rights.
+      const moderator = await canModerateMessages(auth.memberId, auth.teamId);
+      if (!moderator && (silent || existing.sender_id !== auth.memberId)) {
+        return res.status(403).json({ error: "You can only delete your own messages" });
       }
       // Hard delete - permanently remove the message from database
       (await dbRun("DELETE FROM messages WHERE id = ?", messageId));
@@ -6361,6 +6374,10 @@ async function startServer() {
     const existing: any = (await dbGet("SELECT team_id FROM messages WHERE id = ?", messageId));
     if (!existing || existing.team_id !== auth.teamId) {
       return res.status(404).json({ error: "Message not found" });
+    }
+    // Silent edits are a moderation tool (Settings → Admin).
+    if (!(await canModerateMessages(auth.memberId, auth.teamId))) {
+      return res.status(403).json({ error: "Only moderators can edit messages" });
     }
 
     (await dbRun("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", content, new Date().toISOString(), messageId));
