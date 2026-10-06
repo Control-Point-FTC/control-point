@@ -11,12 +11,13 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import SetupWizard from '../SetupWizard';
 import { defaultOnboardingState, type OnboardingState } from '../onboardingState';
+import { clearDrafts } from '../../../modern/drafts';
 
 vi.mock('../../dialog', () => ({
   confirmDialog: vi.fn().mockResolvedValue(true),
 }));
 
-afterEach(() => cleanup());
+afterEach(() => { cleanup(); clearDrafts(); });
 
 function wizardProps(overrides: Partial<React.ComponentProps<typeof SetupWizard>> = {}) {
   const onPatchState = vi.fn(async () => defaultOnboardingState() as OnboardingState);

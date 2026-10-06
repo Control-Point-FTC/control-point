@@ -853,6 +853,71 @@ Legacy `CadView` keeps its JSX: local aliases map onto the hooks. The only chang
 - **Totals:** 551 + new tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
 - **Local QA:** a local test file was created through the UI; Monaco renders in dark mode on desktop. 390 px: no overflow, and every target is ≥44 px. No real phone was available.
 
+## Phase 9d: Emails
+
+### Template (`email-verify.ts`)
+- **New shared `emailTemplate`:**
+  - Table-based layout with inline styles, so it renders the same in Gmail, Outlook and Apple Mail.
+  - A light card with the CP mark and an accent bar.
+  - A **hidden preheader** for the inbox preview line.
+  - An optional **button**.
+  - A footer that says **why the email was sent**, with a link to the site.
+  - Plain parts (title, preheader, footnote, button) are escaped inside the template.
+- **Verification:** "Confirm your email", with the code as six tiles.
+- **Password reset now has its own email.** Before, it reused the signup text ("finish creating your account").
+  - `issueVerificationCode(email, 'reset')` is used by `/api/auth/forgot-password`.
+  - It has its own subject line and wording.
+  - The codes, cooldowns and checks are unchanged.
+- **Task assigned:** "You have a new task", with a task card (accent edge, description, due date) and an **"Open your tasks" button**. The button goes to `APP_URL/tasks`, falling back to https://tryctrlpoint.org. Every field is still escaped.
+
+### Tests
+- **New (5 tests, `src/emailTemplates.test.ts`):** code tiles, preheader and footnote; reset wording; task button link and escaping; the `appUrl` fallback; template escaping.
+- The existing `taskEmail` and `email-verify` tests still pass.
+- **Visual check:** rendered locally in the browser. Screenshots are in `screenshots/phase9/email-*.jpg`. No emails were sent.
+
+## Phase 9c: Onboarding
+
+### Shared engines (Classic JSX unchanged)
+- **`components/onboarding/useWalkthrough.ts`:** the tour state machine moved out of `Walkthrough`. That covers the steps, target lookup with mobile fallbacks, spotlight geometry, tooltip placement, keyboard handling and resume position. Classic renders it exactly as before.
+- **`components/onboarding/useSetupWizard.ts`:** the setup steps, profile save / skip bookkeeping, tour skip and the leave-with-unsaved-changes check.
+  - The **step, name and role are drafted**, so switching look mid-setup carries on at the same step with the same text.
+  - `clearSetupDrafts()` runs whenever the wizard closes (App watches `wizardOpen`), so the next setup starts fresh.
+- `drafts.ts` gains `deleteDraft`, identical to the CAD / Owner branches.
+
+### Modern screens (`src/modern/pages/onboarding/`)
+Each is chosen by `ByMode` in App.
+- **WelcomeDialog:** a wide split card.
+  - A greeting over a slow aurora.
+  - An "Up next" timeline of the three setup steps.
+  - Get started / Skip for now, the same as Classic.
+- **SetupDialog:**
+  - A vertical stepper with an animated current-step marker (a progress bar on phones).
+  - Profile form, frozen while saving.
+  - **Your look:** theme cards plus a new **Layout (Modern / Classic)** choice, saved to the account through the interface-mode provider.
+  - Tour start / retake / maybe later, and a summary.
+- **TourCard:** the same spotlight engine, with a single-shadow accent outline, glow and dim.
+  - A card with a progress ring, step dots that jump, text sliding in per step, and a keyboard hint.
+  - The finish card.
+  - On phones it is a bottom sheet, as in Classic.
+
+### Tests
+- **New (9 tests, `src/modern/__tests__/onboarding.test.tsx`):**
+  - Welcome actions.
+  - The full setup flow, with the requests made.
+  - Blank-name error.
+  - Theme and Layout choice (PATCH `interface_mode`).
+  - **A look switch mid-setup keeps the step and typed name in Classic**, and a closed setup starts fresh.
+  - Asks before leaving with unsaved edits.
+  - Start / retake tour.
+  - Tour next / finish with a missing target, dots, arrows and Escape.
+- The Classic onboarding suites (136 tests) still pass. `tsc` is clean.
+- **Local QA:**
+  - Local QA account (`qa-student1@example.test`) with a local-only session and a reset onboarding row, at 1440 dark and 390.
+  - Walked welcome → profile → look → **switched to Classic mid-setup** (it carried on at step 2) → back to Modern → tour.
+  - No overflow and every target ≥44 px. No real phone was available.
+- **Fixed during QA:** the Tailwind ring was overridden by the inline dim shadow, so the outline is now part of one shadow stack. The theme note now says it is kept on this device (it is stored in localStorage, not on the account).
+- **Still to come in 9c:** the Modern zero-team screen. It renders outside the interface-mode provider and needs 9b's signed-out look helpers, so it lands after #51.
+
 
 ## Phase 9a: Owner console and QR check-in
 
