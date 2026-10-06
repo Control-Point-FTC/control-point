@@ -68,6 +68,25 @@ describe('InterfaceModeProvider', () => {
     expect(saved).toHaveBeenCalledWith({ id: 2, interface_mode: 'modern' });
   });
 
+  it('ignores an older save that finishes after a newer choice', async () => {
+    const resolvers: ((v: any) => void)[] = [];
+    api.apiFetch.mockImplementation(() => new Promise((r) => { resolvers.push(r); }));
+    const saved = vi.fn();
+    function Two() {
+      const { mode, setMode } = useInterfaceMode();
+      return (<div><span data-testid="mode">{mode}</span>
+        <button onClick={() => void setMode('modern')}>m</button><button onClick={() => void setMode('legacy')}>l</button></div>);
+    }
+    render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={{}} onUserSaved={saved}><Two /></InterfaceModeProvider>);
+    fireEvent.click(screen.getByText('m'));
+    fireEvent.click(screen.getByText('l'));
+    await act(async () => { resolvers[0]({ ok: true, json: async () => ({ user: { id: 1, interface_mode: 'modern' } }) }); });
+    expect(screen.getByTestId('mode').textContent).toBe('legacy');
+    expect(saved).not.toHaveBeenCalled();
+    await act(async () => { resolvers[1]({ ok: true, json: async () => ({ user: { id: 1, interface_mode: 'legacy' } }) }); });
+    expect(saved).toHaveBeenCalledWith(expect.objectContaining({ interface_mode: 'legacy' }));
+  });
+
   it('uses the team default when the user has not chosen', () => {
     render(<InterfaceModeProvider user={{ id: 1 }} team={{ default_interface_mode: 'modern' }} onUserSaved={() => {}}><Probe /></InterfaceModeProvider>);
     expect(screen.getByTestId('mode').textContent).toBe('modern');

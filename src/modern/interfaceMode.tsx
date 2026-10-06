@@ -52,12 +52,15 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
   // switch answers for the OLD membership and must not be merged into the new one.
   const memberIdRef = useRef<number | null>(user?.id ?? null);
   memberIdRef.current = user?.id ?? null;
+  // Only the newest save may apply its result; older responses are ignored.
+  const saveSeq = useRef(0);
 
   const mode = pending ?? resolveInterfaceMode(serverMode, teamDefault);
 
   const setMode = useCallback(async (next: InterfaceMode) => {
     if (!user?.id) return false;
     const requestedFor = user.id;
+    const seq = ++saveSeq.current;
     setPending(next);
     try {
       const res = await apiFetch('/api/profile', {
@@ -66,6 +69,7 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
         body: JSON.stringify({ name: user.name || '', role: user.role || '', interface_mode: next }),
       });
       const data = await res.json().catch(() => ({}));
+      if (seq !== saveSeq.current) return true; // superseded by a newer choice
       if (!res.ok || !data.user) throw new Error(data.error || 'save failed');
       // Stale answer (the user switched workspaces meanwhile): the choice is
       // saved per account on the server, so only adopt the mode, not the row.
@@ -76,7 +80,7 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
       onUserSaved({ ...data.user, interface_mode: next });
       return true;
     } catch {
-      setPending(null); // roll back to the saved mode
+      if (seq === saveSeq.current) setPending(null); // roll back to the saved mode
       return false;
     }
   }, [user?.id, user?.name, user?.role, onUserSaved]);

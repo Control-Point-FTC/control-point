@@ -159,8 +159,11 @@ async function inheritInterfaceMode(row: any): Promise<void> {
     row.email, row.id,
   )) as any;
   if (!other?.interface_mode) return;
-  row.interface_mode = other.interface_mode;
-  await dbRun("UPDATE members SET interface_mode = ? WHERE id = ?", other.interface_mode, row.id);
+  // Only fill an empty value: a concurrent PATCH /api/profile may have saved a
+  // newer choice in between. Then return whatever is actually stored.
+  await dbRun("UPDATE members SET interface_mode = ? WHERE id = ? AND interface_mode IS NULL", other.interface_mode, row.id);
+  const now = (await dbGet("SELECT interface_mode FROM members WHERE id = ?", row.id)) as any;
+  row.interface_mode = now?.interface_mode ?? null;
 }
 
 function sanitizeMember<T>(row: T): T {
