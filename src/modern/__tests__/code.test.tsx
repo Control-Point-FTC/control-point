@@ -188,6 +188,41 @@ describe('Modern Code', () => {
     expect(within(dlg).getByLabelText('Code editor')).toHaveAttribute('readonly');
   });
 
+  it('a repo connected while you switch modes shows on the page you return to', async () => {
+    let linked = false;
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/code/repo' && init?.method === 'POST') return new Promise((r) => { finish = () => { linked = true; r({ ok: true, json: async () => ({}) }); }; });
+      if (url === '/api/code/repo') return json(linked ? { owner: 'robo', repo: 'ftc', repoUrl: 'https://github.com/robo/ftc', branch: 'main', fileCount: 0, syncedAt: '2026-09-01T10:00:00Z', fileTree: [] } : null);
+      return json(null);
+    });
+    const first = setup();
+    fireEvent.change(await screen.findByLabelText('GitHub repo URL'), { target: { value: 'https://github.com/robo/ftc' } });
+    fireEvent.click(screen.getByRole('button', { name: /Connect repo/ }));
+    first.unmount();
+    setup();
+    expect(await screen.findByLabelText('GitHub repo URL')).toBeInTheDocument();
+    await act(async () => { finish(); });
+    expect(await screen.findByText('robo/ftc')).toBeInTheDocument();
+  });
+
+  it('a delete finishing after you opened another file leaves that file and its edits alone', async () => {
+    let finish: () => void = () => {};
+    code.deleteCodeFile.mockImplementation((id: number) => new Promise((r) => { finish = () => { fileList = fileList.filter((f) => f.id !== id); r({ success: true }); }; }));
+    const first = setup();
+    await open('Drive.java');
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More file actions' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Delete file/ }));
+    await waitFor(() => expect(code.deleteCodeFile).toHaveBeenCalledWith(1));
+    first.unmount();
+    setup();
+    await open('Arm.java');
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'class Arm { mine }' } });
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Drive.java/ })).not.toBeInTheDocument());
+    expect(screen.getByLabelText('Code editor')).toHaveValue('class Arm { mine }');
+  });
+
   it("a late load for a file you left never replaces the open file's edits", async () => {
     const replies: Record<number, (v: any) => void> = {};
     code.getCodeFileContent.mockImplementation((id: number) => new Promise((r) => { replies[id] = r; }));

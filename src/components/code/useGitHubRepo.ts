@@ -6,7 +6,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog } from '../dialog';
-import { useDraft } from '../../modern/drafts';
+import { getDraft, setDraft, useDraft } from '../../modern/drafts';
+
+// The repo changed on the server (connect / sync / unlink): every mounted repo
+// panel reloads its status, including one that replaced the page that made
+// the change (a mode switch mid-request).
+const repoBus = new EventTarget();
+const repoChanged = () => repoBus.dispatchEvent(new Event('changed'));
 
 export interface RepoEntry { path: string; type: 'blob' | 'tree'; size?: number }
 export interface RepoStatus { owner: string; repo: string; repoUrl: string; branch: string; fileCount: number; syncedAt: string; fileTree: RepoEntry[] }
@@ -105,6 +111,11 @@ export function useGitHubRepo(teamId: number | null) {
   }, [teamId]);
 
   useEffect(() => { void loadStatus(); }, [loadStatus]);
+  useEffect(() => {
+    const on = () => { void loadStatus(); };
+    repoBus.addEventListener('changed', on);
+    return () => repoBus.removeEventListener('changed', on);
+  }, [loadStatus]);
 
   const tree = useMemo(() => (repo ? buildTree(repo.fileTree) : []), [repo]);
 
@@ -151,19 +162,20 @@ export function useGitHubRepo(teamId: number | null) {
     if (!url.trim() || connecting) return;
     setConnecting(true);
     setError(null);
+    const sent = url;
     try {
       const res = await apiFetch('/api/code/repo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoUrl: url.trim() }),
+        body: JSON.stringify({ repoUrl: sent.trim() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data.error || 'Could not connect repo');
         return;
       }
-      setUrl('');
-      await loadStatus();
+      if (getDraft('code:repo-url', '') === sent) setDraft('code:repo-url', '');
+      repoChanged();
     } catch (err) {
       setError(`Could not connect repo: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -182,7 +194,7 @@ export function useGitHubRepo(teamId: number | null) {
         setError(data.error || 'Sync failed');
         return;
       }
-      await loadStatus();
+      repoChanged();
     } catch (err) {
       setError(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -204,6 +216,7 @@ export function useGitHubRepo(teamId: number | null) {
       setRepo(null);
       setSelectedPath(null);
       setFileContent(null);
+      repoChanged();
     } catch (err) {
       setError(`Could not unlink repo: ${err instanceof Error ? err.message : String(err)}`);
     }

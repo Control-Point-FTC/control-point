@@ -306,12 +306,16 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     if (getDraft('code:creating', false)) return;
     setCreating(true);
     const release = inEpoch(() => setCreating(false));
+    // Open the new file only if the editor still shows what it did when
+    // Create was pressed; otherwise it just joins the list.
+    const openAtStart = getDraft<CodeFile | null>('code:file', null)?.id ?? null;
     const opened = inEpoch((file: CodeFile) => {
+      setNewFileName('');
+      setShowNewFileModal(false);
+      if ((getDraft<CodeFile | null>('code:file', null)?.id ?? null) !== openAtStart) return;
       setSelectedFile(file);
       setCurrentBranch('drafts');
       setBuffer({ fileId: file.id, branch: 'drafts', text: '', unsaved: false });
-      setNewFileName('');
-      setShowNewFileModal(false);
     });
     try {
       setError(null);
@@ -336,7 +340,12 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     if (getDraft('code:committing', false)) return;
     setCommitting(true);
     const release = inEpoch(() => setCommitting(false));
-    const done = inEpoch(() => { setCommitMessage(''); setShowCommitModal(false); setCurrentBranch('main'); });
+    // Show main afterwards only if the committed file is still the open one.
+    const done = inEpoch(() => {
+      setCommitMessage('');
+      setShowCommitModal(false);
+      if (getDraft<CodeFile | null>('code:file', null)?.id === file?.id) setCurrentBranch('main');
+    });
     try {
       setError(null);
       // This file's unsaved edits (captured now) are saved first, after any
@@ -380,13 +389,19 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     if (!selectedFile) return;
     if (!(await confirmDialog({ title: 'Delete file', message: 'Are you sure you want to delete this file?', confirmLabel: 'Delete', danger: true }))) return;
     const id = selectedFile.id;
+    // Closing touches the editor only if it still shows the deleted file
+    // (another file may have been opened meanwhile, maybe in the other mode).
+    const close = inEpoch(() => {
+      if (getDraft<CodeFile | null>('code:file', null)?.id !== id) return;
+      setSelectedFile(null);
+      if (getDraft<Buffer | null>(BUFFER_KEY, null)?.fileId === id) setBuffer(null);
+    });
     try {
       setBusy(true);
       await deleteCodeFile(id);
       setFiles((fs) => fs.filter((f) => f.id !== id));
       filesChanged();
-      setSelectedFile(null);
-      setBuffer(null);
+      close();
     } catch (err) {
       setError(`Failed to delete: ${errText(err)}`);
     } finally {
