@@ -5800,7 +5800,7 @@ function CalendarView({ events, setEvents, teams, onRefresh, refresh, currentUse
                         </Button>
                       </div>
                       {aiNote && <p className="text-xs text-text-base/80">{aiNote}</p>}
-                      {aiProposals.length > 1 && (
+                      {aiProposals.length > 0 && (
                         <div className="space-y-1.5 max-h-44 overflow-y-auto">
                           {aiProposals.map((e: any, i: number) => (
                             <div key={i} className="flex items-center justify-between gap-2 rounded-lg bg-text-base/[0.04] border border-text-base/10 px-3 py-1.5">

@@ -131,7 +131,7 @@ export function CalendarPage(props: any) {
           {/* On phones the Agenda already is the list. */}
           {!(narrow && view === 'agenda') && (
             <Section title="Next up" delay={0.05}>
-              <EventList events={ctl.upcoming.filter(show)} onOpen={(e) => setViewId(e.id)} isFinished={ctl.isEventFinished} showDate empty={ctl.canManageCalendar ? 'No upcoming events. Add one with New event.' : 'No upcoming events.'} />
+              <EventList events={ctl.upcomingWhere(show)} onOpen={(e) => setViewId(e.id)} isFinished={ctl.isEventFinished} showDate empty={ctl.canManageCalendar ? 'No upcoming events. Add one with New event.' : 'No upcoming events.'} />
             </Section>
           )}
         </aside>

@@ -7,7 +7,7 @@ import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
 import { streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from '../../services/aiService';
-import { useDraft } from '../../modern/drafts';
+import { useDraft, getDraft } from '../../modern/drafts';
 
 export interface EventForm {
   title: string; description: string; date: string; start_time: string; end_time: string;
@@ -45,6 +45,12 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   const [showModal, setShowModal] = useDraft<boolean>('calendar:editor-open', false);
   const [editingId, setEditingId] = useDraft<number | null>('calendar:editing-id', null);
   const [form, setForm] = useDraft<EventForm>('calendar:form', EMPTY_EVENT);
+  // Editor session counter: bumped whenever the editor opens or closes, so a
+  // Bruno reply that lands after its session ended (even in the other mode)
+  // never writes into a newer draft.
+  const [, setGen] = useDraft<number>('calendar:editor-gen', 0);
+  const bumpGen = () => setGen((g) => g + 1);
+  const currentGen = () => getDraft<number>('calendar:editor-gen', 0);
   // Bruno screen context: the event open in the editor.
   useEffect(() => {
     setScreenEntity('eventId', showModal ? editingId : null);
@@ -55,16 +61,19 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   // proposals. One proposal fills the form; several get a bulk-create preview.
   const [aiOpen, setAiOpen] = useDraft<boolean>('calendar:ai-open', false);
   const [aiText, setAiText] = useDraft<string>('calendar:ai-text', '');
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiNote, setAiNote] = useState<string | null>(null);
+  // Busy flags are drafted too, so a mode switch mid-request can't start a
+  // second parse or a duplicate bulk create.
+  const [aiBusy, setAiBusy] = useDraft<boolean>('calendar:ai-busy', false);
+  const [aiNote, setAiNote] = useDraft<string | null>('calendar:ai-note', null);
   const [aiProposals, setAiProposals] = useDraft<any[]>('calendar:ai-proposals', EMPTY_LIST);
-  const [aiCreating, setAiCreating] = useState(false);
+  const [aiCreating, setAiCreating] = useDraft<boolean>('calendar:ai-creating', false);
 
   const resetAi = () => { setAiText(''); setAiNote(null); setAiProposals(EMPTY_LIST); };
 
   const handleAiParse = async () => {
     const text = aiText.trim();
-    if (!text || aiBusy) return;
+    if (!text || getDraft('calendar:ai-busy', false)) return;
+    const gen = currentGen();
     setAiBusy(true);
     setAiNote(null);
     setAiProposals(EMPTY_LIST);
@@ -73,6 +82,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
       await streamBuildHelper([
         { role: 'user', text: `You are helping fill in a calendar event form. The user pasted the text below into the "AI quick-add" box and clicked Parse — that click is their confirmation that they want the events proposed. Extract EVERY calendar event mentioned and propose them with the \`\`\`event block exactly as your team calendar skill specifies. Resolve relative dates (tomorrow, this Friday, etc.) against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
       ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
+      if (currentGen() !== gen) return; // that editor session has ended
       const proposals = extractActionProposals(agg);
       const items = proposals.find((p) => p.kind === 'event')?.items || [];
       const note = agg.replace(/```event[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
@@ -94,6 +104,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
         setAiNote(note || 'Bruno could not find any events in that text — try adding dates and times.');
       }
     } catch (e: any) {
+      if (currentGen() !== gen) return;
       setAiNote(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
     } finally {
       setAiBusy(false);
@@ -101,17 +112,19 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   };
 
   const handleAiCreateAll = async () => {
-    if (!aiProposals.length || aiCreating) return;
+    if (!aiProposals.length || getDraft('calendar:ai-creating', false)) return;
+    const gen = currentGen();
+    const items = aiProposals;
     setAiCreating(true);
     try {
-      const applied = await applyActionProposals([{ kind: 'event', items: aiProposals } as ActionProposal]);
+      const applied = await applyActionProposals([{ kind: 'event', items } as ActionProposal]);
       notifyBrunoDataChanged(['calendar']);
-      notify(`Created ${applied.event || aiProposals.length} events.`, 'success');
-      resetAi();
-      setAiOpen(false);
-      setShowModal(false);
+      notify(`Created ${applied.event || items.length} events.`, 'success');
       refresh.events();
+      // Only close the editor that started this batch.
+      if (currentGen() === gen) closeEditor();
     } catch (e: any) {
+      if (currentGen() !== gen) return;
       setAiNote(e?.message || "Couldn't create those events — please try again.");
     } finally {
       setAiCreating(false);
@@ -128,6 +141,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   }, [events]);
 
   const openNew = (dateKey: string) => {
+    bumpGen();
     setEditingId(null);
     setForm({ ...EMPTY_EVENT, date: dateKey });
     resetAi();
@@ -136,6 +150,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   };
 
   const openEdit = (e: any) => {
+    bumpGen();
     setEditingId(e.id);
     resetAi();
     setAiOpen(false);
@@ -148,12 +163,14 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     setShowModal(true);
   };
 
-  const closeEditor = () => {
+  function closeEditor() {
+    bumpGen();
     setShowModal(false);
     setEditingId(null);
     setForm(EMPTY_EVENT);
+    setAiOpen(false);
     resetAi();
-  };
+  }
 
   const handleSave = async () => {
     if (!form.title.trim() || !form.date) return;
@@ -223,13 +240,15 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     return false;
   };
 
-  const upcoming = [...events]
-    .filter((e: any) => e.date >= todayKey && !isEventFinished(e))
+  /** Next unfinished events (optionally filtered first), soonest first. */
+  const upcomingWhere = (keep: (e: any) => boolean = () => true, limit = 8) => [...events]
+    .filter((e: any) => e.date >= todayKey && !isEventFinished(e) && keep(e))
     .sort((a: any, b: any) => (a.date + (a.start_time || '')).localeCompare(b.date + (b.start_time || '')))
-    .slice(0, 8);
+    .slice(0, limit);
+  const upcoming = upcomingWhere();
 
   return {
-    canManageCalendar, cursor, setCursor, todayKey, byDate, upcoming, isEventFinished,
+    canManageCalendar, cursor, setCursor, todayKey, byDate, upcoming, upcomingWhere, isEventFinished,
     showModal, setShowModal, editingId, form, setForm, openNew, openEdit, closeEditor, handleSave, handleDelete, deleteEvent,
     aiOpen, setAiOpen, aiText, setAiText, aiBusy, aiNote, aiProposals, setAiProposals, aiCreating, resetAi, handleAiParse, handleAiCreateAll,
   };

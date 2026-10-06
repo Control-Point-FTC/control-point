@@ -138,7 +138,7 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                   </Button>
                 </div>
                 {ctl.aiNote && <p className="mt-2 text-xs text-muted-foreground" role="status">{ctl.aiNote}</p>}
-                {ctl.aiProposals.length > 1 && (
+                {ctl.aiProposals.length > 0 && (
                   <div className="mt-3 space-y-1.5">
                     <ul className="max-h-48 space-y-1.5 overflow-y-auto">
                       {ctl.aiProposals.map((p: any, i: number) => (

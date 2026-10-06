@@ -150,4 +150,34 @@ describe('Modern Calendar', () => {
     await waitFor(() => expect(screen.queryAllByRole('button', { name: /Build night/ })).toHaveLength(0));
     expect(screen.getAllByRole('button', { name: /Qualifier/ }).length).toBeGreaterThan(0);
   });
+
+  it('a Bruno reply that lands after its editor closed never touches a newer draft', async () => {
+    let finish: () => void = () => {};
+    ai.streamBuildHelper.mockImplementation((_m: any, onChunk: (c: string) => void) => new Promise<void>((res) => {
+      finish = () => { onChunk('```event\n[{"title":"Stale","date":"' + later + '"}]\n```'); res(); };
+    }));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText(/Quick add with Bruno/), { target: { value: 'something' } });
+    fireEvent.click(screen.getByRole('button', { name: /Parse/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Fresh' } });
+    finish();
+    await waitFor(() => expect(screen.getByRole('button', { name: /Parse/ })).toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 0));
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Fresh');
+  });
+
+  it('keeps the last remaining Bruno proposal creatable', async () => {
+    ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => {
+      onChunk('```event\n[{"title":"A","date":"' + later + '"},{"title":"B","date":"' + later + '"}]\n```');
+    });
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText(/Quick add with Bruno/), { target: { value: 'two' } });
+    fireEvent.click(screen.getByRole('button', { name: /Parse/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove A' }));
+    expect(screen.getByRole('button', { name: /Create all 1 events/ })).toBeInTheDocument();
+  });
 });
