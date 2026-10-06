@@ -171,11 +171,19 @@ import {
   type OnboardingState,
 } from './components/onboarding';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
+import { PredictView } from './components/predict/PredictView';
 import { clearFtcCache } from './components/ftcCache';
 import { clearScoutCache } from './services/ftcScoutApi';
+import { clearPredictCache } from './services/predictApi';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
-import { WhatsNewAutoPopup } from './components/WhatsNewModal';
+import { WhatsNewAutoPopup, WhatsNewModal } from './components/WhatsNewModal';
+import { InterfaceModeProvider } from './modern/interfaceMode';
+import { ShellSwitch, TryModernBanner } from './modern/ShellSwitch';
+import { ModernShell } from './modern/ModernShell';
+import type { CommandAction } from './modern/CommandMenu';
+import type { NotificationActions } from './modern/InboxSheet';
+import { useDraft, clearDrafts } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
@@ -196,7 +204,6 @@ import {
 } from './components/voice';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import SettingsModal from './components/SettingsModal';
-import CrosshairIcon from './components/CrosshairIcon';
 import Landing from './Landing';
 import LegalPage from './Legal';
 import { cn, Card, Button, Input, Switch } from './components/ui';
@@ -876,6 +883,7 @@ const navItems = [
   { id: 'dashboard', path: 'dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, pinned: true },
   { id: 'chat', path: 'chat', labelKey: 'nav.messaging', icon: MessageSquare, pinned: true },
   { id: 'stats', path: 'stats', labelKey: 'nav.teamStats', icon: Trophy, group: 'Compete' },
+  { id: 'predict', path: 'predict', labelKey: 'nav.predict', icon: Sparkles, group: 'Compete', badge: 'beta' },
   {
     id: 'teams', path: 'teams', labelKey: 'nav.teamsMembers', icon: Users, group: 'Team',
     children: [
@@ -1115,6 +1123,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   // True once the initial session check has finished. Until then we show a
   // minimal splash — never the landing page — so a refresh never flashes the
@@ -1952,6 +1961,8 @@ export default function App() {
     clearFtcCache();
     clearScoutCache();
     clearScreenContext();
+    clearPredictCache();
+    clearDrafts(); // unsent input never follows you into another workspace
     if (typeof localStorage === 'undefined') return;
     [
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',
@@ -2186,6 +2197,8 @@ export default function App() {
     setSessionId(null);
     setTeams([]);
     setTeamsLoaded(false);
+    // Team-specific client caches (FTC data, forecasts, Bruno screen context).
+    clearTeamCaches();
     if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
     setSocket(null);
   };
@@ -2277,13 +2290,23 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  const studentTabIds = ['dashboard', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);
     if (isAdmin) return !t.scope || hasScope(t.scope);
     return studentTabIds.includes(t.id);
   };
+  // "NEW" badge on Predict until the user first opens it (per browser).
+  const [predictSeen, setPredictSeen] = useState(() => {
+    try { return localStorage.getItem('cp-predict-seen') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    if (activeTab !== 'predict' || predictSeen) return;
+    setPredictSeen(true);
+    try { localStorage.setItem('cp-predict-seen', '1'); } catch { /* storage unavailable */ }
+  }, [activeTab, predictSeen]);
+
   const visibleTabs = navItems
     .map((t) => {
       const kids = (t as any).children?.filter(tabVisible);
@@ -2603,6 +2626,7 @@ export default function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={dashboardEl} />
         <Route path="/stats" element={<TeamStatsView />} />
+        <Route path="/predict" element={<PredictView />} />
         <Route path="/teams" element={<TeamsView {...viewProps} />} />
         <Route path="/roles" element={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} />
         <Route path="/attendance" element={<AttendanceView {...viewProps} />} />
@@ -2857,6 +2881,68 @@ export default function App() {
     );
   }
 
+  // Routed page content (or the sync spinner / error). Shared by both shells.
+  const mainContent = loading ? (
+    loadError ? (
+      <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
+        <p className="text-text-base font-bold">Couldn't sync your data</p>
+        <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
+        <button
+          onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
+          className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
+        >
+          Try again
+        </button>
+      </div>
+    ) : (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+        <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
+      </div>
+    )
+  ) : renderContent();
+
+  // Inbox actions for the Modern shell (same endpoints as the Legacy bell).
+  const notificationActions: NotificationActions = {
+    markRead: async (ids) => {
+      if (!ids.length) return;
+      const res = await apiFetch('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+      if (res.ok) setNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: 1 } : n)));
+    },
+    markUnread: async (ids) => {
+      const res = await apiFetch('/api/notifications/unread', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+      if (res.ok) setNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: 0 } : n)));
+    },
+    remove: async (id) => {
+      const res = await apiFetch(`/api/notifications/${id}`, { method: 'DELETE' });
+      if (res.ok) setNotifications((prev) => prev.filter((x) => x.id !== id));
+      else notify('Could not delete notification', 'error');
+    },
+    clearAll: async () => {
+      if (!(await confirmDialog({ title: 'Clear all notifications?', message: 'This will delete all your notifications.', confirmLabel: 'Clear all' }))) return;
+      const res = await apiFetch('/api/notifications', { method: 'DELETE' });
+      if (res.ok) { setNotifications([]); notify('Notifications cleared', 'success'); }
+      else notify('Could not clear notifications', 'error');
+    },
+    open: (n) => {
+      const meta = notifMeta(n);
+      if (n.type === 'mention' && meta.channel_id != null) {
+        navigate('/chat');
+        setActiveChannelId(Number(meta.channel_id));
+        return true;
+      }
+      return false;
+    },
+  };
+
+  // Command-menu actions (Modern). Only actions the user can already take.
+  const commandActions: CommandAction[] = [
+    ...(visibleTabs.some((t) => t.id === 'attendance') ? [{ id: 'checkin', label: 'Check in', group: 'Actions' as const, icon: CalendarCheck, keywords: ['attendance', 'qr', 'here'], run: () => navigate('/attendance') }] : []),
+    { id: 'whats-new', label: "What's new", group: 'Actions', icon: Sparkles, run: () => setWhatsNewOpen(true) },
+    { id: 'feedback', label: 'Send feedback', group: 'Actions', icon: MessageSquare, run: () => setShowFeedback(true) },
+    { id: 'setup', label: 'Setup guide', group: 'Actions', icon: LayoutDashboard, run: () => openSetupGuide() },
+  ];
+
   return (
     <VoiceProvider
       memberId={currentUser?.id ?? null}
@@ -2866,6 +2952,11 @@ export default function App() {
     >
       <VoiceSocketBridge voiceRef={voiceApiRef} />
       <ContextMenuProvider>
+      <InterfaceModeProvider
+        user={currentUser}
+        team={activeTeam}
+        onUserSaved={(u: any) => setCurrentUser((prev: any) => (prev ? { ...prev, ...u } : u))}
+      >
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
       {completingTask && (
@@ -2922,6 +3013,8 @@ export default function App() {
         </div>
       )}
       {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
+      <ShellSwitch
+        legacy={<>
       {/* Sidebar Overlay for Mobile */}
       <AnimatePresence>
         {isSidebarOpen && isMobile && (
@@ -3046,6 +3139,14 @@ export default function App() {
                 >
                   <item.icon className={cn("w-[18px] h-[18px] shrink-0", isActive ? "text-accent-ink" : "text-accent/80 group-hover:text-accent")} strokeWidth={2.25} />
                   {isSidebarOpen && <span className="truncate">{t(item.labelKey)}</span>}
+                  {(item as any).badge === 'beta' && (isSidebarOpen ? (
+                    <span className="ml-auto flex items-center gap-1 shrink-0">
+                      {!predictSeen && <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black tracking-wider leading-none">NEW</span>}
+                      <span className="px-1.5 py-0.5 rounded-full bg-sky-500 text-white text-[9px] font-black tracking-wider leading-none">BETA</span>
+                    </span>
+                  ) : !predictSeen && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-secondary" aria-label="New" />
+                  ))}
                   {item.id === 'chat' && unreadMentions > 0 && (
                     <span
                       className={cn(
@@ -3112,7 +3213,7 @@ export default function App() {
               {isSidebarOpen && (
                 <>
                   <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-text-base transition-colors flex-shrink-0" title="Settings">
-                    <CrosshairIcon className="w-4 h-4" />
+                    <Settings className="w-4 h-4" />
                   </button>
                   <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
                     <LogOut className="w-4 h-4" />
@@ -3431,7 +3532,7 @@ export default function App() {
                           onClick={() => { setShowUserMenu(false); setSettingsOpen(true); }}
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
-                          <CrosshairIcon className="w-[18px] h-[18px] text-accent" />
+                          <Settings className="w-[18px] h-[18px] text-accent" />
                           {t('settings.title')}
                         </button>
                         {(currentUser as any)?.account_type === 'admin' && (
@@ -3465,6 +3566,7 @@ export default function App() {
           "flex flex-col flex-1 min-h-0 min-w-0",
           isImmersiveRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto overflow-x-clip custom-scrollbar"
         )}>
+          {!isImmersiveRoute && <TryModernBanner />}
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -3478,25 +3580,7 @@ export default function App() {
               // padding and the last content hides behind the mobile nav.
               className="flex flex-col grow shrink-0 basis-auto min-w-0"
             >
-              {loading ? (
-                loadError ? (
-                  <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
-                    <p className="text-text-base font-bold">Couldn't sync your data</p>
-                    <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
-                    <button
-                      onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
-                      className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
-                    >
-                      Try again
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-64 gap-4">
-                    <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-                    <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
-                  </div>
-                )
-              ) : renderContent()}
+              {mainContent}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -3548,6 +3632,39 @@ export default function App() {
         </nav>
       )}
 
+        </>}
+        modern={() => (
+          <ModernShell
+            visibleTabs={visibleTabs as any}
+            activeTab={activeTab}
+            pageTitle={pageTitle}
+            onNavigate={(path) => navigate(path)}
+            content={mainContent}
+            immersive={isImmersiveRoute}
+            isMobile={isMobile}
+            user={currentUser}
+            teams={teams}
+            activeTeam={activeTeam}
+            activeTeamName={activeTeamName || ''}
+            isAdmin={isAdmin}
+            onSwitchTeam={(id) => void handleSwitchTeam(id)}
+            unreadMentions={unreadMentions}
+            notifications={notifications}
+            notificationActions={notificationActions}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onLogout={() => void handleLogout()}
+            onOpenBruno={handleBrunoButton}
+            botName={botName}
+            onOpenFeedback={() => setShowFeedback(true)}
+            onSetupGuide={openSetupGuide}
+            onOpenWhatsNew={() => setWhatsNewOpen(true)}
+            onStatusPick={(st) => void handleStatusPick(st)}
+            predictSeen={predictSeen}
+            actions={commandActions}
+          />
+        )}
+      />
+
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       {/* Voice calling surfaces — all driven by VoiceProvider context state.
           CallBar is fixed-bottom (above the mobile nav) and survives route
@@ -3558,6 +3675,7 @@ export default function App() {
       <CookieConsent />
       <InstallPrompt />
       <WhatsNewAutoPopup />
+      <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
       <BrunoPanel
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
@@ -3613,6 +3731,7 @@ export default function App() {
         />
       )}
     </div>
+      </InterfaceModeProvider>
     </ContextMenuProvider>
     </VoiceProvider>
   );
@@ -4954,7 +5073,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any
   );
 }
 
-function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
+function AttendanceView({ members, attendance, events, onRefresh, refresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'grid' | 'history' | 'summary'>('grid');
   const [sessions, setSessions] = useState<string[]>([]);
   const [summary, setSummary] = useState<any[]>([]);
@@ -5309,10 +5428,10 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
-              <tr className="bg-text-base/5 border-b border-text-base/10">
-                <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase sticky left-0 bg-[#111111] z-10 min-w-[150px]">Member</th>
+              <tr className="bg-text-base/5 border-b border-text-base/20">
+                <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase sticky left-0 bg-secondary z-10 min-w-[150px] border-r border-text-base/15">Member</th>
                 {visibleDates.map(date => (
-                  <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative">
+                  <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative border-r border-text-base/10 last:border-r-0">
                     <div className="text-center">
                       {format(parseLocalDate(date), 'MMM dd')}
                       <div className="text-[8px] text-text-muted">{format(parseLocalDate(date), 'EEE')}</div>
@@ -5330,16 +5449,16 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-text-base/5">
+            <tbody className="divide-y divide-text-base/15">
               {members.map((m: any) => (
                 <tr key={m.id} className="hover:bg-text-base/5 transition-colors">
-                  <td className="px-4 py-3 text-sm text-text-base font-medium sticky left-0 bg-[#111111]/90 backdrop-blur-md z-10 border-r border-text-base/5">
+                  <td className="px-4 py-3 text-sm text-text-base font-medium sticky left-0 bg-secondary z-10 border-r border-text-base/15">
                     {m.name}
                   </td>
                   {visibleDates.map(date => {
                     const status = getStatus(m.id, date);
                     return (
-                      <td key={date} className="px-1 py-1 text-center">
+                      <td key={date} className="px-1 py-1 text-center border-r border-text-base/10 last:border-r-0">
                         <button
                           onClick={() => toggleStatus(m.id, date)}
                           disabled={!isAdmin}
@@ -5375,7 +5494,7 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
       {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
       <Card title="Attendance Trend" subtitle={hiddenDates.length > 0 ? "Present check-ins · last 14 meeting days" : "Present check-ins · last 14 days"} icon={TrendingUp} className="p-5 gap-3">
         <Suspense fallback={<ChartLoadingFallback />}>
-          <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="h-52" />
+          <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} events={events} className="h-52" />
         </Suspense>
       </Card>
       <div className="flex gap-1 sm:gap-2 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
@@ -8807,12 +8926,13 @@ function LinkPreview({ url }: { url: string }) {
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
 function ChatView({ messages, setMessages, msgCache, msgExhausted, members, currentUser, socket, channels, setChannels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
-  const [content, setContent] = useState('');
+  // Composer draft lives in the shared draft store so switching Legacy/Modern keeps it.
+  const [content, setContent] = useDraft<string>('chat:content', '');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useDraft<File | null>('chat:file', null);
+  const [pendingPreview, setPendingPreview] = useDraft<string | null>('chat:preview', null);
   const [dragging, setDragging] = useState(false);
   const [showChannelsMobile, setShowChannelsMobile] = useState(false);
   const [showMembersMobile, setShowMembersMobile] = useState(false);
@@ -9937,7 +10057,7 @@ function ChatView({ messages, setMessages, msgCache, msgExhausted, members, curr
           <button onClick={() => setShowChannelsMobile(true)} className="md:hidden p-2 -ml-1 text-text-muted hover:text-text-base" aria-label="Open channels">
             <Menu className="w-5 h-5" />
           </button>
-          <img src="/logo.png" alt="" className="w-5 h-5 rounded-md flex-shrink-0" />
+          <img src="/logo.png?v=3" alt="" className="w-5 h-5 rounded-md flex-shrink-0" />
           <h3 className="text-[15px] font-bold text-text-base truncate">{activeChannel?.name || 'general'}</h3>
           {activeChannel?.topic && (
             <p className="hidden sm:block text-xs text-text-muted truncate border-l border-text-base/10 pl-2 ml-1">{activeChannel.topic}</p>

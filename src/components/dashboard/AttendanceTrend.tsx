@@ -1,7 +1,7 @@
 import { useMemo, memo } from 'react';
 import { format } from 'date-fns';
 import { TrendingUp } from 'lucide-react';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine } from 'recharts';
 import { useTranslation } from 'react-i18next';
 import '../../i18n';
 import { useTheme } from '../../hooks/useTheme';
@@ -12,10 +12,22 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
+/** The first calendar event date (yyyy-MM-dd) strictly after `today`, or null. */
+export function nextMeetDate(events: { date?: string | null }[] | undefined, today: string): string | null {
+  let best: string | null = null;
+  for (const e of events ?? []) {
+    const d = e?.date;
+    if (d && d > today && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
 interface AttendanceTrendProps {
   attendance: any[];
   onNavigate: (path: string) => void;
   hiddenDates?: string[];
+  /** Calendar events; the first one after today is marked as "Next meet". */
+  events?: { date: string }[];
 }
 
 /** The 14-day present-check-ins line chart, reusable outside the dashboard.
@@ -24,7 +36,7 @@ interface AttendanceTrendProps {
  *  When `hiddenDates` is provided, dates hidden via Manage Dates are skipped
  *  and the chart shows the last 14 *meeting* days instead of the last 14
  *  calendar days, so non-meeting days never drag the line to zero. */
-export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDates }: { attendance: any[]; className?: string; hiddenDates?: string[] }) {
+export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDates, events }: { attendance: any[]; className?: string; hiddenDates?: string[]; events?: { date: string }[] }) {
   const { theme } = useTheme();
 
   const chartData = useMemo(() => {
@@ -52,16 +64,26 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
     } else {
       dates = last14CalendarDays();
     }
-    return dates.map((date) => ({
+    const points: { date: string; count: number | null; next?: boolean }[] = dates.map((date) => ({
       date: format(new Date(date + 'T12:00:00'), 'MMM dd'),
       count: attendance?.filter((r: any) => r.date === date && (r.status === 'P' || r.status === 'L')).length || 0,
     }));
-  }, [attendance, hiddenDates, theme]);
+    // One empty slot for the next calendar event after today, so the line
+    // visibly ends at today with the next meeting marked. No upcoming event,
+    // no marker.
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const next = nextMeetDate(events, today);
+    if (next) points.push({ date: format(new Date(next + 'T12:00:00'), 'MMM dd'), count: null, next: true });
+    return points;
+  }, [attendance, hiddenDates, events, theme]);
 
-  const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count)), [chartData]);
+  const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count ?? 0)), [chartData]);
+  const lastIdx = useMemo(() => chartData.reduce((acc, d, i) => (d.count != null ? i : acc), -1), [chartData]);
+  const nextDate = chartData.find((d) => d.next)?.date;
   const accentColor = cssVar('--color-accent', '#FFC700');
   const secondaryColor = cssVar('--color-secondary', '#1A1A1A');
-  const gridColor = theme === 'light' ? '#09090b14' : '#ffffff10';
+  const gridColor = theme === 'light' ? '#09090b2e' : '#ffffff2e';
+  const endDotFill = theme === 'light' ? '#09090b' : '#ffffff';
   const axisColor = theme === 'light' ? '#71717a' : '#94a3b8';
   const tooltipBorder = theme === 'light' ? '#09090b20' : '#ffffff20';
 
@@ -69,15 +91,26 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
     <div className={`${className} w-full min-h-44`}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-          <XAxis dataKey="date" stroke={axisColor} fontSize={10} axisLine={false} tickLine={false} interval={2} />
+          <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+          <XAxis dataKey="date" stroke={axisColor} fontSize={10} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={16} />
           <YAxis stroke={axisColor} fontSize={10} axisLine={false} tickLine={false} allowDecimals={false} width={28}
             domain={[0, Math.max(2, dataMax + 1)]} />
           <Tooltip
             contentStyle={{ backgroundColor: secondaryColor, border: `1px solid ${tooltipBorder}`, borderRadius: '12px' }}
             itemStyle={{ color: accentColor }}
           />
-          <Line type="monotone" dataKey="count" stroke={accentColor} strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />
+          {nextDate && (
+            <ReferenceLine x={nextDate} stroke={axisColor} strokeDasharray="4 4" strokeOpacity={0.6}
+              label={{ value: 'Next meet', position: 'insideTopRight', fill: axisColor, fontSize: 10 }} />
+          )}
+          <Line
+            type="monotone" dataKey="count" stroke={accentColor} strokeWidth={2.5} activeDot={{ r: 5 }} connectNulls={false}
+            isAnimationActive={false}
+            // Today's value ends the line with a dot (white on dark, black on light).
+            dot={(p: any) => p.index === lastIdx
+              ? <circle key={`end-${p.index}`} cx={p.cx} cy={p.cy} r={5} fill={endDotFill} stroke={accentColor} strokeWidth={2} />
+              : <g key={`d-${p.index}`} />}
+          />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -89,7 +122,7 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
  * clickable into the Attendance view. Re-renders on theme toggle so the
  * line follows the current accent color.
  */
-function AttendanceTrend({ attendance, onNavigate, hiddenDates }: AttendanceTrendProps) {
+function AttendanceTrend({ attendance, onNavigate, hiddenDates, events }: AttendanceTrendProps) {
   const { t } = useTranslation();
   const subtitle = hiddenDates && hiddenDates.length > 0
     ? t('dashboard.presentCheckinsMeetingDays')
@@ -102,7 +135,7 @@ function AttendanceTrend({ attendance, onNavigate, hiddenDates }: AttendanceTren
       className="md:col-span-2 xl:col-span-7 p-5 gap-3 cursor-pointer hover:border-accent/30 transition-colors"
       onClick={() => onNavigate('/attendance')}
     >
-      <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="flex-1" />
+      <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} events={events} className="flex-1" />
     </Card>
   );
 }

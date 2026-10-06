@@ -110,9 +110,12 @@ import {
   getFirstEventsMatches,
   getFirstEventsSchedule,
   getFirstEventsAlliances,
+  getFirstEventsAdvancement,
   FirstEventsError,
   matchKey,
 } from "./server/ftcEvents.js";
+import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
+import { PredictStore } from "./server/predict/store.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
 import {
   SCOUT_SEASONS,
@@ -144,6 +147,26 @@ process.on("uncaughtException", (err) => {
 // SECURITY: never expose password hashes to clients. Any member row that
 // leaves the server goes through sanitizeMember first; clients get a
 // `hasPassword` boolean instead of the hash.
+/** Redesign interface modes (members.interface_mode / teams.default_interface_mode). */
+const INTERFACE_MODES = ["legacy", "modern"];
+
+/** A membership row without an interface mode takes the account's choice from
+ *  its other rows (newest first) and keeps it. Called wherever a member row is
+ *  handed to the client: /api/auth/me, workspace switch, join and create. */
+async function inheritInterfaceMode(row: any): Promise<void> {
+  if (!row || row.interface_mode != null || !row.email) return;
+  const other = (await dbGet(
+    "SELECT interface_mode FROM members WHERE email = ? AND id != ? AND interface_mode IS NOT NULL ORDER BY id DESC LIMIT 1",
+    row.email, row.id,
+  )) as any;
+  if (!other?.interface_mode) return;
+  // Only fill an empty value: a concurrent PATCH /api/profile may have saved a
+  // newer choice in between. Then return whatever is actually stored.
+  await dbRun("UPDATE members SET interface_mode = ? WHERE id = ? AND interface_mode IS NULL", other.interface_mode, row.id);
+  const now = (await dbGet("SELECT interface_mode FROM members WHERE id = ?", row.id)) as any;
+  row.interface_mode = now?.interface_mode ?? null;
+}
+
 function sanitizeMember<T>(row: T): T {
   if (!row || typeof row !== "object") return row;
   const r: any = { ...(row as any) };
@@ -717,6 +740,11 @@ if (!memberColumns.some((c: any) => c.name === 'ai_disabled')) {
 // just receiving finished code. Surfaced as a toggle in Settings → Bruno AI.
 if (!memberColumns.some((c: any) => c.name === 'bruno_teach_mode')) {
   (await dbExec("ALTER TABLE members ADD COLUMN bruno_teach_mode INTEGER DEFAULT 0"));
+}
+// Interface mode (2026 redesign): 'legacy' | 'modern' | NULL (= follow the team
+// default). Saved per account: PATCH /api/profile writes every row with the email.
+if (!memberColumns.some((c: any) => c.name === 'interface_mode')) {
+  (await dbExec("ALTER TABLE members ADD COLUMN interface_mode TEXT"));
 }
 // Bruno output level: low | medium | high | max — caps reply length per member.
 if (!memberColumns.some((c: any) => c.name === 'bruno_output_level')) {
@@ -1405,6 +1433,10 @@ async function uniqueAccessCode(): Promise<string> {
   return code;
 }
 
+// Workspace default for the interface mode (admins set it; users can override).
+if (!(await hasColumn('teams', 'default_interface_mode'))) {
+  (await dbExec("ALTER TABLE teams ADD COLUMN default_interface_mode TEXT"));
+}
 if (!(await hasColumn('teams', 'access_code'))) {
   (await dbExec("ALTER TABLE teams ADD COLUMN access_code TEXT"));
 }
@@ -2343,6 +2375,7 @@ async function startServer() {
       return res.json({ needsVerification: true, email });
     }
     const sessionId = await createSession(picked.id);
+    await inheritInterfaceMode(picked);
     res.json({ user: sanitizeMember(picked), sessionId });
   });
 
@@ -2363,6 +2396,7 @@ async function startServer() {
       return res.json({ needsVerification: true, email });
     }
     const sessionId = await createSession(existing.id);
+    await inheritInterfaceMode(user);
     res.json({ user: sanitizeMember(user), sessionId });
   });
 
@@ -2434,6 +2468,7 @@ async function startServer() {
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
@@ -2468,6 +2503,7 @@ async function startServer() {
         await assignSystemRole(team.id, memberId, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -2716,6 +2752,9 @@ async function startServer() {
       (user as any).roles = [];
       (user as any).permissions = [];
     }
+    // Memberships created or reactivated after the user picked an interface
+    // mode inherit it from their other rows (and keep it from then on).
+    await inheritInterfaceMode(user);
     // Every workspace this account belongs to (for the team switcher)
     (user as any).teams = user?.email ? await userTeams(user.email) : [];
     if (user?.id) {
@@ -2893,6 +2932,7 @@ async function startServer() {
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
       }
 
@@ -2911,6 +2951,7 @@ async function startServer() {
         await assignSystemRole(team.id, mInfo.lastInsertRowid, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
+        await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
       }
 
@@ -3515,6 +3556,7 @@ async function startServer() {
     await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
     const sessionId = await createSession(mInfo.lastInsertRowid);
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
+    await inheritInterfaceMode(user);
     (user as any).teams = me?.email ? await userTeams(me.email) : [];
     res.json({ team: { id: teamId, name: cleanName, number: (number || "").trim(), access_code: code }, user: sanitizeMember(user), sessionId });
   });
@@ -3550,6 +3592,7 @@ async function startServer() {
       me?.email || "", teamId
     )) as any;
     if (!row) return res.status(403).json({ error: "You're not a member of that team" });
+    await inheritInterfaceMode(row);
     const sessionId = await createSession(row.id);
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
     res.json({ user: sanitizeMember(row), sessionId, team });
@@ -3590,6 +3633,7 @@ async function startServer() {
       await ensureRolesSeeded(team.id);
       await assignSystemRole(team.id, row.id, "Member");
     }
+    await inheritInterfaceMode(row);
     const sessionId = await createSession(row.id);
     const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
     const wasNew = !existing || (existing.is_active ?? 1) !== 1;
@@ -3647,7 +3691,7 @@ async function startServer() {
     if (parseInt(req.params.id, 10) !== auth.teamId) {
       return res.status(403).json({ error: "Not your workspace" });
     }
-    const { name, number, accent_color, primary_color, text_color, ftc_team_number } = req.body;
+    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode } = req.body;
     // Partial update: only touch columns the caller actually sent, so saving the
     // FTC team number alone can't wipe the workspace name or colors.
     const sets: string[] = [];
@@ -3665,6 +3709,12 @@ async function startServer() {
         return res.status(400).json({ error: "FTC team number must be a positive integer" });
       }
       sets.push("ftc_team_number = ?"); vals.push(ftcNum);
+    }
+    if (default_interface_mode !== undefined) {
+      if (default_interface_mode !== null && !INTERFACE_MODES.includes(default_interface_mode)) {
+        return res.status(400).json({ error: "Invalid interface mode" });
+      }
+      sets.push("default_interface_mode = ?"); vals.push(default_interface_mode);
     }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
     vals.push(req.params.id);
@@ -4764,6 +4814,129 @@ async function startServer() {
     res.json({ entries: await loadShortlist(auth.teamId!, season) });
   });
 
+  // -------------------------------------------------------------------------
+  // Predict (Compete → Predict): advancement odds, partner scenarios, matches.
+  // The engine keeps its own match history on disk (PREDICT_DATA_DIR) synced
+  // from FTC Scout + FIRST in the background; live event data comes from the
+  // same cached event payload as Team Stats.
+  // -------------------------------------------------------------------------
+  const predictSeasons = [currentFtcSeason() - 2, currentFtcSeason() - 1, currentFtcSeason()].filter((s) => SUPPORTED_SEASONS.includes(s));
+  const predictStore = new PredictStore(process.env.PREDICT_DATA_DIR || path.join(process.cwd(), ".data", "predict"), {
+    scout: (query, variables) => ftcQuery(query, variables),
+    advancement: (season, code) => (isFirstEventsConfigured() ? getFirstEventsAdvancement(season, code) : Promise.resolve(null)),
+    gapMs: 150,
+    log: (m) => console.log(m),
+  });
+  const predictEngine = new PredictEngine(predictStore, predictSeasons);
+  let predictSyncing = false;
+  async function syncPredict(): Promise<void> {
+    if (predictSyncing) return;
+    predictSyncing = true;
+    try {
+      for (const s of predictSeasons) {
+        // Older seasons don't change: stop once a sync completed without failures.
+        if (s < currentFtcSeason() - 1 && predictStore.isComplete(s)) continue;
+        const n = await predictStore.syncScout(s);
+        const a = await predictStore.syncAdvancement(s);
+        if (n || a) console.log(`[predict] ${s}: ${n} events, ${a} advancement lists updated`);
+      }
+      await predictEngine.rebuild();
+      predictCache.clear();
+      console.log(`[predict] ratings rebuilt (${predictSeasons.join(", ")})`);
+    } catch (e) {
+      console.error("[predict] sync failed:", (e as Error).message);
+    } finally {
+      predictSyncing = false;
+    }
+  }
+  const predictCache = new Map<string, { at: number; ttl: number; data: unknown }>();
+  async function cachedPredict<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {
+    const hit = predictCache.get(key);
+    if (hit && Date.now() - hit.at < hit.ttl) return hit.data as T;
+    const data = await fn();
+    predictCache.set(key, { at: Date.now(), ttl, data });
+    if (predictCache.size > 500) predictCache.delete(predictCache.keys().next().value!);
+    return data;
+  }
+  if (process.env.NODE_ENV !== "test") {
+    // Build from whatever is on disk right away (PREDICT_SYNC=off skips the
+    // background download, e.g. for local testing), then keep it fresh.
+    setTimeout(() => { predictEngine.rebuild().catch((e) => console.warn("[predict] initial build failed:", (e as Error).message)); }, 5_000);
+    if (process.env.PREDICT_SYNC !== "off") {
+      setTimeout(() => void syncPredict(), 30_000);
+      setInterval(() => void syncPredict(), 2 * 60 * 60 * 1000);
+    }
+  }
+
+  async function myFtcTeam(teamId: number | null): Promise<number | null> {
+    const row = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
+    return parseInt(row?.ftc_team_number, 10) || null;
+  }
+
+  app.get("/api/predict/status", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy });
+  });
+
+  app.get("/api/predict/event", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const code = String(req.query.code || "");
+    if (season == null || !EVENT_CODE_RE.test(code)) return res.status(400).json({ error: "Season and event code are required" });
+    if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+    try {
+      const ev = await cachedEventFull(season, code);
+      if (!ev) return res.status(404).json({ error: "Event not found" });
+      const myTeam = await myFtcTeam(auth.teamId);
+      const live = !ev.matches.length || ev.matches.some((m) => !m.played);
+      const why = predictEngine.unsupportedReason(ev);
+      if (why) return res.status(422).json({ error: why });
+      const fc = await cachedPredict<Forecast | null>(`event:${season}:${code}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => predictEngine.forecast(ev, myTeam));
+      if (!fc) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+      res.json({ ...fc, eventName: ev.name, eventStart: ev.start, eventEnd: ev.end, myTeam });
+    } catch (e) {
+      if (e instanceof FtcUnavailableError) return res.status(503).json({ error: "FTC data is temporarily unavailable." });
+      throw e;
+    }
+  });
+
+  app.get("/api/predict/partners", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const code = String(req.query.code || "");
+    if (season == null || !EVENT_CODE_RE.test(code)) return res.status(400).json({ error: "Season and event code are required" });
+    if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+    const myTeam = await myFtcTeam(auth.teamId);
+    if (!myTeam) return res.status(400).json({ error: "Connect your FTC team number in Settings first." });
+    try {
+      const ev = await cachedEventFull(season, code);
+      if (!ev) return res.status(404).json({ error: "Event not found" });
+      const live = ev.matches.some((m) => !m.played);
+      const out = await cachedPredict<Partners | null>(`partners:${season}:${code}:${myTeam}`, live ? 2 * 60_000 : 10 * 60_000, () => predictEngine.partners(ev, myTeam));
+      if (!out) return res.status(404).json({ error: "Your team isn't registered for this event." });
+      res.json(out);
+    } catch (e) {
+      if (e instanceof FtcUnavailableError) return res.status(503).json({ error: "FTC data is temporarily unavailable." });
+      throw e;
+    }
+  });
+
+  app.get("/api/predict/match", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const season = parseSeason(req.query.season);
+    const list = (v: unknown) => String(v || "").split(",").map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0 && n <= 999999);
+    const red = list(req.query.red), blue = list(req.query.blue);
+    if (season == null || !red.length || !blue.length || red.length > 3 || blue.length > 3) return res.status(400).json({ error: "Season plus 1–3 red and blue team numbers are required" });
+    if (!predictEngine.ready) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
+    const p = predictEngine.match(season, red, blue);
+    if (!p) return res.status(404).json({ error: "No ratings for that season yet." });
+    res.json({ season, red: { teams: red, ...p.red }, blue: { teams: blue, ...p.blue }, pRedWin: p.pRedWin });
+  });
+
   /**
    * Bruno screen context: the page the user is on plus whatever record they
    * have open. Every lookup is scoped to the caller's active workspace, so an
@@ -4794,6 +4967,24 @@ async function startServer() {
     if (req.codeFileId) {
       const f = (await dbGet("SELECT id, file_path, language, file_size, updated_at FROM code_files WHERE id = ? AND team_id = ?", req.codeFileId, auth.teamId)) as any;
       if (f) found.codeFile = { id: f.id, file_path: String(f.file_path || ""), language: f.language || null, file_size: f.file_size ?? null, updated_at: f.updated_at || null };
+    }
+    if (req.predictEvent && req.predictSeason && predictEngine.ready) {
+      try {
+        const ev = await cachedEventFull(req.predictSeason, req.predictEvent);
+        if (ev && !predictEngine.unsupportedReason(ev)) {
+          const myTeam = await myFtcTeam(auth.teamId);
+          const live = !ev.matches.length || ev.matches.some((m) => !m.played);
+          const fc = await cachedPredict<Forecast | null>(`event:${req.predictSeason}:${req.predictEvent}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => predictEngine.forecast(ev, myTeam));
+          if (fc) {
+            const me = myTeam ? fc.teams.find((t) => t.team === myTeam) : undefined;
+            found.predict = {
+              event: fc.event, eventName: ev.name, stage: fc.stage, myTeam, slots: fc.slots, assumptions: fc.assumptions,
+              mine: me ? { pAdvance: me.pAdvance, matchesOnly: fc.matchesOnly?.pAdvance ?? null, pWin: me.pWin, pCaptain: me.pCaptain, rankP10: me.rank.p10, rankP90: me.rank.p90, points: { quals: me.points.quals, alliance: me.points.alliance, playoffs: me.points.playoffs, awards: me.points.awards } } : null,
+              top: fc.teams.slice(0, 6).map((t) => ({ team: t.team, pAdvance: t.pAdvance })),
+            };
+          }
+        }
+      } catch { /* best-effort: the rest of the screen context still goes out */ }
     }
     return formatScreenContext(req, found);
   }
@@ -4944,7 +5135,10 @@ async function startServer() {
   app.patch("/api/profile", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level } = req.body || {};
+    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level, interface_mode } = req.body || {};
+    if (interface_mode !== undefined && interface_mode !== null && !INTERFACE_MODES.includes(interface_mode)) {
+      return res.status(400).json({ error: "Invalid interface mode" });
+    }
     const cleanName = (name || '').trim();
     if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
     const updates: any = { name: cleanName, role: (role || '').trim() };
@@ -4966,6 +5160,12 @@ async function startServer() {
     if (avatar_url !== undefined) updates.avatar_url = avatar_url || null;
     const cols = Object.keys(updates);
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
+    if (interface_mode !== undefined) {
+      // Per account, not per workspace: every membership row for this email.
+      const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+      if (me?.email) await dbRun("UPDATE members SET interface_mode = ? WHERE email = ?", interface_mode, me.email);
+      else await dbRun("UPDATE members SET interface_mode = ? WHERE id = ?", interface_mode, auth.memberId);
+    }
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
     const withPresence = await memberWithPresence(user);
     // Live presence: a status/name change is visible to the team immediately.

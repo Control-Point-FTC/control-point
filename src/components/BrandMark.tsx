@@ -15,8 +15,9 @@ export function BetaBadge({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full border border-accent/40 bg-accent/10',
-        'px-1.5 py-px text-[8px] font-bold uppercase tracking-[0.14em] text-accent',
+        // Beta is always blue, independent of the workspace accent.
+        'inline-flex items-center rounded-full border border-sky-400/50 bg-sky-500/15',
+        'px-1.5 py-px text-[8px] font-bold uppercase tracking-[0.14em] text-sky-500',
         'leading-none select-none',
         className
       )}
@@ -38,7 +39,7 @@ function LogoImage({ className }: { className?: string }) {
   }
   return (
     <img
-      src="/logo.png"
+      src="/logo.png?v=3"
       alt="Control Point logo"
       onError={() => setMissing(true)}
       className={cn('object-contain flex-shrink-0', className)}

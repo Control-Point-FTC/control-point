@@ -10,3 +10,8 @@ api.key
 models/*.gguf
 nexus.dbdashboard.db
 dashboard.db
+# Predict research data cache (downloaded, not committed)
+.cache/
+
+# Predict engine match history (synced at runtime)
+.data/

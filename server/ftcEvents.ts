@@ -536,3 +536,33 @@ export async function getFirstEventsAlliances(season: number, eventCode: string)
     throw err;
   }
 }
+
+export interface FirstAdvancement {
+  /** Where teams advance to (event code or a label), when published. */
+  advancesTo: string | null;
+  /** Number of advancement slots. */
+  slots: number;
+  /** Per-team outcome: FIRST = advanced from here, ALREADY_ADVANCING = qualified earlier, INELIGIBLE. */
+  rows: { team: number; status: string; declined: boolean }[];
+}
+
+/** Advancement slots and outcomes for an event. Null when not published. */
+export async function getFirstEventsAdvancement(season: number, eventCode: string): Promise<FirstAdvancement | null> {
+  try {
+    const data = await firstEventsFetch(`/${season}/advancement/${encodeURIComponent(eventCode)}`);
+    if (!isObj(data)) return null;
+    const slots = num(data.slots);
+    if (!slots) return null;
+    const rows: FirstAdvancement["rows"] = [];
+    for (const r of listOf(data, "advancement")) {
+      if (!isObj(r)) continue;
+      const team = num(r.team);
+      const status = str(r.status);
+      if (team && status) rows.push({ team, status, declined: r.declined === true });
+    }
+    return { advancesTo: str(data.advancesTo), slots, rows };
+  } catch (err) {
+    if (err instanceof FirstEventsError && err.status === 404) return null;
+    throw err;
+  }
+}
