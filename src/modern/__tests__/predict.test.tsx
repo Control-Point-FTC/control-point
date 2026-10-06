@@ -110,6 +110,11 @@ describe('Modern Predict', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Upcoming' }));
     expect(screen.getByText('Q-1')).toBeInTheDocument();
     expect(screen.queryByText('Q-2')).not.toBeInTheDocument();
+    // A filter with nothing in it says so (not "schedule not published").
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) => ({ ...forecast, season, event, matches: forecast.matches.filter((m) => m.played) }));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    expect(await screen.findByText('No upcoming matches')).toBeInTheDocument();
+    expect(screen.queryByText('No matches yet')).not.toBeInTheDocument();
   });
 
   it('field: every team with ours marked, searchable', async () => {

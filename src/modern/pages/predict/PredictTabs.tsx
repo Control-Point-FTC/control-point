@@ -223,7 +223,7 @@ export function FieldTab({ fc, nameOf, myTeam }: FcProps & { nameOf: (t: number)
               <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{t.team} <span className="text-muted-foreground">{nameOf(t.team)}</span>{t.team === myTeam && <Badge variant="soft" className="ml-1.5">You</Badge>}</p>
-                  <p className="text-xs text-muted-foreground">Rank {rankRange(t.rank.p10, t.rank.p90)} · captain {pct(t.pCaptain)} · picked {pct(t.pPicked)} · win {pct(t.pWin)}</p>
+                  <p className="text-xs text-muted-foreground">Rank {rankRange(t.rank.p10, t.rank.p90)} · captain {pct(t.pCaptain)} · picked {pct(t.pPicked)} · win {pct(t.pWin)} · {t.points.matchPoints.toFixed(1)} match pts</p>
                 </div>
                 {odds(t)}
               </div>
@@ -303,7 +303,13 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
         )}
       </div>
       <p className="text-xs text-muted-foreground">Upcoming matches show predicted scores and win odds; played ones show the result and whether the pre-match call held.</p>
-      {!list.length ? <EmptyState icon={Swords} title="No matches yet" description="The match schedule appears here once it's published." /> : (
+      {!(fc.matches ?? []).length ? <EmptyState icon={Swords} title="No matches yet" description="The match schedule appears here once it's published." /> : !list.length ? (
+        <EmptyState
+          icon={Swords}
+          title={filter === 'upcoming' ? 'No upcoming matches' : filter === 'played' ? 'No played matches yet' : 'No matches for this team'}
+          description={filter === 'upcoming' ? 'Every match in this view has been played.' : filter === 'played' ? 'Results appear here as matches finish.' : 'Turn off the team filter to see the whole schedule.'}
+        />
+      ) : (
         <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
           {list.map((m) => <MatchRow key={m.key} m={m} myTeam={myTeam} />)}
         </Stagger>
