@@ -39,11 +39,13 @@ Modern is dark-first and keeps the light theme and the per-team accent colour. I
 
 Users choose between **Legacy Experience** and **Modern Experience** in Settings → Appearance. Think old/new Reddit or GitHub feature previews: two versions of the app over the same data.
 
-- **Stored per user:** `members.interface_mode` (`'legacy' | 'modern' | NULL`). It's written to every member row with the user's email, so the choice follows the person across workspaces and devices.
+- **Stored per user:** `members.interface_mode` (`'legacy' | 'modern' | NULL`). Saving writes it to every member row with the user's email, so the choice follows the person across workspaces and devices.
+- **Later memberships:** member rows created or reactivated afterwards (`/api/teams/join`, workspace create, admin add) copy the newest non-null `interface_mode` for that email, the same way those routes already copy other account fields. As a safety net, reading the current user also falls back to any non-null value on the user's other rows. Either way, a user who picked Modern never lands in a workspace that opens in Legacy.
 - **Team default:** `teams.default_interface_mode`, which admins set in Workspace settings.
 - **Resolution order:** user choice → team default → `legacy`. Legacy stays the default until Modern covers every screen; after that the recommended default becomes Modern.
 - **Schema:** these two nullable columns are the redesign's only schema change. They're additive and added by a boot migration, the same way `bruno_teach_mode` was. The existing `PATCH /api/profile` and `PATCH /api/teams/:id` routes get one optional field each. Nothing else in the API changes.
-- **Switching:** it's instant. An `InterfaceModeProvider` keeps the mode in React state, saves it optimistically (and rolls back if the save fails), and the app re-renders the other shell on the **same route**. There's no reload, and data, open chats and drafts are kept because all state lives above the shell. The saved choice is applied at login, before the first paint.
+- **Switching:** it's instant. An `InterfaceModeProvider` keeps the mode in React state, saves it optimistically (and rolls back if the save fails), and the app re-renders the other shell on the **same route**. There's no reload. Server data (messages, tasks, events…) lives in `App` state above both shells, so it's kept. The saved choice is applied at login, before the first paint.
+- **Drafts:** some unsent work currently lives inside page components and would be lost when a page swaps, for example the chat composer's text and pending attachment in `ChatView`. Phase 2 moves these into a small shared draft store (module-level, keyed by channel or form) that both the Legacy and Modern versions read and write. It gets a test that switches modes with an unsent message and attachment and checks both survive. Every later phase that replaces a page with unsent input (task, event, transaction and log forms) uses the same store.
 - **Separate presentation layer:** Modern code lives in `src/modern/` (shell, navigation, page header, command menu, and one page component per screen). `App.tsx` decides which shell to render. Every route keeps one shared data source (the same props, hooks and API calls). A Modern page reuses the same handlers and helpers, so only the presentation differs.
 - **Incremental:** a screen that hasn't been redesigned yet renders its Legacy page inside the Modern shell. Modern is complete and usable from day one and gets better screen by screen.
 - **Onboarding:** the tour targets (`data-onboard="nav-…"`, `header-bruno`, `nav-settings-gear`, …) get Modern equivalents, so the walkthrough works in both modes.
@@ -113,7 +115,9 @@ Each screen keeps every existing workflow and permission check. Line references 
 
 **Redesign plan:** a full Inbox page with an unread count in the sidebar.
 - List and detail layout with Unread / All filters.
-- Each item links to its source (task, event, message, mention).
+- Each item links to its source (task, event, message, mention). This needs the source's id. Mentions and messages already carry it, but task notifications store only the title.
+  - **Prerequisite (Phase 3):** new notifications get source ids in their existing `meta` JSON (`task_id`, `event_id`, `channel_id`/`message_id`). This is additive: the response shape and existing fields are unchanged.
+  - **Fallback for older items:** link to the section page (Tasks, Calendar, Messages) with the title as a search filter, and label it "Open in Tasks" rather than pretending it's an exact link.
 - Visible per-item actions (mark read/unread, delete), plus Mark all read and Clear all (confirmed).
 - Items are marked read when viewed, not when the list opens.
 - Uses the same `/api/notifications/*` endpoints.
