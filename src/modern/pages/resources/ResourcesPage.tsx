@@ -15,6 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton, Textarea, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
 import { notify } from '../../../components/dialog';
+import { copyText } from '../../../components/copyText';
 import { RESOURCE_CATEGORIES, RESOURCE_FILTERS, domainOf, formatResourceDate, useResourcesController } from '../../../components/resources/useResourcesController';
 import { Page, PageHeader, Section, EmptyState } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
@@ -92,7 +93,7 @@ export function ResourcesPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem asChild><a href={r.url} target="_blank" rel="noreferrer"><ExternalLink /> Open link</a></DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => { void navigator.clipboard?.writeText(r.url).then(() => notify('Link copied.', 'success'), () => notify('Could not copy the link.', 'error')); }}><Copy /> Copy link</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => { void copyText(r.url).then((ok) => notify(ok ? 'Link copied.' : 'Could not copy the link.', ok ? 'success' : 'error')); }}><Copy /> Copy link</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onSelect={() => void ctl.handleDelete(r.id)} className="text-destructive focus:text-destructive"><Trash2 /> Delete</DropdownMenuItem>
                       </DropdownMenuContent>
