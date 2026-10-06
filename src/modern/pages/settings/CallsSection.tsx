@@ -1,10 +1,10 @@
 // Settings → Calls & sounds: notification/call sounds, what the camera does
-// when you join, and your microphone/speaker/camera devices.
+// when you join, and your microphone/speaker/camera devices (DeviceSettings).
 import { useState } from 'react';
 import { Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { soundsEnabled, setSoundsEnabled } from '../../../utils/sounds';
 import { getCameraDefault, setCameraDefault, type CameraDefault } from '../../../components/SettingsModal';
-import { DeviceSettingsSection } from '../../../components/voice/DeviceSettingsSection';
+import { DeviceSettings } from './DeviceSettings';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 
 export function CallsSection() {
@@ -26,11 +26,7 @@ export function CallsSection() {
           </ToggleGroup>
         </SettingsRow>
       </SettingsGroup>
-      <SettingsGroup title="Devices" description="Microphone, speaker and camera for calls on this device.">
-        {/* The device panel (meters, previews) is shared with calls and gets
-            its own rebuild with Messages & calls in phase 6. */}
-        <div className="p-4"><DeviceSettingsSection /></div>
-      </SettingsGroup>
+      <DeviceSettings />
     </div>
   );
 }
