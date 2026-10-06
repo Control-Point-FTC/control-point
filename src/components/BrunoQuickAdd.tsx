@@ -27,8 +27,10 @@ export default function BrunoQuickAdd({ threads, onClose, onLogged }: {
   const [paste, setPaste] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [parsed, setParsed] = useState(false);
+  const [manual, setManual] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [threadSearch, setThreadSearch] = useState('');
 
   const [recipient, setRecipient] = useState('');
   const [subject, setSubject] = useState('');
@@ -122,6 +124,18 @@ Email to parse:
 
   const inputCls = 'w-full rounded-lg border border-text-base/10 bg-text-base/[0.04] px-3 py-2 text-sm text-text-base placeholder:text-text-base/30 focus:outline-none focus:border-accent/60';
 
+  // Thread picker: search across ALL threads; the AI prompt still gets a
+  // capped list to keep the prompt small.
+  const threadOptions = (() => {
+    const q = threadSearch.trim().toLowerCase();
+    if (!q) return threads;
+    return threads.filter((t) =>
+      t.subject.toLowerCase().includes(q) || t.recipient.toLowerCase().includes(q)
+    );
+  })();
+
+  const showFields = parsed || manual;
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
@@ -142,7 +156,7 @@ Email to parse:
           Paste an email — a new message, a reply, or a follow-up. Bruno detects the contact, subject, direction, and thread automatically.
         </p>
 
-        {!parsed ? (
+        {!showFields ? (
           <div className="space-y-3">
             <textarea
               value={paste}
@@ -155,6 +169,12 @@ Email to parse:
             <Button onClick={handleParse} disabled={aiBusy || !paste.trim()} className="w-full">
               {aiBusy ? <><Loader2 className="w-4 h-4 animate-spin" /> Bruno is reading…</> : <><Sparkles className="w-4 h-4" /> Parse with Bruno</>}
             </Button>
+            <button
+              onClick={() => { setManual(true); setError(null); }}
+              className="w-full text-center text-xs font-semibold text-text-muted hover:text-accent transition-colors py-1"
+            >
+              Or fill in the fields manually
+            </button>
           </div>
         ) : (
           <div className="space-y-3">
@@ -193,20 +213,29 @@ Email to parse:
               </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Thread</label>
+                <Input
+                  value={threadSearch}
+                  onChange={(e: any) => setThreadSearch(e.target.value)}
+                  placeholder="Search threads…"
+                  className="!py-1.5 !text-xs mb-1.5"
+                />
                 <ThemedSelect
                   value={parentId == null ? '' : String(parentId)}
                   onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}
                   className={inputCls}>
                   <option value="">New thread</option>
-                  {threads.slice(0, 30).map((t) => (
-                    <option key={t.id} value={String(t.id)}>{t.subject.slice(0, 28)}{t.subject.length > 28 ? '…' : ''}</option>
+                  {threadOptions.slice(0, 100).map((t) => (
+                    <option key={t.id} value={String(t.id)}>{t.subject.slice(0, 28)}{t.subject.length > 28 ? '…' : ''} — {t.recipient.slice(0, 20)}</option>
                   ))}
                 </ThemedSelect>
+                {threadSearch.trim() && threadOptions.length === 0 && (
+                  <p className="text-[11px] text-text-muted">No threads match “{threadSearch.trim()}”.</p>
+                )}
               </div>
             </div>
             {error && <p className="text-sm text-rose-400" role="alert">{error}</p>}
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => { setParsed(false); setError(null); }} className="flex-1">
+              <Button variant="secondary" onClick={() => { setParsed(false); setManual(false); setError(null); setThreadSearch(''); }} className="flex-1">
                 Back
               </Button>
               <Button onClick={handleLog} disabled={saving || !recipient.trim() || !subject.trim()} className="flex-1">

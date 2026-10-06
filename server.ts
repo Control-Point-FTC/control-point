@@ -9563,13 +9563,15 @@ Rules:
           if (!entries?.length) continue;
           for (const c of entries) {
             // Resolve parent_id to the thread root (same rule as POST
-            // /api/communications): must belong to this team.
+            // /api/communications): must belong to this team. An invalid
+            // parent is rejected — never silently saved as a new thread.
             let parentId: number | null = null;
             if (c.parent_id != null) {
               const parent: any = (await dbGet("SELECT id, team_id, parent_id FROM communications WHERE id = ?", c.parent_id));
-              if (parent && parent.team_id === auth.teamId) {
-                parentId = parent.parent_id != null ? parent.parent_id : parent.id;
+              if (!parent || parent.team_id !== auth.teamId) {
+                return res.status(400).json({ error: `Thread #${c.parent_id} no longer exists — the reply was not logged` });
               }
+              parentId = parent.parent_id != null ? parent.parent_id : parent.id;
             }
             (await dbRun(
               "INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
