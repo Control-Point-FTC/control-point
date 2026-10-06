@@ -1,7 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { Button, Badge, Dialog, DialogTrigger, DialogContent, DialogTitle, DialogDescription, Tabs, TabsList, TabsTrigger, TabsContent } from '..';
 import { Button as LegacyButton } from '../../ui';
+import { Send } from 'lucide-react';
 
 afterEach(cleanup);
 
@@ -34,6 +35,37 @@ describe('UI kit', () => {
     expect(dialog).toHaveAttribute('data-esc-owner');
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('keeps explicit icon sizes inside buttons', () => {
+    render(<Button aria-label="Send"><Send className="w-5 h-5" /></Button>);
+    // The default size-4 rule must not match an icon that already has w-/h- classes.
+    const cls = screen.getByRole('button', { name: 'Send' }).className;
+    expect(cls).toContain(":not([class*='w-']):not([class*='h-'])");
+  });
+
+  it('Escape closes a dialog opened inside a parent modal without closing the parent', () => {
+    // Same capture-phase listener SettingsModal uses (skips data-esc-owner targets).
+    const parentClose = vi.fn();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof Element && e.target.closest('[data-esc-owner]')) return;
+      if (e.key === 'Escape') { e.stopPropagation(); parentClose(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    try {
+      render(
+        <Dialog>
+          <DialogTrigger>Open child</DialogTrigger>
+          <DialogContent><DialogTitle>Child</DialogTitle><DialogDescription>Body</DialogDescription><input aria-label="field" /></DialogContent>
+        </Dialog>,
+      );
+      fireEvent.click(screen.getByText('Open child'));
+      fireEvent.keyDown(screen.getByLabelText('field'), { key: 'Escape' });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(parentClose).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', onKey, true);
+    }
   });
 
   it('tabs switch content', () => {
