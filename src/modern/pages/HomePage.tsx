@@ -9,21 +9,19 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
-import { Area, AreaChart, CartesianGrid, ReferenceLine, XAxis, YAxis } from 'recharts';
 import {
   AtSign, CalendarDays, CheckCircle2, CircleDot, Clock, ListTodo, LogOut, MapPin, RefreshCw, Sparkles,
   Trophy, UserCheck, Wallet, Users, ArrowUpRight, Compass, ChevronRight, CalendarCheck, PartyPopper,
 } from 'lucide-react';
 import { cn } from '../../components/cn';
 import {
-  Badge, Button, ChartContainer, ChartTooltip, ChartTooltipContent, Checkbox, Dialog, DialogContent,
+  Badge, Button, Checkbox, Dialog, DialogContent,
   DialogDescription, DialogFooter, DialogHeader, DialogTitle, Label, Textarea, ToggleGroup, ToggleGroupItem,
   Accordion, AccordionContent, AccordionItem, AccordionTrigger, Skeleton,
 } from '../../components/ui-kit';
 import { BrunoMarkdown } from '../../components/BrunoMarkdown';
 import { useDashboardData, type DashboardTeam } from '../../components/dashboard/dashboardSelectors';
 import { activityWhen, type ActivityItem } from '../../components/dashboard/TeamActivity';
-import { buildAttendanceSeries } from '../../components/dashboard/AttendanceTrend';
 import { useSelfReport } from '../../components/dashboard/useSelfReport';
 import { useMyWork } from '../../components/dashboard/useMyWork';
 import { checklistItems, shouldShowChecklist } from '../../components/onboarding/onboardingState';
@@ -33,6 +31,7 @@ import { notifMeta } from '../notifications';
 import { AnimatedValue } from '../AnimatedValue';
 import { useDraft } from '../drafts';
 import { Page, PageHeader, Section, EmptyState } from '../ui/page';
+import { AttendanceArea } from '../ui/AttendanceArea';
 import { Stagger, StaggerItem, Reveal } from '../ui/motion';
 import { useTheme } from '../../hooks/useTheme';
 
@@ -344,37 +343,11 @@ function PulseStats({ present, memberCount, hasSession, openTasks, overdue, budg
   );
 }
 
-function PulseChart({ attendance, hiddenDates, events }: { attendance: any[]; hiddenDates?: string[]; events: any[] }) {
-  const data = useMemo(() => buildAttendanceSeries(attendance, hiddenDates, events), [attendance, hiddenDates, events]);
-  const max = Math.max(2, ...data.map((d) => d.count ?? 0)) + 1;
-  const lastIdx = data.reduce((acc, d, i) => (d.count != null ? i : acc), -1);
-  const next = data.find((d) => d.next)?.date;
+function PulseChart(props: { attendance: any[]; hiddenDates?: string[]; events: any[] }) {
   return (
     <div className="mt-6">
       <p className="mb-2 text-xs text-muted-foreground">Check-ins over the last 14 meeting days</p>
-      <ChartContainer config={{ count: { label: 'Checked in', color: 'var(--color-chart-1)' } }} className="h-48">
-        <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id="home-pulse" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-count)" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="var(--color-count)" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid vertical={false} strokeDasharray="3 3" />
-          <XAxis dataKey="date" tickLine={false} axisLine={false} tickMargin={8} minTickGap={24} />
-          <YAxis allowDecimals={false} domain={[0, max]} tickLine={false} axisLine={false} width={28} />
-          <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-          {next && <ReferenceLine x={next} strokeDasharray="3 4" className="stroke-muted-foreground" label={{ value: 'Next meet', position: 'insideTopRight', fontSize: 12, className: 'fill-muted-foreground' }} />}
-          <Area
-            dataKey="count" type="monotone" stroke="var(--color-count)" strokeWidth={2} fill="url(#home-pulse)" connectNulls={false}
-            animationDuration={900}
-            dot={(p: any) => p.index === lastIdx
-              ? <g key={`e${p.index}`}><circle cx={p.cx} cy={p.cy} r={9} fill="var(--color-count)" className="cp-pulse-dot" /><circle cx={p.cx} cy={p.cy} r={4} fill="var(--color-background)" stroke="var(--color-count)" strokeWidth={2} /></g>
-              : <g key={`d${p.index}`} />}
-            activeDot={{ r: 4 }}
-          />
-        </AreaChart>
-      </ChartContainer>
+      <AttendanceArea {...props} id="home-pulse" />
     </div>
   );
 }

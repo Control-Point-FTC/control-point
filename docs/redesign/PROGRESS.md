@@ -195,3 +195,73 @@ One section per phase, added when the phase's PR merges. See [README.md](README.
   - 375: Agenda default, bottom event sheet, no horizontal scroll, every target ≥44px.
 - **No real phone** was available; the PWA layout was checked only with mobile emulation.
 - **Screenshots:** `docs/redesign/screenshots/phase4/calendar-*.jpg`.
+
+## Phase 4c: Attendance
+
+**Shared logic** lives in `src/components/attendance/`:
+- **`useAttendanceController`:** the grid, meeting days (hidden dates), sessions and summary. It uses the same endpoints and request bodies as before: `POST /api/attendance/batch`, `/api/hidden-dates` (plus `bulk` and `bulk-delete`), `/api/attendance/sessions` and `/api/attendance/summary`.
+- **`useQrSession`:** starts and stops the QR session and runs the countdown.
+- **`useStudentCheckin`:** checks in by scanned token or by the day code. The typed code is **drafted**.
+- **`useQrScanner`:** camera scanning. The scanner logic was moved out of App.tsx.
+- Legacy `AttendanceView`, `QrSessionPanel`, `StudentCheckinView` and `QrScannerModal` now use these hooks, with their markup unchanged.
+
+**Behaviour fixes made during the extraction (both modes):**
+- **Optimistic cells are now keyed per member and date.** Before, they were keyed per member, so a second click on another date for the same member overwrote the first cell's pending value.
+- **A failed save now rolls the cell back.** Before, it kept showing the unsaved value.
+- **Confirmed optimistic values are dropped** once the server data agrees.
+- **Student check-in no longer shows an error after a successful check-in.** Legacy never passed `refresh` to `StudentCheckinView`, so `refresh.attendance()` threw and showed an error toast after a successful check-in.
+- **Legacy shows the drafted day code.** The code field now opens by itself when a drafted code exists.
+
+### Modern Attendance (`src/modern/pages/attendance/`)
+- **Admins** (`attendance` scope) get four tabs: **Today / Grid / History / Insights**.
+  - **Today:**
+    - A **roll call**: every member gets a P/L/E/U/S picker, and tapping the current status clears it.
+    - A **QR check-in card**: session length toggle, live pulse, QR, day code, countdown, **Present** (a full-screen dialog for projectors), and End session.
+    - A "here today" meter with per-status counts.
+  - **Grid:**
+    - Cells are buttons. Click or Enter opens a **popover status picker**, with focus on the current status.
+    - With a cell focused, **P/L/E/U/S** set the status directly, **Backspace** clears it, and the **arrow keys** move between cells (roving tab stop).
+    - Each column header has a menu with "Hide this date".
+    - A **Meeting days** dropdown has one checkbox per weekday, plus show-all and hide-all.
+    - A live Saving / Saved status.
+    - Sticky member column with avatars.
+  - **History:** each day has a present/late bar. Clicking a day opens a **sheet** where any status for that day can be changed.
+  - **Insights:**
+    - The shared check-ins area chart (`modern/ui/AttendanceArea`, now also used by Home).
+    - Average rate and a "below 60%" count.
+    - Bruno's analysis, with a shimmer while thinking.
+    - Per-member table: rate bar (amber below 60%), P · A · L · E counts, last-5 dots.
+- **Members** get a personal view:
+  - A check-in card with a **Scan QR** dialog (camera) and a **day-code** field. The code is drafted.
+  - A spring "You're checked in" state.
+  - Stats: rate, streak, days checked in.
+  - History grouped by month.
+- **Status colours come from tokens:**
+  - P = success
+  - L = warning
+  - E = info
+  - U = destructive
+  - S = chart-4
+- **Dates use the browser locale.** The grid's range label keeps the Legacy format.
+
+### Permissions (unchanged)
+- The grid, QR sessions, meeting days and the history edit all need `hasScope('attendance')`. Everyone else sees the personal view.
+
+### Tests
+- **New (9 Modern Attendance tests):**
+  - Roll call sends the **same batch POST as Legacy**, and clearing sends `status: null`.
+  - A failed save rolls back with the Legacy error toast.
+  - Grid keyboard entry.
+  - The meeting-days weekday toggle sends one bulk request, with only Sundays.
+  - A QR session starts with the chosen length.
+  - The history sheet edits a day.
+  - The personal view: **the drafted day code survives a remount**, code check-in refreshes without an error toast, and the stats and checked-in state are correct.
+- **Totals:** 558 tests pass; the only failures are the known Windows-only ones. `tsc` is clean.
+- **Local QA** on the test workspace, with six fake local members added through the API:
+  - Marked statuses through the roll call.
+  - Keyboard entry in the grid, and confirmed the tab stays put after saves (no remount).
+  - The popover opens with focus inside.
+  - 375 px: no page overflow, the grid scrolls inside its own container, every target is ≥44px, and the tabs fit once their icons are hidden.
+  - 1440 px: Today, Grid and Insights.
+- **Not covered:** no real phone was available for camera scanning. The scanner reuses the Legacy html5-qrcode logic unchanged.
+- **Screenshots:** `docs/redesign/screenshots/phase4/attendance-*.jpg`.
