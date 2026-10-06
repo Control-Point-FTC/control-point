@@ -188,7 +188,7 @@ function ThreadDetail({ thread, ctl }: { thread: any; ctl: Ctl }) {
           const inbound = e.direction === 'inbound';
           const isRoot = e.id === thread.root.id;
           return (
-            <motion.li key={e.id} layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className={cn('flex', inbound ? 'justify-start' : 'justify-end')}>
+            <motion.li key={e.id} data-cm-type="comm" data-cm-id={e.id} layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className={cn('flex', inbound ? 'justify-start' : 'justify-end')}>
               <div className={cn('group/entry max-w-[90%] rounded-2xl border px-4 py-3', inbound ? 'rounded-bl-md border-info/30 bg-info/5' : 'rounded-br-md border-border bg-muted/40')}>
                 <p className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   {inbound ? <ArrowDownLeft className="size-3.5 text-info" /> : <ArrowUpRight className="size-3.5" />}

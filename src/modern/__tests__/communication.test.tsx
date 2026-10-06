@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
@@ -78,7 +78,19 @@ describe('Modern Communication', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/communications/2', expect.objectContaining({ method: 'PUT' })));
     expect(body('/api/communications/2', 'PUT')).toMatchObject({ body: 'Yes — $750!', direction: 'inbound' });
+    // Held confirmation: nothing is deleted until it is approved.
+    let answer: (v: boolean) => void = () => {};
+    dialog.confirmDialog.mockImplementation(() => new Promise<boolean>((res) => { answer = res; }));
+    const deletes = () => api.apiFetch.mock.calls.filter((c) => c[1]?.method === 'DELETE');
     fireEvent.click(screen.getByRole('button', { name: 'Delete thread' }));
+    await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalled());
+    expect(deletes()).toHaveLength(0);
+    await act(async () => { answer(false); });
+    expect(deletes()).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete thread' }));
+    await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalledTimes(2));
+    expect(deletes()).toHaveLength(0);
+    await act(async () => { answer(true); });
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/communications/1', { method: 'DELETE' }));
   });
 
@@ -87,6 +99,13 @@ describe('Modern Communication', () => {
     expect(screen.queryByRole('button', { name: /Log message/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Log their reply/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit entry' })).not.toBeInTheDocument();
+  });
+
+  it('entries carry the right-click delete hooks', () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Acme Robotics/ }));
+    expect(document.querySelectorAll('[data-cm-type="comm"][data-cm-id="1"]').length).toBe(1);
+    expect(document.querySelectorAll('[data-cm-type="comm"][data-cm-id="2"]').length).toBe(1);
   });
 
   it('a half-written log survives a remount (mode switch)', async () => {
