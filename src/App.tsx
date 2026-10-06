@@ -8296,6 +8296,8 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   const [replyingTo, setReplyingTo] = useState<any>(null);
   const [replyForm, setReplyForm] = useState({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction: 'inbound' });
   const [askResponded, setAskResponded] = useState<any>(null);
+  const [editingEntry, setEditingEntry] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ recipient: '', subject: '', body: '', date: '', type: 'email', direction: 'outbound' });
 
   // Group entries into threads: roots (no parent_id) + their replies, chronological.
   const threads = useMemo(() => {
@@ -8382,6 +8384,36 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   const openReply = (thread: any, direction: string) => {
     setReplyingTo(thread);
     setReplyForm({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction });
+  };
+
+  const openEdit = (entry: any) => {
+    setEditingEntry(entry);
+    setEditForm({
+      recipient: entry.recipient || '',
+      subject: entry.subject || '',
+      body: entry.body || '',
+      date: entry.date || format(new Date(), 'yyyy-MM-dd HH:mm'),
+      type: entry.type || 'email',
+      direction: entry.direction === 'inbound' ? 'inbound' : 'outbound',
+    });
+  };
+
+  const handleEdit = async () => {
+    if (!editingEntry) return;
+    let res: any = null;
+    try {
+      res = await apiFetch(`/api/communications/${editingEntry.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      });
+    } catch { res = null; }
+    if (!res || !res.ok) {
+      notify('Could not save changes — try again.', 'error');
+      return;
+    }
+    setEditingEntry(null);
+    refresh.communications();
   };
 
   const handleDelete = async (id: number, isRoot: boolean) => {
@@ -8500,13 +8532,23 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
                               <span className="text-[11px] text-text-muted">{entry.date}</span>
                             </div>
                             <p className="text-sm text-text-base/85 whitespace-pre-wrap">{entry.body}</p>
-                            {canManage && entry.parent_id != null && (
-                              <button
-                                onClick={() => handleDelete(entry.id, false)}
-                                className="mt-2 text-[11px] text-text-muted hover:text-rose-400 transition-colors"
-                              >
-                                Delete reply
-                              </button>
+                            {canManage && (
+                              <div className="mt-2 flex gap-3">
+                                <button
+                                  onClick={() => openEdit(entry)}
+                                  className="text-[11px] text-text-muted hover:text-accent transition-colors"
+                                >
+                                  Edit
+                                </button>
+                                {entry.parent_id != null && (
+                                  <button
+                                    onClick={() => handleDelete(entry.id, false)}
+                                    className="text-[11px] text-text-muted hover:text-rose-400 transition-colors"
+                                  >
+                                    Delete reply
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -8523,6 +8565,9 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
                       </Button>
                       <button onClick={() => handleDelete(root.id, true)} className="ml-auto text-text-muted hover:text-rose-400 transition-colors" title="Delete thread">
                         <Trash2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => openEdit(root)} className="text-text-muted hover:text-accent transition-colors" title="Edit thread">
+                        <Pencil className="w-4 h-4" />
                       </button>
                     </div>
                   )}
@@ -8602,6 +8647,48 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setReplyingTo(null)}>Cancel</Button>
                 <Button onClick={handleReply} disabled={!replyForm.body.trim()}>Add Reply</Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {editingEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <Card title={editingEntry.parent_id == null ? "Edit thread" : "Edit message"} className="w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Button
+                  variant={editForm.direction === 'outbound' ? 'primary' : 'secondary'}
+                  className="flex-1"
+                  onClick={() => setEditForm({ ...editForm, direction: 'outbound' })}
+                >We sent it</Button>
+                <Button
+                  variant={editForm.direction === 'inbound' ? 'primary' : 'secondary'}
+                  className="flex-1"
+                  onClick={() => setEditForm({ ...editForm, direction: 'inbound' })}
+                >They sent it</Button>
+              </div>
+              {editingEntry.parent_id == null && (
+                <>
+                  <Input placeholder="Recipient" value={editForm.recipient} onChange={(e: any) => setEditForm({ ...editForm, recipient: e.target.value })} />
+                  <Input placeholder="Subject" value={editForm.subject} onChange={(e: any) => setEditForm({ ...editForm, subject: e.target.value })} />
+                </>
+              )}
+              <textarea
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-40"
+                placeholder="Message body"
+                value={editForm.body}
+                onChange={(e: any) => setEditForm({ ...editForm, body: e.target.value })}
+              />
+              <Input
+                type="text"
+                value={editForm.date}
+                onChange={(e: any) => setEditForm({ ...editForm, date: e.target.value })}
+              />
+              <div className="flex gap-3 justify-end">
+                <Button variant="secondary" onClick={() => setEditingEntry(null)}>Cancel</Button>
+                <Button onClick={handleEdit}>Save changes</Button>
               </div>
             </div>
           </Card>

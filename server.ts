@@ -9817,6 +9817,25 @@ Rules:
     }
   });
 
+  app.put("/api/communications/:id", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_communications");
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const { recipient, subject, body, date, type, direction } = req.body || {};
+      const dir = direction === 'inbound' ? 'inbound' : 'outbound';
+      await dbRun(
+        "UPDATE communications SET recipient = ?, subject = ?, body = ?, date = ?, type = ?, direction = ? WHERE id = ? AND team_id = ?",
+        recipient ?? '', subject ?? '', body ?? '', date ?? '', type || 'email', dir, req.params.id, auth.teamId
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error updating communication:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.delete("/api/communications/:id", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_communications");
