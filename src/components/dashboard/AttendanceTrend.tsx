@@ -12,6 +12,16 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
+/** The first calendar event date (yyyy-MM-dd) strictly after `today`, or null. */
+export function nextMeetDate(events: { date?: string | null }[] | undefined, today: string): string | null {
+  let best: string | null = null;
+  for (const e of events ?? []) {
+    const d = e?.date;
+    if (d && d > today && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
 interface AttendanceTrendProps {
   attendance: any[];
   onNavigate: (path: string) => void;
@@ -62,7 +72,7 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
     // visibly ends at today with the next meeting marked. No upcoming event,
     // no marker.
     const today = format(new Date(), 'yyyy-MM-dd');
-    const next = (events ?? []).map((e) => e.date).filter((d) => d && d > today).sort()[0];
+    const next = nextMeetDate(events, today);
     if (next) points.push({ date: format(new Date(next + 'T12:00:00'), 'MMM dd'), count: null, next: true });
     return points;
   }, [attendance, hiddenDates, events, theme]);
