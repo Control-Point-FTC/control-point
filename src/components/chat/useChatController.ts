@@ -104,7 +104,7 @@ export function useChatController({ messages, setMessages, msgCache, msgExhauste
   // touch devices have no hover — tapping a message reveals its action bar
   const [activeMsgId, setActiveMsgId] = useState<number | null>(null);
   const [isTouchDevice] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches
+    () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches
   );
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);

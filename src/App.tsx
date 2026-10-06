@@ -189,6 +189,7 @@ import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
 import { CalendarPage } from './modern/pages/calendar/CalendarPage';
 import { AttendancePage } from './modern/pages/attendance/AttendancePage';
 import { PeoplePage } from './modern/pages/people/PeoplePage';
+import { MessagesPage } from './modern/pages/messages/MessagesPage';
 import { SettingsPage } from './modern/pages/settings/SettingsPage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
@@ -2680,7 +2681,7 @@ export default function App() {
         <Route path="/cad-snapshots" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/cad-parts" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/comm" element={<ByMode legacy={<CommunicationView {...viewProps} />} />} />
-        <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} />} />
+        <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} modern={<MessagesPage {...viewProps} memberMenuItems={memberMenuItems} />} />} />
         <Route path="/resources" element={<ByMode legacy={<ResourcesView />} />} />
         <Route path="/bruno" element={<ByMode legacy={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} />} />
         <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} modern={<Navigate to="/settings?section=profile" replace />} />} />
