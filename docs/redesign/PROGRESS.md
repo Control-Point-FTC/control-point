@@ -441,3 +441,35 @@ The ⌘J side panel (`BrunoPanel`) is shared by both modes and still uses the Le
 - **Local QA:**
   - 1440 px: the empty state, and a live send. The server error ("AI not configured" locally) is shown.
   - 375 px: no overflow, every target ≥44 px, the composer sits above the tab bar, and the middle scrolls.
+
+## Phase 6b: Bruno side panel (⌘J)
+
+**Shared logic:** `src/components/bruno/useBrunoPanelChat.ts` holds all of `BrunoPanel`'s behaviour:
+- Lazy chat creation, throttled streaming (90 ms), thinking steps and Stop.
+- Proposals.
+- Analyze mode (the scouting context), page-aware rotating starters, and queued "Scout with Bruno" prompts.
+- The output-length picker (now one save at a time).
+- Escape to close, and the expand-to-chat id.
+
+Legacy `BrunoPanel` uses the hook with its markup unchanged.
+
+**The conversation survives a mode switch.** Messages, chat id, composer text, proposal and thinking state, and the busy flag live in the draft store. The in-flight AbortController is module-scoped. So switching between Legacy and Modern with the panel open keeps the conversation, and a reply that is still streaming keeps going and can still be stopped.
+
+### Modern dock (`src/modern/BrunoDock.tsx`)
+`BrunoPanelSwitch` renders the dock in Modern and `BrunoPanel` in Legacy. The dock keeps the same docking behaviour: it pushes the page aside on desktop and overlays it on phones.
+- **Header:** avatar, name, Analyze-mode badge, and icon actions with tooltips (New chat, Open full Bruno, Close).
+- **Toolbar:** an "answer length" dropdown with checkmarks, and a Resources dropdown (GM0, FTC Docs, REV Docs, Game & Season).
+- **Body:** the greeting card and "Try one" starters with refresh. Replies reuse the Bruno page's parts: live thinking → streamed text with a caret → a finished reply with "Thought for Ns", and the proposal card.
+- **Composer:** the same as the page, with attachments, paste and Stop.
+- It brings its own `TooltipProvider`, since it renders outside the shell.
+
+### Tests
+- **New (5 dock tests):**
+  - A fresh chat streams and reports its id for expand.
+  - **The conversation is kept when the interface switches Modern → Legacy.**
+  - Stop keeps the partial reply.
+  - Answer length sends the same profile PATCH.
+  - A queued "Scout with Bruno" prompt sends, and Escape closes.
+- **Totals:** Modern suite green, plus the existing Legacy panel tests. `tsc` is clean.
+- **Local QA:** ⌘J on Tasks at 1440 px docks the panel beside the page.
+- **Screenshot:** `docs/redesign/screenshots/phase6/bruno-dock-1440-dark.jpg`.
