@@ -1,0 +1,421 @@
+// Modern Owner console (phase 9a), rebuilt on the shadcn kit over the shared
+// useOwner hooks (same /api/owner/* endpoints and confirmations as Legacy).
+// Tabs: Overview (workspaces), Users, AI control, Flags and Feedback; a user
+// sheet holds the AI kill switch, timeouts, budgets, warnings, move and the
+// danger zone.
+import { useMemo } from 'react';
+import { format } from 'date-fns';
+import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
+import {
+  AlertTriangle, Ban, Building2, Clock, FileText, Flag, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
+} from 'lucide-react';
+import { cn } from '../../../components/cn';
+import {
+  Badge, Button, ChartContainer, ChartTooltip, ChartTooltipContent, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Skeleton, Switch, Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Tabs, TabsContent, TabsList, TabsTrigger, ToggleGroup, ToggleGroupItem,
+} from '../../../components/ui-kit';
+import { useIsNarrow } from '../../../components/scout/ScoutUi';
+import { FLAG_REASONS, FLAG_STATUSES, aiStatusOf, fmtTokens, loginChips } from '../../../components/owner/ownerUtils';
+import { useFlagReview, useOwnerConsole, useOwnerUser, type OwnerTab } from '../../../components/owner/useOwner';
+import { Page, PageHeader, Section, EmptyState, Stat } from '../../ui/page';
+import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
+import { AnimatedValue } from '../../AnimatedValue';
+import { MemberAvatar } from '../tasks/AssigneePicker';
+
+type Ctl = ReturnType<typeof useOwnerConsole>;
+// Legacy status classes are tuned for dark; Modern badges get their own tones.
+const tone = (cls: string) => cls.includes('rose') ? 'border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-300'
+  : cls.includes('amber') ? 'border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-300'
+    : cls.includes('orange') ? 'border-orange-500/30 bg-orange-500/15 text-orange-600 dark:text-orange-300'
+      : cls.includes('sky') ? 'border-sky-500/30 bg-sky-500/15 text-sky-600 dark:text-sky-300'
+        : cls.includes('emerald') ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-300'
+          : 'border-border bg-muted text-muted-foreground';
+
+export function OwnerPage() {
+  const ctl = useOwnerConsole();
+  return (
+    <Page>
+      <PageHeader eyebrow="Owner" title="Owner console" description="Every workspace, user, AI flag and feedback note — your private command center.">
+        <Tabs value={ctl.tab} onValueChange={(v) => ctl.setTab(v as OwnerTab)}>
+          <TabsList aria-label="Owner sections" className="max-w-full justify-start overflow-x-auto">
+            <TabsTrigger value="overview" className="shrink-0 max-sm:h-11"><Building2 /> Overview</TabsTrigger>
+            <TabsTrigger value="users" className="shrink-0 max-sm:h-11"><Users /> Users</TabsTrigger>
+            <TabsTrigger value="ai" className="shrink-0 max-sm:h-11"><Zap /> AI control</TabsTrigger>
+            <TabsTrigger value="flags" className="shrink-0 max-sm:h-11"><Flag /> Flags{ctl.openFlagCount > 0 && <Badge variant="destructive" className="ml-1">{ctl.openFlagCount}</Badge>}</TabsTrigger>
+            <TabsTrigger value="feedback" className="shrink-0 max-sm:h-11"><MessageSquareHeart /> Feedback{ctl.totals.new_feedback > 0 && <Badge variant="soft" className="ml-1">{ctl.totals.new_feedback}</Badge>}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </PageHeader>
+      {ctl.loading ? <div className="grid grid-cols-2 gap-6 lg:grid-cols-4" aria-busy="true">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}</div> : (
+        <>
+          {ctl.tab === 'overview' && <OverviewTab ctl={ctl} />}
+          {ctl.tab === 'users' && <UsersTab ctl={ctl} />}
+          {ctl.tab === 'ai' && <AiTab ctl={ctl} />}
+          {ctl.tab === 'flags' && <FlagsTab ctl={ctl} />}
+          {ctl.tab === 'feedback' && <FeedbackTab ctl={ctl} />}
+        </>
+      )}
+      {ctl.selectedId !== null && (
+        <UserSheet key={ctl.selectedId} userId={ctl.selectedId} teams={ctl.overview?.teams || []} onClose={() => ctl.setSelectedId(null)} onChanged={ctl.reloadAfterChange} />
+      )}
+    </Page>
+  );
+}
+
+function OverviewTab({ ctl }: { ctl: Ctl }) {
+  const t = ctl.totals;
+  const teams = ctl.overview?.teams || [];
+  return (
+    <>
+      <Reveal className="mb-8 grid grid-cols-2 gap-6 border-b border-border pb-6 lg:grid-cols-4">
+        <Stat icon={Building2} label="Workspaces" value={<AnimatedValue value={t.teams || 0} />} />
+        <Stat icon={UserCircle} label="Users" value={<AnimatedValue value={t.users || 0} />} />
+        <Stat icon={Zap} label="AI messages today" value={<AnimatedValue value={ctl.aiOverview?.today?.messages || 0} />} />
+        <Stat icon={MessageSquareHeart} label="Feedback notes" value={<AnimatedValue value={t.feedback || 0} />} />
+      </Reveal>
+      <Section title="Workspaces" description="Every team on Control Point and how active each one is.">
+        {teams.length ? (
+          <div className="overflow-x-auto rounded-xl border border-border">
+            <Table>
+              <TableHeader><TableRow><TableHead>Workspace</TableHead><TableHead>Code</TableHead><TableHead className="text-right">Members</TableHead><TableHead className="text-right">Messages</TableHead><TableHead className="text-right">Tasks</TableHead><TableHead className="text-right">Feedback</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {teams.map((w: any) => (
+                  <TableRow key={w.id}>
+                    <TableCell className="font-medium">{w.name}{w.number ? <span className="text-muted-foreground"> #{w.number}</span> : null}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{w.access_code}</TableCell>
+                    <TableCell className="text-right tabular-nums">{w.member_count}</TableCell>
+                    <TableCell className="text-right tabular-nums">{w.message_count}</TableCell>
+                    <TableCell className="text-right tabular-nums">{w.task_count}</TableCell>
+                    <TableCell className="text-right tabular-nums">{w.feedback_count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : <EmptyState icon={Building2} title="No workspaces yet" />}
+      </Section>
+    </>
+  );
+}
+
+function UserRow({ u, ctl, extra }: { u: any; ctl: Ctl; extra?: React.ReactNode }) {
+  const st = aiStatusOf(u);
+  return (
+    <StaggerItem as="li" className="flex items-center gap-3 px-4 py-3">
+      <MemberAvatar member={u} className="size-9 border-0" />
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-1.5 truncate text-sm font-medium">
+          {u.name}
+          {u.flags_open > 0 && <Badge variant="destructive">{u.flags_open} flag{u.flags_open > 1 ? 's' : ''}</Badge>}
+          {u.warnings > 0 && <Badge variant="outline" className={tone('amber')}>{u.warnings} warn</Badge>}
+        </p>
+        <p className="truncate text-xs text-muted-foreground">{u.email}{u.team_name ? ` · ${u.team_name}` : ''}{u.account_type ? ` · ${u.account_type}` : ''}{u.tokens_7d > 0 ? ` · ${fmtTokens(u.tokens_7d)} tokens / 7d` : ''}</p>
+      </div>
+      {extra}
+      <Badge variant="outline" className={cn('max-sm:hidden', tone(st.cls))}>{st.label}</Badge>
+      <Button variant="outline" size="sm" onClick={() => ctl.setSelectedId(u.id)} className="max-sm:h-11">Manage</Button>
+    </StaggerItem>
+  );
+}
+
+function UsersTab({ ctl }: { ctl: Ctl }) {
+  return (
+    <Section title={`Users (${ctl.filteredUsers.length})`} description="Manage opens AI controls, warnings, moves and deletion.">
+      <div className="mb-4 flex flex-wrap gap-2">
+        <div className="relative min-w-[12rem] flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={ctl.userSearch} onChange={(e) => ctl.setUserSearch(e.target.value)} placeholder="Search name or email" aria-label="Search users" className="pl-9 max-sm:h-11" />
+        </div>
+        <Select value={ctl.teamFilter} onValueChange={ctl.setTeamFilter}>
+          <SelectTrigger className="w-48 max-sm:h-11" aria-label="Filter by team"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All teams</SelectItem>
+            {ctl.teams.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {ctl.filteredUsers.length ? (
+        <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
+          {ctl.filteredUsers.map((u) => (
+            <UserRow key={u.id} u={u} ctl={ctl} extra={<Button variant="ghost" size="icon-sm" aria-label={`Delete ${u.name}`} onClick={() => void ctl.quickDeleteUser(u)} className="text-destructive hover:text-destructive max-sm:size-11"><Trash2 /></Button>} />
+          ))}
+        </Stagger>
+      ) : <EmptyState icon={Search} title="No users match" />}
+    </Section>
+  );
+}
+
+function AiTab({ ctl }: { ctl: Ctl }) {
+  const ai = ctl.aiOverview;
+  const daily = useMemo(() => (ai?.daily || []).map((d: any) => ({ ...d, label: String(d.date).slice(5) })), [ai]);
+  return (
+    <>
+      <Reveal className="mb-6 grid grid-cols-2 gap-6 border-b border-border pb-6 lg:grid-cols-4">
+        <Stat icon={Zap} label="AI messages today" value={<AnimatedValue value={ai?.today?.messages || 0} />} />
+        <Stat icon={MessageSquare} label="Tokens today" value={<AnimatedValue value={fmtTokens(ai?.today?.tokens || 0)} />} />
+        <Stat icon={Users} label="People used AI today" value={<AnimatedValue value={ai?.today?.users || 0} />} />
+        <Stat icon={Flag} label="Open misuse flags" value={<AnimatedValue value={ctl.openFlagCount} />} tone={ctl.openFlagCount ? 'bad' : 'default'} />
+      </Reveal>
+      {(ai?.providers || []).length > 0 && <p className="mb-6 text-xs text-muted-foreground">Today's providers: {(ai.providers || []).map((p: any) => `${p.provider} · ${p.messages} msgs`).join('  |  ')}</p>}
+      <Section title="Usage — last 14 days" description="Messages per day (bars) and tokens (line).">
+        {daily.length ? (
+          <ChartContainer config={{ messages: { label: 'Messages', color: 'var(--color-chart-1)' }, tokens: { label: 'Tokens', color: 'var(--color-chart-2)' } }} className="h-64 w-full">
+            <ComposedChart data={daily} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+              <YAxis yAxisId="m" tickLine={false} axisLine={false} width={32} />
+              <YAxis yAxisId="t" orientation="right" tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => fmtTokens(v)} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar yAxisId="m" dataKey="messages" fill="var(--color-messages)" radius={[4, 4, 0, 0]} animationDuration={700} />
+              <Line yAxisId="t" dataKey="tokens" type="monotone" stroke="var(--color-tokens)" strokeWidth={2} dot={false} animationDuration={700} />
+            </ComposedChart>
+          </ChartContainer>
+        ) : <EmptyState icon={Zap} title="No AI usage in the last 14 days" />}
+      </Section>
+      <Section title="Heaviest AI users" description="Last 7 days by tokens — spot runaway usage at a glance.">
+        {(ai?.top || []).length ? (
+          <ol className="divide-y divide-border rounded-xl border border-border">
+            {(ai.top as any[]).map((t, i) => (
+              <li key={t.id} className="flex items-center gap-3 px-4 py-3">
+                <span className="w-5 text-center text-xs font-medium text-muted-foreground">{i + 1}</span>
+                <MemberAvatar member={t} className="size-8 border-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{t.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{t.email}{t.team_name ? ` · ${t.team_name}` : ''}</p>
+                </div>
+                <div className="text-right text-xs text-muted-foreground"><p><span className="font-medium text-foreground">{fmtTokens(t.tokens)}</span> tokens</p><p>{t.messages} messages</p></div>
+                <Button variant="outline" size="sm" onClick={() => ctl.setSelectedId(t.id)} className="max-sm:h-11">Manage</Button>
+              </li>
+            ))}
+          </ol>
+        ) : <EmptyState icon={Users} title="No AI usage in the last 7 days" />}
+      </Section>
+      <Section title="How flagging works">
+        <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
+          <li><span className="font-medium text-foreground">Homework-like</span> — messages matching homework / essay / quiz patterns get flagged for review.</li>
+          <li><span className="font-medium text-foreground">Spam burst</span> — 12+ AI messages within 10 minutes.</li>
+          <li><span className="font-medium text-foreground">Excessive use</span> — 80+ AI messages in a day.</li>
+          <li>Flags never block anyone by themselves — you decide: dismiss, warn, time out, or disable AI.</li>
+        </ul>
+      </Section>
+    </>
+  );
+}
+
+function FlagsTab({ ctl }: { ctl: Ctl }) {
+  return (
+    <>
+      <ToggleGroup type="single" aria-label="Flag filter" value={ctl.flagFilter} onValueChange={(v) => { if (v) ctl.chooseFlagFilter(v as 'open' | 'all'); }} className="mb-5">
+        <ToggleGroupItem value="open" className="max-sm:h-11">Open</ToggleGroupItem>
+        <ToggleGroupItem value="all" className="max-sm:h-11">All</ToggleGroupItem>
+      </ToggleGroup>
+      {ctl.flags.length ? (
+        <Stagger className="grid gap-4 lg:grid-cols-2">
+          {ctl.flags.map((f) => <StaggerItem key={f.id}><FlagReview flag={f} ctl={ctl} /></StaggerItem>)}
+        </Stagger>
+      ) : <EmptyState icon={ShieldCheck} title={`No ${ctl.flagFilter === 'open' ? 'open ' : ''}flags`} description="Quiet on the AI front." />}
+    </>
+  );
+}
+
+function FlagReview({ flag, ctl }: { flag: any; ctl: Ctl }) {
+  const r = useFlagReview(flag, ctl.handleFlagAction);
+  const reason = FLAG_REASONS[flag.reason] || { label: flag.reason, cls: '' };
+  const status = FLAG_STATUSES[flag.status] || { label: flag.status, cls: '' };
+  return (
+    <article className="flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4" aria-label={`Flag: ${reason.label} by ${flag.user_name || 'unknown user'}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline" className={tone(reason.cls)}>{reason.label}</Badge>
+        <Badge variant="outline" className={tone(status.cls)}>{status.label}</Badge>
+        <span className="ml-auto text-xs text-muted-foreground">{flag.created_at ? format(new Date(flag.created_at), 'MMM d, h:mm a') : ''}</span>
+      </div>
+      <button onClick={() => flag.member_id && ctl.setSelectedId(flag.member_id)} className="flex items-center gap-2 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+        <MemberAvatar member={{ name: flag.user_name }} className="size-8 border-0" />
+        <span className="min-w-0"><span className="block truncate text-sm font-medium hover:underline">{flag.user_name || 'Unknown user'}</span><span className="block truncate text-xs text-muted-foreground">{flag.user_email}{flag.team_name ? ` · ${flag.team_name}` : ''}</span></span>
+      </button>
+      <blockquote className="whitespace-pre-wrap rounded-lg border-l-2 border-accent/60 bg-muted/50 px-3 py-2 text-sm">{flag.excerpt}</blockquote>
+      {flag.reviewer_note && <p className="text-xs text-muted-foreground">Your note: {flag.reviewer_note}</p>}
+      {flag.status === 'open' && (
+        <div className="mt-auto space-y-2">
+          <Input value={r.note} onChange={(e) => r.setNote(e.target.value)} placeholder="Note (optional — recorded with warn / timeout / disable)" aria-label="Reviewer note" disabled={r.busy} className="max-sm:h-11" />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" disabled={r.busy} onClick={() => void r.run('dismiss')} className="max-sm:h-11">Dismiss</Button>
+            <Button variant="outline" size="sm" disabled={r.busy} onClick={() => void r.run('warn')} className="text-amber-600 dark:text-amber-400 max-sm:h-11"><AlertTriangle /> Warn</Button>
+            <Button variant="outline" size="sm" disabled={r.busy} onClick={() => void r.run('timeout', 24)} className="text-orange-600 dark:text-orange-400 max-sm:h-11"><Timer /> Timeout 24h</Button>
+            <Button variant="outline" size="sm" disabled={r.busy} onClick={() => void r.run('disable')} className="text-destructive max-sm:h-11"><Ban /> Disable AI</Button>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function FeedbackTab({ ctl }: { ctl: Ctl }) {
+  if (!ctl.feedback.length) return <EmptyState icon={MessageSquareHeart} title="No feedback yet" />;
+  return (
+    <Stagger as="ul" className="space-y-3">
+      {ctl.feedback.map((f) => {
+        const url: string = f.screenshot_url || '';
+        const isVideo = (f.attachment_type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(url);
+        const isImage = (f.attachment_type || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
+        return (
+          <StaggerItem as="li" key={f.id} className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                  <Badge variant="soft">{f.category}</Badge>
+                  <Badge variant="outline" className={f.status === 'new' ? tone('emerald') : tone('')}>{f.status}</Badge>
+                </div>
+                <p className="whitespace-pre-wrap text-sm">{f.message}</p>
+                {url && (
+                  <div className="mt-2">
+                    {isVideo ? <video src={url} controls className="max-h-48 rounded-lg border border-border" />
+                      : isImage ? <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="Feedback attachment" className="max-h-40 rounded-lg border border-border object-contain" /></a>
+                        : <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs hover:border-accent/40"><FileText className="size-4 text-accent" /><span className="max-w-48 truncate">{f.attachment_name || 'Download attachment'}</span></a>}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">{f.user_name} · {f.user_email}{f.team_name ? ` · ${f.team_name}` : ''}{f.created_at ? ` · ${format(new Date(f.created_at), 'MMM d, yyyy h:mm a')}` : ''}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void ctl.setFeedbackStatus(f.id, f.status === 'new' ? 'resolved' : 'new')} className="shrink-0 max-sm:h-11">{f.status === 'new' ? 'Resolve' : 'Reopen'}</Button>
+            </div>
+          </StaggerItem>
+        );
+      })}
+    </Stagger>
+  );
+}
+
+function UserSheet({ userId, teams, onClose, onChanged }: { userId: number; teams: any[]; onClose: () => void; onChanged: () => void }) {
+  const narrow = useIsNarrow();
+  const m = useOwnerUser(userId, { onClose, onChanged, teams });
+  const u = m.data?.user;
+  const st = aiStatusOf(u);
+  const usage = (m.data?.usage14 || []) as any[];
+  const maxT = Math.max(1, ...usage.map((d) => Number(d.tokens) || 0));
+  const siblings = m.data?.siblings?.length || 0;
+  return (
+    <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side={narrow ? 'bottom' : 'right'} className={cn('gap-0 p-0', !narrow && 'sm:max-w-md')}>
+        <SheetHeader className="border-b border-border px-6 py-5 pr-12">
+          <SheetTitle>Manage user</SheetTitle>
+          <SheetDescription>{u ? `${u.email}` : 'Loading…'}</SheetDescription>
+        </SheetHeader>
+        {m.loading && !u ? <div className="space-y-3 p-6"><Skeleton className="h-16" /><Skeleton className="h-40" /></div> : !u ? <p className="p-6 text-sm text-muted-foreground">Couldn't load this user.</p> : (
+          <div className="flex-1 space-y-6 overflow-y-auto px-6 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+            <div className="flex items-center gap-3">
+              <MemberAvatar member={u} className="size-12 border-0" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">{u.name}</p>
+                <p className="text-xs text-muted-foreground">{u.team_name || 'No team'} · {u.role} · {u.account_type}</p>
+              </div>
+              <Badge variant="outline" className={tone(st.cls)}>{st.label}</Badge>
+            </div>
+            {(loginChips(u).length > 0 || siblings > 0) && (
+              <div className="flex flex-wrap gap-1.5">
+                {loginChips(u).map((c) => <Badge key={c} variant="secondary">via {c}</Badge>)}
+                {siblings > 0 && <Badge variant="secondary">{siblings + 1} teams total</Badge>}
+              </div>
+            )}
+
+            <section aria-labelledby="ai-h" className="space-y-4 rounded-xl border border-border p-4">
+              <h3 id="ai-h" className="text-sm font-semibold">AI access</h3>
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="ai-enabled" className="flex-col items-start gap-0.5"><span>AI enabled</span><span className="text-xs font-normal text-muted-foreground">Off blocks all Bruno / NavGPT replies</span></Label>
+                <Switch id="ai-enabled" checked={u.ai_disabled !== 1} disabled={m.busy} onCheckedChange={(next) => void m.patchAi({ ai_disabled: !next }, next ? 'AI re-enabled' : 'AI disabled for user')} />
+              </div>
+              <div>
+                <p className="mb-1.5 text-sm">Timeout AI</p>
+                <div className="flex flex-wrap gap-2">
+                  {[{ l: '1 hour', h: 1 }, { l: '24 hours', h: 24 }, { l: '7 days', h: 168 }].map((t) => (
+                    <Button key={t.l} variant="outline" size="sm" disabled={m.busy} onClick={() => void m.patchAi({ timeoutHours: t.h }, `AI paused for ${t.l}`)} className="max-sm:h-11"><Timer /> {t.l}</Button>
+                  ))}
+                  {m.timeoutUntil && <Button variant="ghost" size="sm" disabled={m.busy} onClick={() => void m.patchAi({ ai_timeout_until: null }, 'Timeout cleared')} className="max-sm:h-11">Clear timeout</Button>}
+                </div>
+                {m.timeoutUntil && <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400"><Clock className="size-3" /> Paused until {format(m.timeoutUntil, 'MMM d, h:mm a')}</p>}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <form className="grid gap-1.5" onSubmit={(e) => { e.preventDefault(); void m.saveDailyLimit(); }}>
+                  <Label htmlFor="ai-limit" className="text-xs">Daily token limit</Label>
+                  <div className="flex gap-1.5"><Input id="ai-limit" inputMode="numeric" value={m.dailyLimit} onChange={(e) => m.setDailyLimit(e.target.value)} placeholder="Unlimited" className="h-9 max-sm:h-11" /><Button type="submit" size="sm" variant="outline" disabled={m.busy} className="h-9 max-sm:h-11">Set</Button></div>
+                </form>
+                <form className="grid gap-1.5" onSubmit={(e) => { e.preventDefault(); void m.saveReplyMax(); }}>
+                  <Label htmlFor="ai-reply" className="text-xs">Max tokens / reply</Label>
+                  <div className="flex gap-1.5"><Input id="ai-reply" inputMode="numeric" value={m.replyMax} onChange={(e) => m.setReplyMax(e.target.value)} placeholder="Default" className="h-9 max-sm:h-11" /><Button type="submit" size="sm" variant="outline" disabled={m.busy} className="h-9 max-sm:h-11">Set</Button></div>
+                </form>
+              </div>
+              <p className="text-xs text-muted-foreground">Blank = no limit. Limits apply to Bruno / NavGPT chat; blocked users see your message in the chat.</p>
+            </section>
+
+            <section aria-labelledby="warn-h" className="space-y-2">
+              <h3 id="warn-h" className="text-sm font-semibold">Warn user</h3>
+              <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void m.doWarn(); }}>
+                <Input value={m.warnNote} onChange={(e) => m.setWarnNote(e.target.value)} placeholder="Reason for the warning" aria-label="Warning reason" className="max-sm:h-11" />
+                <Button type="submit" variant="outline" disabled={m.busy} className="shrink-0 text-amber-600 dark:text-amber-400 max-sm:h-11"><AlertTriangle /> Warn</Button>
+              </form>
+              {(m.data?.warnings || []).map((w: any) => (
+                <div key={w.id} className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs">
+                  <p>{w.note || 'Warning issued'}</p>
+                  <p className="mt-0.5 text-muted-foreground">{w.created_at ? format(new Date(w.created_at), 'MMM d, yyyy h:mm a') : ''}</p>
+                </div>
+              ))}
+            </section>
+
+            <section aria-labelledby="use-h">
+              <h3 id="use-h" className="mb-2 text-sm font-semibold">AI usage · last 14 days</h3>
+              {usage.length ? (
+                <div className="flex h-24 items-end gap-1" role="img" aria-label="Daily AI tokens">
+                  {usage.map((d) => (
+                    <div key={d.day} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={`${d.day}: ${d.messages} messages, ${fmtTokens(d.tokens)} tokens`}>
+                      <div className="w-full rounded-sm bg-accent/70 transition-[height] duration-500" style={{ height: `${Math.max(4, (Number(d.tokens) / maxT) * 80)}px` }} />
+                      <span className="text-[9px] text-muted-foreground">{String(d.day).slice(5)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-xs text-muted-foreground">No AI usage recorded.</p>}
+            </section>
+
+            {(m.data?.flags || []).length > 0 && (
+              <section aria-labelledby="fh-h" className="space-y-2">
+                <h3 id="fh-h" className="text-sm font-semibold">Flag history</h3>
+                {(m.data.flags as any[]).map((f) => {
+                  const rs = FLAG_STATUSES[f.status] || { label: f.status, cls: '' };
+                  const rr = FLAG_REASONS[f.reason] || { label: f.reason, cls: '' };
+                  return (
+                    <div key={f.id} className="rounded-lg border border-border px-3 py-2 text-xs">
+                      <div className="mb-1 flex items-center gap-1.5"><Badge variant="outline" className={tone(rr.cls)}>{rr.label}</Badge><Badge variant="outline" className={tone(rs.cls)}>{rs.label}</Badge><span className="ml-auto text-muted-foreground">{f.created_at ? format(new Date(f.created_at), 'MMM d') : ''}</span></div>
+                      <p className="line-clamp-2">“{f.excerpt}”</p>
+                    </div>
+                  );
+                })}
+              </section>
+            )}
+
+            <section aria-labelledby="move-h" className="space-y-2">
+              <h3 id="move-h" className="text-sm font-semibold">Move workspace</h3>
+              <p className="text-xs text-muted-foreground">Currently in <span className="font-medium text-foreground">{u.team_name || 'no workspace'}</span>. Moving clears their roles and signs them out. They aren't notified.</p>
+              <div className="flex gap-2">
+                <Select value={m.moveTeamId || 'none'} onValueChange={(v) => { m.setMoveTeamId(v === 'none' ? '' : v); m.setMoveError(''); }} disabled={m.moving || m.busy}>
+                  <SelectTrigger className="min-w-0 flex-1 max-sm:h-11" aria-label="Destination workspace"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Pick a workspace…</SelectItem>
+                    {(teams || []).filter((t: any) => t.id !== u.team_id).map((t: any) => <SelectItem key={t.id} value={String(t.id)}>{t.name}{t.number ? ` (${t.number})` : ''}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" disabled={m.moving || m.busy || !m.moveTeamId} onClick={() => void m.doMoveUser()} className="max-sm:h-11">{m.moving ? 'Moving…' : 'Move'}</Button>
+              </div>
+              {m.moveError && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{m.moveError}</p>}
+            </section>
+
+            <section aria-labelledby="danger-h" className="space-y-2 rounded-xl border border-destructive/30 p-4">
+              <h3 id="danger-h" className="text-sm font-semibold text-destructive">Danger zone</h3>
+              <Button variant="outline" disabled={m.busy} onClick={() => void m.doDeleteMembership()} className="w-full text-destructive max-sm:h-11"><UserX /> Remove from {u.team_name || 'team'}</Button>
+              <Button variant="outline" disabled={m.busy} onClick={() => void m.doDeleteAccount()} className="w-full text-destructive max-sm:h-11"><Trash2 /> Delete entire account ({siblings + 1} team{siblings + 1 > 1 ? 's' : ''})</Button>
+              <p className="text-xs text-muted-foreground">Deleting the account removes every membership under {u.email}. You can't delete your own owner account or a team's last admin.</p>
+            </section>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  );
+}
