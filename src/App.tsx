@@ -8298,6 +8298,46 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   const [askResponded, setAskResponded] = useState<any>(null);
   const [editingEntry, setEditingEntry] = useState<any>(null);
   const [editForm, setEditForm] = useState({ recipient: '', subject: '', body: '', date: '', type: 'email', direction: 'outbound' });
+  const editDialogRef = useRef<HTMLDivElement>(null);
+  const editTriggerRef = useRef<HTMLElement | null>(null);
+
+  // Focus management for the edit dialog: move focus in on open, trap Tab
+  // inside while open, restore focus to the trigger on close.
+  useEffect(() => {
+    if (!editingEntry) return;
+    editTriggerRef.current = document.activeElement as HTMLElement | null;
+    const node = editDialogRef.current;
+    if (!node) return;
+    const focusables = () =>
+      Array.from(node.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((el) => el.offsetParent !== null);
+    const first = focusables()[0];
+    if (first) first.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setEditingEntry(null); return; }
+      if (e.key !== 'Tab') return;
+      const els = focusables();
+      if (!els.length) return;
+      const firstEl = els[0];
+      const lastEl = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && document.activeElement === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (editTriggerRef.current && document.contains(editTriggerRef.current)) {
+        editTriggerRef.current.focus();
+      }
+    };
+  }, [editingEntry]);
 
   // Group entries into threads: roots (no parent_id) + their replies, chronological.
   const threads = useMemo(() => {
@@ -8654,7 +8694,7 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
       )}
 
       {editingEntry && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" ref={editDialogRef}>
           <Card title={editingEntry.parent_id == null ? "Edit thread" : "Edit message"} className="w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <div className="space-y-4">
               <div className="flex gap-2">

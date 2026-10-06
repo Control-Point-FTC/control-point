@@ -104,7 +104,7 @@ export async function markEmailVerified(email: string): Promise<void> {
     new Date().toISOString()
   );
   // Consume any outstanding codes for this address.
-  await dbRun("DELETE FROM email_verification_codes WHERE email = ?", email);
+  await dbRun("DELETE FROM email_verification_codes WHERE email = ?", normalized);
 }
 
 function codeExpiry(): string {
