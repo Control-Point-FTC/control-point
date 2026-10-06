@@ -917,3 +917,32 @@ Each is chosen by `ByMode` in App.
   - No overflow and every target ≥44 px. No real phone was available.
 - **Fixed during QA:** the Tailwind ring was overridden by the inline dim shadow, so the outline is now part of one shadow stack. The theme note now says it is kept on this device (it is stored in localStorage, not on the account).
 - **Still to come in 9c:** the Modern zero-team screen. It renders outside the interface-mode provider and needs 9b's signed-out look helpers, so it lands after #51.
+
+
+## Phase 9a: Owner console and QR check-in
+
+### Shared logic
+- **`src/components/owner/ownerUtils.ts`:** `fmtTokens`, `aiStatusOf`, `loginChips` and the flag reason / status maps, moved out of App.tsx.
+- **`src/components/owner/useOwner.ts`:** Legacy `OwnerView`, `FlagCard` and `OwnerUserDrawer` keep their JSX (the flag-filter click now calls `chooseFlagFilter`).
+  - **`useOwnerConsole`:** overview, users (search / team filter, quick delete), the AI overview in the owner's timezone (refreshed when the AI tab opens), flags (open / all) and feedback (resolving deletes it server-side). Reloads are latest-wins.
+  - **`useFlagReview`:** a reviewer note **drafted per flag**, plus the action runner.
+  - **`useOwnerUser`:** load, AI kill switch, timeouts, budgets (inputs show the saved value until edited; edits are **drafted per user** and digits-only), warn, move workspace (silent; with confirm) and delete membership / whole account. The confirm wording is unchanged.
+- **`src/components/attendance/useQrCheckin.ts`:** session lookup (the alive guard handles token changes) and confirm (now guarded against double-submit).
+- **`drafts.ts`:** `deleteDraft` (also on the 8d branch; identical).
+
+### Modern pages
+- **Owner console** (`src/modern/pages/owner/OwnerPage.tsx`): kit tabs with count badges (Overview / Users / AI control / Flags / Feedback).
+  - **Overview:** animated stats and a workspace table.
+  - **Users:** searchable rows with flag / warning / AI-status badges, Manage, and Delete.
+  - **AI control:** stats, a **14-day messages + tokens combo chart** (kit chart instead of the lazy Legacy one), the heaviest users and the flagging rules.
+  - **Flags:** flag cards with a quoted excerpt, a drafted note and the four actions.
+  - **Feedback:** cards with image / video / file attachments and Resolve / Reopen.
+  - **User sheet:** identity and login badges; an AI access panel (kit Switch, timeouts, Clear, limit forms); warnings; a usage bar strip; flag history; move workspace (kit Select); and a danger zone.
+- **QR check-in** (`src/modern/pages/attendance/CheckinPage.tsx`): one focused card with a **spring-animated state icon** (asking / loading / checked in / wrong team / error).
+
+### Tests
+- **New (8 tests):**
+  - Owner: overview + timezone URL; users search / delete; a flag action carries its drafted note; resolving feedback; user sheet (kill switch, timeout, digits-only budget, warn, remove); **a half-typed warning survives a remount**.
+  - Check-in: ask → confirm; wrong team; expired session.
+- **Totals:** 550 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA:** the local server ran with `OWNER_EMAILS` set to the local QA account (local only). Desktop dark (overview, user sheet); 390 px on all five tabs with no overflow and every target ≥44 px. No real phone was available.
