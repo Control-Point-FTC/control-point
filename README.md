@@ -97,4 +97,4 @@ Every change goes through a pull request and gets reviewed to a 5/5 confidence s
 
 ## License
 
-MIT
+GPL v3 — see [LICENSE](LICENSE).
