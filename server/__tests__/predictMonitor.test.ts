@@ -128,4 +128,12 @@ describe("PredictMonitor", () => {
     expect(mon.record(forecast("quals", [fm(1, null, { red: 5, blue: 2 }), fm(2, null, { red: 1, blue: 9 })], [[1, 0.8]]))).toBe(true);
     expect(mon.snapshot(2025, "USXXQ1").advancement.quals?.teams).toEqual({ 1: 0.8 });
   });
+
+  it("treats playoffs as started when only the stored results know about them", () => {
+    const mon = new PredictMonitor(dir);
+    // Stale payload: quals done, no playoff matches listed; stored results already include a playoff match.
+    mon.record(forecast("selected", [fm(1, null, { red: 5, blue: 2 })], [[1, 0.8]]), new Date(), new Set(["qual:0:1", "playoff:1:1"]));
+    expect(mon.snapshot(2025, "USXXQ1").advancement.selected).toBeUndefined();
+  });
 });
+

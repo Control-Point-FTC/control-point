@@ -104,7 +104,11 @@ export class PredictMonitor {
     // Finished = playoffs have been played and nothing is left. Completed
     // quals alone (playoff schedule not out yet) is NOT finished: an
     // after-quals or after-selection call made then is still a real forecast.
-    const playoffsStarted = fc.matches.some((m) => m.level === "playoff" && (m.played || storedPlayed.has(m.key)));
+    // Playoffs count as started if the payload shows a played playoff match
+    // OR the stored results (already in the ratings) hold one — a stale
+    // payload may not list the playoff bracket yet.
+    const playoffsStarted = fc.matches.some((m) => m.level === "playoff" && (m.played || storedPlayed.has(m.key)))
+      || [...storedPlayed].some((key) => key.startsWith("playoff:"));
     const finished = playoffsStarted && fc.matches.every((m) => m.played || storedPlayed.has(m.key));
     for (const m of finished ? [] : fc.matches) {
       if (m.played || m.pRedWin == null || snap.matches[m.key] || storedPlayed.has(m.key)) continue;
