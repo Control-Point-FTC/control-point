@@ -149,7 +149,7 @@ export function PredictView() {
             <div className="flex items-center gap-2 flex-wrap">
               <Sparkles className="w-5 h-5 text-accent" />
               <h2 className="font-display font-bold text-xl text-text-base">Predict</h2>
-              <span className="px-2 py-0.5 rounded-full border border-text-base/20 text-text-muted text-[10px] font-black tracking-wider">BETA</span>
+              <span className="px-2 py-0.5 rounded-full border border-sky-400/50 bg-sky-500/15 text-sky-500 text-[10px] font-black tracking-wider">BETA</span>
               <SeasonChip season={season} />
             </div>
             <p className="text-sm text-text-muted mt-1">Your odds of advancing, simulated from every team's match history. Estimates, not guarantees.</p>
@@ -231,19 +231,25 @@ export function PredictView() {
 function Ring({ value, label }: { value: number; label: string }) {
   const r = 52, c = 2 * Math.PI * r, v = Math.max(0, Math.min(1, value));
   return (
-    <svg viewBox="0 0 128 128" className="w-36 h-36 sm:w-44 sm:h-44" role="img" aria-label={`${label}: ${pct(value)}`}>
-      <circle cx="64" cy="64" r={r} fill="none" className="stroke-text-base/10" strokeWidth="12" />
-      <circle cx="64" cy="64" r={r} fill="none" className="stroke-accent" strokeWidth="12" strokeLinecap="round"
-        strokeDasharray={`${c * v} ${c}`} transform="rotate(-90 64 64)" />
-      <text x="64" y="62" textAnchor="middle" className="fill-text-base font-display font-bold" fontSize="28">{pct(value)}</text>
-      <text x="64" y="82" textAnchor="middle" className="fill-text-muted" fontSize="10">{label}</text>
-    </svg>
+    // Number and label are HTML centred over the ring, so they wrap inside the
+    // hole instead of running into the stroke.
+    <div className="relative w-40 h-40 sm:w-48 sm:h-48" role="img" aria-label={`${label}: ${pct(value)}`}>
+      <svg viewBox="0 0 128 128" className="absolute inset-0 w-full h-full" aria-hidden="true">
+        <circle cx="64" cy="64" r={r} fill="none" className="stroke-text-base/10" strokeWidth="10" />
+        <circle cx="64" cy="64" r={r} fill="none" className="stroke-accent" strokeWidth="10" strokeLinecap="round"
+          strokeDasharray={`${c * v} ${c}`} transform="rotate(-90 64 64)" />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center" aria-hidden="true">
+        <span className="font-display font-bold text-text-base text-4xl sm:text-5xl leading-none tabular-nums">{pct(value)}</span>
+        <span className="mt-1.5 max-w-[58%] text-[11px] sm:text-xs leading-tight text-text-muted">{label}</span>
+      </div>
+    </div>
   );
 }
 
 function Stat({ icon: Icon, label, value, hint }: { icon: typeof Trophy; label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-2xl bg-text-base/[0.04] border border-text-base/10 p-3">
+    <div className="card-surface p-3">
       <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted flex items-center gap-1.5"><Icon className="w-3.5 h-3.5 text-accent" />{label}</p>
       <p className="text-xl font-display font-bold text-text-base mt-1">{value}</p>
       {hint && <p className="text-[11px] text-text-muted">{hint}</p>}

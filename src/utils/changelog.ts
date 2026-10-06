@@ -13,12 +13,39 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.5.0',
+    date: '2026-10-06',
+    title: 'Predict (beta) + email-style threads',
+    added: [
+      'Predict (beta) under Compete: your odds of advancing at each event, simulated from every team’s match history',
+      'Predict alliance scenarios: "Who should we pick?" for captains, "Best captains for us" if you’re likely to be picked',
+      'Predict field and match views: every team’s odds and every upcoming match with predicted scores',
+      '"How accurate is this?" — see how the predictions scored on real past events',
+      'Communication Log threads: log replies so each contact becomes an email-style chain',
+      'Team Stats and Predict buttons on the dashboard’s Team Performance card',
+      'Admins can generate a new invite code from Settings → Team',
+    ],
+    improved: [
+      'Brighter, full-size app icon for the browser tab, home screen and installed app',
+      'Appearance settings use the whole screen, with the live preview beside the controls',
+      'One FTC team number field in team settings (no more asking twice)',
+      'Attendance chart: clearer grid lines, the next meeting marked, and today highlighted with a dot',
+      'Attendance table grid lines are easier to see',
+      'Settings gear in the sidebar user card',
+      'Beta tags are now blue',
+    ],
+    fixed: [
+      'Predict cards are solid instead of see-through',
+      'The percentage and label in the Predict odds ring no longer overlap',
+    ],
+  },
+  {
     version: '1.4.0',
     date: '2026-10-05',
     title: 'Mini FTC Scout + Owner controls + Polish',
     added: [
       'Compete tab: deep-dive team performance — full match history with alliance scores, penalties, and point breakdowns',
-      'Analyze tab: search any team, compare up to 4 side-by-side with stat deltas vs event average',
+      'Analyze tab: search any team or event and get Bruno’s scouting priorities',
       'Event field rankings: every team at an event, sortable by OPR/rank, tap any row for full detail',
       'Scouting shortlist: save and organize teams you\'re watching for alliance selection',
       'Bruno AI now knows what you\'re looking at — asks smarter questions in Analyze mode',
@@ -30,7 +57,6 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Bruno AI colors fixed in light mode — readable everywhere now',
       'All dropdowns replaced with custom themed menus (no more boxy native Windows dropdowns)',
       'Appearance sliders: click any value to type it directly, snaps to valid steps',
-      'NavGPT toggle moved to Bruno AI settings (admin-only)',
       'One signature logo everywhere: hexagon favicon, app icons, and logo unified',
       'Dashboard preview shows live grid effects as you customize',
       'Moved users get the destination workspace\'s default Member role automatically',
@@ -133,4 +159,4 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-export const CURRENT_VERSION = '1.3.0';
+export const CURRENT_VERSION = CHANGELOG[0].version;
