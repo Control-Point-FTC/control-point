@@ -7,19 +7,20 @@
 //                   dock at the bottom and a People sheet.
 import { motion } from 'motion/react';
 import {
-  Expand, Headphones, Maximize, Mic, MicOff, Minimize, MonitorUp, Phone, PhoneOff, Pin, Shrink, Star, TriangleAlert,
-  Users, Video, VideoOff, VolumeX, X,
+  ArrowRightLeft, Check, ChevronDown, Expand, Headphones, Maximize, Mic, MicOff, Minimize, MonitorUp, Phone, PhoneOff, Pin, PinOff,
+  Shrink, Star, Trash2, TriangleAlert, Users, Video, VideoOff, Volume2, VolumeX, X,
 } from 'lucide-react';
 import { cn } from '../../components/cn';
 import {
-  Button, Dialog, DialogContent, DialogDescription, DialogTitle, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
+  Button, Dialog, DialogContent, DialogDescription, DialogTitle, Popover, PopoverAnchor, PopoverContent, Separator, Sheet, SheetContent,
+  SheetDescription, SheetHeader, SheetTitle, Slider,
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '../../components/ui-kit';
 import CrosshairIcon from '../../components/CrosshairIcon';
 import { useVoice, type VoiceParticipant } from '../../voice';
 import { useIncomingCall } from '../../components/voice/useIncomingCall';
 import { useCallView } from '../../components/voice/useCallView';
-import { ParticipantMenu } from '../../components/voice/ParticipantMenu';
+import { useParticipantActions } from '../../components/voice/useParticipantActions';
 import { ParticipantAudio, QualityBadge, StreamVideo, VoiceAvatar } from '../../components/voice/shared';
 
 const STATUS: Record<string, { label: string; dot: string }> = {
@@ -326,8 +327,94 @@ export function CallStage({ onOpenSettings }: { onOpenSettings?: () => void }) {
           </ul>
         </SheetContent>
       </Sheet>
-      {v.menuFor && <ParticipantMenu participant={v.menuFor.p} anchor={v.menuFor.anchor} onClose={() => v.setMenuFor(null)} />}
+      {v.menuFor && <ParticipantOptions key={v.menuFor.p.memberId} participant={v.menuFor.p} anchor={v.menuFor.anchor} container={v.rootRef.current} onClose={() => v.setMenuFor(null)} />}
     </motion.div>
     </TooltipProvider>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function OptionRow({ icon: Icon, label, onClick, checked, disabled, danger }: {
+  icon: React.ComponentType<{ className?: string }>; label: string; onClick: () => void; checked?: boolean; disabled?: boolean; danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:pointer-events-none disabled:opacity-40',
+        danger ? 'text-destructive hover:bg-destructive/10' : 'hover:bg-muted',
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      <span className="flex-1">{label}</span>
+      {checked && <Check className="size-4 text-accent" />}
+    </button>
+  );
+}
+
+/** Per-participant options, anchored where you tapped (same actions as Classic's menu). */
+function ParticipantOptions({ participant: p, anchor, container, onClose }: {
+  participant: VoiceParticipant; anchor: { x: number; y: number }; container: HTMLElement | null; onClose: () => void;
+}) {
+  const a = useParticipantActions(p, onClose);
+  return (
+    <Popover open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <PopoverAnchor asChild>
+        <span aria-hidden="true" className="pointer-events-none fixed size-px" style={{ left: anchor.x, top: anchor.y }} />
+      </PopoverAnchor>
+      {/* Portalled into the stage, so it stays visible in fullscreen. */}
+      <PopoverContent container={container} align="start" className="max-h-[70dvh] w-64 overflow-y-auto p-1.5" role="menu" aria-label={`Options for ${p.name}`}>
+        <div className="flex items-center gap-2.5 px-2.5 py-2">
+          <VoiceAvatar name={p.name} avatarUrl={p.avatarUrl} size={28} speaking={p.speaking} />
+          <span className="min-w-0 truncate text-sm font-medium">{p.name}{p.isSelf && <span className="font-normal text-muted-foreground"> (you)</span>}</span>
+        </div>
+        <Separator className="my-1" />
+        <OptionRow icon={a.isPinned ? PinOff : Pin} label={a.isPinned ? 'Unpin' : 'Pin for me'} checked={a.isPinned} onClick={() => { a.setPersonalPin(a.isPinned ? null : p.memberId); onClose(); }} />
+        <OptionRow icon={Star} label={a.isSpotlit ? 'Remove my spotlight' : 'Spotlight for me'} checked={a.isSpotlit} onClick={() => { a.setPersonalSpotlight(a.isSpotlit ? null : p.memberId); onClose(); }} />
+        {!p.isSelf && (
+          <div className="px-2.5 pb-1 pt-2">
+            <p className="flex items-center justify-between text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5"><Volume2 className="size-3.5" /> Their volume</span>
+              <span className="tabular-nums">{Math.round(a.volume * 100)}%</span>
+            </p>
+            <Slider aria-label={`Volume for ${p.name}`} min={0} max={100} step={1} value={[Math.round(a.volume * 100)]} onValueChange={([n]) => a.handleVolume(n / 100)} />
+          </div>
+        )}
+        {a.canModerate && !p.isSelf && (
+          <>
+            <Separator className="my-1" />
+            <p className="px-2.5 pb-1 pt-1.5 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">Moderate</p>
+            <OptionRow icon={MicOff} label="Mute" disabled={p.isMuted} onClick={() => void a.mod('mute', 'mute')} />
+            <OptionRow icon={p.isDeafened ? VolumeX : Headphones} label="Deafen" disabled={p.isDeafened} onClick={() => void a.mod('deafen', 'deafen')} />
+            <OptionRow icon={VideoOff} label="Disable video" disabled={!p.cameraOn} onClick={() => void a.mod('disable_video', 'disable video')} />
+            <OptionRow icon={MonitorUp} label="Stop screen share" disabled={!p.sharingScreen} onClick={() => void a.mod('stop_screen', 'stop screen share')} />
+            <button
+              type="button"
+              role="menuitem"
+              aria-expanded={a.moveOpen}
+              onClick={() => a.setMoveOpen((o) => !o)}
+              className="flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            >
+              <ArrowRightLeft className="size-4" /><span className="flex-1">Move to channel</span>
+              <ChevronDown className={cn('size-4 transition-transform', a.moveOpen && 'rotate-180')} />
+            </button>
+            {a.moveOpen && (
+              <div role="menu" aria-label="Target channel" className="ml-6 grid max-h-36 gap-0.5 overflow-y-auto border-l border-border pl-2">
+                {a.otherChannels.map((c) => (
+                  <button key={c.id} type="button" role="menuitem" onClick={() => void a.handleMove(c.id)} className="min-h-9 truncate rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground">{c.name}</button>
+                ))}
+                {a.otherChannels.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">No other channels.</p>}
+              </div>
+            )}
+            <OptionRow icon={Star} label={a.isGlobalSpotlight ? 'Remove global spotlight' : 'Set global spotlight'} checked={a.isGlobalSpotlight} onClick={() => void a.handleGlobalSpotlight()} />
+            <OptionRow icon={Trash2} label="Remove from call" danger onClick={() => void a.handleRemove()} />
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }

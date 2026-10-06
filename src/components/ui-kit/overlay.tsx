@@ -192,9 +192,12 @@ export function DropdownMenuSubContent({ className, ...props }: React.ComponentP
 export const Popover = P.Root;
 export const PopoverTrigger = P.Trigger;
 export const PopoverAnchor = P.Anchor;
-export function PopoverContent({ className, align = 'center', sideOffset = 6, ...props }: React.ComponentProps<typeof P.Content>) {
+export function PopoverContent({ className, align = 'center', sideOffset = 6, container, ...props }: React.ComponentProps<typeof P.Content> & {
+  /** Portal target (e.g. a fullscreen element, so the popover stays visible inside it). */
+  container?: HTMLElement | null;
+}) {
   return (
-    <P.Portal>
+    <P.Portal container={container ?? undefined}>
       <P.Content
         data-slot="popover-content"
         data-esc-owner=""

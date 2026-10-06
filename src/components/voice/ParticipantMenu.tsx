@@ -3,12 +3,11 @@
 // Moderator items render only when canModerate; destructive actions go
 // through confirmDialog.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Check, ChevronRight, MicOff, MonitorUp, Pin, PinOff, Star, Trash2, VideoOff, Volume2, VolumeX, Headphones } from 'lucide-react';
 import { cn } from '../ui';
-import { confirmDialog } from '../dialog';
 import { useVoice, type VoiceParticipant } from '../../voice';
-import { getPeerVolume, setPeerVolume, VoiceIconButton } from './shared';
+import { useParticipantActions } from './useParticipantActions';
 
 function MenuItem({
   label,
@@ -62,22 +61,11 @@ export function ParticipantMenu({
   anchor: { x: number; y: number };
 }) {
   const {
-    personalPin,
-    personalSpotlight,
-    setPersonalPin,
-    setPersonalSpotlight,
-    canModerate,
-    moderate,
-    channels,
-    session,
-  } = useVoice();
-  const [volume, setVolume] = useState(() => getPeerVolume(participant.memberId));
-  const [moveOpen, setMoveOpen] = useState(false);
+    canModerate, isPinned, isSpotlit, isGlobalSpotlight, volume, handleVolume, moveOpen, setMoveOpen,
+    setPersonalPin, setPersonalSpotlight, mod, handleRemove, handleMove, handleGlobalSpotlight,
+  } = useParticipantActions(participant, onClose);
+  const { channels, session } = useVoice();
   const menuRef = useRef<HTMLDivElement>(null);
-
-  const isPinned = personalPin === participant.memberId;
-  const isSpotlit = personalSpotlight === participant.memberId;
-  const isGlobalSpotlight = session?.globalSpotlightMemberId === participant.memberId;
 
   useEffect(() => {
     const el = menuRef.current;
@@ -93,38 +81,6 @@ export function ParticipantMenu({
   const pos = {
     left: Math.min(anchor.x, window.innerWidth - 260),
     top: Math.min(anchor.y, window.innerHeight - 420),
-  };
-
-  const handleVolume = (v: number) => {
-    setVolume(v);
-    setPeerVolume(participant.memberId, v);
-  };
-
-  const mod = async (action: 'mute' | 'deafen' | 'disable_video' | 'stop_screen', label: string) => {
-    await moderate(action, participant.memberId);
-    onClose();
-  };
-
-  const handleRemove = async () => {
-    const ok = await confirmDialog({
-      title: `Remove ${participant.name}?`,
-      message: `${participant.name} will be kicked from this call. They can rejoin unless the channel is locked.`,
-      confirmLabel: 'Remove',
-      danger: true,
-    });
-    if (!ok) return;
-    await moderate('remove', participant.memberId);
-    onClose();
-  };
-
-  const handleMove = async (channelId: number) => {
-    await moderate('move', participant.memberId, { targetChannelId: channelId });
-    onClose();
-  };
-
-  const handleGlobalSpotlight = async () => {
-    await moderate(isGlobalSpotlight ? 'unspotlight' : 'spotlight', participant.memberId);
-    onClose();
   };
 
   return (
