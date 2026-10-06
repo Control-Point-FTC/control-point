@@ -13,6 +13,7 @@ import { setLanguage, SUPPORTED_LANGUAGES } from '../i18n';
 import { soundsEnabled, setSoundsEnabled } from '../utils/sounds';
 import { WhatsNewModal } from './WhatsNewModal';
 import { CURRENT_VERSION } from '../utils/changelog';
+import { InterfaceModePicker, WorkspaceInterfaceDefault } from '../modern/InterfaceModePicker';
 import { DashboardPreview } from './DashboardPreview';
 
 /** Click-to-edit numeric value for appearance sliders. */
@@ -881,6 +882,9 @@ export default function SettingsModal({
               <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:gap-10 xl:items-start">
               <section className="space-y-6 min-w-0">
                 <div className="card-surface p-5 sm:p-6">
+                  <InterfaceModePicker />
+                </div>
+                <div className="card-surface p-5 sm:p-6">
                   <ThemePicker />
                 </div>
 
@@ -888,7 +892,7 @@ export default function SettingsModal({
                   <div>
                     <h3 className="text-sm font-bold text-text-base">Background Effects</h3>
                     <p className="text-xs text-text-muted leading-relaxed mt-1">
-                      Customize the animated background grid.
+                      Customize the animated background grid. These effects belong to the Legacy experience.
                     </p>
                   </div>
                   <button
@@ -1430,6 +1434,8 @@ export default function SettingsModal({
                     {saving ? 'Saving…' : 'Save changes'}
                   </button>
                 </section>
+
+                <WorkspaceInterfaceDefault team={team} onTeamSaved={onTeamSaved} />
 
                 <section>
                   <h3 className="text-sm font-bold text-text-base mb-1">Invite code</h3>

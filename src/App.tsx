@@ -176,7 +176,13 @@ import { clearScoutCache } from './services/ftcScoutApi';
 import { clearPredictCache } from './services/predictApi';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
-import { WhatsNewAutoPopup } from './components/WhatsNewModal';
+import { WhatsNewAutoPopup, WhatsNewModal } from './components/WhatsNewModal';
+import { InterfaceModeProvider } from './modern/interfaceMode';
+import { ShellSwitch, TryModernBanner } from './modern/ShellSwitch';
+import { ModernShell } from './modern/ModernShell';
+import type { CommandAction } from './modern/CommandMenu';
+import type { NotificationActions } from './modern/InboxSheet';
+import { useDraft, clearDrafts } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
@@ -1115,6 +1121,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const [isOwner, setIsOwner] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   // True once the initial session check has finished. Until then we show a
   // minimal splash — never the landing page — so a refresh never flashes the
@@ -1950,6 +1957,7 @@ export default function App() {
     clearScoutCache();
     clearScreenContext();
     clearPredictCache();
+    clearDrafts(); // unsent input never follows you into another workspace
     if (typeof localStorage === 'undefined') return;
     [
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',
@@ -2834,6 +2842,68 @@ export default function App() {
     );
   }
 
+  // Routed page content (or the sync spinner / error). Shared by both shells.
+  const mainContent = loading ? (
+    loadError ? (
+      <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
+        <p className="text-text-base font-bold">Couldn't sync your data</p>
+        <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
+        <button
+          onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
+          className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
+        >
+          Try again
+        </button>
+      </div>
+    ) : (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
+        <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
+      </div>
+    )
+  ) : renderContent();
+
+  // Inbox actions for the Modern shell (same endpoints as the Legacy bell).
+  const notificationActions: NotificationActions = {
+    markRead: async (ids) => {
+      if (!ids.length) return;
+      const res = await apiFetch('/api/notifications/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+      if (res.ok) setNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: 1 } : n)));
+    },
+    markUnread: async (ids) => {
+      const res = await apiFetch('/api/notifications/unread', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+      if (res.ok) setNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, is_read: 0 } : n)));
+    },
+    remove: async (id) => {
+      const res = await apiFetch(`/api/notifications/${id}`, { method: 'DELETE' });
+      if (res.ok) setNotifications((prev) => prev.filter((x) => x.id !== id));
+      else notify('Could not delete notification', 'error');
+    },
+    clearAll: async () => {
+      if (!(await confirmDialog({ title: 'Clear all notifications?', message: 'This will delete all your notifications.', confirmLabel: 'Clear all' }))) return;
+      const res = await apiFetch('/api/notifications', { method: 'DELETE' });
+      if (res.ok) { setNotifications([]); notify('Notifications cleared', 'success'); }
+      else notify('Could not clear notifications', 'error');
+    },
+    open: (n) => {
+      const meta = notifMeta(n);
+      if (n.type === 'mention' && meta.channel_id != null) {
+        navigate('/chat');
+        setActiveChannelId(Number(meta.channel_id));
+        return true;
+      }
+      return false;
+    },
+  };
+
+  // Command-menu actions (Modern). Only actions the user can already take.
+  const commandActions: CommandAction[] = [
+    ...(visibleTabs.some((t) => t.id === 'attendance') ? [{ id: 'checkin', label: 'Check in', group: 'Actions' as const, icon: CalendarCheck, keywords: ['attendance', 'qr', 'here'], run: () => navigate('/attendance') }] : []),
+    { id: 'whats-new', label: "What's new", group: 'Actions', icon: Sparkles, run: () => setWhatsNewOpen(true) },
+    { id: 'feedback', label: 'Send feedback', group: 'Actions', icon: MessageSquare, run: () => setShowFeedback(true) },
+    { id: 'setup', label: 'Setup guide', group: 'Actions', icon: LayoutDashboard, run: () => openSetupGuide() },
+  ];
+
   return (
     <VoiceProvider
       memberId={currentUser?.id ?? null}
@@ -2843,6 +2913,11 @@ export default function App() {
     >
       <VoiceSocketBridge voiceRef={voiceApiRef} />
       <ContextMenuProvider>
+      <InterfaceModeProvider
+        user={currentUser}
+        team={activeTeam}
+        onUserSaved={(u: any) => setCurrentUser((prev: any) => (prev ? { ...prev, ...u } : u))}
+      >
     <div className="flex h-dvh overflow-hidden bg-primary">
       <DialogHost />
       {completingTask && (
@@ -2899,6 +2974,8 @@ export default function App() {
         </div>
       )}
       {signupTeam && <CodeRevealScreen team={signupTeam} onEnter={() => setSignupTeam(null)} />}
+      <ShellSwitch
+        legacy={<>
       {/* Sidebar Overlay for Mobile */}
       <AnimatePresence>
         {isSidebarOpen && isMobile && (
@@ -3450,6 +3527,7 @@ export default function App() {
           "flex flex-col flex-1 min-h-0 min-w-0",
           isImmersiveRoute ? "overflow-hidden pb-[calc(62px+env(safe-area-inset-bottom))] md:pb-0" : "px-4 pt-4 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 pb-28 md:pb-8 overflow-y-auto overflow-x-clip custom-scrollbar"
         )}>
+          {!isImmersiveRoute && <TryModernBanner />}
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -3463,25 +3541,7 @@ export default function App() {
               // padding and the last content hides behind the mobile nav.
               className="flex flex-col grow shrink-0 basis-auto min-w-0"
             >
-              {loading ? (
-                loadError ? (
-                  <div className="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
-                    <p className="text-text-base font-bold">Couldn't sync your data</p>
-                    <p className="text-text-muted text-sm max-w-sm">{loadError}</p>
-                    <button
-                      onClick={() => { hasLoadedOnce.current = false; fetchData(); }}
-                      className="px-5 py-2.5 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-110 transition"
-                    >
-                      Try again
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-64 gap-4">
-                    <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
-                    <p className="text-text-muted animate-pulse">Synchronizing club data...</p>
-                  </div>
-                )
-              ) : renderContent()}
+              {mainContent}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -3533,6 +3593,39 @@ export default function App() {
         </nav>
       )}
 
+        </>}
+        modern={() => (
+          <ModernShell
+            visibleTabs={visibleTabs as any}
+            activeTab={activeTab}
+            pageTitle={pageTitle}
+            onNavigate={(path) => navigate(path)}
+            content={mainContent}
+            immersive={isImmersiveRoute}
+            isMobile={isMobile}
+            user={currentUser}
+            teams={teams}
+            activeTeam={activeTeam}
+            activeTeamName={activeTeamName || ''}
+            isAdmin={isAdmin}
+            onSwitchTeam={(id) => void handleSwitchTeam(id)}
+            unreadMentions={unreadMentions}
+            notifications={notifications}
+            notificationActions={notificationActions}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onLogout={() => void handleLogout()}
+            onOpenBruno={handleBrunoButton}
+            botName={botName}
+            onOpenFeedback={() => setShowFeedback(true)}
+            onSetupGuide={openSetupGuide}
+            onOpenWhatsNew={() => setWhatsNewOpen(true)}
+            onStatusPick={(st) => void handleStatusPick(st)}
+            predictSeen={predictSeen}
+            actions={commandActions}
+          />
+        )}
+      />
+
       {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
       {/* Voice calling surfaces — all driven by VoiceProvider context state.
           CallBar is fixed-bottom (above the mobile nav) and survives route
@@ -3543,6 +3636,7 @@ export default function App() {
       <CookieConsent />
       <InstallPrompt />
       <WhatsNewAutoPopup />
+      <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
       <BrunoPanel
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
@@ -3598,6 +3692,7 @@ export default function App() {
         />
       )}
     </div>
+      </InterfaceModeProvider>
     </ContextMenuProvider>
     </VoiceProvider>
   );
@@ -8653,12 +8748,13 @@ function LinkPreview({ url }: { url: string }) {
 // center, member list with presence on the right. No servers — channels live
 // inside the team.
 function ChatView({ messages, setMessages, msgCache, msgExhausted, members, currentUser, socket, channels, setChannels, activeChannelId, setActiveChannelId, handleCreateChannel, handleDeleteChannel, isAdmin, teams, activeTeamName, onSwitchTeam, chatCategories, handleCreateCategory, handleRenameCategory, handleDeleteCategory, handleMoveChannel }: any) {
-  const [content, setContent] = useState('');
+  // Composer draft lives in the shared draft store so switching Legacy/Modern keeps it.
+  const [content, setContent] = useDraft<string>('chat:content', '');
   const [mentionSearch, setMentionSearch] = useState('');
   const [showMentions, setShowMentions] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [pendingPreview, setPendingPreview] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useDraft<File | null>('chat:file', null);
+  const [pendingPreview, setPendingPreview] = useDraft<string | null>('chat:preview', null);
   const [dragging, setDragging] = useState(false);
   const [showChannelsMobile, setShowChannelsMobile] = useState(false);
   const [showMembersMobile, setShowMembersMobile] = useState(false);
