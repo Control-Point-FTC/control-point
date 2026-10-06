@@ -15,6 +15,7 @@ import {
   MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf,
 } from '../../../components/BrunoImageAttach';
 import { BrunoThinking, StreamingCaret } from '../../../components/bruno/BrunoThinking';
+import { inEpoch } from '../../drafts';
 import type { LiveThink } from '../../../components/bruno/useBrunoConversation';
 
 export function BrunoAvatar({ className }: { className?: string }) {
@@ -67,7 +68,7 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
         value={value}
         autoFocus={autoFocus}
         onChange={(e) => onChange(e.target.value)}
-        onPaste={(e) => { void imagesFromPaste(e).then(addImages); }}
+        onPaste={(e) => { void imagesFromPaste(e).then(inEpoch(addImages)); }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
@@ -79,8 +80,8 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
         className="block w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
       />
       <div className="flex items-center gap-1 px-2 pb-2">
-        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void filesToAttachedImages(e.target.files || []).then(addImages); e.target.value = ''; }} />
-        <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={(e) => { void filesToAttachedPdfs(e.target.files || []).then((pdfs) => setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS))); e.target.value = ''; }} />
+        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void filesToAttachedImages(e.target.files || []).then(inEpoch(addImages)); e.target.value = ''; }} />
+        <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={(e) => { void filesToAttachedPdfs(e.target.files || []).then(inEpoch((pdfs: AttachedPdf[]) => setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS)))); e.target.value = ''; }} />
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground max-sm:size-11" aria-label="Attach screenshots" title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} screenshots` : 'Attach screenshots'} disabled={busy || attached.length >= MAX_BRUNO_IMAGES} onClick={() => fileRef.current?.click()}><ImagePlus /></Button>
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground max-sm:size-11" aria-label="Attach a PDF" title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'} disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS} onClick={() => pdfRef.current?.click()}><FileText /></Button>
         <span className="ml-auto hidden px-2 text-xs text-muted-foreground sm:inline">{busy ? 'Bruno is replying…' : 'Shift+Enter for a new line'}</span>

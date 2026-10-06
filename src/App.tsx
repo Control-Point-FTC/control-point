@@ -148,7 +148,6 @@ function ChatImage({ src, href, alt }: { src: string | null | undefined; href: s
 }
 import Markdown from 'react-markdown';
 import BrunoView from './components/BrunoView';
-import BrunoPanel from './components/BrunoPanel';
 import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
 import BrunoIcon from './components/BrunoIcon';
 import FeedbackIcon from './components/FeedbackIcon';
@@ -190,6 +189,7 @@ import { CalendarPage } from './modern/pages/calendar/CalendarPage';
 import { AttendancePage } from './modern/pages/attendance/AttendancePage';
 import { PeoplePage } from './modern/pages/people/PeoplePage';
 import { BrunoPage } from './modern/pages/bruno/BrunoPage';
+import { BrunoPanelSwitch } from './modern/BrunoDock';
 import { SettingsPage } from './modern/pages/settings/SettingsPage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
@@ -3726,7 +3726,7 @@ export default function App() {
       <InstallPrompt />
       <WhatsNewAutoPopup />
       <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
-      <BrunoPanel
+      <BrunoPanelSwitch
         key={currentUser?.team_id ?? 'none'}
         open={brunoPanelOpen}
         onClose={() => setBrunoPanelOpen(false)}
