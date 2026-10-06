@@ -570,3 +570,43 @@ Three panes (channels · conversation · people). On phones the side panes becom
   - Desktop: the hero, OPR and trends, and an opened Championship event. The match lists were stacked into a single column because two columns were cramped.
   - 390 px: no overflow, and every target is ≥44 px.
   - No real phone was available.
+
+## Phase 7c: Team Stats · Analyze
+
+### Shared logic (`src/components/scout/useAnalyze.ts`)
+Legacy `AnalyzeView` keeps its JSX; its logic moved into hooks that both modes use:
+- **`useAnalyzeController`:** Team detail / side-panel peek, the event picker (defaults to the reference team's upcoming or most recently played event), pins (`controlpoint-scout-pins`), recents, the workspace shortlist (`useShortlist`, with serialized optimistic writes), shortlist rules (wait for the season's list; a team already listed opens the Shortlist tab) and Bruno's scouting context and greeting.
+- **`useEventField`:** latest-wins event load, filter / round / alliance colour, sort (each column has its natural first direction), and paging.
+- **`useTeamSearch`:** debounced search that drops stale responses.
+- **`useShortlistNotes`:** notes live in the draft store under `scout-notes:<season>:<team>`. A half-written note survives a mode switch in both modes. A newer server value replaces the draft, which is what Legacy did.
+
+### Modern Analyze (`src/modern/pages/stats/AnalyzeWorkspace.tsx`, `ShortlistBoard.tsx`)
+- **Finder card** (replaces Legacy's left rail): a large search box with a results dropdown, and quick-pick chips for Pinned / Shortlist / Recent. Below them, the season toggle and **event chips**.
+- **Views:** Event field / Team detail / Shortlist tabs, plus Ask Bruno.
+- **Event field:**
+  - A stat header (teams, matches played, average OPR and score).
+  - A filter input, plus Round and Alliance toggle groups.
+  - Desktop: a kit table with `aria-sort` headers and direction arrows, rank medals, a shortlist marker, and a row that opens a peek. Phones: cards with a Sort menu.
+  - Each team has an actions menu: View team, View matches, Scout with Bruno, shortlist, pin.
+  - Pagination, and a data-source line.
+- **Peek:** a wide side sheet with the Modern `TeamProfile` and "Open in Team detail". Team detail itself is `TeamProfile`.
+- **Match sheets:** "View matches" lists that team's matches; each opens the Modern match breakdown.
+- **Shortlist:**
+  - A Bruno recommendations panel: scout next, and partner fits for our team.
+  - Team cards with a priority toggle, a Scout next switch, drafted notes (saved on blur) and strength / weakness badges. Suggested tags are dashed chips; custom tags can be added as a strength or weakness.
+  - Upcoming matches as alliance-coloured badges, with alliance text for screen readers.
+- Still no compare mode, comparison table or compare action.
+
+### Tests
+- **New (8 Modern Analyze tests):**
+  - The Bruno greeting and context, with no compare UI.
+  - Default event, sort, filter and the alliance filter.
+  - Peek → Open in Team detail.
+  - Search → Team detail and recents.
+  - Add to shortlist from the menu, then priority, scout-next and tags.
+  - **A half-written note survives a remount and saves on blur.**
+  - Pin → quick pick.
+  - View matches → match breakdown.
+- The Legacy scout tests and the 7b tests still pass.
+- **Totals:** 502 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (real FTC data, 2025–26, NJ Championship Parkway, 24 teams): the desktop finder and field table (the table scrolls inside its frame when Bruno's dock is open). At 390 px: no overflow, every target ≥44 px, and the field shows as cards. No real phone was available.

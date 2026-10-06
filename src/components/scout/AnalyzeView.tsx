@@ -1,100 +1,32 @@
 // Team Stats → Analyze: event scouting & alliance-planning workspace.
 // Individual team scouting, event context and partner-fit help — there is
 // intentionally NO compare mode, comparison table or compare action here.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Search, X, CalendarDays, Users, Star, Bookmark, Eye, List as ListIcon, Trash2, Bot, Pin, ChevronLeft, ChevronRight, ArrowUpDown, Filter, Sparkles, History } from 'lucide-react';
 import { cn } from '../ui';
-import type { FtcEventFull, FtcMatchFull, FtcTeamEventStats, FtcTeamSearchHit, ShortlistEntry, ShortlistPriority } from '../../types/ftcScout';
-import {
-  fetchScoutEvent, fetchScoutTeam, searchScoutTeams,
-  readRecentTeams, pushRecentTeam, type RecentTeam,
-} from '../../services/ftcScoutApi';
-import { setScoutingContext, openBruno, ANALYZE_GREETING } from '../../services/brunoContext';
-import { useDebounced } from '../../hooks/useDebounced';
+import type { FtcEventFull, FtcMatchFull, FtcTeamEventStats, ShortlistEntry, ShortlistPriority } from '../../types/ftcScout';
+import { fetchScoutEvent, type RecentTeam } from '../../services/ftcScoutApi';
+import { openBruno, ANALYZE_GREETING } from '../../services/brunoContext';
 import type { ShortlistPatch } from '../../utils/shortlist';
-import { useShortlist } from './useShortlist';
+import { useAnalyzeController, useEventField, useShortlistNotes, useTeamSearch, type FieldSortKey } from './useAnalyze';
 import { eventAverages, partnerFit, scoutingPriorities, strengthsWeaknesses, teamMatches, winRate } from '../../utils/ftcAnalysis';
 import { TeamScoutView, MatchRow, MatchSheet, scoutWithBruno, type TeamActions } from './CompeteView';
 import { ALL_SEASONS, EmptyState, ErrorState, QuickPop, SeasonChip, SeasonPicker, Sheet, Skeleton, SourceBadge, fmt, placementClass, relTime, useIsNarrow } from './ScoutUi';
 import { Select as ThemedSelect } from '../Select';
 
-type View = 'team' | 'field' | 'shortlist';
-type SortKey = 'rank' | 'opr' | 'auto' | 'teleop' | 'endgame' | 'rp' | 'avgScore' | 'avgPen' | 'number';
-
-const PIN_KEY = 'controlpoint-scout-pins';
-function readPins(): RecentTeam[] {
-  try { const v = JSON.parse(localStorage.getItem(PIN_KEY) || '[]'); return Array.isArray(v) ? v.filter((t) => t && Number.isInteger(t.number)) : []; } catch { return []; }
-}
-function writePins(p: RecentTeam[]) { try { localStorage.setItem(PIN_KEY, JSON.stringify(p.slice(0, 12))); } catch { /* storage unavailable */ } }
+type SortKey = FieldSortKey;
 
 export function AnalyzeView({ season, onSeasonChange, myTeam, initialTeam = null }: { season: number; onSeasonChange: (s: number) => void; myTeam: number | null; initialTeam?: { number: number; name: string } | null }) {
-  const [view, setView] = useState<View>(initialTeam ? 'team' : 'field');
-  const [selected, setSelected] = useState<{ number: number; name: string } | null>(initialTeam);
-  const [panelTeam, setPanelTeam] = useState<{ number: number; name: string } | null>(null);
-  const [eventCode, setEventCode] = useState<string | null>(null);
-  const [eventOptions, setEventOptions] = useState<{ code: string; name: string; date: string | null }[]>([]);
-  const { entries: shortlist, loaded: shortlistLoaded, error: shortlistErr, patch: patchShortlist, remove: removeFromShortlist } = useShortlist(season);
-  const [recent, setRecent] = useState<RecentTeam[]>(readRecentTeams);
-  const [pins, setPins] = useState<RecentTeam[]>(readPins);
+  const {
+    view, setView, selected, panelTeam, setPanelTeam, eventCode, eventOptions, chooseEvent,
+    shortlist, shortlistErr, patchShortlist, removeFromShortlist, recent, pins, openTeam, peekTeam, actions,
+  } = useAnalyzeController({ season, myTeam, initialTeam });
   const [filtersOpen, setFiltersOpen] = useState(false);
-
-  // Tell Bruno what we're looking at, and open it with the scouting greeting.
-  useEffect(() => {
-    // The team open in the side panel wins while it's open.
-    setScoutingContext({ mode: 'analyze', season, eventCode, selectedTeam: panelTeam?.number ?? selected?.number ?? null });
-  }, [season, eventCode, selected, panelTeam]);
-  useEffect(() => {
-    openBruno({ greeting: ANALYZE_GREETING });
-    return () => setScoutingContext(null);
-  }, []);
-
-  // Event picker defaults to the reference team's most recent/upcoming event.
-  const refTeam = selected?.number ?? myTeam;
-  useEffect(() => {
-    let alive = true;
-    if (!refTeam) { setEventOptions([]); return; }
-    fetchScoutTeam(season, refTeam === myTeam ? null : refTeam)
-      .then((p) => {
-        if (!alive) return;
-        const opts = p.events.map((e) => ({ code: e.code, name: e.name, date: e.date }));
-        setEventOptions(opts);
-        const today = new Date().toISOString().slice(0, 10);
-        const upcoming = opts.filter((o) => o.date && o.date >= today).sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
-        const recentPlayed = [...p.events].reverse().find((e) => e.stats?.rank != null);
-        setEventCode((cur) => (cur && opts.some((o) => o.code === cur) ? cur : upcoming?.code ?? recentPlayed?.code ?? opts[opts.length - 1]?.code ?? null));
-      })
-      .catch(() => { if (alive) setEventOptions([]); });
-    return () => { alive = false; };
-  }, [season, refTeam, myTeam]);
-
-  const openTeam = useCallback((number: number, name = `Team ${number}`) => {
-    setSelected({ number, name });
-    setRecent(pushRecentTeam({ number, name }));
-    setView('team');
-    setPanelTeam(null);
-  }, []);
-  const peekTeam = useCallback((number: number, name = `Team ${number}`) => {
-    setPanelTeam({ number, name });
-    setRecent(pushRecentTeam({ number, name }));
-  }, []);
-
-  const listed = useCallback((n: number) => shortlist.some((s) => s.teamNumber === n), [shortlist]);
-  const addToShortlist = useCallback((n: number, name: string) => {
-    if (!shortlistLoaded) return; // season switching: wait for this season's list
-    if (listed(n)) { setView('shortlist'); return; }
-    patchShortlist({ teamNumber: n, teamName: name || `Team ${n}`, eventCode });
-  }, [shortlistLoaded, listed, eventCode, patchShortlist]);
-  const pinned = useCallback((n: number) => pins.some((p) => p.number === n), [pins]);
-  const togglePin = useCallback((n: number, name: string) => {
-    setPins((cur) => { const next = cur.some((p) => p.number === n) ? cur.filter((p) => p.number !== n) : [{ number: n, name }, ...cur]; writePins(next); return next; });
-  }, []);
-
-  const actions: TeamActions = { onViewTeam: (n, name) => peekTeam(n, name), onAddShortlist: addToShortlist, shortlisted: listed, onTogglePin: togglePin, pinned };
 
   const left = (
     <LeftPanel
       season={season} onSeasonChange={onSeasonChange}
-      eventCode={eventCode} eventOptions={eventOptions} onEvent={(c) => { setEventCode(c); setView('field'); }}
+      eventCode={eventCode} eventOptions={eventOptions} onEvent={chooseEvent}
       onPickTeam={openTeam} recent={recent} pins={pins} shortlist={shortlist}
       open={filtersOpen} onToggle={() => setFiltersOpen((v) => !v)}
     />
@@ -150,23 +82,7 @@ function LeftPanel({ season, onSeasonChange, eventCode, eventOptions, onEvent, o
   onPickTeam: (n: number, name?: string) => void; recent: RecentTeam[]; pins: RecentTeam[]; shortlist: ShortlistEntry[];
   open: boolean; onToggle: () => void;
 }) {
-  const [q, setQ] = useState('');
-  const dq = useDebounced(q, 300);
-  const [hits, setHits] = useState<FtcTeamSearchHit[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchErr, setSearchErr] = useState<string | null>(null);
-  useEffect(() => {
-    const term = dq.trim();
-    if (term.length < 2 && !/^\d+$/.test(term)) { setHits([]); setSearchErr(null); setSearching(false); return; }
-    const ctrl = new AbortController();
-    setSearching(true);
-    setSearchErr(null);
-    searchScoutTeams(term, season)
-      .then((r) => { if (!ctrl.signal.aborted) setHits(r); })
-      .catch((e) => { if (!ctrl.signal.aborted) setSearchErr(e instanceof Error ? e.message : 'Search failed'); })
-      .finally(() => { if (!ctrl.signal.aborted) setSearching(false); });
-    return () => ctrl.abort();
-  }, [dq, season]);
+  const { q, setQ, dq, hits, searching, searchErr } = useTeamSearch(season);
 
   const list = (title: string, icon: ReactNode, items: { number: number; name: string }[], empty: string) => (
     <div>
@@ -240,76 +156,18 @@ const PAGE = 20;
 
 function EventField({ season, code, myTeam, shortlist, actions, onOpenTeam }: { season: number; code: string | null; myTeam: number | null; shortlist: ShortlistEntry[]; actions: TeamActions; onOpenTeam: (n: number, name: string) => void }) {
   const narrow = useIsNarrow();
-  const [ev, setEv] = useState<FtcEventFull | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'rank', dir: 1 });
-  const [filter, setFilter] = useState('');
-  const [round, setRound] = useState<'all' | 'qual' | 'playoff'>('all');
-  const [color, setColor] = useState<'all' | 'red' | 'blue'>('all');
-  const [page, setPage] = useState(0);
+  const { ev, err, loading, load, avg, rows, pageRows, page, pages, setPage, sort, setSort, sortBy, filter, setFilter, round, setRound, color, setColor } = useEventField(season, code, PAGE);
   const [matchesOf, setMatchesOf] = useState<FtcTeamEventStats | null>(null);
   const [match, setMatch] = useState<{ m: FtcMatchFull; team: number } | null>(null);
-
-  // Only the latest request may update the view (season/event can change
-  // while an older request is still in flight).
-  const reqId = useRef(0);
-  const load = useCallback((force?: boolean) => {
-    const id = ++reqId.current;
-    if (!code) { setLoading(false); return; }
-    setLoading(true); setErr(null);
-    fetchScoutEvent(season, code, { force })
-      .then((r) => { if (id === reqId.current) setEv(r); })
-      .catch((e) => { if (id === reqId.current) setErr(e instanceof Error ? e.message : 'Could not load the event'); })
-      .finally(() => { if (id === reqId.current) setLoading(false); });
-  }, [season, code]);
-  useEffect(() => { setEv(null); setPage(0); load(); return () => { reqId.current++; }; }, [load]);
-
-  const avg = useMemo(() => (ev ? eventAverages(ev.field) : null), [ev]);
-  const rows = useMemo(() => {
-    if (!ev) return [];
-    const term = filter.trim().toLowerCase();
-    // Round / alliance-color filters keep teams that played matching matches.
-    const plays = (t: FtcTeamEventStats) => {
-      if (round === 'all' && color === 'all') return true;
-      return teamMatches(ev, t.teamNumber).some((p) => (round === 'all' || p.match.level === round) && (color === 'all' || p.alliance === color));
-    };
-    const val = (t: FtcTeamEventStats): number | null => {
-      switch (sort.key) {
-        case 'rank': return t.rank;
-        case 'opr': return t.opr?.totalNp ?? null;
-        case 'auto': return t.opr?.auto ?? null;
-        case 'teleop': return t.opr?.teleop ?? null;
-        case 'endgame': return t.opr?.endgame ?? null;
-        case 'rp': return t.rp;
-        case 'avgScore': return t.avg?.total ?? null;
-        case 'avgPen': return t.avg?.penaltiesCommitted ?? null;
-        case 'number': return t.teamNumber;
-      }
-    };
-    return ev.field
-      .filter((t) => !term || String(t.teamNumber).includes(term) || t.name.toLowerCase().includes(term))
-      .filter(plays)
-      .sort((a, b) => {
-        const va = val(a), vb = val(b);
-        if (va == null && vb == null) return a.teamNumber - b.teamNumber;
-        if (va == null) return 1;
-        if (vb == null) return -1;
-        return (va - vb) * sort.dir;
-      });
-  }, [ev, filter, round, color, sort]);
-  useEffect(() => setPage(0), [filter, round, color, sort]);
 
   if (!code) return <EmptyState title="No event selected" body="Pick an event on the left (it lists the events of the searched team, or your own team's events)." />;
   if (loading && !ev) return <div className="space-y-2" aria-busy="true" aria-label="Loading event field"><Skeleton className="h-16" />{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="h-11" />)}</div>;
   if (err && !ev) return <ErrorState message={err} onRetry={() => load(true)} note="Both data sources failed and there's no cached copy of this event yet." />;
   if (!ev) return null;
 
-  const pageRows = rows.slice(page * PAGE, page * PAGE + PAGE);
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
   const head = (key: SortKey, label: string, title?: string) => (
     <th scope="col" className="py-2 px-2 font-bold whitespace-nowrap">
-      <button onClick={() => setSort((s) => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : key === 'rank' || key === 'number' || key === 'avgPen' ? 1 : -1 }))} title={title}
+      <button onClick={() => sortBy(key)} title={title}
         className={cn('inline-flex items-center gap-1 hover:text-text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 rounded', sort.key === key && 'text-accent')}
         aria-label={`Sort by ${label}`}>
         {label}<ArrowUpDown className="w-3 h-3" />
@@ -488,9 +346,8 @@ function ShortlistView({ season, entries, onPatch, onRemove, error, eventCode, m
 }
 
 function ShortlistCard({ e, ev, onPatch, onRemove, onOpen, season }: { e: ShortlistEntry; ev: FtcEventFull | null; onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void; onRemove: () => void; onOpen: () => void; season: number }) {
-  const [notes, setNotes] = useState(e.notes);
+  const { notes, setNotes, save: saveNotes } = useShortlistNotes(season, e, onPatch);
   const [tagDraft, setTagDraft] = useState('');
-  useEffect(() => setNotes(e.notes), [e.notes]);
   const stats = ev?.field.find((t) => t.teamNumber === e.teamNumber) || null;
   const avg = ev ? eventAverages(ev.field) : null;
   const suggested = stats && avg ? strengthsWeaknesses(stats, avg) : [];
@@ -524,7 +381,7 @@ function ShortlistCard({ e, ev, onPatch, onRemove, onOpen, season }: { e: Shortl
       </div>
       <div>
         <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted" htmlFor={`notes-${e.teamNumber}`}>Notes</label>
-        <textarea id={`notes-${e.teamNumber}`} value={notes} onChange={(x) => setNotes(x.target.value)} onBlur={() => notes !== e.notes && onPatch({ notes })} rows={2} maxLength={2000} placeholder="What did you see? Intake, auto routine, driver, reliability…"
+        <textarea id={`notes-${e.teamNumber}`} value={notes} onChange={(x) => setNotes(x.target.value)} onBlur={saveNotes} rows={2} maxLength={2000} placeholder="What did you see? Intake, auto routine, driver, reliability…"
           className="mt-1 w-full rounded-xl bg-text-base/[0.04] border border-text-base/10 px-3 py-2 text-sm text-text-base placeholder:text-text-muted/70 focus:outline-none focus:border-accent/60 resize-y" />
       </div>
       {(['strengths', 'weaknesses'] as const).map((kind) => (
