@@ -1,0 +1,238 @@
+// Shared Resources logic for Legacy ResourcesView and the Modern Resources
+// page. Extracted from ResourcesView: the page owns its list (GET
+// /api/resources, refetched on the live `resources-changed` event), Bruno's
+// link extraction (POST /api/resources/parse) into an editable preview,
+// bulk save, and optimistic delete with row-only rollback. The paste box,
+// the preview and the in-flight save lock are drafted (they survive a mode
+// switch, so a returning page can't save the same links twice); the preview
+// freezes while saving, and async results are dropped after a sign-out or
+// workspace switch.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiJson } from '../../services/api';
+import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
+
+export interface ResourceItem {
+  id: number;
+  url: string;
+  title: string;
+  description: string;
+  category: string;
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: number | string | null;
+}
+
+export interface ParsedItem {
+  url: string;
+  title: string;
+  description: string;
+  category: string;
+}
+
+export const RESOURCE_CATEGORIES = [
+  'Game Updates',
+  'Parts & Suppliers',
+  'CAD & Design',
+  'Code & Programming',
+  'Outreach',
+  'Videos',
+  'Community',
+  'Other',
+] as const;
+
+export const RESOURCE_FILTERS = ['All', ...RESOURCE_CATEGORIES];
+
+export function formatResourceDate(ts: number | string | null | undefined): string {
+  if (!ts) return '';
+  // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS" — parse as UTC explicitly
+  // so the date doesn't shift or read as "in the future" in US timezones.
+  let ms: number;
+  if (typeof ts === 'string') {
+    const iso = ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
+    ms = Date.parse(iso);
+  } else {
+    ms = ts;
+  }
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+export function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+const SAVING_KEY = 'res:saving';
+
+export function useResourcesController() {
+  const [resources, setResources] = useState<ResourceItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('All');
+
+  // Paste box + preview (drafted)
+  const [pasteText, setPasteText] = useDraft<string>('res:paste', '');
+  const [preview, setPreview] = useDraft<ParsedItem[] | null>('res:preview', null);
+  const [saving, setSaving] = useDraft<boolean>(SAVING_KEY, false);
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
+
+  // Latest-wins: a slow older load can't overwrite a newer one.
+  const loadSeq = useRef(0);
+  const fetchResources = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const list = await apiJson<ResourceItem[]>('/api/resources');
+      if (seq === loadSeq.current) setResources(Array.isArray(list) ? list : []);
+    } catch (e: any) {
+      if (seq === loadSeq.current) setLoadError(e?.message || 'Could not load resources');
+    } finally {
+      if (seq === loadSeq.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchResources();
+  }, [fetchResources]);
+
+  // Live mission control: another user added/removed a resource — refetch, no page reload.
+  useEffect(() => {
+    const handler = () => { fetchResources(); };
+    window.addEventListener('resources-changed', handler);
+    return () => window.removeEventListener('resources-changed', handler);
+  }, [fetchResources]);
+
+  const items = useMemo(() => (filter === 'All' ? resources : resources.filter((r) => r.category === filter)), [resources, filter]);
+
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { All: resources.length };
+    for (const f of RESOURCE_CATEGORIES) c[f] = resources.filter((r) => r.category === f).length;
+    return c;
+  }, [resources]);
+
+  const handleParse = async () => {
+    const text = pasteText.trim();
+    if (!text || parsing) return;
+    setParsing(true);
+    setParseError(null);
+    setSaveError(null);
+    // The preview lands only if nobody signed out / switched workspace meanwhile.
+    const show = inEpoch((list: ParsedItem[] | null) => setPreview(list));
+    try {
+      const res = await apiJson<{ items: ParsedItem[]; count: number }>('/api/resources/parse', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      });
+      const list = Array.isArray(res.items) ? res.items : [];
+      if (list.length === 0) {
+        setParseError('No links found in that text — try pasting messages that include URLs.');
+        show(null);
+      } else {
+        show(list.map((it) => ({
+          url: it.url || '',
+          title: it.title || domainOf(it.url || ''),
+          description: it.description || '',
+          category: RESOURCE_CATEGORIES.includes(it.category as any) ? it.category : 'Other',
+        })));
+      }
+    } catch (e: any) {
+      // 422 = no links found; surface the server's message
+      setParseError(e?.body?.error || e?.message || 'Could not extract links from that text.');
+      show(null);
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  // Preview edits are ignored while saving (frozen in both modes).
+  const updatePreviewRow = (idx: number, patch: Partial<ParsedItem>) => {
+    if (getDraft(SAVING_KEY, false)) return;
+    setPreview((prev) => (prev ? prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)) : prev));
+  };
+  const removePreviewRow = (idx: number) => {
+    if (getDraft(SAVING_KEY, false)) return;
+    setPreview((prev) => (prev ? prev.filter((_, i) => i !== idx) : prev));
+  };
+  const discardPreview = () => {
+    if (getDraft(SAVING_KEY, false)) return;
+    setPreview(null);
+    setSaveError(null);
+  };
+
+  const handleSaveAll = async () => {
+    const submitted = getDraft<ParsedItem[] | null>('res:preview', preview);
+    if (!submitted || submitted.length === 0 || getDraft(SAVING_KEY, false)) return;
+    const rows = submitted.filter((r) => r.url.trim());
+    if (rows.length === 0) {
+      setSaveError('Every row needs a URL before saving.');
+      return;
+    }
+    setSaving(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it. The same guard keeps the old box from being cleared.
+    const unlock = inEpoch(() => setSaving(false));
+    const clear = inEpoch(() => { setPreview(null); setPasteText(''); });
+    setSaveError(null);
+    try {
+      await apiJson('/api/resources', {
+        method: 'POST',
+        body: JSON.stringify({
+          items: rows.map((r) => ({
+            url: r.url.trim(),
+            title: r.title.trim() || domainOf(r.url.trim()),
+            description: r.description.trim(),
+            category: r.category,
+          })),
+        }),
+      });
+      clear();
+      await fetchResources();
+    } catch (e: any) {
+      setSaveError(e?.body?.error || e?.message || 'Could not save those links.');
+    } finally {
+      unlock();
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (deletingIds.has(id)) return;
+    // Capture the specific item for targeted rollback (not the whole array,
+    // which could restore items deleted by concurrent requests).
+    const index = resources.findIndex((r) => r.id === id);
+    const deletedItem = resources[index];
+    setResources((rs) => rs.filter((r) => r.id !== id));
+    setDeletingIds((s) => new Set(s).add(id));
+    try {
+      await apiJson(`/api/resources/${id}`, { method: 'DELETE' });
+    } catch {
+      // Re-insert only the failed item (near its old spot), preserving other changes.
+      if (deletedItem) {
+        setResources((rs) => {
+          if (rs.some((r) => r.id === id)) return rs;
+          const at = Math.max(0, Math.min(index, rs.length));
+          return [...rs.slice(0, at), deletedItem, ...rs.slice(at)];
+        });
+      }
+    } finally {
+      setDeletingIds((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  return {
+    resources, loading, loadError, fetchResources, filter, setFilter, items, counts,
+    pasteText, setPasteText, parsing, parseError, preview, saving, saveError,
+    handleParse, updatePreviewRow, removePreviewRow, discardPreview, handleSaveAll, deletingIds, handleDelete,
+  };
+}
