@@ -390,6 +390,57 @@ One page with route-driven tabs: **Members** (`/teams`), **Roles** (`/roles`) an
   - Found and fixed the top bar saying "Team Settings".
   - No overflow afterwards.
 - **Screenshots:** `docs/redesign/screenshots/phase5/settings-*.jpg`.
+## Phase 6a: Bruno page
+
+**Shared logic:** `src/components/bruno/useBrunoConversation.ts` holds everything that was inside Legacy `BrunoView`:
+- Chat list paging, opening a chat, and creating one on first send.
+- Streaming through `streamBuildHelper` (40 ms batching).
+- Proposal confirm via `applyActionProposals` + `notifyBrunoDataChanged`.
+- The NavGPT → Bruno handoff.
+- Rename, share and delete.
+- The panel's "expand" chat id, carried in route state.
+
+Legacy `BrunoView` uses the hook with its markup unchanged.
+
+The `wip/bruno-thinking` work is folded in, with its gaps closed:
+- **Honest thinking steps.** They list only what Bruno is actually given (the page, attachments, scouting data, the conversation). After the reply they collapse to "Thought for Ns".
+- **Streaming caret.**
+- **Stop** (an AbortSignal through `postStream`). It keeps the partial text and appends "_Stopped._".
+- The NavGPT handoff now gets thinking steps and Stop too; the WIP branch skipped it.
+- The "Thinking" label's shimmer class now matches the stylesheet (`cp-shimmer-text`).
+- The composer text is **drafted** (`bruno:input`).
+
+### Modern Bruno (`src/modern/pages/bruno/`)
+- **Layout:** full height (immersive), with a history rail.
+  - The rail has **New chat**, chat search, and "Yours" / "Shared by the team" groups, plus "Show older chats".
+  - On phones the rail becomes a left sheet.
+- **Header:**
+  - Chat title and privacy.
+  - For owners: a Share switch and a menu with Rename, Share and Delete.
+  - Admins can delete others' chats, as before.
+- **Empty state:** "What are we working on?", with three starter groups (Do it for me / Code / Build & strategy) and "More ideas".
+- **Conversation:**
+  - User turns are right-aligned. Bruno's replies are plain prose next to an avatar.
+  - Action proposals use a rebuilt card that keeps the same wording, via the exported `KIND_META` / `itemSummary`.
+  - Live replies show thinking steps, then streamed text with a caret.
+- **Composer:** auto-growing, with screenshot and PDF attach, paste-to-attach, Enter to send (Shift+Enter for a new line), and Send / Stop.
+- **Shell:** immersive pages now get `min-h-0`, so they scroll internally.
+
+### Not in this PR
+The ⌘J side panel (`BrunoPanel`) is shared by both modes and still uses the Legacy look. Its Modern rebuild is phase 6b.
+
+### Tests
+- **New (5 Modern Bruno tests):**
+  - Starting a chat creates it (POST), then streams and shows the reply.
+  - **Stop** aborts the reply and keeps the partial text.
+  - **A half-typed message survives a remount.**
+  - A proposal confirm goes through apply-actions and refreshes the affected data.
+  - Owners get share, rename and delete; others read only.
+- Like the real server, the mock server stores each chat's history, so the tests are deterministic under load.
+- **Totals:** 445 frontend tests pass; the only failures are the known Windows-only ftcCache ones. `tsc` is clean.
+- **Local QA:**
+  - 1440 px: the empty state, and a live send. The server error ("AI not configured" locally) is shown.
+  - 375 px: no overflow, every target ≥44 px, the composer sits above the tab bar, and the middle scrolls.
 
 ## Phase 6c: Messages
 

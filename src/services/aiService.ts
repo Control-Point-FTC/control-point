@@ -27,12 +27,14 @@ async function postJSON(endpoint: string, body: any = {}) {
 async function postStream(
   endpoint: string,
   body: any,
-  onChunk: (chunk: string) => void
+  onChunk: (chunk: string) => void,
+  signal?: AbortSignal,
 ) {
   const res = await apiFetch(`${endpoint}?stream=true`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok || !res.body) {
@@ -322,7 +324,7 @@ export function streamBuildHelper(
   messages: BuildHelperMessage[],
   onChunk: (chunk: string) => void,
   chatId?: number,
-  opts?: { persona?: string; scouting?: ScoutingContextRequest }
+  opts?: { persona?: string; scouting?: ScoutingContextRequest; signal?: AbortSignal }
 ) {
   const body: any = chatId ? { messages, chatId } : { messages };
   if (opts?.persona) body.persona = opts.persona;
@@ -346,5 +348,6 @@ export function streamBuildHelper(
       .slice(0, 5)
       .map((p) => ({ mimeType: 'application/pdf', data: p.data.slice(0, 15 * 1024 * 1024), name: String(p.name || 'document.pdf').slice(0, 128) }));
   }
-  return postStream('/api/ai/build-helper', body, onChunk);
+  // `signal` lets the user stop a reply mid-stream (Modern "Stop" button).
+  return postStream('/api/ai/build-helper', body, onChunk, opts?.signal);
 }

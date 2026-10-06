@@ -159,7 +159,8 @@ export function ModernShell(props: ModernShellProps) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="flex min-w-0 grow flex-col"
+              // Immersive pages (chat, Bruno) manage their own scrolling.
+              className={cn('flex min-w-0 grow flex-col', immersive && 'min-h-0')}
             >
               {content}
             </motion.div>
