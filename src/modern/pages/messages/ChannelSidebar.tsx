@@ -8,7 +8,7 @@ import {
   Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuSub,
   DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger, Input,
 } from '../../../components/ui-kit';
-import { VoiceChannelList } from '../../../components/voice/VoiceChannelList';
+import { VoiceChannels } from './VoiceChannels';
 import type { useChatController } from '../../../components/chat/useChatController';
 
 type Ctl = ReturnType<typeof useChatController>;
@@ -171,7 +171,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
             </section>
           );
         })}
-        <div className="mt-4 border-t border-border pt-3"><VoiceChannelList /></div>
+        <div className="mt-4 border-t border-border pt-3"><VoiceChannels /></div>
       </nav>
     </div>
   );

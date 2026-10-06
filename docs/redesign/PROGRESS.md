@@ -1100,3 +1100,26 @@ Everything that floats over every page now has a Modern version, chosen by `ByMo
 - **Status:** every phase is merged and live. Modern is the default, and Classic is one click away in Settings → Appearance, the account menu or ⌘K.
 - **Rundown:** [`Control-Point-2026-Redesign.pdf`](Control-Point-2026-Redesign.pdf) covers every change, what was rebuilt and how, in 8 pages.
 - **Final suite:** 684 tests run, all pass except the 2 known Windows-only `ftcCache` tests.
+
+## Phase 10b: Messages widgets
+
+The last Classic pieces inside Modern Messages are rebuilt.
+- **Shared logic (Classic JSX unchanged):**
+  - `useReactionToggle` (in `MessageReactions`) holds the optimistic toggle, the server reconcile, rollback with an error, and one request per emoji. It also names who reacted.
+  - `useEmojiPicker` (in `ReactionPicker`) holds the category, a search of up to 64 matches, and your custom reactions.
+  - `useVoiceChannels` holds auto-expanding live channels, joining (it asks about video per your camera default), join with video, and admin rename.
+- **Modern `ReactionBar`:**
+  - Spring-in chips, a count that ticks on change, and a kit tooltip with the big emoji and who reacted.
+  - A "+" chip opens the picker. Chips are 36 px tall on phones.
+- **Modern `EmojiPicker`:**
+  - Quick reactions, a kit search input, and category tabs with a sliding marker.
+  - A grid and your custom reactions.
+  - Escape or a click outside closes it.
+- **Modern `VoiceChannels`:**
+  - Sidebar rows matching the text channels, with a live dot, Live call / lock / private markers and a people count.
+  - Join with video and rename appear on hover (always on touch).
+  - An animated participant list, and an inline rename form.
+- **Found while building it:** the custom-reaction upload screen (`CustomReactionsSettings`) isn't rendered anywhere. It is flagged as a follow-up, and the Modern picker no longer points to a Settings page that doesn't exist.
+- **Tests:**
+  - 8 new: reaction toggle, rollback, the + chip, picker quick / search / category / custom / close, voice channels list, join rules and rename.
+  - The Messages suite now mocks the new component; the Classic voice suite still passes.
