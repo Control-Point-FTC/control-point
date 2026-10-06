@@ -3,7 +3,8 @@
 // (speaker layout) > grid. Participant list sidebar with per-participant
 // menus, fullscreen + minimize, keyboard accessible, aria-live status.
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React from 'react';
+import { useCallView } from './useCallView';
 import {
   Headphones,
   Mic,
@@ -122,75 +123,13 @@ function ParticipantTile({
 
 export function CallView({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const {
-    status,
-    session,
-    participants,
-    self,
-    expanded,
-    setExpanded,
-    toggleMute,
-    toggleDeafen,
-    toggleCamera,
-    toggleScreenShare,
-    leave,
-    personalPin,
-    personalSpotlight,
-  } = useVoice();
-
-  const [menuFor, setMenuFor] = useState<{ p: VoiceParticipant; anchor: { x: number; y: number } } | null>(null);
-  const [listOpen, setListOpen] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const prevStatus = useRef(status);
-  const [announcement, setAnnouncement] = useState('');
-
-  // aria-live announcements for status changes (text, never color-only).
-  useEffect(() => {
-    if (prevStatus.current !== status) {
-      const labels: Record<string, string> = {
-        joining: 'Connecting to the call',
-        connected: 'Connected to the call',
-        reconnecting: 'Connection lost — reconnecting',
-        failed: 'Connection failed',
-        ended: 'Call ended',
-      };
-      setAnnouncement(labels[status] ?? '');
-      prevStatus.current = status;
-    }
-  }, [status]);
-
-  useEffect(() => {
-    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', onFs);
-    return () => document.removeEventListener('fullscreenchange', onFs);
-  }, []);
-
-  const toggleFullscreen = async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await rootRef.current?.requestFullscreen();
-    } catch {
-      /* fullscreen unsupported — no-op */
-    }
-  };
-
-  const featuredId = useMemo(() => {
-    if (participants.length === 0) return null;
-    const sharer = participants.find((p) => p.sharingScreen);
-    if (sharer) return sharer.memberId;
-    if (session?.globalSpotlightMemberId != null) return session.globalSpotlightMemberId;
-    if (personalSpotlight != null) return personalSpotlight;
-    if (personalPin != null) return personalPin;
-    return null;
-  }, [participants, session?.globalSpotlightMemberId, personalSpotlight, personalPin]);
-
-  const featured = featuredId != null ? participants.find((p) => p.memberId === featuredId) ?? null : null;
-  const rest = featured ? participants.filter((p) => p.memberId !== featured.memberId) : participants;
-  const featuredIsSharing = !!featured?.sharingScreen;
+    status, session, participants, self, expanded, setExpanded, toggleMute, toggleDeafen, toggleCamera, toggleScreenShare, leave,
+    personalPin, menuFor, setMenuFor, openMenu, listOpen, setListOpen, isFullscreen, toggleFullscreen,
+    rootRef, announcement, featured, rest, featuredIsSharing,
+  } = useCallView();
 
   if (!session || !expanded) return null;
 
-  const openMenu = (p: VoiceParticipant, anchor: { x: number; y: number }) => setMenuFor({ p, anchor });
 
   // Grid columns adapt to count (and viewport via CSS).
   const gridCols =

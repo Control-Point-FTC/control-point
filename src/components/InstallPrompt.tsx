@@ -4,95 +4,12 @@
 // - iOS Safari: shows Share → Add to Home Screen instructions
 // Dismissable, remembers dismissal for 30 days.
 
-import { useEffect, useState } from 'react';
+import { useInstallPrompt } from './overlays/useOverlays';
 import { X, Share, PlusSquare, Smartphone } from 'lucide-react';
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
-
-const DISMISS_KEY = 'controlpoint-install-dismissed';
-
-function isIOS(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-}
-
-function isStandalone(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia('(display-mode: standalone)').matches ||
-    (window.navigator as any).standalone === true;
-}
-
-function wasDismissedRecently(): boolean {
-  try {
-    const ts = Number(localStorage.getItem(DISMISS_KEY) || 0);
-    return Date.now() - ts < 30 * 24 * 60 * 60 * 1000;
-  } catch {
-    return false;
-  }
-}
-
 export function InstallPrompt() {
-  const [visible, setVisible] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showIOSHelp, setShowIOSHelp] = useState(false);
-
-  useEffect(() => {
-    // Don't show if already installed or dismissed
-    if (isStandalone() || wasDismissedRecently()) return;
-    // Only on mobile
-    if (!/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) return;
-
-    const onBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      setVisible(true);
-    };
-
-    window.addEventListener('beforeinstallprompt', onBeforeInstall);
-
-    // iOS has no beforeinstallprompt — show after a delay if not installed
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    if (isIOS()) {
-      timer = setTimeout(() => setVisible(true), 10000);
-    }
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  // Register service worker
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
-    }
-  }, []);
-
+  const { visible, showIOSHelp, dismiss, handleInstall, ios } = useInstallPrompt();
   if (!visible) return null;
-
-  const dismiss = () => {
-    try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch {}
-    setVisible(false);
-    setShowIOSHelp(false);
-  };
-
-  const handleInstall = async () => {
-    if (deferredPrompt) {
-      await deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') {
-        setVisible(false);
-      }
-      setDeferredPrompt(null);
-    } else if (isIOS()) {
-      setShowIOSHelp(true);
-    }
-  };
 
   return (
     <div className="fixed bottom-20 md:bottom-6 left-3 right-3 md:left-auto md:right-6 md:max-w-sm z-[60]">
@@ -112,7 +29,7 @@ export function InstallPrompt() {
                   onClick={handleInstall}
                   className="px-3.5 py-2 rounded-xl text-xs font-bold bg-accent text-accent-ink hover:brightness-105 active:scale-95 transition-all"
                 >
-                  {isIOS() ? 'How to install' : 'Install'}
+                  {ios ? 'How to install' : 'Install'}
                 </button>
                 <button
                   onClick={dismiss}

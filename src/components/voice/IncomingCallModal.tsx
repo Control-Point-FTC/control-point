@@ -2,64 +2,15 @@
 // Never auto-switches: when already in another call the modal shows an
 // explicit warning and requires the "Leave & join" choice to switch.
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Phone, PhoneCall, PhoneOff, TriangleAlert, Video, X } from 'lucide-react';
 import { cn } from '../ui';
-import { useVoice } from '../../voice';
+import { useIncomingCall } from './useIncomingCall';
 import { VoiceAvatar } from './shared';
-import { startRingtone, stopRingtone } from '../../utils/sounds';
 
 export function IncomingCallModal() {
-  const { incomingCall, session, status, acceptCall, declineCall, dismissIncomingCall, leave } = useVoice();
-  const [busy, setBusy] = useState<'accept' | 'switch' | null>(null);
-
-  useEffect(() => {
-    setBusy(null);
-  }, [incomingCall?.inviteId]);
-
-  // Ring while the incoming-call modal is showing; stop on any resolution.
-  useEffect(() => {
-    if (!incomingCall) return;
-    startRingtone();
-    return () => stopRingtone();
-  }, [incomingCall?.inviteId]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  const { incomingCall, session, inAnotherCall, isVideo, busy, handleAccept, handleDecline, handleDismiss, handleSwitch } = useIncomingCall();
   if (!incomingCall) return null;
-
-  const inAnotherCall = session != null && status !== 'idle' && status !== 'ended';
-  const isVideo = incomingCall.media === 'video';
-
-  const handleAccept = async () => {
-    stopRingtone();
-    setBusy('accept');
-    try {
-      await acceptCall();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleDecline = async () => {
-    stopRingtone();
-    await declineCall();
-  };
-
-  const handleDismiss = () => {
-    stopRingtone();
-    dismissIncomingCall();
-  };
-
-  /** Explicit leave-and-join: never implicit. */
-  const handleSwitch = async () => {
-    stopRingtone();
-    setBusy('switch');
-    try {
-      await leave();
-      await acceptCall();
-    } finally {
-      setBusy(null);
-    }
-  };
 
   return (
     <div
