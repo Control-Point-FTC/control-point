@@ -13,12 +13,15 @@ import { buildModernNav, flattenNav } from '../nav';
 afterEach(cleanup);
 beforeEach(() => { api.apiFetch.mockReset(); clearDrafts(); });
 
+// Start these in Classic: the workspace default (the user hasn't chosen).
+const LEGACY_TEAM = { default_interface_mode: 'legacy' };
+
 describe('resolveInterfaceMode', () => {
-  it('prefers the user choice, then the team default, then legacy', () => {
+  it('prefers the user choice, then the team default, then Modern (the default since 9e)', () => {
     expect(resolveInterfaceMode('modern', 'legacy')).toBe('modern');
-    expect(resolveInterfaceMode(null, 'modern')).toBe('modern');
-    expect(resolveInterfaceMode(undefined, undefined)).toBe('legacy');
-    expect(resolveInterfaceMode('bogus', 'nope')).toBe('legacy');
+    expect(resolveInterfaceMode(null, 'legacy')).toBe('legacy');
+    expect(resolveInterfaceMode(undefined, undefined)).toBe('modern');
+    expect(resolveInterfaceMode('bogus', 'nope')).toBe('modern');
   });
 });
 
@@ -37,7 +40,7 @@ describe('InterfaceModeProvider', () => {
     let resolve!: (v: any) => void;
     api.apiFetch.mockReturnValue(new Promise((r) => { resolve = r; }));
     const saved = vi.fn();
-    render(<InterfaceModeProvider user={{ id: 1, name: 'A', role: '' }} team={{}} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
+    render(<InterfaceModeProvider user={{ id: 1, name: 'A', role: '' }} team={LEGACY_TEAM} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
     expect(screen.getByTestId('mode').textContent).toBe('legacy');
     fireEvent.click(screen.getByText('modern'));
     // Optimistic: already modern while the request is in flight.
@@ -50,7 +53,7 @@ describe('InterfaceModeProvider', () => {
 
   it('rolls back when the save fails', async () => {
     api.apiFetch.mockResolvedValue({ ok: false, json: async () => ({ error: 'nope' }) });
-    render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={{}} onUserSaved={() => {}}><Probe /></InterfaceModeProvider>);
+    render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={LEGACY_TEAM} onUserSaved={() => {}}><Probe /></InterfaceModeProvider>);
     fireEvent.click(screen.getByText('modern'));
     await waitFor(() => expect(screen.getByTestId('mode').textContent).toBe('legacy'));
   });
@@ -59,10 +62,10 @@ describe('InterfaceModeProvider', () => {
     let resolve!: (v: any) => void;
     api.apiFetch.mockReturnValue(new Promise((r) => { resolve = r; }));
     const saved = vi.fn();
-    const { rerender } = render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={{}} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
+    const { rerender } = render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={LEGACY_TEAM} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
     fireEvent.click(screen.getByText('modern'));
     // The user switches workspace (new membership row) before the save returns.
-    rerender(<InterfaceModeProvider user={{ id: 2, name: 'A' }} team={{}} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
+    rerender(<InterfaceModeProvider user={{ id: 2, name: 'A' }} team={LEGACY_TEAM} onUserSaved={saved}><Probe /></InterfaceModeProvider>);
     await act(async () => { resolve({ ok: true, json: async () => ({ user: { id: 1, team_id: 10, interface_mode: 'modern' } }) }); });
     expect(saved).toHaveBeenCalledTimes(1);
     expect(saved).toHaveBeenCalledWith({ id: 2, interface_mode: 'modern' });
@@ -135,7 +138,7 @@ describe('switching modes keeps drafts', () => {
         />
       );
     }
-    render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={{}} onUserSaved={() => {}}><App /></InterfaceModeProvider>);
+    render(<InterfaceModeProvider user={{ id: 1, name: 'A' }} team={LEGACY_TEAM} onUserSaved={() => {}}><App /></InterfaceModeProvider>);
     expect(screen.getByText('legacy shell')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('message'), { target: { value: 'half-typed note' } });
     fireEvent.click(screen.getByText('attach'));
@@ -191,9 +194,9 @@ describe('interpolateNumbers', () => {
 import { AnimatedValue } from '../AnimatedValue';
 describe('AnimatedValue', () => {
   it('formats the raw number (decimal-comma locales are never re-parsed)', () => {
-    // Outside a provider the mode is legacy, so it renders the final text immediately.
+    // In Classic it renders the final text immediately.
     const de = (n: number) => `$${n.toLocaleString('de-DE')}`;
-    render(<AnimatedValue value={de(3.5)} to={3.5} format={de} />);
+    render(<InterfaceModeProvider user={{ id: 1, interface_mode: 'legacy' }} team={{}} onUserSaved={() => {}}><AnimatedValue value={de(3.5)} to={3.5} format={de} /></InterfaceModeProvider>);
     expect(screen.getByText('$3,5')).toBeInTheDocument();
   });
 

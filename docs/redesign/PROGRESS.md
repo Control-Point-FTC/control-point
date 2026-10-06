@@ -1013,3 +1013,46 @@ The logic moved out of the Classic screens. Their JSX is unchanged.
   - The page body is the scroller on these screens, so the bar is `fixed` (sticky would not hold).
   - The cash-flow line is revealed with a clip instead of a path-length animation, which broke the non-scaling stroke.
 - Screenshots are in `screenshots/phase9/`.
+
+## Phase 9e: Modern by default
+
+### The flip
+- **`DEFAULT_INTERFACE_MODE` is now `'modern'`.**
+  - Members who never chose a look, in workspaces without a default, get Modern.
+  - New devices get the Modern landing page.
+  - An explicit choice (account or workspace default) still wins.
+  - Settings shows the workspace option "Not set" as "Not set (Modern)".
+- **One name for the old look: "Classic".** It is used everywhere users see it: Settings → Interface, the account menu, ⌘K, the setup Layout step and the auth screens. Code and tests still say `legacy` internally.
+
+### The interim frame is gone
+- Every route now has a Modern page, so `ByMode` requires `modern` (a missing page is a type error).
+- The `.m-legacy` wrapper and its interim CSS block in `modern.css` are deleted.
+
+### Last Modern screens
+- **Zero-team screen (`TeamlessPage`):**
+  - Over a new shared `useTeamless` hook (Classic `TeamlessScreen` JSX unchanged).
+  - Create / Join cards open their form in place.
+  - The delete-account danger zone needs the email typed, then a confirmation.
+  - Same App callbacks as Classic.
+  - Shown by this device's look, since it renders outside the provider.
+- **What's new (`WhatsNewDialog`):**
+  - A kit dialog with a release rail.
+  - The same changelog and seen-version rule.
+  - One auto-open state for both looks, so switching never re-opens it.
+- **Changelog v2.0.0, "Control Point, redesigned":** what changed for users.
+
+### Flaky tests
+- The Calendar Bruno quick-add, the Calendar stale-reply test and Bruno "Stop aborts" now use load-safe timeouts (5 s finds, 20 s per test). They passed alone and only timed out under full-suite load.
+
+### Tests
+- New: Modern zero-team (2 tests) and What's new (2 tests).
+- Interface-mode tests now start in Classic through the workspace default, with resolution expecting Modern.
+- Signed-out device-mode test expects Modern by default.
+- Full suite: 667 tests run, all pass except the 2 known Windows-only `ftcCache` tests. `tsc` is clean.
+- **Local QA:**
+  - A brand-new device lands on the Modern landing page.
+  - A local QA member with no saved look and no workspace default gets the Modern shell.
+  - A sweep of 24 routes found no error screens and no `.m-legacy` frames, with no horizontal overflow.
+  - `/teams`, `/roles` and `/code` send that student account to the dashboard, which is the existing permission rule.
+  - No real phone was available.
+- **Next (9f):** Modern versions of the global overlays: feedback, cookie consent, install prompt, the mention toast and the call UI.

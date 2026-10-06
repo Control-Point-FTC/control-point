@@ -120,9 +120,9 @@ describe('Modern Calendar', () => {
     });
     setup();
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));
-    fireEvent.change(await screen.findByLabelText(/Quick add with Bruno/), { target: { value: 'parent night tomorrow 6pm' } });
+    fireEvent.change(await screen.findByLabelText(/Quick add with Bruno/, {}, { timeout: 5000 }), { target: { value: 'parent night tomorrow 6pm' } });
     fireEvent.click(screen.getByRole('button', { name: /Parse/ }));
-    await waitFor(() => expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Parent night'));
+    await waitFor(() => expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Parent night'), { timeout: 5000 });
     expect((screen.getByLabelText(/Starts/) as HTMLInputElement).value).toBe('18:00');
 
     ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => {
@@ -131,9 +131,9 @@ describe('Modern Calendar', () => {
     ai.applyActionProposals.mockResolvedValue({ event: 2 });
     fireEvent.change(screen.getByLabelText(/Quick add with Bruno/), { target: { value: 'two things' } });
     fireEvent.click(screen.getByRole('button', { name: /Parse/ }));
-    fireEvent.click(await screen.findByRole('button', { name: /Create all 2 events/ }));
-    await waitFor(() => expect(ai.applyActionProposals).toHaveBeenCalledWith([{ kind: 'event', items: [expect.objectContaining({ title: 'A' }), expect.objectContaining({ title: 'B' })] }]));
-  });
+    fireEvent.click(await screen.findByRole('button', { name: /Create all 2 events/ }, { timeout: 5000 }));
+    await waitFor(() => expect(ai.applyActionProposals).toHaveBeenCalledWith([{ kind: 'event', items: [expect.objectContaining({ title: 'A' }), expect.objectContaining({ title: 'B' })] }]), { timeout: 5000 });
+  }, 20000);
 
   it('switches between Month, Week and Agenda', async () => {
     setup();
@@ -158,16 +158,16 @@ describe('Modern Calendar', () => {
     }));
     setup();
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));
-    fireEvent.change(await screen.findByLabelText(/Quick add with Bruno/), { target: { value: 'something' } });
+    fireEvent.change(await screen.findByLabelText(/Quick add with Bruno/, {}, { timeout: 5000 }), { target: { value: 'something' } });
     fireEvent.click(screen.getByRole('button', { name: /Parse/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(screen.getByRole('button', { name: /New event/ }));
-    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Fresh' } });
+    fireEvent.change(await screen.findByLabelText('Title', {}, { timeout: 5000 }), { target: { value: 'Fresh' } });
     finish();
     await waitFor(() => expect(screen.getByRole('button', { name: /Parse/ })).toBeInTheDocument());
     await new Promise((r) => setTimeout(r, 0));
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Fresh');
-  });
+  }, 20000);
 
   it('keeps the last remaining Bruno proposal creatable', async () => {
     ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => {

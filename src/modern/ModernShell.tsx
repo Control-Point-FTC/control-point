@@ -474,7 +474,7 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
         <DropdownMenuItem onSelect={(e) => { e.preventDefault(); toggle(); }}>
           {theme === 'light' ? <Moon /> : <Sun />} {theme === 'light' ? 'Dark theme' : 'Light theme'}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void setMode('legacy')}><ArrowLeftRight /> Switch to Legacy experience</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => void setMode('legacy')}><ArrowLeftRight /> Switch to Classic experience</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onOpenWhatsNew}><Sparkles /> What's new</DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpenFeedback}><MessageSquareHeart /> Send feedback</DropdownMenuItem>
