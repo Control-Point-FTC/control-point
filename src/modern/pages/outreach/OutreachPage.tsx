@@ -266,7 +266,7 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
           <SheetTitle>{ctl.editingId ? 'Edit outreach event' : 'Log outreach event'}</SheetTitle>
           <SheetDescription>{ctl.editingId ? 'Update the details below.' : 'Pick a quick type or fill in the details.'}</SheetDescription>
         </SheetHeader>
-        <form id="outreach-form" noValidate className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void ctl.handleSubmit(); }}>
+        <form id="outreach-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void ctl.handleSubmit(); }}>
           <fieldset disabled={ctl.saving} className="m-0 min-w-0 space-y-5 border-0 p-0">
           {!ctl.editingId && (
             <ToggleGroup type="single" aria-label="Quick type" value={OUTREACH_PRESETS.includes(f.title) ? f.title : ''} onValueChange={(v) => { if (v) ctl.setForm((cur) => ({ ...cur, title: v })); }} className="flex flex-wrap justify-start gap-1.5 bg-transparent p-0">
@@ -294,9 +294,9 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {num('hours', 'Hours', 'hours', { placeholder: '2' })}
-            {num('attendees', 'Attendees', 'attendees', { placeholder: '0' })}
-            {num('funds', 'Funds ($)', 'funds_raised', { step: '0.01', placeholder: '0' })}
+            {num('hours', 'Hours', 'hours', { placeholder: '2', step: '1', inputMode: 'numeric' })}
+            {num('attendees', 'Attendees', 'attendees', { placeholder: '0', step: '1', inputMode: 'numeric' })}
+            {num('funds', 'Funds ($)', 'funds_raised', { step: 'any', placeholder: '0' })}
           </div>
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Sparkles className="size-3.5 text-accent" />You can also ask Bruno in chat to log one or many events.</p>
           </fieldset>

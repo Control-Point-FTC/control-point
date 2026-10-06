@@ -665,7 +665,7 @@ Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both 
 - **Channels:** YouTube cards with a big subscriber count, a growth badge and an **animated trend line**, views / videos / average per video, last sync, Open, and Sync now. A manage menu offers pin, move up / down and unlink. "Link YouTube" opens a dialog.
 - **Log / edit sheet:** quick-type chips, title, description, date, location, hours / attendees / funds.
 - **Bruno AI sheet:** paste box, Quick parse / Parse with Bruno, row preview with remove, and "Log all N events".
-- **Validation:** forms use our own validation (`noValidate`), so values like `$12.345` round to cents instead of being silently blocked by the browser. The same fix is pushed to 8a.
+- **Validation:** browser number checks stay on (minimum 0; whole hours and attendees), with `step="any"` on funds so `$12.345` rounds to cents instead of being blocked.
 
 ### Tests
 - **New (10 tests):** totals and timeline order, with TikTok hidden; member vs manager rights; quick-type log with normalised numbers; title required; edit / delete with row-only rollback; quick parse → remove → log all; Parse with Bruno; pin / sync / unlink; Link YouTube; **draft survives remount** and the **save lock survives leaving and coming back**.
