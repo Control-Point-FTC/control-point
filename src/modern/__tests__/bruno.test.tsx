@@ -146,5 +146,17 @@ describe('Modern Bruno', () => {
     await waitFor(() => expect(screen.queryByLabelText('Chat title')).not.toBeInTheDocument());
     expect(api.apiFetch.mock.calls.some((c) => c[1]?.method === 'PATCH')).toBe(false);
   });
+
+  it('a rejected request does not claim any thinking', async () => {
+    ai.streamBuildHelper.mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      throw Object.assign(new Error('nope'), { serverError: 'AI not configured' });
+    });
+    setup();
+    fireEvent.change(await screen.findByLabelText('Message Bruno'), { target: { value: 'Hello?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('AI not configured')).toBeInTheDocument(), { timeout: 3000 });
+    expect(screen.queryByText(/Thought for/)).not.toBeInTheDocument();
+  });
 });
 

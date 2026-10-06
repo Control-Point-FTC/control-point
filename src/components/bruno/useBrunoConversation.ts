@@ -120,6 +120,13 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     const ac = new AbortController();
     abortRef.current = ac;
     const replyIndex = next.length;
+    // Only replies Bruno actually produced (or that were stopped mid-way)
+    // keep their thinking record — a rejected request (AI not configured,
+    // blocked, rate-limited) must not claim it read the page or attachments.
+    const keepThinking = () => {
+      const done = { ...think, thoughtMs: think.thoughtMs ?? Date.now() - startedAt };
+      setThinkByIndex((m) => ({ ...m, [replyIndex]: done }));
+    };
     try {
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
@@ -132,16 +139,16 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
         stream.push(chunk);
       }, chatId, { ...(opts.persona ? { persona: opts.persona } : {}), signal: ac.signal });
       setMessages([...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
+      if (agg.trim()) keepThinking();
     } catch (err: any) {
       // Stopped by the user: keep what was generated so far.
       if (err?.name !== 'AbortError') throw err;
       setMessages([...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
+      keepThinking();
     } finally {
       stream.finish();
       abortRef.current = null;
       setLiveThink(null);
-      const done = { ...think, thoughtMs: think.thoughtMs ?? Date.now() - startedAt };
-      setThinkByIndex((m) => ({ ...m, [replyIndex]: done }));
     }
   };
 
