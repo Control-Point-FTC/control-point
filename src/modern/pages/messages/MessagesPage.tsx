@@ -87,7 +87,9 @@ export function MessagesPage(props: any) {
     const day = msg.timestamp ? new Date(msg.timestamp).toDateString() : '';
     if (!prev || (prev.timestamp && new Date(prev.timestamp).toDateString() !== day)) {
       rows = [];
-      days.push({ key: `d-${day}-${msg.id}`, label: msg.timestamp ? formatDayDivider(msg.timestamp) : '', rows });
+      // Stable per channel + day: loading older messages or deleting the
+      // first one must not remount the day (and reset its rows).
+      days.push({ key: `d-${ch?.id ?? 0}-${day}`, label: msg.timestamp ? formatDayDivider(msg.timestamp) : '', rows });
       prev = null;
     }
     const grouped = !!prev && prev.sender_id === msg.sender_id && !msg.reply_to_id && !msg.is_forwarded
