@@ -946,3 +946,70 @@ Each is chosen by `ByMode` in App.
   - Check-in: ask → confirm; wrong team; expired session.
 - **Totals:** 550 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
 - **Local QA:** the local server ran with `OWNER_EMAILS` set to the local QA account (local only). Desktop dark (overview, user sheet); 390 px on all five tabs with no overflow and every target ≥44 px. No real phone was available.
+
+## Phase 9b: Landing and auth
+
+### Which look the signed-out screens use (`src/modern/signedOut.tsx`)
+- No account is loaded yet, so the landing and auth screens follow **the look this device last used**. `InterfaceModeProvider` already mirrors the active mode into `localStorage['cp-interface-mode']`. When nothing is stored, the app default applies.
+- Signing out picks up the look the session just used.
+- Every Modern screen has a **"Use the Classic look"** link, which this device remembers.
+- `SignedOutModern` turns the Modern theme tokens on (`html[data-ui="modern"]`) while a Modern signed-out screen is shown. It sets them before paint, and again after the provider's unmount clean-up on sign-out. It also honours reduced motion with `MotionConfig`, the same way ModernShell does.
+
+### Shared controllers (`src/components/auth/useAuthForms.ts`)
+The logic moved out of the Classic screens. Their JSX is unchanged.
+- `useTeamLookup`: FTC number lookup, which is now latest-wins.
+- `useSignupForm`, `useOAuthSignup`, `useVerifyEmail` and `useForgotPassword` send the same requests, with the same validation, as before.
+- **Drafted fields:**
+  - Name, email, team number / name, access code and the OAuth role choice are **drafted**. Going back a step or switching looks keeps them.
+  - Passwords are never drafted.
+  - A drafted team number is looked up again on return. A typed team name is kept if the number still isn't an FTC team.
+  - Drafts are cleared at sign-in (`persistSession`).
+- Provider marks moved to `components/auth/ProviderIcons.tsx`.
+
+### Modern screens (`src/modern/pages/auth/`)
+- **Landing (`ModernLanding`):** a different page from Classic.
+  - A fixed glass bar with section links.
+  - A centred hero with a gradient headline.
+  - A live **product window**: an animated attendance ring, build-board ticks, the next event, and a cash-flow line drawn left to right.
+  - An 8-tile **bento** of what's inside, a **3-step timeline** with a drawn connector, an **FAQ accordion**, a closing CTA, and a footer with Privacy / Terms / Classic look.
+- **Split auth layout (`AuthLayout`):**
+  - On wide screens, a living brand panel: drifting light, a dot grid, and product highlights that rotate every few seconds with a progress bar.
+  - The form column has Back, the Classic link and legal links.
+  - Phones get the form only.
+- **Sign in:**
+  - Labelled fields, a show-password toggle, inline errors, and the providers enabled on the server.
+  - First-time setup asks only for the new password.
+  - Login and setup still run in App.
+- **Password reset:** a kit **Dialog** with a 3-step progress bar (email → code → new password). It has a **six-box code input** over one real input, so paste and one-time-code autofill work, plus a resend countdown.
+- **Role choice:** two cards, each with what you get, and provider sign-up.
+- **Signup (admin / member):**
+  - The FTC number is verified live, with a check in the field and a verified card. A typed name is the fallback.
+  - The access-code field for members.
+  - Fields are frozen while submitting.
+- **OAuth completion:** an animated Team admin / Joining a team switch (a radiogroup), then the same fields.
+- **Email check:** the same six-box code input and resend countdown.
+- **Workspace ready:** shown to a new admin after signup in Modern. It is a dialog over the workspace, with the access code as separate tiles and a Copy button. Copying uses the shared `copyText` fallback and says when copying fails.
+
+### Tests
+- **New (14 tests, `src/modern/__tests__/auth.test.tsx`):**
+  - Device look resolution, remembering Classic, and picking up the session look on sign-out.
+  - The landing sets and clears the Modern tokens, and both exits work.
+  - Sign-in wiring, errors and providers (enabled ones only), the setup variant, the password toggle, and the full reset flow (request bodies, digit filtering, mismatch error).
+  - Role choice.
+  - Admin signup payload with the looked-up team name.
+  - Unknown number → typed name, with **drafts surviving a remount (password not kept)**.
+  - Member signup error.
+  - OAuth role switch and request body.
+  - Email verify.
+  - Workspace-ready copy.
+- The Classic auth tests (`VerifyEmailScreen`) still pass. `tsc` is clean.
+- **Local QA** (local dev server against the local API):
+  - Checked at 1440 dark, 768 light and 390 dark, with no horizontal overflow and every target ≥44 px.
+  - Wrong-password error from the real `/api/auth/login`.
+  - Live FTC lookup.
+  - A **look switch mid-signup kept the typed name and number** and showed the unchanged Classic screen.
+  - No real phone was available.
+- **Fixed during QA:**
+  - The page body is the scroller on these screens, so the bar is `fixed` (sticky would not hold).
+  - The cash-flow line is revealed with a clip instead of a path-length animation, which broke the non-scaling stroke.
+- Screenshots are in `screenshots/phase9/`.
