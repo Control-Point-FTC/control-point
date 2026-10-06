@@ -128,6 +128,64 @@ describe('Modern Owner console', () => {
   });
 });
 
+describe('Owner console races', () => {
+  it('a budget save keeps a newer edit, and shows the saved value otherwise', async () => {
+    let finish: () => void = () => {};
+    let limit: number | null = 5000;
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/owner/users/11/ai' && init?.method === 'PATCH') {
+        const b = JSON.parse(init.body);
+        return new Promise((r) => { finish = () => { limit = b.ai_daily_token_limit === '0' ? null : Number(b.ai_daily_token_limit); r({ ok: true, status: 200, json: async () => ({}) }); }; });
+      }
+      if (url === '/api/owner/users/11') return json({ ...DB[url], user: { ...DB[url].user, ai_daily_token_limit: limit } });
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [], providers: [] });
+      return json(DB[url.split('?')[0]] ?? null);
+    });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Users/);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
+    const sheet = await screen.findByRole('dialog');
+    const input = await within(sheet).findByLabelText('Daily token limit');
+    await waitFor(() => expect(input).toHaveValue('5000'));
+    // Save 6000, then keep typing before it lands: the newer edit stays.
+    fireEvent.change(input, { target: { value: '6000' } });
+    fireEvent.submit(input.closest('form')!);
+    fireEvent.change(input, { target: { value: '7000' } });
+    await act(async () => { finish(); });
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Daily limit saved', 'success'));
+    expect(input).toHaveValue('7000');
+    // Saving 0 removes the limit: the input shows the server's value (empty = Unlimited).
+    fireEvent.change(input, { target: { value: '0' } });
+    fireEvent.submit(input.closest('form')!);
+    await act(async () => { finish(); });
+    await waitFor(() => expect(input).toHaveValue(''));
+  });
+
+  it('an older flags response never replaces a newer one', async () => {
+    let releaseAll: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string) => {
+      // "All": headers arrive at once but the body is slow, landing after "Open".
+      if (url === '/api/owner/ai-flags?status=all') return json(null).then(() => ({ ok: true, status: 200, json: () => new Promise((r) => { releaseAll = () => r([{ ...DB['/api/owner/ai-flags'][0], id: 40, user_name: 'Stale' }]); }) }));
+      if (url.startsWith('/api/owner/ai-flags')) return json([{ ...DB['/api/owner/ai-flags'][0], user_name: 'Fresh' }]);
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 1 }, daily: [], top: [], providers: [] });
+      return json(DB[url] ?? null);
+    });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Flags/);
+    expect(await screen.findByRole('article', { name: /by Fresh/ })).toBeInTheDocument();
+    const filter = screen.getByRole('radiogroup', { name: 'Flag filter' });
+    fireEvent.click(within(filter).getByRole('radio', { name: 'All' }));
+    await waitFor(() => expect(calls('/api/owner/ai-flags?status=all')).toHaveLength(1));
+    fireEvent.click(within(filter).getByRole('radio', { name: 'Open' }));
+    await waitFor(() => expect(calls('/api/owner/ai-flags?status=open').length).toBeGreaterThan(0));
+    await act(async () => { releaseAll(); });
+    expect(screen.queryByRole('article', { name: /by Stale/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('article', { name: /by Fresh/ })).toBeInTheDocument();
+  });
+});
+
 describe('Modern QR check-in', () => {
   const checkin = (token = 'tok') => render(
     <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>

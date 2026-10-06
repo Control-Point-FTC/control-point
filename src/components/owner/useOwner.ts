@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
-import { deleteDraft, useDraft } from '../../modern/drafts';
+import { deleteDraft, getDraft, useDraft } from '../../modern/drafts';
 
 export type OwnerTab = 'overview' | 'users' | 'ai' | 'flags' | 'feedback';
 
@@ -38,18 +38,23 @@ export function useOwnerConsole() {
   const [teamFilter, setTeamFilter] = useState('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const seq = useRef({ users: 0, ai: 0, flags: 0 });
+  const flagFilterRef = useRef(flagFilter);
+  flagFilterRef.current = flagFilter;
 
   const loadAll = useCallback(async () => {
     setLoading(true);
+    // The initial load takes part in latest-wins too: a refresh started while
+    // it runs (e.g. opening AI Control) must not be overwritten by it.
+    const ids = { users: ++seq.current.users, ai: ++seq.current.ai, flags: ++seq.current.flags };
     try {
       const [o, f, u, a, fl] = await Promise.all([
-        json('/api/owner/overview'), json('/api/owner/feedback'), json('/api/owner/users'), json(aiOverviewUrl()), json('/api/owner/ai-flags'),
+        json('/api/owner/overview'), json('/api/owner/feedback'), json('/api/owner/users'), json(aiOverviewUrl()), json(`/api/owner/ai-flags?status=${flagFilterRef.current}`),
       ]);
       setOverview(o);
       setFeedback(Array.isArray(f) ? f : []);
-      setUsers(Array.isArray(u) ? u : []);
-      setAiOverview(a);
-      setFlags(Array.isArray(fl) ? fl : []);
+      if (ids.users === seq.current.users) setUsers(Array.isArray(u) ? u : []);
+      if (ids.ai === seq.current.ai) setAiOverview(a);
+      if (ids.flags === seq.current.flags) setFlags(Array.isArray(fl) ? fl : []);
     } catch { /* keep what we have */ } finally {
       setLoading(false);
     }
@@ -58,18 +63,19 @@ export function useOwnerConsole() {
 
   const reloadFlags = useCallback(async (filter: 'open' | 'all' = flagFilter) => {
     const id = ++seq.current.flags;
-    const r = await apiFetch(`/api/owner/ai-flags?status=${filter}`).catch(() => null);
-    if (r?.ok && id === seq.current.flags) setFlags(await r.json());
+    const data = await json(`/api/owner/ai-flags?status=${filter}`).catch(() => null);
+    // Checked after the body is read: an older response can't land later.
+    if (data && id === seq.current.flags) setFlags(data);
   }, [flagFilter]);
   const reloadUsers = useCallback(async () => {
     const id = ++seq.current.users;
-    const r = await apiFetch('/api/owner/users').catch(() => null);
-    if (r?.ok && id === seq.current.users) setUsers(await r.json());
+    const data = await json('/api/owner/users').catch(() => null);
+    if (data && id === seq.current.users) setUsers(data);
   }, []);
   const reloadAi = useCallback(async () => {
     const id = ++seq.current.ai;
-    const r = await apiFetch(aiOverviewUrl()).catch(() => null);
-    if (r?.ok && id === seq.current.ai) setAiOverview(await r.json());
+    const data = await json(aiOverviewUrl()).catch(() => null);
+    if (data && id === seq.current.ai) setAiOverview(data);
   }, []);
   // Fresh numbers every time the AI Control tab opens.
   useEffect(() => { if (tab === 'ai') void reloadAi(); }, [tab, reloadAi]);
@@ -164,7 +170,8 @@ export function useOwnerUser(userId: number, { onClose, onChanged, teams }: { on
     setLoading(true);
     try {
       const r = await apiFetch(`/api/owner/users/${userId}`);
-      if (r.ok && id === seq.current) setData(await r.json());
+      const body = r.ok ? await r.json() : null;
+      if (body && id === seq.current) setData(body);
     } catch { /* keep */ } finally {
       if (id === seq.current) setLoading(false);
     }
@@ -189,8 +196,13 @@ export function useOwnerUser(userId: number, { onClose, onChanged, teams }: { on
       await load(); onChanged();
     } catch { notify('Update failed', 'error'); } finally { setBusy(false); }
   };
-  const saveDailyLimit = () => patchAi({ ai_daily_token_limit: limitValue || null }, 'Daily limit saved', () => setDailyLimit(null));
-  const saveReplyMax = () => patchAi({ ai_max_tokens_reply: replyValue || null }, 'Reply cap saved', () => setReplyMax(null));
+  // After a save the input shows the server's value again, unless the owner
+  // has typed something newer meanwhile (that edit stays).
+  const clearIfUnchanged = (key: string, submitted: string | null) => () => {
+    if (submitted != null && getDraft<string | null>(key, null) === submitted) deleteDraft(key);
+  };
+  const saveDailyLimit = () => patchAi({ ai_daily_token_limit: limitValue || null }, 'Daily limit saved', clearIfUnchanged(`owner:limit:${userId}`, dailyLimit));
+  const saveReplyMax = () => patchAi({ ai_max_tokens_reply: replyValue || null }, 'Reply cap saved', clearIfUnchanged(`owner:reply:${userId}`, replyMax));
 
   const doWarn = async () => {
     if (busy) return;

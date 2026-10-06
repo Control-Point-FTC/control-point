@@ -8966,7 +8966,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
   // Per-user management is shared with the Modern owner console.
   const {
     data, loading, busy, moving, moveError, setMoveError, dailyLimit, setDailyLimit, replyMax, setReplyMax,
-    warnNote, setWarnNote, moveTeamId, setMoveTeamId, patchAi, doWarn, doMoveUser, doDeleteMembership, doDeleteAccount,
+    warnNote, setWarnNote, moveTeamId, setMoveTeamId, patchAi, saveDailyLimit, saveReplyMax, doWarn, doMoveUser, doDeleteMembership, doDeleteAccount,
   } = useOwnerUser(userId, { onClose, onChanged, teams });
 
   const u = data?.user;
@@ -9058,7 +9058,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                       inputMode="numeric"
                       className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                     />
-                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_daily_token_limit: dailyLimit || null }, 'Daily limit saved')}>Set</Button>
+                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => void saveDailyLimit()}>Set</Button>
                   </div>
                 </div>
                 <div>
@@ -9071,7 +9071,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                       inputMode="numeric"
                       className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                     />
-                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_max_tokens_reply: replyMax || null }, 'Reply cap saved')}>Set</Button>
+                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => void saveReplyMax()}>Set</Button>
                   </div>
                 </div>
               </div>
