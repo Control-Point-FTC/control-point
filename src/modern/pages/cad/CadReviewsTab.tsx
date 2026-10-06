@@ -124,7 +124,7 @@ function ReviewDetail({ review, ctl, isAdmin, onDeleted }: { review: any; ctl: R
               const Icon = MOVE_ICON[m.to] ?? Check;
               return <Button key={m.to} size="sm" variant={m.primary ? 'default' : 'outline'} onClick={() => void ctl.setStatus(review.id, m.to)} className="max-sm:h-11"><Icon /> {m.label}</Button>;
             })}
-            {isAdmin && <Button size="sm" variant="ghost" onClick={async () => { await ctl.remove(review.id); onDeleted(); }} className="ml-auto text-destructive hover:text-destructive max-sm:h-11"><Trash2 /> Delete</Button>}
+            {isAdmin && <Button size="sm" variant="ghost" onClick={async () => { if (await ctl.remove(review.id)) onDeleted(); }} className="ml-auto text-destructive hover:text-destructive max-sm:h-11"><Trash2 /> Delete</Button>}
           </div>
         )}
         <section aria-label="Discussion" className="border-t border-border pt-4">

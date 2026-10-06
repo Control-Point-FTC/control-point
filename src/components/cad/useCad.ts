@@ -152,11 +152,13 @@ export function useCadReviews({ currentUser, isAdmin }: { currentUser?: any; isA
     cadChanged('/api/cad/reviews');
     notify(`Marked as ${REVIEW_STATUS_LABELS[status]}.`, 'success');
   };
-  const remove = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete review?', message: 'This removes the review and its comments.', confirmLabel: 'Delete' }))) return;
+  /** Resolves true only when the review was deleted (not on cancel or failure). */
+  const remove = async (id: number): Promise<boolean> => {
+    if (!(await confirmDialog({ title: 'Delete review?', message: 'This removes the review and its comments.', confirmLabel: 'Delete' }))) return false;
     const r = await apiFetch(`/api/cad/reviews/${id}`, { method: 'DELETE' }).catch(() => null);
-    if (r?.ok) { setReviews((p) => p.filter((x) => x.id !== id)); cadChanged('/api/cad/reviews'); notify('Review deleted.', 'success'); }
-    else notify('Could not delete.', 'error');
+    if (r?.ok) { setReviews((p) => p.filter((x) => x.id !== id)); cadChanged('/api/cad/reviews'); notify('Review deleted.', 'success'); return true; }
+    notify('Could not delete.', 'error');
+    return false;
   };
   /** Who may move a design to a status: admins anything (but never re-mark or leave Built); authors only submit / re-submit. */
   const canAct = (review: any, to: string) => {

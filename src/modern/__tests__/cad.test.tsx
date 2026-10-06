@@ -259,6 +259,20 @@ describe('Modern CAD', () => {
     expect(calls('/api/cad/parts/import-invoice/parse', 'POST')).toHaveLength(1);
   });
 
+  it('cancelling or failing a review delete keeps its sheet open', async () => {
+    setup('cad-reviews', true);
+    fireEvent.click(await screen.findByRole('button', { name: /Lift v2/ }));
+    const sheet = await screen.findByRole('dialog');
+    dialog.confirmDialog.mockResolvedValueOnce(false);
+    fireEvent.click(within(sheet).getByRole('button', { name: /Delete/ }));
+    await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalled());
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    api.apiFetch.mockImplementation((url: string, init?: any) => (init?.method === 'DELETE' ? json({}, false) : json(db[url] ?? [])));
+    fireEvent.click(within(sheet).getByRole('button', { name: /Delete/ }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Could not delete.', 'error'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('a status change or delete refreshes every mounted CAD page', async () => {
     setup('cad-reviews', true);
     fireEvent.click(await screen.findByRole('button', { name: /Lift v2/ }));
