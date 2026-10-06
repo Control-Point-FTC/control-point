@@ -219,6 +219,7 @@ import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, st
 import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
 import { CadView } from './components/CadView';
 import ResourcesView from './components/ResourcesView';
+import { ResourcesPage } from './modern/pages/resources/ResourcesPage';
 import MessageReactions, { postReactionToggle } from './components/MessageReactions';
 import ReactionPicker from './components/ReactionPicker';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
@@ -2696,7 +2697,7 @@ export default function App() {
         <Route path="/cad-parts" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/comm" element={<ByMode legacy={<CommunicationView {...viewProps} />} modern={<CommunicationPage {...viewProps} />} />} />
         <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} modern={<MessagesPage {...viewProps} memberMenuItems={memberMenuItems} />} />} />
-        <Route path="/resources" element={<ByMode legacy={<ResourcesView />} />} />
+        <Route path="/resources" element={<ByMode legacy={<ResourcesView />} modern={<ResourcesPage />} />} />
         <Route path="/bruno" element={<ByMode legacy={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} modern={<BrunoPage key={currentUser?.team_id ?? 'none'} {...viewProps} />} />} />
         <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} modern={<Navigate to="/settings?section=profile" replace />} />} />
         <Route path="/settings" element={<ByMode legacy={<SettingsView {...viewProps} hasPerm={hasPerm} />} modern={<SettingsPage {...viewProps} {...settingsCallbacks} hasPerm={hasPerm} />} />} />
