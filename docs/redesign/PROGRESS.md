@@ -1094,3 +1094,9 @@ Everything that floats over every page now has a Modern version, chosen by `ByMo
 - The existing Classic voice tests pass on the new hooks.
 - Full suite: 675 tests run, all pass except the 2 known Windows-only `ftcCache` tests. `tsc` is clean.
 - **Local QA:** the Modern consent bar and feedback dialog were checked on a local QA account. The call UI needs a second participant, so it is covered by tests only. No real phone was available.
+
+## Wrap-up
+
+- **Status:** every phase is merged and live. Modern is the default, and Classic is one click away in Settings → Appearance, the account menu or ⌘K.
+- **Rundown:** [`Control-Point-2026-Redesign.pdf`](Control-Point-2026-Redesign.pdf) covers every change, what was rebuilt and how, in 8 pages.
+- **Final suite:** 684 tests run, all pass except the 2 known Windows-only `ftcCache` tests.
