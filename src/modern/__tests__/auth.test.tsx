@@ -9,6 +9,7 @@ import { ModernLanding } from '../pages/auth/ModernLanding';
 import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from '../pages/auth/AuthPages';
 import { CodeRevealDialog } from '../pages/auth/CodeRevealDialog';
 import { AuthLayout } from '../pages/auth/AuthLayout';
+import { notify } from '../../components/dialog';
 import { readDeviceMode, useSignedOutMode } from '../signedOut';
 import { clearDrafts } from '../drafts';
 
@@ -279,6 +280,14 @@ describe('Phase 9b review fixes', () => {
       vi.useRealTimers();
       window.matchMedia = mm;
     }
+  });
+});
+
+describe('signed-out toasts', () => {
+  it('a notify on a Modern signed-out screen is shown (e.g. after a password reset)', async () => {
+    render(<AuthLayout><p>form</p></AuthLayout>);
+    act(() => notify('Password updated — sign in with your new password', 'success'));
+    expect(await screen.findByText('Password updated — sign in with your new password')).toBeInTheDocument();
   });
 });
 

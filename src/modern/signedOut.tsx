@@ -5,6 +5,7 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import { MotionConfig } from 'motion/react';
 import { DEFAULT_INTERFACE_MODE, isInterfaceMode, type InterfaceMode } from './interfaceMode';
+import { Toaster } from '../components/ui-kit';
 
 const KEY = 'cp-interface-mode';
 
@@ -44,5 +45,12 @@ export function SignedOutModern({ children }: { children: ReactNode }) {
   // …and again after passive effects: on sign-out the provider's unmount
   // cleanup (which clears the attribute) runs after the layout effect above.
   useEffect(() => { document.documentElement.dataset.ui = 'modern'; }, []);
-  return <MotionConfig reducedMotion="user">{children}</MotionConfig>;
+  // Toasts (e.g. "Password updated") go to Sonner in Modern; ModernShell's
+  // Toaster isn't mounted while signed out, so these screens bring their own.
+  return (
+    <MotionConfig reducedMotion="user">
+      {children}
+      <Toaster />
+    </MotionConfig>
+  );
 }
