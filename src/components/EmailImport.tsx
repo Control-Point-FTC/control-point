@@ -160,6 +160,7 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
   const [body, setBody] = useState('');
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd HH:mm'));
   const [type, setType] = useState('email');
+  const [direction, setDirection] = useState<'inbound' | 'outbound'>('outbound');
   const [aiBusy, setAiBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pasteMode, setPasteMode] = useState(false);
@@ -214,7 +215,7 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
     let agg = '';
     try {
       await streamBuildHelper([
-        { role: 'user', text: `You are helping import a saved email into the team's communication log. The user opened the "Import email" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entry proposed. Extract the recipient (To), subject, body text, and date from the email below and propose it with the \`\`\`communications block exactly as your communications log skill specifies. Resolve relative dates against today's date from your context. If the recipient is truly impossible to determine, ask one short clarifying question (no block). Do not include the page's navigation chrome or ads in the body — just the email content.\n\nEmail to parse:\n"""${source.slice(0, 6000)}"""` },
+        { role: 'user', text: `You are helping import a saved email into the team's communication log. The user opened the "Import email" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entry proposed. Extract the recipient (To), subject, body text, date, and direction (outbound if the team sent it, inbound if someone outside wrote to the team) from the email below and propose it with the \`\`\`communications block exactly as your communications log skill specifies. Resolve relative dates against today's date from your context. If the recipient is truly impossible to determine, ask one short clarifying question (no block). Do not include the page's navigation chrome or ads in the body — just the email content.\n\nEmail to parse:\n"""${source.slice(0, 6000)}"""` },
       ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
       const items = extractActionProposals(agg).find((p) => p.kind === 'communication')?.items || [];
       if (items.length) {
@@ -224,6 +225,7 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
         setBody(String(c.body || ''));
         setDate(/^\d{4}-\d{2}-\d{2}$/.test(String(c.date || '')) ? `${c.date} 12:00` : format(new Date(), 'yyyy-MM-dd HH:mm'));
         setType(c.type === 'announcement' ? 'announcement' : 'email');
+        setDirection(c.direction === 'inbound' ? 'inbound' : 'outbound');
         setParsed(true);
         setError(null);
       } else {
@@ -248,7 +250,7 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
       const res = await apiFetch(apiUrl('/api/communications'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: recipient.trim(), subject: subject.trim(), body: body.trim(), date, type }),
+        body: JSON.stringify({ recipient: recipient.trim(), subject: subject.trim(), body: body.trim(), date, type, direction }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log it — try again.');
@@ -348,6 +350,13 @@ export default function EmailImportModal({ onClose, onLogged }: { onClose: () =>
               <ThemedSelect value={type} onChange={(e) => setType(e.target.value)} className={inputCls + ' mt-1'}>
                 <option value="email">Email</option>
                 <option value="announcement">Announcement</option>
+              </ThemedSelect>
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-text-base/60">Direction</span>
+              <ThemedSelect value={direction} onChange={(e) => setDirection(e.target.value === 'inbound' ? 'inbound' : 'outbound')} className={inputCls + ' mt-1'}>
+                <option value="outbound">⬆ We sent it</option>
+                <option value="inbound">⬇ They sent it</option>
               </ThemedSelect>
             </label>
             <label className="block">
