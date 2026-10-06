@@ -56,6 +56,8 @@ const ADV_TOLERANCE = 0.04;
 
 export class PredictMonitor {
   private cache = new Map<string, EventSnapshot>();
+  /** Snapshots whose last write failed: kept in memory and retried. */
+  private unsaved = new Set<string>();
 
   constructor(readonly dir: string, private log: (msg: string) => void = () => {}) {}
 
@@ -74,7 +76,11 @@ export class PredictMonitor {
       s.matches ??= {};
       s.advancement ??= {};
       this.cache.set(k, s);
-      if (this.cache.size > 400) this.cache.delete(this.cache.keys().next().value!);
+      if (this.cache.size > 400) {
+        // Never evict a snapshot that hasn't reached disk yet.
+        const victim = [...this.cache.keys()].find((x) => !this.unsaved.has(x) && x !== k);
+        if (victim) this.cache.delete(victim);
+      }
     }
     return s;
   }
@@ -82,31 +88,62 @@ export class PredictMonitor {
   /**
    * Record what a fresh forecast says, first-write-wins: unplayed matches'
    * win odds, and this stage's advancement odds if the stage has none yet.
-   * Returns true when anything new was written.
+   *
+   * `storedPlayed` is the set of match keys the ratings already include
+   * (the stored results); those are never recorded even if a stale event
+   * payload still lists them as unplayed. A forecast of a finished event
+   * (every listed match played) records nothing, and advancement odds aren't
+   * recorded once playoffs have started — both would use known answers.
+   * Returns true when something new reached disk.
    */
-  record(fc: Forecast, now = new Date()): boolean {
+  record(fc: Forecast, now = new Date(), storedPlayed: Set<string> = new Set()): boolean {
+    const k = `${fc.season}:${fc.event}`;
     const snap = this.snapshot(fc.season, fc.event);
     const at = now.toISOString();
     let changed = false;
-    for (const m of fc.matches) {
-      if (m.played || m.pRedWin == null || snap.matches[m.key]) continue;
+    const finished = fc.matches.length > 0 && fc.matches.every((m) => m.played);
+    const playoffsStarted = fc.matches.some((m) => m.level === "playoff" && (m.played || storedPlayed.has(m.key)));
+    for (const m of finished ? [] : fc.matches) {
+      if (m.played || m.pRedWin == null || snap.matches[m.key] || storedPlayed.has(m.key)) continue;
       snap.matches[m.key] = { p: round(m.pRedWin), at };
       changed = true;
     }
     // A "live" forecast (quals under way) is neither a clean pre-event call
     // nor a post-quals one, so it isn't scored as a stage.
-    const stage = fc.stage === "live" ? null : fc.stage;
+    const stage = fc.stage === "live" || finished || playoffsStarted ? null : fc.stage;
     if (stage && !snap.advancement[stage] && fc.teams.length) {
       const teams: Record<string, number> = {};
       for (const t of fc.teams) teams[t.team] = round(t.pAdvance);
       snap.advancement[stage] = { at, teams, excluded: fc.prequalified };
       changed = true;
     }
-    if (changed) {
-      try { writeFileSync(this.file(fc.season, fc.event), JSON.stringify(snap)); }
-      catch (e) { this.log(`[predict] snapshot write failed for ${fc.event}: ${(e as Error).message}`); }
+    if (!changed && !this.unsaved.has(k)) return false;
+    try {
+      this.write(fc.season, fc.event, snap);
+      this.unsaved.delete(k);
+      return true;
+    } catch (e) {
+      this.unsaved.add(k);
+      this.log(`[predict] snapshot write failed for ${fc.event} (will retry): ${(e as Error).message}`);
+      return false;
     }
-    return changed;
+  }
+
+  /** Overridable for tests. */
+  protected write(season: number, code: string, snap: EventSnapshot): void {
+    writeFileSync(this.file(season, code), JSON.stringify(snap));
+  }
+
+  /** Retry snapshots whose write failed (called after each sync). */
+  flush(): number {
+    let n = 0;
+    for (const k of [...this.unsaved]) {
+      const snap = this.cache.get(k);
+      if (!snap) { this.unsaved.delete(k); continue; }
+      try { this.write(snap.season, snap.code, snap); this.unsaved.delete(k); n++; }
+      catch { /* keep for the next try */ }
+    }
+    return n;
   }
 
   /** Pre-match odds recorded for a match, if any (for "Called it / Upset"). */

@@ -102,6 +102,25 @@ describe('PredictView', () => {
     expect(screen.queryByText('Advancement odds after quals')).not.toBeInTheDocument();
   });
 
+  it('shows advancement scores even with no played match calls, and refetches when the sheet opens', async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) => ({ ...forecast, season, event }));
+    const adv = { brier: 0.1, calibrationError: 0.01 };
+    const status = (n: number) => ({
+      ready: true, readyAt: '', syncing: false, seasons: [2025],
+      accuracy: { testSeason: '2025–26', matches: { count: 100, liveAccuracy: 0.72, liveBrier: 0.18, preEventAccuracy: 0.68, oprAccuracy: 0.65, oprBrier: 0.2, scoreRange80Coverage: 0.8 },
+        advancement: { events: 5, pre: adv, quals: adv, selected: adv, matchesOnlyPre: adv, naiveTopRanked: { brier: 0.15 }, calibrationPre: [] }, partners: null, pickTop3: 0.5 },
+      live: { season: 2025, matches: { n: 0, accuracy: 0, brier: 0, upsets: 0 }, advancement: { pre: { n, events: 1, brier: 0.11 }, quals: { n: 0, events: 0, brier: 0 }, selected: { n: 0, events: 0, brier: 0 } }, updatedAt: '' },
+    });
+    predict.fetchPredictStatus.mockResolvedValue(status(0));
+    renderView('/predict?season=2025&event=USNJCMPPKWY');
+    await screen.findAllByText('63%');
+    predict.fetchPredictStatus.mockResolvedValue(status(30));
+    fireEvent.click(screen.getByText(/How accurate is this/));
+    expect(await screen.findByText('Advancement odds before the event')).toBeInTheDocument();
+    expect(screen.getByText('No recorded match calls have been played yet.')).toBeInTheDocument();
+  });
+
   it('explains warm-up and unsupported events instead of erroring', async () => {
     scout.fetchScoutTeam.mockResolvedValue(profile([ev('FPERR', 'Premier', '2099-05-28')]));
     predict.fetchForecast.mockRejectedValue(new PredictError('This championship is split into divisions.', 422));

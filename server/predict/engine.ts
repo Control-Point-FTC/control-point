@@ -113,6 +113,12 @@ export class PredictEngine {
   get ready(): boolean { return this.readyAt != null; }
   get accuracy(): unknown { return M.accuracy; }
 
+  /** Match keys (`level:series:number`) of an event already in the ratings. */
+  storedPlayedKeys(season: number, code: string): Set<string> {
+    const ev = this.events.get(season)?.find((e) => e.code === code);
+    return new Set((ev?.matches ?? []).map((m) => `${m.level}:${m.series}:${m.number}`));
+  }
+
   /** Stored results of a season (for live accuracy scoring). */
   seasonData(season: number): { events: EventRecord[]; advancement: ReturnType<PredictStore["loadAdvancement"]> } {
     return { events: this.events.get(season) ?? [], advancement: this.advancement.get(season) ?? [] };

@@ -86,4 +86,39 @@ describe("PredictMonitor", () => {
     expect(eventStillOpen("2026-03-07", now)).toBe(false);
     expect(eventStillOpen(null, now)).toBe(true);
   });
+
+  it("never records known answers: finished events, stored results, or advancement after playoffs start", () => {
+    const mon = new PredictMonitor(dir);
+    // Every listed match played → finished event → nothing recorded.
+    expect(mon.record(forecast("selected", [fm(1, null, { red: 1, blue: 2 })], [[1, 0.9]]))).toBe(false);
+    expect(mon.snapshot(2025, "USXXQ1").advancement.selected).toBeUndefined();
+    // A stale payload lists Q2 as unplayed, but the ratings already hold its result.
+    mon.record(forecast("live", [fm(2, 0.6), fm(3, 0.55)]), new Date(), new Set(["qual:0:2"]));
+    expect(mon.preMatch(2025, "USXXQ1", "qual:0:2")).toBeNull();
+    expect(mon.preMatch(2025, "USXXQ1", "qual:0:3")).toBe(0.55);
+    // A playoff match already played: no "after selection" advancement snapshot.
+    const playoff: ForecastMatch = { ...fm(1, null, { red: 3, blue: 1 }), key: "playoff:1:1", level: "playoff" };
+    mon.record(forecast("selected", [playoff, { ...fm(9, 0.5), key: "playoff:2:1", level: "playoff" }], [[1, 0.7]]));
+    expect(mon.snapshot(2025, "USXXQ1").advancement.selected).toBeUndefined();
+  });
+
+  it("keeps calls whose write failed and retries them", () => {
+    class Flaky extends PredictMonitor {
+      fail = true;
+      protected write(season: number, code: string, snap: any) { if (this.fail) throw new Error("disk full"); super.write(season, code, snap); }
+    }
+    const logs: string[] = [];
+    const mon = new Flaky(dir, (m) => logs.push(m));
+    expect(mon.record(forecast("pre", [fm(1, 0.7)]))).toBe(false);
+    expect(logs[0]).toMatch(/will retry/);
+    mon.fail = false;
+    // No new entries, but the unsaved snapshot is retried.
+    expect(mon.record(forecast("pre", [fm(1, 0.1)]))).toBe(true);
+    expect(new PredictMonitor(dir).preMatch(2025, "USXXQ1", "qual:0:1")).toBe(0.7);
+    mon.fail = true;
+    mon.record(forecast("pre", [fm(2, 0.4)]));
+    mon.fail = false;
+    expect(mon.flush()).toBe(1);
+    expect(new PredictMonitor(dir).preMatch(2025, "USXXQ1", "qual:0:2")).toBe(0.4);
+  });
 });

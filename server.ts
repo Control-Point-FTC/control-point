@@ -4859,7 +4859,7 @@ async function startServer() {
   function forecastAndRecord(ev: Parameters<typeof predictEngine.forecast>[0], myTeam: number | null): Forecast | null {
     const fc = predictEngine.forecast(ev, myTeam);
     if (!fc) return null;
-    if (eventStillOpen(ev.end)) predictMonitor.record(fc);
+    if (eventStillOpen(ev.end)) predictMonitor.record(fc, new Date(), predictEngine.storedPlayedKeys(ev.season, ev.code));
     return predictMonitor.annotate(fc);
   }
   /**
@@ -4881,7 +4881,7 @@ async function startServer() {
         const ev = await cachedEventFull(season, meta.code);
         if (!ev || predictEngine.unsupportedReason(ev) || !eventStillOpen(ev.end)) continue;
         const fc = predictEngine.forecast(ev, null, 1000);
-        if (fc && predictMonitor.record(fc)) n++;
+        if (fc && predictMonitor.record(fc, new Date(), predictEngine.storedPlayedKeys(season, meta.code))) n++;
       } catch { /* FTC data unavailable for this one — try next sync */ }
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -4902,6 +4902,7 @@ async function startServer() {
       await predictEngine.rebuild();
       predictCache.clear();
       console.log(`[predict] ratings rebuilt (${predictSeasons.join(", ")})`);
+      predictMonitor.flush();
       const snapped = await snapshotCurrentEvents();
       if (snapped) console.log(`[predict] snapshots recorded for ${snapped} current events`);
       scoreLive();

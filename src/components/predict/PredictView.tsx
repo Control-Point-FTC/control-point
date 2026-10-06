@@ -57,6 +57,9 @@ export function PredictView() {
   const [names, setNames] = useState<Map<number, string>>(new Map());
   const [accuracy, setAccuracy] = useState<PredictAccuracy | null>(null);
   const [live, setLive] = useState<LiveAccuracy | null>(null);
+  // Status (back-test + live scores) loads on mount and again whenever the
+  // accuracy sheet opens, so a page left open through a sync isn't stale.
+  const loadStatus = () => { fetchPredictStatus().then((s) => { setAccuracy(s.accuracy); setLive(s.live ?? null); }).catch(() => {}); };
   const [showAccuracy, setShowAccuracy] = useState(false);
   const [autoStepped, setAutoStepped] = useState(() => params.has('season'));
   const [teamReload, setTeamReload] = useState(0);
@@ -100,7 +103,7 @@ export function PredictView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, teamReload]);
 
-  useEffect(() => { fetchPredictStatus().then((s) => { setAccuracy(s.accuracy); setLive(s.live ?? null); }).catch(() => {}); }, []);
+  useEffect(() => { loadStatus(); }, []);
 
   // Every request (initial, Refresh, Try again) gets an id and only the latest
   // may update state, so a slow answer for an old selection can't overwrite it.
@@ -155,7 +158,7 @@ export function PredictView() {
             </div>
             <p className="text-sm text-text-muted mt-1">Your odds of advancing, simulated from every team's match history. Estimates, not guarantees.</p>
           </div>
-          <button onClick={() => setShowAccuracy(true)} className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:opacity-80">
+          <button onClick={() => { setShowAccuracy(true); loadStatus(); }} className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:opacity-80">
             <CircleHelp className="w-4 h-4" /> How accurate is this?
           </button>
         </div>
@@ -542,13 +545,17 @@ function AccuracyPanel({ accuracy: a, live }: { accuracy: PredictAccuracy | null
     <div className="space-y-5 text-sm">
       <section>
         <h4 className="font-bold text-text-base flex items-center gap-1.5 mb-1"><Activity className="w-4 h-4 text-accent" />Live this season</h4>
-        {live && live.matches.n > 0 ? (
+        {live && (live.matches.n > 0 || (['pre', 'quals', 'selected'] as const).some((s) => live.advancement[s].n > 0)) ? (
           <>
-            <p className="text-xs text-text-muted mb-1">Only predictions written down <em>before</em> each match was played, scored against what happened.</p>
-            {row('Match winners called', `${(live.matches.accuracy * 100).toFixed(1)}%`, `${live.matches.n.toLocaleString()} matches · ${live.matches.upsets.toLocaleString()} upsets · back-test ${(a.matches.liveAccuracy * 100).toFixed(1)}%`)}
-            {row('Match odds score', live.matches.brier.toFixed(3), `Brier, lower is better · back-test ${a.matches.liveBrier.toFixed(3)}`)}
+            <p className="text-xs text-text-muted mb-1">Only predictions written down <em>before</em> the results were known, scored against what happened.</p>
+            {live.matches.n > 0 ? (
+              <>
+                {row('Match winners called', `${(live.matches.accuracy * 100).toFixed(1)}%`, `${live.matches.n.toLocaleString()} matches · ${live.matches.upsets.toLocaleString()} upsets · back-test ${(a.matches.liveAccuracy * 100).toFixed(1)}%`)}
+                {row('Match odds score', live.matches.brier.toFixed(3), `Brier, lower is better · back-test ${a.matches.liveBrier.toFixed(3)}`)}
+              </>
+            ) : <p className="text-xs text-text-muted py-1.5">No recorded match calls have been played yet.</p>}
             {(['pre', 'quals', 'selected'] as const).filter((s) => live.advancement[s].n > 0).map((s) => (
-              row(`Advancement odds ${stageLabel[s]}`, live.advancement[s].brier.toFixed(3), `${live.advancement[s].events} events · back-test ${backBrier[s].toFixed(3)}`)
+              <div key={s}>{row(`Advancement odds ${stageLabel[s]}`, live.advancement[s].brier.toFixed(3), `${live.advancement[s].events} events · back-test ${backBrier[s].toFixed(3)}`)}</div>
             ))}
           </>
         ) : (
