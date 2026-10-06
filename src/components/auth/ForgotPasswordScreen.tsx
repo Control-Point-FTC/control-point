@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ChevronLeft, Mail, KeyRound } from 'lucide-react';
 import { Card, Button, Input } from '../ui';
-import { apiFetch } from '../../services/api';
+import { useForgotPassword } from './useAuthForms';
 
 // Forgot password: email -> 6-digit OTP via Resend -> new password.
 // Rendered as an overlay on top of the login form.
@@ -10,24 +10,13 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
   onBack: () => void;
   onDone: () => void;
 }) {
-  const [step, setStep] = useState<'email' | 'code' | 'password'>('email');
-  const [email, setEmail] = useState(initialEmail);
-  const [code, setCode] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
-  const [resending, setResending] = useState(false);
+  const {
+    step, email, setEmail, code, setCode, password, setPassword, confirm, setConfirm,
+    error, busy, cooldown, resending, sendCode, resend, continueFromCode, resetPassword,
+  } = useForgotPassword({ initialEmail, onDone });
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
 
   // Focus management: move focus into the dialog on open and on step change,
   // trap Tab inside while open, and restore focus to the trigger on close.
@@ -66,91 +55,6 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
       }
     };
   }, [step, onBack]);
-
-  const sendCode = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = email.trim();
-    if (!clean || !clean.includes('@')) { setError('Enter a valid email address.'); return; }
-    setError(null);
-    setBusy(true);
-    try {
-      const res = await apiFetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: clean }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Couldn't send the code");
-      setStep('code');
-      setCooldown(data.cooldownSeconds || 60);
-    } catch (err: any) {
-      setError(err.message || "Couldn't send the code — try again");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const resend = async () => {
-    if (cooldown > 0 || resending) return;
-    setResending(true);
-    setError(null);
-    try {
-      const res = await apiFetch('/api/auth/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Couldn't resend the code");
-      setCooldown(data.cooldownSeconds || 60);
-    } catch (err: any) {
-      setError(err.message || "Couldn't resend the code");
-    } finally {
-      setResending(false);
-    }
-  };
-
-  // Code step: require all 6 digits before advancing. The server still
-  // validates the code together with the new password.
-  const continueFromCode = (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = code.replace(/\D/g, '').slice(0, 6);
-    if (clean.length !== 6) { setError('Enter the 6-digit code from the email.'); return; }
-    setError(null);
-    setStep('password');
-  };
-
-  const resetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const clean = code.replace(/\D/g, '').slice(0, 6);
-    if (clean.length !== 6) {
-      setError('Enter the 6-digit code from the email.');
-      setStep('code');
-      return;
-    }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
-    if (password !== confirm) { setError("Passwords don't match."); return; }
-    setError(null);
-    setBusy(true);
-    try {
-      const res = await apiFetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), code: clean, newPassword: password }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Couldn't reset your password");
-      onDone();
-    } catch (err: any) {
-      const msg = err.message || "Couldn't reset your password — try again";
-      // Code problems surface here (code is validated together with the new
-      // password) — send them back to the code step so they can retry.
-      if (/code/i.test(msg)) setStep('code');
-      setError(msg);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 overflow-y-auto" role="dialog" aria-modal="true" aria-label="Reset password">
@@ -198,7 +102,7 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
                 required
                 aria-label="Reset code"
                 value={code}
-                onChange={(e: any) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onChange={(e: any) => setCode(e.target.value)}
                 placeholder="••••••"
                 inputMode="numeric"
                 autoComplete="one-time-code"
@@ -228,7 +132,7 @@ export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
                   required
                   aria-label="Reset code"
                   value={code}
-                  onChange={(e: any) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={(e: any) => setCode(e.target.value)}
                   placeholder="••••••"
                   inputMode="numeric"
                   autoComplete="one-time-code"
