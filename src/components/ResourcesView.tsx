@@ -68,6 +68,7 @@ export default function ResourcesView() {
         <textarea
           value={pasteText}
           onChange={(e) => setPasteText(e.target.value)}
+          disabled={saving}
           rows={4}
           placeholder="Paste text with links… (Discord messages, chat logs, notes — Bruno pulls out every link, writes titles, and sorts them into categories)"
           className="w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[96px]"
@@ -76,7 +77,7 @@ export default function ResourcesView() {
           <p className="text-[11px] text-text-muted">
             Tip: dump a whole Discord thread in here — Bruno extracts each URL and files it under the right category.
           </p>
-          <Button onClick={handleParse} disabled={!pasteText.trim() || parsing} className="shrink-0 w-full sm:w-auto">
+          <Button onClick={handleParse} disabled={!pasteText.trim() || parsing || saving} className="shrink-0 w-full sm:w-auto">
             {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             {parsing ? 'Bruno is reading…' : 'Extract links with Bruno'}
           </Button>
@@ -113,6 +114,7 @@ export default function ResourcesView() {
                       <Input
                         value={row.title}
                         onChange={(e: any) => updatePreviewRow(i, { title: e.target.value })}
+                        disabled={saving}
                         placeholder="Title"
                         className="!py-1.5 !text-sm font-semibold"
                       />
@@ -120,13 +122,15 @@ export default function ResourcesView() {
                       <Input
                         value={row.description}
                         onChange={(e: any) => updatePreviewRow(i, { description: e.target.value })}
+                        disabled={saving}
                         placeholder="Short description…"
                         className="!py-1.5 !text-sm"
                       />
                     </div>
                     <button
                       onClick={() => removePreviewRow(i)}
-                      className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                      disabled={saving}
+                      className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0 disabled:opacity-40"
                       title="Remove"
                     >
                       <X className="w-4 h-4" />
@@ -135,6 +139,7 @@ export default function ResourcesView() {
                   <ThemedSelect
                     value={row.category}
                     onChange={(e) => updatePreviewRow(i, { category: e.target.value })}
+                    disabled={saving}
                     className="w-full sm:w-56 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
                   >
                     {RESOURCE_CATEGORIES.map((c) => (
