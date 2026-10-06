@@ -9561,18 +9561,23 @@ Rules:
           }
           const { entries } = extractCommunicationsBlock("```communications\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
+          // Validate every parent BEFORE writing anything: if one reply
+          // refers to a deleted thread, nothing is saved, so a retry
+          // cannot duplicate the entries that succeeded before the failure.
+          const resolvedParents = new Map<number, number | null>();
           for (const c of entries) {
-            // Resolve parent_id to the thread root (same rule as POST
-            // /api/communications): must belong to this team. An invalid
-            // parent is rejected — never silently saved as a new thread.
-            let parentId: number | null = null;
             if (c.parent_id != null) {
               const parent: any = (await dbGet("SELECT id, team_id, parent_id FROM communications WHERE id = ?", c.parent_id));
               if (!parent || parent.team_id !== auth.teamId) {
-                return res.status(400).json({ error: `Thread #${c.parent_id} no longer exists — the reply was not logged` });
+                return res.status(400).json({ error: `Thread #${c.parent_id} no longer exists — nothing was logged` });
               }
-              parentId = parent.parent_id != null ? parent.parent_id : parent.id;
+              resolvedParents.set(c.parent_id, parent.parent_id != null ? parent.parent_id : parent.id);
             }
+          }
+          for (const c of entries) {
+            // Resolve parent_id to the thread root (same rule as POST
+            // /api/communications): must belong to this team.
+            const parentId = c.parent_id != null ? resolvedParents.get(c.parent_id) ?? null : null;
             (await dbRun(
               "INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               c.recipient, c.subject, c.body, c.date, c.type, auth.teamId, parentId, c.direction || 'outbound'

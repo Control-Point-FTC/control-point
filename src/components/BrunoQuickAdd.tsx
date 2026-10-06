@@ -171,7 +171,8 @@ Email to parse:
             </Button>
             <button
               onClick={() => { setManual(true); setError(null); }}
-              className="w-full text-center text-xs font-semibold text-text-muted hover:text-accent transition-colors py-1"
+              disabled={aiBusy}
+              className="w-full text-center text-xs font-semibold text-text-muted hover:text-accent transition-colors py-1 disabled:opacity-40"
             >
               Or fill in the fields manually
             </button>
