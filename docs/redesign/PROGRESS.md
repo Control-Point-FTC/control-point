@@ -1013,3 +1013,41 @@ The logic moved out of the Classic screens. Their JSX is unchanged.
   - The page body is the scroller on these screens, so the bar is `fixed` (sticky would not hold).
   - The cash-flow line is revealed with a clip instead of a path-length animation, which broke the non-scaling stroke.
 - Screenshots are in `screenshots/phase9/`.
+
+## Phase 9f: Global overlays
+
+Everything that floats over every page now has a Modern version, chosen by `ByMode`.
+
+### Shared logic (Classic JSX unchanged)
+- **`components/overlays/useOverlays.ts`:**
+  - **`useCookieConsent`:** the same `cp-consent` storage and `cp:cookie-settings` reopen event.
+  - **`useFeedbackForm`:**
+    - The same `/api/feedback` multipart request, file rules (25 MB, images / video / documents) and paste-to-attach.
+    - The topic, message and attachment are **drafted**, so a look switch keeps them.
+    - A failed request now shows an error instead of an unhandled rejection.
+  - **`useInstallPrompt`:** the same mobile-only, 30-day dismissal and iOS instructions.
+- **`components/voice/useIncomingCall.ts`:** ringing, accept / decline / dismiss, and the explicit leave-and-join.
+- **`components/voice/useCallView.ts`:** status announcements, fullscreen, the participant menu / list, and the featured order: screen share, then global spotlight, then personal spotlight, then pin.
+
+### Modern components (`src/modern/overlays/`)
+- **CookieBar:** a bottom card, with a Customize view using a kit Switch.
+- **FeedbackDialog:** a kit dialog with a topic Select, a message, attach / preview / remove, and a sent state.
+- **InstallBanner:** the install card and iOS steps.
+- **MentionToastCard:** the mention toast with a Jump button.
+- **CallDock:** a floating pill while minimized, with status, avatars and round media controls with tooltips.
+- **IncomingCall:** an alert dialog with a pulsing ring, and Accept / Decline or Stay / Leave & join.
+- **CallStage:** a tile grid or featured stage (screen share first), a bottom control dock, and a People sheet that is closed by default. It reuses the shared stream / audio / quality primitives and the participant menu.
+
+### Tests
+- **New (10 tests, `src/modern/__tests__/overlays.test.tsx`):**
+  - Consent save and reopen.
+  - Feedback request, with the draft surviving a remount, plus file rejection.
+  - Android install.
+  - Mention toast.
+  - Dock controls and the hidden state.
+  - Incoming accept / decline / explicit switch.
+  - Stage tiles and People sheet.
+  - Screen share takes the stage.
+- The existing Classic voice tests pass on the new hooks.
+- Full suite: 675 tests run, all pass except the 2 known Windows-only `ftcCache` tests. `tsc` is clean.
+- **Local QA:** the Modern consent bar and feedback dialog were checked on a local QA account. The call UI needs a second participant, so it is covered by tests only. No real phone was available.

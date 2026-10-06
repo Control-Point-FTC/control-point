@@ -184,10 +184,13 @@ import { clearPredictCache } from './services/predictApi';
 import { format } from 'date-fns';
 import { InstallPrompt } from './components/InstallPrompt';
 import { WhatsNewAutoPopup, WhatsNewModal } from './components/WhatsNewModal';
+import { FEEDBACK_ACCEPT, FEEDBACK_TOPICS, useCookieConsent, useFeedbackForm } from './components/overlays/useOverlays';
 import { InterfaceModeProvider } from './modern/interfaceMode';
 import { ShellSwitch, TryModernBanner } from './modern/ShellSwitch';
 import { ModernShell } from './modern/ModernShell';
 import { ByMode } from './modern/ByMode';
+import { CookieBar, FeedbackDialog, InstallBanner, MentionToastCard } from './modern/overlays/Overlays';
+import { CallDock, CallStage, IncomingCall } from './modern/overlays/CallUi';
 import { WelcomeDialog } from './modern/pages/onboarding/WelcomeDialog';
 import { SetupDialog } from './modern/pages/onboarding/SetupDialog';
 import { TourCard } from './modern/pages/onboarding/TourCard';
@@ -2980,39 +2983,52 @@ export default function App() {
       )}
       {/* Slide-in mention toast: appears when someone pings you in a channel
           you aren't viewing. Click jumps to the channel. */}
-      <AnimatePresence>
-        {mentionToast && (
-          <motion.div
-            initial={{ opacity: 0, x: 80 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 80 }}
-            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-            className="fixed bottom-5 right-5 z-[90] w-[320px] max-w-[calc(100vw-2.5rem)] glass rounded-2xl border border-accent/30 shadow-2xl overflow-hidden"
-          >
-            <div className="p-4">
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-full bg-accent/15 flex items-center justify-center shrink-0">
-                  <AtSign className="w-4 h-4 text-accent" />
+      <ByMode
+        legacy={(
+          <AnimatePresence>
+            {mentionToast && (
+              <motion.div
+                initial={{ opacity: 0, x: 80 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 80 }}
+                transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                className="fixed bottom-5 right-5 z-[90] w-[320px] max-w-[calc(100vw-2.5rem)] glass rounded-2xl border border-accent/30 shadow-2xl overflow-hidden"
+              >
+                <div className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-accent/15 flex items-center justify-center shrink-0">
+                      <AtSign className="w-4 h-4 text-accent" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-text-base">
+                        Mentioned{notifMeta(mentionToast).channel_name ? ` in #${notifMeta(mentionToast).channel_name}` : ''}
+                      </p>
+                      <p className="text-xs text-text-muted leading-relaxed mt-0.5 line-clamp-3">{mentionToast.content}</p>
+                    </div>
+                    <button onClick={dismissMentionToast} className="p-1 text-text-muted hover:text-text-base shrink-0" aria-label="Dismiss">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {notifMeta(mentionToast).channel_id != null && (
+                    <Button className="w-full mt-3 !py-2 text-xs" onClick={() => jumpToMention(mentionToast)}>
+                      Jump to #{notifMeta(mentionToast).channel_name || 'chat'}
+                    </Button>
+                  )}
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-text-base">
-                    Mentioned{notifMeta(mentionToast).channel_name ? ` in #${notifMeta(mentionToast).channel_name}` : ''}
-                  </p>
-                  <p className="text-xs text-text-muted leading-relaxed mt-0.5 line-clamp-3">{mentionToast.content}</p>
-                </div>
-                <button onClick={dismissMentionToast} className="p-1 text-text-muted hover:text-text-base shrink-0" aria-label="Dismiss">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              {notifMeta(mentionToast).channel_id != null && (
-                <Button className="w-full mt-3 !py-2 text-xs" onClick={() => jumpToMention(mentionToast)}>
-                  Jump to #{notifMeta(mentionToast).channel_name || 'chat'}
-                </Button>
-              )}
-            </div>
-          </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
-      </AnimatePresence>
+        modern={(
+          <MentionToastCard
+            toast={mentionToast}
+            channelName={mentionToast ? notifMeta(mentionToast).channel_name : null}
+            canJump={!!mentionToast && notifMeta(mentionToast).channel_id != null}
+            onJump={() => mentionToast && jumpToMention(mentionToast)}
+            onDismiss={dismissMentionToast}
+          />
+        )}
+      />
       {/* Slim non-blocking refresh indicator (background fetchData after first load). */}
       {refreshing && !loading && (
         <div className="fixed top-0 left-0 right-0 z-[120] h-[3px] pointer-events-none" aria-hidden="true">
@@ -3676,15 +3692,15 @@ export default function App() {
         )}
       />
 
-      {showFeedback && <FeedbackModal onClose={() => setShowFeedback(false)} />}
+      {showFeedback && <ByMode legacy={<FeedbackModal onClose={() => setShowFeedback(false)} />} modern={<FeedbackDialog onClose={() => setShowFeedback(false)} />} />}
       {/* Voice calling surfaces — all driven by VoiceProvider context state.
           CallBar is fixed-bottom (above the mobile nav) and survives route
           navigation because it lives outside the routed views. */}
-      <CallBar onOpenSettings={() => openSettings()} />
-      <IncomingCallModal />
-      <CallView onOpenSettings={() => openSettings()} />
-      <CookieConsent />
-      <InstallPrompt />
+      <ByMode legacy={<CallBar onOpenSettings={() => openSettings()} />} modern={<CallDock onOpenSettings={() => openSettings()} />} />
+      <ByMode legacy={<IncomingCallModal />} modern={<IncomingCall />} />
+      <ByMode legacy={<CallView onOpenSettings={() => openSettings()} />} modern={<CallStage onOpenSettings={() => openSettings()} />} />
+      <ByMode legacy={<CookieConsent />} modern={<CookieBar />} />
+      <ByMode legacy={<InstallPrompt />} modern={<InstallBanner />} />
       <WhatsNewAutoPopup />
       <WhatsNewModal open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
       <BrunoPanelSwitch
@@ -3788,36 +3804,7 @@ function AppFooter({ links, teamName }: { links: { id: string; path: string; lab
 // a session token to keep you signed in, your theme colors, and this choice.
 // No trackers, no ads, no third-party cookies.
 function CookieConsent() {
-  const [visible, setVisible] = useState(false);
-  const [customizing, setCustomizing] = useState(false);
-  const [functional, setFunctional] = useState(true);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('cp-consent');
-      if (!saved) setVisible(true);
-      else {
-        const parsed = JSON.parse(saved);
-        setFunctional(parsed.functional !== false);
-      }
-    } catch {
-      setVisible(true);
-    }
-  }, []);
-
-  // Allow reopening from anywhere: window.dispatchEvent(new Event('cp:cookie-settings'))
-  useEffect(() => {
-    const open = () => { setCustomizing(true); setVisible(true); };
-    window.addEventListener('cp:cookie-settings', open);
-    return () => window.removeEventListener('cp:cookie-settings', open);
-  }, []);
-
-  const save = (choice: { necessary: true; functional: boolean }) => {
-    try { localStorage.setItem('cp-consent', JSON.stringify({ ...choice, savedAt: new Date().toISOString() })); } catch {}
-    setFunctional(choice.functional);
-    setVisible(false);
-    setCustomizing(false);
-  };
+  const { visible, customizing, setCustomizing, functional, setFunctional, save } = useCookieConsent();
 
   if (!visible) return null;
 
@@ -8002,89 +7989,10 @@ function TeamlessScreen({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSig
 }
 
 function FeedbackModal({ onClose }: any) {
-  const [category, setCategory] = useState('general');
-  const [message, setMessage] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [attachment, setAttachment] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [attachmentKind, setAttachmentKind] = useState<'image' | 'video' | 'file'>('image');
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  const acceptFile = (f: File): boolean => {
-    const mime = f.type || '';
-    const name = f.name.toLowerCase();
-    const ok = mime.startsWith('image/') || mime.startsWith('video/')
-      || /\.(pdf|txt|md|markdown|csv|log|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z)$/.test(name);
-    if (!ok) {
-      notify('That file type is not supported — use an image, video, or common document.', 'error');
-      return false;
-    }
-    if (f.size > 25 * 1024 * 1024) {
-      notify('Attachments must be under 25MB.', 'error');
-      return false;
-    }
-    return true;
-  };
-
-  const setFile = (f: File) => {
-    if (preview) URL.revokeObjectURL(preview);
-    setAttachment(f);
-    setPreview(URL.createObjectURL(f));
-    setAttachmentKind(f.type.startsWith('video/') ? 'video' : f.type.startsWith('image/') ? 'image' : 'file');
-  };
-
-  const pickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (acceptFile(f)) setFile(f);
-  };
-
-  // Paste a screenshot / file straight from the clipboard (Ctrl+V / Cmd+V)
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of Array.from(items)) {
-      if (item.kind === 'file') {
-        const f = item.getAsFile();
-        if (f && acceptFile(f)) {
-          e.preventDefault();
-          setFile(f);
-          notify('Attachment pasted — ready to send.', 'success');
-        }
-        return;
-      }
-    }
-  };
-
-  const clearAttachment = () => {
-    if (preview) URL.revokeObjectURL(preview);
-    setAttachment(null);
-    setPreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!message.trim()) return;
-    setSending(true);
-    try {
-      const form = new FormData();
-      form.append('category', category);
-      form.append('message', message.trim());
-      if (attachment) form.append('attachment', attachment);
-      const res = await apiFetch('/api/feedback', { method: 'POST', body: form });
-      if (res.ok) {
-        clearAttachment();
-        setSent(true);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notify(data.error || 'Could not send feedback — try again.', 'error');
-      }
-    } finally {
-      setSending(false);
-    }
-  };
+  const {
+    category, setCategory, message, setMessage, attachment, preview, attachmentKind, sending, sent,
+    fileInputRef, pickFile, handlePaste, clearAttachment, submit,
+  } = useFeedbackForm();
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
@@ -8111,12 +8019,7 @@ function FeedbackModal({ onClose }: any) {
                 <Select
                   value={category}
                   onChange={(e: any) => setCategory(e.target.value)}
-                  options={[
-                    { value: 'general', label: 'General' },
-                    { value: 'bug', label: 'Bug report' },
-                    { value: 'feature', label: 'Feature idea' },
-                    { value: 'question', label: 'Question' },
-                  ]}
+                  options={FEEDBACK_TOPICS}
                 />
               </div>
               <div className="space-y-1">
@@ -8130,7 +8033,7 @@ function FeedbackModal({ onClose }: any) {
                 />
               </div>
               <div className="space-y-2">
-                <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.txt,.md,.csv,.log,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip" onChange={pickFile} className="hidden" />
+                <input ref={fileInputRef} type="file" accept={FEEDBACK_ACCEPT} onChange={pickFile} className="hidden" />
                 {attachment ? (
                   <div className="flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/5 p-2">
                     {attachmentKind === 'image' && preview ? (
