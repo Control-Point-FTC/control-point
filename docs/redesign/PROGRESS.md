@@ -1098,8 +1098,8 @@ Everything that floats over every page now has a Modern version, chosen by `ByMo
 ## Wrap-up
 
 - **Status:** every phase is merged and live. Modern is the default, and Classic is one click away in Settings → Appearance, the account menu or ⌘K.
-- **Rundown:** [`Control-Point-2026-Redesign.pdf`](Control-Point-2026-Redesign.pdf) covers every change, what was rebuilt and how, in 8 pages.
-- **Final suite:** 684 tests run, all pass except the 2 known Windows-only `ftcCache` tests.
+- **Rundown:** [`Control-Point-2026-Redesign.pdf`](Control-Point-2026-Redesign.pdf) covers every change, what was rebuilt and how, in 9 pages (updated for phase 10).
+- **Final suite (after phase 10):** 715 tests run, all pass except the 2 known Windows-only `ftcCache` tests.
 
 ## Phase 10a: Call participant options
 
