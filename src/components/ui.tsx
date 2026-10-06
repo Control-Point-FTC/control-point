@@ -1,17 +1,10 @@
-import type { ClassValue } from 'clsx';
-import { clsx } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { Button as KitButton } from './ui-kit/button';
+import { Input as KitInput } from './ui-kit/basic';
 
-// Shared class-name helper (moved out of App.tsx so dashboard components can use it too).
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { cn } from './cn';
 
-// Helper to get CSS variable values
-function getCSSVariable(name: string): string {
-  if (typeof window === 'undefined') return '';
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '';
-}
+// Shared class-name helper (lives in ./cn so the UI kit can use it without a cycle).
+export { cn };
 
 // --- Shared primitives (moved out of App.tsx) ---
 
@@ -34,49 +27,25 @@ export const Card = ({ children, className, title, subtitle, icon: Icon, ...rest
   </div>
 );
 
-export const Button = ({ children, className, variant = 'primary', ...props }: any) => {
-  const accentColor = getCSSVariable('--color-accent');
-  const primaryColor = getCSSVariable('--color-primary');
-
-  const variants: any = {
-    primary: {
-      className: 'font-bold hover:brightness-105 shadow-[0_4px_16px_rgba(255,199,0,0.25)]',
-      style: { backgroundColor: accentColor || '#FFC700', color: '#231A00' }
-    },
-    secondary: 'bg-elevated text-text-base hover:bg-text-base/10 border border-text-base/10 font-semibold',
-    outline: {
-      className: 'text-accent hover:opacity-80 border border-current font-bold',
-    },
-    ghost: 'text-text-muted hover:text-text-base hover:bg-text-base/5 font-semibold',
-    danger: 'bg-rose-900/30 text-rose-400 hover:bg-rose-900/50 border border-rose-500/30 font-semibold'
-  };
-
-  const variantConfig = variants[variant as keyof typeof variants];
-  const isObject = typeof variantConfig === 'object' && !Array.isArray(variantConfig);
-
-  return (
-    <button
-      className={cn(
-        "px-4 py-2 rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50",
-        isObject ? variantConfig.className : variantConfig,
-        className
-      )}
-      style={isObject ? variantConfig.style : undefined}
-      {...props}
-    >
-      {children}
-    </button>
-  );
+// Legacy Button/Input API (variant names used across the app), rendered with
+// the shadcn-based kit in ./ui-kit so every screen shares one implementation.
+const LEGACY_VARIANT: Record<string, 'default' | 'secondary' | 'outline' | 'ghost' | 'destructive'> = {
+  primary: 'default', secondary: 'secondary', outline: 'outline', ghost: 'ghost', danger: 'destructive',
 };
 
-export const Input = ({ className, ...props }: any) => (
-  <input
-    className={cn(
-      "w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
-      className
-    )}
+export const Button = ({ children, className, variant = 'primary', ...props }: any) => (
+  <KitButton
+    variant={LEGACY_VARIANT[variant] ?? 'default'}
+    // Old callers size buttons with padding, not a fixed height.
+    className={cn('h-auto py-2', variant === 'outline' && 'border-accent/50 text-accent hover:bg-accent/10', className)}
     {...props}
-  />
+  >
+    {children}
+  </KitButton>
+);
+
+export const Input = ({ className, ...props }: any) => (
+  <KitInput className={cn('h-auto px-4 py-2.5', className)} {...props} />
 );
 
 // Presentational switch track (no button wrapper) — for when the switch visual
