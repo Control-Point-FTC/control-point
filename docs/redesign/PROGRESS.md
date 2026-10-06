@@ -88,3 +88,53 @@ One section per phase, added when the phase's PR merges. See [README.md](README.
   - No physical phone was available, so PWA install, notch and keyboard behavior were checked in mobile emulation only.
   - The 768px tablet capture is still to do, and the Legacy-vs-Modern light comparison is still to do.
   - The AI briefing can't be generated locally (no AI key), so only its error and empty states were seen.
+
+## Phase 4a: Tasks
+
+### What was rebuilt
+**Shared logic:** `useTasksController` (`src/components/tasks/`) holds all Tasks state and handlers, taken verbatim from `TasksView`: create/edit, bulk import, Bruno quick-add, status moves (Done → proof dialog), delete, filters and analytics data.
+- Legacy `TasksView` now uses it too. Its JSX is unchanged.
+- The open editor, its fields and the bulk-paste text are kept in the **shared draft store**, so an open, half-written task survives a Legacy↔Modern switch.
+- *Legacy side effect, intentional:* navigating away from Tasks and back with the editor open reopens it with your text.
+
+**Modern Tasks (`/tasks`):**
+- **Header:** title with open / overdue / done counts. **New task** is a split button whose menu has "Paste a list with Bruno".
+- **Toolbar:** search, an assignee filter (Everyone / Assigned to me / person), a team filter when there are multiple teams, and a **Board / List / Insights** view switch.
+- **Board:** three lanes with counts.
+  - Cards show the title, a due chip (red when overdue), a Board badge, and an assignee avatar stack.
+  - **Drag a card to another lane** to move it. Card moves are animated with layout springs.
+  - On phones the lanes become a horizontal snap carousel.
+  - Each lane has a "+" button (managers).
+- **List:** a table sorted by status then due date, with an inline status Select on each row.
+- **Insights:** a stat row (open, done this week, average days to done; numbers count up), a shadcn area chart of completions per day, and stacked bars of workload by person.
+- **Task sheet** (right sheet; bottom sheet on phones):
+  - Status ToggleGroup: moving to Done opens the proof dialog, exactly like Legacy.
+  - Assignees, due date, completed time, description.
+  - Edit and Delete for managers only.
+- **Editor sheet:** Bruno quick-add (single result fills the form; several show a pick-list), title, description, team, assignees (shadcn Popover + Command multi-select with avatars), due date, and a Board toggle for admins.
+- **Bulk import dialog:** paste text → editable table of title, description, status, assignee and due date → save all.
+- **Proof-of-completion dialog:** rebuilt on the kit, with paste or pick photos.
+- **Deep links:** `/tasks?task=ID` (from Inbox) opens that task's sheet.
+
+**Kit:** `Label`, `Badge`, `Card`, `Input` and `Textarea` now follow shadcn styling. Legacy `Input` keeps its original markup.
+
+### Permissions (unchanged)
+- Create, edit, delete and bulk import need the `tasks` scope.
+- Status moves are open to everyone (the server enforces its own rules).
+- Board tasks are visible only with the `admin` scope.
+
+### Tests
+- **New (10 Modern Tasks tests):**
+  - Lanes and counts; board tasks only for admins.
+  - The sheet's status change sends the same `PATCH /api/tasks/:id {status}`.
+  - Done asks for proof instead of PATCHing.
+  - Members can't create or edit but can open tasks.
+  - **A half-written new task survives a remount.**
+  - Create sends the same POST body as Legacy (`is_board: 0`, default team).
+  - Search filters the board.
+  - The deep link opens the task.
+- **Legacy:** the Tasks deep-link tests (manager → editor, member → no editor) pass on the shared controller.
+- **Totals:** 528 tests pass; the only failures are the known Windows-only ones. `tsc` is clean.
+- **Local interaction:** opened a task sheet; opened the New task sheet on a phone (bottom sheet, focus on quick add).
+- **Phone (390×844):** no overflow, every target ≥44px, full-width search, snapping lanes.
+- **Screenshot limit:** the browser pane runs at 125% display scaling, so desktop captures are cropped to the pane's visible slice (`tasks-modern-desktop-dark.jpg`, `tasks-modern-sheet-dark.jpg`). Desktop layout was verified with DOM geometry (no overflow at 1440).

@@ -1,5 +1,4 @@
 import { Button as KitButton } from './ui-kit/button';
-import { Input as KitInput } from './ui-kit/basic';
 
 import { cn } from './cn';
 
@@ -44,8 +43,15 @@ export const Button = ({ children, className, variant = 'primary', ...props }: a
   </KitButton>
 );
 
+// Legacy input keeps its original look (the shadcn kit Input is Modern-styled).
 export const Input = ({ className, ...props }: any) => (
-  <KitInput className={cn('h-auto px-4 py-2.5', className)} {...props} />
+  <input
+    className={cn(
+      "w-full bg-elevated border border-text-base/10 rounded-xl px-4 py-2.5 text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all",
+      className
+    )}
+    {...props}
+  />
 );
 
 // Presentational switch track (no button wrapper) — for when the switch visual

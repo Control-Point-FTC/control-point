@@ -9,7 +9,7 @@ import { cn } from '../cn';
 // --- Card -------------------------------------------------------------------
 
 export function Card({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-slot="card" className={cn('card-surface flex flex-col gap-4 p-5 sm:p-6', className)} {...props} />;
+  return <div data-slot="card" className={cn('flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground sm:p-6', className)} {...props} />;
 }
 export function CardHeader({ className, ...props }: React.ComponentProps<'div'>) {
   return <div data-slot="card-header" className={cn('flex items-start justify-between gap-3', className)} {...props} />;
@@ -30,21 +30,21 @@ export function CardFooter({ className, ...props }: React.ComponentProps<'div'>)
 // --- Form fields ------------------------------------------------------------
 
 const field =
-  'w-full min-w-0 rounded-xl border border-line bg-elevated px-3.5 text-sm text-text-base placeholder:text-text-muted/60 ' +
-  'transition-[border-color,box-shadow] outline-none focus-visible:border-accent/60 focus-visible:ring-2 focus-visible:ring-accent/20 ' +
-  'disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-rose-500/60 aria-invalid:ring-rose-500/20';
+  'w-full min-w-0 rounded-lg border border-input bg-transparent px-3 text-sm text-foreground shadow-xs placeholder:text-muted-foreground ' +
+  'transition-[border-color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/25 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20';
 
 export function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
-  return <input type={type} data-slot="input" className={cn(field, 'h-10 py-2', className)} {...props} />;
+  return <input type={type} data-slot="input" className={cn(field, 'h-9 py-1', className)} {...props} />;
 }
 export function Textarea({ className, ...props }: React.ComponentProps<'textarea'>) {
-  return <textarea data-slot="textarea" className={cn(field, 'min-h-20 py-2.5', className)} {...props} />;
+  return <textarea data-slot="textarea" className={cn(field, 'min-h-20 py-2', className)} {...props} />;
 }
 export function Label({ className, ...props }: React.ComponentProps<typeof LabelPrimitive.Root>) {
   return (
     <LabelPrimitive.Root
       data-slot="label"
-      className={cn('text-[11px] font-bold uppercase tracking-widest text-text-muted select-none', className)}
+      className={cn('flex items-center gap-2 text-sm font-medium leading-none text-foreground select-none peer-disabled:cursor-not-allowed peer-disabled:opacity-50', className)}
       {...props}
     />
   );
@@ -53,7 +53,7 @@ export function Label({ className, ...props }: React.ComponentProps<typeof Label
 // --- Badge ------------------------------------------------------------------
 
 export const badgeVariants = cva(
-  'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider leading-none whitespace-nowrap [&_svg]:size-3',
+  'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium leading-none whitespace-nowrap [&_svg]:size-3',
   {
     variants: {
       variant: {
