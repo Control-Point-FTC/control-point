@@ -2,10 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import {
-  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus, FileText, RefreshCw,
+  Plus, Trash2, Globe, Lock, Pencil, Check, X, Sparkles, ChevronLeft, ImagePlus, FileText, RefreshCw, Square,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
+import { BrunoThinking, StreamingCaret, thinkingSteps, type ThinkingStep } from './bruno/BrunoThinking';
+import { useInterfaceMode } from '../modern/interfaceMode';
+import { getScreenContext } from '../services/brunoContext';
 import { streamBuildHelper, stripEventBlocks, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
 import { type ProposalStatus } from './ActionProposalCard';
@@ -79,6 +82,11 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  // Modern experience: live thinking steps for the in-flight reply, a caret
+  // while it streams, and a Stop button.
+  const modern = useInterfaceMode().mode === 'modern';
+  const [liveThink, setLiveThink] = useState<{ steps: ThinkingStep[]; startedAt: number; thoughtMs: number | null } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [loading, setLoading] = useState(true);
   // Rotating starter batches per category — never repeat until exhausted.
   const [starterBatches, setStarterBatches] = useState<Record<string, { batch: string[]; seen: number[] }>>(() => {
@@ -229,14 +237,34 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
       stream.start();
       let agg = '';
       const persona = chatId ? personaByChat[chatId] : undefined;
+      const startedAt = Date.now();
+      let gotFirst = false;
+      setLiveThink({
+        steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: outgoing.length, pdfs: outgoingPdfs.length, history: next.length }),
+        startedAt,
+        thoughtMs: null,
+      });
+      const ac = new AbortController();
+      abortRef.current = ac;
       try {
         await streamBuildHelper(next, (chunk) => {
           agg += chunk;
+          if (!gotFirst && chunk.trim()) {
+            gotFirst = true;
+            const ms = Date.now() - startedAt;
+            setLiveThink((t) => (t ? { ...t, thoughtMs: ms } : t));
+          }
           stream.push(chunk);
-        }, chatId || undefined, persona ? { persona } : undefined);
+        }, chatId || undefined, { ...(persona ? { persona } : {}), signal: ac.signal });
         setMessages([...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
+      } catch (err: any) {
+        // Stopped by the user: keep what was generated so far.
+        if (err?.name !== 'AbortError') throw err;
+        setMessages([...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
       } finally {
         stream.finish();
+        abortRef.current = null;
+        setLiveThink(null);
       }
       // Note: data-action proposal blocks (```event etc.) are NOT auto-inserted
       // anymore — the confirm card calls applyActionProposals + notify on tap.
@@ -570,9 +598,20 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
           {stream.active && (
             <div className="flex justify-start">
               <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-4 py-2.5 text-sm text-text-base/85 leading-relaxed">
+                {modern && liveThink && (
+                  <BrunoThinking
+                    steps={liveThink.steps}
+                    startedAt={liveThink.startedAt}
+                    thoughtMs={liveThink.thoughtMs}
+                    phase={stream.text ? 'generating' : 'thinking'}
+                  />
+                )}
                 {stream.text ? (
-                  <BrunoMarkdown>{stripEventBlocks(stream.text)}</BrunoMarkdown>
-                ) : (
+                  <>
+                    <BrunoMarkdown>{stripEventBlocks(stream.text)}</BrunoMarkdown>
+                    {modern && <StreamingCaret />}
+                  </>
+                ) : modern && liveThink ? null : (
                   <span className="flex gap-1 items-center text-text-muted py-1">
                     {[0, 1, 2].map((d) => (
                       <span key={d} className="w-1.5 h-1.5 rounded-full bg-accent/70 animate-bounce" style={{ animationDelay: `${d * 0.15}s` }} />
@@ -651,6 +690,17 @@ export default function BrunoView({ currentUser, hasScope, botName }: any) {
                 placeholder="Ask about mechanisms, code, strategy…"
               />
             </div>
+            {modern && busy && liveThink && (
+              <button
+                type="button"
+                onClick={() => abortRef.current?.abort()}
+                aria-label="Stop generating"
+                title="Stop generating"
+                className="w-10 h-10 shrink-0 rounded-xl bg-text-base text-primary flex items-center justify-center hover:opacity-90 transition"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </button>
+            )}
           </div>
           <p className="text-[10px] text-text-muted/60 mt-1.5 px-1 flex items-center gap-1">
             <Sparkles className="w-3 h-3" />
