@@ -183,6 +183,11 @@ import { InterfaceModeProvider } from './modern/interfaceMode';
 import { ShellSwitch, TryModernBanner } from './modern/ShellSwitch';
 import { ModernShell } from './modern/ModernShell';
 import { ByMode } from './modern/ByMode';
+import { WelcomeDialog } from './modern/pages/onboarding/WelcomeDialog';
+import { SetupDialog } from './modern/pages/onboarding/SetupDialog';
+import { TourCard } from './modern/pages/onboarding/TourCard';
+import { clearSetupDrafts } from './components/onboarding/useSetupWizard';
+import { clearTourDraft } from './components/onboarding/useWalkthrough';
 import { useSignedOutMode } from './modern/signedOut';
 import { ModernLanding } from './modern/pages/auth/ModernLanding';
 import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from './modern/pages/auth/AuthPages';
@@ -1051,8 +1056,12 @@ export default function App() {
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  // A closed tour starts at its own start step next time (the draft only bridges a look switch).
+  useEffect(() => { if (!tourOpen) clearTourDraft(); }, [tourOpen]);
   const [tourStartStep, setTourStartStep] = useState(0);
   const [wizardOpen, setWizardOpen] = useState(false);
+  // A closed setup starts fresh next time (its drafts only bridge a look switch).
+  useEffect(() => { if (!wizardOpen) clearSetupDrafts(); }, [wizardOpen]);
   const [wizardStartStep, setWizardStartStep] = useState<0 | 1 | 2 | 3>(0);
   const tourSaveTimer = useRef<number | null>(null);
   const tourStepRef = useRef(0);
@@ -3686,33 +3695,34 @@ export default function App() {
 
       {/* ---- Onboarding overlays ---- */}
       {showWelcome && onboarding && (
-        <WelcomeScreen
-          userName={currentUser?.name}
-          onGetStarted={() => void handleWelcomeGetStarted()}
-          onSkip={() => void handleWelcomeSkip()}
+        <ByMode
+          legacy={<WelcomeScreen userName={currentUser?.name} onGetStarted={() => void handleWelcomeGetStarted()} onSkip={() => void handleWelcomeSkip()} />}
+          modern={<WelcomeDialog userName={currentUser?.name} onGetStarted={() => void handleWelcomeGetStarted()} onSkip={() => void handleWelcomeSkip()} />}
         />
       )}
-      {tourOpen && (
-        <Walkthrough
-          steps={tourSteps}
-          initialStep={Math.min(tourStartStep, Math.max(0, tourSteps.length - 1))}
-          onStepChange={handleTourStepChange}
-          onFinish={(next) => void handleTourFinish(next)}
-          onExit={() => void handleTourExit()}
-        />
-      )}
-      {wizardOpen && onboarding && currentUser && (
-        <SetupWizard
-          user={{ name: currentUser.name, role: currentUser.role }}
-          initialStep={wizardStartStep}
-          state={onboarding}
-          onPatchState={patchOnboarding}
-          onSaveProfile={handleWizardSaveProfile}
-          onProfileChanged={(name, role) => setCurrentUser((u) => (u ? { ...u, name, role } : u))}
-          onStartTour={(fromStep) => startTour(fromStep ?? Math.max(0, onboarding.walkthrough.lastStep || 0))}
-          onClose={() => setWizardOpen(false)}
-        />
-      )}
+      {tourOpen && (() => {
+        const tour = {
+          steps: tourSteps,
+          initialStep: Math.min(tourStartStep, Math.max(0, tourSteps.length - 1)),
+          onStepChange: handleTourStepChange,
+          onFinish: (next: 'setup' | 'explore') => void handleTourFinish(next),
+          onExit: () => void handleTourExit(),
+        };
+        return <ByMode legacy={<Walkthrough {...tour} />} modern={<TourCard {...tour} />} />;
+      })()}
+      {wizardOpen && onboarding && currentUser && (() => {
+        const setup = {
+          user: { name: currentUser.name, role: currentUser.role },
+          initialStep: wizardStartStep,
+          state: onboarding,
+          onPatchState: patchOnboarding,
+          onSaveProfile: handleWizardSaveProfile,
+          onProfileChanged: (name: string, role: string) => setCurrentUser((u) => (u ? { ...u, name, role } : u)),
+          onStartTour: (fromStep?: number) => startTour(fromStep ?? Math.max(0, onboarding.walkthrough.lastStep || 0)),
+          onClose: () => setWizardOpen(false),
+        };
+        return <ByMode legacy={<SetupWizard {...setup} />} modern={<SetupDialog {...setup} />} />;
+      })()}
       {/* Discord-style settings popup (gear by the user card) */}
       {settingsOpen && currentUser && (
         <SettingsModal

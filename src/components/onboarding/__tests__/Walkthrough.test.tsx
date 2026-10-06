@@ -10,6 +10,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Walkthrough from '../Walkthrough';
+import { clearDrafts } from '../../../modern/drafts';
 import type { TourStep } from '../onboardingState';
 
 // jsdom has no matchMedia — the component queries it for the mobile breakpoint.
@@ -29,6 +30,7 @@ Object.defineProperty(window, 'matchMedia', {
 
 afterEach(() => {
   cleanup();
+  clearDrafts();
   document.body.innerHTML = '';
 });
 
