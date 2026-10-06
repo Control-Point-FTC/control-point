@@ -154,6 +154,7 @@ import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute }
 import BrunoIcon from './components/BrunoIcon';
 import FeedbackIcon from './components/FeedbackIcon';
 import EmailImportModal from './components/EmailImport';
+import BrunoQuickAdd from './components/BrunoQuickAdd';
 import TaskCompletionDialog from './components/TaskCompletionDialog';
 import {
   WelcomeScreen,
@@ -208,6 +209,7 @@ import LegalPage from './Legal';
 import { cn, Card, Button, Input, Switch } from './components/ui';
 import { AuthShell } from './components/auth/AuthShell';
 import VerifyEmailScreen from './components/auth/VerifyEmailScreen';
+import ForgotPasswordScreen from './components/auth/ForgotPasswordScreen';
 import { BrandMark, BrandLogo, BetaBadge } from './components/BrandMark';
 import DashboardView from './components/dashboard/DashboardView';
 import ThemeToggle from './components/ThemeToggle';
@@ -1133,6 +1135,9 @@ export default function App() {
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [signupTeam, setSignupTeam] = useState<{ id: number; name: string; access_code: string } | null>(null);
 
   // Data State
@@ -2111,28 +2116,37 @@ export default function App() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await apiFetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: loginEmail, password: loginPassword })
-    });
-    const data = await res.json();
-    if (data.needsVerification) {
-      setVerifyState({ email: data.email, mode: 'login' });
-      return;
-    }
-    if (data.needsSetup) {
-      setNeedsSetup(true);
-      setCurrentUser(data.user);
-      if (data.sessionId) {
-        if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', data.sessionId);
-        setSessionId(data.sessionId);
+    setLoginError(null);
+    setLoggingIn(true);
+    try {
+      const res = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      if (data.needsVerification) {
+        setVerifyState({ email: data.email, mode: 'login' });
+        return;
       }
-    } else if (data.user) {
-      persistSession(data.sessionId, data.user);
-      setNeedsSetup(false);
-    } else {
-      notify(data.error || "Login failed", 'error');
+      if (data.needsSetup) {
+        setNeedsSetup(true);
+        setCurrentUser(data.user);
+        if (data.sessionId) {
+          if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', data.sessionId);
+          setSessionId(data.sessionId);
+        }
+      } else if (data.user) {
+        persistSession(data.sessionId, data.user);
+        setNeedsSetup(false);
+      } else {
+        throw new Error(data.error || 'Login failed');
+      }
+    } catch (err: any) {
+      setLoginError(err.message || 'Login failed — try again');
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -2747,13 +2761,38 @@ export default function App() {
                 </div>
               )}
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Password</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-bold text-text-muted uppercase tracking-widest">Password</label>
+                  {!needsSetup && (
+                    <button
+                      type="button"
+                      onClick={() => setShowForgotPassword(true)}
+                      className="text-[11px] font-semibold text-accent hover:brightness-110"
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+                </div>
                 <Input type="password" required value={loginPassword} onChange={(e: any) => setLoginPassword(e.target.value)} placeholder="••••••••" />
               </div>
-              <Button type="submit" className="w-full py-3 mt-2 text-[15px]">
-                {needsSetup ? "Complete Setup" : "Sign In"}
+              {loginError && (
+                <p className="text-sm text-rose-400 text-center" role="alert">{loginError}</p>
+              )}
+              <Button type="submit" disabled={loggingIn} className="w-full py-3 mt-2 text-[15px]">
+                {loggingIn ? 'Signing in…' : needsSetup ? "Complete Setup" : "Sign In"}
               </Button>
             </form>
+            {showForgotPassword && !needsSetup && (
+              <ForgotPasswordScreen
+                initialEmail={loginEmail}
+                onBack={() => setShowForgotPassword(false)}
+                onDone={() => {
+                  setShowForgotPassword(false);
+                  setLoginPassword('');
+                  notify('Password updated — sign in with your new password', 'success');
+                }}
+              />
+            )}
             {oauthError && !needsSetup && (
               <p className="text-sm text-rose-400 text-center mt-4">{oauthError}</p>
             )}
@@ -8370,11 +8409,54 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   const canManage = hasScope ? hasScope('communications') : false;
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [replyingTo, setReplyingTo] = useState<any>(null);
   const [replyForm, setReplyForm] = useState({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction: 'inbound' });
   const [askResponded, setAskResponded] = useState<any>(null);
+  const [editingEntry, setEditingEntry] = useState<any>(null);
+  const [editForm, setEditForm] = useState({ recipient: '', subject: '', body: '', date: '', type: 'email', direction: 'outbound' });
+  const editDialogRef = useRef<HTMLDivElement>(null);
+  const editTriggerRef = useRef<HTMLElement | null>(null);
+
+  // Focus management for the edit dialog: move focus in on open, trap Tab
+  // inside while open, restore focus to the trigger on close.
+  useEffect(() => {
+    if (!editingEntry) return;
+    editTriggerRef.current = document.activeElement as HTMLElement | null;
+    const node = editDialogRef.current;
+    if (!node) return;
+    const focusables = () =>
+      Array.from(node.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter((el) => el.offsetParent !== null);
+    const first = focusables()[0];
+    if (first) first.focus();
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setEditingEntry(null); return; }
+      if (e.key !== 'Tab') return;
+      const els = focusables();
+      if (!els.length) return;
+      const firstEl = els[0];
+      const lastEl = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && document.activeElement === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      if (editTriggerRef.current && document.contains(editTriggerRef.current)) {
+        editTriggerRef.current.focus();
+      }
+    };
+  }, [editingEntry]);
 
   // Group entries into threads: roots (no parent_id) + their replies, chronological.
   const threads = useMemo(() => {
@@ -8463,6 +8545,36 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
     setReplyForm({ body: '', date: format(new Date(), 'yyyy-MM-dd HH:mm'), direction });
   };
 
+  const openEdit = (entry: any) => {
+    setEditingEntry(entry);
+    setEditForm({
+      recipient: entry.recipient || '',
+      subject: entry.subject || '',
+      body: entry.body || '',
+      date: entry.date || format(new Date(), 'yyyy-MM-dd HH:mm'),
+      type: entry.type || 'email',
+      direction: entry.direction === 'inbound' ? 'inbound' : 'outbound',
+    });
+  };
+
+  const handleEdit = async () => {
+    if (!editingEntry) return;
+    let res: any = null;
+    try {
+      res = await apiFetch(`/api/communications/${editingEntry.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      });
+    } catch { res = null; }
+    if (!res || !res.ok) {
+      notify('Could not save changes — try again.', 'error');
+      return;
+    }
+    setEditingEntry(null);
+    refresh.communications();
+  };
+
   const handleDelete = async (id: number, isRoot: boolean) => {
     const msg = isRoot ? 'Delete this entire thread including all replies?' : 'Delete this reply?';
     if (!(await confirmDialog({ title: isRoot ? 'Delete thread' : 'Delete reply', message: msg, confirmLabel: 'Delete', danger: true }))) return;
@@ -8491,6 +8603,9 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
         </div>
         {canManage && (
           <div className="flex gap-2 w-full sm:w-auto">
+            <Button variant="secondary" onClick={() => setShowQuickAdd(true)} className="flex-1 sm:flex-none">
+              <Sparkles className="w-4 h-4" /> Bruno quick add
+            </Button>
             <Button variant="secondary" onClick={() => setShowImport(true)} className="flex-1 sm:flex-none">
               <Mail className="w-4 h-4" /> Import email
             </Button>
@@ -8503,6 +8618,14 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
         <EmailImportModal
           onClose={() => setShowImport(false)}
           onLogged={() => { setShowImport(false); refresh.communications(); }}
+        />
+      )}
+
+      {showQuickAdd && (
+        <BrunoQuickAdd
+          threads={threads.map((t: any) => ({ id: t.root.id, subject: t.root.subject, recipient: t.root.recipient, date: t.root.date }))}
+          onClose={() => setShowQuickAdd(false)}
+          onLogged={() => { setShowQuickAdd(false); refresh.communications(); }}
         />
       )}
 
@@ -8568,13 +8691,23 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
                               <span className="text-[11px] text-text-muted">{entry.date}</span>
                             </div>
                             <p className="text-sm text-text-base/85 whitespace-pre-wrap">{entry.body}</p>
-                            {canManage && entry.parent_id != null && (
-                              <button
-                                onClick={() => handleDelete(entry.id, false)}
-                                className="mt-2 text-[11px] text-text-muted hover:text-rose-400 transition-colors"
-                              >
-                                Delete reply
-                              </button>
+                            {canManage && (
+                              <div className="mt-2 flex gap-3">
+                                <button
+                                  onClick={() => openEdit(entry)}
+                                  className="text-[11px] text-text-muted hover:text-accent transition-colors"
+                                >
+                                  Edit
+                                </button>
+                                {entry.parent_id != null && (
+                                  <button
+                                    onClick={() => handleDelete(entry.id, false)}
+                                    className="text-[11px] text-text-muted hover:text-rose-400 transition-colors"
+                                  >
+                                    Delete reply
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
@@ -8591,6 +8724,9 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
                       </Button>
                       <button onClick={() => handleDelete(root.id, true)} className="ml-auto text-text-muted hover:text-rose-400 transition-colors" title="Delete thread">
                         <Trash2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => openEdit(root)} className="text-text-muted hover:text-accent transition-colors" title="Edit thread">
+                        <Pencil className="w-4 h-4" />
                       </button>
                     </div>
                   )}
@@ -8670,6 +8806,48 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
               <div className="flex gap-3 justify-end">
                 <Button variant="secondary" onClick={() => setReplyingTo(null)}>Cancel</Button>
                 <Button onClick={handleReply} disabled={!replyForm.body.trim()}>Add Reply</Button>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {editingEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" ref={editDialogRef}>
+          <Card title={editingEntry.parent_id == null ? "Edit thread" : "Edit message"} className="w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <Button
+                  variant={editForm.direction === 'outbound' ? 'primary' : 'secondary'}
+                  className="flex-1"
+                  onClick={() => setEditForm({ ...editForm, direction: 'outbound' })}
+                >We sent it</Button>
+                <Button
+                  variant={editForm.direction === 'inbound' ? 'primary' : 'secondary'}
+                  className="flex-1"
+                  onClick={() => setEditForm({ ...editForm, direction: 'inbound' })}
+                >They sent it</Button>
+              </div>
+              {editingEntry.parent_id == null && (
+                <>
+                  <Input placeholder="Recipient" value={editForm.recipient} onChange={(e: any) => setEditForm({ ...editForm, recipient: e.target.value })} />
+                  <Input placeholder="Subject" value={editForm.subject} onChange={(e: any) => setEditForm({ ...editForm, subject: e.target.value })} />
+                </>
+              )}
+              <textarea
+                className="w-full bg-primary border border-text-base/10 rounded-xl px-4 py-2 text-text-base focus:outline-none focus:border-accent/50 transition-colors h-40"
+                placeholder="Message body"
+                value={editForm.body}
+                onChange={(e: any) => setEditForm({ ...editForm, body: e.target.value })}
+              />
+              <Input
+                type="text"
+                value={editForm.date}
+                onChange={(e: any) => setEditForm({ ...editForm, date: e.target.value })}
+              />
+              <div className="flex gap-3 justify-end">
+                <Button variant="secondary" onClick={() => setEditingEntry(null)}>Cancel</Button>
+                <Button onClick={handleEdit}>Save changes</Button>
               </div>
             </div>
           </Card>

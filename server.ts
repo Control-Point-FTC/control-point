@@ -32,6 +32,7 @@ import {
   markEmailVerified,
   issueVerificationCode,
   checkVerificationCode,
+  consumeVerificationCode,
   notifyTaskAssignees,
 } from "./email-verify.js";
 import {
@@ -2564,6 +2565,66 @@ async function startServer() {
       console.error("resend code failed:", e);
       return res.status(500).json({ error: "Couldn't send the code — try again" });
     }
+  });
+
+  // ---- Forgot password (OTP via Resend) ----
+  // Step 1: request a reset code. Always returns generic success so the
+  // endpoint can't be used to enumerate accounts.
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const email = (((req.body || {}).email) || "").trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: "Email is required" });
+    try {
+      // Case-insensitive lookup: signup preserves the user's original casing.
+      const exists = (await dbGet("SELECT id FROM members WHERE LOWER(email) = ?", email)) as any;
+      if (exists) {
+        // Fire and forget the cooldown: the public response is identical
+        // whether the account exists, is cooling down, or is unknown, so
+        // the endpoint never reveals registered addresses.
+        await issueVerificationCode(email).catch((e) => console.error("forgot password code issue failed:", e));
+      }
+      return res.json({ sent: true });
+    } catch (e: any) {
+      console.error("forgot password failed:", e);
+      return res.status(500).json({ error: "Couldn't send the code — try again" });
+    }
+  });
+
+  // Step 2: verify the code + set a new password. The code proves email
+  // ownership, so this also marks the email verified.
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const email = (((req.body || {}).email) || "").trim().toLowerCase();
+    const code = String((req.body || {}).code || "");
+    const newPassword = String((req.body || {}).newPassword || "");
+    if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+    // Atomic: validate + consume the code in one step so overlapping
+    // requests with the same code can't both succeed.
+    const check = await consumeVerificationCode(email, code);
+    if (check.ok === false) {
+      const msg = check.reason === "expired"
+        ? "That code expired — request a new one"
+        : check.reason === "locked"
+          ? "Too many wrong attempts — request a new code"
+          : "That code doesn't match — try again";
+      return res.status(400).json({ error: msg, reason: check.reason });
+    }
+    // Case-insensitive: match the account regardless of stored casing.
+    const members = (await dbAll("SELECT id FROM members WHERE LOWER(email) = ?", email)) as any[];
+    if (!members.length) return res.status(400).json({ error: "No account found for that email" });
+    const hashedPassword = bcrypt.hashSync(newPassword, 10);
+    // The password is account-wide: set it on every membership row for this email.
+    await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE LOWER(email) = ?", hashedPassword, email);
+    await markEmailVerified(email);
+    // The code is already consumed; clear any stragglers.
+    await dbRun("DELETE FROM email_verification_codes WHERE LOWER(email) = ?", email);
+    // Kill every existing session on all membership rows: a password reset
+    // must log out everything, including a possibly-stolen session.
+    const memberIds = members.map((m) => m.id);
+    const placeholders = memberIds.map(() => "?").join(",");
+    await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders})`, ...memberIds);
+    res.json({ success: true });
   });
 
   // ---- OAuth (Google, Discord, GitHub) ----
@@ -9204,12 +9265,16 @@ Rules:
             date = c.date;
           }
           const type = c.type === "announcement" ? "announcement" : "email";
+          const direction = c.direction === "inbound" ? "inbound" : "outbound";
+          const parentId = Number.isInteger(c.parent_id) && (c.parent_id as number) > 0 ? (c.parent_id as number) : null;
           return {
             recipient: c.recipient.trim().slice(0, 200),
             subject: c.subject.trim().slice(0, 200),
             body: typeof c.body === "string" ? c.body.trim().slice(0, 2000) : "",
             date,
             type,
+            direction,
+            parent_id: parentId,
           };
         }).filter(Boolean);
         if (valid.length) entries = valid;
@@ -9696,10 +9761,26 @@ Rules:
           }
           const { entries } = extractCommunicationsBlock("```communications\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
+          // Validate every parent BEFORE writing anything: if one reply
+          // refers to a deleted thread, nothing is saved, so a retry
+          // cannot duplicate the entries that succeeded before the failure.
+          const resolvedParents = new Map<number, number | null>();
           for (const c of entries) {
+            if (c.parent_id != null) {
+              const parent: any = (await dbGet("SELECT id, team_id, parent_id FROM communications WHERE id = ?", c.parent_id));
+              if (!parent || parent.team_id !== auth.teamId) {
+                return res.status(400).json({ error: `Thread #${c.parent_id} no longer exists — nothing was logged` });
+              }
+              resolvedParents.set(c.parent_id, parent.parent_id != null ? parent.parent_id : parent.id);
+            }
+          }
+          for (const c of entries) {
+            // Resolve parent_id to the thread root (same rule as POST
+            // /api/communications): must belong to this team.
+            const parentId = c.parent_id != null ? resolvedParents.get(c.parent_id) ?? null : null;
             (await dbRun(
-              "INSERT INTO communications (recipient, subject, body, date, type, team_id) VALUES (?, ?, ?, ?, ?, ?)",
-              c.recipient, c.subject, c.body, c.date, c.type, auth.teamId
+              "INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              c.recipient, c.subject, c.body, c.date, c.type, auth.teamId, parentId, c.direction || 'outbound'
             ));
           }
           applied.communication = (applied.communication || 0) + entries.length;
@@ -9939,6 +10020,25 @@ Rules:
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating communication:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.put("/api/communications/:id", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_communications");
+      if (!auth) return;
+      const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
+      if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
+      const { recipient, subject, body, date, type, direction } = req.body || {};
+      const dir = direction === 'inbound' ? 'inbound' : 'outbound';
+      await dbRun(
+        "UPDATE communications SET recipient = ?, subject = ?, body = ?, date = ?, type = ?, direction = ? WHERE id = ? AND team_id = ?",
+        recipient ?? '', subject ?? '', body ?? '', date ?? '', type || 'email', dir, req.params.id, auth.teamId
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error updating communication:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });

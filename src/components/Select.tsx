@@ -227,7 +227,9 @@ export function Select({
           aria-labelledby={ariaLabelledBy}
           aria-label={ariaLabelledBy ? undefined : ariaLabel}
           tabIndex={-1}
-          style={menuStyle}
+          // Portalled menus are part of whatever dialog opened them (see ui-kit/overlay).
+          data-cp-portal=""
+          style={{ ...menuStyle, pointerEvents: 'auto' }}
           className={cn(
             'z-[200] overflow-y-auto custom-scrollbar rounded-xl border border-text-base/10 bg-elevated py-1 shadow-xl shadow-black/20',
             menuClassName
