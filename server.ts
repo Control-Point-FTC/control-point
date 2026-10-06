@@ -116,6 +116,7 @@ import {
 } from "./server/ftcEvents.js";
 import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
 import { PredictStore } from "./server/predict/store.js";
+import { PredictMonitor, eventStillOpen, type LiveAccuracy } from "./server/predict/monitor.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
 import {
   SCOUT_SEASONS,
@@ -4838,6 +4839,54 @@ async function startServer() {
     log: (m) => console.log(m),
   });
   const predictEngine = new PredictEngine(predictStore, predictSeasons);
+  // Live monitoring: pre-match / per-stage snapshots, scored once results land.
+  const predictMonitor = new PredictMonitor(predictStore.dir, (m) => console.log(m));
+  let predictLive: LiveAccuracy | null = null;
+  const predictBaseline = () => {
+    const a = predictEngine.accuracy as any;
+    return {
+      matchBrier: a?.matches?.liveBrier ?? 0.18,
+      advancement: { pre: a?.advancement?.pre?.brier, quals: a?.advancement?.quals?.brier, selected: a?.advancement?.selected?.brier },
+    };
+  };
+  function scoreLive(): void {
+    const season = currentFtcSeason();
+    const { events, advancement } = predictEngine.seasonData(season);
+    predictLive = predictMonitor.score(season, events, advancement);
+    predictMonitor.checkDrift(predictLive, predictBaseline());
+  }
+  /** Forecast an event, record its snapshots, and annotate played matches with their pre-match odds. */
+  function forecastAndRecord(ev: Parameters<typeof predictEngine.forecast>[0], myTeam: number | null): Forecast | null {
+    const fc = predictEngine.forecast(ev, myTeam);
+    if (!fc) return null;
+    if (eventStillOpen(ev.end)) predictMonitor.record(fc, new Date(), predictEngine.storedPlayedKeys(ev.season, ev.code));
+    return predictMonitor.annotate(fc);
+  }
+  /**
+   * Snapshot events that are on now or start within a day, so their
+   * pre-match odds are recorded even if nobody opens them. Sequential and
+   * capped — each forecast is a few thousand simulations.
+   */
+  async function snapshotCurrentEvents(): Promise<number> {
+    const season = currentFtcSeason();
+    if (!predictEngine.ready || !predictStore.hasSeason(season)) return 0;
+    const today = new Date().toISOString().slice(0, 10);
+    const soon = new Date(Date.now() + 864e5).toISOString().slice(0, 10);
+    const metas = Object.values(predictStore.index(season))
+      .filter((e) => !e.remote && e.start && e.end && e.start <= soon && e.end >= today)
+      .slice(0, 40);
+    let n = 0;
+    for (const meta of metas) {
+      try {
+        const ev = await cachedEventFull(season, meta.code);
+        if (!ev || predictEngine.unsupportedReason(ev) || !eventStillOpen(ev.end)) continue;
+        const fc = predictEngine.forecast(ev, null, 1000);
+        if (fc && predictMonitor.record(fc, new Date(), predictEngine.storedPlayedKeys(season, meta.code))) n++;
+      } catch { /* FTC data unavailable for this one — try next sync */ }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return n;
+  }
   let predictSyncing = false;
   async function syncPredict(): Promise<void> {
     if (predictSyncing) return;
@@ -4853,6 +4902,10 @@ async function startServer() {
       await predictEngine.rebuild();
       predictCache.clear();
       console.log(`[predict] ratings rebuilt (${predictSeasons.join(", ")})`);
+      predictMonitor.flush();
+      const snapped = await snapshotCurrentEvents();
+      if (snapped) console.log(`[predict] snapshots recorded for ${snapped} current events`);
+      scoreLive();
     } catch (e) {
       console.error("[predict] sync failed:", (e as Error).message);
     } finally {
@@ -4871,7 +4924,7 @@ async function startServer() {
   if (process.env.NODE_ENV !== "test") {
     // Build from whatever is on disk right away (PREDICT_SYNC=off skips the
     // background download, e.g. for local testing), then keep it fresh.
-    setTimeout(() => { predictEngine.rebuild().catch((e) => console.warn("[predict] initial build failed:", (e as Error).message)); }, 5_000);
+    setTimeout(() => { predictEngine.rebuild().then(scoreLive).catch((e) => console.warn("[predict] initial build failed:", (e as Error).message)); }, 5_000);
     if (process.env.PREDICT_SYNC !== "off") {
       setTimeout(() => void syncPredict(), 30_000);
       setInterval(() => void syncPredict(), 2 * 60 * 60 * 1000);
@@ -4886,7 +4939,7 @@ async function startServer() {
   app.get("/api/predict/status", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy });
+    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy, live: predictLive });
   });
 
   app.get("/api/predict/event", async (req, res) => {
@@ -4903,7 +4956,7 @@ async function startServer() {
       const live = !ev.matches.length || ev.matches.some((m) => !m.played);
       const why = predictEngine.unsupportedReason(ev);
       if (why) return res.status(422).json({ error: why });
-      const fc = await cachedPredict<Forecast | null>(`event:${season}:${code}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => predictEngine.forecast(ev, myTeam));
+      const fc = await cachedPredict<Forecast | null>(`event:${season}:${code}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => forecastAndRecord(ev, myTeam));
       if (!fc) return res.status(503).json({ error: "Predictions are warming up — check back in a few minutes." });
       res.json({ ...fc, eventName: ev.name, eventStart: ev.start, eventEnd: ev.end, myTeam });
     } catch (e) {
@@ -4984,7 +5037,7 @@ async function startServer() {
         if (ev && !predictEngine.unsupportedReason(ev)) {
           const myTeam = await myFtcTeam(auth.teamId);
           const live = !ev.matches.length || ev.matches.some((m) => !m.played);
-          const fc = await cachedPredict<Forecast | null>(`event:${req.predictSeason}:${req.predictEvent}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => predictEngine.forecast(ev, myTeam));
+          const fc = await cachedPredict<Forecast | null>(`event:${req.predictSeason}:${req.predictEvent}:${myTeam ?? 0}`, live ? 2 * 60_000 : 10 * 60_000, async () => forecastAndRecord(ev, myTeam));
           if (fc) {
             const me = myTeam ? fc.teams.find((t) => t.team === myTeam) : undefined;
             found.predict = {

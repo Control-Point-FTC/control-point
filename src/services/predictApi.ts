@@ -4,8 +4,9 @@
 import { apiFetch } from './api';
 import { createTtlCache } from './ftcScoutApi';
 import type { Forecast, Partners } from '../../server/predict/engine';
+import type { LiveAccuracy } from '../../server/predict/monitor';
 
-export type { Forecast, Partners };
+export type { Forecast, Partners, LiveAccuracy };
 export type ForecastView = Forecast & { eventName: string; eventStart: string | null; eventEnd: string | null; myTeam: number | null };
 
 export interface PredictAccuracy {
@@ -24,7 +25,7 @@ export interface PredictAccuracy {
   pickTop3: number;
 }
 
-export interface PredictStatus { ready: boolean; readyAt: string | null; syncing: boolean; seasons: number[]; accuracy: PredictAccuracy }
+export interface PredictStatus { ready: boolean; readyAt: string | null; syncing: boolean; seasons: number[]; accuracy: PredictAccuracy; live?: LiveAccuracy | null }
 
 /** Error with the HTTP status: 503 = warming up, 422 = event can't be forecast. */
 export class PredictError extends Error {
