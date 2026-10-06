@@ -26,4 +26,11 @@ describe('copyText', () => {
     (document as any).execCommand = vi.fn().mockReturnValue(false);
     expect(await copyText('hi')).toBe(false);
   });
+
+  it('removes its hidden textarea even when copying throws', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    (document as any).execCommand = vi.fn(() => { throw new Error('nope'); });
+    expect(await copyText('hi')).toBe(false);
+    expect(document.querySelector('textarea')).toBeNull();
+  });
 });
