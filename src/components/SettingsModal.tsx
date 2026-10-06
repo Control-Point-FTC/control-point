@@ -451,14 +451,15 @@ export default function SettingsModal({
       // One number: the FTC team number also becomes the workspace's display
       // number ("Team #4215" in pickers).
       body.ftc_team_number = ftcNumber.trim() === '' ? null : parseInt(ftcNumber.trim(), 10);
-      if (ftcNumber.trim()) body.number = ftcNumber.trim();
+      body.number = ftcNumber.trim(); // cleared together with the FTC number
       const res = await apiFetch(`/api/teams/${team.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) { onTeamSaved(data.team || { ...team, ...body }); notify('Team settings saved.', 'success'); }
+      // Only the fields this save changed, so it can't undo a concurrent invite-code change.
+      if (res.ok) { onTeamSaved({ id: team.id, ...body }); notify('Team settings saved.', 'success'); }
       else notify(data.error || 'Could not save team settings.', 'error');
     } catch {
       notify('Could not save team settings.', 'error');
@@ -515,7 +516,7 @@ export default function SettingsModal({
       const res = await apiFetch('/api/teams/regenerate-code', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.access_code) {
-        onTeamSaved({ ...team, access_code: data.access_code });
+        onTeamSaved({ id: team?.id, access_code: data.access_code });
         notify('New invite code created. The old one no longer works.', 'success');
       } else notify(data.error || 'Could not create a new code.', 'error');
     } catch {
@@ -864,7 +865,7 @@ export default function SettingsModal({
             )}
 
             {section === 'appearance' && (
-              <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(340px,440px)] lg:gap-10 lg:items-start">
+              <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:gap-10 xl:items-start">
               <section className="space-y-6 min-w-0">
                 <div className="card-surface p-5 sm:p-6">
                   <ThemePicker />
@@ -1074,9 +1075,9 @@ export default function SettingsModal({
                 </div>
                 </div>
               </section>
-              {/* Sticky live preview beside the controls on laptop-size screens and up;
-                  below lg the settings stack full-width so controls aren't squeezed. */}
-              <div className="hidden lg:block sticky top-0">
+              {/* Sticky live preview beside the controls from xl up (at lg the
+                  controls would be too narrow); below that the settings stack full-width. */}
+              <div className="hidden xl:block sticky top-0">
                 <DashboardPreview />
               </div>
               </div>
