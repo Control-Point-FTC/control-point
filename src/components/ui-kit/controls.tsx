@@ -141,7 +141,7 @@ export function SelectSeparator({ className, ...props }: React.ComponentProps<ty
 // --- Progress ---------------------------------------------------------------
 export function Progress({ className, value, indicatorClassName, ...props }: React.ComponentProps<typeof ProgressP.Root> & { indicatorClassName?: string }) {
   return (
-    <ProgressP.Root data-slot="progress" className={cn('relative h-1.5 w-full overflow-hidden rounded-full bg-muted', className)} {...props}>
+    <ProgressP.Root data-slot="progress" value={value} className={cn('relative h-1.5 w-full overflow-hidden rounded-full bg-muted', className)} {...props}>
       <ProgressP.Indicator
         className={cn('h-full w-full flex-1 rounded-full bg-accent transition-transform duration-500 ease-out', indicatorClassName)}
         style={{ transform: `translateX(-${100 - Math.max(0, Math.min(100, value || 0))}%)` }}

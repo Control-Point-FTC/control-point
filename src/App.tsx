@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
-import { Routes, Route, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { 
@@ -6073,7 +6073,7 @@ function defaultTeamId(teams: any[], currentUser: any): any {
   return teams.some((t: any) => String(t.id) === String(tid)) ? tid : '';
 }
 
-function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope, onRequestComplete }: any) {  const [showAddTask, setShowAddTask] = useState(false);
+export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, currentUser, hasScope, onRequestComplete }: any) {  const [showAddTask, setShowAddTask] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [isBoardTask, setIsBoardTask] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null);
@@ -6144,6 +6144,27 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
     setAiTaskOpen(false);
     setShowAddTask(true);
   };
+
+  // Deep link from a notification (/tasks?task=ID): managers get the task's
+  // editor; everyone else gets the card scrolled into view and highlighted.
+  const [taskParams, setTaskParams] = useSearchParams();
+  const linkedTaskId = Number(taskParams.get('task')) || null;
+  const [flashTaskId, setFlashTaskId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!linkedTaskId) return;
+    const task = tasks.find((t: any) => t.id === linkedTaskId);
+    if (!task) return;
+    if (canManageTasks) openEditTask(task);
+    else {
+      setFlashTaskId(task.id);
+      requestAnimationFrame(() => document.querySelector(`[data-cm-type="task"][data-cm-id="${task.id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+      window.setTimeout(() => setFlashTaskId(null), 2400);
+    }
+    const next = new URLSearchParams(taskParams);
+    next.delete('task');
+    setTaskParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedTaskId, tasks]);
 
   const openEditTask = (task: any) => {
     setEditingTaskId(task.id);
@@ -6485,8 +6506,9 @@ function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh, curren
                   data-cm-type="task"
                   data-cm-id={task.id}
                   className={cn(
-                  "bg-elevated p-4 rounded-xl border group shadow-sm",
-                  task.is_board ? "border-accent/30" : "border-text-base/10"
+                  "bg-elevated p-4 rounded-xl border group shadow-sm transition-shadow",
+                  task.is_board ? "border-accent/30" : "border-text-base/10",
+                  flashTaskId === task.id && "ring-2 ring-accent"
                 )}>
                   <div className="flex items-center justify-between mb-1">
                     <h5 className="text-sm font-bold text-text-base">{task.title}</h5>

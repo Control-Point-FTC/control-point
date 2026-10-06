@@ -27,7 +27,7 @@ function homeProps(over: Record<string, any> = {}) {
     members: [me, { id: 8, name: 'Grace' }],
     attendance: [], tasks: [
       { id: 1, title: 'Wire the drivetrain', status: 'todo', assignee_ids: [7], due_date: '2020-01-01' },
-      { id: 2, title: 'Print brackets', status: 'in_progress', assignee_ids: [7] },
+      { id: 2, title: 'Print brackets', status: 'in-progress', assignee_ids: [7] },
     ],
     setTasks: vi.fn(), events: [{ id: 3, title: 'Build night', date: today }], budget: [],
     currentUser: me, isAdmin: false, hiddenDates: [], setAttendance: vi.fn(), setLoading: vi.fn(), onRefresh: vi.fn(),
@@ -51,6 +51,8 @@ describe('Modern Home', () => {
     expect(screen.getByRole('heading', { name: 'My work' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Team pulse' })).not.toBeInTheDocument();
     expect(screen.getAllByText('Wire the drivetrain').length).toBeGreaterThan(0);
+    // Stored status is 'in-progress' (hyphen): it must read "In progress".
+    expect(screen.getByText('In progress')).toBeInTheDocument();
     cleanup();
     renderInModern(<HomePage {...homeProps({ isAdmin: true })} />);
     expect(screen.getByRole('heading', { name: 'Team pulse' })).toBeInTheDocument();

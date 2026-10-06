@@ -407,7 +407,7 @@ function MyWork({ mine, onNavigate }: { mine: ReturnType<typeof useMyWork>; onNa
                 <p className="truncate text-sm text-foreground">{tk.title}</p>
                 {tk.due_date && <p className={cn('text-xs', String(tk.due_date).slice(0, 10) < mine.today ? 'text-destructive' : 'text-muted-foreground')}>Due {format(new Date(String(tk.due_date).slice(0, 10) + 'T12:00:00'), 'MMM d')}</p>}
               </div>
-              <Badge variant={tk.status === 'in_progress' ? 'soft' : 'secondary'}>{tk.status === 'in_progress' ? 'In progress' : 'To do'}</Badge>
+              <Badge variant={tk.status === 'in-progress' ? 'soft' : 'secondary'}>{tk.status === 'in-progress' ? 'In progress' : 'To do'}</Badge>
             </StaggerItem>
           ))}
         </Stagger>
