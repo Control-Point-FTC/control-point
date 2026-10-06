@@ -177,4 +177,22 @@ describe('Modern Analyze', () => {
     await waitFor(() => expect(screen.getByText('Red alliance · winner')).toBeInTheDocument());
     await act(async () => {});
   });
+
+  it('removing a team drops its note draft; re-adding it starts with no note', async () => {
+    server = [entry(1111)];
+    setup();
+    tab(/Shortlist/);
+    fireEvent.change(await screen.findByLabelText('Notes'), { target: { value: 'B' } });
+    fireEvent.blur(screen.getByLabelText('Notes'));
+    await waitFor(() => expect(api.saveShortlistPatch).toHaveBeenCalledWith(expect.objectContaining({ notes: 'B' }), expect.anything()));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove 1111 from shortlist' }));
+    await waitFor(() => expect(screen.queryByLabelText('Notes')).not.toBeInTheDocument());
+    // Re-added (e.g. by a teammate) with an empty note.
+    cleanup();
+    server = [entry(1111)];
+    setup();
+    tab(/Shortlist/);
+    expect(await screen.findByLabelText('Notes')).toHaveValue('');
+  });
 });
+

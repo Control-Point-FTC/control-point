@@ -130,11 +130,11 @@ function ShortlistCard({ e, ev, season, onPatch, onRemove, onOpen }: { e: Shortl
         return (
           <div key={kind} className="mt-4">
             <p className="text-xs capitalize text-muted-foreground">{kind}</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <div className="mt-1.5 flex flex-wrap gap-1.5 max-sm:gap-3">
               {e[kind].map((t) => (
                 <Badge key={t} variant={kind === 'strengths' ? 'success' : 'destructive'} className="gap-1 pr-1">
                   {t}
-                  <button onClick={() => removeTag(kind, t)} aria-label={`Remove ${t}`} className="rounded p-0.5 hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"><X /></button>
+                  <button onClick={() => removeTag(kind, t)} aria-label={`Remove ${t}`} className="relative rounded p-0.5 after:absolute after:-inset-3.5 after:content-[''] hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"><X /></button>
                 </Badge>
               ))}
               {hints.map((s) => (

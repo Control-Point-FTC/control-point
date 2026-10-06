@@ -11,7 +11,7 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { ANALYZE_GREETING, openBruno, setScoutingContext } from '../../services/brunoContext';
 import { eventAverages, teamMatches } from '../../utils/ftcAnalysis';
 import type { ShortlistPatch } from '../../utils/shortlist';
-import { useDraft } from '../../modern/drafts';
+import { setDraft, useDraft } from '../../modern/drafts';
 import { useShortlist } from './useShortlist';
 import type { TeamActions } from './CompeteView';
 
@@ -31,7 +31,9 @@ export function useAnalyzeController({ season, myTeam, initialTeam = null }: { s
   const [panelTeam, setPanelTeam] = useState<TeamRef | null>(null);
   const [eventCode, setEventCode] = useState<string | null>(null);
   const [eventOptions, setEventOptions] = useState<{ code: string; name: string; date: string | null }[]>([]);
-  const { entries: shortlist, loaded: shortlistLoaded, error: shortlistErr, patch: patchShortlist, remove: removeFromShortlist } = useShortlist(season);
+  const { entries: shortlist, loaded: shortlistLoaded, error: shortlistErr, patch: patchShortlist, remove: removeEntry } = useShortlist(season);
+  // Removing a team also drops its note draft, so re-adding it starts clean.
+  const removeFromShortlist = useCallback((n: number) => { clearShortlistNotesDraft(season, n); removeEntry(n); }, [season, removeEntry]);
   const [recent, setRecent] = useState<RecentTeam[]>(readRecentTeams);
   const [pins, setPins] = useState<RecentTeam[]>(readPins);
 
@@ -170,11 +172,15 @@ export function useEventField(season: number, code: string | null, pageSize = 20
  * text survives a remount (mode switch). A newer server value (our own save
  * landing, or a teammate's edit) replaces the draft, as Legacy did.
  */
+const notesKey = (season: number, team: number) => `scout-notes:${season}:${team}`;
+export function clearShortlistNotesDraft(season: number, team: number) { setDraft(notesKey(season, team), null); }
+
 export function useShortlistNotes(season: number, e: ShortlistEntry, onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void) {
-  const [draft, setDraftValue] = useDraft<{ base: string; text: string } | null>(`scout-notes:${season}:${e.teamNumber}`, null);
+  const [draft, setDraftValue] = useDraft<{ base: string; text: string } | null>(notesKey(season, e.teamNumber), null);
   const notes = draft && draft.base === e.notes ? draft.text : e.notes;
   const setNotes = useCallback((text: string) => setDraftValue({ base: e.notes, text }), [e.notes, setDraftValue]);
-  const save = useCallback(() => { if (notes !== e.notes) onPatch({ notes }); }, [notes, e.notes, onPatch]);
+  // Saving retires the draft: the entry now holds the text (optimistically).
+  const save = useCallback(() => { if (notes !== e.notes) onPatch({ notes }); setDraftValue(null); }, [notes, e.notes, onPatch, setDraftValue]);
   return { notes, setNotes, save };
 }
 
