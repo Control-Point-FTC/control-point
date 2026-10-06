@@ -7,7 +7,7 @@ import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
-import { useDraft } from '../../modern/drafts';
+import { useDraft, getDraft, setDraft } from '../../modern/drafts';
 
 export interface TaskForm {
   team_id: any;
@@ -109,6 +109,12 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   // switch, navigation) still sees "saving" and can't submit twice.
   const [bulkSaving, setBulkSaving] = useDraft<boolean>('tasks:bulk-saving', false);
   const [editorSaving, setEditorSaving] = useDraft<boolean>('tasks:editor-saving', false);
+  // Each editor / bulk session gets a generation number. A save only cleans
+  // up its draft if its session is still the current one, so a request that
+  // finishes late can never wipe a newer draft.
+  const bumpGen = (key: string) => setDraft(key, getDraft<number>(key, 0) + 1);
+  const EDITOR_GEN = 'tasks:editor-gen';
+  const BULK_GEN = 'tasks:bulk-gen';
   // AI quick-add: type natural language, Bruno parses it into task fields.
   const [aiTaskOpen, setAiTaskOpen] = useState(false);
   const [aiTaskText, setAiTaskText] = useDraft<string>('tasks:ai-text', '');
@@ -127,6 +133,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const resetAiTask = () => { setAiTaskText(''); setAiTaskNote(null); setAiTaskProposals([]); };
 
   const openNewTask = (status = 'todo') => {
+    bumpGen(EDITOR_GEN);
     setEditingTaskId(null);
     setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', status });
     setIsBoardTask(false);
@@ -136,6 +143,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   };
 
   const openEditTask = (task: any) => {
+    bumpGen(EDITOR_GEN);
     setEditingTaskId(task.id);
     setNewTask({
       team_id: task.team_id?.toString() || '',
@@ -150,6 +158,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   };
 
   const closeTaskModal = () => {
+    bumpGen(EDITOR_GEN);
     setShowAddTask(false);
     setEditingTaskId(null);
     setNewTask(EMPTY_FORM);
@@ -158,6 +167,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const handleAddTask = async () => {
     if (editorSaving) return;
     setEditorSaving(true);
+    const gen = getDraft<number>(EDITOR_GEN, 0);
+    const stillCurrent = () => getDraft<number>(EDITOR_GEN, 0) === gen;
     try {
       if (editingTaskId) {
         const res = await apiFetch(`/api/tasks/${editingTaskId}`, {
@@ -172,7 +183,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
           }),
         });
         if (res.ok) {
-          closeTaskModal();
+          if (stillCurrent()) closeTaskModal();
           refresh.tasks();
         } else {
           notify('Could not save task — try again.', 'error');
@@ -185,7 +196,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
         body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 }),
       });
       if (res.ok) {
-        closeTaskModal();
+        if (stillCurrent()) closeTaskModal();
         refresh.tasks();
       } else {
         notify('Could not create task — try again.', 'error');
@@ -235,6 +246,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const handleBulkSave = async () => {
     if (!bulkPreview?.length || bulkSaving) return;
     setBulkSaving(true);
+    const gen = getDraft<number>(BULK_GEN, 0);
     setBulkError(null);
     try {
       const res = await apiFetch('/api/tasks/bulk', {
@@ -245,9 +257,11 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Could not save tasks');
       notify(`Saved ${d.count || 0} task${(d.count || 0) === 1 ? '' : 's'}.`, 'success');
-      setShowBulk(false);
-      setBulkText('');
-      setBulkPreview(null);
+      if (getDraft<number>(BULK_GEN, 0) === gen) {
+        setShowBulk(false);
+        setBulkText('');
+        setBulkPreview(null);
+      }
       refresh.tasks();
     } catch (e: any) {
       setBulkError(e?.message || 'Could not save tasks.');
@@ -257,6 +271,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   };
 
   const closeBulkModal = () => {
+    bumpGen(BULK_GEN);
     setShowBulk(false);
     setBulkText('');
     setBulkPreview(null);

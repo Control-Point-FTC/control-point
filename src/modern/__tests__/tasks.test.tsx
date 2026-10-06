@@ -129,4 +129,21 @@ describe('Modern Tasks', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Insights' }));
     expect(await screen.findByText('Whole team')).toBeInTheDocument();
   });
+
+  it('a late save never wipes a newer draft', async () => {
+    let resolve!: (v: any) => void;
+    api.apiFetch.mockImplementation(() => new Promise((r) => { resolve = r; }));
+    const first = setup();
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'First task' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    first.unmount();
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' })); // drop the restored editor
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Second task' } });
+    resolve({ ok: true, json: async () => ({}) }); // the first save lands late
+    await new Promise((r) => setTimeout(r, 20));
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Second task');
+  });
 });
