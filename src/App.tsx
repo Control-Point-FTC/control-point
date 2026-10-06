@@ -1483,6 +1483,7 @@ export default function App() {
   // clears the stored session and fires this — return to signed-out state.
   useEffect(() => {
     const onUnauthorized = () => {
+      clearDrafts(); // a half-written form never follows a session to the next user
       setIsLoggedIn(false);
       setCurrentUser(null);
       setSessionId(null);
@@ -1978,6 +1979,7 @@ export default function App() {
   };
 
   const persistSession = (sid: string, user: any) => {
+    clearDrafts(); // every sign-in (or account switch) starts with no drafts
     if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', sid);
     setSessionId(sid);
     setCurrentUser(user);
