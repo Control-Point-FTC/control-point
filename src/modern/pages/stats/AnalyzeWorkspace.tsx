@@ -49,7 +49,7 @@ export function AnalyzeWorkspace({ season, onSeasonChange, myTeam, initialTeam =
             : <EmptyState icon={Search} title="Search for a team" description="Use the search above (team number or name) to open a full team scouting profile." />}
         </TabsContent>
         <TabsContent value="shortlist">
-          <ShortlistBoard season={season} entries={ctl.shortlist} onPatch={ctl.patchShortlist} onRemove={ctl.removeFromShortlist} error={ctl.shortlistErr} eventCode={ctl.eventCode} myTeam={myTeam} onOpenTeam={ctl.peekTeam} />
+          <ShortlistBoard season={season} entries={ctl.shortlist} confirmed={ctl.shortlistConfirmed} onPatch={ctl.patchShortlist} onRemove={ctl.removeFromShortlist} error={ctl.shortlistErr} eventCode={ctl.eventCode} myTeam={myTeam} onOpenTeam={ctl.peekTeam} />
         </TabsContent>
       </Tabs>
 

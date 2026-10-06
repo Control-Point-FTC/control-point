@@ -19,8 +19,8 @@ import { Stagger, StaggerItem } from '../../ui/motion';
 
 type Patch = Omit<ShortlistPatch, 'season' | 'teamNumber'>;
 
-export function ShortlistBoard({ season, entries, onPatch, onRemove, error, eventCode, myTeam, onOpenTeam }: {
-  season: number; entries: ShortlistEntry[]; onPatch: (p: Omit<ShortlistPatch, 'season'>) => void; onRemove: (n: number) => void;
+export function ShortlistBoard({ season, entries, confirmed, onPatch, onRemove, error, eventCode, myTeam, onOpenTeam }: {
+  season: number; entries: ShortlistEntry[]; confirmed: ShortlistEntry[]; onPatch: (p: Omit<ShortlistPatch, 'season'>) => void; onRemove: (n: number) => void;
   error: string | null; eventCode: string | null; myTeam: number | null; onOpenTeam: (n: number, name: string) => void;
 }) {
   const [ev, setEv] = useState<FtcEventFull | null>(null);
@@ -69,7 +69,7 @@ export function ShortlistBoard({ season, entries, onPatch, onRemove, error, even
         <Stagger className="grid gap-4 xl:grid-cols-2">
           {entries.map((e) => (
             <StaggerItem key={e.teamNumber}>
-              <ShortlistCard e={e} ev={ev} season={season} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} />
+              <ShortlistCard e={e} ev={ev} season={season} confirmedNotes={confirmed.find((c) => c.teamNumber === e.teamNumber)?.notes ?? null} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} />
             </StaggerItem>
           ))}
         </Stagger>
@@ -84,8 +84,8 @@ const PRIORITY: Record<ShortlistPriority, string> = {
   low: '',
 };
 
-function ShortlistCard({ e, ev, season, onPatch, onRemove, onOpen }: { e: ShortlistEntry; ev: FtcEventFull | null; season: number; onPatch: (p: Patch) => void; onRemove: () => void; onOpen: () => void }) {
-  const { notes, setNotes, save } = useShortlistNotes(season, e, onPatch);
+function ShortlistCard({ e, ev, season, confirmedNotes, onPatch, onRemove, onOpen }: { e: ShortlistEntry; ev: FtcEventFull | null; season: number; confirmedNotes: string | null; onPatch: (p: Patch) => void; onRemove: () => void; onOpen: () => void }) {
+  const { notes, setNotes, save } = useShortlistNotes(season, e, onPatch, confirmedNotes);
   const [tagDraft, setTagDraft] = useState('');
   const stats = ev?.field.find((t) => t.teamNumber === e.teamNumber) || null;
   const avg = ev ? eventAverages(ev.field) : null;

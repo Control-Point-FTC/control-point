@@ -31,7 +31,7 @@ export function useAnalyzeController({ season, myTeam, initialTeam = null }: { s
   const [panelTeam, setPanelTeam] = useState<TeamRef | null>(null);
   const [eventCode, setEventCode] = useState<string | null>(null);
   const [eventOptions, setEventOptions] = useState<{ code: string; name: string; date: string | null }[]>([]);
-  const { entries: shortlist, loaded: shortlistLoaded, error: shortlistErr, patch: patchShortlist, remove: removeEntry } = useShortlist(season);
+  const { entries: shortlist, confirmed: shortlistConfirmed, loaded: shortlistLoaded, error: shortlistErr, patch: patchShortlist, remove: removeEntry } = useShortlist(season);
   // Removing a team also drops its note draft, so re-adding it starts clean.
   const removeFromShortlist = useCallback((n: number) => { clearShortlistNotesDraft(season, n); removeEntry(n); }, [season, removeEntry]);
   const [recent, setRecent] = useState<RecentTeam[]>(readRecentTeams);
@@ -95,7 +95,7 @@ export function useAnalyzeController({ season, myTeam, initialTeam = null }: { s
 
   return {
     view, setView, selected, panelTeam, setPanelTeam, eventCode, eventOptions, chooseEvent,
-    shortlist, shortlistErr, patchShortlist, removeFromShortlist,
+    shortlist, shortlistConfirmed, shortlistErr, patchShortlist, removeFromShortlist,
     recent, pins, openTeam, peekTeam, actions,
   };
 }
@@ -169,18 +169,20 @@ export function useEventField(season: number, code: string | null, pageSize = 20
 
 /**
  * A shortlist entry's notes, drafted under the season + team so unsaved
- * text survives a remount (mode switch). A newer server value (our own save
- * landing, or a teammate's edit) replaces the draft, as Legacy did.
+ * text survives a remount (mode switch). A newer value (our own optimistic
+ * save, or a teammate's edit) shows instead of the draft, as Legacy did; the
+ * draft is retired only once the server has confirmed that text, so a failed
+ * save rolls back to what was typed.
  */
 const notesKey = (season: number, team: number) => `scout-notes:${season}:${team}`;
 export function clearShortlistNotesDraft(season: number, team: number) { setDraft(notesKey(season, team), null); }
 
-export function useShortlistNotes(season: number, e: ShortlistEntry, onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void) {
+export function useShortlistNotes(season: number, e: ShortlistEntry, onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void, confirmedNotes?: string | null) {
   const [draft, setDraftValue] = useDraft<{ base: string; text: string } | null>(notesKey(season, e.teamNumber), null);
   const notes = draft && draft.base === e.notes ? draft.text : e.notes;
   const setNotes = useCallback((text: string) => setDraftValue({ base: e.notes, text }), [e.notes, setDraftValue]);
-  // Saving retires the draft: the entry now holds the text (optimistically).
-  const save = useCallback(() => { if (notes !== e.notes) onPatch({ notes }); setDraftValue(null); }, [notes, e.notes, onPatch, setDraftValue]);
+  const save = useCallback(() => { if (notes !== e.notes) onPatch({ notes }); }, [notes, e.notes, onPatch]);
+  useEffect(() => { if (draft && confirmedNotes === draft.text) setDraftValue(null); }, [draft, confirmedNotes, setDraftValue]);
   return { notes, setNotes, save };
 }
 

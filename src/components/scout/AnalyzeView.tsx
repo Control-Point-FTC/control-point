@@ -19,7 +19,7 @@ type SortKey = FieldSortKey;
 export function AnalyzeView({ season, onSeasonChange, myTeam, initialTeam = null }: { season: number; onSeasonChange: (s: number) => void; myTeam: number | null; initialTeam?: { number: number; name: string } | null }) {
   const {
     view, setView, selected, panelTeam, setPanelTeam, eventCode, eventOptions, chooseEvent,
-    shortlist, shortlistErr, patchShortlist, removeFromShortlist, recent, pins, openTeam, peekTeam, actions,
+    shortlist, shortlistConfirmed, shortlistErr, patchShortlist, removeFromShortlist, recent, pins, openTeam, peekTeam, actions,
   } = useAnalyzeController({ season, myTeam, initialTeam });
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -56,7 +56,7 @@ export function AnalyzeView({ season, onSeasonChange, myTeam, initialTeam = null
         {view === 'team' && (selected
           ? <TeamScoutView number={selected.number} season={season} onSeasonChange={onSeasonChange} actions={actions} />
           : <EmptyState title="Search for a team" body="Use the search on the left (team number or name) to open a full team scouting profile." />)}
-        {view === 'shortlist' && <ShortlistView season={season} entries={shortlist} onPatch={patchShortlist} onRemove={removeFromShortlist} error={shortlistErr} eventCode={eventCode} myTeam={myTeam} onOpenTeam={peekTeam} />}
+        {view === 'shortlist' && <ShortlistView season={season} entries={shortlist} confirmed={shortlistConfirmed} onPatch={patchShortlist} onRemove={removeFromShortlist} error={shortlistErr} eventCode={eventCode} myTeam={myTeam} onOpenTeam={peekTeam} />}
       </div>
 
       <Sheet open={!!panelTeam} onClose={() => setPanelTeam(null)} wide title={panelTeam ? `${panelTeam.number} ${panelTeam.name}` : ''} subtitle="Team scouting profile">
@@ -312,8 +312,8 @@ function FieldActions({ t, season, listed, actions, onMatches, onOpen, compact }
 // Scouting shortlist (notes, priority, scout-next, tags — no comparisons)
 // ---------------------------------------------------------------------------
 
-function ShortlistView({ season, entries, onPatch, onRemove, error, eventCode, myTeam, onOpenTeam }: {
-  season: number; entries: ShortlistEntry[]; onPatch: (p: Omit<ShortlistPatch, 'season'>) => void; onRemove: (n: number) => void; error: string | null; eventCode: string | null; myTeam: number | null; onOpenTeam: (n: number, name: string) => void;
+function ShortlistView({ season, entries, confirmed, onPatch, onRemove, error, eventCode, myTeam, onOpenTeam }: {
+  season: number; entries: ShortlistEntry[]; confirmed: ShortlistEntry[]; onPatch: (p: Omit<ShortlistPatch, 'season'>) => void; onRemove: (n: number) => void; error: string | null; eventCode: string | null; myTeam: number | null; onOpenTeam: (n: number, name: string) => void;
 }) {
   const [ev, setEv] = useState<FtcEventFull | null>(null);
   useEffect(() => {
@@ -338,15 +338,15 @@ function ShortlistView({ season, entries, onPatch, onRemove, error, eventCode, m
       {!entries.length ? <EmptyState title="No scouting shortlist teams" body="Add teams from the event field, a team profile, or partner history. Your whole workspace shares this list." /> : (
         <div className="grid xl:grid-cols-2 gap-3">
           {error && entries.length > 0 && <p className="text-xs text-rose-300">{error}</p>}
-          {entries.map((e) => <ShortlistCard key={e.teamNumber} e={e} ev={ev} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} season={season} />)}
+          {entries.map((e) => <ShortlistCard key={e.teamNumber} e={e} ev={ev} confirmedNotes={confirmed.find((c) => c.teamNumber === e.teamNumber)?.notes ?? null} onPatch={(p) => onPatch({ ...p, teamNumber: e.teamNumber })} onRemove={() => onRemove(e.teamNumber)} onOpen={() => onOpenTeam(e.teamNumber, e.teamName)} season={season} />)}
         </div>
       )}
     </div>
   );
 }
 
-function ShortlistCard({ e, ev, onPatch, onRemove, onOpen, season }: { e: ShortlistEntry; ev: FtcEventFull | null; onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void; onRemove: () => void; onOpen: () => void; season: number }) {
-  const { notes, setNotes, save: saveNotes } = useShortlistNotes(season, e, onPatch);
+function ShortlistCard({ e, ev, confirmedNotes, onPatch, onRemove, onOpen, season }: { e: ShortlistEntry; ev: FtcEventFull | null; confirmedNotes: string | null; onPatch: (p: Omit<ShortlistPatch, 'season' | 'teamNumber'>) => void; onRemove: () => void; onOpen: () => void; season: number }) {
+  const { notes, setNotes, save: saveNotes } = useShortlistNotes(season, e, onPatch, confirmedNotes);
   const [tagDraft, setTagDraft] = useState('');
   const stats = ev?.field.find((t) => t.teamNumber === e.teamNumber) || null;
   const avg = ev ? eventAverages(ev.field) : null;

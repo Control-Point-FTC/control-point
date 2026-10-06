@@ -194,5 +194,17 @@ describe('Modern Analyze', () => {
     tab(/Shortlist/);
     expect(await screen.findByLabelText('Notes')).toHaveValue('');
   });
+
+  it('a failed note save keeps the typed text', async () => {
+    server = [entry(1111)];
+    api.saveShortlistPatch.mockRejectedValue(new Error('Server error'));
+    setup();
+    tab(/Shortlist/);
+    fireEvent.change(await screen.findByLabelText('Notes'), { target: { value: 'Keep me' } });
+    fireEvent.blur(screen.getByLabelText('Notes'));
+    expect(await screen.findByText(/wasn't saved/)).toBeInTheDocument();
+    await waitFor(() => expect(api.fetchShortlist).toHaveBeenCalledTimes(2)); // reconcile after the failure
+    expect(screen.getByLabelText('Notes')).toHaveValue('Keep me');
+  });
 });
 
