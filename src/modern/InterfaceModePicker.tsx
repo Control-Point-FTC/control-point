@@ -1,4 +1,4 @@
-// Settings → Appearance: choose the Legacy or Modern experience (per user), and
+// Settings → Appearance: choose the Classic (legacy) or Modern experience (per user), and
 // (admins) the workspace default. Switching applies instantly.
 import { useState } from 'react';
 import { Check, LayoutPanelLeft, Sparkles } from 'lucide-react';
@@ -10,13 +10,13 @@ const OPTIONS: { id: InterfaceMode; title: string; desc: string; icon: typeof Sp
   {
     id: 'modern',
     title: 'Modern Experience',
-    desc: 'The redesigned Control Point: a calmer workspace with a new sidebar, ⌘K search, an Inbox and redesigned pages as they roll out.',
+    desc: 'The redesigned Control Point: a calmer workspace with a new sidebar, ⌘K search, an Inbox and every page rebuilt.',
     icon: Sparkles,
     recommended: true,
   },
   {
     id: 'legacy',
-    title: 'Legacy Experience',
+    title: 'Classic Experience',
     desc: 'The classic layout, navigation and dashboard you already know. Nothing about your data changes.',
     icon: LayoutPanelLeft,
   },
@@ -101,7 +101,7 @@ export function WorkspaceInterfaceDefault({ team, onTeamSaved }: { team: any; on
       <h3 className="text-sm font-bold text-text-base">Default interface</h3>
       <p className="mt-1 mb-3 text-xs text-text-muted">Used by members who haven't chosen one themselves. Members can always override it.</p>
       <div role="radiogroup" aria-label="Default interface" className="inline-flex rounded-xl border border-line bg-secondary p-1">
-        {([['none', 'Not set (Legacy)'], ['legacy', 'Legacy'], ['modern', 'Modern']] as const).map(([v, label]) => (
+        {([['none', 'Not set (Modern)'], ['legacy', 'Classic'], ['modern', 'Modern']] as const).map(([v, label]) => (
           <button
             key={v}
             type="button"

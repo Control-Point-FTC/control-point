@@ -63,7 +63,7 @@ export function AppearanceSection() {
             <button type="button" className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left">
               <span>
                 <span className="block text-sm font-semibold">Legacy background effects</span>
-                <span className="block text-sm text-muted-foreground">Grid, pulse and cursor glow behind the Legacy experience.</span>
+                <span className="block text-sm text-muted-foreground">Grid, pulse and cursor glow behind the Classic experience.</span>
               </span>
               <ChevronDown className={cn('size-4 shrink-0 text-muted-foreground transition-transform', effectsOpen && 'rotate-180')} />
             </button>
