@@ -35,7 +35,16 @@ export function newSessionId(): number {
   return sessionSeq;
 }
 
+// Store epoch: bumped by clearDrafts() (sign-out, workspace switch). Async
+// work started in an older epoch must not write back into the cleared store —
+// e.g. a reply still streaming when someone signs out.
+let epoch = 0;
+export function draftEpoch(): number {
+  return epoch;
+}
+
 export function clearDrafts(): void {
+  epoch += 1;
   const keys = [...store.keys()];
   store.clear();
   for (const k of keys) emit(k);

@@ -32,7 +32,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
     attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
-    outputLevel, changeOutputLevel,
+    outputLevel, changeOutputLevel, levelSaving,
   } = useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved });
   // Modern experience: live thinking steps, streaming caret and a Stop button.
   const modern = useInterfaceMode().mode === 'modern';
@@ -150,6 +150,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                         <button
                           key={opt.value}
                           onClick={() => { void changeOutputLevel(opt.value); setOutputMenuOpen(false); }}
+                          disabled={levelSaving}
                           className={cn(
                             "w-full text-left px-3 py-2 transition-colors",
                             outputLevel === opt.value

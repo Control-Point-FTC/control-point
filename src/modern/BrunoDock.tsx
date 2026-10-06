@@ -86,7 +86,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                   <DropdownMenuContent align="start" className="w-52">
                     <DropdownMenuLabel>Answer length</DropdownMenuLabel>
                     {OUTPUT_LEVELS.map((l) => (
-                      <DropdownMenuItem key={l.value} onSelect={() => void c.changeOutputLevel(l.value)}>
+                      <DropdownMenuItem key={l.value} disabled={c.levelSaving} onSelect={() => void c.changeOutputLevel(l.value)}>
                         <span className="flex-1"><span className="block">{l.label}</span><span className="block text-xs text-muted-foreground">{l.desc}</span></span>
                         {c.outputLevel === l.value && <Check className="text-accent" />}
                       </DropdownMenuItem>

@@ -89,4 +89,51 @@ describe('Modern Bruno dock', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(p.onClose).toHaveBeenCalled();
   });
+
+  it('a reply still running at sign-out never writes the old conversation back', async () => {
+    let finish: () => void = () => {};
+    ai.streamBuildHelper.mockImplementation((_m: any, onChunk: (c: string) => void) => new Promise<void>((res) => {
+      finish = () => { onChunk('secret answer'); res(); };
+    }));
+    render(wrap(<BrunoDock {...props()} />));
+    fireEvent.change(screen.getByLabelText('Message Bruno'), { target: { value: 'private question' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(ai.streamBuildHelper).toHaveBeenCalled());
+    act(() => clearDrafts()); // sign-out / workspace switch
+    await act(async () => { finish(); });
+    expect(screen.queryByText('private question')).not.toBeInTheDocument();
+    expect(screen.queryByText('secret answer')).not.toBeInTheDocument();
+  });
+
+  it('Stop works while the chat is still being created', async () => {
+    let createChat: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/bruno/chats' && init?.method === 'POST'
+      ? new Promise((res) => { createChat = () => res({ ok: true, json: async () => ({ id: 55 }) }); })
+      : json({})));
+    render(wrap(<BrunoDock {...props()} />));
+    fireEvent.change(screen.getByLabelText('Message Bruno'), { target: { value: 'Quick one' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop generating' }));
+    await act(async () => { createChat(); });
+    await waitFor(() => expect(screen.getByText('Stopped.')).toBeInTheDocument());
+    expect(ai.streamBuildHelper).not.toHaveBeenCalled();
+  });
+
+  it('keeps attachments and a queued scouting prompt across a mode switch', async () => {
+    let finish: () => void = () => {};
+    ai.streamBuildHelper.mockImplementation((_m: any, onChunk: (c: string) => void) => new Promise<void>((res) => { finish = () => { onChunk('ok'); res(); }; }));
+    const first = render(wrap(<BrunoDock {...props()} />));
+    fireEvent.change(screen.getByLabelText('Message Bruno'), { target: { value: 'first' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(ai.streamBuildHelper).toHaveBeenCalledTimes(1));
+    // Queued while busy, then the interface switches.
+    act(() => { window.dispatchEvent(new CustomEvent(BRUNO_OPEN_EVENT, { detail: { prompt: 'Queued scouting question' } })); });
+    first.unmount();
+    render(wrap(<BrunoPanel {...props()} />));
+    ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => { onChunk('second reply'); });
+    await act(async () => { finish(); });
+    await waitFor(() => expect(ai.streamBuildHelper).toHaveBeenCalledTimes(2));
+    expect(ai.streamBuildHelper.mock.calls[1][0].at(-1)).toMatchObject({ role: 'user', text: 'Queued scouting question' });
+  });
 });
+

@@ -13,7 +13,7 @@ import { streamBuildHelper, applyActionProposals, notifyBrunoDataChanged, type B
 import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../../services/brunoContext';
 import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
-import { getDraft, useDraft } from '../../modern/drafts';
+import { draftEpoch, getDraft, setDraft, useDraft } from '../../modern/drafts';
 import type { ScoutingContextRequest } from '../../types/ftcScout';
 import { starterPoolForPath, nextStarters } from '../brunoStarters';
 import { thinkingSteps, type ThinkingStep } from './BrunoThinking';
@@ -47,10 +47,15 @@ const ANALYZE_POOL = {
 // conversation in the draft store) so Stop still works after a mode switch
 // swaps the panel component mid-reply.
 let panelAbort: AbortController | null = null;
+// Answer-length saves: sequence so only the latest response applies, even
+// across a mode switch (the hook instance is replaced, this is not).
+let levelSeq = 0;
 
 type ThinkMeta = Record<number, { steps: ThinkingStep[]; startedAt: number; thoughtMs: number | null }>;
 const EMPTY_MSGS: BuildHelperMessage[] = [];
 const EMPTY_OBJ = {};
+const EMPTY_IMGS: AttachedImage[] = [];
+const EMPTY_PDFS: AttachedPdf[] = [];
 
 export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved }: {
   open: boolean;
@@ -112,7 +117,9 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     setStarterSeen(seen);
   };
   const [greeting, setGreeting] = useState<string | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<{ text: string; scouting?: ScoutingContextRequest } | null>(null);
+  // Queued "Scout with Bruno" prompt — in the store so a mode switch while a
+  // reply is running doesn't drop it.
+  const [pendingPrompt, setPendingPrompt] = useDraft<{ text: string; scouting?: ScoutingContextRequest } | null>('bruno-panel:pending', null);
   useEffect(() => {
     const onOpen = (e: Event) => {
       const d = (e as CustomEvent<BrunoOpenDetail>).detail || {};
@@ -125,8 +132,8 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   useEffect(() => { if (!scoutCtx) setGreeting(null); }, [scoutCtx]);
 
   // Screenshots / PDFs for the next message — in memory only, never saved.
-  const [attached, setAttached] = useState<AttachedImage[]>([]);
-  const [attachedPdfs, setAttachedPdfs] = useState<AttachedPdf[]>([]);
+  const [attached, setAttached] = useDraft<AttachedImage[]>('bruno-panel:attached', EMPTY_IMGS);
+  const [attachedPdfs, setAttachedPdfs] = useDraft<AttachedPdf[]>('bruno-panel:attached-pdfs', EMPTY_PDFS);
   const addAttached = (imgs: AttachedImage[]) => {
     if (!imgs.length) return;
     setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
@@ -138,10 +145,12 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     const lvl = currentUser?.bruno_output_level; // 'max' was removed → 'high'
     setOutputLevel(lvl === 'max' ? 'high' : (lvl || 'medium'));
   }, [currentUser?.bruno_output_level, open]);
-  const levelSaving = useRef(false);
+  // Shared across mode switches; the UI disables the choices while saving.
+  const [levelSaving, setLevelSaving] = useDraft<boolean>('bruno-panel:level-saving', false);
   const changeOutputLevel = async (lvl: string) => {
-    if (levelSaving.current || lvl === outputLevel) return;
-    levelSaving.current = true;
+    if (getDraft('bruno-panel:level-saving', false) || lvl === outputLevel) return;
+    const seq = ++levelSeq;
+    setLevelSaving(true);
     const prev = outputLevel;
     setOutputLevel(lvl);
     try {
@@ -151,12 +160,13 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
         body: JSON.stringify({ name: currentUser?.name || '', role: currentUser?.role || '', bruno_output_level: lvl }),
       });
       const data = await res.json().catch(() => ({}));
+      if (seq !== levelSeq) return; // a newer choice owns the result
       if (res.ok && data.user) onUserSaved?.(data.user);
       else setOutputLevel(prev);
     } catch {
-      setOutputLevel(prev);
+      if (seq === levelSeq) setOutputLevel(prev);
     } finally {
-      levelSaving.current = false;
+      if (seq === levelSeq) setLevelSaving(false);
     }
   };
 
@@ -182,13 +192,14 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  const ensureChat = async (): Promise<number | null> => {
+  const ensureChat = async (ep: number): Promise<number | null> => {
     const existing = getDraft<number | null>('bruno-panel:chat', null);
     if (existing) return existing;
     try {
       const res = await apiFetch('/api/bruno/chats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       if (!res.ok) return null;
       const created = await res.json();
+      if (draftEpoch() !== ep) return null;
       setChatId(created.id);
       return created.id;
     } catch {
@@ -199,24 +210,43 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   const send = async (text?: string, scoutingOverride?: ScoutingContextRequest) => {
     const content = (text ?? input).trim();
     if ((!content && !attached.length && !attachedPdfs.length) || getDraft('bruno-panel:busy', false)) return;
+    // Everything below writes only while the store is still this epoch: a
+    // sign-out / workspace switch mid-reply aborts it and drops its writes,
+    // so a private conversation can't reappear for the next user.
+    const ep = draftEpoch();
+    const live = () => draftEpoch() === ep;
+    const put = <T,>(key: string, value: T | ((prev: T) => T), fallback?: T) => {
+      if (!live()) return;
+      setDraft(key, typeof value === 'function' ? (value as (p: T) => T)(getDraft(key, fallback as T)) : value);
+    };
     setInput('');
     const outgoing = attached;
     const outgoingPdfs = attachedPdfs;
-    setAttached([]);
-    setAttachedPdfs([]);
+    setAttached(EMPTY_IMGS);
+    setAttachedPdfs(EMPTY_PDFS);
     setBusy(true);
-    const id = await ensureChat();
+    // Stop works from the first moment, including while the chat is created.
+    const ac = new AbortController();
+    panelAbort = ac;
     const userMsg: BuildHelperMessage = { role: 'user', text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?') };
     if (outgoing.length) userMsg.images = outgoing;
     if (outgoingPdfs.length) userMsg.pdfs = outgoingPdfs;
     const next: BuildHelperMessage[] = [...getDraft<BuildHelperMessage[]>('bruno-panel:messages', EMPTY_MSGS), userMsg];
     let agg = '';
     setMessages([...next, { role: 'model', text: '' }]);
+    const id = await ensureChat(ep);
+    if (!live()) { ac.abort(); if (panelAbort === ac) panelAbort = null; return; }
+    if (ac.signal.aborted) {
+      put('bruno-panel:messages', [...next, { role: 'model', text: '_Stopped._' }]);
+      if (panelAbort === ac) panelAbort = null;
+      put('bruno-panel:busy', false);
+      return;
+    }
     // What Bruno is actually given for this reply (its thinking steps).
     const replyIndex = next.length;
     const startedAt = Date.now();
     let firstTokenAt: number | null = null;
-    setThinkMeta((m) => ({
+    put<ThinkMeta>('bruno-panel:think', (m) => ({
       ...m,
       [replyIndex]: {
         steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: outgoing.length, pdfs: outgoingPdfs.length, scouting: !!(scoutingOverride ?? getScoutingContext()), history: next.length }),
@@ -224,35 +254,34 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
         thoughtMs: null,
       },
     }));
-    const ac = new AbortController();
-    panelAbort = ac;
     // Throttle streamed renders (~11/sec); the accumulator keeps every char.
     let renderTimer: number | null = null;
-    const pushRender = () => { renderTimer = null; setMessages([...next, { role: 'model', text: agg }]); };
+    const pushRender = () => { renderTimer = null; put('bruno-panel:messages', [...next, { role: 'model', text: agg }]); };
     try {
       await streamBuildHelper(next, (chunk) => {
+        if (!live()) { ac.abort(); return; }
         agg += chunk;
         if (firstTokenAt === null && chunk.trim()) {
           firstTokenAt = Date.now();
           const ms = firstTokenAt - startedAt;
-          setThinkMeta((m) => (m[replyIndex] ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: ms } } : m));
+          put<ThinkMeta>('bruno-panel:think', (m) => (m[replyIndex] ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: ms } } : m), EMPTY_OBJ as ThinkMeta);
         }
         if (renderTimer === null) renderTimer = window.setTimeout(pushRender, 90);
       }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined, signal: ac.signal });
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
-      setMessages([...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
+      put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? agg : `${name} hit a snag — please try again in a moment.` }]);
     } catch (e: any) {
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       if (e?.name === 'AbortError') {
-        setMessages([...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
-        setThinkMeta((m) => (m[replyIndex] && m[replyIndex].thoughtMs == null ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: Date.now() - startedAt } } : m));
+        put('bruno-panel:messages', [...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
+        put<ThinkMeta>('bruno-panel:think', (m) => (m[replyIndex] && m[replyIndex].thoughtMs == null ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: Date.now() - startedAt } } : m), EMPTY_OBJ as ThinkMeta);
       } else {
-        setThinkMeta((m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; });
-        setMessages([...next, { role: 'model', text: e?.serverError || `${name} isn't reachable right now. Check your connection and try again.` }]);
+        put<ThinkMeta>('bruno-panel:think', (m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; }, EMPTY_OBJ as ThinkMeta);
+        put('bruno-panel:messages', [...next, { role: 'model', text: e?.serverError || `${name} isn't reachable right now. Check your connection and try again.` }]);
       }
     } finally {
       if (panelAbort === ac) panelAbort = null;
-      setBusy(false);
+      put('bruno-panel:busy', false);
     }
   };
 
@@ -271,6 +300,6 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
     attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
-    outputLevel, changeOutputLevel,
+    outputLevel, changeOutputLevel, levelSaving,
   };
 }
