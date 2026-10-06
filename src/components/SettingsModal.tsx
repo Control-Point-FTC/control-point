@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X, ChevronLeft, ChevronDown, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette, AlertCircle, Sparkles } from 'lucide-react';
+import { X, ChevronLeft, ChevronDown, UserCircle, Users, ShieldCheck, Copy, Check, ImagePlus, Trash2, PhoneCall, Bot, GraduationCap, Palette, AlertCircle, Sparkles, RefreshCw } from 'lucide-react';
 import { cn } from './onboarding/onboardingState';
 import { apiFetch } from '../services/api';
 import { notify, confirmDialog } from './dialog';
@@ -303,7 +303,6 @@ export default function SettingsModal({
   // Inline save feedback (auto-clears after 4s).
   const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null);
   const [teamName, setTeamName] = useState('');
-  const [teamNumber, setTeamNumber] = useState('');
   const [ftcNumber, setFtcNumber] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -386,7 +385,6 @@ export default function SettingsModal({
     // 'max' was removed — anyone who had it falls back to 'high'
     setOutputLevel(user?.bruno_output_level === 'max' ? 'high' : (user?.bruno_output_level || 'medium'));
     setTeamName(team?.name || '');
-    setTeamNumber(team?.number || '');
     setFtcNumber(team?.ftc_team_number ? String(team.ftc_team_number) : '');
     setCopied(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -450,8 +448,10 @@ export default function SettingsModal({
     setSaving(true);
     try {
       const body: any = { name: teamName.trim() };
-      if (teamNumber.trim()) body.number = teamNumber.trim();
+      // One number: the FTC team number also becomes the workspace's display
+      // number ("Team #4215" in pickers).
       body.ftc_team_number = ftcNumber.trim() === '' ? null : parseInt(ftcNumber.trim(), 10);
+      if (ftcNumber.trim()) body.number = ftcNumber.trim();
       const res = await apiFetch(`/api/teams/${team.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -502,6 +502,27 @@ export default function SettingsModal({
       notify('Could not remove picture.', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Regenerating invalidates the old invite code; asks once before doing it.
+  const [confirmRegen, setConfirmRegen] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const regenerateAccessCode = async () => {
+    if (!confirmRegen) { setConfirmRegen(true); return; }
+    setRegenerating(true);
+    try {
+      const res = await apiFetch('/api/teams/regenerate-code', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.access_code) {
+        onTeamSaved({ ...team, access_code: data.access_code });
+        notify('New invite code created. The old one no longer works.', 'success');
+      } else notify(data.error || 'Could not create a new code.', 'error');
+    } catch {
+      notify('Could not create a new code.', 'error');
+    } finally {
+      setRegenerating(false);
+      setConfirmRegen(false);
     }
   };
 
@@ -700,7 +721,8 @@ export default function SettingsModal({
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar px-6 sm:px-10 pb-10">
-          <div className="max-w-xl space-y-8">
+          {/* Appearance gets the full width (controls + live preview side by side). */}
+          <div className={cn('space-y-8', section === 'appearance' ? 'max-w-6xl' : 'max-w-xl')}>
             {section === 'account' && (
               <>
                 <section>
@@ -842,9 +864,11 @@ export default function SettingsModal({
             )}
 
             {section === 'appearance' && (
-              <div className="xl:grid xl:grid-cols-[1fr_340px] xl:gap-8 xl:items-start">
+              <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(340px,440px)] lg:gap-10 lg:items-start">
               <section className="space-y-6 min-w-0">
-                <ThemePicker />
+                <div className="card-surface p-5 sm:p-6">
+                  <ThemePicker />
+                </div>
 
                 <div className="flex items-start justify-between">
                   <div>
@@ -861,8 +885,10 @@ export default function SettingsModal({
                   </button>
                 </div>
 
+                <div className="grid gap-4 2xl:grid-cols-2 2xl:items-start">
                 {/* Grid on/off */}
-                <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                <div className="card-surface p-5 space-y-4">
+                <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-text-base">Background grid</p>
                     <p className="text-xs text-text-muted mt-0.5">
@@ -912,8 +938,11 @@ export default function SettingsModal({
                   </>
                 )}
 
+                </div>
+
                 {/* Pulse wave */}
-                <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                <div className="card-surface p-5 space-y-4">
+                <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-text-base">Pulsing volt wave</p>
                     <p className="text-xs text-text-muted mt-0.5">
@@ -991,8 +1020,11 @@ export default function SettingsModal({
                   </>
                 )}
 
+                </div>
+
                 {/* Cursor glow */}
-                <div className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-text-base/[0.03] border border-text-base/[0.06]">
+                <div className="card-surface p-5 space-y-4 2xl:col-span-2">
+                <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold text-text-base">Cursor glow</p>
                     <p className="text-xs text-text-muted mt-0.5">
@@ -1039,10 +1071,12 @@ export default function SettingsModal({
                     </div>
                   </>
                 )}
+                </div>
+                </div>
               </section>
-              {/* Sticky live preview — xl screens only, stays visible while scrolling.
-                  Below xl the settings stack full-width so controls aren't squeezed. */}
-              <div className="hidden xl:block sticky top-0">
+              {/* Sticky live preview beside the controls on laptop-size screens and up;
+                  below lg the settings stack full-width so controls aren't squeezed. */}
+              <div className="hidden lg:block sticky top-0">
                 <DashboardPreview />
               </div>
               </div>
@@ -1369,15 +1403,10 @@ export default function SettingsModal({
                     <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Team name</label>
                     <input value={teamName} onChange={(e) => setTeamName(e.target.value)} maxLength={80} className={inputClass} />
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">Team number</label>
-                      <input value={teamNumber} onChange={(e) => setTeamNumber(e.target.value)} maxLength={20} className={inputClass} />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">FTC team #</label>
-                      <input value={ftcNumber} onChange={(e) => setFtcNumber(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="e.g. 33950" className={inputClass} />
-                    </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-text-muted uppercase tracking-widest mb-1.5">FTC team number</label>
+                    <input value={ftcNumber} onChange={(e) => setFtcNumber(e.target.value.replace(/\D/g, ''))} inputMode="numeric" placeholder="e.g. 33950" className={inputClass} />
+                    <p className="text-[11px] text-text-muted mt-1.5">Used for Team Stats, Predict and your workspace's team number.</p>
                   </div>
                   <button
                     onClick={() => void saveTeam()}
@@ -1402,6 +1431,25 @@ export default function SettingsModal({
                     >
                       {copied ? <Check className="w-5 h-5 text-emerald-400" /> : <Copy className="w-5 h-5" />}
                     </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <button
+                      onClick={() => void regenerateAccessCode()}
+                      disabled={regenerating}
+                      className={cn(
+                        'inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-50',
+                        confirmRegen ? 'bg-rose-500 text-white hover:brightness-110' : 'bg-text-base/[0.06] text-text-base hover:bg-text-base/[0.1]'
+                      )}
+                    >
+                      <RefreshCw className={cn('w-4 h-4', regenerating && 'animate-spin')} />
+                      {regenerating ? 'Generating…' : confirmRegen ? 'Yes, replace the code' : 'Generate new code'}
+                    </button>
+                    {confirmRegen && !regenerating && (
+                      <>
+                        <button onClick={() => setConfirmRegen(false)} className="px-3 py-2 rounded-xl text-sm font-bold text-text-muted hover:text-text-base">Cancel</button>
+                        <span className="text-xs text-text-muted basis-full">The current code stops working. Existing members aren't affected.</span>
+                      </>
+                    )}
                   </div>
                 </section>
 

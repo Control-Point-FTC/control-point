@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Trophy } from 'lucide-react';
+import { Trophy, Sparkles, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import '../../i18n';
 import { useFtcTeam, seasonLabel } from '../FtcStats';
@@ -64,7 +64,6 @@ function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
                   </button>
                 ))}
               </div>
-              <button onClick={() => onNavigate('/stats')} className="text-xs font-bold text-accent hover:opacity-80 whitespace-nowrap">{t('dashboard.fullStats')}</button>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2.5">
@@ -80,6 +79,26 @@ function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
                 </p>
               </button>
             ))}
+          </div>
+          {/* Jump into the Compete pages. */}
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              onClick={() => onNavigate('/stats')}
+              className="group flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-accent text-accent-ink font-bold text-sm hover:brightness-105 active:scale-[0.98] transition-all min-w-0"
+            >
+              <Trophy className="w-4 h-4 shrink-0" />
+              <span className="truncate">{t('nav.teamStats')}</span>
+              <ChevronRight className="w-4 h-4 ml-auto shrink-0 opacity-70 group-hover:translate-x-0.5 transition-transform" />
+            </button>
+            <button
+              onClick={() => onNavigate('/predict')}
+              className="group flex items-center gap-2.5 px-3.5 py-3 rounded-xl bg-text-base/[0.06] border border-text-base/10 text-text-base font-bold text-sm hover:border-accent/40 active:scale-[0.98] transition-all min-w-0"
+            >
+              <Sparkles className="w-4 h-4 shrink-0 text-accent" />
+              <span className="truncate">{t('nav.predict')}</span>
+              <span className="px-1.5 py-0.5 rounded-full bg-sky-500 text-white text-[9px] font-black tracking-wider leading-none shrink-0">BETA</span>
+              <ChevronRight className="w-4 h-4 ml-auto shrink-0 text-text-muted group-hover:translate-x-0.5 transition-transform" />
+            </button>
           </div>
         </div>
       ) : (

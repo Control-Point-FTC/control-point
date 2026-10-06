@@ -197,7 +197,6 @@ import {
 } from './components/voice';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import SettingsModal from './components/SettingsModal';
-import CrosshairIcon from './components/CrosshairIcon';
 import Landing from './Landing';
 import LegalPage from './Legal';
 import { cn, Card, Button, Input, Switch } from './components/ui';
@@ -3027,7 +3026,7 @@ export default function App() {
                   {(item as any).badge === 'beta' && (isSidebarOpen ? (
                     <span className="ml-auto flex items-center gap-1 shrink-0">
                       {!predictSeen && <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[9px] font-black tracking-wider leading-none">NEW</span>}
-                      <span className={cn("px-1.5 py-0.5 rounded-full border text-[9px] font-black tracking-wider leading-none", isActive ? "border-accent-ink/40 text-accent-ink" : "border-text-base/20 text-text-muted")}>BETA</span>
+                      <span className="px-1.5 py-0.5 rounded-full bg-sky-500 text-white text-[9px] font-black tracking-wider leading-none">BETA</span>
                     </span>
                   ) : !predictSeen && (
                     <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 ring-2 ring-secondary" aria-label="New" />
@@ -3098,7 +3097,7 @@ export default function App() {
               {isSidebarOpen && (
                 <>
                   <button onClick={() => setSettingsOpen(true)} aria-label="Settings" data-onboard="nav-settings-gear" className="p-2 text-text-muted hover:text-text-base transition-colors flex-shrink-0" title="Settings">
-                    <CrosshairIcon className="w-4 h-4" />
+                    <Settings className="w-4 h-4" />
                   </button>
                   <button onClick={handleLogout} aria-label="Sign out" className="p-2 text-text-muted hover:text-rose-400 transition-colors flex-shrink-0" title="Sign out">
                     <LogOut className="w-4 h-4" />
@@ -3417,7 +3416,7 @@ export default function App() {
                           onClick={() => { setShowUserMenu(false); setSettingsOpen(true); }}
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-text-base hover:bg-text-base/[0.06] transition-colors"
                         >
-                          <CrosshairIcon className="w-[18px] h-[18px] text-accent" />
+                          <Settings className="w-[18px] h-[18px] text-accent" />
                           {t('settings.title')}
                         </button>
                         {(currentUser as any)?.account_type === 'admin' && (
@@ -5295,10 +5294,10 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
-              <tr className="bg-text-base/5 border-b border-text-base/10">
-                <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase sticky left-0 bg-[#111111] z-10 min-w-[150px]">Member</th>
+              <tr className="bg-text-base/5 border-b border-text-base/20">
+                <th className="px-4 py-3 text-xs font-bold text-text-muted uppercase sticky left-0 bg-secondary z-10 min-w-[150px] border-r border-text-base/15">Member</th>
                 {visibleDates.map(date => (
-                  <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative">
+                  <th key={date} className="px-2 py-3 text-[10px] font-bold text-text-muted uppercase text-center min-w-[40px] group relative border-r border-text-base/10 last:border-r-0">
                     <div className="text-center">
                       {format(parseLocalDate(date), 'MMM dd')}
                       <div className="text-[8px] text-text-muted">{format(parseLocalDate(date), 'EEE')}</div>
@@ -5316,16 +5315,16 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-text-base/5">
+            <tbody className="divide-y divide-text-base/15">
               {members.map((m: any) => (
                 <tr key={m.id} className="hover:bg-text-base/5 transition-colors">
-                  <td className="px-4 py-3 text-sm text-text-base font-medium sticky left-0 bg-[#111111]/90 backdrop-blur-md z-10 border-r border-text-base/5">
+                  <td className="px-4 py-3 text-sm text-text-base font-medium sticky left-0 bg-secondary z-10 border-r border-text-base/15">
                     {m.name}
                   </td>
                   {visibleDates.map(date => {
                     const status = getStatus(m.id, date);
                     return (
-                      <td key={date} className="px-1 py-1 text-center">
+                      <td key={date} className="px-1 py-1 text-center border-r border-text-base/10 last:border-r-0">
                         <button
                           onClick={() => toggleStatus(m.id, date)}
                           disabled={!isAdmin}
