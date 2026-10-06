@@ -82,7 +82,7 @@ export function useResourcesController() {
   const [preview, setPreview] = useDraft<ParsedItem[] | null>('res:preview', null);
   const [saving, setSaving] = useDraft<boolean>(SAVING_KEY, false);
   const [parsing, setParsing] = useDraft<boolean>('res:parsing', false);
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [parseError, setParseError] = useDraft<string | null>('res:parse-error', null);
   const [saveError, setSaveError] = useDraft<string | null>(SAVE_ERROR_KEY, null);
 
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
@@ -135,6 +135,8 @@ export function useResourcesController() {
     setParseError(null);
     setSaveError(null);
     const show = inEpoch((list: ParsedItem[] | null) => { if (latest()) setPreview(list); });
+    // Errors go to whichever page is mounted, under the same guards.
+    const fail = inEpoch((msg: string) => { if (latest()) setParseError(msg); });
     try {
       const res = await apiJson<{ items: ParsedItem[]; count: number }>('/api/resources/parse', {
         method: 'POST',
@@ -142,7 +144,7 @@ export function useResourcesController() {
       });
       const list = Array.isArray(res.items) ? res.items : [];
       if (list.length === 0) {
-        setParseError('No links found in that text — try pasting messages that include URLs.');
+        fail('No links found in that text — try pasting messages that include URLs.');
         show(null);
       } else {
         show(list.map((it) => ({
@@ -154,7 +156,7 @@ export function useResourcesController() {
       }
     } catch (e: any) {
       // 422 = no links found; surface the server's message
-      setParseError(e?.body?.error || e?.message || 'Could not extract links from that text.');
+      fail(e?.body?.error || e?.message || 'Could not extract links from that text.');
       show(null);
     } finally {
       done();

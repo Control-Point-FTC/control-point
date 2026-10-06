@@ -180,5 +180,20 @@ describe('Modern Resources', () => {
     expect(screen.getByLabelText('Text with links')).toHaveValue('');
     expect(screen.queryByText(/Preview — edit before saving/)).not.toBeInTheDocument();
   });
+
+  it('an extraction error reaches the page you came back to', async () => {
+    let reject: (e: any) => void = () => {};
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources/parse') return new Promise((_r, j) => { reject = j; });
+      return url === '/api/resources' && !init?.method ? list : {};
+    });
+    const first = setup();
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'nothing here' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    first.unmount();
+    setup();
+    await act(async () => { reject(Object.assign(new Error('x'), { body: { error: 'No links found in that text.' } })); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('No links found in that text.');
+  });
 });
 
