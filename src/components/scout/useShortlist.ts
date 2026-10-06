@@ -29,6 +29,9 @@ export function useShortlist(season: number) {
   const chains = useRef(new Map<number, Promise<void>>());
   // Last list the server confirmed for the current season (rollback target).
   const confirmed = useRef<ShortlistEntry[]>([]);
+  // The same list as state, for views that act on what the server has saved.
+  const [confirmedList, setConfirmedList] = useState<ShortlistEntry[]>([]);
+  const confirm = (list: ShortlistEntry[]) => { confirmed.current = list; setConfirmedList(list); };
 
   // Bumped whenever a server snapshot is applied, so a slower reconcile read
   // can't overwrite a newer write's response.
@@ -45,7 +48,7 @@ export function useShortlist(season: number) {
       const list = await fetchShortlist(season, { timeoutMs: RECONCILE_TIMEOUT_MS });
       if (ep !== epoch.current || v !== version.current) return;
       version.current++;
-      confirmed.current = list;
+      confirm(list);
       setEntries(withPending(list));
       if (timedOut) setError(null); // the list now shows what the server actually has
     } catch {
@@ -60,12 +63,12 @@ export function useShortlist(season: number) {
   useEffect(() => {
     const ep = ++epoch.current;
     pending.current = [];
-    confirmed.current = [];
+    confirm([]);
     setEntries([]);
     setLoaded(false);
     setError(null);
     fetchShortlist(season)
-      .then((list) => { if (ep === epoch.current) { version.current++; confirmed.current = list; setEntries(withPending(list)); setLoaded(true); } })
+      .then((list) => { if (ep === epoch.current) { version.current++; confirm(list); setEntries(withPending(list)); setLoaded(true); } })
       .catch((e) => { if (ep === epoch.current) setError(e instanceof Error ? e.message : 'Could not load the shortlist'); });
     return () => { epoch.current++; };
   }, [season]);
@@ -81,7 +84,7 @@ export function useShortlist(season: number) {
         if (ep !== epoch.current) return;
         pending.current = pending.current.filter((o) => o !== op);
         version.current++;
-        confirmed.current = list;
+        confirm(list);
         setEntries(withPending(list));
         setError(null);
       } catch (e) {
@@ -124,5 +127,5 @@ export function useShortlist(season: number) {
     enqueue({ apply: (list) => list.filter((x) => x.teamNumber !== teamNumber), send: () => removeShortlistEntry(season, teamNumber, origin) });
   }, [season, enqueue]);
 
-  return { entries, loaded, error, patch, remove };
+  return { entries, confirmed: confirmedList, loaded, error, patch, remove };
 }
