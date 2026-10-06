@@ -73,10 +73,10 @@ export function WhatsNewModal({ open, onClose }: { open: boolean; onClose: () =>
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="What's new">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-2 sm:p-4" role="dialog" aria-modal="true" aria-label="What's new">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} aria-hidden="true" />
-      <div className="relative w-full max-w-lg bg-elevated border border-text-base/10 rounded-3xl shadow-2xl max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-text-base/10">
+      <div className="relative w-full max-w-xl bg-elevated border border-text-base/10 rounded-3xl shadow-2xl max-h-[92vh] sm:max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between px-4 sm:px-6 pt-5 pb-4 border-b border-text-base/10">
           <div>
             <h2 className="text-lg font-bold text-text-base">What's New</h2>
             <p className="text-xs text-text-muted mt-0.5">Control Point v{CURRENT_VERSION}</p>
@@ -89,7 +89,7 @@ export function WhatsNewModal({ open, onClose }: { open: boolean; onClose: () =>
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 custom-scrollbar">
           {CHANGELOG.map((entry, i) => (
             <ChangelogCard key={entry.version} entry={entry} latest={i === 0} />
           ))}
