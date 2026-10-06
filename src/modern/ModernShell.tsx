@@ -3,6 +3,7 @@
 // same App state; screens without a Modern page yet render their Legacy page
 // inside this shell.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Inbox, Bot, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
@@ -122,6 +123,8 @@ export function ModernShell(props: ModernShellProps) {
   };
 
   return (
+    // reducedMotion="user": Motion springs (the sliding nav pill) follow the OS setting.
+    <MotionConfig reducedMotion="user">
     <TooltipProvider>
       <div className="modern-shell flex h-dvh w-full overflow-hidden bg-primary text-text-base" data-ui-shell="modern">
         {!isMobile && (
@@ -153,7 +156,8 @@ export function ModernShell(props: ModernShellProps) {
                 : 'overflow-y-auto overflow-x-clip custom-scrollbar px-4 pt-5 pb-28 sm:px-6 lg:px-8 lg:pt-6 md:pb-10',
             )}
           >
-            <div className={cn('flex min-w-0 grow flex-col', !immersive && 'mx-auto w-full max-w-[1400px]')}>{content}</div>
+            {/* Keyed by route so each page plays its enter animation (modern.css .m-page). */}
+            <div key={props.activeTab} className={cn('m-page flex min-w-0 grow flex-col', !immersive && 'mx-auto w-full max-w-[1400px]')}>{content}</div>
           </main>
         </div>
 
@@ -195,6 +199,7 @@ export function ModernShell(props: ModernShellProps) {
         />
       </div>
     </TooltipProvider>
+    </MotionConfig>
   );
 }
 
@@ -283,7 +288,7 @@ function rowClass(active: boolean, collapsed: boolean) {
     'group relative flex w-full items-center gap-2.5 rounded-lg text-[13px] font-medium transition-colors outline-none',
     'focus-visible:ring-2 focus-visible:ring-accent/60',
     collapsed ? 'size-10 justify-center mx-auto' : 'h-8 px-2.5',
-    active ? 'bg-text-base/[0.08] text-text-base' : 'text-text-muted hover:bg-text-base/[0.05] hover:text-text-base',
+    active ? 'text-text-base' : 'text-text-muted hover:bg-text-base/[0.05] hover:text-text-base',
   );
 }
 
@@ -312,10 +317,12 @@ function NavLink({ item, label, activeTab, onNavigate, collapsed, predictSeen, c
         data-onboard={`nav-${item.id}`}
         className={rowClass(active, collapsed)}
       >
-        <Icon className={cn('size-4 shrink-0', active ? 'text-accent' : 'text-text-muted group-hover:text-text-base')} />
-        {!collapsed && <span className="truncate">{label}</span>}
+        {/* The active pill slides between items. */}
+        {active && <motion.span layoutId="m-nav-active" transition={{ type: 'spring', stiffness: 500, damping: 38 }} className="absolute inset-0 rounded-lg bg-text-base/[0.08]" aria-hidden="true" />}
+        <Icon className={cn('relative size-4 shrink-0', active ? 'text-accent' : 'text-text-muted group-hover:text-text-base')} />
+        {!collapsed && <span className="relative truncate">{label}</span>}
         {!collapsed && item.badge === 'beta' && (
-          <span className="ml-auto flex items-center gap-1">
+          <span className="relative ml-auto flex items-center gap-1">
             {!predictSeen && <Badge variant="new">New</Badge>}
             <Badge variant="beta">Beta</Badge>
           </span>
@@ -323,7 +330,7 @@ function NavLink({ item, label, activeTab, onNavigate, collapsed, predictSeen, c
         {count > 0 && (
           collapsed
             ? <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-red-500" aria-hidden="true" />
-            : <span className="ml-auto rounded-full bg-red-500 px-1.5 text-[11px] font-semibold leading-5 text-white tabular-nums">{count > 99 ? '99+' : count}</span>
+            : <span className="relative ml-auto rounded-full bg-red-500 px-1.5 text-[11px] font-semibold leading-5 text-white tabular-nums">{count > 99 ? '99+' : count}</span>
         )}
         {collapsed && item.badge === 'beta' && !predictSeen && <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-red-500" aria-hidden="true" />}
       </a>

@@ -100,6 +100,9 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
     document.documentElement.dataset.ui = mode;
     try { localStorage.setItem('cp-interface-mode', mode); } catch { /* storage unavailable */ }
   }, [mode]);
+  // Signed out (provider unmounts): the landing and auth screens are shared by
+  // both modes and must not pick up Modern-only styles.
+  useEffect(() => () => { delete document.documentElement.dataset.ui; }, []);
 
   return <InterfaceModeContext.Provider value={value}>{children}</InterfaceModeContext.Provider>;
 }
