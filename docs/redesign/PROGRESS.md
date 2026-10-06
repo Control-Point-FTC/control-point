@@ -645,6 +645,94 @@ Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both 
   - 390 px: no overflow, and every target is ≥44 px.
   - No real phone was available.
 
+## Phase 7c: Team Stats · Analyze
+
+### Shared logic (`src/components/scout/useAnalyze.ts`)
+Legacy `AnalyzeView` keeps its JSX; its logic moved into hooks that both modes use:
+- **`useAnalyzeController`:** Team detail / side-panel peek, the event picker (defaults to the reference team's upcoming or most recently played event), pins (`controlpoint-scout-pins`), recents, the workspace shortlist (`useShortlist`, with serialized optimistic writes), shortlist rules (wait for the season's list; a team already listed opens the Shortlist tab) and Bruno's scouting context and greeting.
+- **`useEventField`:** latest-wins event load, filter / round / alliance colour, sort (each column has its natural first direction), and paging.
+- **`useTeamSearch`:** debounced search that drops stale responses.
+- **`useShortlistNotes`:** notes live in the draft store under `scout-notes:<season>:<team>`. A half-written note survives a mode switch in both modes. A newer server value replaces the draft, which is what Legacy did.
+
+### Modern Analyze (`src/modern/pages/stats/AnalyzeWorkspace.tsx`, `ShortlistBoard.tsx`)
+- **Finder card** (replaces Legacy's left rail): a large search box with a results dropdown, and quick-pick chips for Pinned / Shortlist / Recent. Below them, the season toggle and **event chips**.
+- **Views:** Event field / Team detail / Shortlist tabs, plus Ask Bruno.
+- **Event field:**
+  - A stat header (teams, matches played, average OPR and score).
+  - A filter input, plus Round and Alliance toggle groups.
+  - Desktop: a kit table with `aria-sort` headers and direction arrows, rank medals, a shortlist marker, and a row that opens a peek. Phones: cards with a Sort menu.
+  - Each team has an actions menu: View team, View matches, Scout with Bruno, shortlist, pin.
+  - Pagination, and a data-source line.
+- **Peek:** a wide side sheet with the Modern `TeamProfile` and "Open in Team detail". Team detail itself is `TeamProfile`.
+- **Match sheets:** "View matches" lists that team's matches; each opens the Modern match breakdown.
+- **Shortlist:**
+  - A Bruno recommendations panel: scout next, and partner fits for our team.
+  - Team cards with a priority toggle, a Scout next switch, drafted notes (saved on blur) and strength / weakness badges. Suggested tags are dashed chips; custom tags can be added as a strength or weakness.
+  - Upcoming matches as alliance-coloured badges, with alliance text for screen readers.
+- Still no compare mode, comparison table or compare action.
+
+### Tests
+- **New (8 Modern Analyze tests):**
+  - The Bruno greeting and context, with no compare UI.
+  - Default event, sort, filter and the alliance filter.
+  - Peek → Open in Team detail.
+  - Search → Team detail and recents.
+  - Add to shortlist from the menu, then priority, scout-next and tags.
+  - **A half-written note survives a remount and saves on blur.**
+  - Pin → quick pick.
+  - View matches → match breakdown.
+- The Legacy scout tests and the 7b tests still pass.
+- **Totals:** 502 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (real FTC data, 2025–26, NJ Championship Parkway, 24 teams): the desktop finder and field table (the table scrolls inside its frame when Bruno's dock is open). At 390 px: no overflow, every target ≥44 px, and the field shows as cards. No real phone was available.
+
+## Phase 8a: Budget and Inventory
+
+### Shared controllers
+- **`useBudgetController`** (`src/components/budget/`): extracted from Legacy `BudgetView` with unchanged JSX.
+  - Same `/api/budget` POST / PATCH / DELETE bodies, optimistic delete with rollback, duplicate-as-new, right-click menu (`budget-tx`) and totals.
+  - The entry form is **drafted** (`budget:open`, `budget:editing`, `budget:form`). A save closes only the form it submitted.
+  - Save and delete now have separate locks (Legacy shared one).
+- **`useInventoryController`** (`src/components/inventory/`): extracted from Legacy `InventoryView` with unchanged JSX.
+  - Same endpoints: add, edit, optimistic delete, REV link scrape, invoice parse → review → confirm, auto-categorize.
+  - The add / edit forms and the invoice review are **drafted** (`inv:*`), with the same close-only-what-you-submitted guard.
+  - REV and invoice results are dropped after a sign-out or workspace switch (`inEpoch`).
+  - REV fills use a functional update, so typing during the fetch isn't lost.
+  - Search tolerates parts with no part number.
+- Kit: `SheetFooter`.
+
+### Modern Budget (`src/modern/pages/budget/BudgetPage.tsx`)
+- **Balance hero:** an animated net balance (red when negative), income and expense figures with an income-vs-expense split bar, and a new **cash-flow-by-month** bar chart (last six months with activity).
+- **"Where the money goes":** the top expense categories, with bars.
+- **Transactions:** All / Income / Expenses toggle and a search box, plus a **month-grouped ledger** with sticky month headers and each month's net.
+  - Each row has an in/out icon, a category badge and a signed amount (with screen-reader text), and an actions menu (Edit / Duplicate / Delete).
+- **Log / edit sheet:** Income / Expense toggle, `$` amount, description, category (suggested from past categories), date and team.
+- Read-only without the `budget` permission.
+
+### Modern Inventory (`src/modern/pages/inventory/InventoryPage.tsx`)
+- **Header actions:** Import invoice and Add part.
+- **Stats:** parts, units on hand and inventory value (animated).
+- **Finding parts:** search, Auto-categorize (shown when anything is uncategorized), a card / table layout toggle, and category chips.
+- **Part cards:** name, SKU and part number, quantity on hand and location, category badge, value and an actions menu. The table layout is a dense kit table.
+- **Add / edit sheet:** REV import panel (when adding), a fields grid with kit Selects for category and team, and a description.
+- **Invoice review dialog:** a checkbox per line, editable name / quantity / unit price, a category select, and "Import N items".
+- Read-only without the `inventory` permission.
+
+### Tests
+- **New (17 tests):**
+  - Budget: hero / ledger, filters, read-only, log (POST), edit (PATCH) / duplicate / delete, delete rollback, **draft survives remount**, and a slow save that doesn't close an edited form.
+  - Inventory: cards / filters, read-only, required fields + POST, REV fill, edit (PATCH) / delete, invoice parse → untick → confirm body, auto-categorize, **draft survives remount**, table layout.
+- **Totals:** 514 frontend tests pass. The failures are the 2 known Windows-only ftcCache tests, plus one Bruno Stop test that is known to be flaky under full-suite load (8/8 pass on their own three times). `tsc` is clean.
+- **Local QA:** with local-only seed rows (6 transactions, 6 parts) in the dev DB:
+  - Desktop dark: hero, chart, ledger, part grid, add sheet.
+  - 768 light: Budget.
+  - 390: both pages have no overflow, and every target is ≥44 px.
+  - No real phone was available.
+
+### Review follow-ups (8a)
+- **No double submits:** a form's fields freeze while it saves (the exported setters ignore edits, so Legacy is covered too). The save locks (`budget:saving`, `inv:saving`, `inv:invoice-confirming`) are drafted, so they survive a remount. Each request releases only its own lock (`inEpoch`), so an old save can't unlock a new one after a workspace switch.
+- **Delete rollback:** a failed delete restores only that row, near its old spot (`restoreRow`), so a refresh from a concurrent save isn't overwritten.
+- **Validation:** browser number checks stay on (`step="any"` only where decimals are fine). The controllers also check numbers in both modes: budget amounts must be greater than 0; stock must be a whole number, 0 or more; costs can't be negative.
+
 ## Phase 8b: Outreach
 
 ### Shared controller (`src/components/outreach/`)
