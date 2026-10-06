@@ -169,7 +169,7 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               <SheetTitle>{editing ? 'Edit part' : 'Add part'}</SheetTitle>
               <SheetDescription>{editing ? f.name : 'Name and SKU are required. A REV Robotics link can fill the rest.'}</SheetDescription>
             </SheetHeader>
-            <form id="part-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void (editing ? ctl.handleUpdate() : ctl.handleAdd()); }}>
+            <form id="part-form" noValidate className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void (editing ? ctl.handleUpdate() : ctl.handleAdd()); }}>
               <fieldset disabled={ctl.busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
               {!editing && (
                 <div className="rounded-xl border border-dashed border-border p-4">

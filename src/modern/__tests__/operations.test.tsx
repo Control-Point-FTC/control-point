@@ -57,6 +57,15 @@ describe('Modern Budget', () => {
     expect(screen.getByText('Where the money goes')).toBeInTheDocument();
   });
 
+  it('amounts past two decimals still save (no silent browser validation block)', async () => {
+    budgetSetup();
+    fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
+    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10.005' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
+    await waitFor(() => expect(calls('/api/budget', 'POST')).toHaveLength(1));
+    expect(body('/api/budget', 'POST')).toMatchObject({ amount: 10.005 });
+  });
+
   it('filters by type and search', () => {
     budgetSetup();
     fireEvent.click(screen.getByRole('radio', { name: 'Income' }));
