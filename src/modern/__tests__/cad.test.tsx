@@ -242,6 +242,23 @@ describe('Modern CAD', () => {
     expect(within(dlg).getByRole('button', { name: /Parse with Bruno/ })).toBeInTheDocument();
   });
 
+  it('cancelling a multi-file read sends no further files', async () => {
+    let reply: (v: any) => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/cad/parts/import-invoice/parse') return new Promise((r) => { reply = r; });
+      return init?.method ? json({ id: 1 }) : json(db[url] ?? []);
+    });
+    setup('cad-parts');
+    fireEvent.click(await screen.findByRole('button', { name: /Import invoice/ }));
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.change(within(dlg).getByLabelText(/Choose invoice files/), { target: { files: [new File(['x'], 'a.pdf'), new File(['y'], 'b.pdf'), new File(['z'], 'c.pdf')] } });
+    fireEvent.click(within(dlg).getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    await act(async () => { reply({ ok: true, json: async () => ({ items: [{ name: 'Row', quantity: 1, unitPrice: 1 }] }) }); });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls('/api/cad/parts/import-invoice/parse', 'POST')).toHaveLength(1);
+  });
+
   it('a status change or delete refreshes every mounted CAD page', async () => {
     setup('cad-reviews', true);
     fireEvent.click(await screen.findByRole('button', { name: /Lift v2/ }));

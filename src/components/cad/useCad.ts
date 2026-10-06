@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
-import { deleteDraft, getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
+import { deleteDraft, draftEpoch, getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 
 export const CAD_SECTIONS = ['Intake', 'Outtake', 'Drivetrain', 'Chassis', 'End Game', 'Electronics', 'Other'];
 export const REVIEW_STATUS_LABELS: Record<string, string> = {
@@ -385,18 +385,23 @@ export function useCadInvoiceImport(onDone: () => void) {
     if (!files.length || getDraft(INVOICE_PARSING_KEY, null) || lock.held()) return;
     const seq = getDraft<number>(INVOICE_SEQ_KEY, 0) + 1;
     setDraft(INVOICE_SEQ_KEY, seq);
-    const latest = () => getDraft<number>(INVOICE_SEQ_KEY, 0) === seq;
+    const epoch = draftEpoch();
+    // Still wanted: not discarded, replaced by a newer parse, or signed out.
+    const latest = () => draftEpoch() === epoch && getDraft<number>(INVOICE_SEQ_KEY, 0) === seq;
     const status = inEpoch((s: string | null) => { if (latest()) setParsing(s); });
     const found: any[] = [];
     const show = inEpoch((rows: any[]) => { if (latest()) rawSetItems(rows); });
     try {
       for (let i = 0; i < files.length; i++) {
+        // A cancelled read sends no further files (each one is a paid AI read).
+        if (!latest()) return;
         const file = files[i];
         status(files.length > 1 ? `Reading ${i + 1} of ${files.length}…` : 'Bruno is reading the invoice…');
         const form = new FormData();
         form.append('file', file);
         const r = await apiFetch('/api/cad/parts/import-invoice/parse', { method: 'POST', body: form });
         const d = await r.json().catch(() => ({}));
+        if (!latest()) return;
         if (!r.ok) { notify(`Couldn't read ${file.name}: ` + (d.error || 'Unsupported file'), 'error'); continue; }
         for (const it of d.items || []) {
           found.push({
@@ -411,6 +416,7 @@ export function useCadInvoiceImport(onDone: () => void) {
           });
         }
       }
+      if (!latest()) return;
       if (!found.length) { notify('No line items found in the selected file(s).', 'error'); return; }
       show(found);
     } catch (e: any) {
