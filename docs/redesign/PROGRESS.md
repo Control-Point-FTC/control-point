@@ -1114,6 +1114,29 @@ Phase 10 rebuilds the last Classic widgets that were still embedded inside Moder
   - It renders into the call stage, so it stays visible in fullscreen. The kit `PopoverContent` gained an optional `container` prop for this.
 - **Tests:** 3 new (pin, moderator deafen / move / remove with confirm, member-only view). The Classic voice suite still passes.
 
+## Phase 10b: Messages widgets
+
+The last Classic pieces inside Modern Messages are rebuilt.
+- **Shared logic (Classic JSX unchanged):**
+  - `useReactionToggle` (in `MessageReactions`) holds the optimistic toggle, the server reconcile, rollback with an error, and one request per emoji. It also names who reacted.
+  - `useEmojiPicker` (in `ReactionPicker`) holds the category, a search of up to 64 matches, and your custom reactions.
+  - `useVoiceChannels` holds auto-expanding live channels, joining (it asks about video per your camera default), join with video, and admin rename.
+- **Modern `ReactionBar`:**
+  - Spring-in chips, a count that ticks on change, and a kit tooltip with the big emoji and who reacted.
+  - A "+" chip opens the picker. Chips are 36 px tall on phones.
+- **Modern `EmojiPicker`:**
+  - Quick reactions, a kit search input, and category tabs with a sliding marker.
+  - A grid and your custom reactions.
+  - Escape or a click outside closes it.
+- **Modern `VoiceChannels`:**
+  - Sidebar rows matching the text channels, with a live dot, Live call / lock / private markers and a people count.
+  - Join with video and rename appear on hover (always on touch).
+  - An animated participant list, and an inline rename form.
+- **Found while building it:** the custom-reaction upload screen (`CustomReactionsSettings`) isn't rendered anywhere. It is flagged as a follow-up, and the Modern picker no longer points to a Settings page that doesn't exist.
+- **Tests:**
+  - 8 new: reaction toggle, rollback, the + chip, picker quick / search / category / custom / close, voice channels list, join rules and rename.
+  - The Messages suite now mocks the new component; the Classic voice suite still passes.
+
 ## Phase 10c: Communication log dialogs
 
 - **Shared logic (Classic JSX unchanged, apart from closing through the hook):**

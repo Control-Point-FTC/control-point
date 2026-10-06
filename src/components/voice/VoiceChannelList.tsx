@@ -1,14 +1,12 @@
 // VOICE CHANNELS section for the sidebar. Mirrors the text-channel row
 // styling (same padding, hover, active states) so it feels native.
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { ChevronDown, ChevronRight, EyeOff, Headphones, Lock, MicOff, MonitorUp, Pencil, Video, VideoOff, Volume2 } from 'lucide-react';
 import { cn } from '../ui';
-import { useVoice, type VoiceChannelSummary } from '../../voice';
+import { type VoiceChannelSummary } from '../../voice';
+import { useVoiceChannels } from './useVoiceChannels';
 import { VoiceAvatar } from './shared';
-import { confirmDialog } from '../dialog';
-import { getCameraDefault } from '../SettingsModal';
-import { voiceAdminApi } from '../../voice/api';
 
 function JoinedRow({ p, isSelf }: { p: VoiceChannelSummary['participants'][number]; isSelf: boolean }) {
   return (
@@ -35,74 +33,10 @@ function JoinedRow({ p, isSelf }: { p: VoiceChannelSummary['participants'][numbe
 }
 
 export function VoiceChannelList({ className }: { className?: string }) {
-  const { channels, session, joinChannel, participants, error, clearError, canManageVoice, refreshChannels } = useVoice();
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
-  const [joiningId, setJoiningId] = useState<number | null>(null);
-  const [renamingId, setRenamingId] = useState<number | null>(null);
-  const [renameName, setRenameName] = useState('');
-  const [renameBusy, setRenameBusy] = useState(false);
-  const selfId = participants.find((p) => p.isSelf)?.memberId;
-
-  // Auto-expand channels that have participants, so users can see who's
-  // in the call without clicking (Discord-style).
-  useEffect(() => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      for (const c of channels) {
-        if (c.participants.length > 0) next.add(c.id);
-      }
-      return next;
-    });
-  }, [channels]);
-
-  const toggleExpanded = (id: number) =>
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const handleJoin = async (channel: VoiceChannelSummary) => {
-    if (session?.kind === 'voice_channel' && session.channelId === channel.id) return;
-    setJoiningId(channel.id);
-    try {
-      // Camera only turns on with explicit user consent — never automatically.
-      const camDefault = getCameraDefault();
-      let withVideo = false;
-      if (camDefault === 'on') {
-        withVideo = true;
-      } else if (camDefault === 'ask') {
-        withVideo = await confirmDialog({
-          title: 'Join with video?',
-          message: `Turn on your camera when joining ${channel.name}?`,
-          confirmLabel: 'Join with video',
-          cancelLabel: 'Audio only',
-        });
-      }
-      // 'off' → withVideo stays false, joins audio-only.
-      await joinChannel(channel.id, withVideo ? { video: true } : undefined);
-    } finally {
-      setJoiningId(null);
-    }
-  };
-
-  const handleRenameSubmit = async () => {
-    if (renamingId == null || renameBusy) return;
-    const name = renameName.trim();
-    if (!name) return;
-    setRenameBusy(true);
-    try {
-      await voiceAdminApi.patchChannel(renamingId, { name } as any);
-      await refreshChannels();
-      setRenamingId(null);
-      setRenameName('');
-    } catch (e: any) {
-      // Error surfaced via voice context error state
-    } finally {
-      setRenameBusy(false);
-    }
-  };
+  const {
+    channels, session, error, clearError, canManageVoice, selfId, expandedIds, toggleExpanded, joiningId, handleJoin, joinWithVideo,
+    renamingId, setRenamingId, renameName, setRenameName, renameBusy, startRename, handleRenameSubmit,
+  } = useVoiceChannels();
 
   return (
     <div className={className} aria-label="Voice channels">
@@ -167,14 +101,7 @@ export function VoiceChannelList({ className }: { className?: string }) {
                   {!isActive && (
                     <button
                       type="button"
-                      onClick={async () => {
-                        setJoiningId(c.id);
-                        try {
-                          await joinChannel(c.id, { video: true });
-                        } finally {
-                          setJoiningId(null);
-                        }
-                      }}
+                      onClick={() => void joinWithVideo(c.id)}
                       disabled={joining}
                       title={`Join ${c.name} with video`}
                       aria-label={`Join ${c.name} with video on`}
@@ -191,7 +118,7 @@ export function VoiceChannelList({ className }: { className?: string }) {
                   {canManageVoice && !c.isTemporary && (
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setRenameName(c.name); setRenamingId(renamingId === c.id ? null : c.id); }}
+                      onClick={(e) => { e.stopPropagation(); startRename(c); }}
                       title={`Rename ${c.name}`}
                       aria-label={`Rename voice channel ${c.name}`}
                       className={cn(
