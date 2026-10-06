@@ -733,3 +733,29 @@ Legacy `AnalyzeView` keeps its JSX; its logic moved into hooks that both modes u
 - **Delete rollback:** a failed delete restores only that row, near its old spot (`restoreRow`), so a refresh from a concurrent save isn't overwritten.
 - **Validation:** browser number checks stay on (`step="any"` only where decimals are fine). The controllers also check numbers in both modes: budget amounts must be greater than 0; stock must be a whole number, 0 or more; costs can't be negative.
 
+## Phase 8b: Outreach
+
+### Shared controller (`src/components/outreach/`)
+- **`useOutreachController`:** extracted from Legacy `OutreachView`.
+  - Same `/api/outreach` and `/api/outreach/social` endpoints and bodies, totals, and the TikTok OAuth result banner.
+  - The Bruno AI bulk log: quick local parse, or "Parse with Bruno" via `streamBuildHelper`.
+  - Optimistic delete / unlink / pin / reorder.
+  - Permissions as on the server: **any member** can log, edit and delete events; channels need `manage_outreach` (`hasScope('outreach')`).
+- **`parseOutreachRows`:** moved to its own module; App re-exports it for its existing tests.
+- **Lessons from the 8a review, applied up front:**
+  - The event form, the bulk box and their **in-flight locks are drafted**, so returning mid-save can't log twice. Fields freeze while saving, and a save closes only the form it submitted.
+  - A failed delete or unlink puts back **only that row**. A failed pin flips back only that profile; Legacy's optimistic pin also wrote the wrong field.
+  - Unlink now uses the app's confirm dialog instead of `window.confirm`.
+
+### Modern Outreach (`src/modern/pages/outreach/OutreachPage.tsx`)
+- **Impact strip:** events, hours, people reached and funds raised, animated.
+- **Event log:** a newest-first **timeline** with calendar date tiles. Each card has an hours badge, location, description, reached / raised badges and an Edit / Delete menu; right-click works too.
+- **Channels:** YouTube cards with a big subscriber count, a growth badge and an **animated trend line**, views / videos / average per video, last sync, Open, and Sync now. A manage menu offers pin, move up / down and unlink. "Link YouTube" opens a dialog.
+- **Log / edit sheet:** quick-type chips, title, description, date, location, hours / attendees / funds.
+- **Bruno AI sheet:** paste box, Quick parse / Parse with Bruno, row preview with remove, and "Log all N events".
+- **Validation:** browser number checks stay on (minimum 0; whole hours and attendees), with `step="any"` on funds so `$12.345` rounds to cents instead of being blocked.
+
+### Tests
+- **New (10 tests):** totals and timeline order, with TikTok hidden; member vs manager rights; quick-type log with normalised numbers; title required; edit / delete with row-only rollback; quick parse → remove → log all; Parse with Bruno; pin / sync / unlink; Link YouTube; **draft survives remount** and the **save lock survives leaving and coming back**.
+- The `parseOutreachRows` tests (7) still pass. `tsc` is clean.
+- **Local QA** (3 local-only seeded events): desktop dark and 390 px, with no overflow and every target ≥44 px. No real phone was available.
