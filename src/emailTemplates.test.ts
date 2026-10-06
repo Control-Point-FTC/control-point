@@ -39,4 +39,10 @@ describe("email templates (phase 9d)", () => {
     expect(html).not.toMatch(/<p>|<t>|<f>|<l>/);
     expect(html).toContain('href="https://x.test/&quot;q"');
   });
+
+  it("classic Outlook gets a fixed-width wrapper (it ignores max-width)", () => {
+    const html = verificationEmailHtml("111111");
+    expect(html).toContain('<!--[if mso]><table role="presentation" width="520"');
+    expect(html).toContain("<!--[if mso]></td></tr></table><![endif]-->");
+  });
 });

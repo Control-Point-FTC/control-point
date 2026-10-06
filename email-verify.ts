@@ -43,7 +43,8 @@ export function hashCode(code: string): string {
 // styles so it renders the same in Gmail, Outlook and Apple Mail: a light card
 // with the Control Point mark, a hidden preheader (the inbox preview line),
 // the message, an optional code or button, and a footer that says why the
-// email was sent. Every dynamic value is escaped.
+// email was sent. Every dynamic value is escaped. Classic Outlook ignores
+// max-width, so a fixed 520px ghost table (Outlook-only) keeps it compact.
 // ---------------------------------------------------------------------------
 
 const BRAND = "#ffc700";
@@ -84,6 +85,7 @@ export function emailTemplate({ preheader, title, intro, body = "", cta, footnot
 <body style="margin:0;padding:0;background:#f4f4f5;">
 <span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</span>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f5;"><tr><td align="center" style="padding:32px 16px;">
+<!--[if mso]><table role="presentation" width="520" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
 <tr><td style="padding:0 4px 16px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -102,6 +104,7 @@ ${button}
 ${escapeHtml(footnote)}<br><a href="${escapeHtml(site)}" style="color:${FAINT};text-decoration:underline;">${escapeHtml(site.replace(/^https?:\/\//, ""))}</a> &middot; Mission control for robotics teams
 </td></tr>
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
 </td></tr></table>
 </body></html>`;
 }
