@@ -247,7 +247,9 @@ export function useOwnerUser(userId: number, { onClose, onChanged, teams }: { on
         return;
       }
       notify(`Moved to ${dest.name}`, 'success');
-      setMoveTeamId('');
+      // A destination picked while this was moving stays.
+      const moveKey = `owner:move:${userId}`;
+      if (getDraft<string>(moveKey, '') === String(moveTeamId)) deleteDraft(moveKey);
       await load(); onChanged();
     } catch (e: any) {
       const msg = e?.message?.includes('fetch') || e?.name === 'TypeError'

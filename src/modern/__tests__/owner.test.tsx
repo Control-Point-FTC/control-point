@@ -10,7 +10,7 @@ vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()),
 import { InterfaceModeProvider } from '../interfaceMode';
 import { OwnerPage } from '../pages/owner/OwnerPage';
 import { CheckinPage } from '../pages/attendance/CheckinPage';
-import { clearDrafts } from '../drafts';
+import { clearDrafts, getDraft, setDraft } from '../drafts';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
 const json = (body: any, ok = true, status = ok ? 200 : 400) => Promise.resolve({ ok, status, json: async () => body });
@@ -193,6 +193,28 @@ describe('Owner console races', () => {
     await act(async () => { pending.shift()!(); });
     await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Warning recorded', 'success'));
     expect(screen.getByLabelText('Warning reason')).toHaveValue('next one');
+  });
+
+  it('a destination picked while a move is sending is kept', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/owner/users/11/move') return new Promise((r) => { finish = () => r({ ok: true, status: 200, json: async () => ({}) }); });
+      if (init?.method) return json({});
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [], providers: [] });
+      return json(DB[url.split('?')[0]] ?? null);
+    });
+    setDraft('owner:move:11', '2');
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Users/);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
+    const sheet = await screen.findByRole('dialog');
+    fireEvent.click(await within(sheet).findByRole('button', { name: 'Move' }));
+    await waitFor(() => expect(calls('/api/owner/users/11/move', 'POST')).toHaveLength(1));
+    act(() => setDraft('owner:move:11', '1')); // picked again (e.g. after reopening the sheet)
+    await act(async () => { finish(); });
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Moved to Gears', 'success'));
+    expect(getDraft('owner:move:11', '')).toBe('1');
   });
 
   it('user rows are single list items', async () => {
