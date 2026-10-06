@@ -140,5 +140,25 @@ describe('10c review fixes', () => {
     fireEvent.click(await screen.findByRole('option', { name: /Thread 250/ }));
     expect(screen.getByRole('combobox', { name: 'Thread' })).toHaveTextContent('Thread 250');
   });
+
+  it('a look switch mid-save keeps the lock, and the dialog shown now finishes and closes', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation(() => new Promise((r) => { finish = () => r({ ok: true, status: 200, json: async () => ({ id: 1 }) }); }));
+    const first = render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Fill in the fields myself' }));
+    fireEvent.change(await screen.findByLabelText('Recipient'), { target: { value: 'a@x.test' } });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Hello' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Log it' }));
+    first.unmount(); // look switch: the draft (and its session) stay
+    const onLogged = vi.fn();
+    render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={onLogged} />);
+    expect(screen.getByRole('button', { name: /Logging/ })).toBeDisabled(); // no second send
+    await act(async () => { finish(); });
+    await waitFor(() => expect(onLogged).toHaveBeenCalled());
+    expect(api.apiFetch).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);
+    expect(screen.getByLabelText('Email to parse')).toHaveValue(''); // the logged draft is gone
+  });
 });
 

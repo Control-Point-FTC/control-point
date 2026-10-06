@@ -4,7 +4,7 @@
 // then POST /api/communications. Fields are drafted (a look switch keeps
 // them); a file read or Bruno reply after sign-out never writes back, and only
 // the newest Bruno reply may fill the form.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { streamBuildHelper, extractActionProposals } from '../../services/aiService';
 import { apiUrl, apiFetch } from '../../services/api';
@@ -12,7 +12,7 @@ import { deleteDraft, getDraft, inEpoch, newSessionId, setDraft, useDraft } from
 import { MAX_FILE_BYTES, parseEmailFile, type ParsedEmail } from './emailParse';
 
 const K = 'comm-import:';
-const KEYS = ['session', 'parse-seq', 'fileName', 'parsed', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'pasteMode', 'pasteText'];
+const KEYS = ['session', 'parse-seq', 'saving', 'logged', 'fileName', 'parsed', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'pasteMode', 'pasteText'];
 /** Forget a logged or abandoned import. */
 export function clearEmailImportDrafts() {
   KEYS.forEach((k) => deleteDraft(K + k));
@@ -27,6 +27,17 @@ export function useEmailImport({ onLogged, onRefresh }: { onLogged: () => void; 
     return id;
   });
   const current = () => getDraft<number | null>(`${K}session`, null) === session;
+  // Drafted and owned by the session: a remount (look switch) mid-save keeps
+  // the lock, so the same entry can't be sent twice.
+  const [savingFor, setSavingFor] = useDraft<number | null>(`${K}saving`, null);
+  const saving = savingFor != null && savingFor === session;
+  // A finished save marks its session logged; the dialog mounted for that
+  // session now (maybe in the other look) clears the draft and closes.
+  const [logged] = useDraft<number | null>(`${K}logged`, null);
+  useEffect(() => {
+    if (logged === session) { clearEmailImportDrafts(); onLogged(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logged]);
   const [fileName, setFileName] = useDraft(`${K}fileName`, '');
   const [error, setError] = useState<string | null>(null);
   const [parsed, setParsed] = useDraft(`${K}parsed`, false);
@@ -37,7 +48,6 @@ export function useEmailImport({ onLogged, onRefresh }: { onLogged: () => void; 
   const [type, setType] = useDraft(`${K}type`, 'email');
   const [direction, setDirection] = useDraft<'inbound' | 'outbound'>(`${K}direction`, 'outbound');
   const [aiBusy, setAiBusy] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [pasteMode, setPasteMode] = useDraft(`${K}pasteMode`, false);
   const [pasteText, setPasteText] = useDraft(`${K}pasteText`, '');
 
@@ -121,8 +131,10 @@ export function useEmailImport({ onLogged, onRefresh }: { onLogged: () => void; 
   };
 
   const handleLog = async () => {
-    if (!recipient.trim() || !subject.trim() || saving) return;
-    setSaving(true);
+    if (!recipient.trim() || !subject.trim() || getDraft<number | null>(`${K}saving`, null) === session) return;
+    setSavingFor(session);
+    // Only this session's lock is released (never a newer dialog's).
+    const release = inEpoch(() => { if (getDraft<number | null>(`${K}saving`, null) === session) setSavingFor(null); });
     setError(null);
     try {
       // Use the shared apiFetch so the real session id (X-Session-ID) travels
@@ -136,16 +148,12 @@ export function useEmailImport({ onLogged, onRefresh }: { onLogged: () => void; 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log it — try again.');
       // Saved either way; only the dialog that sent it is cleared and closed.
-      if (current()) {
-        clearEmailImportDrafts();
-        onLogged();
-      } else {
-        onRefresh?.();
-      }
+      if (current()) setDraft(`${K}logged`, session); // the mounted dialog finishes it
+      else onRefresh?.();
     } catch (e: any) {
       setError(e?.message || 'Could not log it — try again.');
     } finally {
-      setSaving(false);
+      release();
     }
   };
 

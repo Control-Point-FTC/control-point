@@ -3,7 +3,7 @@
 // subject, body, date, type, direction, thread), everything is editable, then
 // POST /api/communications. The paste and the fields are drafted, so a look
 // switch keeps them; only the newest parse may fill the form.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { streamBuildHelper, extractActionProposals } from '../../services/aiService';
 import { apiFetch } from '../../services/api';
@@ -17,7 +17,7 @@ export interface QuickAddThread {
 }
 
 const K = 'comm-quickadd:';
-const KEYS = ['session', 'parse-seq', 'paste', 'parsed', 'manual', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'parent'];
+const KEYS = ['session', 'parse-seq', 'saving', 'logged', 'paste', 'parsed', 'manual', 'recipient', 'subject', 'body', 'date', 'type', 'direction', 'parent'];
 /** Forget a logged or abandoned quick-add. */
 export function clearQuickAddDrafts() {
   KEYS.forEach((k) => deleteDraft(K + k));
@@ -32,11 +32,21 @@ export function useBrunoQuickAdd({ threads, onLogged, onRefresh }: { threads: Qu
     return id;
   });
   const current = () => getDraft<number | null>(`${K}session`, null) === session;
+  // Drafted and owned by the session: a remount (look switch) mid-save keeps
+  // the lock, so the same entry can't be sent twice.
+  const [savingFor, setSavingFor] = useDraft<number | null>(`${K}saving`, null);
+  const saving = savingFor != null && savingFor === session;
+  // A finished save marks its session logged; the dialog mounted for that
+  // session now (maybe in the other look) clears the draft and closes.
+  const [logged] = useDraft<number | null>(`${K}logged`, null);
+  useEffect(() => {
+    if (logged === session) { clearQuickAddDrafts(); onLogged(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logged]);
   const [paste, setPaste] = useDraft(`${K}paste`, '');
   const [aiBusy, setAiBusy] = useState(false);
   const [parsed, setParsed] = useDraft(`${K}parsed`, false);
   const [manual, setManual] = useDraft(`${K}manual`, false);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [threadSearch, setThreadSearch] = useState('');
 
@@ -110,8 +120,10 @@ Email to parse:
   };
 
   const handleLog = async () => {
-    if (!recipient.trim() || !subject.trim() || saving) return;
-    setSaving(true);
+    if (!recipient.trim() || !subject.trim() || getDraft<number | null>(`${K}saving`, null) === session) return;
+    setSavingFor(session);
+    // Only this session's lock is released (never a newer dialog's).
+    const release = inEpoch(() => { if (getDraft<number | null>(`${K}saving`, null) === session) setSavingFor(null); });
     setError(null);
     try {
       const res = await apiFetch('/api/communications', {
@@ -130,16 +142,12 @@ Email to parse:
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not log it — try again.');
       // Saved either way; only the dialog that sent it is cleared and closed.
-      if (current()) {
-        clearQuickAddDrafts();
-        onLogged();
-      } else {
-        onRefresh?.();
-      }
+      if (current()) setDraft(`${K}logged`, session); // the mounted dialog finishes it
+      else onRefresh?.();
     } catch (e: any) {
       setError(e?.message || 'Could not log it — try again.');
     } finally {
-      setSaving(false);
+      release();
     }
   };
 
