@@ -15,7 +15,7 @@ import { Pencil, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { extractActionProposals, streamBuildHelper } from '../../services/aiService';
 import { confirmDialog, notify } from '../dialog';
-import { getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
+import { draftEpoch, getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { parseOutreachRows } from './parseOutreachRows';
 
@@ -241,10 +241,14 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     // identity check below would pass (getDraft falls back to `submitted`)
     // and could write these rows into the next account's box.
     const sameSession = inEpoch((fn: () => void) => fn());
+    const epoch = draftEpoch();
     let done = 0;
     const failed: any[] = [];
     try {
       for (const r of submitted) {
+        // Stop as soon as the account / workspace changes: each request uses
+        // the current session, so the rest would land in the new workspace.
+        if (draftEpoch() !== epoch) break;
         const payload = {
           title: r.title, description: r.description || '', date: r.date,
           hours: r.hours === '' ? 0 : Number(r.hours) || 0,

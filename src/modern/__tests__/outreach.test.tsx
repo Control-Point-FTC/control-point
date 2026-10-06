@@ -259,5 +259,19 @@ describe('Modern Outreach', () => {
     await act(async () => { fail(); });
     expect(screen.queryByText('Secret demo')).not.toBeInTheDocument();
   });
+
+  it('a bulk log stops sending as soon as the workspace changes', async () => {
+    const pending: (() => void)[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/outreach' && init?.method === 'POST' ? new Promise((_r, j) => { pending.push(() => j(new Error('offline'))); }) : json({})));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Bruno AI/ }));
+    fireEvent.change(await screen.findByLabelText('Events'), { target: { value: ['One | 2026-09-12 | 2', 'Two | 2026-09-13 | 2'].join(String.fromCharCode(10)) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Quick parse' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Log all 2 events' }));
+    await waitFor(() => expect(calls('/api/outreach', 'POST')).toHaveLength(1));
+    act(() => clearDrafts()); // switched workspace
+    await act(async () => { pending[0](); });
+    expect(calls('/api/outreach', 'POST')).toHaveLength(1);
+  });
 });
 
