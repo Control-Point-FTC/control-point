@@ -3,6 +3,7 @@
 // stepper on wide screens (a progress bar on phones). The look step also picks
 // Modern or Classic; switching mid-setup carries on in Classic at the same
 // step with the same typed name and role (they're drafted).
+import { useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { ArrowLeft, ArrowRight, Check, Compass, LayoutDashboard, Moon, Sun, UserCircle } from 'lucide-react';
 import { cn } from '../../../components/cn';
@@ -12,6 +13,8 @@ import {
 import { useSetupWizard } from '../../../components/onboarding/useSetupWizard';
 import type { SetupWizardProps } from '../../../components/onboarding/SetupWizard';
 import { useInterfaceMode, type InterfaceMode } from '../../interfaceMode';
+import { useDraft } from '../../drafts';
+import { notify } from '../../../components/dialog';
 
 const STEPS = [
   { title: 'Your profile', hint: 'Name and role' },
@@ -64,14 +67,28 @@ const layoutPreview = (modern: boolean) => (
 );
 
 export function SetupDialog(props: SetupWizardProps) {
-  const w = useSetupWizard(props);
+  // "Leave setup?" is asked inside this dialog: a separate dialog layered over
+  // a modal Radix dialog can't take focus or clicks.
+  const [ask, setAsk] = useState<((ok: boolean) => void) | null>(null);
+  const confirmLeave = () => new Promise<boolean>((resolve) => setAsk(() => resolve));
+  const answer = (ok: boolean) => { ask?.(ok); setAsk(null); };
+  const w = useSetupWizard(props, confirmLeave);
   const { mode, setMode } = useInterfaceMode();
   const { state, onStartTour } = props;
-  const pick = (m: InterfaceMode) => { if (m !== mode) void setMode(m); };
+  // Drafted: a failed save flips the look and back, remounting this dialog.
+  const [layoutError, setLayoutError] = useDraft<string | null>('onboarding:layout-error', null);
+  const pick = async (m: InterfaceMode) => {
+    if (m === mode) return;
+    setLayoutError(null);
+    if (!(await setMode(m))) {
+      setLayoutError("Couldn't save your layout. Check your connection and try again.");
+      notify("Couldn't save your layout.", 'error');
+    }
+  };
 
   return (
     <MotionConfig reducedMotion="user">
-      <Dialog open onOpenChange={(o) => { if (!o) void w.handleClose(); }}>
+      <Dialog open onOpenChange={(o) => { if (o) return; if (ask) answer(false); else void w.handleClose(); }}>
         <DialogContent className="max-h-[92dvh] overflow-y-auto p-0 sm:max-w-2xl">
           <div className="grid sm:grid-cols-[200px_1fr]">
             <nav aria-label="Setup steps" className="hidden border-r border-border bg-muted/50 p-5 sm:block">
@@ -95,7 +112,28 @@ export function SetupDialog(props: SetupWizardProps) {
                 })}
               </ol>
             </nav>
-            <div className="min-w-0 p-6">
+            <div className="relative min-w-0 p-6">
+              <AnimatePresence>
+                {ask && (
+                  <motion.div
+                    role="alertdialog"
+                    aria-labelledby="setup-leave-title"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 z-10 flex items-center justify-center bg-popover/95 p-6 backdrop-blur-sm"
+                  >
+                    <div className="max-w-xs text-center">
+                      <p id="setup-leave-title" className="font-display text-lg font-semibold">Leave setup?</p>
+                      <p className="mt-1.5 text-sm text-muted-foreground">Your profile changes haven&rsquo;t been saved yet. You can finish setup anytime from your account menu.</p>
+                      <div className="mt-5 grid gap-2">
+                        <Button onClick={() => answer(false)} autoFocus className="h-11">Keep editing</Button>
+                        <Button variant="ghost" onClick={() => answer(true)} className="h-11">Leave</Button>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               <div className="mb-4 flex gap-1 sm:hidden" aria-hidden="true">
                 {STEPS.map((s, i) => <span key={s.title} className={cn('h-1 flex-1 rounded-full transition-colors', i <= w.step ? 'bg-accent' : 'bg-foreground/10')} />)}
               </div>
@@ -150,10 +188,12 @@ export function SetupDialog(props: SetupWizardProps) {
                       <div>
                         <p className="mb-2 text-sm font-medium">Layout</p>
                         <div role="radiogroup" aria-label="Layout" className="grid grid-cols-2 gap-3">
-                          <Choice checked={mode === 'modern'} onClick={() => pick('modern')} title={<><LayoutDashboard className="size-4" /> Modern</>} hint="This look" preview={layoutPreview(true)} />
-                          <Choice checked={mode === 'legacy'} onClick={() => pick('legacy')} title="Classic" hint="The original look" preview={layoutPreview(false)} />
+                          <Choice checked={mode === 'modern'} onClick={() => void pick('modern')} title={<><LayoutDashboard className="size-4" /> Modern</>} hint="This look" preview={layoutPreview(true)} />
+                          <Choice checked={mode === 'legacy'} onClick={() => void pick('legacy')} title="Classic" hint="The original look" preview={layoutPreview(false)} />
                         </div>
-                        <p className="mt-2 text-xs text-muted-foreground">Both apply instantly. The theme is kept on this device; the layout is saved to your account.</p>
+                        {layoutError
+                          ? <p role="alert" className="mt-2 text-xs text-destructive">{layoutError}</p>
+                          : <p className="mt-2 text-xs text-muted-foreground">Both apply instantly. The theme is kept on this device; the layout is saved to your account.</p>}
                       </div>
                       <div className="flex items-center justify-between gap-2">
                         <Button variant="ghost" onClick={() => w.setStep(0)} className="h-11"><ArrowLeft /> Back</Button>

@@ -9,6 +9,15 @@ import {
   type TourStep,
 } from './onboardingState';
 import type { WalkthroughProps } from './Walkthrough';
+import { deleteDraft, getDraft, setDraft } from '../../modern/drafts';
+
+// The step on screen, kept while the tour is open so a look switch (which
+// swaps the Classic and Modern tour) carries on where the user was. App
+// clears it when the tour closes.
+const TOUR_STEP_KEY = 'onboarding:tour-step';
+export function clearTourDraft() {
+  deleteDraft(TOUR_STEP_KEY);
+}
 
 // ---------------------------------------------------------------------------
 // Choreography constants. The tour runs as a three-beat sequence per step:
@@ -80,7 +89,7 @@ export function useWalkthrough({ steps, initialStep = 0, onStepChange, onExit }:
 
   // shownIndex drives visible content; targetRef tracks the latest requested
   // step so rapid Next/Back presses retarget cleanly mid-transition.
-  const [shownIndex, setShownIndex] = useState(() => clampStep(initialStep, steps.length));
+  const [shownIndex, setShownIndex] = useState(() => clampStep(getDraft<number>(TOUR_STEP_KEY, initialStep), steps.length));
   const shownRef = useRef(shownIndex);
   const targetRef = useRef(shownIndex);
   const [placement, setPlacement] = useState<TooltipPlacement>({ kind: 'center' });
@@ -153,6 +162,7 @@ export function useWalkthrough({ steps, initialStep = 0, onStepChange, onExit }:
     (i: number) => {
       shownRef.current = i;
       setShownIndex(i);
+      setDraft(TOUR_STEP_KEY, i);
       onStepChange?.(i);
       enterStep(i);
     },

@@ -186,6 +186,7 @@ import { WelcomeDialog } from './modern/pages/onboarding/WelcomeDialog';
 import { SetupDialog } from './modern/pages/onboarding/SetupDialog';
 import { TourCard } from './modern/pages/onboarding/TourCard';
 import { clearSetupDrafts } from './components/onboarding/useSetupWizard';
+import { clearTourDraft } from './components/onboarding/useWalkthrough';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { InboxPage } from './modern/pages/InboxPage';
@@ -1155,6 +1156,8 @@ export default function App() {
   const [onboardingReady, setOnboardingReady] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  // A closed tour starts at its own start step next time (the draft only bridges a look switch).
+  useEffect(() => { if (!tourOpen) clearTourDraft(); }, [tourOpen]);
   const [tourStartStep, setTourStartStep] = useState(0);
   const [wizardOpen, setWizardOpen] = useState(false);
   // A closed setup starts fresh next time (its drafts only bridge a look switch).

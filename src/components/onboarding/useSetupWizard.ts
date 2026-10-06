@@ -6,16 +6,41 @@ import { useEffect, useRef, useState } from 'react';
 import { buildProfilePatch, validateProfileInput } from './onboardingState';
 import { confirmDialog } from '../dialog';
 import { useTheme } from '../../hooks/useTheme';
-import { deleteDraft, useDraft } from '../../modern/drafts';
+import { deleteDraft, getDraft, newSessionId, setDraft, useDraft } from '../../modern/drafts';
 import type { SetupWizardProps } from './SetupWizard';
 
-const K = { step: 'onboarding:wizard-step', name: 'onboarding:wizard-name', role: 'onboarding:wizard-role' };
+const K = {
+  step: 'onboarding:wizard-step',
+  name: 'onboarding:wizard-name',
+  role: 'onboarding:wizard-role',
+  /** This setup's id: survives a look switch, gone once setup closes. */
+  session: 'onboarding:wizard-session',
+  /** Modern's failed-layout-save message. */
+  layoutError: 'onboarding:layout-error',
+};
 /** Forget a finished or abandoned setup's drafts. */
 export function clearSetupDrafts() {
   Object.values(K).forEach(deleteDraft);
 }
 
-export function useSetupWizard({ user, initialStep = 0, state, onPatchState, onSaveProfile, onProfileChanged, onClose }: SetupWizardProps) {
+export function useSetupWizard(
+  { user, initialStep = 0, state, onPatchState, onSaveProfile, onProfileChanged, onClose }: SetupWizardProps,
+  /** How to ask before leaving with unsaved edits (Modern asks inside its dialog). */
+  confirmLeave: () => Promise<boolean> = () => confirmDialog({
+    title: 'Leave setup?',
+    message: 'Your profile changes haven’t been saved yet. You can finish setup anytime from your account menu.',
+    confirmLabel: 'Leave',
+    cancelLabel: 'Keep editing',
+  }),
+) {
+  // A save that finishes after this setup closed (and maybe a new one opened)
+  // must not move the new setup's step.
+  const [session] = useState(() => {
+    let id = getDraft<number | null>(K.session, null);
+    if (id == null) { id = newSessionId(); setDraft(K.session, id); }
+    return id;
+  });
+  const stillOpen = () => getDraft<number | null>(K.session, null) === session;
   const [step, setStep] = useDraft<0 | 1 | 2 | 3>(K.step, initialStep);
   const [name, setName] = useDraft(K.name, user.name || '');
   const [role, setRole] = useDraft(K.role, user.role || '');
@@ -44,13 +69,7 @@ export function useSetupWizard({ user, initialStep = 0, state, onPatchState, onS
 
   const handleClose = async () => {
     if (dirtyRef.current && step === 0) {
-      const ok = await confirmDialog({
-        title: 'Leave setup?',
-        message: 'Your profile changes haven\u2019t been saved yet. You can finish setup anytime from your account menu.',
-        confirmLabel: 'Leave',
-        cancelLabel: 'Keep editing',
-      });
-      if (!ok) return;
+      if (!(await confirmLeave())) return;
     }
     clearSetupDrafts();
     onClose();
@@ -71,7 +90,7 @@ export function useSetupWizard({ user, initialStep = 0, state, onPatchState, onS
       try {
         await markStep('profile', 'skipped');
         setSummary((s) => ({ ...s, profile: 'skipped' }));
-        setStep(1);
+        if (stillOpen()) setStep(1);
       } catch (e: any) {
         setError(e?.message || 'Could not save. Please try again.');
       } finally {
@@ -93,7 +112,7 @@ export function useSetupWizard({ user, initialStep = 0, state, onPatchState, onS
       }
       await markStep('profile', 'done');
       setSummary((s) => ({ ...s, profile: 'done' }));
-      setStep(1);
+      if (stillOpen()) setStep(1);
     } catch (e: any) {
       setError(e?.message || 'Could not save your profile. Please try again.');
     } finally {
@@ -107,7 +126,7 @@ export function useSetupWizard({ user, initialStep = 0, state, onPatchState, onS
     try {
       await markStep('tour', 'skipped');
       setSummary((s) => ({ ...s, tour: 'skipped' }));
-      setStep(3);
+      if (stillOpen()) setStep(3);
     } catch (e: any) {
       setError(e?.message || 'Could not save. Please try again.');
     } finally {

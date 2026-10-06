@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
@@ -11,6 +11,8 @@ import { WelcomeDialog } from '../pages/onboarding/WelcomeDialog';
 import { SetupDialog } from '../pages/onboarding/SetupDialog';
 import { TourCard } from '../pages/onboarding/TourCard';
 import SetupWizard from '../../components/onboarding/SetupWizard';
+import Walkthrough from '../../components/onboarding/Walkthrough';
+import { clearTourDraft } from '../../components/onboarding/useWalkthrough';
 import { defaultOnboardingState, type OnboardingState, type TourStep } from '../../components/onboarding/onboardingState';
 import { clearSetupDrafts } from '../../components/onboarding/useSetupWizard';
 import { clearDrafts } from '../drafts';
@@ -27,6 +29,7 @@ beforeEach(() => {
   api.apiFetch.mockImplementation((_u: string, init?: any) => json({ user: { id: 7, name: 'Ada', ...(init?.body ? JSON.parse(init.body) : {}) } }));
   dialog.confirmDialog.mockReset();
   dialog.confirmDialog.mockResolvedValue(true);
+  dialog.notify.mockReset();
   clearDrafts();
 });
 afterEach(cleanup);
@@ -110,14 +113,43 @@ describe('Modern setup', () => {
     expect(screen.getByLabelText('Display name')).toHaveValue('');
   });
 
-  it('closing with unsaved profile edits asks first', async () => {
+  it('closing with unsaved edits asks inside the dialog (Keep editing / Leave)', async () => {
     const p = setupProps();
-    dialog.confirmDialog.mockResolvedValueOnce(false);
     mount(p);
     fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'x' } });
-    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
-    await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalled());
+    fireEvent.keyDown(screen.getByLabelText('Display name'), { key: 'Escape' });
+    const ask = await screen.findByRole('alertdialog', { name: 'Leave setup?' });
+    fireEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
     expect(p.onClose).not.toHaveBeenCalled();
+    expect(dialog.confirmDialog).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByLabelText('Display name'), { key: 'Escape' });
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Leave' }));
+    await waitFor(() => expect(p.onClose).toHaveBeenCalled());
+  });
+
+  it('a save that lands after setup closed never moves a reopened setup', async () => {
+    let finish: () => void = () => {};
+    const p = setupProps({ onSaveProfile: vi.fn(() => new Promise<void>((r) => { finish = () => r(); })) });
+    const first = mount(p);
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Alex' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save and continue/ }));
+    await waitFor(() => expect(p.onSaveProfile).toHaveBeenCalled());
+    first.unmount();
+    clearSetupDrafts(); // App does this when setup closes
+    mount(setupProps());
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Unfinished' } });
+    await act(async () => { finish(); });
+    expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent('Your profile');
+    expect(screen.getByLabelText('Display name')).toHaveValue('Unfinished');
+  });
+
+  it("a layout that couldn't be saved says so", async () => {
+    api.apiFetch.mockImplementation(() => json({ error: 'nope' }, false));
+    mount(setupProps({ initialStep: 1 }));
+    fireEvent.click(screen.getByRole('radio', { name: /Classic/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save your layout");
+    expect(dialog.notify).toHaveBeenCalledWith("Couldn't save your layout.", 'error');
   });
 
   it('the tour step starts or retakes the tour', async () => {
@@ -160,6 +192,19 @@ describe('Modern tour', () => {
     expect(await screen.findByRole('heading', { name: "You're ready" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
     expect(p.onFinish).toHaveBeenCalledWith('setup');
+  });
+
+  it('a look switch mid-tour carries on at the same step', async () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+    expect(await screen.findByRole('heading', { name: 'Step Two' })).toBeInTheDocument();
+    cleanup();
+    render(<Walkthrough steps={STEPS} initialStep={0} onFinish={vi.fn()} onExit={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'Step Two' })).toBeInTheDocument();
+    cleanup();
+    clearTourDraft(); // App does this when the tour closes
+    render(<TourCard steps={STEPS} initialStep={0} onFinish={vi.fn()} onExit={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'Step One' })).toBeInTheDocument();
   });
 
   it('dots jump, arrows move and Escape exits', async () => {
