@@ -25,6 +25,12 @@ export function setDraft<T>(key: string, value: T): void {
   emit(key);
 }
 
+/** Forget one draft (readers fall back to their initial value again). */
+export function deleteDraft(key: string): void {
+  if (!store.delete(key)) return;
+  emit(key);
+}
+
 // Editor-session ids. Controllers stamp each editor session (open/close) with
 // one and check it before a late save closes or clears anything. Module-level
 // and never reused, so ids stay unique even after clearDrafts() resets the
