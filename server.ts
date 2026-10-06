@@ -1788,7 +1788,10 @@ function parsePerms(json: any): string[] {
 // account_type 'admin' -> Admin role, everyone else -> Member role.
 // Ensures all three default roles exist (Admin, Member, Verified Member) —
 // creates any that are missing, so existing teams get new defaults too.
-async function ensureRolesSeeded(teamId: number) {
+async function ensureRolesSeeded(teamId: number | null | undefined) {
+  // A member with no team (e.g. their workspace was deleted) has nothing to
+  // seed; inserting would violate roles.team_id NOT NULL and 500 the request.
+  if (!teamId) return;
   const existing = (await dbAll("SELECT name FROM roles WHERE team_id = ?", teamId)) as any[];
   const names = new Set(existing.map((r: any) => r.name));
 
