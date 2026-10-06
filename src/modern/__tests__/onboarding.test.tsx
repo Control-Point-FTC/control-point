@@ -128,6 +128,29 @@ describe('Modern setup', () => {
     await waitFor(() => expect(p.onClose).toHaveBeenCalled());
   });
 
+  it('while asking, the form behind the question is inert', async () => {
+    mount(setupProps());
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'x' } });
+    fireEvent.keyDown(screen.getByLabelText('Display name'), { key: 'Escape' });
+    await screen.findByRole('alertdialog');
+    expect(screen.getByLabelText('Display name').closest('[inert]')).not.toBeNull();
+    expect(screen.getByRole('navigation', { hidden: true }).hasAttribute('inert')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Keep editing' }).closest('[inert]')).toBeNull();
+  });
+
+  it("an old setup's failed layout save doesn't show its error in a reopened setup", async () => {
+    let fail: () => void = () => {};
+    api.apiFetch.mockImplementation(() => new Promise((r) => { fail = () => r({ ok: false, status: 500, json: async () => ({}) }); }));
+    const first = mount(setupProps({ initialStep: 1 }));
+    fireEvent.click(screen.getByRole('radio', { name: /Classic/ }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalled());
+    first.unmount();
+    clearSetupDrafts();
+    mount(setupProps({ initialStep: 1 }));
+    await act(async () => { fail(); });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('a save that lands after setup closed never moves a reopened setup', async () => {
     let finish: () => void = () => {};
     const p = setupProps({ onSaveProfile: vi.fn(() => new Promise<void>((r) => { finish = () => r(); })) });

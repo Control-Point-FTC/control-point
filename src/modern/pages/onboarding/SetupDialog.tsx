@@ -80,7 +80,8 @@ export function SetupDialog(props: SetupWizardProps) {
   const pick = async (m: InterfaceMode) => {
     if (m === mode) return;
     setLayoutError(null);
-    if (!(await setMode(m))) {
+    // Only this setup (or its look-switched twin) may show the error.
+    if (!(await setMode(m)) && w.stillOpen()) {
       setLayoutError("Couldn't save your layout. Check your connection and try again.");
       notify("Couldn't save your layout.", 'error');
     }
@@ -91,7 +92,7 @@ export function SetupDialog(props: SetupWizardProps) {
       <Dialog open onOpenChange={(o) => { if (o) return; if (ask) answer(false); else void w.handleClose(); }}>
         <DialogContent className="max-h-[92dvh] overflow-y-auto p-0 sm:max-w-2xl">
           <div className="grid sm:grid-cols-[200px_1fr]">
-            <nav aria-label="Setup steps" className="hidden border-r border-border bg-muted/50 p-5 sm:block">
+            <nav aria-label="Setup steps" inert={!!ask} className="hidden border-r border-border bg-muted/50 p-5 sm:block">
               <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">Setup</p>
               <ol className="mt-4 grid gap-1">
                 {STEPS.map((s, i) => {
@@ -134,6 +135,8 @@ export function SetupDialog(props: SetupWizardProps) {
                   </motion.div>
                 )}
               </AnimatePresence>
+              {/* Covered while asking: no focus or clicks behind the question. */}
+              <div inert={!!ask}>
               <div className="mb-4 flex gap-1 sm:hidden" aria-hidden="true">
                 {STEPS.map((s, i) => <span key={s.title} className={cn('h-1 flex-1 rounded-full transition-colors', i <= w.step ? 'bg-accent' : 'bg-foreground/10')} />)}
               </div>
@@ -249,6 +252,7 @@ export function SetupDialog(props: SetupWizardProps) {
                   )}
                 </motion.div>
               </AnimatePresence>
+              </div>
             </div>
           </div>
         </DialogContent>

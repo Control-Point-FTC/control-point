@@ -136,6 +136,6 @@ export function useSetupWizard(
 
   return {
     step, setStep, dir, name, setName, role, setRole, busy, error, setError, fieldError, summary, theme, setTheme,
-    handleClose, finish, saveProfile, skipTour,
+    handleClose, finish, saveProfile, skipTour, stillOpen,
   };
 }
