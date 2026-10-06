@@ -283,5 +283,29 @@ describe('Modern Code', () => {
     await act(async () => { finish(); });
     await waitFor(() => expect(screen.getByLabelText('Code editor')).toHaveValue('reverted'));
   });
-});
 
+  it('a revert drops auto-saves still waiting, so they cannot undo it', async () => {
+    let firstSave: () => void = () => {};
+    code.saveDraft.mockImplementation((id: number, text: string) => {
+      if (code.saveDraft.mock.calls.length === 1) return new Promise((r) => { firstSave = () => { server[id].drafts = text; r({}); }; });
+      server[id].drafts = text; return Promise.resolve({});
+    });
+    code.revertCommit.mockImplementation(async () => { server[1].drafts = 'reverted'; return {}; });
+    setup();
+    await open('Drive.java');
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v1' } });
+    await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+    // A second auto-save queues behind the slow first one…
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v2' } });
+    await new Promise((r) => setTimeout(r, 3300));
+    // …then the user reverts.
+    fireEvent.click(screen.getByRole('button', { name: /History/ }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('button', { name: /Revert/ })[0]);
+    expect(code.revertCommit).not.toHaveBeenCalled(); // waits for the running save
+    await act(async () => { firstSave(); });
+    await waitFor(() => expect(code.revertCommit).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByLabelText('Code editor')).toHaveValue('reverted'));
+    expect(code.saveDraft.mock.calls.map((c) => c[1])).toEqual(['v1']);
+    expect(server[1].drafts).toBe('reverted');
+  }, 15000);
+});

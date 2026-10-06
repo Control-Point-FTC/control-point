@@ -35,6 +35,10 @@ const errText = (err: unknown) => (err instanceof Error ? err.message : String(e
 // - a "files changed" bus — the mounted page reloads its file list.
 let contentRequest = 0;
 let saveQueue: Promise<unknown> = Promise.resolve();
+// Per-file revert counter. A save queued before a revert of its file is
+// dropped when its turn comes, so it can't put the pre-revert text back.
+const revertGen = new Map<number, number>();
+const genOf = (fileId: number) => revertGen.get(fileId) ?? 0;
 const filesBus = new EventTarget();
 const filesChanged = () => filesBus.dispatchEvent(new Event('changed'));
 // A file's content changed on the server (revert / commit): the mounted page
@@ -221,7 +225,8 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
    */
   const saveNow = useCallback((): Promise<boolean> => {
     const snapshot = getDraft<Buffer | null>(BUFFER_KEY, null);
-    const run = saveQueue.then(() => saveBuffer(snapshot));
+    const gen = snapshot ? genOf(snapshot.fileId) : 0;
+    const run = saveQueue.then(() => (snapshot && genOf(snapshot.fileId) !== gen ? true : saveBuffer(snapshot)));
     saveQueue = run.catch(() => {});
     return run;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -270,9 +275,13 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     if (!currentUser) return setError('Must be signed in to revert');
     try {
       setBusy(true);
+      const file = getDraft<CodeFile | null>('code:file', null);
+      // Saves of this file still waiting are dropped; one already running
+      // finishes first, so the revert is the last write either way.
+      if (file) revertGen.set(file.id, genOf(file.id) + 1);
+      await saveQueue;
       await revertCommit(commitId, branch, currentUser.id);
       // The reverted content replaces the buffer (any unsaved edit is superseded).
-      const file = getDraft<CodeFile | null>('code:file', null);
       setBuffer(null);
       if (file) contentChanged(file.id); // the mounted page (maybe not this one) reloads
     } catch (err) {
