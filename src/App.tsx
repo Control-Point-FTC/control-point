@@ -170,6 +170,7 @@ import {
 } from './components/onboarding';
 import { useFtcTeam, seasonLabel, TeamStatsView } from './components/FtcStats';
 import { PredictView } from './components/predict/PredictView';
+import { TeamStatsPage } from './modern/pages/stats/TeamStatsPage';
 import { clearFtcCache } from './components/ftcCache';
 import { clearScoutCache } from './services/ftcScoutApi';
 import { clearPredictCache } from './services/predictApi';
@@ -2665,7 +2666,7 @@ export default function App() {
         <Route path="/dashboard" element={<ByMode legacy={dashboardEl} modern={<HomePage {...viewProps} notifications={notifications} unreadMentions={unreadMentions} />} />} />
         {/* Inbox is a Modern page; Legacy keeps its bell dropdown. */}
         <Route path="/inbox" element={<ByMode legacy={<Navigate to="/dashboard" replace />} modern={<InboxPage notifications={notifications} actions={notificationActions} onOpenChannel={(id) => setActiveChannelId(id)} />} />} />
-        <Route path="/stats" element={<ByMode legacy={<TeamStatsView />} />} />
+        <Route path="/stats" element={<ByMode legacy={<TeamStatsView />} modern={<TeamStatsPage />} />} />
         <Route path="/predict" element={<ByMode legacy={<PredictView />} />} />
         <Route path="/teams" element={<ByMode legacy={<TeamsView {...viewProps} />} modern={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />} />
         <Route path="/roles" element={<ByMode legacy={<RolesView members={members} currentUser={currentUser} onRefresh={fetchData} />} modern={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />} />
