@@ -1536,7 +1536,14 @@ if (defaultTeam) {
   for (const t of teamTables) {
     (await dbRun(`UPDATE ${t} SET team_id = ? WHERE team_id IS NULL`, defaultTeam.id));
   }
-  (await dbRun("UPDATE members SET team_id = ? WHERE team_id IS NULL", defaultTeam.id));
+  // Only active team-less rows (legacy data) get a home. Inactive "ghost"
+  // anchors left by workspace deletion stay team-less by design, and a row is
+  // never moved into a team where that email already has a membership (that
+  // violated UNIQUE(team_id, email) and crash-looped the server at boot).
+  (await dbRun(
+    "UPDATE members SET team_id = ? WHERE team_id IS NULL AND COALESCE(is_active, 1) = 1 AND NOT EXISTS (SELECT 1 FROM members m2 WHERE m2.team_id = ? AND m2.email = members.email)",
+    defaultTeam.id, defaultTeam.id,
+  ));
 }
 
 // Backfill access codes for teams created before codes existed
