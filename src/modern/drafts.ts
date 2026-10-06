@@ -1,10 +1,20 @@
 // Shared draft store (2026 redesign). Unsent input that lives inside a page
 // component would be lost when the Legacy and Modern shells swap (the page
 // remounts). Pages keep such input here instead; both modes read and write the
-// same keys, so switching modes never drops a draft. Cleared on sign-out.
-import { useCallback, useState, type SetStateAction } from 'react';
+// same keys, so switching modes never drops a draft. Cleared on sign-out and
+// workspace switch.
+//
+// The store is observable: every mounted useDraft for a key re-renders when
+// that key changes, even if the write came from an instance that has since
+// unmounted (e.g. a save that finishes after the user switched modes).
+import { useCallback, useRef, useSyncExternalStore, type SetStateAction } from 'react';
 
 const store = new Map<string, unknown>();
+const listeners = new Map<string, Set<() => void>>();
+
+function emit(key: string) {
+  for (const l of listeners.get(key) ?? []) l();
+}
 
 export function getDraft<T>(key: string, fallback: T): T {
   return store.has(key) ? (store.get(key) as T) : fallback;
@@ -12,21 +22,30 @@ export function getDraft<T>(key: string, fallback: T): T {
 
 export function setDraft<T>(key: string, value: T): void {
   store.set(key, value);
+  emit(key);
 }
 
 export function clearDrafts(): void {
+  const keys = [...store.keys()];
   store.clear();
+  for (const k of keys) emit(k);
 }
 
 /** Drop-in replacement for useState whose value survives remounts. */
 export function useDraft<T>(key: string, initial: T): [T, (v: SetStateAction<T>) => void] {
-  const [value, setValue] = useState<T>(() => getDraft(key, initial));
+  // Freeze the initial value so the snapshot stays referentially stable.
+  const initialRef = useRef(initial);
+  const subscribe = useCallback((cb: () => void) => {
+    let set = listeners.get(key);
+    if (!set) { set = new Set(); listeners.set(key, set); }
+    set.add(cb);
+    return () => { set!.delete(cb); };
+  }, [key]);
+  const value = useSyncExternalStore(subscribe, () => getDraft(key, initialRef.current), () => initialRef.current);
   const set = useCallback((v: SetStateAction<T>) => {
-    setValue((prev) => {
-      const next = typeof v === 'function' ? (v as (p: T) => T)(prev) : v;
-      store.set(key, next);
-      return next;
-    });
+    const prev = getDraft(key, initialRef.current);
+    const next = typeof v === 'function' ? (v as (p: T) => T)(prev) : v;
+    setDraft(key, next);
   }, [key]);
   return [value, set];
 }

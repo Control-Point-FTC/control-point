@@ -35,6 +35,45 @@ export const TASK_COLUMNS = [
 ] as const;
 
 const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', status: 'todo' };
+const EMPTY_LIST: any[] = [];
+
+/** Completed-per-day for the last 7 days. */
+export function completionTrendsOf(tasks: any[]) {
+  const last7Days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    return format(d, 'yyyy-MM-dd');
+  }).reverse();
+  return last7Days.map((date) => ({
+    date: format(new Date(date), 'MMM dd'),
+    completed: tasks.filter((t: any) => t.status === 'done' && t.completed_at?.startsWith(date)).length,
+  }));
+}
+
+/** Per-member task counts by status (members with at least one task). */
+export function memberCapacityOf(tasks: any[], members: any[]) {
+  return members.map((m: any) => {
+    const memberTasks = tasks.filter((t: any) => {
+      const ids = Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
+      return ids.includes(m.id);
+    });
+    return {
+      name: m.name,
+      total: memberTasks.length,
+      todo: memberTasks.filter((t: any) => t.status === 'todo').length,
+      inProgress: memberTasks.filter((t: any) => t.status === 'in-progress').length,
+      done: memberTasks.filter((t: any) => t.status === 'done').length,
+    };
+  }).filter((m: any) => m.total > 0);
+}
+
+/** Average days from created to done (string with 1 decimal, or 0). */
+export function avgCompletionDaysOf(tasks: any[]) {
+  const completedTasks = tasks.filter((t: any) => t.status === 'done' && t.completed_at && t.created_at);
+  if (completedTasks.length === 0) return 0;
+  const totalTime = completedTasks.reduce((acc: number, t: any) => acc + (new Date(t.completed_at).getTime() - new Date(t.created_at).getTime()), 0);
+  return (totalTime / completedTasks.length / (1000 * 60 * 60 * 24)).toFixed(1);
+}
 
 export function useTasksController({ tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete }: {
   tasks: any[];
@@ -64,9 +103,12 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const [bulkText, setBulkText] = useDraft<string>('tasks:bulk-text', '');
   const [bulkParsing, setBulkParsing] = useState(false);
   const [bulkPreview, setBulkPreview] = useDraft<any[] | null>('tasks:bulk-preview', null);
-  const [bulkRoster, setBulkRoster] = useState<any[]>([]);
+  const [bulkRoster, setBulkRoster] = useDraft<any[]>('tasks:bulk-roster', EMPTY_LIST);
   const [bulkError, setBulkError] = useState<string | null>(null);
-  const [bulkSaving, setBulkSaving] = useState(false);
+  // In-flight saves are drafted too: a page that remounts mid-save (mode
+  // switch, navigation) still sees "saving" and can't submit twice.
+  const [bulkSaving, setBulkSaving] = useDraft<boolean>('tasks:bulk-saving', false);
+  const [editorSaving, setEditorSaving] = useDraft<boolean>('tasks:editor-saving', false);
   // AI quick-add: type natural language, Bruno parses it into task fields.
   const [aiTaskOpen, setAiTaskOpen] = useState(false);
   const [aiTaskText, setAiTaskText] = useDraft<string>('tasks:ai-text', '');
@@ -114,8 +156,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   };
 
   const handleAddTask = async () => {
-    if (pendingIds.has(-1)) return;
-    markPending(-1, true);
+    if (editorSaving) return;
+    setEditorSaving(true);
     try {
       if (editingTaskId) {
         const res = await apiFetch(`/api/tasks/${editingTaskId}`, {
@@ -149,7 +191,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
         notify('Could not create task — try again.', 'error');
       }
     } finally {
-      markPending(-1, false);
+      setEditorSaving(false);
     }
   };
 
@@ -330,45 +372,13 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     }
   };
 
-  // Analytics data
-  const completionTrends = useMemo(() => {
-    const last7Days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      return format(d, 'yyyy-MM-dd');
-    }).reverse();
-    return last7Days.map((date) => ({
-      date: format(new Date(date), 'MMM dd'),
-      completed: tasks.filter((t: any) => t.status === 'done' && t.completed_at?.startsWith(date)).length,
-    }));
-  }, [tasks]);
+  // Analytics data (all visible-to-Legacy tasks; Modern recomputes for its filters)
+  const completionTrends = useMemo(() => completionTrendsOf(tasks), [tasks]);
+  const memberCapacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
+  const avgCompletionTime = useMemo(() => avgCompletionDaysOf(tasks), [tasks]);
 
-  const memberCapacity = useMemo(() => {
-    return members.map((m: any) => {
-      const memberTasks = tasks.filter((t: any) => {
-        const ids = Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
-        return ids.includes(m.id);
-      });
-      return {
-        name: m.name,
-        total: memberTasks.length,
-        todo: memberTasks.filter((t: any) => t.status === 'todo').length,
-        inProgress: memberTasks.filter((t: any) => t.status === 'in-progress').length,
-        done: memberTasks.filter((t: any) => t.status === 'done').length,
-      };
-    }).filter((m: any) => m.total > 0);
-  }, [tasks, members]);
-
-  const avgCompletionTime = useMemo(() => {
-    const completedTasks = tasks.filter((t: any) => t.status === 'done' && t.completed_at && t.created_at);
-    if (completedTasks.length === 0) return 0;
-    const totalTime = completedTasks.reduce((acc: number, t: any) => {
-      const start = new Date(t.created_at).getTime();
-      const end = new Date(t.completed_at).getTime();
-      return acc + (end - start);
-    }, 0);
-    return (totalTime / completedTasks.length / (1000 * 60 * 60 * 24)).toFixed(1); // in days
-  }, [tasks]);
+  // Callers read pendingIds.has(-1) for "editor saving" (Legacy JSX + Modern).
+  const pendingView = useMemo(() => (editorSaving ? new Set([...pendingIds, -1]) : pendingIds), [pendingIds, editorSaving]);
 
   return {
     // permissions
@@ -377,7 +387,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     showAddTask, setShowAddTask, editingTaskId, setEditingTaskId, newTask, setNewTask, isBoardTask, setIsBoardTask,
     openNewTask, openEditTask, closeTaskModal, handleAddTask,
     // view state
-    showAnalytics, setShowAnalytics, filterTeam, setFilterTeam, pendingIds, filteredTasks,
+    showAnalytics, setShowAnalytics, filterTeam, setFilterTeam, pendingIds: pendingView, filteredTasks,
     // bulk
     showBulk, setShowBulk, bulkText, setBulkText, bulkParsing, bulkPreview, setBulkPreview, bulkRoster, bulkError,
     bulkSaving, handleBulkParse, updateBulkRow, removeBulkRow, handleBulkSave, closeBulkModal,

@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Table, TableBody, TableCell,
   TableHead, TableHeader, TableRow, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
-import { useTasksController, taskAssigneeIds, TASK_COLUMNS } from '../../../components/tasks/useTasksController';
+import { useTasksController, taskAssigneeIds, TASK_COLUMNS, completionTrendsOf, memberCapacityOf, avgCompletionDaysOf } from '../../../components/tasks/useTasksController';
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { AnimatedValue } from '../../AnimatedValue';
 import { AvatarStack } from './AssigneePicker';
@@ -37,7 +37,8 @@ export function TasksPage(props: any) {
   // Deep link from a notification: open that task's sheet.
   const linked = Number(params.get('task')) || null;
   useEffect(() => {
-    if (!linked || !tasks.some((t: any) => t.id === linked)) return;
+    // Same visibility as the board (board tasks only for admins).
+    if (!linked || !ctl.filteredTasks.some((t: any) => t.id === linked)) return;
     setViewTaskId(linked);
     const next = new URLSearchParams(params);
     next.delete('task');
@@ -58,7 +59,7 @@ export function TasksPage(props: any) {
 
   const open = visible.filter((t: any) => t.status !== 'done');
   const overdue = open.filter(isOverdue);
-  const viewTask = viewTaskId ? tasks.find((t: any) => t.id === viewTaskId) ?? null : null;
+  const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
   const assigneesOf = (t: any) => taskAssigneeIds(t).map((id) => memberById.get(id)).filter(Boolean);
 
@@ -119,7 +120,13 @@ export function TasksPage(props: any) {
           ? <EmptyState icon={ListChecks} title="No tasks match" description="Try clearing the search or filters." />
           : <ListView tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} />
       )}
-      {view === 'insights' && <Insights ctl={ctl} openCount={open.length} />}
+      {view === 'insights' && (
+        <Insights
+          tasks={visible}
+          members={members}
+          scope={who === 'all' ? (query.trim() ? 'Matching your search' : 'Whole team') : who === 'mine' ? 'Assigned to you' : `Assigned to ${members.find((m: any) => String(m.id) === who)?.name ?? 'them'}`}
+        />
+      )}
 
       <TaskViewSheet task={viewTask} onOpenChange={(o) => { if (!o) setViewTaskId(null); }} ctl={ctl} members={members} teams={teams} />
       <TaskEditorSheet ctl={ctl} members={members} teams={teams} />
@@ -288,19 +295,25 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
 // Insights
 // ---------------------------------------------------------------------------
 
-function Insights({ ctl, openCount }: { ctl: ReturnType<typeof useTasksController>; openCount: number }) {
-  const doneThisWeek = ctl.completionTrends.reduce((a: number, d: any) => a + d.completed, 0);
+function Insights({ tasks, members, scope }: { tasks: any[]; members: any[]; scope: string }) {
+  // Every figure here uses the same filtered tasks as the board/list.
+  const trends = useMemo(() => completionTrendsOf(tasks), [tasks]);
+  const capacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
+  const avg = useMemo(() => avgCompletionDaysOf(tasks), [tasks]);
+  const openCount = tasks.filter((t) => t.status !== 'done').length;
+  const doneThisWeek = trends.reduce((a: number, d: any) => a + d.completed, 0);
   return (
     <>
+      <p className="mb-3 text-sm text-muted-foreground">Showing: <span className="font-medium text-foreground">{scope}</span></p>
       <div className="mb-8 grid grid-cols-3 divide-x divide-border rounded-xl border border-border bg-card py-4">
         <div className="px-5"><p className="text-sm text-muted-foreground">Open</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums"><AnimatedValue value={String(openCount)} /></p></div>
         <div className="px-5"><p className="text-sm text-muted-foreground">Done this week</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums text-success"><AnimatedValue value={String(doneThisWeek)} /></p></div>
-        <div className="px-5"><p className="text-sm text-muted-foreground">Avg. time to done</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums"><AnimatedValue value={`${ctl.avgCompletionTime}`} /><span className="ml-1 text-base font-normal text-muted-foreground">days</span></p></div>
+        <div className="px-5"><p className="text-sm text-muted-foreground">Avg. time to done</p><p className="mt-1 font-display text-3xl font-semibold tabular-nums"><AnimatedValue value={`${avg}`} /><span className="ml-1 text-base font-normal text-muted-foreground">days</span></p></div>
       </div>
       <div className="grid gap-x-10 lg:grid-cols-2">
         <Section title="Completed per day" description="Last 7 days">
           <ChartContainer config={{ completed: { label: 'Completed', color: 'var(--color-chart-3)' } }} className="h-56">
-            <AreaChart data={ctl.completionTrends} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart data={trends} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="tasks-done" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="var(--color-completed)" stopOpacity={0.35} />
@@ -316,14 +329,14 @@ function Insights({ ctl, openCount }: { ctl: ReturnType<typeof useTasksControlle
           </ChartContainer>
         </Section>
         <Section title="Workload by person" description="Assigned tasks by status">
-          {ctl.memberCapacity.length === 0 ? (
+          {capacity.length === 0 ? (
             <EmptyState title="No assigned tasks yet" />
           ) : (
             <ChartContainer
               config={{ todo: { label: 'To do', color: 'var(--color-muted-foreground)' }, inProgress: { label: 'In progress', color: 'var(--color-chart-2)' }, done: { label: 'Done', color: 'var(--color-chart-3)' } }}
               className="h-56"
             >
-              <BarChart data={ctl.memberCapacity} layout="vertical" barSize={14} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <BarChart data={capacity} layout="vertical" barSize={14} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid horizontal={false} strokeDasharray="3 3" />
                 <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} />
                 <YAxis dataKey="name" type="category" tickLine={false} axisLine={false} width={88} />

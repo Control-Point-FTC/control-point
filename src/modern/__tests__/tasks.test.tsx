@@ -101,4 +101,32 @@ describe('Modern Tasks', () => {
     const sheet = await screen.findByRole('dialog');
     expect(within(sheet).getByText('Print brackets')).toBeInTheDocument();
   });
+
+  it('members cannot open a board task through a deep link', async () => {
+    setup({ url: '/tasks?task=3' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('a save in flight survives a remount and cannot be submitted twice', async () => {
+    let resolve!: (v: any) => void;
+    api.apiFetch.mockImplementation(() => new Promise((r) => { resolve = r; }));
+    const first = setup();
+    fireEvent.click(screen.getByRole('button', { name: /New task/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Tune the intake' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    first.unmount(); // user switches modes mid-save
+    setup();
+    expect(await screen.findByRole('button', { name: 'Create task' })).toBeDisabled();
+    expect(api.apiFetch).toHaveBeenCalledTimes(1);
+    resolve({ ok: true, json: async () => ({}) });
+    await waitFor(() => expect(screen.queryByLabelText('Title')).not.toBeInTheDocument()); // editor closes when it lands
+  });
+
+  it('insights use the same filtered tasks and say which', async () => {
+    setup();
+    fireEvent.mouseDown(screen.getByRole('radio', { name: 'Insights' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Insights' }));
+    expect(await screen.findByText('Whole team')).toBeInTheDocument();
+  });
 });
