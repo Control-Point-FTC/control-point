@@ -138,3 +138,60 @@ One section per phase, added when the phase's PR merges. See [README.md](README.
 - **Local interaction:** opened a task sheet; opened the New task sheet on a phone (bottom sheet, focus on quick add).
 - **Phone (390×844):** no overflow, every target ≥44px, full-width search, snapping lanes.
 - **Screenshot limit:** the browser pane runs at 125% display scaling, so desktop captures are cropped to the pane's visible slice (`tasks-modern-desktop-dark.jpg`, `tasks-modern-sheet-dark.jpg`). Desktop layout was verified with DOM geometry (no overflow at 1440).
+
+## Phase 4b — Calendar
+
+**Shared logic:** `src/components/calendar/useCalendarController.ts` now holds everything that was inside Legacy `CalendarView`: the same `POST /api/events`, `PATCH /api/events/:id` and `DELETE /api/events/:id` requests, optimistic updates with rollback, Bruno quick-add (one event fills the form; several can be created together through `applyActionProposals`), and the "finished" / "upcoming" rules. Legacy `CalendarView` uses the controller with its markup unchanged. The right-click delete now uses the shared optimistic delete, with an error toast if it fails.
+
+**Drafts:** the editor's open state, the event being edited, the form, the Bruno text, its proposals and the quick-add panel state all live in the draft store (`calendar:*` keys). A half-written event survives a Legacy ↔ Modern switch. The draft is cleared when the editor closes, which is also the moment the optimistic save starts, so a late save can never wipe a newer draft.
+
+### Modern Calendar (`src/modern/pages/calendar/`)
+- **Header:**
+  - The title is the month (or the week range, using the locale's `formatRange`, e.g. "Oct 4 – 10, 2026").
+  - **New event** appears for calendar managers only.
+- **Toolbar:**
+  - A previous / Today / next stepper.
+  - A **Month / Week / Agenda** switch. Agenda is the default on phones.
+  - A multi-select **type filter** that doubles as the colour legend.
+- **Month:**
+  - Every day is a button. It selects the day, and the right rail lists that day's events, with **Add** for managers.
+  - From `xl` up, days show event chips and a **"+N more"** popover. Narrower grids show coloured dots instead.
+  - Days outside the month are shaded. Today has an accent ring.
+- **Week:** seven day columns with time and title blocks. Each column has an Add button for managers. On phones the columns stack.
+- **Agenda:** the month's days that have events, with large date markers. Past days are dimmed and finished events are struck through.
+- **Next up:** the next eight unfinished events. It is hidden in phone Agenda, where it would duplicate the list.
+- **Event sheet:** opens for **everyone**. It shows type, date, time, location, team and notes. Edit and Delete appear only for the `calendar` scope.
+  - This fixes a Legacy bug where members clicking "Upcoming" opened the manager editor.
+- **Editor sheet:**
+  - Bruno quick-add comes first. ⌘/Ctrl+Enter parses; several results show a removable list and **Create all N events**.
+  - Then title, a type toggle, date, start and end time, team, location and notes.
+- **Type colours come from tokens:**
+  - meeting = `info`
+  - competition = `chart-4` (violet, so it never clashes with a team's accent)
+  - deadline = `warning`
+  - social = `success`
+  - other = `muted`
+- **Dates and times use the browser locale.**
+- **Motion:** month and week steps slide in the direction of travel, and Agenda rows nudge on hover. All of it honours reduced motion through the shell's `MotionConfig`.
+
+### Permissions (unchanged)
+- Create, edit and delete need `hasScope('calendar')`. Everyone can view.
+
+### Tests
+- **New (8 Modern Calendar tests):**
+  - Members get read-only sheets.
+  - Create sends the **same POST body as Legacy**.
+  - Edit sends `PATCH`.
+  - Delete waits for confirmation and then sends `DELETE`. A cancelled delete sends nothing.
+  - **A half-written event survives a remount.**
+  - Bruno: a single result fills the form, and several results are created together through `applyActionProposals`.
+  - The Month / Week / Agenda switch works.
+  - The type filter works.
+- **Totals:** 546 tests pass; the only failures are the known Windows-only ones (migration runner, taskCompletion, the fileStore timeout, ftcCache). `tsc` is clean.
+- **Local QA** on the test account:
+  - Created a Competition event through the sheet and it showed up immediately.
+  - Week label and layout checked at 1440 in light mode.
+  - 768: dots grid with no overflow.
+  - 375: Agenda default, bottom event sheet, no horizontal scroll, every target ≥44px.
+- **No real phone** was available; the PWA layout was checked only with mobile emulation.
+- **Screenshots:** `docs/redesign/screenshots/phase4/calendar-*.jpg`.
