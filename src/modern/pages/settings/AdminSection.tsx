@@ -6,7 +6,7 @@ import { HardDrive, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, Input, Label, Skeleton, Textarea, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
-import { VoiceSettingsSection } from '../../../components/voice/VoiceSettingsSection';
+import { CallsPolicy } from './CallsPolicy';
 import { getDraft, useDraft } from '../../drafts';
 import { EmptyState } from '../../ui/page';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
@@ -73,8 +73,7 @@ export function AdminSection({ settings = {}, isAdmin, isOwner, hasPerm, refresh
     <div>
       {canVoice && (
         <SettingsGroup title="Calls policy" description="What the team can do in voice and video calls.">
-          {/* Shared with Legacy; rebuilt with Messages & calls in phase 6. */}
-          <div className="p-4"><VoiceSettingsSection /></div>
+          <CallsPolicy />
         </SettingsGroup>
       )}
 

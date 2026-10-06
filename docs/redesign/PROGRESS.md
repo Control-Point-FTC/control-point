@@ -1136,3 +1136,19 @@ The last Classic pieces inside Modern Messages are rebuilt.
 - **Tests:**
   - 8 new: reaction toggle, rollback, the + chip, picker quick / search / category / custom / close, voice channels list, join rules and rename.
   - The Messages suite now mocks the new component; the Classic voice suite still passes.
+
+## Phase 10d: Calls settings
+
+The last Classic panels inside Modern Settings are rebuilt.
+- **Shared logic (Classic JSX unchanged):**
+  - `useVoiceSettings` holds the same `GET` / `PUT /api/voice/settings` and clamping. Saving is now careful: an edit made while a save is in flight is kept and stays unsaved.
+  - `useDeviceSettings` holds the permission state and the explicit enable request, the mic test (meter only), the test tone and the camera preview. Hardware is used only while a test or preview runs.
+- **Modern `CallsPolicy`** (Settings → Admin): the Settings page's own rows, with kit Switches, Selects and number inputs. A sticky Save bar appears only when something changed. It links to Roles for moderation permissions.
+- **Modern `DeviceSettings`** (Settings → Calls & sounds), in four groups:
+  - **Browser permissions:** Allowed / Blocked / Not asked badges and the enable button.
+  - **Microphone:** a device Select, a test with a 20-segment level meter, an input-volume Slider (up to 200%) and the processing Switches.
+  - **Speaker:** a device Select, a volume Slider and a test sound.
+  - **Camera:** a device Select, capture quality, and a preview that expands in place.
+- **Tests:**
+  - 6 new: policy clamp and save, an edit during save kept, load failure; permissions, prefs, the camera preview acquiring and releasing.
+  - The Classic voice suite still passes.
