@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
-import { getDraft, useDraft } from '../../modern/drafts';
+import { getDraft, newSessionId, useDraft } from '../../modern/drafts';
 
 export const MEMBER_SCOPES = ['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'] as const;
 
@@ -38,10 +38,12 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
   const [showAddMember, setShowAddMember] = useDraft<boolean>('members:editor-open', false);
   const [editingMemberId, setEditingMemberId] = useDraft<number | null>('members:editing-id', null);
   const [newMember, setNewMember] = useDraft<MemberForm>('members:form', EMPTY_MEMBER);
-  const [, setMemberGen] = useDraft<number>('members:editor-gen', 0);
-  const [savingMember, setSavingMember] = useDraft<boolean>('members:editor-saving', false);
+  // Session id of the open editor, and of the session whose save is in flight.
+  const [memberGen, setMemberGen] = useDraft<number>('members:editor-gen', 0);
+  const [memberSavingGen, setMemberSavingGen] = useDraft<number>('members:editor-saving', 0);
+  const savingMember = memberSavingGen !== 0 && memberSavingGen === memberGen;
   const editingMember = editingMemberId == null ? null : (members || []).find((m: any) => m.id === editingMemberId) || { id: editingMemberId };
-  const bumpMemberGen = () => setMemberGen((g) => g + 1);
+  const bumpMemberGen = () => setMemberGen(newSessionId());
 
   const openNewMember = () => {
     bumpMemberGen();
@@ -73,12 +75,12 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
   }));
 
   const handleAddMember = async () => {
-    if (getDraft('members:editor-saving', false)) return;
     const gen = getDraft<number>('members:editor-gen', 0);
+    if (getDraft<number>('members:editor-saving', 0) === gen) return; // this session is already saving
     const id = editingMemberId;
     const url = id ? `/api/members/${id}` : '/api/members';
     const form = newMember;
-    setSavingMember(true);
+    setMemberSavingGen(gen);
     try {
       const res = await apiFetch(url, {
         method: id ? 'PATCH' : 'POST',
@@ -95,7 +97,7 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     } catch {
       notify('Could not save member', 'error');
     } finally {
-      setSavingMember(false);
+      if (getDraft<number>('members:editor-saving', 0) === gen) setMemberSavingGen(0);
     }
   };
 
@@ -138,9 +140,10 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
   const [showAddTeam, setShowAddTeam] = useDraft<boolean>('teams:editor-open', false);
   const [editingTeam, setEditingTeam] = useDraft<any>('teams:editing', null);
   const [newTeam, setNewTeam] = useDraft<TeamForm>('teams:form', EMPTY_TEAM);
-  const [, setTeamGen] = useDraft<number>('teams:editor-gen', 0);
-  const [savingTeam, setSavingTeam] = useDraft<boolean>('teams:editor-saving', false);
-  const bumpTeamGen = () => setTeamGen((g) => g + 1);
+  const [teamGen, setTeamGen] = useDraft<number>('teams:editor-gen', 0);
+  const [teamSavingGen, setTeamSavingGen] = useDraft<number>('teams:editor-saving', 0);
+  const savingTeam = teamSavingGen !== 0 && teamSavingGen === teamGen;
+  const bumpTeamGen = () => setTeamGen(newSessionId());
 
   const openNewTeam = () => {
     bumpTeamGen();
@@ -165,10 +168,10 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
   };
 
   const handleAddTeam = async () => {
-    if (getDraft('teams:editor-saving', false)) return;
     const gen = getDraft<number>('teams:editor-gen', 0);
+    if (getDraft<number>('teams:editor-saving', 0) === gen) return;
     const done = () => { if (getDraft<number>('teams:editor-gen', 0) === gen) closeTeamEditor(); };
-    setSavingTeam(true);
+    setTeamSavingGen(gen);
     try {
       if (editingTeam) {
         const { name, number, accent_color } = newTeam;
@@ -191,7 +194,7 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     } catch (e: any) {
       notify(e.message || 'Could not save team', 'error');
     } finally {
-      setSavingTeam(false);
+      if (getDraft<number>('teams:editor-saving', 0) === gen) setTeamSavingGen(0);
     }
   };
 

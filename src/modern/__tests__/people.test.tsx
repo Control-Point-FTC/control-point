@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
@@ -181,3 +181,54 @@ describe('Modern People — workspaces', () => {
     expect(r.props.onLeaveTeam).toHaveBeenCalledWith(teams[0]);
   });
 });
+
+describe('Modern People — review regressions', () => {
+  it('reloads roles when the active workspace changes', async () => {
+    const other = [{ id: 9, name: 'Pit Crew', color: '#22C55E', permissions: [], is_system: 0, member_count: 0, position: 0, team_id: 2 }];
+    let call = 0;
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/roles' ? json(++call === 1 ? ROLES : other) : routeApi(url)));
+    const props: any = {
+      members: [me, grace], teams, currentUser: me, refresh: { members: vi.fn() }, onRefresh: vi.fn(),
+      hasScope: () => true, hasPerm: () => true, onAddTeam: vi.fn(), onSwitchTeam: vi.fn(), onDeleteTeam: vi.fn(), onLeaveTeam: vi.fn(),
+    };
+    const tree = (user: any) => (
+      <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
+        <MemoryRouter initialEntries={['/roles']}><Routes><Route path="/roles" element={<PeoplePage {...props} currentUser={user} />} /></Routes></MemoryRouter>
+      </InterfaceModeProvider>
+    );
+    const { rerender } = render(tree(me));
+    expect(await screen.findByText('Build Lead')).toBeInTheDocument();
+    rerender(tree({ ...me, team_id: 2 }));
+    expect(await screen.findByText('Pit Crew')).toBeInTheDocument();
+    expect(screen.queryByText('Build Lead')).not.toBeInTheDocument();
+  });
+
+  it('New role still opens when roles failed to load', async () => {
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/roles' ? Promise.reject(new Error('offline')) : routeApi(url)));
+    setup({ url: '/roles' });
+    expect(await screen.findByText('No roles loaded')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /New role/ }));
+    expect(await screen.findByLabelText('Name')).toBeInTheDocument();
+  });
+
+  it('a save that finishes after drafts were cleared never closes a newer editor', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/members' && init?.method === 'POST'
+      ? new Promise((res) => { finish = () => res({ ok: true, json: async () => ({}) }); })
+      : routeApi(url)));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Add member/ }));
+    fireEvent.change(await screen.findByLabelText('Full name'), { target: { value: 'First' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/members', expect.objectContaining({ method: 'POST' })));
+    // Workspace switch / sign-out clears drafts while the save is in flight…
+    act(() => clearDrafts());
+    // …and a new editor session starts.
+    fireEvent.click(screen.getByRole('button', { name: /Add member/ }));
+    fireEvent.change(await screen.findByLabelText('Full name'), { target: { value: 'Second' } });
+    await act(async () => { finish(); });
+    expect((screen.getByLabelText('Full name') as HTMLInputElement).value).toBe('Second');
+    expect(screen.getByRole('button', { name: 'Add member' })).not.toBeDisabled();
+  });
+});
+

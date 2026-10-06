@@ -30,10 +30,15 @@ export function RoleChip({ role, className }: { role: RoleRef; className?: strin
 }
 
 export function RolesTab({ ctl, members, canManage }: { ctl: Ctl; members: any[]; canManage: boolean }) {
+  // The editor + role picker stay mounted in every state, so "New role" works
+  // even while roles are loading or failed to load.
+  const dialogs = canManage && <><RoleEditorSheet ctl={ctl} /><MemberRolesDialog ctl={ctl} /></>;
   if (ctl.loading && !ctl.roles.length) {
-    return <div className="grid gap-3 md:grid-cols-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32 rounded-xl" />)}</div>;
+    return <>{dialogs}<div className="grid gap-3 md:grid-cols-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-32 rounded-xl" />)}</div></>;
   }
-  if (!ctl.roles.length) return <EmptyState icon={ShieldCheck} title="No roles yet" />;
+  if (!ctl.roles.length) {
+    return <>{dialogs}<EmptyState icon={ShieldCheck} title="No roles loaded" description="Roles couldn’t be loaded." action={<Button variant="outline" onClick={() => void ctl.load()}>Try again</Button>} /></>;
+  }
   return (
     <>
       {!canManage && <p className="mb-4 flex items-center gap-2 text-sm text-muted-foreground"><Lock className="size-4" /> You can view roles; ask an admin to change them.</p>}
@@ -73,8 +78,7 @@ export function RolesTab({ ctl, members, canManage }: { ctl: Ctl; members: any[]
           );
         })}
       </Stagger>
-      {canManage && <RoleEditorSheet ctl={ctl} />}
-      {canManage && <MemberRolesDialog ctl={ctl} />}
+      {dialogs}
     </>
   );
 }

@@ -1,10 +1,10 @@
 // Shared Roles logic for the Legacy RolesView and the Modern People page.
 // Extracted from RolesView: same endpoints (/api/roles, /api/role-permissions,
 // /api/members/:id/roles). The role editor (open role + its form) is drafted.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
-import { getDraft, useDraft } from '../../modern/drafts';
+import { getDraft, newSessionId, useDraft } from '../../modern/drafts';
 
 export interface RoleRef { id: number; name: string; color: string }
 export interface Role extends RoleRef {
@@ -22,35 +22,47 @@ export const ROLE_COLOR_SWATCHES = [
 ];
 export const NEW_ROLE: RoleDraft = { name: '', color: '#71717A', permissions: ['view_ai'] };
 
-export function useRolesController({ onRefresh }: { onRefresh?: () => any }) {
+export function useRolesController({ onRefresh, teamId }: { onRefresh?: () => any; teamId?: number | null }) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [permKeys, setPermKeys] = useState<{ key: string; label: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useDraft<number | 'new' | null>('roles:editing-id', null);
   const [form, setForm] = useDraft<RoleDraft>('roles:form', NEW_ROLE);
-  const [, setGen] = useDraft<number>('roles:editor-gen', 0);
-  const [saving, setSaving] = useDraft<boolean>('roles:saving', false);
+  const [gen, setGen] = useDraft<number>('roles:editor-gen', 0);
+  const [savingGen, setSavingGen] = useDraft<number>('roles:saving', 0);
+  const saving = savingGen !== 0 && savingGen === gen;
   const [managingMember, setManagingMember] = useState<any>(null);
   const [memberRoles, setMemberRoles] = useState<number[]>([]);
   const [toggling, setToggling] = useState(false);
 
+  // Latest-wins: a reply for an earlier request (e.g. the previous
+  // workspace) never overwrites a newer one.
+  const loadSeq = useRef(0);
   const load = async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       const [rRes, pRes] = await Promise.all([apiFetch('/api/roles'), apiFetch('/api/role-permissions')]);
       const rData = await rRes.json();
       const pData = await pRes.json();
+      if (seq !== loadSeq.current) return;
       if (rRes.ok) setRoles(Array.isArray(rData) ? rData : []);
       if (pRes.ok) setPermKeys(Array.isArray(pData) ? pData : []);
     } catch {
-      notify('Could not load roles', 'error');
+      if (seq === loadSeq.current) notify('Could not load roles', 'error');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
+  // Reload when the active workspace changes (switching or creating one
+  // doesn't remount the page).
   useEffect(() => {
+    setRoles([]);
+    setManagingMember(null);
     load();
+  }, [teamId]);
+  useEffect(() => {
     // Live role sync: another admin's role changes refresh this view too.
     const onRolesChanged = () => load();
     window.addEventListener('roles-changed', onRolesChanged);
@@ -58,13 +70,13 @@ export function useRolesController({ onRefresh }: { onRefresh?: () => any }) {
   }, []);
 
   const openRole = (id: number | 'new') => {
-    setGen((g) => g + 1);
+    setGen(newSessionId());
     const r = id === 'new' ? null : roles.find((x) => x.id === id);
     setForm(r ? { name: r.name, color: r.color, permissions: r.permissions } : NEW_ROLE);
     setEditingId(id);
   };
   const closeRole = () => {
-    setGen((g) => g + 1);
+    setGen(newSessionId());
     setEditingId(null);
     setForm(NEW_ROLE);
   };
@@ -77,10 +89,10 @@ export function useRolesController({ onRefresh }: { onRefresh?: () => any }) {
       notify('Role name is required', 'error');
       return;
     }
-    if (getDraft('roles:saving', false)) return;
-    const gen = getDraft<number>('roles:editor-gen', 0);
+    const session = getDraft<number>('roles:editor-gen', 0);
+    if (getDraft<number>('roles:saving', 0) === session) return; // already saving this session
     const id = editingId;
-    setSaving(true);
+    setSavingGen(session);
     try {
       const url = id === 'new' ? '/api/roles' : `/api/roles/${id}`;
       const res = await apiFetch(url, {
@@ -94,13 +106,13 @@ export function useRolesController({ onRefresh }: { onRefresh?: () => any }) {
         return;
       }
       notify(id === 'new' ? 'Role created' : 'Role updated', 'success');
-      if (getDraft<number>('roles:editor-gen', 0) === gen) closeRole();
+      if (getDraft<number>('roles:editor-gen', 0) === session) closeRole();
       await load();
       onRefresh?.();
     } catch {
       notify('Could not save role', 'error');
     } finally {
-      setSaving(false);
+      if (getDraft<number>('roles:saving', 0) === session) setSavingGen(0);
     }
   };
 

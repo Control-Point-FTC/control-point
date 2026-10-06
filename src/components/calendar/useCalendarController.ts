@@ -7,7 +7,7 @@ import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
 import { streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from '../../services/aiService';
-import { useDraft, getDraft } from '../../modern/drafts';
+import { useDraft, getDraft, newSessionId } from '../../modern/drafts';
 
 export interface EventForm {
   title: string; description: string; date: string; start_time: string; end_time: string;
@@ -49,7 +49,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   // Bruno reply that lands after its session ended (even in the other mode)
   // never writes into a newer draft.
   const [, setGen] = useDraft<number>('calendar:editor-gen', 0);
-  const bumpGen = () => setGen((g) => g + 1);
+  const bumpGen = () => setGen(newSessionId());
   const currentGen = () => getDraft<number>('calendar:editor-gen', 0);
   // Bruno screen context: the event open in the editor.
   useEffect(() => {

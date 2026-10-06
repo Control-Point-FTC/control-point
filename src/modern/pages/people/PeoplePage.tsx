@@ -25,7 +25,7 @@ export function PeoplePage(props: any) {
   const go = (t: string) => navigate(t === 'roles' ? '/roles' : t === 'workspaces' ? '/teams?tab=workspaces' : '/teams');
 
   const ctl = useMembersController({ members, refresh, onRefresh, currentUser, hasScope, onAddTeam });
-  const roles = useRolesController({ onRefresh });
+  const roles = useRolesController({ onRefresh, teamId: currentUser?.team_id });
   const canManageRoles = hasPerm ? hasPerm('manage_roles') : ctl.isAdmin;
   const voice = useVoice();
 

@@ -115,12 +115,12 @@ function RoleForm({
   );
 }
 
-export default function RolesView({ members, onRefresh }: any) {
+export default function RolesView({ members, currentUser, onRefresh }: any) {
   // Roles state + handlers are shared with the Modern People page.
   const {
     roles, permKeys, loading, editingId, form, setForm, togglePerm, openRole, closeRole, saving, saveRole, deleteRole,
     managingMember, setManagingMember, memberRoles, openMemberRoles, toggleMemberRole,
-  } = useRolesController({ onRefresh });
+  } = useRolesController({ onRefresh, teamId: currentUser?.team_id });
 
   if (loading) {
     return (
