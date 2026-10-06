@@ -206,5 +206,27 @@ describe('Modern Analyze', () => {
     await waitFor(() => expect(api.fetchShortlist).toHaveBeenCalledTimes(2)); // reconcile after the failure
     expect(screen.getByLabelText('Notes')).toHaveValue('Keep me');
   });
+
+  it('clearing a note while its save is pending keeps the cleared text', async () => {
+    server = [entry(1111)];
+    let land: () => void = () => {};
+    api.saveShortlistPatch.mockImplementation((p: any) => new Promise((res) => {
+      land = () => {
+        const cur = server.find((e) => e.teamNumber === p.teamNumber) ?? null;
+        server = server.map((e) => (e.teamNumber === p.teamNumber ? applyShortlistPatch(cur, p, new Date().toISOString()) : e));
+        res(server);
+      };
+    }));
+    setup();
+    tab(/Shortlist/);
+    const box = await screen.findByLabelText('Notes');
+    fireEvent.change(box, { target: { value: 'B' } });
+    fireEvent.blur(box);
+    await waitFor(() => expect(api.saveShortlistPatch).toHaveBeenCalled());
+    fireEvent.change(box, { target: { value: '' } });
+    expect(box).toHaveValue('');
+    await act(async () => { land(); });
+    expect(screen.getByLabelText('Notes')).toHaveValue('');
+  });
 });
 

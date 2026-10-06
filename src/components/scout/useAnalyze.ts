@@ -182,7 +182,11 @@ export function useShortlistNotes(season: number, e: ShortlistEntry, onPatch: (p
   const notes = draft && draft.base === e.notes ? draft.text : e.notes;
   const setNotes = useCallback((text: string) => setDraftValue({ base: e.notes, text }), [e.notes, setDraftValue]);
   const save = useCallback(() => { if (notes !== e.notes) onPatch({ notes }); }, [notes, e.notes, onPatch]);
-  useEffect(() => { if (draft && confirmedNotes === draft.text) setDraftValue(null); }, [draft, confirmedNotes, setDraftValue]);
+  // Retire the draft once the server holds exactly this text and the entry
+  // shows it too (not while an older save is still landing).
+  useEffect(() => {
+    if (draft && confirmedNotes === draft.text && e.notes === draft.text) setDraftValue(null);
+  }, [draft, confirmedNotes, e.notes, setDraftValue]);
   return { notes, setNotes, save };
 }
 
