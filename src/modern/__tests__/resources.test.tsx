@@ -122,4 +122,63 @@ describe('Modern Resources', () => {
     await waitFor(() => expect(screen.queryByText(/Preview — edit before saving/)).not.toBeInTheDocument());
     expect(calls('/api/resources', 'POST')).toHaveLength(1);
   });
+
+  it('an older Bruno reply never replaces a newer preview (even across a remount)', async () => {
+    const replies: ((v: any) => void)[] = [];
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources/parse') return new Promise((r) => { replies.push(r); });
+      return url === '/api/resources' && !init?.method ? list : {};
+    });
+    const first = setup();
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'old https://old.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    first.unmount();
+    setup();
+    // Still reading: the returning page can't start a second parse yet.
+    expect(screen.getByRole('button', { name: /Bruno is reading/ })).toBeDisabled();
+    await act(async () => { replies[0]({ items: [{ url: 'https://old.example', title: 'Old', description: '', category: 'Other' }] }); });
+    expect(await screen.findByLabelText('Title for https://old.example')).toHaveValue('Old');
+    // A newer parse wins over a late older reply.
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'new https://new.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'newer https://newer.example' } });
+    expect(replies).toHaveLength(2);
+    await act(async () => { replies[1]({ items: [{ url: 'https://new.example', title: 'New', description: '', category: 'Other' }] }); });
+    expect(await screen.findByLabelText('Title for https://new.example')).toHaveValue('New');
+  });
+
+  it('a save that finishes after leaving updates (or reports to) the page you came back to', async () => {
+    let finish: (v: any) => void = () => {};
+    let fail: (e: any) => void = () => {};
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources/parse') return { items: [{ url: 'https://gm0.org', title: 'GM0', description: '', category: 'Community' }] };
+      if (url === '/api/resources' && init?.method === 'POST') return new Promise((r, j) => { finish = r; fail = j; });
+      return url === '/api/resources' ? list : {};
+    });
+    const first = setup();
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'https://gm0.org' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save all 1' }));
+    first.unmount();
+    setup();
+    await screen.findByText('Core Hex Motor');
+    await act(async () => { fail(Object.assign(new Error('x'), { body: { error: 'Server said no' } })); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Server said no');
+    // Retry from the returning page; success refetches its list.
+    list = [...LIST, { ...LIST[0], id: 5, title: 'GM0 saved' }];
+    fireEvent.click(screen.getByRole('button', { name: 'Save all 1' }));
+    await act(async () => { finish({}); });
+    expect(await screen.findByText('GM0 saved')).toBeInTheDocument();
+  });
+
+  it('a sign-out (cleared drafts) drops the pasted text and preview', async () => {
+    setup();
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'https://gm0.org' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    await screen.findByText(/Preview — edit before saving/);
+    act(() => clearDrafts());
+    expect(screen.getByLabelText('Text with links')).toHaveValue('');
+    expect(screen.queryByText(/Preview — edit before saving/)).not.toBeInTheDocument();
+  });
 });
+

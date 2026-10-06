@@ -5,11 +5,13 @@
 // bulk save, and optimistic delete with row-only rollback. The paste box,
 // the preview and the in-flight save lock are drafted (they survive a mode
 // switch, so a returning page can't save the same links twice); the preview
-// freezes while saving, and async results are dropped after a sign-out or
-// workspace switch.
+// freezes while saving, async results are dropped after a sign-out or
+// workspace switch, and only the newest parse may fill the preview. Save
+// results reach whichever page is mounted: success refetches every list via
+// `resources-changed`, and a failure is kept as a drafted error.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiJson } from '../../services/api';
-import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
+import { getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 
 export interface ResourceItem {
   id: number;
@@ -66,6 +68,8 @@ export function domainOf(url: string): string {
 }
 
 const SAVING_KEY = 'res:saving';
+const PARSE_SEQ_KEY = 'res:parse-seq';
+const SAVE_ERROR_KEY = 'res:save-error';
 
 export function useResourcesController() {
   const [resources, setResources] = useState<ResourceItem[]>([]);
@@ -77,9 +81,9 @@ export function useResourcesController() {
   const [pasteText, setPasteText] = useDraft<string>('res:paste', '');
   const [preview, setPreview] = useDraft<ParsedItem[] | null>('res:preview', null);
   const [saving, setSaving] = useDraft<boolean>(SAVING_KEY, false);
-  const [parsing, setParsing] = useState(false);
+  const [parsing, setParsing] = useDraft<boolean>('res:parsing', false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useDraft<string | null>(SAVE_ERROR_KEY, null);
 
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
 
@@ -120,12 +124,17 @@ export function useResourcesController() {
 
   const handleParse = async () => {
     const text = pasteText.trim();
-    if (!text || parsing) return;
+    if (!text || getDraft('res:parsing', false) || getDraft(SAVING_KEY, false)) return;
+    // Only the newest parse may fill the preview (an older reply that lands
+    // after a remount and a newer parse is dropped), and only in this epoch.
+    const seq = getDraft<number>(PARSE_SEQ_KEY, 0) + 1;
+    setDraft(PARSE_SEQ_KEY, seq);
+    const latest = () => getDraft<number>(PARSE_SEQ_KEY, 0) === seq;
     setParsing(true);
+    const done = inEpoch(() => { if (latest()) setParsing(false); });
     setParseError(null);
     setSaveError(null);
-    // The preview lands only if nobody signed out / switched workspace meanwhile.
-    const show = inEpoch((list: ParsedItem[] | null) => setPreview(list));
+    const show = inEpoch((list: ParsedItem[] | null) => { if (latest()) setPreview(list); });
     try {
       const res = await apiJson<{ items: ParsedItem[]; count: number }>('/api/resources/parse', {
         method: 'POST',
@@ -148,7 +157,7 @@ export function useResourcesController() {
       setParseError(e?.body?.error || e?.message || 'Could not extract links from that text.');
       show(null);
     } finally {
-      setParsing(false);
+      done();
     }
   };
 
@@ -180,6 +189,7 @@ export function useResourcesController() {
     // save may hold it. The same guard keeps the old box from being cleared.
     const unlock = inEpoch(() => setSaving(false));
     const clear = inEpoch(() => { setPreview(null); setPasteText(''); });
+    const fail = inEpoch((msg: string) => setSaveError(msg));
     setSaveError(null);
     try {
       await apiJson('/api/resources', {
@@ -194,9 +204,10 @@ export function useResourcesController() {
         }),
       });
       clear();
-      await fetchResources();
+      // Refetch on every mounted Resources page (this one may have been left).
+      window.dispatchEvent(new Event('resources-changed'));
     } catch (e: any) {
-      setSaveError(e?.body?.error || e?.message || 'Could not save those links.');
+      fail(e?.body?.error || e?.message || 'Could not save those links.');
     } finally {
       unlock();
     }
