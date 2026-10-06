@@ -82,9 +82,10 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Focus search once, on open (not every time onClose changes identity).
+  useEffect(() => { searchRef.current?.focus(); }, []);
   // Escape or a click outside closes it.
   useEffect(() => {
-    searchRef.current?.focus();
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     const onDown = (e: PointerEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
     window.addEventListener('keydown', onKey, true);
@@ -101,9 +102,9 @@ export function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => vo
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.16 }}
       onClick={(e) => e.stopPropagation()}
-      className="w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl"
+      className="w-[min(20rem,calc(100vw-2rem))] max-w-full overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl"
     >
-      <div className="flex items-center gap-0.5 border-b border-border px-2 py-1.5" aria-label="Quick reactions">
+      <div className="flex flex-wrap items-center gap-0.5 border-b border-border px-2 py-1.5" aria-label="Quick reactions">
         {QUICK_REACTIONS.map((e) => (
           <button key={e} type="button" onClick={() => onPick(e)} aria-label={`React ${e}`} className="flex size-9 items-center justify-center rounded-lg text-xl transition-transform hover:scale-110 hover:bg-muted">{e}</button>
         ))}

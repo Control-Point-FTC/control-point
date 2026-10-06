@@ -77,4 +77,15 @@ describe('Modern emoji picker', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(within(screen.getByRole('dialog', { name: 'Pick a reaction' })).getByLabelText('Search emojis')).toBeInTheDocument();
   });
+
+  it('focuses search once; a new onClose (parent re-render) does not steal focus back', () => {
+    api.apiFetch.mockImplementation(() => json([]));
+    const { rerender } = render(<EmojiPicker onPick={vi.fn()} onClose={() => {}} />);
+    expect(screen.getByLabelText('Search emojis')).toHaveFocus();
+    const hearts = screen.getByRole('tab', { name: 'Hearts' });
+    hearts.focus();
+    rerender(<EmojiPicker onPick={vi.fn()} onClose={() => {}} />);
+    expect(hearts).toHaveFocus();
+  });
 });
+
