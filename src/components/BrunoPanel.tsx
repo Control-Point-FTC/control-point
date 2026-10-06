@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown, FileText, RefreshCw } from 'lucide-react';
+import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown, FileText, RefreshCw, Square } from 'lucide-react';
 import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
 import { apiFetch } from '../services/api';
 import ChatInput from './ChatInput';
@@ -9,7 +9,9 @@ import BrunoIcon from './BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
 import { cn } from './ui';
-import { getScoutingContext, subscribeScoutingContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../services/brunoContext';
+import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../services/brunoContext';
+import { BrunoThinking, StreamingCaret, thinkingSteps, type ThinkingStep } from './bruno/BrunoThinking';
+import { useInterfaceMode } from '../modern/interfaceMode';
 import type { ScoutingContextRequest } from '../types/ftcScout';
 import { BRUNO_TITLE, starterPoolForPath, nextStarters } from './brunoStarters';
 
@@ -32,7 +34,14 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   onUserSaved?: (user: any) => void;
 }) {
   const name = botName || 'Bruno';
+  // Modern experience: live thinking steps, streaming caret and a Stop button.
+  const modern = useInterfaceMode().mode === 'modern';
+  const [thinkMeta, setThinkMeta] = useState<Record<number, { steps: ThinkingStep[]; startedAt: number; thoughtMs: number | null }>>({});
+  const abortRef = useRef<AbortController | null>(null);
+  const stop = () => abortRef.current?.abort();
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
+  // A cleared conversation (new chat) drops the per-reply thinking data.
+  useEffect(() => { if (messages.length === 0) setThinkMeta({}); }, [messages.length]);
   // Data-action proposals: pending until the user taps the confirm card.
   const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
 
@@ -215,6 +224,26 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     setBusy(true);
     let agg = '';
     setMessages([...next, { role: 'model', text: '' }]);
+    // What Bruno is actually given for this reply (shown as its thinking steps).
+    const replyIndex = next.length;
+    const startedAt = Date.now();
+    let firstTokenAt: number | null = null;
+    setThinkMeta((m) => ({
+      ...m,
+      [replyIndex]: {
+        steps: thinkingSteps({
+          page: getScreenContext()?.view ?? null,
+          images: outgoing.length,
+          pdfs: outgoingPdfs.length,
+          scouting: !!(scoutingOverride ?? getScoutingContext()),
+          history: next.length,
+        }),
+        startedAt,
+        thoughtMs: null,
+      },
+    }));
+    const ac = new AbortController();
+    abortRef.current = ac;
     // Throttle streamed renders: each render re-parses the growing markdown
     // reply, so cap re-renders at ~11/sec. The accumulator keeps every char.
     let renderTimer: number | null = null;
@@ -225,8 +254,13 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
     try {
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
+        if (firstTokenAt === null && chunk.trim()) {
+          firstTokenAt = Date.now();
+          const ms = firstTokenAt - startedAt;
+          setThinkMeta((m) => (m[replyIndex] ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: ms } } : m));
+        }
         if (renderTimer === null) renderTimer = window.setTimeout(pushRender, 90);
-      }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined });
+      }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined, signal: ac.signal });
       if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
       setMessages([...next, { role: 'model', text: agg }]);
       if (!agg.trim()) {
@@ -235,9 +269,18 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
       // Note: data-action proposal blocks are NOT auto-inserted anymore — the
       // confirm card calls applyActionProposals + notify on tap.
     } catch (e: any) {
-      const blockedMsg = e?.serverError;
-      setMessages([...next, { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` }]);
+      if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
+      if (e?.name === 'AbortError') {
+        // Stopped by the user: keep what was generated so far.
+        setMessages([...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
+        setThinkMeta((m) => (m[replyIndex] && m[replyIndex].thoughtMs == null ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: Date.now() - startedAt } } : m));
+      } else {
+        setThinkMeta((m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; });
+        const blockedMsg = e?.serverError;
+        setMessages([...next, { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` }]);
+      }
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   };
@@ -428,9 +471,20 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                 ) : (
                   <div key={i} className="flex justify-start">
                     <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-text-base/[0.05] border border-text-base/[0.07] px-3.5 py-2.5 text-[13px] text-text-base/85 leading-relaxed prose-sm">
+                      {modern && thinkMeta[i] && (
+                        <BrunoThinking
+                          steps={thinkMeta[i].steps}
+                          startedAt={thinkMeta[i].startedAt}
+                          thoughtMs={thinkMeta[i].thoughtMs}
+                          phase={!m.text ? 'thinking' : busy && i === messages.length - 1 ? 'generating' : 'done'}
+                        />
+                      )}
                       {m.text ? (
-                        <BrunoMarkdown>{stripEventBlocks(m.text)}</BrunoMarkdown>
-                      ) : (
+                        <>
+                          <BrunoMarkdown>{stripEventBlocks(m.text)}</BrunoMarkdown>
+                          {modern && busy && i === messages.length - 1 && <StreamingCaret />}
+                        </>
+                      ) : modern && thinkMeta[i] ? null : (
                         <span className="flex gap-1 items-center text-text-muted">
                           {[0, 1, 2].map((d) => (
                             <span key={d} className="w-1.5 h-1.5 rounded-full bg-accent/70 animate-bounce" style={{ animationDelay: `${d * 0.15}s` }} />
@@ -531,6 +585,17 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                     placeholder="Ask about mechanisms, code, strategy…"
                   />
                 </div>
+                {modern && busy && (
+                  <button
+                    type="button"
+                    onClick={stop}
+                    aria-label="Stop generating"
+                    title="Stop generating"
+                    className="w-10 h-10 shrink-0 rounded-xl bg-text-base text-primary flex items-center justify-center hover:opacity-90 transition"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                  </button>
+                )}
               </div>
               <p className="text-[10px] text-text-muted/60 mt-1.5 px-1">
                 Grounded in GM0, FTC docs &amp; REV resources. Screenshots are read once and never saved.
