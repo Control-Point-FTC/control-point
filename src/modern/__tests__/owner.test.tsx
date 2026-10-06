@@ -162,6 +162,49 @@ describe('Owner console races', () => {
     await waitFor(() => expect(input).toHaveValue(''));
   });
 
+  it('a note typed while a warning or flag action is sending is kept', async () => {
+    const pending: Array<() => void> = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (init?.method) return new Promise((r) => { pending.push(() => r({ ok: true, status: 200, json: async () => ({}) })); });
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 1 }, daily: [], top: [], providers: [] });
+      if (url.startsWith('/api/owner/ai-flags')) return json(DB['/api/owner/ai-flags']);
+      return json(DB[url] ?? null);
+    });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Flags/);
+    const card = await screen.findByRole('article', { name: /by Ada/ });
+    const note = within(card).getByLabelText('Reviewer note');
+    fireEvent.change(note, { target: { value: 'first' } });
+    fireEvent.click(within(card).getByRole('button', { name: /Warn/ }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    fireEvent.change(note, { target: { value: 'second thoughts' } });
+    await act(async () => { pending.shift()!(); });
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Warning recorded', 'success'));
+    expect(within(screen.getByRole('article', { name: /by Ada/ })).getByLabelText('Reviewer note')).toHaveValue('second thoughts');
+
+    tab(/Users/);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
+    const reason = await screen.findByLabelText('Warning reason');
+    fireEvent.change(reason, { target: { value: 'homework' } });
+    fireEvent.submit(reason.closest('form')!);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    fireEvent.change(reason, { target: { value: 'next one' } });
+    await act(async () => { pending.shift()!(); });
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Warning recorded', 'success'));
+    expect(screen.getByLabelText('Warning reason')).toHaveValue('next one');
+  });
+
+  it('user rows are single list items', async () => {
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Users/);
+    await screen.findAllByRole('button', { name: 'Manage' });
+    const items = screen.getAllByRole('listitem').filter((li) => within(li).queryByRole('button', { name: 'Manage' }));
+    expect(items).toHaveLength(2);
+    items.forEach((li) => expect(li.querySelector('li')).toBeNull());
+  });
+
   it('an older flags response never replaces a newer one', async () => {
     let releaseAll: () => void = () => {};
     api.apiFetch.mockImplementation((url: string) => {

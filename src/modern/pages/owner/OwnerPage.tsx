@@ -102,7 +102,7 @@ function OverviewTab({ ctl }: { ctl: Ctl }) {
 function UserRow({ u, ctl, extra }: { u: any; ctl: Ctl; extra?: React.ReactNode }) {
   const st = aiStatusOf(u);
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
+    <StaggerItem as="li" className="flex items-center gap-3 px-4 py-3">
       <MemberAvatar member={u} className="size-9 border-0" />
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-center gap-1.5 truncate text-sm font-medium">
@@ -115,7 +115,7 @@ function UserRow({ u, ctl, extra }: { u: any; ctl: Ctl; extra?: React.ReactNode 
       {extra}
       <Badge variant="outline" className={cn('max-sm:hidden', tone(st.cls))}>{st.label}</Badge>
       <Button variant="outline" size="sm" onClick={() => ctl.setSelectedId(u.id)} className="max-sm:h-11">Manage</Button>
-    </li>
+    </StaggerItem>
   );
 }
 
@@ -138,9 +138,7 @@ function UsersTab({ ctl }: { ctl: Ctl }) {
       {ctl.filteredUsers.length ? (
         <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
           {ctl.filteredUsers.map((u) => (
-            <StaggerItem as="li" key={u.id} className="contents">
-              <UserRow u={u} ctl={ctl} extra={<Button variant="ghost" size="icon-sm" aria-label={`Delete ${u.name}`} onClick={() => void ctl.quickDeleteUser(u)} className="text-destructive hover:text-destructive max-sm:size-11"><Trash2 /></Button>} />
-            </StaggerItem>
+            <UserRow key={u.id} u={u} ctl={ctl} extra={<Button variant="ghost" size="icon-sm" aria-label={`Delete ${u.name}`} onClick={() => void ctl.quickDeleteUser(u)} className="text-destructive hover:text-destructive max-sm:size-11"><Trash2 /></Button>} />
           ))}
         </Stagger>
       ) : <EmptyState icon={Search} title="No users match" />}

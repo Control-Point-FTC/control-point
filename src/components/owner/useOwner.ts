@@ -100,7 +100,9 @@ export function useOwnerConsole() {
     }).catch(() => null);
     if (r?.ok) {
       notify(action === 'dismiss' ? 'Flag dismissed' : action === 'warn' ? 'Warning recorded' : action === 'timeout' ? 'AI timed out for user' : 'AI disabled for user', 'success');
-      deleteDraft(`owner:flag-note:${id}`);
+      // Clear the note only if it's still the one sent (a newer edit stays).
+      const noteKey = `owner:flag-note:${id}`;
+      if (getDraft<string | null>(noteKey, null) === note) deleteDraft(noteKey);
       reloadAfterChange();
     } else {
       notify('Action failed', 'error');
@@ -207,13 +209,16 @@ export function useOwnerUser(userId: number, { onClose, onChanged, teams }: { on
   const doWarn = async () => {
     if (busy) return;
     setBusy(true);
+    const sent = warnNote;
     try {
       const r = await apiFetch(`/api/owner/users/${userId}/warn`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: warnNote }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: sent }),
       });
       if (!r.ok) { notify('Warn failed', 'error'); return; }
       notify('Warning recorded', 'success');
-      setWarnNote('');
+      // A note typed while this was sending stays.
+      const warnKey = `owner:warn:${userId}`;
+      if (getDraft<string>(warnKey, '') === sent) deleteDraft(warnKey);
       await load(); onChanged();
     } catch { notify('Warn failed', 'error'); } finally { setBusy(false); }
   };
