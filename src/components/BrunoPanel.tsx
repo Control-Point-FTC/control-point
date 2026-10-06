@@ -2,25 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { BrunoMarkdown } from './BrunoMarkdown';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, ExternalLink, Sparkles, Maximize2, Plus, ImagePlus, ChevronDown, FileText, RefreshCw, Square } from 'lucide-react';
-import { streamBuildHelper, stripEventBlocks, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../services/aiService';
-import { apiFetch } from '../services/api';
+import { stripEventBlocks, extractActionProposals } from '../services/aiService';
 import ChatInput from './ChatInput';
 import BrunoIcon from './BrunoIcon';
-import ActionProposalCard, { type ProposalStatus } from './ActionProposalCard';
-import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf } from './BrunoImageAttach';
+import ActionProposalCard from './ActionProposalCard';
+import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS } from './BrunoImageAttach';
 import { cn } from './ui';
-import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../services/brunoContext';
-import { BrunoThinking, StreamingCaret, thinkingSteps, type ThinkingStep } from './bruno/BrunoThinking';
+import { BrunoThinking, StreamingCaret } from './bruno/BrunoThinking';
+import { useBrunoPanelChat, BRUNO_RESOURCES as RESOURCES } from './bruno/useBrunoPanelChat';
 import { useInterfaceMode } from '../modern/interfaceMode';
-import type { ScoutingContextRequest } from '../types/ftcScout';
-import { BRUNO_TITLE, starterPoolForPath, nextStarters } from './brunoStarters';
+import { BRUNO_TITLE } from './brunoStarters';
 
-const RESOURCES = [
-  { label: 'Game Manual 0', url: 'https://gm0.org' },
-  { label: 'FTC Docs', url: 'https://ftc-docs.firstinspires.org' },
-  { label: 'REV Docs', url: 'https://docs.revrobotics.com' },
-  { label: 'Game & Season', url: 'https://www.firstinspires.org/resource-library/ftc/game-and-season-info' },
-];
 
 export default function BrunoPanel({ open, onClose, onExpand, currentUser, botName, onActiveChatId, onUserSaved }: {
   open: boolean;
@@ -33,267 +25,34 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   /** Persisted user after a settings save — parent refreshes its own state. */
   onUserSaved?: (user: any) => void;
 }) {
-  const name = botName || 'Bruno';
+  // Conversation, starters, output length and streaming are shared with the
+  // Modern panel (and survive a mode switch via the draft store).
+  const {
+    name, messages, input, setInput, busy, thinkMeta, stop, send, newChat,
+    proposalState, confirmProposals, dismissProposal,
+    scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
+    attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
+    outputLevel, changeOutputLevel,
+  } = useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved });
   // Modern experience: live thinking steps, streaming caret and a Stop button.
   const modern = useInterfaceMode().mode === 'modern';
-  const [thinkMeta, setThinkMeta] = useState<Record<number, { steps: ThinkingStep[]; startedAt: number; thoughtMs: number | null }>>({});
-  const abortRef = useRef<AbortController | null>(null);
-  const stop = () => abortRef.current?.abort();
-  const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
-  // A cleared conversation (new chat) drops the per-reply thinking data.
-  useEffect(() => { if (messages.length === 0) setThinkMeta({}); }, [messages.length]);
-  // Data-action proposals: pending until the user taps the confirm card.
-  const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
-
-  const confirmProposals = async (idx: number, proposals: ActionProposal[]) => {
-    setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
-    try {
-      const applied = await applyActionProposals(proposals);
-      const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' ? 'calendar' : k));
-      notifyBrunoDataChanged(types);
-      setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
-    } catch (e: any) {
-      setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
-    }
-  };
-  const [input, setInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  // Analyze mode (Team Stats): the page publishes what it's looking at; the
-  // panel forwards it with each message and swaps in scouting starters.
-  const [scoutCtx, setScoutCtx] = useState(getScoutingContext);
-  useEffect(() => subscribeScoutingContext(() => setScoutCtx(getScoutingContext())), []);
-  // Context-aware rotating starters: the pool follows the current page
-  // (Communication → email logging, Tasks → task creation, …), showing a
-  // fresh batch each time without repeating until the pool is exhausted.
-  const [starterPath, setStarterPath] = useState(() => window.location.pathname);
-  useEffect(() => {
-    const update = () => setStarterPath(window.location.pathname);
-    window.addEventListener('popstate', update);
-    // React-router navigations don't fire popstate; poll cheaply while open.
-    const t = setInterval(update, 1000);
-    return () => { window.removeEventListener('popstate', update); clearInterval(t); };
-  }, []);
-  const starterPool = scoutCtx
-    ? { greeting: 'Analyze mode — ask me about this scouting view.', prompts: [
-        'Who is our best potential alliance partner here?',
-        'Who should we scout next?',
-        'What is our biggest weakness compared with the event average?',
-        'What information is missing before we make a scouting decision?',
-        'Which teams have the most consistent autonomous?',
-        'Compare our cycle times to the top teams here',
-      ] }
-    : starterPoolForPath(starterPath);
-  const [starterSeen, setStarterSeen] = useState<number[]>([]);
-  const [starterBatch, setStarterBatch] = useState<string[]>(() => nextStarters(starterPoolForPath(window.location.pathname), []).batch);
-  // Reset rotation when the page (context) changes.
-  useEffect(() => {
-    const { batch, seen } = nextStarters(starterPool, []);
-    setStarterBatch(batch);
-    setStarterSeen(seen);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [starterPath, scoutCtx]);
-  const refreshStarters = () => {
-    const { batch, seen } = nextStarters(starterPool, starterSeen);
-    setStarterBatch(batch);
-    setStarterSeen(seen);
-  };
-  const [greeting, setGreeting] = useState<string | null>(null);
-  const [pendingPrompt, setPendingPrompt] = useState<{ text: string; scouting?: ScoutingContextRequest } | null>(null);
-  useEffect(() => {
-    const onOpen = (e: Event) => {
-      const d = (e as CustomEvent<BrunoOpenDetail>).detail || {};
-      if (d.greeting) setGreeting(d.greeting);
-      if (d.prompt) setPendingPrompt({ text: d.prompt, scouting: d.scouting });
-    };
-    window.addEventListener(BRUNO_OPEN_EVENT, onOpen);
-    return () => window.removeEventListener(BRUNO_OPEN_EVENT, onOpen);
-  }, []);
-  useEffect(() => { if (!scoutCtx) setGreeting(null); }, [scoutCtx]);
-  const [chatId, setChatId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
-  // Screenshots attached to the next message. Cleared on send; the images
-  // travel to the AI in-memory only and are never saved anywhere.
-  const [attached, setAttached] = useState<AttachedImage[]>([]);
-  const [attachedPdfs, setAttachedPdfs] = useState<AttachedPdf[]>([]);
-
-  const addAttached = (imgs: AttachedImage[]) => {
-    if (!imgs.length) return;
-    setAttached((prev) => [...prev, ...imgs].slice(0, MAX_BRUNO_IMAGES));
-  };
-
-  // Output length — the same member preference as Settings → Bruno AI,
-  // adjustable right here in the sidebar too.
-  const [outputLevel, setOutputLevel] = useState('medium');
   const [outputMenuOpen, setOutputMenuOpen] = useState(false);
   const outputMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!outputMenuOpen) return;
     const close = (e: MouseEvent) => {
-      if (outputMenuRef.current && !outputMenuRef.current.contains(e.target as Node)) {
-        setOutputMenuOpen(false);
-      }
+      if (outputMenuRef.current && !outputMenuRef.current.contains(e.target as Node)) setOutputMenuOpen(false);
     };
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, [outputMenuOpen]);
   useEffect(() => {
-    // 'max' was removed — anyone who had it falls back to 'high'
-    const lvl = currentUser?.bruno_output_level;
-    setOutputLevel(lvl === 'max' ? 'high' : (lvl || 'medium'));
-  }, [currentUser?.bruno_output_level, open]);
-  const changeOutputLevel = async (lvl: string) => {
-    const prev = outputLevel;
-    setOutputLevel(lvl);
-    try {
-      const res = await apiFetch('/api/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: currentUser?.name || '', role: currentUser?.role || '', bruno_output_level: lvl }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.user) onUserSaved?.(data.user);
-      else setOutputLevel(prev);
-    } catch {
-      setOutputLevel(prev);
-    }
-  };
-
-  useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, open]);
-
-  // Every panel open starts a FRESH chat — never resume the previous one.
-  // Past chats keep their auto-titles and stay available in the full view.
-  const newChat = () => {
-    if (busy) return;
-    setChatId(null);
-    setMessages([]);
-    setProposalState({});
-    setInput('');
-    setAttached([]);
-  };
-
-  // Let the parent know which conversation is active so expanding the panel
-  // into the full view can preserve it instead of opening an unrelated chat.
-  useEffect(() => {
-    onActiveChatId?.(chatId);
-  }, [chatId, onActiveChatId]);
-
-  // Escape closes the panel
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
-  const ensureChat = async (): Promise<number | null> => {
-    if (chatId) return chatId;
-    try {
-      const res = await apiFetch('/api/bruno/chats', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) return null;
-      const created = await res.json();
-      setChatId(created.id);
-      return created.id;
-    } catch {
-      return null;
-    }
-  };
-
-  const send = async (text?: string, scoutingOverride?: ScoutingContextRequest) => {
-    const content = (text ?? input).trim();
-    if ((!content && !attached.length && !attachedPdfs.length) || busy) return;
-    setInput('');
-    const outgoing = attached;
-    const outgoingPdfs = attachedPdfs;
-    setAttached([]);
-    setAttachedPdfs([]);
-    const id = await ensureChat();
-    const userMsg: BuildHelperMessage = { role: 'user', text: content || (outgoingPdfs.length ? 'What do you see in these documents?' : 'What do you see in this screenshot?') };
-    if (outgoing.length) userMsg.images = outgoing;
-    if (outgoingPdfs.length) userMsg.pdfs = outgoingPdfs;
-    const next: BuildHelperMessage[] = [...messages, userMsg];
-    setMessages(next);
-    setBusy(true);
-    let agg = '';
-    setMessages([...next, { role: 'model', text: '' }]);
-    // What Bruno is actually given for this reply (shown as its thinking steps).
-    const replyIndex = next.length;
-    const startedAt = Date.now();
-    let firstTokenAt: number | null = null;
-    setThinkMeta((m) => ({
-      ...m,
-      [replyIndex]: {
-        steps: thinkingSteps({
-          page: getScreenContext()?.view ?? null,
-          images: outgoing.length,
-          pdfs: outgoingPdfs.length,
-          scouting: !!(scoutingOverride ?? getScoutingContext()),
-          history: next.length,
-        }),
-        startedAt,
-        thoughtMs: null,
-      },
-    }));
-    const ac = new AbortController();
-    abortRef.current = ac;
-    // Throttle streamed renders: each render re-parses the growing markdown
-    // reply, so cap re-renders at ~11/sec. The accumulator keeps every char.
-    let renderTimer: number | null = null;
-    const pushRender = () => {
-      renderTimer = null;
-      setMessages([...next, { role: 'model', text: agg }]);
-    };
-    try {
-      await streamBuildHelper(next, (chunk) => {
-        agg += chunk;
-        if (firstTokenAt === null && chunk.trim()) {
-          firstTokenAt = Date.now();
-          const ms = firstTokenAt - startedAt;
-          setThinkMeta((m) => (m[replyIndex] ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: ms } } : m));
-        }
-        if (renderTimer === null) renderTimer = window.setTimeout(pushRender, 90);
-      }, id || undefined, { scouting: scoutingOverride ?? getScoutingContext() ?? undefined, signal: ac.signal });
-      if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
-      setMessages([...next, { role: 'model', text: agg }]);
-      if (!agg.trim()) {
-        setMessages([...next, { role: 'model', text: `${name} hit a snag — please try again in a moment.` }]);
-      }
-      // Note: data-action proposal blocks are NOT auto-inserted anymore — the
-      // confirm card calls applyActionProposals + notify on tap.
-    } catch (e: any) {
-      if (renderTimer !== null) { clearTimeout(renderTimer); renderTimer = null; }
-      if (e?.name === 'AbortError') {
-        // Stopped by the user: keep what was generated so far.
-        setMessages([...next, { role: 'model', text: agg.trim() ? `${agg}\n\n_Stopped._` : '_Stopped._' }]);
-        setThinkMeta((m) => (m[replyIndex] && m[replyIndex].thoughtMs == null ? { ...m, [replyIndex]: { ...m[replyIndex], thoughtMs: Date.now() - startedAt } } : m));
-      } else {
-        setThinkMeta((m) => { const { [replyIndex]: _drop, ...rest } = m; return rest; });
-        const blockedMsg = e?.serverError;
-        setMessages([...next, { role: 'model', text: blockedMsg || `${name} isn't reachable right now. Check your connection and try again.` }]);
-      }
-    } finally {
-      abortRef.current = null;
-      setBusy(false);
-    }
-  };
-
-  // "Scout with Bruno" buttons queue a prompt; send it once the panel is open.
-  useEffect(() => {
-    if (open && pendingPrompt && !busy) {
-      const p = pendingPrompt;
-      setPendingPrompt(null);
-      void send(p.text, p.scouting);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pendingPrompt, busy]);
 
   return (
     <AnimatePresence>
@@ -504,7 +263,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                             status={st}
                             error={proposalState[i]?.error}
                             onConfirm={() => confirmProposals(i, proposals)}
-                            onDismiss={() => setProposalState((s) => ({ ...s, [i]: { status: 'dismissed' } }))}
+                            onDismiss={() => dismissProposal(i)}
                           />
                         );
                       })()}
