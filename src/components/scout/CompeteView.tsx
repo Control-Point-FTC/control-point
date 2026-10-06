@@ -130,7 +130,7 @@ export function useScoutProfile(number: number | null, season: number, opts?: { 
 }
 
 /** Lazily loads event payloads (shared 10-min cache) for a list of codes. */
-function useEvents(season: number, codes: string[], enabled: boolean) {
+export function useEvents(season: number, codes: string[], enabled: boolean) {
   const [events, setEvents] = useState<Record<string, FtcEventFull>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -331,7 +331,7 @@ function OprTile({ label, icon: Icon, stat, total, accent, onOpen, fetchedAt }: 
   );
 }
 
-const OPR_COMPONENT: Record<'tot' | 'auto' | 'dc' | 'eg', { label: string; key: keyof FtcPointSplit }> = {
+export const OPR_COMPONENT: Record<'tot' | 'auto' | 'dc' | 'eg', { label: string; key: keyof FtcPointSplit }> = {
   tot: { label: 'Total OPR (no penalties)', key: 'totalNp' },
   auto: { label: 'Autonomous OPR', key: 'auto' },
   dc: { label: 'TeleOp OPR', key: 'teleop' },
@@ -390,8 +390,8 @@ function OprSheet({ which, p, season, onClose }: { which: 'tot' | 'auto' | 'dc' 
 // Trends
 // ---------------------------------------------------------------------------
 
-type TrendKey = 'opr' | 'winRate' | 'avgScore' | 'avgPenalties' | 'auto' | 'teleop' | 'endgame' | 'rp';
-const TRENDS: { key: TrendKey; label: string; suffix?: string; lowerIsBetter?: boolean }[] = [
+export type TrendKey = 'opr' | 'winRate' | 'avgScore' | 'avgPenalties' | 'auto' | 'teleop' | 'endgame' | 'rp';
+export const TRENDS: { key: TrendKey; label: string; suffix?: string; lowerIsBetter?: boolean }[] = [
   { key: 'opr', label: 'OPR by event' },
   { key: 'winRate', label: 'Win rate', suffix: '%' },
   { key: 'avgScore', label: 'Avg alliance score' },

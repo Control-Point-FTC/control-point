@@ -1,10 +1,10 @@
 // FTC team statistics: shared hook + dashboard card + dedicated stats page.
 // Match data comes from the backend's FTC Scout proxy (credited to ftcscout.org).
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { TeamScoutView } from './scout/CompeteView';
 import { AnalyzeView } from './scout/AnalyzeView';
-import { fetchScoutTeam } from '../services/ftcScoutApi';
+import { useTeamStats } from './scout/useTeamStats';
 import {
   Trophy, MapPin, GraduationCap, Target, Bot,
   Cog, Flag, ChevronRight, RefreshCw, Settings as SettingsIcon,
@@ -297,26 +297,7 @@ export function FtcTeamCard() {
 // Dedicated stats page: /stats — Compete (our team, in depth) and Analyze
 // (event scouting workspace). Mode lives in ?mode= so links/back work.
 export function TeamStatsView() {
-  const [params, setParams] = useSearchParams();
-  const mode: 'compete' | 'analyze' = params.get('mode') === 'analyze' ? 'analyze' : 'compete';
-  const [season, setSeason] = useState(currentFtcSeason);
-  const [myTeam, setMyTeam] = useState<number | null>(null);
-  const [focusTeam, setFocusTeam] = useState<{ number: number; name: string } | null>(null);
-  // Our team number (for Analyze). On a direct ?mode=analyze visit before the
-  // new season has data, step back once to the latest season we played.
-  const stepBack = useRef(params.get('mode') === 'analyze');
-  useEffect(() => {
-    let alive = true;
-    fetchScoutTeam(season).then((p) => {
-      if (!alive) return;
-      setMyTeam(p.number);
-      const prev = p.seasons.filter((s) => s < season).sort((a, b) => b - a)[0];
-      if (stepBack.current && !p.events.length && prev) setSeason(prev);
-      stepBack.current = false;
-    }).catch(() => { stepBack.current = false; /* not connected / no data: Analyze still works by search */ });
-    return () => { alive = false; };
-  }, [season]);
-  const setMode = (m: 'compete' | 'analyze') => setParams((p) => { const n = new URLSearchParams(p); if (m === 'analyze') n.set('mode', 'analyze'); else n.delete('mode'); return n; });
+  const { mode, setMode, season, setSeason, myTeam, focusTeam, viewTeam } = useTeamStats();
 
   const tabs = (
     <div className="inline-flex rounded-2xl card-surface p-1 gap-1" role="tablist" aria-label="Team stats mode">
@@ -338,9 +319,7 @@ export function TeamStatsView() {
           season={season}
           onSeasonChange={setSeason}
           autoSeason
-          actions={{
-            onViewTeam: (n, name) => { setFocusTeam({ number: n, name }); setMode('analyze'); },
-          }}
+          actions={{ onViewTeam: viewTeam }}
         />
       ) : (
         <AnalyzeView key={focusTeam?.number ?? 'none'} season={season} onSeasonChange={setSeason} myTeam={myTeam} initialTeam={focusTeam} />

@@ -610,3 +610,37 @@ Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both 
   - 390 dark: Field, Matches and the accuracy sheet. No overflow, and every target is ≥44 px (the switch uses the kit's 44 px hit area).
   - No real phone was available.
 - Screenshots: `docs/redesign/screenshots/phase7/`.
+
+## Phase 7b: Team Stats · Compete
+
+### Shared state
+- **`useTeamStats`** (`src/components/scout/useTeamStats.ts`): Compete/Analyze mode (`?mode=analyze`), the season, our team number, and the step back on a direct Analyze visit. It also handles the Compete → Analyze hand-off (`viewTeam`). Legacy `TeamStatsView` now uses it, with unchanged JSX.
+- **From `CompeteView`:** `useEvents`, `OPR_COMPONENT`, `TRENDS` and `TrendKey` are exported, so Modern reuses the same data hooks (`useScoutProfile` and its empty-season rules, plus lazy event loads).
+
+### Modern Team Stats (`src/modern/pages/stats/`)
+- **Page:** Compete / Analyze tabs under the page header. Analyze still renders the Legacy view in the interim frame; it is rebuilt in 7c.
+- **`TeamProfile`** (reusable for any team in 7c):
+  - **Hero:** a big team number, name, school / location / rookie year / last update, a collapsible sponsors line, a season toggle, and host actions (Scout with Bruno, shortlist, pin) when the host provides them.
+  - **OPR:** four buttons with animated values, world rank, a "top N%" percentile bar and a hover lift. Each opens a kit sheet with the build-up per event, a ± badge against the event average, and the component split.
+  - **Trends:** a single line chart that can show any of the 8 metrics (Legacy shows 8 sparkline cards). It shows the latest value and a Rising / Falling / Steady badge, with a collapsible "Event by event" table.
+  - **Event history:** a timeline rail with rank medals (gold / silver / bronze). Each event expands with an animated height and loads lazily, with Try again on failure. Inside:
+    - "Against the field" bars, with the event-average marker.
+    - Strength and weakness badges.
+    - Qualification and playoff match rows.
+    - Rankings (top 8 / all; rows open the team in Analyze).
+    - Alliance selection.
+    - Teammates and opponents at that event.
+  - **Partners & opponents:** loaded on demand, then shown in Partners / Opponents tabs. Each row has an actions menu (View matches / View team / Scout with Bruno / shortlist / pin). "View matches" opens a sheet of the shared matches.
+  - **Match sheet:** red and blue cards (winner ring, clickable teams, surrogate / DQ marks), a mirrored scoring breakdown, the score difference and source notes, and Scout with Bruno.
+  - **States:** loading skeleton; "No FTC team connected" → Settings; both sources down → Retry; empty season → a friendly "No 2025–26 · DECODE data yet". A failed refresh keeps the last loaded data and shows a Retry banner.
+
+### Tests
+- **New (11 tests):**
+  - Compete: hero, OPR, trend chart and timeline order (no compare UI); lazy event load, then the match breakdown; event rankings → Analyze; the OPR sheet; partners on demand, then "View matches"; stepping back from an empty season; the mode tabs.
+  - TeamProfile states: empty season, Retry, not connected, and host actions (shortlist, pin, Bruno prompt).
+- The Legacy scout tests still pass.
+- **Totals:** 494 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (real FTC data, team 4215, 2025–26):
+  - Desktop: the hero, OPR and trends, and an opened Championship event. The match lists were stacked into a single column because two columns were cramped.
+  - 390 px: no overflow, and every target is ≥44 px.
+  - No real phone was available.
