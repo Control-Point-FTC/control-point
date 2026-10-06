@@ -147,7 +147,8 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
         if (confirmed.current.has(k)) n.set(k, confirmed.current.get(k)!); else n.delete(k);
         return n;
       });
-      refresh.attendance(); // reconcile with the server's truth either way
+      // Reconcile with the server's truth either way (offline: keep the rollback).
+      Promise.resolve(refresh.attendance()).catch(() => {});
     };
     try {
       const res = await apiFetch('/api/attendance/batch', {
@@ -163,7 +164,8 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
         setSavingStatus('saved');
         if (savedTimer.current) clearTimeout(savedTimer.current);
         savedTimer.current = setTimeout(() => setSavingStatus('idle'), 2000);
-        refresh.attendance(); // keep the optimistic value; reconcile in background
+        // Keep the optimistic value; reconcile in the background.
+        Promise.resolve(refresh.attendance()).catch(() => {});
       } else {
         rollback();
         setSavingStatus('idle');
