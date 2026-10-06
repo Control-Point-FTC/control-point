@@ -246,5 +246,42 @@ describe('Modern Code', () => {
     await act(async () => { finish(); });
     expect(await screen.findByRole('button', { name: /Late.java/ })).toBeInTheDocument();
   });
+
+  it("a commit saves its own file's newest edits even if you open another file meanwhile", async () => {
+    let firstSave: () => void = () => {};
+    code.saveDraft.mockImplementation((id: number, text: string) => {
+      if (code.saveDraft.mock.calls.length === 1) return new Promise((r) => { firstSave = () => { server[id].drafts = text; r({}); }; });
+      server[id].drafts = text; return Promise.resolve({});
+    });
+    setup();
+    await open('Drive.java');
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v1' } });
+    await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Commit$/ }));
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.change(within(dlg).getByLabelText('Commit message'), { target: { value: 'ship' } });
+    fireEvent.click(within(dlg).getByRole('button', { name: /Commit/ }));
+    // Open another file while the commit waits for the in-flight save.
+    fireEvent.click(screen.getAllByRole('button', { name: /Arm.java/, hidden: true })[0]);
+    await act(async () => { firstSave(); });
+    await waitFor(() => expect(code.commitToMain).toHaveBeenCalledWith(1, 'ship', 7));
+    expect(code.saveDraft.mock.calls.map((c) => [c[0], c[1]])).toEqual([[1, 'v1'], [1, 'v2']]);
+    expect(server[1].main).toBe('v2');
+  });
+
+  it('a revert that finishes after a mode switch refreshes the page you came back to', async () => {
+    let finish: () => void = () => {};
+    code.revertCommit.mockImplementation(() => new Promise((r) => { finish = () => { server[1].drafts = 'reverted'; r({}); }; }));
+    const first = setup();
+    await open('Drive.java');
+    fireEvent.click(screen.getByRole('button', { name: /History/ }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getAllByRole('button', { name: /Revert/ })[0]);
+    first.unmount();
+    setup();
+    await waitFor(() => expect(screen.getByLabelText('Code editor')).toHaveValue('class Drive {}'));
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.getByLabelText('Code editor')).toHaveValue('reverted'));
+  });
 });
 

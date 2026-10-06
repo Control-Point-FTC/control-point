@@ -37,6 +37,9 @@ let contentRequest = 0;
 let saveQueue: Promise<unknown> = Promise.resolve();
 const filesBus = new EventTarget();
 const filesChanged = () => filesBus.dispatchEvent(new Event('changed'));
+// A file's content changed on the server (revert / commit): the mounted page
+// showing it reloads its content and history.
+const contentChanged = (fileId: number) => filesBus.dispatchEvent(new CustomEvent('content', { detail: fileId }));
 
 export function useCodeController({ teams, currentUser, hasScope, activeTeamId }: {
   teams: Team[]; currentUser?: Member; hasScope?: (scope: string) => boolean; activeTeamId?: number | null;
@@ -140,10 +143,15 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     return () => filesBus.removeEventListener('changed', on);
   }, [loadFiles]);
 
+  // This page's own loading state (spinner, commit gating) follows its own
+  // newest request; the shared buffer only takes the newest request overall.
+  const localContentSeq = useRef(0);
   const loadFileContent = useCallback(async () => {
     const file = getDraft<CodeFile | null>('code:file', null);
     if (!file) return;
     const branch = getDraft<Branch>('code:branch', 'drafts');
+    const local = ++localContentSeq.current;
+    const mine = () => local === localContentSeq.current;
     const seq = ++contentRequest;
     const latest = () => seq === contentRequest;
     const stillOpen = () => getDraft<CodeFile | null>('code:file', null)?.id === file.id && getDraft<Branch>('code:branch', 'drafts') === branch;
@@ -151,8 +159,7 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     try {
       setBusy(true);
       const content = await getCodeFileContent(file.id);
-      if (!latest()) return;
-      setFileContentObj(content);
+      if (mine()) setFileContentObj(content);
       // Keep unsaved edits for this file + branch (e.g. after a mode switch).
       // Only the newest request for the file + branch still open may write.
       write(() => {
@@ -165,9 +172,9 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
         }
       });
     } catch (err) {
-      if (latest()) setError(`Failed to load file content: ${errText(err)}`);
+      if (mine()) setError(`Failed to load file content: ${errText(err)}`);
     } finally {
-      if (latest()) setBusy(false);
+      if (mine()) setBusy(false);
     }
   }, [setBuffer]);
 
@@ -187,6 +194,16 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     }
   }, [history.length]);
 
+  useEffect(() => {
+    const on = (e: Event) => {
+      if (getDraft<CodeFile | null>('code:file', null)?.id !== (e as CustomEvent<number>).detail) return;
+      void loadHistory();
+      void loadFileContent();
+    };
+    filesBus.addEventListener('content', on);
+    return () => filesBus.removeEventListener('content', on);
+  }, [loadHistory, loadFileContent]);
+
   // Open file or branch changed: load its content and history.
   useEffect(() => {
     if (!selectedFile) return;
@@ -197,17 +214,19 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
   }, [selectedFile?.id, currentBranch]);
 
   /**
-   * Save the drafts branch (queued behind any save already running); marks it
-   * saved only if nothing changed meanwhile. Resolves false if the save failed.
+   * Save the drafts buffer as it is now (captured when called, so a queued
+   * save still writes the file it was meant for), queued behind any save
+   * already running; marks it saved only if nothing changed meanwhile.
+   * Resolves false if the save failed.
    */
   const saveNow = useCallback((): Promise<boolean> => {
-    const run = saveQueue.then(() => saveBuffer());
+    const snapshot = getDraft<Buffer | null>(BUFFER_KEY, null);
+    const run = saveQueue.then(() => saveBuffer(snapshot));
     saveQueue = run.catch(() => {});
     return run;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, setBuffer]);
-  const saveBuffer = async (): Promise<boolean> => {
-    const b = getDraft<Buffer | null>(BUFFER_KEY, null);
+  const saveBuffer = async (b: Buffer | null): Promise<boolean> => {
     if (!b || !b.unsaved || b.branch !== 'drafts' || !currentUser) return true;
     try {
       setAutoSaveStatus('saving');
@@ -253,9 +272,9 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       setBusy(true);
       await revertCommit(commitId, branch, currentUser.id);
       // The reverted content replaces the buffer (any unsaved edit is superseded).
+      const file = getDraft<CodeFile | null>('code:file', null);
       setBuffer(null);
-      await loadHistory();
-      await loadFileContent();
+      if (file) contentChanged(file.id); // the mounted page (maybe not this one) reloads
     } catch (err) {
       setError(`Failed to revert: ${errText(err)}`);
     } finally {
@@ -306,12 +325,17 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     const done = inEpoch(() => { setCommitMessage(''); setShowCommitModal(false); setCurrentBranch('main'); });
     try {
       setError(null);
-      // Unsaved edits are saved first so they're part of the commit.
-      if (!(await saveNow())) throw new Error('Could not save your latest changes');
+      // This file's unsaved edits (captured now) are saved first, after any
+      // save already in flight, so they're part of the commit.
+      const b = getDraft<Buffer | null>(BUFFER_KEY, null);
+      if (b && b.fileId === file.id && b.branch === 'drafts' && b.unsaved) {
+        if (!(await saveNow())) throw new Error('Could not save your latest changes');
+      } else {
+        await saveQueue; // a save of this file may still be in flight
+      }
       await commitToMain(file.id, message, currentUser.id);
       done();
-      await loadHistory();
-      await loadFileContent();
+      contentChanged(file.id); // the mounted page (maybe not this one) reloads
     } catch (err) {
       setError(`Failed to commit: ${errText(err)}`);
     } finally {
