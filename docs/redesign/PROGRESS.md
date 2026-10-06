@@ -759,3 +759,29 @@ Legacy `AnalyzeView` keeps its JSX; its logic moved into hooks that both modes u
 - **New (10 tests):** totals and timeline order, with TikTok hidden; member vs manager rights; quick-type log with normalised numbers; title required; edit / delete with row-only rollback; quick parse → remove → log all; Parse with Bruno; pin / sync / unlink; Link YouTube; **draft survives remount** and the **save lock survives leaving and coming back**.
 - The `parseOutreachRows` tests (7) still pass. `tsc` is clean.
 - **Local QA** (3 local-only seeded events): desktop dark and 390 px, with no overflow and every target ≥44 px. No real phone was available.
+
+## Phase 8c: Resources
+
+### Shared controller (`src/components/resources/useResourcesController.ts`)
+Extracted from Legacy `ResourcesView`, whose JSX is unchanged apart from Discard now calling the controller.
+- **Unchanged behaviour:**
+  - The page owns its list (`GET /api/resources`) and refetches on the live `resources-changed` event.
+  - Bruno's link extraction (`POST /api/resources/parse`) feeds an editable preview. Unknown categories become Other, and empty titles become the domain.
+  - Bulk save, and optimistic delete with row-only rollback.
+- **Changes:**
+  - Loading is now latest-wins.
+  - A failed delete puts the link back near its old spot (it used to go to the end).
+  - The paste box, the preview and the **in-flight save lock are drafted** and released only by their own epoch. The preview **freezes while saving**, and Bruno's results are dropped after a sign-out.
+
+### Modern Resources (`src/modern/pages/resources/ResourcesPage.tsx`)
+- **Header:** a saved-links count.
+- **"Add links in bulk" composer:** paste → Extract links with Bruno → an editable preview (title, kit Select for category, description, remove) → Discard / Save all.
+- **Library:**
+  - A new **search** box and category chips with counts.
+  - Link cards with a category-coloured icon tile, a clickable title, the domain, a description, a category badge and who added it / when.
+  - An actions menu: Open link, a new **Copy link**, and Delete.
+
+### Tests
+- **New (6 tests):** chips / search; extract → edit → remove → save all (request body); parse error; delete with row-only rollback in its original place; live refetch; **preview survives remount** and the **save lock survives leaving and coming back**.
+- The component and modern suites pass apart from the known flaky / Windows-only tests. `tsc` is clean.
+- **Local QA** (5 local-only seeded links): desktop dark, and 390 px with no overflow and every target ≥44 px. Locally, Bruno extraction returns "AI not configured" as expected.
