@@ -227,6 +227,7 @@ function EntrySheet({ ctl, teams, budget }: { ctl: Ctl; teams: any[]; budget: an
           <SheetDescription>{ctl.editingId ? 'Changes save to the shared ledger.' : 'Record money coming in or going out.'}</SheetDescription>
         </SheetHeader>
         <form id="budget-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void ctl.handleAdd(); }}>
+          <fieldset disabled={ctl.busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
           <ToggleGroup type="single" aria-label="Type" value={f.type} onValueChange={(v) => { if (v) set({ type: v }); }} className="grid w-full grid-cols-2">
             <ToggleGroupItem value="income" size="lg" className="max-sm:h-11"><ArrowDownLeft /> Income</ToggleGroupItem>
             <ToggleGroupItem value="expense" size="lg" className="max-sm:h-11"><ArrowUpRight /> Expense</ToggleGroupItem>
@@ -263,6 +264,7 @@ function EntrySheet({ ctl, teams, budget }: { ctl: Ctl; teams: any[]; budget: an
               </SelectContent>
             </Select>
           </div>
+          </fieldset>
         </form>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <Button variant="outline" onClick={ctl.closeEntryModal} className="max-sm:h-11">Cancel</Button>

@@ -170,6 +170,7 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               <SheetDescription>{editing ? f.name : 'Name and SKU are required. A REV Robotics link can fill the rest.'}</SheetDescription>
             </SheetHeader>
             <form id="part-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void (editing ? ctl.handleUpdate() : ctl.handleAdd()); }}>
+              <fieldset disabled={ctl.busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
               {!editing && (
                 <div className="rounded-xl border border-dashed border-border p-4">
                   <Label htmlFor="part-rev" className="flex items-center gap-1.5"><Link2 className="size-4" /> Import from REV Robotics</Label>
@@ -210,6 +211,7 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 <Label htmlFor="part-description">Description</Label>
                 <Textarea id="part-description" rows={3} value={f.description ?? ''} onChange={(e) => set({ description: e.target.value })} />
               </div>
+              </fieldset>
             </form>
             <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
               <Button variant="outline" onClick={close} className="max-sm:h-11">Cancel</Button>
@@ -234,7 +236,7 @@ function InvoiceReview({ ctl }: { ctl: Ctl }) {
             The AI read these lines and picked a category for each. Fix anything wrong and untick what you don't want. Items already in inventory get restocked.
           </DialogDescription>
         </DialogHeader>
-        <div className="-mx-1 min-h-0 flex-1 overflow-auto px-1">
+        <fieldset disabled={ctl.invoiceConfirming} className="-mx-1 m-0 min-h-0 min-w-0 flex-1 overflow-auto border-0 px-1 py-0">
           <Table>
             <TableHeader>
               <TableRow><TableHead className="w-10"><span className="sr-only">Import</span></TableHead><TableHead>Item</TableHead><TableHead>SKU</TableHead><TableHead className="w-24">Qty</TableHead><TableHead className="w-28">Unit $</TableHead><TableHead className="w-40">Category</TableHead></TableRow>
@@ -257,7 +259,7 @@ function InvoiceReview({ ctl }: { ctl: Ctl }) {
               ))}
             </TableBody>
           </Table>
-        </div>
+        </fieldset>
         <DialogFooter>
           <Button variant="outline" onClick={() => ctl.setShowInvoicePreview(false)} disabled={ctl.invoiceConfirming}>Cancel</Button>
           <Button onClick={ctl.handleInvoiceConfirm} disabled={ctl.invoiceConfirming || !selected}>

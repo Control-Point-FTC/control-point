@@ -1,8 +1,10 @@
 // Shared Budget logic for Legacy BudgetView and the Modern Budget page.
 // Extracted from BudgetView: same /api/budget endpoints and bodies, the
 // optimistic delete with rollback, duplicate-as-new and the right-click menu.
-// The entry form is drafted (it survives a mode switch), and a save only
-// closes the form it submitted.
+// The entry form and its in-flight save lock are drafted (they survive a
+// mode switch, so a returning page can't send the same entry twice); views
+// freeze the form while it saves, and a save only closes the form it
+// submitted. A failed delete restores just that row, keeping newer changes.
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { Copy, Pencil, Trash2 } from 'lucide-react';
@@ -14,6 +16,13 @@ import { defaultTeamId } from '../tasks/useTasksController';
 
 export interface BudgetForm { team_id: string; type: string; amount: string; category: string; description: string; date: string }
 const today = () => format(new Date(), 'yyyy-MM-dd');
+
+/** Put a row back at (about) its old position unless the list already has it. */
+export function restoreRow<T extends { id: unknown }>(list: T[], row: T, index: number): T[] {
+  if (list.some((x) => x.id === row.id)) return list;
+  const at = Math.max(0, Math.min(index, list.length));
+  return [...list.slice(0, at), row, ...list.slice(at)];
+}
 const FORM_KEY = 'budget:form';
 
 export function useBudgetController({ budget, setBudget, teams, refresh, hasScope, currentUser }: {
@@ -22,7 +31,7 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
   const [showAdd, setShowAdd] = useDraft<boolean>('budget:open', false);
   const [editingId, setEditingId] = useDraft<number | null>('budget:editing', null);
   const [newItem, setNewItem] = useDraft<BudgetForm>(FORM_KEY, { team_id: '', type: 'expense', amount: '', category: '', description: '', date: today() });
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useDraft<boolean>('budget:saving', false);
   const [deleting, setDeleting] = useState(false);
   const isAdmin = hasScope('budget');
 
@@ -61,7 +70,7 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
   };
 
   const handleAdd = async () => {
-    if (busy) return;
+    if (getDraft('budget:saving', false)) return;
     setBusy(true);
     const submitted = getDraft<BudgetForm>(FORM_KEY, newItem);
     const id = editingId;
@@ -89,18 +98,21 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
     if (!(await confirmDialog({ title: 'Delete transaction', message: 'Delete this transaction?', confirmLabel: 'Delete', danger: true }))) return;
     if (deleting) return;
     setDeleting(true);
-    // Optimistic: drop the row instantly, restore on failure.
-    const prev = budget;
+    // Optimistic: drop the row instantly; on failure put back only that row
+    // (a save may have refreshed the list meanwhile).
+    const idx = budget.findIndex((b: any) => b.id === id);
+    const removed = budget[idx];
     setBudget((bs: any[]) => bs.filter((b: any) => b.id !== id));
+    const restore = () => { if (removed) setBudget((cur: any[]) => restoreRow(cur, removed, idx)); };
     try {
       const res = await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
       if (res.ok) refresh.budget();
       else {
-        setBudget(prev);
+        restore();
         notify('Could not delete entry — try again.', 'error');
       }
     } catch {
-      setBudget(prev);
+      restore();
       notify('Could not delete entry — try again.', 'error');
     } finally {
       setDeleting(false);
@@ -123,8 +135,11 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
   const totalIncome = budget.filter((i: any) => i.type === 'income').reduce((acc: number, i: any) => acc + i.amount, 0);
   const totalExpense = budget.filter((i: any) => i.type === 'expense').reduce((acc: number, i: any) => acc + i.amount, 0);
 
+  // Field edits are ignored while the form saves (frozen in both modes).
+  const editForm: typeof setNewItem = (v) => { if (!getDraft('budget:saving', false)) setNewItem(v); };
+
   return {
-    isAdmin, showAdd, editingId, newItem, setNewItem, busy, deleting,
+    isAdmin, showAdd, editingId, newItem, setNewItem: editForm, busy, deleting,
     openNewEntry, openEditEntry, openDuplicateEntry, closeEntryModal, handleAdd, handleDelete,
     totalIncome, totalExpense,
   };

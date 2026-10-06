@@ -2,9 +2,11 @@
 // page. Extracted from InventoryView: same /api/inventory endpoints and
 // bodies (add, edit, optimistic delete, REV link import, invoice parse →
 // review → confirm, auto-categorize), search / category filter and totals.
-// The add / edit forms and the invoice review are drafted (they survive a
-// mode switch); a save only closes the form it submitted, and async results
-// are dropped after a sign-out or workspace switch.
+// The add / edit forms, the invoice review and their in-flight locks are
+// drafted (they survive a mode switch, so a returning page can't send the
+// same part or invoice twice); views freeze a form while it saves, a save
+// only closes the form it submitted, async results are dropped after a
+// sign-out or workspace switch, and a failed delete restores just that row.
 import { useRef, useState } from 'react';
 import { Edit2, Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
@@ -12,6 +14,7 @@ import { confirmDialog, notify } from '../dialog';
 import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { defaultTeamId } from '../tasks/useTasksController';
+import { restoreRow } from '../budget/useBudgetController';
 
 export const INVENTORY_CATEGORIES = [
   'Structure', 'Motion', 'Wheels', 'Electronics', 'Sensors', 'Power',
@@ -36,10 +39,10 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   const [revLink, setRevLink] = useState('');
   const [isLoadingRev, setIsLoadingRev] = useState(false);
   const [invoiceParsing, setInvoiceParsing] = useState<string | null>(null); // null = idle, string = status text
-  const [invoiceConfirming, setInvoiceConfirming] = useState(false);
+  const [invoiceConfirming, setInvoiceConfirming] = useDraft<boolean>('inv:invoice-confirming', false);
   const [autoCategorizing, setAutoCategorizing] = useState(false);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useDraft<boolean>('inv:saving', false);
   const [deleting, setDeleting] = useState(false);
 
   const openAdd = () => { setNewPart(blankPart(defaultTeamId(teams, currentUser))); setShowAdd(true); };
@@ -50,7 +53,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
       notify('Name and SKU are required', 'error');
       return;
     }
-    if (busy) return;
+    if (getDraft('inv:saving', false)) return;
     setBusy(true);
     try {
       const res = await apiFetch('/api/inventory', {
@@ -85,7 +88,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   const handleUpdate = async () => {
     const submitted = getDraft<any>(EDIT_KEY, showEdit);
     if (!submitted) return;
-    if (busy) return;
+    if (getDraft('inv:saving', false)) return;
     setBusy(true);
     try {
       const res = await apiFetch(`/api/inventory/${submitted.id}`, {
@@ -116,18 +119,21 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     if (!(await confirmDialog({ title: 'Delete part', message: 'Delete this part?', confirmLabel: 'Delete', danger: true }))) return;
     if (deleting) return;
     setDeleting(true);
-    // Optimistic: drop the row instantly, restore on failure.
-    const prev = inventory;
+    // Optimistic: drop the row instantly; on failure put back only that row
+    // (a save may have refreshed the list meanwhile).
+    const idx = inventory.findIndex((p: any) => p.id === id);
+    const removed = inventory[idx];
     setInventory((ps: any[]) => ps.filter((p: any) => p.id !== id));
+    const restore = () => { if (removed) setInventory((cur: any[]) => restoreRow(cur, removed, idx)); };
     try {
       const res = await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
       if (res.ok) refresh.inventory();
       else {
-        setInventory(prev);
+        restore();
         notify('Could not delete part — try again.', 'error');
       }
     } catch {
-      setInventory(prev);
+      restore();
       notify('Could not delete part — try again.', 'error');
     } finally {
       setDeleting(false);
@@ -221,6 +227,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   };
 
   const updateInvoiceItem = (index: number, patch: any) => {
+    if (getDraft('inv:invoice-confirming', false)) return; // frozen while importing
     setInvoiceItems((items) => items.map((it, i) => (i === index ? { ...it, ...patch } : it)));
   };
 
@@ -231,7 +238,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
       notify('Select at least one item to import', 'info');
       return;
     }
-    if (invoiceConfirming) return;
+    if (getDraft('inv:invoice-confirming', false)) return;
     setInvoiceConfirming(true);
     try {
       const res = await apiFetch('/api/inventory/import-invoice/confirm', {
@@ -295,8 +302,14 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   });
   const totalValue = inventory.reduce((acc: number, p: any) => acc + (p.cost * p.quantity), 0);
 
+  // Field edits are ignored while a part saves (frozen in both modes);
+  // closing the edit form (null) is always allowed.
+  const saving = () => getDraft('inv:saving', false);
+  const editNewPart: typeof setNewPart = (v) => { if (!saving()) setNewPart(v); };
+  const editPart: typeof setShowEdit = (v) => { if (v === null || !saving()) setShowEdit(v); };
+
   return {
-    canManage, showAdd, setShowAdd, openAdd, showEdit, setShowEdit, newPart, setNewPart,
+    canManage, showAdd, setShowAdd, openAdd, showEdit, setShowEdit: editPart, newPart, setNewPart: editNewPart,
     searchTerm, setSearchTerm, filterCategory, setFilterCategory, revLink, setRevLink, isLoadingRev,
     invoiceParsing, invoiceConfirming, autoCategorizing, invoiceItems, showInvoicePreview, setShowInvoicePreview, invoiceFileRef,
     busy, deleting, handleAdd, handleUpdate, handleDelete, handleImportRev, handleInvoiceFile, handleInvoiceFiles, updateInvoiceItem,

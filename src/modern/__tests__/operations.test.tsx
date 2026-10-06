@@ -108,12 +108,16 @@ describe('Modern Budget', () => {
     expect(props.setBudget).toHaveBeenCalled();
   });
 
-  it('a failed delete rolls back', async () => {
+  it('a failed delete puts back only that row (newer rows survive)', async () => {
     api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'DELETE' ? json({}, false) : json({})));
     const { props } = budgetSetup();
     await menu('Actions for Acme sponsorship', /Delete transaction/);
     await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Could not delete entry — try again.', 'error'));
-    expect(props.setBudget).toHaveBeenLastCalledWith(BUDGET);
+    const restore = props.setBudget.mock.calls.at(-1)![0];
+    // Meanwhile a save refreshed the list (row 1 gone, a new row 9 added).
+    const fresh = [BUDGET[1], BUDGET[2], { id: 9, type: 'income', amount: 5, category: '', description: 'New', date: '2026-09-20' }];
+    expect(restore(fresh).map((b: any) => b.id)).toEqual([1, 2, 3, 9]);
+    expect(restore(BUDGET)).toBe(BUDGET); // already back: unchanged
   });
 
   it('a half-written entry survives a remount (mode switch)', async () => {
@@ -125,17 +129,25 @@ describe('Modern Budget', () => {
     expect(await screen.findByLabelText('Description')).toHaveValue('Field tiles');
   });
 
-  it('a slow save never closes a form that was changed meanwhile', async () => {
+  it('freezes the form while saving, and the lock survives leaving and coming back', async () => {
     let resolve: (v: any) => void = () => {};
     api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'POST' ? new Promise((r) => { resolve = r; }) : json({})));
-    budgetSetup();
+    const first = budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10' } });
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
+    expect(screen.getByLabelText('Description')).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'typed after saving' } });
+    expect(screen.getByLabelText('Description')).toHaveValue('');
+    // Leave and come back (mode switch) while the save is in flight.
+    first.unmount();
+    budgetSetup();
+    const again = await screen.findByRole('button', { name: 'Saving…' });
+    expect(again).toBeDisabled();
+    fireEvent.click(again);
+    expect(calls('/api/budget', 'POST')).toHaveLength(1);
     await act(async () => { resolve({ ok: true, json: async () => ({}) }); });
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByLabelText('Description')).toHaveValue('typed after saving');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
 
@@ -230,6 +242,25 @@ describe('Modern Inventory', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(props.refresh.inventory).toHaveBeenCalled();
     expect(dialog.notify).toHaveBeenCalledWith('Import complete: 1 added, 0 restocked', 'success');
+  });
+
+  it('the invoice review is frozen while importing', async () => {
+    let finish: (v: any) => void = () => {};
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/inventory/import-invoice/parse') return json({ items: [{ sku: 'A1', name: 'Bolt pack', quantity: 2, unitPrice: 5, category: 'Hardware' }] });
+      if (url === '/api/inventory/import-invoice/confirm') return new Promise((r) => { finish = r; });
+      return json({});
+    });
+    invSetup();
+    fireEvent.change(screen.getByLabelText('Invoice files'), { target: { files: [new File(['x'], 'order.pdf')] } });
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Import 1 item' }));
+    await waitFor(() => expect(within(dlg).getByLabelText('Quantity for A1')).toBeDisabled());
+    fireEvent.change(within(dlg).getByLabelText('Quantity for A1'), { target: { value: '99' } });
+    expect(within(dlg).getByLabelText('Quantity for A1')).toHaveValue(2);
+    await act(async () => { finish({ ok: true, json: async () => ({ added: 1, merged: 0 }) }); });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(calls('/api/inventory/import-invoice/confirm', 'POST')).toHaveLength(1);
   });
 
   it('auto-categorizes uncategorized parts', async () => {
