@@ -178,4 +178,23 @@ describe('Modern Outreach', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(calls('/api/outreach', 'POST')).toHaveLength(1);
   });
+
+  it("an old save finishing after a workspace switch doesn't unlock the new one", async () => {
+    const pending: ((v: any) => void)[] = [];
+    api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'POST' ? new Promise((r) => { pending.push(r); }) : json({})));
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /Log event/ }));
+    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'First' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Log event' }));
+    act(() => clearDrafts());
+    fireEvent.click(screen.getAllByRole('button', { name: /Log event/ })[0]);
+    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'Second' } });
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Log event' }));
+    expect(pending).toHaveLength(2);
+    await act(async () => { pending[0]({ ok: true, json: async () => ({}) }); });
+    expect(screen.getByLabelText('Event title *')).toBeDisabled();
+    await act(async () => { pending[1]({ ok: true, json: async () => ({}) }); });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
 });
+

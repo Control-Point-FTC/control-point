@@ -217,6 +217,9 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     const submitted = getDraft<any[]>(BULK_ROWS_KEY, bulkRows);
     if (!submitted.length || getDraft(BULK_SAVING_KEY, false)) return;
     setBulkSaving(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it.
+    const unlock = inEpoch(() => setBulkSaving(false));
     let done = 0;
     try {
       for (const r of submitted) {
@@ -237,7 +240,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
       }
       refresh.outreach();
     } finally {
-      setBulkSaving(false);
+      unlock();
     }
   };
 
@@ -278,6 +281,9 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     if (!/^\d{4}-\d{2}-\d{2}$/.test(submitted.date)) { notify('Pick a valid date.', 'error'); return; }
     if (getDraft(SAVING_KEY, false)) return;
     setSaving(true);
+    // Release only our own lock: after a sign-out / workspace switch a new
+    // save may hold it.
+    const unlock = inEpoch(() => setSaving(false));
     try {
       const payload = {
         title: submitted.title.trim(),
@@ -299,7 +305,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     } catch {
       notify('Could not save the event.', 'error');
     } finally {
-      setSaving(false);
+      unlock();
     }
   };
 
