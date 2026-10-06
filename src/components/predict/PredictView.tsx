@@ -4,12 +4,12 @@
 // the "How accurate is this?" sheet shows the back-test results.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Sparkles, Target, Users, ListOrdered, Swords, Info, RefreshCw, Settings as SettingsIcon, Trophy, Crown, Gauge, BarChart3, CircleHelp } from 'lucide-react';
+import { Sparkles, Target, Users, ListOrdered, Swords, Info, RefreshCw, Settings as SettingsIcon, Trophy, Crown, Gauge, BarChart3, CircleHelp, Activity } from 'lucide-react';
 import { cn } from '../ui';
 import { Select } from '../Select';
 import { EmptyState, ErrorState, Sheet, Skeleton, SeasonChip, SeasonPicker, relTime, seasonShort, useIsNarrow } from '../scout/ScoutUi';
 import { fetchScoutEvent, fetchScoutTeam } from '../../services/ftcScoutApi';
-import { fetchForecast, fetchPartners, fetchPredictStatus, PredictError, type ForecastView, type Partners, type PredictAccuracy } from '../../services/predictApi';
+import { fetchForecast, fetchPartners, fetchPredictStatus, PredictError, type ForecastView, type Partners, type PredictAccuracy, type LiveAccuracy } from '../../services/predictApi';
 import { setScreenEntity } from '../../services/brunoContext';
 import { currentFtcSeason } from '../FtcStats';
 import type { FtcTeamEventSummary } from '../../types/ftcScout';
@@ -56,6 +56,10 @@ export function PredictView() {
   const [loading, setLoading] = useState(false);
   const [names, setNames] = useState<Map<number, string>>(new Map());
   const [accuracy, setAccuracy] = useState<PredictAccuracy | null>(null);
+  const [live, setLive] = useState<LiveAccuracy | null>(null);
+  // Status (back-test + live scores) loads on mount and again whenever the
+  // accuracy sheet opens, so a page left open through a sync isn't stale.
+  const loadStatus = () => { fetchPredictStatus().then((s) => { setAccuracy(s.accuracy); setLive(s.live ?? null); }).catch(() => {}); };
   const [showAccuracy, setShowAccuracy] = useState(false);
   const [autoStepped, setAutoStepped] = useState(() => params.has('season'));
   const [teamReload, setTeamReload] = useState(0);
@@ -99,7 +103,7 @@ export function PredictView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, teamReload]);
 
-  useEffect(() => { fetchPredictStatus().then((s) => setAccuracy(s.accuracy)).catch(() => {}); }, []);
+  useEffect(() => { loadStatus(); }, []);
 
   // Every request (initial, Refresh, Try again) gets an id and only the latest
   // may update state, so a slow answer for an old selection can't overwrite it.
@@ -154,7 +158,7 @@ export function PredictView() {
             </div>
             <p className="text-sm text-text-muted mt-1">Your odds of advancing, simulated from every team's match history. Estimates, not guarantees.</p>
           </div>
-          <button onClick={() => setShowAccuracy(true)} className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:opacity-80">
+          <button onClick={() => { setShowAccuracy(true); loadStatus(); }} className="inline-flex items-center gap-1.5 text-xs font-bold text-accent hover:opacity-80">
             <CircleHelp className="w-4 h-4" /> How accurate is this?
           </button>
         </div>
@@ -217,8 +221,8 @@ export function PredictView() {
         </>
       ) : null}
 
-      <Sheet open={showAccuracy} onClose={() => setShowAccuracy(false)} title="How accurate is this?" subtitle="Back-tested on real past events">
-        <AccuracyPanel accuracy={accuracy} />
+      <Sheet open={showAccuracy} onClose={() => setShowAccuracy(false)} title="How accurate is this?" subtitle="Back-tested on past events, and tracked live this season">
+        <AccuracyPanel accuracy={accuracy} live={live} />
       </Sheet>
     </div>
   );
@@ -479,7 +483,10 @@ function MatchesTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null })
                 </div>
                 <div className="text-right text-xs">
                   {won ? (
-                    <p className={cn('font-bold', won === 'Red won' ? 'text-red-500' : won === 'Blue won' ? 'text-blue-500' : 'text-text-muted')}>{won}</p>
+                    <>
+                      <p className={cn('font-bold', won === 'Red won' ? 'text-red-500' : won === 'Blue won' ? 'text-blue-500' : 'text-text-muted')}>{won}</p>
+                      <PreMatchCall pre={m.pre ?? null} played={m.played!} />
+                    </>
                   ) : p != null ? (
                     <p className={cn('font-bold', favRed ? 'text-red-500' : 'text-blue-500')}>{favRed ? 'Red' : 'Blue'} {pct(favRed ? p : 1 - p)}</p>
                   ) : <p className="text-text-muted" title="Which two robots will play isn't known yet">No prediction</p>}
@@ -490,6 +497,21 @@ function MatchesTab({ fc, myTeam }: { fc: ForecastView; myTeam: number | null })
         </ul>
       )}
     </div>
+  );
+}
+
+/** Honest call for a played match, from odds recorded before it was played. */
+function PreMatchCall({ pre, played }: { pre: number | null; played: { red: number; blue: number } }) {
+  if (pre == null || played.red === played.blue || pre === 0.5) {
+    return pre == null ? <p className="text-[11px] text-text-muted" title="No forecast was recorded before this match">No pre-match call</p> : null;
+  }
+  const favRed = pre > 0.5;
+  const favP = favRed ? pre : 1 - pre;
+  const called = favRed === (played.red > played.blue);
+  return called ? (
+    <p className="text-[11px] font-bold text-emerald-500" title={`Before the match: ${favRed ? 'Red' : 'Blue'} ${pct(favP)}`}>Called it · {pct(favP)}</p>
+  ) : (
+    <p className="text-[11px] font-bold text-amber-500" title={`Before the match the winner had ${pct(1 - favP)}`}>Upset · {pct(1 - favP)}</p>
   );
 }
 
@@ -509,7 +531,7 @@ function Side({ color, teams, myTeam, mean, actual }: { color: 'red' | 'blue'; t
 // Accuracy
 // ---------------------------------------------------------------------------
 
-function AccuracyPanel({ accuracy: a }: { accuracy: PredictAccuracy | null }): ReactNode {
+function AccuracyPanel({ accuracy: a, live }: { accuracy: PredictAccuracy | null; live?: LiveAccuracy | null }): ReactNode {
   if (!a) return <Skeleton className="h-40" />;
   const row = (label: string, value: string, note?: string) => (
     <div className="flex items-baseline justify-between gap-3 py-1.5 border-b border-text-base/[0.06] last:border-0">
@@ -517,8 +539,29 @@ function AccuracyPanel({ accuracy: a }: { accuracy: PredictAccuracy | null }): R
       <span className="text-right"><span className="font-bold text-text-base tabular-nums">{value}</span>{note && <span className="block text-[11px] text-text-muted">{note}</span>}</span>
     </div>
   );
+  const stageLabel: Record<string, string> = { pre: 'before the event', quals: 'after quals', selected: 'after alliance selection' };
+  const backBrier: Record<string, number> = { pre: a.advancement.pre.brier, quals: a.advancement.quals.brier, selected: a.advancement.selected.brier };
   return (
     <div className="space-y-5 text-sm">
+      <section>
+        <h4 className="font-bold text-text-base flex items-center gap-1.5 mb-1"><Activity className="w-4 h-4 text-accent" />Live this season</h4>
+        {live && (live.matches.n > 0 || (['pre', 'quals', 'selected'] as const).some((s) => live.advancement[s].n > 0)) ? (
+          <>
+            <p className="text-xs text-text-muted mb-1">Only predictions written down <em>before</em> the results were known, scored against what happened.</p>
+            {live.matches.n > 0 ? (
+              <>
+                {row('Match winners called', `${(live.matches.accuracy * 100).toFixed(1)}%`, `${live.matches.n.toLocaleString()} matches · ${live.matches.upsets.toLocaleString()} upsets · back-test ${(a.matches.liveAccuracy * 100).toFixed(1)}%`)}
+                {row('Match odds score', live.matches.brier.toFixed(3), `Brier, lower is better · back-test ${a.matches.liveBrier.toFixed(3)}`)}
+              </>
+            ) : <p className="text-xs text-text-muted py-1.5">No recorded match calls have been played yet.</p>}
+            {(['pre', 'quals', 'selected'] as const).filter((s) => live.advancement[s].n > 0).map((s) => (
+              <div key={s}>{row(`Advancement odds ${stageLabel[s]}`, live.advancement[s].brier.toFixed(3), `${live.advancement[s].events} events · back-test ${backBrier[s].toFixed(3)}`)}</div>
+            ))}
+          </>
+        ) : (
+          <p className="text-xs text-text-muted">Collecting. Every forecast is written down before its matches are played; live scores appear here once those matches finish.</p>
+        )}
+      </section>
       <p className="text-text-muted">Every number below comes from replaying the {a.testSeason} season event by event, using only data that existed at the time. Settings were tuned on the season before.</p>
       <section>
         <h4 className="font-bold text-text-base flex items-center gap-1.5 mb-1"><Swords className="w-4 h-4 text-accent" />Match winners ({a.matches.count.toLocaleString()} matches)</h4>

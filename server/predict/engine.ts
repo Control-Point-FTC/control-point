@@ -77,6 +77,9 @@ export interface ForecastMatch {
   blueMean: number | null;
   /** Real final scores once played. */
   played: { red: number; blue: number } | null;
+  /** Played matches only: red's win odds as recorded *before* the match was
+   *  played (live monitoring), or null if no forecast was made in time. */
+  pre?: number | null;
 }
 
 export interface PartnerOption { team: number; pAdvance: number; pWin: number }
@@ -109,6 +112,17 @@ export class PredictEngine {
 
   get ready(): boolean { return this.readyAt != null; }
   get accuracy(): unknown { return M.accuracy; }
+
+  /** Match keys (`level:series:number`) of an event already in the ratings. */
+  storedPlayedKeys(season: number, code: string): Set<string> {
+    const ev = this.events.get(season)?.find((e) => e.code === code);
+    return new Set((ev?.matches ?? []).map((m) => `${m.level}:${m.series}:${m.number}`));
+  }
+
+  /** Stored results of a season (for live accuracy scoring). */
+  seasonData(season: number): { events: EventRecord[]; advancement: ReturnType<PredictStore["loadAdvancement"]> } {
+    return { events: this.events.get(season) ?? [], advancement: this.advancement.get(season) ?? [] };
+  }
 
   /**
    * Rebuild ratings + indexes from the store (seasons in order, oldest first).
