@@ -27,6 +27,17 @@ const HISTORY_PAGE = 50;
 const BUFFER_KEY = 'code:buffer';
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+// Module-wide (shared by every mounted Code page, so a page left by a mode
+// switch can't win a race against the page that replaced it):
+// - the newest content request id — older responses never touch the buffer;
+// - one save queue — saves run in order, so a commit waits for an auto-save
+//   already in flight and the server's drafts end up holding the newest text;
+// - a "files changed" bus — the mounted page reloads its file list.
+let contentRequest = 0;
+let saveQueue: Promise<unknown> = Promise.resolve();
+const filesBus = new EventTarget();
+const filesChanged = () => filesBus.dispatchEvent(new Event('changed'));
+
 export function useCodeController({ teams, currentUser, hasScope, activeTeamId }: {
   teams: Team[]; currentUser?: Member; hasScope?: (scope: string) => boolean; activeTeamId?: number | null;
 }) {
@@ -123,30 +134,40 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     }
   }, [selectedTeamId]);
   useEffect(() => { void loadFiles(); }, [loadFiles]);
+  useEffect(() => {
+    const on = () => { void loadFiles(); };
+    filesBus.addEventListener('changed', on);
+    return () => filesBus.removeEventListener('changed', on);
+  }, [loadFiles]);
 
-  const contentSeq = useRef(0);
   const loadFileContent = useCallback(async () => {
     const file = getDraft<CodeFile | null>('code:file', null);
     if (!file) return;
     const branch = getDraft<Branch>('code:branch', 'drafts');
-    const seq = ++contentSeq.current;
+    const seq = ++contentRequest;
+    const latest = () => seq === contentRequest;
+    const stillOpen = () => getDraft<CodeFile | null>('code:file', null)?.id === file.id && getDraft<Branch>('code:branch', 'drafts') === branch;
+    const write = inEpoch((fn: () => void) => { if (latest() && stillOpen()) fn(); });
     try {
       setBusy(true);
       const content = await getCodeFileContent(file.id);
-      if (seq !== contentSeq.current) return;
+      if (!latest()) return;
       setFileContentObj(content);
       // Keep unsaved edits for this file + branch (e.g. after a mode switch).
-      const b = getDraft<Buffer | null>(BUFFER_KEY, null);
-      if (b && b.fileId === file.id && b.branch === branch && b.unsaved) {
-        setAutoSaveStatus('unsaved');
-      } else {
-        setBuffer({ fileId: file.id, branch, text: branch === 'drafts' ? content.content.drafts : content.content.main, unsaved: false });
-        setAutoSaveStatus('saved');
-      }
+      // Only the newest request for the file + branch still open may write.
+      write(() => {
+        const b = getDraft<Buffer | null>(BUFFER_KEY, null);
+        if (b && b.fileId === file.id && b.branch === branch && b.unsaved) {
+          setAutoSaveStatus('unsaved');
+        } else {
+          setBuffer({ fileId: file.id, branch, text: branch === 'drafts' ? content.content.drafts : content.content.main, unsaved: false });
+          setAutoSaveStatus('saved');
+        }
+      });
     } catch (err) {
-      if (seq === contentSeq.current) setError(`Failed to load file content: ${errText(err)}`);
+      if (latest()) setError(`Failed to load file content: ${errText(err)}`);
     } finally {
-      if (seq === contentSeq.current) setBusy(false);
+      if (latest()) setBusy(false);
     }
   }, [setBuffer]);
 
@@ -175,8 +196,17 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFile?.id, currentBranch]);
 
-  /** Save the drafts branch now; marks it saved only if nothing changed meanwhile. */
-  const saveNow = useCallback(async () => {
+  /**
+   * Save the drafts branch (queued behind any save already running); marks it
+   * saved only if nothing changed meanwhile. Resolves false if the save failed.
+   */
+  const saveNow = useCallback((): Promise<boolean> => {
+    const run = saveQueue.then(() => saveBuffer());
+    saveQueue = run.catch(() => {});
+    return run;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, setBuffer]);
+  const saveBuffer = async (): Promise<boolean> => {
     const b = getDraft<Buffer | null>(BUFFER_KEY, null);
     if (!b || !b.unsaved || b.branch !== 'drafts' || !currentUser) return true;
     try {
@@ -195,7 +225,7 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       console.error('Auto-save failed:', err);
       return false;
     }
-  }, [currentUser, setBuffer]);
+  };
 
   // Auto-save 3 s after the last edit on drafts.
   useEffect(() => {
@@ -255,6 +285,7 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       const newFile = await createCodeFile(selectedTeamId, name, `${name}`, language, '', currentUser.id);
       setFiles((fs) => [...fs, newFile]);
       opened(newFile);
+      filesChanged(); // the page mounted now (maybe not this one) reloads its list
     } catch (err) {
       setError(`Failed to create file: ${errText(err)}`);
     } finally {
@@ -311,6 +342,7 @@ export function useCodeController({ teams, currentUser, hasScope, activeTeamId }
       setBusy(true);
       await deleteCodeFile(id);
       setFiles((fs) => fs.filter((f) => f.id !== id));
+      filesChanged();
       setSelectedFile(null);
       setBuffer(null);
     } catch (err) {

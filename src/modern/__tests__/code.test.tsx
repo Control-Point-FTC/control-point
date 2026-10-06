@@ -26,6 +26,7 @@ const json = (body: any, ok = true) => Promise.resolve({ ok, json: async () => b
 const me = { id: 7, name: 'Ada', team_id: 1, interface_mode: 'modern' };
 const FILES = [{ id: 1, file_name: 'Drive.java', language: 'java' }, { id: 2, file_name: 'Arm.java', language: 'java' }];
 let server: Record<number, { drafts: string; main: string }>;
+let fileList: any[];
 const COMMITS = [
   { id: 101, hash: 'aaaaaaaaaa', message: 'Tune PID', author_name: 'Ada', created_at: '2026-09-01T10:00:00Z', content: 'v1' },
   { id: 102, hash: 'bbbbbbbbbb', message: 'Add arm', author_name: 'Bo', created_at: '2026-09-02T10:00:00Z', content: 'v2' },
@@ -34,13 +35,19 @@ const COMMITS = [
 beforeEach(() => {
   server = { 1: { drafts: 'class Drive {}', main: 'class Drive { /* main */ }' }, 2: { drafts: 'class Arm {}', main: '' } };
   Object.values(code).forEach((f) => f.mockReset());
-  code.getCodeFiles.mockResolvedValue(FILES);
+  fileList = [...FILES];
+  code.getCodeFiles.mockImplementation(async () => fileList);
   code.getCodeFileContent.mockImplementation(async (id: number) => ({ content: server[id] }));
   code.getCommitHistory.mockResolvedValue(COMMITS);
   code.saveDraft.mockImplementation(async (id: number, text: string) => { server[id].drafts = text; return {}; });
   code.commitToMain.mockImplementation(async (id: number) => { server[id].main = server[id].drafts; return {}; });
-  code.createCodeFile.mockImplementation(async (_t: number, name: string, _p: string, language: string) => ({ id: 3, file_name: name, language }));
-  code.deleteCodeFile.mockResolvedValue({ success: true });
+  code.createCodeFile.mockImplementation(async (_t: number, name: string, _p: string, language: string) => {
+    const f = { id: 3, file_name: name, language };
+    fileList = [...fileList, f];
+    server[3] = { drafts: '', main: '' };
+    return f;
+  });
+  code.deleteCodeFile.mockImplementation(async (id: number) => { fileList = fileList.filter((f) => f.id !== id); return { success: true }; });
   code.revertCommit.mockResolvedValue({});
   api.apiFetch.mockReset();
   api.apiFetch.mockImplementation(() => json(null));
@@ -179,4 +186,65 @@ describe('Modern Code', () => {
     await waitFor(() => expect(within(dlg).getByLabelText('Code editor')).toHaveValue('class Auto {}'));
     expect(within(dlg).getByLabelText('Code editor')).toHaveAttribute('readonly');
   });
+
+  it("a late load for a file you left never replaces the open file's edits", async () => {
+    const replies: Record<number, (v: any) => void> = {};
+    code.getCodeFileContent.mockImplementation((id: number) => new Promise((r) => { replies[id] = r; }));
+    const first = setup();
+    fireEvent.click(await screen.findByRole('button', { name: /Drive.java/ }));
+    await waitFor(() => expect(replies[1]).toBeDefined());
+    first.unmount();
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: /Arm.java/ }));
+    await waitFor(() => expect(replies[2]).toBeDefined());
+    await act(async () => { replies[2]({ content: server[2] }); });
+    fireEvent.change(await screen.findByLabelText('Code editor'), { target: { value: 'class Arm { edited }' } });
+    await act(async () => { replies[1]({ content: server[1] }); });
+    expect(screen.getByLabelText('Code editor')).toHaveValue('class Arm { edited }');
+  });
+
+  it('a commit waits for an auto-save already in flight, so main gets the newest text', async () => {
+    const order: string[] = [];
+    let firstSave: () => void = () => {};
+    code.saveDraft.mockImplementation((id: number, text: string) => {
+      order.push(`save:${text}`);
+      if (order.length === 1) return new Promise((r) => { firstSave = () => { server[id].drafts = text; order.push('save-landed:' + text); r({}); }; });
+      server[id].drafts = text; order.push('save-landed:' + text); return Promise.resolve({});
+    });
+    code.commitToMain.mockImplementation(async (id: number) => { order.push('commit'); server[id].main = server[id].drafts; return {}; });
+    setup();
+    await open('Drive.java');
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v1' } });
+    await waitFor(() => expect(code.saveDraft).toHaveBeenCalledTimes(1), { timeout: 4500 });
+    fireEvent.change(screen.getByLabelText('Code editor'), { target: { value: 'v2' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Commit$/ }));
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.change(within(dlg).getByLabelText('Commit message'), { target: { value: 'ship' } });
+    fireEvent.click(within(dlg).getByRole('button', { name: /Commit/ }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(order).toEqual(['save:v1']); // queued behind the in-flight save
+    await act(async () => { firstSave(); });
+    await waitFor(() => expect(code.commitToMain).toHaveBeenCalled());
+    expect(order).toEqual(['save:v1', 'save-landed:v1', 'save:v2', 'save-landed:v2', 'commit']);
+    expect(server[1].main).toBe('v2');
+  });
+
+  it('a file created while you switch modes shows up in the list of the page you return to', async () => {
+    let finish: () => void = () => {};
+    code.createCodeFile.mockImplementation((_t: number, name: string, _p: string, language: string) => new Promise((r) => {
+      finish = () => { const f = { id: 3, file_name: name, language }; fileList = [...fileList, f]; server[3] = { drafts: '', main: '' }; r(f); };
+    }));
+    const first = setup();
+    await screen.findByRole('button', { name: /Drive.java/ });
+    fireEvent.click(screen.getByRole('button', { name: /New file/ }));
+    fireEvent.change(await screen.findByLabelText('File name'), { target: { value: 'Late.java' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    first.unmount();
+    setup();
+    // The returning page loads its list (the drafted dialog is still open on top).
+    await waitFor(() => expect(code.getCodeFiles).toHaveBeenCalledTimes(2));
+    await act(async () => { finish(); });
+    expect(await screen.findByRole('button', { name: /Late.java/ })).toBeInTheDocument();
+  });
 });
+
