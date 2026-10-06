@@ -15,8 +15,7 @@ import {
   ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import EmailImportModal from '../../../components/EmailImport';
-import BrunoQuickAdd from '../../../components/BrunoQuickAdd';
+import { ImportEmailDialog, QuickAddDialog } from './LogDialogs';
 import { useCommunicationController } from '../../../components/communication/useCommunicationController';
 import { Page, PageHeader, EmptyState } from '../../ui/page';
 
@@ -156,9 +155,9 @@ export function CommunicationPage(props: any) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {ctl.showImport && <EmailImportModal onClose={() => ctl.setShowImport(false)} onLogged={() => { ctl.setShowImport(false); props.refresh.communications(); }} />}
+      {ctl.showImport && <ImportEmailDialog onClose={() => ctl.setShowImport(false)} onLogged={() => { ctl.setShowImport(false); props.refresh.communications(); }} />}
       {ctl.showQuickAdd && (
-        <BrunoQuickAdd
+        <QuickAddDialog
           threads={ctl.threads.map((t: any) => ({ id: t.root.id, subject: t.root.subject, recipient: t.root.recipient, date: t.root.date }))}
           onClose={() => ctl.setShowQuickAdd(false)}
           onLogged={() => { ctl.setShowQuickAdd(false); props.refresh.communications(); }}
