@@ -197,6 +197,10 @@ import { BrunoPanelSwitch } from './modern/BrunoDock';
 import { SettingsPage } from './modern/pages/settings/SettingsPage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController, defaultTeamId } from './components/tasks/useTasksController';
+import { useBudgetController } from './components/budget/useBudgetController';
+import { useInventoryController, INVENTORY_CATEGORIES } from './components/inventory/useInventoryController';
+import { BudgetPage } from './modern/pages/budget/BudgetPage';
+import { InventoryPage } from './modern/pages/inventory/InventoryPage';
 import { useCalendarController, toDateKey, fmtTime } from './components/calendar/useCalendarController';
 import { useMembersController } from './components/people/useMembersController';
 import { useCommunicationController } from './components/communication/useCommunicationController';
@@ -1480,6 +1484,7 @@ export default function App() {
   // clears the stored session and fires this — return to signed-out state.
   useEffect(() => {
     const onUnauthorized = () => {
+      clearDrafts(); // a half-written form never follows a session to the next user
       setIsLoggedIn(false);
       setCurrentUser(null);
       setSessionId(null);
@@ -1975,6 +1980,7 @@ export default function App() {
   };
 
   const persistSession = (sid: string, user: any) => {
+    clearDrafts(); // every sign-in (or account switch) starts with no drafts
     if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', sid);
     setSessionId(sid);
     setCurrentUser(user);
@@ -2676,8 +2682,8 @@ export default function App() {
         <Route path="/attendance" element={<ByMode legacy={<AttendanceView {...viewProps} />} modern={<AttendancePage {...viewProps} />} />} />
         <Route path="/tasks" element={<ByMode legacy={<TasksView {...viewProps} />} modern={<TasksPage {...viewProps} />} />} />
         <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} modern={<CalendarPage {...viewProps} />} />} />
-        <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} />} />
-        <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} />} />
+        <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} modern={<BudgetPage {...viewProps} />} />} />
+        <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} modern={<InventoryPage {...viewProps} />} />} />
         <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} />} />
         <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />} />
         <Route path="/cad" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
@@ -5832,122 +5838,10 @@ export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh,
 }
 
 function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, currentUser }: any) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [newItem, setNewItem] = useState({ team_id: '', type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
-  const [busy, setBusy] = useState(false);
-
-  const openNewEntry = () => {
-    setEditingId(null);
-    setNewItem({ team_id: defaultTeamId(teams, currentUser), type: 'expense', amount: '', category: '', description: '', date: format(new Date(), 'yyyy-MM-dd') });
-    setShowAdd(true);
-  };
-
-  const openEditEntry = (item: any) => {
-    setEditingId(item.id);
-    setNewItem({
-      team_id: item.team_id?.toString() || '',
-      type: item.type || 'expense',
-      amount: item.amount?.toString() || '',
-      category: item.category || '',
-      description: item.description || '',
-      date: item.date || format(new Date(), 'yyyy-MM-dd'),
-    });
-    setShowAdd(true);
-  };
-
-  const openDuplicateEntry = (item: any) => {
-    setEditingId(null);
-    setNewItem({
-      team_id: defaultTeamId(teams, currentUser),
-      type: item.type || 'expense',
-      amount: item.amount?.toString() || '',
-      category: item.category || '',
-      description: item.description || '',
-      date: format(new Date(), 'yyyy-MM-dd'),
-    });
-    setShowAdd(true);
-  };
-
-  const closeEntryModal = () => {
-    setShowAdd(false);
-    setEditingId(null);
-  };
-
-  const handleAdd = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const payload = { ...newItem, amount: parseFloat(newItem.amount) };
-      if (editingId) {
-        const res = await apiFetch(`/api/budget/${editingId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (res.ok) {
-          closeEntryModal();
-          refresh.budget();
-        } else {
-          notify('Could not save entry — try again.', 'error');
-        }
-        return;
-      }
-      const res = await apiFetch('/api/budget', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        closeEntryModal();
-        refresh.budget();
-      } else {
-        notify('Could not log entry — try again.', 'error');
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete transaction', message: 'Delete this transaction?', confirmLabel: 'Delete', danger: true }))) return;
-    if (busy) return;
-    setBusy(true);
-    // Optimistic: drop the row instantly, restore on failure.
-    const prev = budget;
-    setBudget((bs: any[]) => bs.filter((b: any) => b.id !== id));
-    try {
-      const res = await apiFetch(`/api/budget/${id}`, { method: 'DELETE' });
-      if (res.ok) refresh.budget();
-      else {
-        setBudget(prev);
-        notify('Could not delete entry — try again.', 'error');
-      }
-    } catch {
-      setBudget(prev);
-      notify('Could not delete entry — try again.', 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  useContextMenu('budget-tx', (el) => {
-    if (!hasScope('budget')) return null;
-    const id = Number(el.dataset.cmId);
-    const item = budget.find((b: any) => b.id === id);
-    if (!item) return null;
-    return [
-      { label: 'Edit transaction', icon: Pencil, action: () => openEditEntry(item) },
-      { label: 'Duplicate transaction', icon: Copy, action: () => openDuplicateEntry(item) },
-      { separator: true },
-      { label: 'Delete transaction', icon: Trash2, danger: true, action: () => handleDelete(id) },
-    ];
-  });
-
-  const totalIncome = budget.filter((i: any) => i.type === 'income').reduce((acc: number, i: any) => acc + i.amount, 0);
-  const totalExpense = budget.filter((i: any) => i.type === 'expense').reduce((acc: number, i: any) => acc + i.amount, 0);
-
-  const isAdmin = hasScope('budget');
+  const {
+    isAdmin, showAdd, editingId, newItem, setNewItem, busy,
+    openNewEntry, openEditEntry, closeEntryModal, handleAdd, handleDelete, totalIncome, totalExpense,
+  } = useBudgetController({ budget, setBudget, teams, refresh, hasScope, currentUser });
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -6089,271 +5983,13 @@ function BudgetView({ budget, setBudget, teams, onRefresh, refresh, hasScope, cu
 }
 
 function InventoryView({ inventory, setInventory, members, teams, onRefresh, refresh, currentUser, hasScope }: any) {
-  const canManage = hasScope ? hasScope('inventory') : false;
-  const INVENTORY_CATEGORIES = [
-    "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
-    "Hardware", "Tools", "Raw Material", "3D Printing", "Field", "Other",
-  ];
-  const [showAdd, setShowAdd] = useState(false);
-  const [showEdit, setShowEdit] = useState<any>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
-  const [revLink, setRevLink] = useState('');
-  const [isLoadingRev, setIsLoadingRev] = useState(false);
-  const [invoiceParsing, setInvoiceParsing] = useState<string | null>(null); // null = idle, string = status text
-  const [invoiceConfirming, setInvoiceConfirming] = useState(false);
-  const [autoCategorizing, setAutoCategorizing] = useState(false);
-  const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
-  const [showInvoicePreview, setShowInvoicePreview] = useState(false);
-  const invoiceFileRef = React.useRef<HTMLInputElement>(null);
-  const [newPart, setNewPart] = useState({ 
-    team_id: '', name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', 
-    location: '', category: '', description: '', cost: '' 
-  });
-  const [busy, setBusy] = useState(false);
-
-  const handleAdd = async () => {
-    if (!newPart.name || !newPart.sku) {
-      notify('Name and SKU are required', 'error');
-      return;
-    }
-    if (busy) return;
-    setBusy(true);
-    try {
-      const res = await apiFetch('/api/inventory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newPart,
-          team_id: newPart.team_id ? parseInt(newPart.team_id) : null,
-          quantity: parseInt(newPart.quantity) || 0,
-          assigned_to: newPart.assigned_to ? parseInt(newPart.assigned_to) : null,
-          cost: parseFloat(newPart.cost) || 0
-        })
-      });
-      if (res.ok) {
-        setShowAdd(false);
-        setNewPart({ team_id: '', name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' });
-        refresh.inventory();
-      } else {
-        const err = await res.json();
-        notify('Error: ' + err.error, 'error');
-      }
-    } catch (error) {
-      notify('Error adding part: ' + error, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleUpdate = async () => {
-    if (!showEdit) return;
-    if (busy) return;
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/api/inventory/${showEdit.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...showEdit,
-          team_id: showEdit.team_id ? parseInt(showEdit.team_id) : null,
-          assigned_to: showEdit.assigned_to ? parseInt(showEdit.assigned_to) : null,
-          cost: parseFloat(showEdit.cost) || 0
-        })
-      });
-      if (res.ok) {
-        setShowEdit(null);
-        refresh.inventory();
-      } else {
-        const err = await res.json();
-        notify('Error: ' + err.error, 'error');
-      }
-    } catch (error) {
-      notify('Error updating part: ' + error, 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete part', message: 'Delete this part?', confirmLabel: 'Delete', danger: true }))) return;
-    if (busy) return;
-    setBusy(true);
-    // Optimistic: drop the row instantly, restore on failure.
-    const prev = inventory;
-    setInventory((ps: any[]) => ps.filter((p: any) => p.id !== id));
-    try {
-      const res = await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' });
-      if (res.ok) refresh.inventory();
-      else {
-        setInventory(prev);
-        notify('Could not delete part — try again.', 'error');
-      }
-    } catch {
-      setInventory(prev);
-      notify('Could not delete part — try again.', 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  useContextMenu('inventory-part', (el) => {
-    if (!canManage) return null;
-    const id = Number(el.dataset.cmId);
-    const part = inventory.find((p: any) => p.id === id);
-    if (!part) return null;
-    return [
-      { label: 'Edit part', icon: Edit2, action: () => setShowEdit(part) },
-      { label: 'Delete part', icon: Trash2, danger: true, action: () => handleDelete(id) },
-    ];
-  });
-
-  const handleImportRev = async () => {
-    if (!revLink.trim()) {
-      notify('Please enter a REV Robotics link', 'info');
-      return;
-    }
-    
-    setIsLoadingRev(true);
-    try {
-      const res = await apiFetch('/api/inventory/scrape-rev', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: revLink })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setNewPart({
-          ...newPart,
-          name: data.name || newPart.name,
-          sku: data.sku || newPart.sku,
-          part_number: data.part_number || newPart.part_number,
-          cost: data.cost ? data.cost.toString() : newPart.cost,
-          category: data.category || newPart.category
-        });
-        setRevLink('');
-        notify('Product imported! Review and save when ready.', 'success');
-      } else {
-        const err = await res.json();
-        notify('Error: ' + err.error, 'error');
-      }
-    } catch (error) {
-      notify('Error importing from REV: ' + error, 'error');
-    } finally {
-      setIsLoadingRev(false);
-    }
-  };
-
-  const handleInvoiceFile = async (e: any) => {
-    const files = Array.from(e.target.files || []) as File[];
-    e.target.value = '';
-    if (!files.length) return;
-    const allItems: any[] = [];
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setInvoiceParsing(files.length > 1 ? `Reading ${i + 1} of ${files.length}...` : 'Reading file...');
-        const form = new FormData();
-        form.append('file', file);
-        const res = await apiFetch('/api/inventory/import-invoice/parse', { method: 'POST', body: form });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          notify(`Couldn't read ${file.name}: ` + (data.error || 'Unsupported file'), 'error');
-          continue;
-        }
-        if (!data.items || data.items.length === 0) {
-          notify(`No line items found in ${file.name}`, 'error');
-          continue;
-        }
-        for (const it of data.items) allItems.push({ ...it, selected: true });
-      }
-      if (allItems.length === 0) {
-        notify('No line items found in the selected file(s)', 'error');
-        return;
-      }
-      setInvoiceItems(allItems);
-      setShowInvoicePreview(true);
-    } catch (error) {
-      notify('Error reading file: ' + error, 'error');
-    } finally {
-      setInvoiceParsing(null);
-    }
-  };
-
-  const updateInvoiceItem = (index: number, patch: any) => {
-    setInvoiceItems(items => items.map((it, i) => (i === index ? { ...it, ...patch } : it)));
-  };
-
-  const handleInvoiceConfirm = async () => {
-    const selected = invoiceItems.filter((it: any) => it.selected);
-    if (!selected.length) {
-      notify('Select at least one item to import', 'info');
-      return;
-    }
-    if (invoiceConfirming) return;
-    setInvoiceConfirming(true);
-    try {
-      const res = await apiFetch('/api/inventory/import-invoice/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: selected.map((it: any) => ({
-            sku: it.sku,
-            name: it.name,
-            quantity: parseInt(it.quantity, 10) || 0,
-            cost: parseFloat(it.unitPrice) || 0,
-            category: it.category || 'Other'
-          }))
-        })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        notify('Error: ' + (data.error || 'Import failed'), 'error');
-        return;
-      }
-      setShowInvoicePreview(false);
-      setInvoiceItems([]);
-      refresh.inventory();
-      const parts = [`${data.added} added`, `${data.merged} restocked`];
-      if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
-      notify('Import complete: ' + parts.join(', '), 'success');
-    } catch (error) {
-      notify('Error importing: ' + error, 'error');
-    } finally {
-      setInvoiceConfirming(false);
-    }
-  };
-
-  const handleAutoCategorize = async () => {
-    if (autoCategorizing) return;
-    setAutoCategorizing(true);
-    try {
-      const res = await apiFetch('/api/inventory/auto-categorize', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        notify('Error: ' + (data.error || 'Auto-categorize failed'), 'error');
-        return;
-      }
-      refresh.inventory();
-      notify(data.categorized > 0 ? `Categorized ${data.categorized} part${data.categorized === 1 ? '' : 's'}` : 'Everything is already categorized', 'success');
-    } catch (error) {
-      notify('Error: ' + error, 'error');
-    } finally {
-      setAutoCategorizing(false);
-    }
-  };
-
-  const categories = [...new Set(inventory.map((p: any) => p.category).filter((c: any) => c))];
-  const filteredParts = inventory.filter((p: any) => {
-    const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                        p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        p.part_number.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchCategory = !filterCategory || p.category === filterCategory;
-    return matchSearch && matchCategory;
-  });
-
-  const totalValue = inventory.reduce((acc: number, p: any) => acc + (p.cost * p.quantity), 0);
+  const {
+    canManage, showAdd, setShowAdd, openAdd, showEdit, setShowEdit, newPart, setNewPart,
+    searchTerm, setSearchTerm, filterCategory, setFilterCategory, revLink, setRevLink, isLoadingRev,
+    invoiceParsing, invoiceConfirming, autoCategorizing, invoiceItems, showInvoicePreview, setShowInvoicePreview, invoiceFileRef,
+    busy, handleAdd, handleUpdate, handleDelete, handleImportRev, handleInvoiceFile, updateInvoiceItem,
+    handleInvoiceConfirm, handleAutoCategorize, categories, filteredParts, totalValue,
+  } = useInventoryController({ inventory, setInventory, teams, refresh, currentUser, hasScope });
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -6387,7 +6023,7 @@ function InventoryView({ inventory, setInventory, members, teams, onRefresh, ref
               className="sm:w-48"
             />
             {canManage && (
-              <Button onClick={() => { setNewPart({ team_id: defaultTeamId(teams, currentUser), name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' }); setShowAdd(true); }} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
+              <Button onClick={openAdd} className="w-full sm:w-auto"><Plus className="w-4 h-4" /> Add Part</Button>
             )}
             {canManage && (
               <Button onClick={() => invoiceFileRef.current?.click()} variant="secondary" className="w-full sm:w-auto" disabled={!!invoiceParsing}>
