@@ -611,6 +611,80 @@ Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both 
   - No real phone was available.
 - Screenshots: `docs/redesign/screenshots/phase7/`.
 
+## Phase 7b: Team Stats · Compete
+
+### Shared state
+- **`useTeamStats`** (`src/components/scout/useTeamStats.ts`): Compete/Analyze mode (`?mode=analyze`), the season, our team number, and the step back on a direct Analyze visit. It also handles the Compete → Analyze hand-off (`viewTeam`). Legacy `TeamStatsView` now uses it, with unchanged JSX.
+- **From `CompeteView`:** `useEvents`, `OPR_COMPONENT`, `TRENDS` and `TrendKey` are exported, so Modern reuses the same data hooks (`useScoutProfile` and its empty-season rules, plus lazy event loads).
+
+### Modern Team Stats (`src/modern/pages/stats/`)
+- **Page:** Compete / Analyze tabs under the page header. Analyze still renders the Legacy view in the interim frame; it is rebuilt in 7c.
+- **`TeamProfile`** (reusable for any team in 7c):
+  - **Hero:** a big team number, name, school / location / rookie year / last update, a collapsible sponsors line, a season toggle, and host actions (Scout with Bruno, shortlist, pin) when the host provides them.
+  - **OPR:** four buttons with animated values, world rank, a "top N%" percentile bar and a hover lift. Each opens a kit sheet with the build-up per event, a ± badge against the event average, and the component split.
+  - **Trends:** a single line chart that can show any of the 8 metrics (Legacy shows 8 sparkline cards). It shows the latest value and a Rising / Falling / Steady badge, with a collapsible "Event by event" table.
+  - **Event history:** a timeline rail with rank medals (gold / silver / bronze). Each event expands with an animated height and loads lazily, with Try again on failure. Inside:
+    - "Against the field" bars, with the event-average marker.
+    - Strength and weakness badges.
+    - Qualification and playoff match rows.
+    - Rankings (top 8 / all; rows open the team in Analyze).
+    - Alliance selection.
+    - Teammates and opponents at that event.
+  - **Partners & opponents:** loaded on demand, then shown in Partners / Opponents tabs. Each row has an actions menu (View matches / View team / Scout with Bruno / shortlist / pin). "View matches" opens a sheet of the shared matches.
+  - **Match sheet:** red and blue cards (winner ring, clickable teams, surrogate / DQ marks), a mirrored scoring breakdown, the score difference and source notes, and Scout with Bruno.
+  - **States:** loading skeleton; "No FTC team connected" → Settings; both sources down → Retry; empty season → a friendly "No 2025–26 · DECODE data yet". A failed refresh keeps the last loaded data and shows a Retry banner.
+
+### Tests
+- **New (11 tests):**
+  - Compete: hero, OPR, trend chart and timeline order (no compare UI); lazy event load, then the match breakdown; event rankings → Analyze; the OPR sheet; partners on demand, then "View matches"; stepping back from an empty season; the mode tabs.
+  - TeamProfile states: empty season, Retry, not connected, and host actions (shortlist, pin, Bruno prompt).
+- The Legacy scout tests still pass.
+- **Totals:** 494 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (real FTC data, team 4215, 2025–26):
+  - Desktop: the hero, OPR and trends, and an opened Championship event. The match lists were stacked into a single column because two columns were cramped.
+  - 390 px: no overflow, and every target is ≥44 px.
+  - No real phone was available.
+
+## Phase 7c: Team Stats · Analyze
+
+### Shared logic (`src/components/scout/useAnalyze.ts`)
+Legacy `AnalyzeView` keeps its JSX; its logic moved into hooks that both modes use:
+- **`useAnalyzeController`:** Team detail / side-panel peek, the event picker (defaults to the reference team's upcoming or most recently played event), pins (`controlpoint-scout-pins`), recents, the workspace shortlist (`useShortlist`, with serialized optimistic writes), shortlist rules (wait for the season's list; a team already listed opens the Shortlist tab) and Bruno's scouting context and greeting.
+- **`useEventField`:** latest-wins event load, filter / round / alliance colour, sort (each column has its natural first direction), and paging.
+- **`useTeamSearch`:** debounced search that drops stale responses.
+- **`useShortlistNotes`:** notes live in the draft store under `scout-notes:<season>:<team>`. A half-written note survives a mode switch in both modes. A newer server value replaces the draft, which is what Legacy did.
+
+### Modern Analyze (`src/modern/pages/stats/AnalyzeWorkspace.tsx`, `ShortlistBoard.tsx`)
+- **Finder card** (replaces Legacy's left rail): a large search box with a results dropdown, and quick-pick chips for Pinned / Shortlist / Recent. Below them, the season toggle and **event chips**.
+- **Views:** Event field / Team detail / Shortlist tabs, plus Ask Bruno.
+- **Event field:**
+  - A stat header (teams, matches played, average OPR and score).
+  - A filter input, plus Round and Alliance toggle groups.
+  - Desktop: a kit table with `aria-sort` headers and direction arrows, rank medals, a shortlist marker, and a row that opens a peek. Phones: cards with a Sort menu.
+  - Each team has an actions menu: View team, View matches, Scout with Bruno, shortlist, pin.
+  - Pagination, and a data-source line.
+- **Peek:** a wide side sheet with the Modern `TeamProfile` and "Open in Team detail". Team detail itself is `TeamProfile`.
+- **Match sheets:** "View matches" lists that team's matches; each opens the Modern match breakdown.
+- **Shortlist:**
+  - A Bruno recommendations panel: scout next, and partner fits for our team.
+  - Team cards with a priority toggle, a Scout next switch, drafted notes (saved on blur) and strength / weakness badges. Suggested tags are dashed chips; custom tags can be added as a strength or weakness.
+  - Upcoming matches as alliance-coloured badges, with alliance text for screen readers.
+- Still no compare mode, comparison table or compare action.
+
+### Tests
+- **New (8 Modern Analyze tests):**
+  - The Bruno greeting and context, with no compare UI.
+  - Default event, sort, filter and the alliance filter.
+  - Peek → Open in Team detail.
+  - Search → Team detail and recents.
+  - Add to shortlist from the menu, then priority, scout-next and tags.
+  - **A half-written note survives a remount and saves on blur.**
+  - Pin → quick pick.
+  - View matches → match breakdown.
+- The Legacy scout tests and the 7b tests still pass.
+- **Totals:** 502 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (real FTC data, 2025–26, NJ Championship Parkway, 24 teams): the desktop finder and field table (the table scrolls inside its frame when Bruno's dock is open). At 390 px: no overflow, every target ≥44 px, and the field shows as cards. No real phone was available.
+
 ## Phase 8a: Budget and Inventory
 
 ### Shared controllers
@@ -653,3 +727,9 @@ Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both 
   - 768 light: Budget.
   - 390: both pages have no overflow, and every target is ≥44 px.
   - No real phone was available.
+
+### Review follow-ups (8a)
+- **No double submits:** a form's fields freeze while it saves (the exported setters ignore edits, so Legacy is covered too). The save locks (`budget:saving`, `inv:saving`, `inv:invoice-confirming`) are drafted, so they survive a remount. Each request releases only its own lock (`inEpoch`), so an old save can't unlock a new one after a workspace switch.
+- **Delete rollback:** a failed delete restores only that row, near its old spot (`restoreRow`), so a refresh from a concurrent save isn't overwritten.
+- **Validation:** browser number checks stay on (`step="any"` only where decimals are fine). The controllers also check numbers in both modes: budget amounts must be greater than 0; stock must be a whole number, 0 or more; costs can't be negative.
+
