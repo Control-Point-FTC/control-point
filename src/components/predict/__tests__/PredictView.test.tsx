@@ -68,6 +68,40 @@ describe('PredictView', () => {
     expect(screen.queryByText(/called it/i)).not.toBeInTheDocument();
   });
 
+  it('labels played matches from odds recorded before they were played', async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+    const played = (key: string, pre: number | null, red: number, blue: number) => ({ key, label: key, level: 'qual', red: [4215, 1111], blue: [2222, 3333], pRedWin: null, redMean: null, blueMean: null, played: { red, blue }, pre });
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) => ({
+      ...forecast, season, event,
+      matches: [played('Q-1', 0.7, 100, 50), played('Q-2', 0.8, 50, 100), played('Q-3', null, 90, 10)],
+    }));
+    renderView('/predict?season=2025&event=USNJCMPPKWY');
+    await screen.findAllByText('63%');
+    fireEvent.click(screen.getByRole('tab', { name: /matches/i }));
+    expect(screen.getByText('Called it · 70%')).toBeInTheDocument();
+    expect(screen.getByText('Upset · 20%')).toBeInTheDocument();
+    expect(screen.getByText('No pre-match call')).toBeInTheDocument();
+  });
+
+  it('shows live-this-season accuracy next to the back-test', async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+    predict.fetchForecast.mockImplementation(async (season: number, event: string) => ({ ...forecast, season, event }));
+    const adv = { brier: 0.1, calibrationError: 0.01 };
+    predict.fetchPredictStatus.mockResolvedValue({
+      ready: true, readyAt: '', syncing: false, seasons: [2025],
+      accuracy: { testSeason: '2025–26', matches: { count: 100, liveAccuracy: 0.72, liveBrier: 0.18, preEventAccuracy: 0.68, oprAccuracy: 0.65, oprBrier: 0.2, scoreRange80Coverage: 0.8 },
+        advancement: { events: 5, pre: adv, quals: adv, selected: adv, matchesOnlyPre: adv, naiveTopRanked: { brier: 0.15 }, calibrationPre: [] }, partners: null, pickTop3: 0.5 },
+      live: { season: 2025, matches: { n: 420, accuracy: 0.705, brier: 0.19, upsets: 124 }, advancement: { pre: { n: 80, events: 4, brier: 0.12 }, quals: { n: 0, events: 0, brier: 0 }, selected: { n: 0, events: 0, brier: 0 } }, updatedAt: '' },
+    });
+    renderView('/predict?season=2025&event=USNJCMPPKWY');
+    fireEvent.click(await screen.findByText(/How accurate is this/));
+    expect(await screen.findByText('Live this season')).toBeInTheDocument();
+    expect(screen.getByText('70.5%')).toBeInTheDocument();
+    expect(screen.getByText(/420 matches · 124 upsets/)).toBeInTheDocument();
+    expect(screen.getByText('Advancement odds before the event')).toBeInTheDocument();
+    expect(screen.queryByText('Advancement odds after quals')).not.toBeInTheDocument();
+  });
+
   it('explains warm-up and unsupported events instead of erroring', async () => {
     scout.fetchScoutTeam.mockResolvedValue(profile([ev('FPERR', 'Premier', '2099-05-28')]));
     predict.fetchForecast.mockRejectedValue(new PredictError('This championship is split into divisions.', 422));
