@@ -109,6 +109,11 @@ const CodeView = React.lazy(() => import('./components/CodeView').then(m => ({ d
 const CodePage = React.lazy(() => import('./modern/pages/code/CodePage').then(m => ({ default: m.CodePage })));
 const AttendanceTrendChart = React.lazy(() => import('./components/dashboard/AttendanceTrend').then(m => ({ default: m.AttendanceTrendChart })));
 const AiUsageChart = React.lazy(() => import('./components/owner/AiUsageChart'));
+import { FLAG_REASONS, FLAG_STATUSES, aiStatusOf, fmtTokens, loginChips } from './components/owner/ownerUtils';
+import { useOwnerConsole, useFlagReview, useOwnerUser } from './components/owner/useOwner';
+import { useQrCheckin } from './components/attendance/useQrCheckin';
+import { OwnerPage } from './modern/pages/owner/OwnerPage';
+import { CheckinPage } from './modern/pages/attendance/CheckinPage';
 
 /** Lightweight placeholder while a heavy lazy chunk (charts, code editor) loads. */
 function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
@@ -2712,8 +2717,8 @@ export default function App() {
         <Route path="/bruno" element={<ByMode legacy={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} modern={<BrunoPage key={currentUser?.team_id ?? 'none'} {...viewProps} />} />} />
         <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} modern={<Navigate to="/settings?section=profile" replace />} />} />
         <Route path="/settings" element={<ByMode legacy={<SettingsView {...viewProps} hasPerm={hasPerm} />} modern={<SettingsPage {...viewProps} {...settingsCallbacks} hasPerm={hasPerm} />} />} />
-        <Route path="/owner" element={<ByMode legacy={<OwnerView {...viewProps} />} />} />
-        <Route path="/checkin/:token" element={<ByMode legacy={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} />} />
+        <Route path="/owner" element={<ByMode legacy={<OwnerView {...viewProps} />} modern={<OwnerPage />} />} />
+        <Route path="/checkin/:token" element={<ByMode legacy={<QrCheckinPage currentUser={currentUser} onRefresh={fetchData} />} modern={<CheckinPage currentUser={currentUser} onRefresh={fetchData} />} />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     );
@@ -4661,42 +4666,8 @@ function QrSessionPanel({ teamName }: { teamName: string }) {
 function QrCheckinPage({ currentUser, onRefresh }: any) {
   const { token } = useParams();
   const navigate = useNavigate();
-  const [info, setInfo] = useState<any>(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await apiFetch(`/api/attendance/qr-session/${token}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Session not found');
-        setInfo(data);
-        if (data.alreadyCheckedIn) {
-          setDone(true);
-          onRefresh?.();
-        }
-      } catch (e: any) {
-        setError(e.message || 'Could not load session');
-      }
-    })();
-  }, [token]);
-
-  const confirm = async () => {
-    setBusy(true);
-    try {
-      const res = await apiFetch(`/api/attendance/checkin/${token}`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Check-in failed');
-      setDone(true);
-      onRefresh?.();
-    } catch (e: any) {
-      setError(e.message || 'Check-in failed');
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Session lookup + confirm are shared with the Modern check-in page.
+  const { info, error, busy, done, confirm } = useQrCheckin(token, onRefresh);
 
   return (
     <div className="min-h-screen bg-primary flex items-center justify-center p-4">
@@ -8275,157 +8246,19 @@ function FeedbackModal({ onClose }: any) {
 }
 
 // Owner portal: Sushil's cross-workspace view of usage + feedback
-function fmtTokens(n: any): string {
-  const v = Number(n) || 0;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
-  return `${v}`;
-}
-
-function aiStatusOf(u: any) {
-  if (!u) return { label: '—', cls: 'bg-text-base/5 text-text-muted' };
-  if (u.ai_disabled === 1) return { label: 'AI disabled', cls: 'bg-rose-500/15 text-rose-400' };
-  if (u.ai_timeout_until && new Date(String(u.ai_timeout_until).replace(' ', 'T') + 'Z').getTime() > Date.now())
-    return { label: 'Timed out', cls: 'bg-amber-500/15 text-amber-400' };
-  if (u.ai_daily_token_limit) return { label: `${fmtTokens(u.ai_daily_token_limit)}/day`, cls: 'bg-sky-500/15 text-sky-400' };
-  return { label: 'AI ok', cls: 'bg-emerald-500/15 text-emerald-400' };
-}
-
-function loginChips(u: any) {
-  const chips: string[] = [];
-  if (u.google_id) chips.push('Google');
-  if (u.discord_id) chips.push('Discord');
-  if (u.github_id) chips.push('GitHub');
-  return chips;
-}
-
-const FLAG_REASONS: Record<string, { label: string; cls: string }> = {
-  'homework': { label: 'Homework-like', cls: 'bg-amber-500/15 text-amber-400' },
-  'spam': { label: 'Spam burst', cls: 'bg-rose-500/15 text-rose-400' },
-  'excessive-use': { label: 'Excessive use', cls: 'bg-orange-500/15 text-orange-400' },
-};
-
-const FLAG_STATUSES: Record<string, { label: string; cls: string }> = {
-  'open': { label: 'Open', cls: 'bg-rose-500/15 text-rose-400' },
-  'dismissed': { label: 'Dismissed', cls: 'bg-text-base/5 text-text-muted' },
-  'warned': { label: 'Warned', cls: 'bg-amber-500/15 text-amber-400' },
-  'timed_out': { label: 'Timed out', cls: 'bg-orange-500/15 text-orange-400' },
-  'ai_disabled': { label: 'AI disabled', cls: 'bg-rose-500/20 text-rose-300' },
-};
-
 function OwnerView(_props: any) {
-  const [tab, setTab] = useState<'overview' | 'users' | 'ai' | 'flags' | 'feedback'>('overview');
-  const [overview, setOverview] = useState<any>(null);
-  const [feedback, setFeedback] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
-  const [aiOverview, setAiOverview] = useState<any>(null);
-  const [flags, setFlags] = useState<any[]>([]);
-  const [flagFilter, setFlagFilter] = useState<'open' | 'all'>('open');
-  const [loading, setLoading] = useState(true);
-  const [userSearch, setUserSearch] = useState('');
-  const [teamFilter, setTeamFilter] = useState('all');
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-
-  const loadAll = async () => {
-    setLoading(true);
-    try {
-      const [o, f, u, a, fl] = await Promise.all([
-        apiFetch('/api/owner/overview').then(r => r.json()),
-        apiFetch('/api/owner/feedback').then(r => r.json()),
-        apiFetch('/api/owner/users').then(r => r.json()),
-        apiFetch(aiOverviewUrl()).then(r => r.json()),
-        apiFetch('/api/owner/ai-flags').then(r => r.json()),
-      ]);
-      setOverview(o);
-      setFeedback(Array.isArray(f) ? f : []);
-      setUsers(Array.isArray(u) ? u : []);
-      setAiOverview(a);
-      setFlags(Array.isArray(fl) ? fl : []);
-    } finally {
-      setLoading(false);
-    }
-  };
-  useEffect(() => { loadAll(); }, []);
-
-  const reloadFlags = async (filter: 'open' | 'all' = flagFilter) => {
-    const r = await apiFetch(`/api/owner/ai-flags?status=${filter}`);
-    if (r.ok) setFlags(await r.json());
-  };
-  const reloadUsers = async () => {
-    const r = await apiFetch('/api/owner/users');
-    if (r.ok) setUsers(await r.json());
-  };
-  const reloadAi = async () => {
-    const r = await apiFetch(aiOverviewUrl());
-    if (r.ok) setAiOverview(await r.json());
-  };
-  // The owner's timezone drives "today" and the daily history server-side.
-  // Defined after loadAll/reloadAi (function hoisting keeps both working).
-  function aiOverviewUrl() {
-    let tz = 'America/New_York';
-    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz; } catch { /* default */ }
-    return `/api/owner/ai-overview?tz=${encodeURIComponent(tz)}`;
-  }
-  // Fresh numbers every time the AI Control tab opens.
-  useEffect(() => { if (tab === 'ai') reloadAi(); }, [tab]);
-
-  const setFeedbackStatus = async (id: number, status: 'new' | 'resolved') => {
-    const res = await apiFetch(`/api/owner/feedback/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status })
-    });
-    if (res.ok) {
-      // Resolved feedback is deleted server-side (user gets notified), so drop it from the list.
-      if (status === 'resolved') setFeedback(feedback.filter(f => f.id !== id));
-      else setFeedback(feedback.map(f => f.id === id ? { ...f, status } : f));
-    }
-  };
-
-  const handleFlagAction = async (id: number, action: string, note: string, timeoutHours?: number) => {
-    const r = await apiFetch(`/api/owner/ai-flags/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, note, timeoutHours })
-    });
-    if (r.ok) {
-      notify(action === 'dismiss' ? 'Flag dismissed' : action === 'warn' ? 'Warning recorded' : action === 'timeout' ? 'AI timed out for user' : 'AI disabled for user', 'success');
-      reloadFlags(); reloadUsers(); reloadAi();
-    } else {
-      notify('Action failed', 'error');
-    }
-  };
-
-  const quickDeleteUser = async (u: any) => {
-    const ok = await confirmDialog({
-      title: 'Delete user',
-      message: `Remove ${u.name} (${u.email}) from ${u.team_name || 'their team'}? Their private AI chats and usage history go with them. This can't be undone.`,
-      confirmLabel: 'Delete', danger: true,
-    });
-    if (!ok) return;
-    const r = await apiFetch(`/api/owner/users/${u.id}`, { method: 'DELETE' });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { notify(j.error || 'Delete failed', 'error'); return; }
-    notify('User deleted', 'success');
-    reloadUsers(); reloadAi(); reloadFlags();
-  };
-
-  const totals = overview?.totals || {};
-  const openFlagCount = aiOverview?.flags?.open || 0;
+  // Data, filters and actions are shared with the Modern owner console.
+  const {
+    tab, setTab, overview, feedback, aiOverview, flags, flagFilter, chooseFlagFilter, loading, userSearch, setUserSearch,
+    teamFilter, setTeamFilter, selectedId, setSelectedId, totals, openFlagCount, teams, filteredUsers,
+    setFeedbackStatus, handleFlagAction, quickDeleteUser, reloadAfterChange,
+  } = useOwnerConsole();
   const statCards = [
     { label: 'Workspaces', value: totals.teams || 0, icon: Users },
     { label: 'Users', value: totals.users || 0, icon: UserCircle },
     { label: 'AI msgs today', value: aiOverview?.today?.messages || 0, icon: Zap },
     { label: 'Feedback notes', value: totals.feedback || 0, icon: MessageSquareHeart },
   ];
-
-  const teams = Array.from(new Set(users.map(u => u.team_name).filter(Boolean))).sort() as string[];
-  const filteredUsers = users.filter(u => {
-    if (teamFilter !== 'all' && u.team_name !== teamFilter) return false;
-    if (userSearch) {
-      const q = userSearch.toLowerCase();
-      return (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
-    }
-    return true;
-  });
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
@@ -8626,7 +8459,7 @@ function OwnerView(_props: any) {
             {(['open', 'all'] as const).map((f) => (
               <button
                 key={f}
-                onClick={() => { setFlagFilter(f); reloadFlags(f); }}
+                onClick={() => chooseFlagFilter(f)}
                 className={cn("px-4 py-1.5 rounded-lg text-xs font-bold capitalize transition-all", flagFilter === f ? "bg-accent text-accent-ink" : "text-text-muted hover:text-text-base")}
               >
                 {f}
@@ -8687,7 +8520,7 @@ function OwnerView(_props: any) {
         <OwnerUserDrawer
           userId={selectedId}
           onClose={() => setSelectedId(null)}
-          onChanged={() => { reloadUsers(); reloadAi(); reloadFlags(); }}
+          onChanged={reloadAfterChange}
           teams={overview?.teams || []}
         />
       )}
@@ -8696,16 +8529,9 @@ function OwnerView(_props: any) {
 }
 
 function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: number, action: string, note: string, timeoutHours?: number) => Promise<void>; onManageUser: (id: number) => void }) {
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
+  const { note, setNote, busy, run } = useFlagReview(flag, onAction);
   const reason = FLAG_REASONS[flag.reason] || { label: flag.reason, cls: 'bg-text-base/5 text-text-muted' };
   const status = FLAG_STATUSES[flag.status] || { label: flag.status, cls: 'bg-text-base/5 text-text-muted' };
-
-  const run = async (action: string, timeoutHours?: number) => {
-    setBusy(true);
-    try { await onAction(flag.id, action, note, timeoutHours); }
-    finally { setBusy(false); }
-  };
 
   return (
     <Card className="!p-4 !gap-3">
@@ -8754,123 +8580,11 @@ function FlagCard({ flag, onAction, onManageUser }: { flag: any; onAction: (id: 
 }
 
 function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number; onClose: () => void; onChanged: () => void; teams: any[] }) {
-  const [data, setData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [dailyLimit, setDailyLimit] = useState('');
-  const [replyMax, setReplyMax] = useState('');
-  const [warnNote, setWarnNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [moveTeamId, setMoveTeamId] = useState('');
-  const [moving, setMoving] = useState(false);
-  const [moveError, setMoveError] = useState('');
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      const r = await apiFetch(`/api/owner/users/${userId}`);
-      if (r.ok) {
-        const d = await r.json();
-        setData(d);
-        setDailyLimit(d.user.ai_daily_token_limit ? String(d.user.ai_daily_token_limit) : '');
-        setReplyMax(d.user.ai_max_tokens_reply ? String(d.user.ai_max_tokens_reply) : '');
-      }
-    } finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, [userId]);
-
-  const patchAi = async (body: any, msg = 'AI controls updated') => {
-    setBusy(true);
-    try {
-      const r = await apiFetch(`/api/owner/users/${userId}/ai`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) { notify(j.error || 'Update failed', 'error'); return; }
-      notify(msg, 'success');
-      await load(); onChanged();
-    } finally { setBusy(false); }
-  };
-
-  const doWarn = async () => {
-    setBusy(true);
-    try {
-      const r = await apiFetch(`/api/owner/users/${userId}/warn`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: warnNote }),
-      });
-      if (!r.ok) { notify('Warn failed', 'error'); return; }
-      notify('Warning recorded', 'success');
-      setWarnNote('');
-      await load(); onChanged();
-    } finally { setBusy(false); }
-  };
-
-  const doMoveUser = async () => {
-    const u = data?.user;
-    const dest = (teams || []).find((t: any) => String(t.id) === String(moveTeamId));
-    if (!dest) { notify('Pick a workspace first', 'error'); return; }
-    const ok = await confirmDialog({
-      title: 'Move user',
-      message: `Move ${u?.name} (${u?.email}) from ${u?.team_name || 'their team'} to ${dest.name}? They'll lose their current roles and be signed out. They won't be notified.`,
-      confirmLabel: 'Move',
-    });
-    if (!ok) return;
-    setMoving(true);
-    setMoveError('');
-    try {
-      const r = await apiFetch(`/api/owner/users/${userId}/move`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teamId: dest.id }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const msg = j.error || `Move failed (HTTP ${r.status})`;
-        setMoveError(msg);
-        notify(msg, 'error');
-        return;
-      }
-      notify(`Moved to ${dest.name}`, 'success');
-      setMoveTeamId('');
-      await load(); onChanged();
-    } catch (e: any) {
-      const msg = e?.message?.includes('fetch') || e?.name === 'TypeError'
-        ? 'Network error — check your connection and try again.'
-        : (e?.message || 'Move failed unexpectedly.');
-      setMoveError(msg);
-      notify(msg, 'error');
-    } finally { setMoving(false); }
-  };
-
-  const doDeleteMembership = async () => {
-    const u = data?.user;
-    const ok = await confirmDialog({
-      title: 'Delete user',
-      message: `Remove ${u?.name} (${u?.email}) from ${u?.team_name || 'their team'}? Sessions, private AI chats, and usage history are removed too. This can't be undone.`,
-      confirmLabel: 'Delete', danger: true,
-    });
-    if (!ok) return;
-    const r = await apiFetch(`/api/owner/users/${userId}`, { method: 'DELETE' });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { notify(j.error || 'Delete failed', 'error'); return; }
-    notify('User deleted', 'success');
-    onClose(); onChanged();
-  };
-
-  const doDeleteAccount = async () => {
-    const u = data?.user;
-    const teams = (data?.siblings?.length || 0) + 1;
-    const ok = await confirmDialog({
-      title: 'Delete entire account',
-      message: `Delete EVERYTHING for ${u?.email} across ${teams} team${teams > 1 ? 's' : ''}? This can't be undone.`,
-      confirmLabel: 'Delete everything', danger: true,
-    });
-    if (!ok) return;
-    const r = await apiFetch(`/api/owner/accounts?email=${encodeURIComponent(u.email)}`, { method: 'DELETE' });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) { notify(j.error || 'Delete failed', 'error'); return; }
-    if (j.skipped?.length) notify(`Deleted ${j.deleted.length}, skipped ${j.skipped.length} (see console)`, 'info');
-    else notify(`Account deleted (${j.deleted.length} membership${j.deleted.length === 1 ? '' : 's'})`, 'success');
-    onClose(); onChanged();
-  };
+  // Per-user management is shared with the Modern owner console.
+  const {
+    data, loading, busy, moving, moveError, setMoveError, dailyLimit, setDailyLimit, replyMax, setReplyMax,
+    warnNote, setWarnNote, moveTeamId, setMoveTeamId, patchAi, saveDailyLimit, saveReplyMax, doWarn, doMoveUser, doDeleteMembership, doDeleteAccount,
+  } = useOwnerUser(userId, { onClose, onChanged, teams });
 
   const u = data?.user;
   const st = aiStatusOf(u);
@@ -8961,7 +8675,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                       inputMode="numeric"
                       className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                     />
-                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_daily_token_limit: dailyLimit || null }, 'Daily limit saved')}>Set</Button>
+                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => void saveDailyLimit()}>Set</Button>
                   </div>
                 </div>
                 <div>
@@ -8974,7 +8688,7 @@ function OwnerUserDrawer({ userId, onClose, onChanged, teams }: { userId: number
                       inputMode="numeric"
                       className="w-full bg-text-base/5 border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base placeholder:text-text-muted focus:outline-none focus:border-accent/50"
                     />
-                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => patchAi({ ai_max_tokens_reply: replyMax || null }, 'Reply cap saved')}>Set</Button>
+                    <Button variant="secondary" size="sm" disabled={busy} onClick={() => void saveReplyMax()}>Set</Button>
                   </div>
                 </div>
               </div>
