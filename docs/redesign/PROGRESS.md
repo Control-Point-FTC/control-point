@@ -785,3 +785,41 @@ Extracted from Legacy `ResourcesView`, whose JSX is unchanged apart from Discard
 - **New (6 tests):** chips / search; extract → edit → remove → save all (request body); parse error; delete with row-only rollback in its original place; live refetch; **preview survives remount** and the **save lock survives leaving and coming back**.
 - The component and modern suites pass apart from the known flaky / Windows-only tests. `tsc` is clean.
 - **Local QA** (5 local-only seeded links): desktop dark, and 390 px with no overflow and every target ≥44 px. Locally, Bruno extraction returns "AI not configured" as expected.
+
+## Phase 8d: CAD
+
+### Shared hooks (`src/components/cad/useCad.ts`)
+Legacy `CadView` keeps its JSX: local aliases map onto the hooks. The only change is the part-form open / close handlers. Its constants are re-exported.
+- **Hooks:** `useCadDashboard`, `useCadDocs`, `useCadReviews` (filter, the same **status rules** via `canAct` / `actionsFor`, admin delete), `useReviewForm`, `useReviewComments`, `useCadSnapshots` (delete when admin or author), `useSnapshotForm` (STEP / STL check), `useCadParts`, `usePartForm`, `useCadInvoiceImport`.
+- **Same endpoints and bodies** as Legacy.
+- **Lessons from the 8a–8c reviews, applied up front:**
+  - **Drafts:** every form, its open state and the invoice review are drafted (the comment draft is per review).
+  - **Locks:** each save holds a **drafted lock released only by its own request** (`inEpoch`), and fields freeze while saving.
+  - **Parsing:** the invoice parse has a drafted busy flag and newest-wins request ids.
+  - **Refresh:** lists refresh through a small **CAD event bus**, so a save that finishes after a mode switch still refreshes the mounted page.
+  - **Numbers:** BOM quantities must be whole and ≥ 1, and costs can't be negative (checked in both modes).
+- **`drafts.ts`:** new `deleteDraft(key)` (used to drop a finished or discarded part form).
+
+### Modern CAD (`src/modern/pages/cad/`)
+- **Tabs:** one page with route-driven kit tabs: Overview / Onshape docs / Design reviews / Snapshots / Parts list.
+- **Overview:** animated stat tiles that navigate, an amber "Review queue", quick actions, and an activity timeline.
+- **Docs:** an inline link form, then doc cards with an Open / Unlink menu.
+- **Reviews:**
+  - A status filter with counts.
+  - Cards with a screenshot, status badge, section / author / date and comment count.
+  - A **detail sheet** with a **workflow stepper** (Concept → In review → Approved → Built, with Changes requested in amber), the screenshot and description, Open in Onshape, the permitted moves, admin delete, and the **discussion thread with a composer**.
+  - "Submit design" opens a sheet with a styled file picker.
+- **Snapshots:** grouped by subsystem; preview tiles open the 3D viewer (lazy-loaded); a menu has Delete for the owner or an admin; upload happens in a sheet.
+- **Parts:** a BOM summary (animated total, a **status-mix bar**, Import invoice / Add part), per-subsystem tables with subtotals and row menus, an add / edit sheet, and an **invoice review dialog** (select all, editable rows, kit selects).
+
+### Tests
+- **New (9 Modern tests):**
+  - Overview navigation; docs link / unlink.
+  - Review permissions: author vs other vs admin moves, delete, comments.
+  - Submit design (validation, FormData, **draft survives remount**).
+  - Snapshots: viewer, owner-only delete, file-type checks, upload.
+  - Parts: validation, add / edit / delete; invoice parse → untick → import.
+  - **A save finishing after leaving refreshes the returning page.**
+- **2 Legacy CadView smoke tests** on the hooks (parts add; the review form shares the Modern draft).
+- **Totals:** 529 + new tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (local-only seeded docs, reviews and parts): desktop dark (overview, parts, review sheet); 390 px on all five tabs with no overflow and every target ≥44 px. No real phone was available.
