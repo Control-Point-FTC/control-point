@@ -70,11 +70,15 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
   const onNumChange = (v: string) => {
     setTeamNumber(v);
     if (timer.current) clearTimeout(timer.current);
+    // Any edit retires the previous answer at once, so a reply for the old
+    // number can't land (and look verified) during the next delay.
+    seq.current++;
+    if (foundName || lookup === 'found') { setFoundName(''); setFoundSchool(null); setTeamName(''); }
     if (!v.trim()) {
-      seq.current++;
       setLookup('idle'); setFoundName(''); setFoundSchool(null); setTeamName('');
       return;
     }
+    setLookup('idle');
     timer.current = setTimeout(() => doLookup(v), 600);
   };
 

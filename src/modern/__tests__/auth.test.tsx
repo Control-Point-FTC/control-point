@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, renderHook, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
@@ -7,6 +8,7 @@ vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...a
 import { ModernLanding } from '../pages/auth/ModernLanding';
 import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from '../pages/auth/AuthPages';
 import { CodeRevealDialog } from '../pages/auth/CodeRevealDialog';
+import { AuthLayout } from '../pages/auth/AuthLayout';
 import { readDeviceMode, useSignedOutMode } from '../signedOut';
 import { clearDrafts } from '../drafts';
 
@@ -223,3 +225,60 @@ describe('Modern workspace-ready dialog', () => {
     expect(onEnter).toHaveBeenCalled();
   });
 });
+
+describe('Phase 9b review fixes', () => {
+  it("an old number's lookup can't verify the number now in the field", async () => {
+    const replies: Record<string, (v: any) => void> = {};
+    fetchMock.mockImplementation((u: string) => new Promise((r) => { replies[new URL(u, 'http://x').searchParams.get('number')!] = r; }));
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} onClassic={vi.fn()} />);
+    const num = screen.getByLabelText('FTC team number');
+    fireEvent.change(num, { target: { value: '4215' } });
+    await waitFor(() => expect(replies['4215']).toBeDefined(), { timeout: 2000 });
+    fireEvent.change(num, { target: { value: '42150' } }); // next lookup not started yet (600 ms delay)
+    await act(async () => { replies['4215']({ ok: true, json: async () => ({ name: 'Wrong Team' }) }); });
+    expect(screen.queryByText('Wrong Team')).not.toBeInTheDocument();
+    expect(screen.queryByText('Verified FTC team')).not.toBeInTheDocument();
+    await waitFor(() => expect(replies['42150']).toBeDefined(), { timeout: 2000 });
+    await act(async () => { replies['42150']({ ok: true, json: async () => ({ name: 'Right Team' }) }); });
+    expect(await screen.findByText('Right Team')).toBeInTheDocument();
+  });
+
+  it('a pasted code with spaces keeps all six digits', async () => {
+    render(<VerifyEmailPage email="ada@x.test" onBack={vi.fn()} onVerified={vi.fn()} onClassic={vi.fn()} />);
+    const input = screen.getByLabelText('Verification code');
+    const user = userEvent.setup();
+    await user.click(input);
+    await user.paste('123 456');
+    expect(input).toHaveValue('123456');
+  });
+
+  it('highlights can be paused, and stay still with reduced motion', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<AuthLayout><p>form</p></AuthLayout>);
+      const first = screen.getByText('Check in with one scan');
+      fireEvent.click(screen.getByRole('button', { name: 'Pause highlights' }));
+      await act(async () => { vi.advanceTimersByTime(12000); });
+      expect(first).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Play highlights' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Show: Scout smarter' }));
+      expect(screen.getByRole('button', { name: 'Show: Scout smarter' })).toHaveAttribute('aria-current', 'true');
+    } finally {
+      vi.useRealTimers();
+    }
+    cleanup();
+    const mm = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as any;
+    try {
+      vi.useFakeTimers();
+      render(<AuthLayout><p>form</p></AuthLayout>);
+      expect(screen.queryByRole('button', { name: /Pause highlights/ })).not.toBeInTheDocument();
+      await act(async () => { vi.advanceTimersByTime(12000); });
+      expect(screen.getByText('Check in with one scan')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+      window.matchMedia = mm;
+    }
+  });
+});
+

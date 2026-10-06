@@ -5,7 +5,7 @@
 // with the mark in the top bar.
 import { useEffect, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowLeft, CalendarCheck, CheckSquare, LineChart, Wallet } from 'lucide-react';
+import { ArrowLeft, CalendarCheck, CheckSquare, LineChart, Pause, Play, Wallet } from 'lucide-react';
 import { Button } from '../../../components/ui-kit';
 import { BrandLogo } from '../../../components/BrandMark';
 import { SignedOutModern } from '../../signedOut';
@@ -17,16 +17,36 @@ const HIGHLIGHTS = [
   { icon: Wallet, title: 'Every dollar accounted for', body: 'Sponsors, dues and spending in a ledger the whole team can read.' },
 ];
 
-function Highlights() {
-  const [i, setI] = useState(0);
+/** Live prefers-reduced-motion (read per mount, follows changes). */
+function usePrefersReducedMotion() {
+  const query = '(prefers-reduced-motion: reduce)';
+  const [reduce, setReduce] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(query).matches);
   useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = (e: MediaQueryListEvent) => setReduce(e.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  return reduce;
+}
+
+function Highlights() {
+  const reduce = usePrefersReducedMotion();
+  const [i, setI] = useState(0);
+  // Readers can pause the rotation; reduced motion keeps one highlight still.
+  const [paused, setPaused] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const running = !reduce && !paused && !hovered;
+  useEffect(() => {
+    if (!running) return;
     const t = setInterval(() => setI((n) => (n + 1) % HIGHLIGHTS.length), 5200);
     return () => clearInterval(t);
-  }, []);
+  }, [running, i]);
   const h = HIGHLIGHTS[i];
   return (
-    <div className="relative">
-      <div className="min-h-[148px]">
+    <div className="relative" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <div className="min-h-[148px]" aria-live={running ? 'off' : 'polite'}>
         <AnimatePresence mode="wait">
           <motion.div
             key={h.title}
@@ -43,12 +63,35 @@ function Highlights() {
           </motion.div>
         </AnimatePresence>
       </div>
-      <div className="mt-6 flex gap-1.5" aria-hidden="true">
+      <div className="mt-4 flex items-center gap-1">
         {HIGHLIGHTS.map((x, n) => (
-          <span key={x.title} className="h-1 w-8 overflow-hidden rounded-full bg-foreground/10">
-            {n === i && <motion.span className="block h-full bg-accent" initial={{ width: 0 }} animate={{ width: '100%' }} transition={{ duration: 5.2, ease: 'linear' }} />}
-          </span>
+          <button
+            key={x.title}
+            type="button"
+            onClick={() => setI(n)}
+            aria-label={`Show: ${x.title}`}
+            aria-current={n === i ? 'true' : undefined}
+            className="flex h-11 w-9 items-center"
+          >
+            <span className="block h-1 w-8 overflow-hidden rounded-full bg-foreground/10">
+              {n === i && (
+                running
+                  ? <motion.span key={`run-${i}`} className="block h-full bg-accent" initial={{ width: 0 }} animate={{ width: '100%' }} transition={{ duration: 5.2, ease: 'linear' }} />
+                  : <span className="block h-full w-full bg-accent" />
+              )}
+            </span>
+          </button>
         ))}
+        {!reduce && (
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            aria-label={paused ? 'Play highlights' : 'Pause highlights'}
+            className="ml-1 flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground"
+          >
+            {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+          </button>
+        )}
       </div>
     </div>
   );

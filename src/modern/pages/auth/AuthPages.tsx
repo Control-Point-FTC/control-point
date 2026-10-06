@@ -213,7 +213,6 @@ function CodeInput({ label, value, onChange }: { label: string; value: string; o
           onBlur={() => setFocused(false)}
           inputMode="numeric"
           autoComplete="one-time-code"
-          maxLength={6}
           className="absolute inset-0 h-full w-full cursor-text opacity-0"
         />
         <div className="pointer-events-none grid grid-cols-6 gap-2" aria-hidden="true">
