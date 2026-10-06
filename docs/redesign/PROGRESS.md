@@ -823,3 +823,25 @@ Legacy `CadView` keeps its JSX: local aliases map onto the hooks. The only chang
 - **2 Legacy CadView smoke tests** on the hooks (parts add; the review form shares the Modern draft).
 - **Totals:** 529 + new tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
 - **Local QA** (local-only seeded docs, reviews and parts): desktop dark (overview, parts, review sheet); 390 px on all five tabs with no overflow and every target ≥44 px. No real phone was available.
+
+## Phase 9d: Emails
+
+### Template (`email-verify.ts`)
+- **New shared `emailTemplate`:**
+  - Table-based layout with inline styles, so it renders the same in Gmail, Outlook and Apple Mail.
+  - A light card with the CP mark and an accent bar.
+  - A **hidden preheader** for the inbox preview line.
+  - An optional **button**.
+  - A footer that says **why the email was sent**, with a link to the site.
+  - Plain parts (title, preheader, footnote, button) are escaped inside the template.
+- **Verification:** "Confirm your email", with the code as six tiles.
+- **Password reset now has its own email.** Before, it reused the signup text ("finish creating your account").
+  - `issueVerificationCode(email, 'reset')` is used by `/api/auth/forgot-password`.
+  - It has its own subject line and wording.
+  - The codes, cooldowns and checks are unchanged.
+- **Task assigned:** "You have a new task", with a task card (accent edge, description, due date) and an **"Open your tasks" button**. The button goes to `APP_URL/tasks`, falling back to https://tryctrlpoint.org. Every field is still escaped.
+
+### Tests
+- **New (5 tests, `src/emailTemplates.test.ts`):** code tiles, preheader and footnote; reset wording; task button link and escaping; the `appUrl` fallback; template escaping.
+- The existing `taskEmail` and `email-verify` tests still pass.
+- **Visual check:** rendered locally in the browser. Screenshots are in `screenshots/phase9/email-*.jpg`. No emails were sent.
