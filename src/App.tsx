@@ -206,6 +206,9 @@ import { useBudgetController } from './components/budget/useBudgetController';
 import { useInventoryController, INVENTORY_CATEGORIES } from './components/inventory/useInventoryController';
 import { BudgetPage } from './modern/pages/budget/BudgetPage';
 import { InventoryPage } from './modern/pages/inventory/InventoryPage';
+import { useOutreachController, OUTREACH_PRESETS } from './components/outreach/useOutreachController';
+import { parseOutreachRows } from './components/outreach/parseOutreachRows';
+import { OutreachPage } from './modern/pages/outreach/OutreachPage';
 import { useCalendarController, toDateKey, fmtTime } from './components/calendar/useCalendarController';
 import { useMembersController } from './components/people/useMembersController';
 import { useCommunicationController } from './components/communication/useCommunicationController';
@@ -221,6 +224,7 @@ import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, st
 import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
 import { CadView } from './components/CadView';
 import ResourcesView from './components/ResourcesView';
+import { ResourcesPage } from './modern/pages/resources/ResourcesPage';
 import MessageReactions, { postReactionToggle } from './components/MessageReactions';
 import ReactionPicker from './components/ReactionPicker';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
@@ -2689,7 +2693,7 @@ export default function App() {
         <Route path="/calendar" element={<ByMode legacy={<CalendarView {...viewProps} />} modern={<CalendarPage {...viewProps} />} />} />
         <Route path="/budget" element={<ByMode legacy={<BudgetView {...viewProps} />} modern={<BudgetPage {...viewProps} />} />} />
         <Route path="/inventory" element={<ByMode legacy={<InventoryView {...viewProps} />} modern={<InventoryPage {...viewProps} />} />} />
-        <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} />} />
+        <Route path="/outreach" element={<ByMode legacy={<OutreachView {...viewProps} />} modern={<OutreachPage {...viewProps} />} />} />
         <Route path="/code" element={<ByMode legacy={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodeView {...viewProps} /></Suspense>} />} />
         <Route path="/cad" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/cad-docs" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
@@ -2698,7 +2702,7 @@ export default function App() {
         <Route path="/cad-parts" element={<ByMode legacy={<CadView activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />} />
         <Route path="/comm" element={<ByMode legacy={<CommunicationView {...viewProps} />} modern={<CommunicationPage {...viewProps} />} />} />
         <Route path="/chat" element={<ByMode legacy={<ChatView {...viewProps} />} modern={<MessagesPage {...viewProps} memberMenuItems={memberMenuItems} />} />} />
-        <Route path="/resources" element={<ByMode legacy={<ResourcesView />} />} />
+        <Route path="/resources" element={<ByMode legacy={<ResourcesView />} modern={<ResourcesPage />} />} />
         <Route path="/bruno" element={<ByMode legacy={<BrunoView key={currentUser?.team_id ?? 'none'} {...viewProps} />} modern={<BrunoPage key={currentUser?.team_id ?? 'none'} {...viewProps} />} />} />
         <Route path="/profile" element={<ByMode legacy={<ProfileView {...viewProps} />} modern={<Navigate to="/settings?section=profile" replace />} />} />
         <Route path="/settings" element={<ByMode legacy={<SettingsView {...viewProps} hasPerm={hasPerm} />} modern={<SettingsPage {...viewProps} {...settingsCallbacks} hasPerm={hasPerm} />} />} />
@@ -6217,7 +6221,6 @@ function InventoryView({ inventory, setInventory, members, teams, onRefresh, ref
   );
 }
 
-const OUTREACH_PRESETS = ['Demo', 'Workshop', 'Volunteering', 'Fundraiser', 'Presentation', 'Competition'];
 
 // Rich YouTube channel analytics, analyzer-style: stat tiles, channel meta
 // (handle, country, join date), and an expandable description. Data comes
@@ -6304,134 +6307,8 @@ function DueDateLabel({ task, className }: { task: { due_date?: string | null; s
   );
 }
 
-// Bulk outreach paste parser: turns pasted tables/text into outreach rows.
-// Handles tab/pipe/comma-delimited rows with an optional header line
-// (title, date, hours, location, attendees, funds_raised, description), or
-// freeform lines where dates/hours/attendees/funds are sniffed out.
-function normalizeBulkDate(cell: string): string | null {
-  const t = cell.trim();
-  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (m) {
-    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
-    return isNaN(d.getTime()) ? null : `${m[1]}-${m[2]}-${m[3]}`;
-  }
-  m = t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
-  if (m) {
-    const nowY = new Date().getFullYear();
-    let y = m[3] ? parseInt(m[3], 10) : nowY;
-    if (y < 100) y += 2000;
-    const mm = String(parseInt(m[1], 10)).padStart(2, '0');
-    const dd = String(parseInt(m[2], 10)).padStart(2, '0');
-    const d = new Date(`${y}-${mm}-${dd}T00:00:00`);
-    return isNaN(d.getTime()) ? null : `${y}-${mm}-${dd}`;
-  }
-  m = t.match(/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$/i);
-  if (m) {
-    const months: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-    const y = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
-    const mm = String(months[m[1].toLowerCase()]).padStart(2, '0');
-    const dd = String(parseInt(m[2], 10)).padStart(2, '0');
-    const d = new Date(`${y}-${mm}-${dd}T00:00:00`);
-    return isNaN(d.getTime()) ? null : `${y}-${mm}-${dd}`;
-  }
-  return null;
-}
-
-function sniffBulkCell(cell: string): { field: string; value: any } | null {
-  const t = cell.trim();
-  if (!t) return null;
-  const date = normalizeBulkDate(t);
-  if (date) return { field: 'date', value: date };
-  const fundsInline = t.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/);
-  if (fundsInline && /fund|rais|donat|\$/i.test(t)) {
-    return { field: 'funds_raised', value: parseFloat(fundsInline[1].replace(/,/g, '')) || 0 };
-  }
-  let m = t.match(/^(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours)$/i);
-  if (m) return { field: 'hours', value: parseFloat(m[1]) };
-  m = t.match(/(\d+)\s*(attendees|people|students|kids|participants)/i);
-  if (m) return { field: 'attendees', value: parseInt(m[1], 10) };
-  return { field: 'text', value: t };
-}
-
-export function parseOutreachRows(text: string): any[] {
-  const lines = String(text || '').split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  if (!lines.length) return [];
-  // Detect delimiter: tabs (spreadsheet paste) win, then pipes, then commas.
-  let delim: string | null = null;
-  const frac = (ch: string) => lines.filter(l => l.includes(ch)).length / lines.length;
-  if (frac('\t') >= 0.5) delim = '\t';
-  else if (frac('|') >= 0.5) delim = '|';
-  else if (lines.length > 1 && frac(',') >= 0.5) delim = ',';
-
-  const rows: any[] = [];
-  let startIdx = 0;
-  let colMap: Record<string, number> | null = null;
-  if (delim) {
-    const header = lines[0].split(delim).map(c => c.trim().toLowerCase());
-    const looksHeader = header.some(c => /^(title|event|name)$/.test(c)) && header.some(c => /date/.test(c));
-    if (looksHeader) {
-      colMap = {};
-      header.forEach((c, i) => {
-        if (/^(title|event|name)$/.test(c)) colMap!['title'] = i;
-        else if (/date/.test(c)) colMap!['date'] = i;
-        else if (/hour/.test(c)) colMap!['hours'] = i;
-        else if (/locat|venue|place/.test(c)) colMap!['location'] = i;
-        else if (/attend/.test(c)) colMap!['attendees'] = i;
-        else if (/fund|rais|donat|amount|\$/.test(c)) colMap!['funds_raised'] = i;
-        else if (/desc|note/.test(c)) colMap!['description'] = i;
-      });
-      startIdx = 1;
-    }
-  }
-
-  const today = new Date();
-  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-
-  for (let li = startIdx; li < lines.length && rows.length < 50; li++) {
-    const cells = delim ? lines[li].split(delim).map(c => c.trim()) : [lines[li]];
-    const row: any = { title: '', description: '', date: todayKey, hours: '', location: '', attendees: '', funds_raised: '' };
-    if (colMap) {
-      const at = (k: string) => (colMap![k] != null ? (cells[colMap![k]] || '') : '');
-      row.title = at('title');
-      const d = normalizeBulkDate(at('date'));
-      if (d) row.date = d;
-      const h = parseFloat(at('hours'));
-      if (isFinite(h) && h >= 0) row.hours = String(h);
-      row.location = at('location');
-      const a = parseInt(at('attendees'), 10);
-      if (isFinite(a) && a >= 0) row.attendees = String(a);
-      const f = parseFloat(String(at('funds_raised')).replace(/[$,]/g, ''));
-      if (isFinite(f) && f >= 0) row.funds_raised = String(f);
-      row.description = at('description');
-    } else {
-      const texts: string[] = [];
-      // Positional hint: in "title | date | hours | ..." layouts the 3rd cell
-      // is often a bare hours number — claim it before text classification.
-      let textCells = cells;
-      if (cells.length >= 3 && /^\d+(\.\d+)?$/.test(cells[2].trim())) {
-        const h = parseFloat(cells[2]);
-        if (h >= 0 && h <= 24) {
-          row.hours = String(h);
-          textCells = cells.filter((_, i) => i !== 2);
-        }
-      }
-      for (const cell of textCells) {
-        const s = sniffBulkCell(cell);
-        if (!s) continue;
-        if (s.field === 'text') texts.push(s.value);
-        else if (s.field === 'date') row.date = s.value;
-        else if (s.field === 'hours' && !row.hours) row.hours = String(s.value);
-        else if (s.field === 'attendees' && !row.attendees) row.attendees = String(s.value);
-        else if (s.field === 'funds_raised' && !row.funds_raised) row.funds_raised = String(s.value);
-      }
-      if (texts.length > 0) row.title = texts[0];
-      if (texts.length > 1) row.location = texts[1];
-      if (texts.length > 2) row.description = texts.slice(2).join(' — ');
-    }
-    if (row.title) rows.push(row);
-  }
-  return rows;
-}
+// Bulk outreach paste parser (shared with Modern Outreach); re-exported for its tests.
+export { parseOutreachRows };
 
 function OutreachField({ label, children }: any) {
   return (
@@ -6474,286 +6351,14 @@ function timeAgoSocial(ts: number) {
 }
 
 function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles, youtubeEnabled, tiktokEnabled, currentUser, onRefresh, refresh, hasScope }: any) {
-  const isAdminSocial = hasScope ? hasScope('outreach') : (currentUser as any)?.account_type === 'admin';
-
-  // Right-click on an outreach event card: edit or delete.
-  useContextMenu('outreach', (el) => {
-    if (!isAdminSocial) return null;
-    const id = Number(el.dataset.cmId);
-    const event = (outreach || []).find((x: any) => x.id === id);
-    if (!event) return null;
-    return [
-      { label: 'Edit event', icon: Pencil, action: () => openEdit(event) },
-      { label: 'Delete event', icon: Trash2, danger: true, action: () => handleDelete(event.id) },
-    ];
-  });
-  const [showLinkYT, setShowLinkYT] = useState(false);
-  const [ytInput, setYtInput] = useState('');
-  const [linkingYT, setLinkingYT] = useState(false);
-  const [syncingId, setSyncingId] = useState<number | null>(null);
-
-  // TikTok OAuth result (?social=connected|error|cancelled|tiktok_unavailable)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const s = params.get('social');
-    if (!s) return;
-    if (s === 'connected') notify('TikTok connected — stats synced.', 'success');
-    else if (s === 'cancelled') notify('TikTok connection cancelled.', 'error');
-    else if (s === 'tiktok_unavailable') notify('TikTok is temporarily unavailable.', 'error');
-    else if (s === 'error') notify('TikTok connection failed — try again.', 'error');
-    params.delete('social');
-    window.history.replaceState(null, '', window.location.pathname + (params.toString() ? '?' + params.toString() : ''));
-    if (s === 'connected') onRefresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleLinkYouTube = async () => {
-    if (!ytInput.trim()) { notify('Enter a channel handle, URL, or channel ID.', 'error'); return; }
-    setLinkingYT(true);
-    try {
-      const res = await apiFetch('/api/outreach/social/youtube', { method: 'POST', body: JSON.stringify({ input: ytInput.trim() }) });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Could not link channel');
-      notify('YouTube channel linked — stats synced.', 'success');
-      setYtInput('');
-      setShowLinkYT(false);
-      refresh.socialProfiles();
-    } catch (e: any) {
-      notify(e.message || 'Could not link channel', 'error');
-    } finally {
-      setLinkingYT(false);
-    }
-  };
-
-  const handleUnlinkProfile = async (id: number) => {
-    if (!window.confirm('Unlink this profile? Its sync history will be removed.')) return;
-    // Optimistic: drop instantly, restore on failure.
-    const prev = socialProfiles;
-    setSocialProfiles((ps: any[]) => (ps || []).filter((p: any) => p.id !== id));
-    try {
-      const res = await apiFetch(`/api/outreach/social/${id}`, { method: 'DELETE' });
-      if (res.ok) refresh.socialProfiles();
-      else {
-        setSocialProfiles(prev);
-        notify('Could not unlink profile — try again.', 'error');
-      }
-    } catch {
-      setSocialProfiles(prev);
-      notify('Could not unlink profile — try again.', 'error');
-    }
-  };
-
-  const handlePinProfile = async (id: number, pinned: boolean) => {
-    // Optimistic: flip instantly, revert on failure.
-    const prev = socialProfiles;
-    setSocialProfiles((ps: any[]) => (ps || []).map((p: any) => p.id === id ? { ...p, pinned: !pinned } : p));
-    try {
-      const res = await apiFetch(`/api/outreach/social/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned: !pinned }) });
-      if (res.ok) refresh.socialProfiles();
-      else {
-        setSocialProfiles(prev);
-        notify('Could not update pin — try again.', 'error');
-      }
-    } catch {
-      setSocialProfiles(prev);
-      notify('Could not update pin — try again.', 'error');
-    }
-  };
-
-  const handleMoveProfile = async (id: number, dir: -1 | 1) => {
-    const ids = (socialProfiles || []).map((p: any) => p.id);
-    const i = ids.indexOf(id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    // Optimistic: reorder instantly (the id order is already computed above).
-    const prev = socialProfiles;
-    const order = new Map<number, number>(ids.map((pid: number, idx: number) => [pid, idx]));
-    setSocialProfiles((ps: any[]) => [...(ps || [])].sort((a: any, b: any) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)));
-    try {
-      const res = await apiFetch('/api/outreach/social/reorder', { method: 'POST', body: JSON.stringify({ ids }) });
-      if (res.ok) refresh.socialProfiles();
-      else {
-        setSocialProfiles(prev);
-        notify('Could not reorder — try again.', 'error');
-      }
-    } catch {
-      setSocialProfiles(prev);
-      notify('Could not reorder — try again.', 'error');
-    }
-  };
-
-  const handleSyncNow = async (id: number) => {
-    setSyncingId(id);
-    try {
-      const res = await apiFetch(`/api/outreach/social/${id}/sync`, { method: 'POST' });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || 'Sync failed');
-      notify('Stats updated.', 'success');
-      refresh.socialProfiles();
-    } catch (e: any) {
-      notify(e.message || 'Sync failed', 'error');
-    } finally {
-      setSyncingId(null);
-    }
-  };
-
-  // TikTok is temporarily disabled until Login Kit is verified — hide any
-  // linked TikTok profiles from the UI (their data stays in the DB).
-  const profiles = (socialProfiles || []).filter((p: any) => p.platform !== 'tiktok');
-  const emptyForm = () => ({ title: '', description: '', date: format(new Date(), 'yyyy-MM-dd'), hours: '2', location: '', attendees: '', funds_raised: '' });
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [form, setForm] = useState(emptyForm());
-  const [saving, setSaving] = useState(false);
-
-  // Bruno AI log: paste a table/text, parse rows, preview, log them all.
-  // "Quick parse" is a deterministic local parser; "Parse with Bruno" uses the
-  // same Bruno AI for messy natural language (```outreach proposals).
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkText, setBulkText] = useState('');
-  const [bulkRows, setBulkRows] = useState<any[]>([]);
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkSaving, setBulkSaving] = useState(false);
-  const [bulkNote, setBulkNote] = useState<string | null>(null);
-
-  const handleBulkParse = () => {
-    const rows = parseOutreachRows(bulkText);
-    setBulkRows(rows);
-    setBulkNote(rows.length
-      ? `Found ${rows.length} event${rows.length === 1 ? '' : 's'} — review and log them all.`
-      : 'No events found — try the AI parse, or format rows as: title | date | hours | location | attendees | funds');
-  };
-
-  const handleBulkAiParse = async () => {
-    const text = bulkText.trim();
-    if (!text || bulkBusy) return;
-    setBulkBusy(true);
-    setBulkNote(null);
-    setBulkRows([]);
-    let agg = '';
-    try {
-      await streamBuildHelper([
-        { role: 'user', text: `You are helping bulk-log outreach events (demos, workshops, volunteering, fundraisers, presentations). The user pasted the text below into the "Bruno AI" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entries proposed. Extract EVERY outreach event mentioned and propose them with the \`\`\`outreach block exactly as your outreach log skill specifies. Resolve relative dates against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
-      ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
-      const proposals = extractActionProposals(agg);
-      const items = proposals.find(p => p.kind === 'outreach')?.items || [];
-      const note = agg.replace(/```outreach[\s\S]*?(```|$)/g, '').replace(/```[\s\S]*?(```|$)/g, '').trim();
-      if (items.length) {
-        setBulkRows(items.map((e: any) => ({
-          title: e.title || '', description: e.description || '', date: e.date || '',
-          hours: e.hours != null && e.hours !== '' ? String(e.hours) : '',
-          location: e.location || '', attendees: e.attendees != null && e.attendees !== '' ? String(e.attendees) : '',
-          funds_raised: e.funds_raised != null && e.funds_raised !== '' ? String(e.funds_raised) : '',
-        })));
-        setBulkNote(`Bruno found ${items.length} event${items.length === 1 ? '' : 's'} — review and log them all.`);
-      } else {
-        setBulkNote(note || 'Bruno could not find any events in that text — try adding dates.');
-      }
-    } catch (e: any) {
-      setBulkNote(e?.serverError || e?.message || "Bruno isn't reachable right now — try again in a moment.");
-    } finally {
-      setBulkBusy(false);
-    }
-  };
-
-  const handleBulkLogAll = async () => {
-    if (!bulkRows.length || bulkSaving) return;
-    setBulkSaving(true);
-    let done = 0;
-    try {
-      for (const r of bulkRows) {
-        const payload = {
-          title: r.title, description: r.description || '', date: r.date,
-          hours: r.hours === '' ? 0 : Number(r.hours) || 0,
-          location: r.location || '',
-          attendees: r.attendees === '' ? 0 : Math.max(0, parseInt(r.attendees, 10) || 0),
-          funds_raised: r.funds_raised === '' ? 0 : Math.max(0, parseFloat(r.funds_raised) || 0),
-        };
-        const res = await apiFetch('/api/outreach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (res.ok) done++;
-      }
-      notify(`Logged ${done} of ${bulkRows.length} outreach events.`, done === bulkRows.length ? 'success' : 'error');
-      setBulkRows([]); setBulkText(''); setBulkNote(null); setBulkOpen(false);
-      refresh.outreach();
-    } finally {
-      setBulkSaving(false);
-    }
-  };
-
-  const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
-
-  const totals = useMemo(() => {
-    const list = outreach || [];
-    return {
-      events: list.length,
-      hours: list.reduce((s: number, e: any) => s + (Number(e.hours) || 0), 0),
-      attendees: list.reduce((s: number, e: any) => s + (Number(e.attendees) || 0), 0),
-      funds: list.reduce((s: number, e: any) => s + (Number(e.funds_raised) || 0), 0),
-    };
-  }, [outreach]);
-
-  const openAdd = () => { setEditingId(null); setForm(emptyForm()); setShowForm(true); };
-  const openEdit = (event: any) => {
-    setEditingId(event.id);
-    setForm({
-      title: event.title || '',
-      description: event.description || '',
-      date: (event.date || '').slice(0, 10) || format(new Date(), 'yyyy-MM-dd'),
-      hours: event.hours != null && event.hours !== '' ? String(event.hours) : '',
-      location: event.location || '',
-      attendees: event.attendees ? String(event.attendees) : '',
-      funds_raised: event.funds_raised ? String(event.funds_raised) : '',
-    });
-    setShowForm(true);
-  };
-
-  const handleSubmit = async () => {
-    if (!form.title.trim()) { notify('Give the event a title.', 'error'); return; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date)) { notify('Pick a valid date.', 'error'); return; }
-    setSaving(true);
-    try {
-      const payload = {
-        title: form.title.trim(),
-        description: form.description.trim(),
-        date: form.date,
-        hours: Math.max(0, parseInt(form.hours) || 0),
-        location: form.location.trim(),
-        attendees: Math.max(0, parseInt(form.attendees) || 0),
-        funds_raised: Math.max(0, Math.round((parseFloat(form.funds_raised) || 0) * 100) / 100),
-      };
-      const res = editingId
-        ? await apiFetch(`/api/outreach/${editingId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        : await apiFetch('/api/outreach', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error('save failed');
-      setShowForm(false);
-      setEditingId(null);
-      refresh.outreach();
-      notify(editingId ? 'Event updated.' : 'Event logged.');
-    } catch {
-      notify('Could not save the event.', 'error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (!(await confirmDialog({ title: 'Delete event', message: 'Delete this outreach event?', confirmLabel: 'Delete', danger: true }))) return;
-    // Optimistic: remove instantly, restore on failure.
-    const prev = outreach;
-    setOutreach((es: any[]) => es.filter((e: any) => e.id !== id));
-    try {
-      const res = await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' });
-      if (res.ok) refresh.outreach();
-      else {
-        setOutreach(prev);
-        notify('Could not delete event — try again.', 'error');
-      }
-    } catch {
-      setOutreach(prev);
-      notify('Could not delete event — try again.', 'error');
-    }
-  };
+  // Log, social and bulk-log state + handlers are shared with the Modern Outreach page.
+  const {
+    isAdminSocial, profiles, showLinkYT, setShowLinkYT, ytInput, setYtInput, linkingYT, syncingId,
+    handleLinkYouTube, handleUnlinkProfile, handlePinProfile, handleMoveProfile, handleSyncNow,
+    showForm, editingId, form, setForm, set, saving, openAdd, openEdit, closeForm, handleSubmit, handleDelete, totals,
+    bulkOpen, setBulkOpen, bulkText, setBulkText, bulkRows, removeBulkRow, bulkBusy, bulkSaving, bulkNote,
+    handleBulkParse, handleBulkAiParse, handleBulkLogAll,
+  } = useOutreachController({ outreach, setOutreach, socialProfiles, setSocialProfiles, currentUser, onRefresh, refresh, hasScope });
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -6796,7 +6401,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
                     </div>
                     <button
                       type="button"
-                      onClick={() => setBulkRows(bulkRows.filter((_, j) => j !== i))}
+                      onClick={() => removeBulkRow(i)}
                       className="text-text-muted hover:text-rose-400 transition-colors shrink-0"
                       title="Remove"
                     >
@@ -6983,7 +6588,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
 
       {/* Improved add/edit modal */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => { setShowForm(false); setEditingId(null); }}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={closeForm}>
           <Card title={editingId ? 'Edit Outreach Event' : 'Log Outreach Event'} subtitle={editingId ? 'Update the details below' : 'Pick a quick type or fill in the details'} className="w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div onClick={(e: any) => e.stopPropagation()} className="space-y-4">
               {!editingId && (
@@ -7039,7 +6644,7 @@ function OutreachView({ outreach, setOutreach, socialProfiles, setSocialProfiles
               </div>
               <p className="text-[11px] text-text-muted">Tip: you can also ask Bruno in chat to log one or many events — e.g. "log our last three demos".</p>
               <div className="flex gap-3 justify-end">
-                <Button variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }}>Cancel</Button>
+                <Button variant="secondary" onClick={closeForm}>Cancel</Button>
                 <Button onClick={handleSubmit} disabled={saving}>{saving ? 'Saving…' : (editingId ? 'Save Changes' : 'Log Event')}</Button>
               </div>
             </div>

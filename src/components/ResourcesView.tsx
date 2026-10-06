@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Flag,
   Package,
@@ -15,40 +14,13 @@ import {
   Loader2,
   Save,
 } from 'lucide-react';
-import { apiJson } from '../services/api';
+import { RESOURCE_CATEGORIES, RESOURCE_FILTERS, domainOf, formatResourceDate, useResourcesController } from './resources/useResourcesController';
 import { Card, Button, Input, cn } from './ui';
 import { Select as ThemedSelect } from './Select';
 
-export interface ResourceItem {
-  id: number;
-  url: string;
-  title: string;
-  description: string;
-  category: string;
-  created_by: number | null;
-  created_by_name: string | null;
-  created_at: number | string | null;
-}
-
-interface ParsedItem {
-  url: string;
-  title: string;
-  description: string;
-  category: string;
-}
-
-export const RESOURCE_CATEGORIES = [
-  'Game Updates',
-  'Parts & Suppliers',
-  'CAD & Design',
-  'Code & Programming',
-  'Outreach',
-  'Videos',
-  'Community',
-  'Other',
-] as const;
-
-const FILTERS = ['All', ...RESOURCE_CATEGORIES];
+export { RESOURCE_CATEGORIES } from './resources/useResourcesController';
+export type { ResourceItem } from './resources/useResourcesController';
+const FILTERS = RESOURCE_FILTERS;
 
 function catMeta(cat: string): { Icon: any; badge: string } {
   switch (cat) {
@@ -63,178 +35,16 @@ function catMeta(cat: string): { Icon: any; badge: string } {
   }
 }
 
-function formatDate(ts: number | string | null | undefined): string {
-  if (!ts) return '';
-  // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS" — parse as UTC explicitly
-  // so the date doesn't shift or read as "in the future" in US timezones.
-  let ms: number;
-  if (typeof ts === 'string') {
-    const iso = ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
-    ms = Date.parse(iso);
-  } else {
-    ms = ts;
-  }
-  if (!Number.isFinite(ms)) return '';
-  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
+const formatDate = formatResourceDate;
 
 /** Self-contained Resources page. Fetches its own data; needs no props. */
 export default function ResourcesView() {
-  const [resources, setResources] = useState<ResourceItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [filter, setFilter] = useState('All');
-
-  // Paste-box state
-  const [pasteText, setPasteText] = useState('');
-  const [parsing, setParsing] = useState(false);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<ParsedItem[] | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
-
-  const fetchResources = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const list = await apiJson<ResourceItem[]>('/api/resources');
-      setResources(Array.isArray(list) ? list : []);
-    } catch (e: any) {
-      setLoadError(e?.message || 'Could not load resources');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchResources();
-  }, [fetchResources]);
-
-  // Live mission control: another user added/removed a resource — refetch, no page reload.
-  useEffect(() => {
-    const handler = () => { fetchResources(); };
-    window.addEventListener('resources-changed', handler);
-    return () => window.removeEventListener('resources-changed', handler);
-  }, [fetchResources]);
-
-  const items = useMemo(() => {
-    return filter === 'All' ? resources : resources.filter((r) => r.category === filter);
-  }, [resources, filter]);
-
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { All: resources.length };
-    for (const f of RESOURCE_CATEGORIES) c[f] = resources.filter((r) => r.category === f).length;
-    return c;
-  }, [resources]);
-
-  const handleParse = async () => {
-    const text = pasteText.trim();
-    if (!text || parsing) return;
-    setParsing(true);
-    setParseError(null);
-    setSaveError(null);
-    try {
-      const res = await apiJson<{ items: ParsedItem[]; count: number }>('/api/resources/parse', {
-        method: 'POST',
-        body: JSON.stringify({ text }),
-      });
-      const list = Array.isArray(res.items) ? res.items : [];
-      if (list.length === 0) {
-        setParseError('No links found in that text — try pasting messages that include URLs.');
-        setPreview(null);
-      } else {
-        setPreview(list.map((it) => ({
-          url: it.url || '',
-          title: it.title || domainOf(it.url || ''),
-          description: it.description || '',
-          category: RESOURCE_CATEGORIES.includes(it.category as any) ? it.category : 'Other',
-        })));
-      }
-    } catch (e: any) {
-      // 422 = no links found; surface the server's message
-      setParseError(e?.body?.error || e?.message || 'Could not extract links from that text.');
-      setPreview(null);
-    } finally {
-      setParsing(false);
-    }
-  };
-
-  const updatePreviewRow = (idx: number, patch: Partial<ParsedItem>) => {
-    setPreview((prev) => (prev ? prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)) : prev));
-  };
-
-  const removePreviewRow = (idx: number) => {
-    setPreview((prev) => (prev ? prev.filter((_, i) => i !== idx) : prev));
-  };
-
-  const handleSaveAll = async () => {
-    if (!preview || preview.length === 0 || saving) return;
-    const rows = preview.filter((r) => r.url.trim());
-    if (rows.length === 0) {
-      setSaveError('Every row needs a URL before saving.');
-      return;
-    }
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await apiJson('/api/resources', {
-        method: 'POST',
-        body: JSON.stringify({
-          items: rows.map((r) => ({
-            url: r.url.trim(),
-            title: r.title.trim() || domainOf(r.url.trim()),
-            description: r.description.trim(),
-            category: r.category,
-          })),
-        }),
-      });
-      setPreview(null);
-      setPasteText('');
-      await fetchResources();
-    } catch (e: any) {
-      setSaveError(e?.body?.error || e?.message || 'Could not save those links.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDelete = async (id: number) => {
-    if (deletingIds.has(id)) return;
-    // Capture the specific item for targeted rollback (not the whole array,
-    // which could restore items deleted by concurrent requests).
-    const deletedItem = resources.find((r) => r.id === id);
-    // Optimistic removal with targeted rollback on failure
-    setResources((rs) => rs.filter((r) => r.id !== id));
-    setDeletingIds((s) => new Set(s).add(id));
-    try {
-      await apiJson(`/api/resources/${id}`, { method: 'DELETE' });
-    } catch (e: any) {
-      // Re-insert only the failed item, preserving other concurrent changes.
-      if (deletedItem) {
-        setResources((rs) => {
-          // Avoid duplicates if it was somehow re-added
-          if (rs.some((r) => r.id === id)) return rs;
-          return [...rs, deletedItem];
-        });
-      }
-    } finally {
-      setDeletingIds((s) => {
-        const next = new Set(s);
-        next.delete(id);
-        return next;
-      });
-    }
-  };
+  // List, paste/preview and delete logic is shared with the Modern Resources page.
+  const {
+    resources, loading, loadError, fetchResources, filter, setFilter, items, counts,
+    pasteText, setPasteText, parsing, parseError, preview, saving, saveError,
+    handleParse, updatePreviewRow, removePreviewRow, discardPreview, handleSaveAll, deletingIds, handleDelete,
+  } = useResourcesController();
 
   return (
     <div className="space-y-4 sm:space-y-6 min-w-0">
@@ -258,6 +68,7 @@ export default function ResourcesView() {
         <textarea
           value={pasteText}
           onChange={(e) => setPasteText(e.target.value)}
+          disabled={saving}
           rows={4}
           placeholder="Paste text with links… (Discord messages, chat logs, notes — Bruno pulls out every link, writes titles, and sorts them into categories)"
           className="w-full min-w-0 bg-elevated border border-text-base/10 rounded-xl px-4 py-3 text-sm text-text-base placeholder:text-text-muted/60 focus:outline-none focus:border-accent/60 focus:ring-2 focus:ring-accent/20 transition-all resize-y min-h-[96px]"
@@ -266,7 +77,7 @@ export default function ResourcesView() {
           <p className="text-[11px] text-text-muted">
             Tip: dump a whole Discord thread in here — Bruno extracts each URL and files it under the right category.
           </p>
-          <Button onClick={handleParse} disabled={!pasteText.trim() || parsing} className="shrink-0 w-full sm:w-auto">
+          <Button onClick={handleParse} disabled={!pasteText.trim() || parsing || saving} className="shrink-0 w-full sm:w-auto">
             {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
             {parsing ? 'Bruno is reading…' : 'Extract links with Bruno'}
           </Button>
@@ -303,6 +114,7 @@ export default function ResourcesView() {
                       <Input
                         value={row.title}
                         onChange={(e: any) => updatePreviewRow(i, { title: e.target.value })}
+                        disabled={saving}
                         placeholder="Title"
                         className="!py-1.5 !text-sm font-semibold"
                       />
@@ -310,13 +122,15 @@ export default function ResourcesView() {
                       <Input
                         value={row.description}
                         onChange={(e: any) => updatePreviewRow(i, { description: e.target.value })}
+                        disabled={saving}
                         placeholder="Short description…"
                         className="!py-1.5 !text-sm"
                       />
                     </div>
                     <button
                       onClick={() => removePreviewRow(i)}
-                      className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                      disabled={saving}
+                      className="p-1.5 rounded-lg text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0 disabled:opacity-40"
                       title="Remove"
                     >
                       <X className="w-4 h-4" />
@@ -325,6 +139,7 @@ export default function ResourcesView() {
                   <ThemedSelect
                     value={row.category}
                     onChange={(e) => updatePreviewRow(i, { category: e.target.value })}
+                    disabled={saving}
                     className="w-full sm:w-56 bg-elevated border border-text-base/10 rounded-xl px-3 py-1.5 text-sm text-text-base focus:outline-none focus:border-accent/60"
                   >
                     {RESOURCE_CATEGORIES.map((c) => (
@@ -340,7 +155,7 @@ export default function ResourcesView() {
               </div>
             ) : null}
             <div className="flex gap-2 justify-end">
-              <Button variant="secondary" onClick={() => { setPreview(null); setSaveError(null); }} disabled={saving}>
+              <Button variant="secondary" onClick={discardPreview} disabled={saving}>
                 Discard
               </Button>
               <Button onClick={handleSaveAll} disabled={saving || preview.length === 0}>
