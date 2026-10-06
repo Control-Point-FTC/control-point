@@ -15,7 +15,7 @@ vi.mock('../../utils/sounds', () => ({ startRingtone: vi.fn(), stopRingtone: vi.
 
 import { CookieBar, FeedbackDialog, InstallBanner, MentionToastCard } from '../overlays/Overlays';
 import { CallDock, CallStage, IncomingCall } from '../overlays/CallUi';
-import { clearDrafts } from '../drafts';
+import { clearDrafts, getDraft } from '../drafts';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
 // jsdom's File and Node's FormData don't mix; a plain recorder is enough here.
@@ -230,6 +230,19 @@ describe('9f review fixes', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Install' }));
     await waitFor(() => expect(prompt).toHaveBeenCalled());
     ua.mockRestore();
+  });
+
+  it("a feedback send that lands after a sign-out never clears the next person's same-looking draft", async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation(() => new Promise((r) => { finish = () => r({ ok: true, status: 200, json: async () => ({}) }); }));
+    render(<FeedbackDialog onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'hi' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Sushil' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledTimes(1));
+    act(() => { clearDrafts(); });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'hi' } });
+    await act(async () => { finish(); });
+    expect(getDraft('feedback:message', '')).toBe('hi');
   });
 });
 

@@ -117,11 +117,21 @@ export function useFeedbackForm() {
     e.preventDefault();
     if (!message.trim() || getDraft('feedback:sending', false)) return;
     setSending(true);
-    const release = inEpoch(() => setSending(false));
     // What this request sends; a newer note typed meanwhile must survive it.
     const sentMessage = message;
     const sentFile = attachment;
     const sentCategory = category;
+    const release = inEpoch(() => setSending(false));
+    // Only in the same draft epoch: after a sign-out or workspace switch the
+    // store holds someone else's (unsent) note, even if it reads the same.
+    const clearSent = inEpoch(() => {
+      if (getDraft('feedback:message', '') === sentMessage && getDraft<File | null>('feedback:file', null) === sentFile) {
+        setDraft('feedback:message', '');
+        setDraft('feedback:file', null);
+        setDraft('feedback:category', 'general');
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    });
     try {
       const form = new FormData();
       form.append('category', sentCategory);
@@ -129,12 +139,7 @@ export function useFeedbackForm() {
       if (sentFile) form.append('attachment', sentFile);
       const res = await apiFetch('/api/feedback', { method: 'POST', body: form });
       if (res.ok) {
-        if (getDraft('feedback:message', '') === sentMessage && getDraft<File | null>('feedback:file', null) === sentFile) {
-          setDraft('feedback:message', '');
-          setDraft('feedback:file', null);
-          setDraft('feedback:category', 'general');
-          if (fileInputRef.current) fileInputRef.current.value = '';
-        }
+        clearSent();
         setSent(true);
       } else {
         const data = await res.json().catch(() => ({}));
