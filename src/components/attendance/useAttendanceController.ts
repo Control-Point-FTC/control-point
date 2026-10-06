@@ -99,20 +99,18 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
     return next < new Date(new Date().getFullYear() + 1, 0, 1); // up to next year
   }, [calendarStart]);
 
-  // Per-cell request sequence, and the last value the server accepted for a
-  // cell whose refresh hasn't landed yet. A failed save rolls back to that
-  // confirmed value (or the server data) — never to another unsaved value.
+  // Per-cell request sequence, and the value the server accepted since the
+  // last attendance snapshot. A failed save rolls back to that confirmed value
+  // or else to the server data — never to another unsaved value. The server
+  // acknowledges a save before the client can see a later snapshot, so any new
+  // snapshot is authoritative and clears the confirmed cache.
   const cellSeq = useRef(new Map<string, number>());
   const confirmed = useRef(new Map<string, string>());
   const confirmedSeq = useRef(new Map<string, number>());
 
   // Drop optimistic values once the server data agrees with them.
   useEffect(() => {
-    for (const [k, v] of confirmed.current) {
-      const [mid, date] = k.split('|');
-      const server = attendance.find((r: any) => r.member_id === Number(mid) && r.date === date)?.status || '-';
-      if (server === v) confirmed.current.delete(k);
-    }
+    confirmed.current.clear(); // (confirmedSeq persists so a late, older ack can't re-confirm)
     setPendingChanges((m) => {
       if (!m.size) return m;
       const n = new Map(m);

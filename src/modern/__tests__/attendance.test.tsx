@@ -107,6 +107,33 @@ describe('Modern Attendance (admins)', () => {
     await waitFor(() => expect(within(row).getByRole('radio', { name: 'Present' })).toHaveAttribute('aria-checked', 'true'));
   });
 
+  it('fresh server data wins over an earlier confirmed save when a later edit fails', async () => {
+    const pending: ((ok: boolean) => void)[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/attendance/batch'
+      ? new Promise((res) => { pending.push((ok) => res({ ok, json: async () => ({}) })); })
+      : routeApi(url, init)));
+    const { rerender, props } = setup();
+    const view = (attendance: any[]) => (
+      <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
+        <MemoryRouter initialEntries={['/attendance']}><AttendancePage {...props} attendance={attendance} /></MemoryRouter>
+      </InterfaceModeProvider>
+    );
+    const row = () => (screen.getByText('Grace').closest('li, div[class*="flex-wrap"]') as HTMLElement);
+    await screen.findByText('Grace');
+    fireEvent.click(within(row()).getByRole('radio', { name: 'Present' }));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    // The broadcast refresh lands before the save response…
+    rerender(view([{ member_id: 8, date: today, status: 'P' }]));
+    await act(async () => { pending[0](true); });
+    // …then another admin marks the cell Unexcused.
+    rerender(view([{ member_id: 8, date: today, status: 'U' }]));
+    await waitFor(() => expect(within(row()).getByRole('radio', { name: 'Unexcused' })).toHaveAttribute('aria-checked', 'true'));
+    fireEvent.click(within(row()).getByRole('radio', { name: 'Late' }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    await act(async () => { pending[1](false); });
+    await waitFor(() => expect(within(row()).getByRole('radio', { name: 'Unexcused' })).toHaveAttribute('aria-checked', 'true'));
+  });
+
   it('grid cells take keyboard shortcuts', async () => {
     setup();
     selectTab('Grid');
