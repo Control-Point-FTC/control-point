@@ -1,11 +1,11 @@
 // shadcn/ui controls on Radix: Avatar, Switch, Checkbox, RadioGroup, Select,
-// Progress, ToggleGroup, ScrollArea, Accordion, Collapsible.
+// Progress, Slider, ToggleGroup, ScrollArea, Accordion, Collapsible.
 // shadcn "primary" maps to our accent (bg-accent / text-accent-ink).
 import * as React from 'react';
 import {
   Avatar as AvatarP, Switch as SwitchP, Checkbox as CheckboxP, RadioGroup as RadioP, Select as SelectP,
   Progress as ProgressP, ToggleGroup as ToggleGroupP, ScrollArea as ScrollAreaP, Accordion as AccordionP,
-  Collapsible as CollapsibleP,
+  Collapsible as CollapsibleP, Slider as SliderP,
 } from 'radix-ui';
 import { Check, ChevronDown, ChevronUp, Circle } from 'lucide-react';
 import { cva, type VariantProps } from 'class-variance-authority';
@@ -28,7 +28,9 @@ export function Switch({ className, ...props }: React.ComponentProps<typeof Swit
     <SwitchP.Root
       data-slot="switch"
       className={cn(
-        'peer inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors outline-none',
+        'peer relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors outline-none',
+        // Invisible 44×44 hit area around the 36×20 track (touch targets).
+        "after:absolute after:left-1/2 after:top-1/2 after:size-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
         'focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50',
         'data-[state=checked]:bg-accent data-[state=unchecked]:bg-input',
         className,
@@ -147,6 +149,25 @@ export function Progress({ className, value, indicatorClassName, ...props }: Rea
         style={{ transform: `translateX(-${100 - Math.max(0, Math.min(100, value || 0))}%)` }}
       />
     </ProgressP.Root>
+  );
+}
+
+// --- Slider -----------------------------------------------------------------
+export function Slider({ className, ...props }: React.ComponentProps<typeof SliderP.Root>) {
+  const count = (props.value ?? props.defaultValue ?? [0]).length;
+  return (
+    <SliderP.Root data-slot="slider" className={cn('relative flex w-full touch-none select-none items-center py-2 data-[disabled]:opacity-50', className)} {...props}>
+      <SliderP.Track className="relative h-1.5 w-full grow overflow-hidden rounded-full bg-muted">
+        <SliderP.Range className="absolute h-full bg-accent" />
+      </SliderP.Track>
+      {Array.from({ length: count }, (_, i) => (
+        <SliderP.Thumb
+          key={i}
+          aria-label={props['aria-label']}
+          className="block size-4 rounded-full border border-accent bg-background shadow-sm transition-[box-shadow] hover:ring-4 hover:ring-ring/30 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/50"
+        />
+      ))}
+    </SliderP.Root>
   );
 }
 

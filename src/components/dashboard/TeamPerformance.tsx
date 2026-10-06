@@ -40,7 +40,7 @@ function TeamPerformance({ onNavigate }: TeamPerformanceProps) {
       ) : ftc.notConnected ? (
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 py-2">
           <p className="text-sm text-text-muted flex-1">{t('dashboard.connectFtcTeam')}</p>
-          <Button onClick={() => onNavigate('/settings')} className="text-sm w-fit">{t('dashboard.connectTeam')}</Button>
+          <Button onClick={() => onNavigate('/settings?section=workspace')} className="text-sm w-fit">{t('dashboard.connectTeam')}</Button>
         </div>
       ) : ftc.data ? (
         <div className="flex flex-col gap-3">
