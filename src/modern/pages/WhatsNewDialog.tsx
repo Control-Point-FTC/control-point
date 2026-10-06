@@ -2,7 +2,7 @@
 // Classic, as a kit dialog. A version rail on the left (wide screens) jumps
 // between releases; each release shows New / Improved / Fixed with icons.
 import { useEffect, useState } from 'react';
-import { motion } from 'motion/react';
+import { motion, MotionConfig } from 'motion/react';
 import { Bug, Sparkles, Wrench } from 'lucide-react';
 import { cn } from '../../components/cn';
 import { Badge, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui-kit';
@@ -38,7 +38,9 @@ export function WhatsNewDialog({ open, onClose }: { open: boolean; onClose: () =
   const [version, setVersion] = useState(CHANGELOG[0]?.version);
   useEffect(() => { if (open) { markVersionSeen(); setVersion(CHANGELOG[0]?.version); } }, [open]);
   const entry = CHANGELOG.find((e) => e.version === version) ?? CHANGELOG[0];
+  // Outside ModernShell's MotionConfig, so honour reduced motion here too.
   return (
+    <MotionConfig reducedMotion="user">
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-h-[88dvh] overflow-hidden p-0 sm:max-w-3xl">
         <DialogHeader className="border-b border-border px-6 py-4">
@@ -69,5 +71,6 @@ export function WhatsNewDialog({ open, onClose }: { open: boolean; onClose: () =
         </div>
       </DialogContent>
     </Dialog>
+    </MotionConfig>
   );
 }
