@@ -304,6 +304,7 @@ export default function SettingsModal({
   const [saveFeedback, setSaveFeedback] = useState<{ kind: 'success' | 'error'; msg: string } | null>(null);
   const [teamName, setTeamName] = useState('');
   const [ftcNumber, setFtcNumber] = useState('');
+  const initialNumber = useRef('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -385,7 +386,10 @@ export default function SettingsModal({
     // 'max' was removed — anyone who had it falls back to 'high'
     setOutputLevel(user?.bruno_output_level === 'max' ? 'high' : (user?.bruno_output_level || 'medium'));
     setTeamName(team?.name || '');
-    setFtcNumber(team?.ftc_team_number ? String(team.ftc_team_number) : '');
+    // Older workspaces only have the display number; show it in the one field.
+    const num = team?.ftc_team_number ? String(team.ftc_team_number) : /^\d+$/.test(String(team?.number ?? '').trim()) ? String(team.number).trim() : '';
+    setFtcNumber(num);
+    initialNumber.current = num;
     setCopied(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -449,9 +453,12 @@ export default function SettingsModal({
     try {
       const body: any = { name: teamName.trim() };
       // One number: the FTC team number also becomes the workspace's display
-      // number ("Team #4215" in pickers).
-      body.ftc_team_number = ftcNumber.trim() === '' ? null : parseInt(ftcNumber.trim(), 10);
-      body.number = ftcNumber.trim(); // cleared together with the FTC number
+      // number ("Team #4215" in pickers). Sent only when the admin changed it,
+      // so renaming never touches an existing number.
+      if (ftcNumber.trim() !== initialNumber.current) {
+        body.ftc_team_number = ftcNumber.trim() === '' ? null : parseInt(ftcNumber.trim(), 10);
+        body.number = ftcNumber.trim();
+      }
       const res = await apiFetch(`/api/teams/${team.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -459,7 +466,11 @@ export default function SettingsModal({
       });
       const data = await res.json().catch(() => ({}));
       // Only the fields this save changed, so it can't undo a concurrent invite-code change.
-      if (res.ok) { onTeamSaved({ id: team.id, ...body }); notify('Team settings saved.', 'success'); }
+      if (res.ok) {
+        onTeamSaved({ id: team.id, ...body });
+        initialNumber.current = ftcNumber.trim();
+        notify('Team settings saved.', 'success');
+      }
       else notify(data.error || 'Could not save team settings.', 'error');
     } catch {
       notify('Could not save team settings.', 'error');
