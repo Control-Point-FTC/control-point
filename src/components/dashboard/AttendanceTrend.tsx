@@ -12,10 +12,22 @@ function cssVar(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 }
 
+/** The first calendar event date (yyyy-MM-dd) strictly after `today`, or null. */
+export function nextMeetDate(events: { date?: string | null }[] | undefined, today: string): string | null {
+  let best: string | null = null;
+  for (const e of events ?? []) {
+    const d = e?.date;
+    if (d && d > today && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
 interface AttendanceTrendProps {
   attendance: any[];
   onNavigate: (path: string) => void;
   hiddenDates?: string[];
+  /** Calendar events; the first one after today is marked as "Next meet". */
+  events?: { date: string }[];
 }
 
 /** The 14-day present-check-ins line chart, reusable outside the dashboard.
@@ -24,7 +36,7 @@ interface AttendanceTrendProps {
  *  When `hiddenDates` is provided, dates hidden via Manage Dates are skipped
  *  and the chart shows the last 14 *meeting* days instead of the last 14
  *  calendar days, so non-meeting days never drag the line to zero. */
-export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDates }: { attendance: any[]; className?: string; hiddenDates?: string[] }) {
+export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDates, events }: { attendance: any[]; className?: string; hiddenDates?: string[]; events?: { date: string }[] }) {
   const { theme } = useTheme();
 
   const chartData = useMemo(() => {
@@ -56,17 +68,14 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
       date: format(new Date(date + 'T12:00:00'), 'MMM dd'),
       count: attendance?.filter((r: any) => r.date === date && (r.status === 'P' || r.status === 'L')).length || 0,
     }));
-    // One empty slot for the next meeting day (the next date that isn't hidden),
-    // so the line visibly ends at today with room to see what's coming.
-    const hidden = new Set(hiddenDates ?? []);
-    const n = new Date();
-    for (let i = 0; i < 60; i++) {
-      n.setDate(n.getDate() + 1);
-      const ds = format(n, 'yyyy-MM-dd');
-      if (!hidden.has(ds)) { points.push({ date: format(n, 'MMM dd'), count: null, next: true }); break; }
-    }
+    // One empty slot for the next calendar event after today, so the line
+    // visibly ends at today with the next meeting marked. No upcoming event,
+    // no marker.
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const next = nextMeetDate(events, today);
+    if (next) points.push({ date: format(new Date(next + 'T12:00:00'), 'MMM dd'), count: null, next: true });
     return points;
-  }, [attendance, hiddenDates, theme]);
+  }, [attendance, hiddenDates, events, theme]);
 
   const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count ?? 0)), [chartData]);
   const lastIdx = useMemo(() => chartData.reduce((acc, d, i) => (d.count != null ? i : acc), -1), [chartData]);
@@ -113,7 +122,7 @@ export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDat
  * clickable into the Attendance view. Re-renders on theme toggle so the
  * line follows the current accent color.
  */
-function AttendanceTrend({ attendance, onNavigate, hiddenDates }: AttendanceTrendProps) {
+function AttendanceTrend({ attendance, onNavigate, hiddenDates, events }: AttendanceTrendProps) {
   const { t } = useTranslation();
   const subtitle = hiddenDates && hiddenDates.length > 0
     ? t('dashboard.presentCheckinsMeetingDays')
@@ -126,7 +135,7 @@ function AttendanceTrend({ attendance, onNavigate, hiddenDates }: AttendanceTren
       className="md:col-span-2 xl:col-span-7 p-5 gap-3 cursor-pointer hover:border-accent/30 transition-colors"
       onClick={() => onNavigate('/attendance')}
     >
-      <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="flex-1" />
+      <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} events={events} className="flex-1" />
     </Card>
   );
 }

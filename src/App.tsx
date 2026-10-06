@@ -4939,7 +4939,7 @@ function StudentCheckinView({ attendance, currentUser, onRefresh, refresh }: any
   );
 }
 
-function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
+function AttendanceView({ members, attendance, events, onRefresh, refresh, setLoading, hasScope, insights, updateInsights, isAiLoading, ThinkingIndicator, currentUser, activeTeamName }: any) {
   const [activeSubTab, setActiveSubTab] = useState<'grid' | 'history' | 'summary'>('grid');
   const [sessions, setSessions] = useState<string[]>([]);
   const [summary, setSummary] = useState<any[]>([]);
@@ -5360,7 +5360,7 @@ function AttendanceView({ members, attendance, onRefresh, refresh, setLoading, h
       {isAdmin && <QrSessionPanel teamName={activeTeamName || 'Your team'} />}
       <Card title="Attendance Trend" subtitle={hiddenDates.length > 0 ? "Present check-ins · last 14 meeting days" : "Present check-ins · last 14 days"} icon={TrendingUp} className="p-5 gap-3">
         <Suspense fallback={<ChartLoadingFallback />}>
-          <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} className="h-52" />
+          <AttendanceTrendChart attendance={attendance} hiddenDates={hiddenDates} events={events} className="h-52" />
         </Suspense>
       </Card>
       <div className="flex gap-1 sm:gap-2 p-1 bg-text-base/5 rounded-xl border border-text-base/10 w-full sm:w-fit overflow-x-auto custom-scrollbar">
