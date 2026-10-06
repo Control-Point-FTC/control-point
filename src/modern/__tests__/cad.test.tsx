@@ -10,7 +10,7 @@ vi.mock('../../components/CadModelViewer', () => ({ default: ({ fileName, onClos
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { CadPage } from '../pages/cad/CadPage';
-import { clearDrafts } from '../drafts';
+import { clearDrafts, setDraft } from '../drafts';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
 const json = (body: any, ok = true) => Promise.resolve({ ok, status: ok ? 200 : 400, json: async () => body });
@@ -248,6 +248,23 @@ describe('Modern CAD', () => {
     const before = calls('/api/cad/reviews').length;
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /Approve/ }));
     await waitFor(() => expect(calls('/api/cad/reviews').length).toBeGreaterThan(before));
+  });
+
+  it("a part save finishing after you opened another part doesn't close the other editor", async () => {
+    let finish: (v: any) => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/cad/parts' && init?.method === 'POST') return new Promise((r) => { finish = r; });
+      return init?.method ? json({}) : json(db[url] ?? []);
+    });
+    setup('cad-parts');
+    fireEvent.click(await screen.findByRole('button', { name: /Add part/ }));
+    fireEvent.change(await screen.findByLabelText('Part name'), { target: { value: 'New one' } });
+    fireEvent.submit(document.getElementById('bom-form')!);
+    // As Legacy allows: close mid-save and open another part.
+    act(() => setDraft('cad:part-open', db['/api/cad/parts'][0]));
+    expect(await screen.findByDisplayValue('Omni wheel')).toBeInTheDocument();
+    await act(async () => { finish({ ok: true, json: async () => ({ id: 9 }) }); });
+    expect(screen.getByDisplayValue('Omni wheel')).toBeInTheDocument();
   });
 });
 

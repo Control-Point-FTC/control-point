@@ -341,7 +341,13 @@ export function usePartForm(initial: any | null, onDone: () => void) {
     if (bad) { notify(bad, 'error'); return; }
     if (lock.held()) return;
     const release = lock.begin();
-    const finish = inEpoch(() => { deleteDraft(key); onDone(); cadChanged('/api/cad/parts'); });
+    // Close the editor only if it still shows this part (Legacy lets you close
+    // it mid-save and open another one, which must stay open).
+    const stillOpen = () => {
+      const open = getDraft<any>('cad:part-open', null);
+      return initial ? !!open && open !== 'new' && open.id === initial.id : open === 'new';
+    };
+    const finish = inEpoch(() => { deleteDraft(key); if (stillOpen()) onDone(); cadChanged('/api/cad/parts'); });
     try {
       const body = { name: f.name.trim(), section: f.section, quantity: Number(f.quantity) || 1, source: f.source, unit_cost: Number(f.unitCost) || 0, status: f.status, assignee: f.assignee.trim(), notes: f.notes.trim() };
       const r = await apiFetch(initial ? `/api/cad/parts/${initial.id}` : '/api/cad/parts', {
