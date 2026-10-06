@@ -169,7 +169,7 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               <SheetTitle>{editing ? 'Edit part' : 'Add part'}</SheetTitle>
               <SheetDescription>{editing ? f.name : 'Name and SKU are required. A REV Robotics link can fill the rest.'}</SheetDescription>
             </SheetHeader>
-            <form id="part-form" noValidate className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void (editing ? ctl.handleUpdate() : ctl.handleAdd()); }}>
+            <form id="part-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void (editing ? ctl.handleUpdate() : ctl.handleAdd()); }}>
               <fieldset disabled={ctl.busy} className="m-0 min-w-0 space-y-5 border-0 p-0">
               {!editing && (
                 <div className="rounded-xl border border-dashed border-border p-4">
@@ -186,8 +186,8 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 {field('name', 'Part name *', 'name')}
                 {field('sku', 'SKU (unique) *', 'sku', { className: 'font-mono max-sm:h-11' })}
                 {field('number', 'Part number', 'part_number')}
-                {field('qty', 'Quantity', 'quantity', { type: 'number', min: '0', inputMode: 'numeric' })}
-                {field('cost', 'Cost per unit', 'cost', { type: 'number', step: '0.01', min: '0', inputMode: 'decimal' })}
+                {field('qty', 'Quantity', 'quantity', { type: 'number', min: '0', step: '1', inputMode: 'numeric' })}
+                {field('cost', 'Cost per unit', 'cost', { type: 'number', step: 'any', min: '0', inputMode: 'decimal' })}
                 {field('location', 'Location', 'location', { placeholder: 'Bin, shelf, box…' })}
                 <div className="grid gap-2">
                   <Label htmlFor="part-category">Category</Label>
@@ -248,7 +248,7 @@ function InvoiceReview({ ctl }: { ctl: Ctl }) {
                   <TableCell className="min-w-[12rem]"><Input value={it.name} onChange={(e) => ctl.updateInvoiceItem(i, { name: e.target.value })} aria-label={`Name for ${it.sku}`} className="h-9" /></TableCell>
                   <TableCell className="whitespace-nowrap font-mono text-xs text-accent">{it.sku}</TableCell>
                   <TableCell><Input type="number" min="0" value={it.quantity} onChange={(e) => ctl.updateInvoiceItem(i, { quantity: e.target.value })} aria-label={`Quantity for ${it.sku}`} className="h-9" /></TableCell>
-                  <TableCell><Input type="number" min="0" step="0.01" value={it.unitPrice} onChange={(e) => ctl.updateInvoiceItem(i, { unitPrice: e.target.value })} aria-label={`Unit price for ${it.sku}`} className="h-9" /></TableCell>
+                  <TableCell><Input type="number" min="0" step="any" value={it.unitPrice} onChange={(e) => ctl.updateInvoiceItem(i, { unitPrice: e.target.value })} aria-label={`Unit price for ${it.sku}`} className="h-9" /></TableCell>
                   <TableCell>
                     <Select value={it.category || 'Other'} onValueChange={(v) => ctl.updateInvoiceItem(i, { category: v })}>
                       <SelectTrigger className="h-9" aria-label={`Category for ${it.sku}`}><SelectValue /></SelectTrigger>

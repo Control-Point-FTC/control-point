@@ -66,6 +66,15 @@ describe('Modern Budget', () => {
     expect(body('/api/budget', 'POST')).toMatchObject({ amount: 10.005 });
   });
 
+  it('rejects zero or negative amounts', async () => {
+    budgetSetup();
+    fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
+    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '-50' } });
+    fireEvent.submit(document.getElementById('budget-form')!);
+    expect(dialog.notify).toHaveBeenCalledWith('Enter an amount greater than zero.', 'error');
+    expect(calls('/api/budget', 'POST')).toHaveLength(0);
+  });
+
   it('filters by type and search', () => {
     budgetSetup();
     fireEvent.click(screen.getByRole('radio', { name: 'Income' }));
@@ -289,6 +298,21 @@ describe('Modern Inventory', () => {
     await act(async () => { finish({ ok: true, json: async () => ({ added: 1, merged: 0 }) }); });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(calls('/api/inventory/import-invoice/confirm', 'POST')).toHaveLength(1);
+  });
+
+  it('rejects fractional or negative stock and negative cost', async () => {
+    invSetup();
+    fireEvent.click(screen.getByRole('button', { name: /Add part/ }));
+    fireEvent.change(await screen.findByLabelText('Part name *'), { target: { value: 'Servo' } });
+    fireEvent.change(screen.getByLabelText('SKU (unique) *'), { target: { value: 'S1' } });
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '1.5' } });
+    fireEvent.submit(document.getElementById('part-form')!);
+    expect(dialog.notify).toHaveBeenCalledWith('Quantity must be a whole number, 0 or more.', 'error');
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Cost per unit'), { target: { value: '-3' } });
+    fireEvent.submit(document.getElementById('part-form')!);
+    expect(dialog.notify).toHaveBeenCalledWith("Cost can't be negative.", 'error');
+    expect(calls('/api/inventory', 'POST')).toHaveLength(0);
   });
 
   it('auto-categorizes uncategorized parts', async () => {

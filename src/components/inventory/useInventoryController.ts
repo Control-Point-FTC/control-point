@@ -23,6 +23,15 @@ export const INVENTORY_CATEGORIES = [
 export interface NewPart { team_id: string; name: string; part_number: string; sku: string; quantity: string; assigned_to: string; location: string; category: string; description: string; cost: string }
 export const blankPart = (team_id = ''): NewPart => ({ team_id, name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' });
 const NEW_KEY = 'inv:new';
+
+/** Why a part's numbers can't be saved (whole, non-negative stock; non-negative cost), or null. */
+export function partNumbersError(quantity: unknown, cost: unknown): string | null {
+  const q = quantity === '' || quantity == null ? 0 : Number(quantity);
+  if (!Number.isInteger(q) || q < 0) return 'Quantity must be a whole number, 0 or more.';
+  const c = cost === '' || cost == null ? 0 : Number(cost);
+  if (!Number.isFinite(c) || c < 0) return "Cost can't be negative.";
+  return null;
+}
 const EDIT_KEY = 'inv:edit';
 
 export function useInventoryController({ inventory, setInventory, teams, refresh, currentUser, hasScope }: {
@@ -53,6 +62,8 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
       notify('Name and SKU are required', 'error');
       return;
     }
+    const numbersError = partNumbersError(submitted.quantity, submitted.cost);
+    if (numbersError) { notify(numbersError, 'error'); return; }
     if (getDraft('inv:saving', false)) return;
     setBusy(true);
     // Release only our own lock: after a sign-out / workspace switch a new
@@ -91,6 +102,8 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   const handleUpdate = async () => {
     const submitted = getDraft<any>(EDIT_KEY, showEdit);
     if (!submitted) return;
+    const numbersError = partNumbersError(submitted.quantity, submitted.cost);
+    if (numbersError) { notify(numbersError, 'error'); return; }
     if (getDraft('inv:saving', false)) return;
     setBusy(true);
     // Release only our own lock: after a sign-out / workspace switch a new
@@ -244,6 +257,8 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
       notify('Select at least one item to import', 'info');
       return;
     }
+    const bad = selected.map((it: any) => partNumbersError(it.quantity, it.unitPrice)).find(Boolean);
+    if (bad) { notify(bad, 'error'); return; }
     if (getDraft('inv:invoice-confirming', false)) return;
     setInvoiceConfirming(true);
     // Release only our own lock: after a sign-out / workspace switch a new

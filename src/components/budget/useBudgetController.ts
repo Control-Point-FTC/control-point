@@ -71,6 +71,8 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
 
   const handleAdd = async () => {
     if (getDraft('budget:saving', false)) return;
+    const amount = Number(getDraft<BudgetForm>(FORM_KEY, newItem).amount);
+    if (!Number.isFinite(amount) || amount <= 0) { notify('Enter an amount greater than zero.', 'error'); return; }
     setBusy(true);
     // Release only our own lock: after a sign-out / workspace switch a new
     // save may hold it.
