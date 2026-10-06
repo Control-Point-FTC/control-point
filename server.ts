@@ -2598,7 +2598,7 @@ async function startServer() {
         // Fire and forget the cooldown: the public response is identical
         // whether the account exists, is cooling down, or is unknown, so
         // the endpoint never reveals registered addresses.
-        await issueVerificationCode(email).catch((e) => console.error("forgot password code issue failed:", e));
+        await issueVerificationCode(email, "reset").catch((e) => console.error("forgot password code issue failed:", e));
       }
       return res.json({ sent: true });
     } catch (e: any) {

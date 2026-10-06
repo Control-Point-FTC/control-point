@@ -38,37 +38,112 @@ export function hashCode(code: string): string {
   return crypto.createHash("sha256").update(code, "utf8").digest("hex");
 }
 
-/**
- * Shared email template — dark card, yellow Control Point badge, volt theme.
- * All app emails use this so they look consistent.
- */
-function emailTemplate(title: string, bodyHtml: string): string {
-  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#09090b;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
-<div style="max-width:480px;margin:0 auto;padding:40px 24px;">
-<div style="text-align:center;margin-bottom:24px;">
-<div style="display:inline-block;background:#ffc700;color:#09090b;font-weight:800;font-size:20px;padding:10px 18px;border-radius:12px;">Control Point</div>
-</div>
-<div style="background:#141419;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:32px;text-align:center;">
-<h1 style="color:#fff;font-size:20px;margin:0 0 8px;">${title}</h1>
-${bodyHtml}
-</div>
-</div></body></html>`;
+// ---------------------------------------------------------------------------
+// Email templates (2026 redesign, phase 9d). Table-based layout with inline
+// styles so it renders the same in Gmail, Outlook and Apple Mail: a light card
+// with the Control Point mark, a hidden preheader (the inbox preview line),
+// the message, an optional code or button, and a footer that says why the
+// email was sent. Every dynamic value is escaped. Classic Outlook ignores
+// max-width, so a fixed 520px ghost table (Outlook-only) keeps it compact.
+// ---------------------------------------------------------------------------
+
+const BRAND = "#ffc700";
+const INK = "#09090b";
+const MUTED = "#52525b";
+const FAINT = "#a1a1aa";
+const LINE = "#e4e4e7";
+const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+/** Public app address for links in emails (APP_URL, else the production site). */
+export function appUrl(path = ""): string {
+  const base = (process.env.APP_URL || "https://tryctrlpoint.org").replace(/\/$/, "");
+  return `${base}${path}`;
 }
 
-function verificationEmailHtml(code: string): string {
-  return emailTemplate(
-    'Verify your email',
-    `<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">Enter this code in Control Point to finish creating your account. It expires in ${VERIFY_CODE_TTL_MINUTES} minutes.</p>
-<div style="font-size:40px;font-weight:800;letter-spacing:12px;color:#ffc700;margin:8px 0 20px;">${code}</div>
-<p style="color:#71717a;font-size:12px;margin:0;">If you didn't ask for this, you can ignore this email.</p>`
-  );
+export interface EmailParts {
+  /** Inbox preview text, plain (escaped here). */
+  preheader: string;
+  /** Plain (escaped here). */
+  title: string;
+  /** Already-escaped HTML. */
+  intro: string;
+  /** Already-escaped HTML placed under the intro (a code, a task card…). */
+  body?: string;
+  cta?: { label: string; href: string };
+  /** Plain text: why this email was sent (escaped here). */
+  footnote: string;
 }
 
-export async function sendVerificationEmail(to: string, code: string): Promise<void> {
+export function emailTemplate({ preheader, title, intro, body = "", cta, footnote }: EmailParts): string {
+  const button = cta
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 4px;"><tr><td style="border-radius:10px;background:${INK};">
+<a href="${escapeHtml(cta.href)}" style="display:inline-block;padding:13px 22px;font-family:${FONT};font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">${escapeHtml(cta.label)} &rarr;</a>
+</td></tr></table>`
+    : "";
+  const site = appUrl();
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${escapeHtml(title)}</title></head>
+<body style="margin:0;padding:0;background:#f4f4f5;">
+<span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</span>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f5;"><tr><td align="center" style="padding:32px 16px;">
+<!--[if mso]><table role="presentation" width="520" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
+<tr><td style="padding:0 4px 16px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="width:28px;height:28px;border-radius:8px;background:${BRAND};text-align:center;vertical-align:middle;font-family:${FONT};font-size:12px;font-weight:800;color:${INK};">CP</td>
+<td style="padding-left:10px;font-family:${FONT};font-size:15px;font-weight:700;color:${INK};">Control Point</td>
+</tr></table>
+</td></tr>
+<tr><td style="background:#ffffff;border:1px solid ${LINE};border-radius:16px;padding:32px 28px;">
+<div style="height:4px;width:44px;border-radius:4px;background:${BRAND};margin:0 0 20px;font-size:0;line-height:0;">&nbsp;</div>
+<h1 style="margin:0 0 10px;font-family:${FONT};font-size:22px;line-height:1.3;font-weight:700;color:${INK};">${escapeHtml(title)}</h1>
+<p style="margin:0;font-family:${FONT};font-size:15px;line-height:1.6;color:${MUTED};">${intro}</p>
+${body}
+${button}
+</td></tr>
+<tr><td style="padding:18px 8px 0;font-family:${FONT};font-size:12px;line-height:1.6;color:${FAINT};">
+${escapeHtml(footnote)}<br><a href="${escapeHtml(site)}" style="color:${FAINT};text-decoration:underline;">${escapeHtml(site.replace(/^https?:\/\//, ""))}</a> &middot; Mission control for robotics teams
+</td></tr>
+</table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td></tr></table>
+</body></html>`;
+}
+
+/** A six-digit code as separate tiles (easy to read, easy to type). */
+function codeTiles(code: string): string {
+  const cells = escapeHtml(code).split("").map((d) =>
+    `<td style="width:44px;height:54px;border:1px solid ${LINE};border-radius:10px;background:#fafafa;text-align:center;vertical-align:middle;font-family:'SFMono-Regular',Menlo,Consolas,monospace;font-size:26px;font-weight:700;color:${INK};">${d}</td>`
+  ).join(`<td style="width:6px;"></td>`);
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 8px;"><tr>${cells}</tr></table>`;
+}
+
+export type CodePurpose = "verify" | "reset";
+
+export function verificationEmailHtml(code: string): string {
+  return emailTemplate({
+    preheader: `Your code is ${code}. It expires in ${VERIFY_CODE_TTL_MINUTES} minutes.`,
+    title: "Confirm your email",
+    intro: `Enter this code in Control Point to finish creating your account. It expires in ${VERIFY_CODE_TTL_MINUTES} minutes.`,
+    body: codeTiles(code),
+    footnote: "You're getting this because someone signed up for Control Point with this address. If it wasn't you, ignore this email and no account will be created.",
+  });
+}
+
+export function resetEmailHtml(code: string): string {
+  return emailTemplate({
+    preheader: `Your password reset code is ${code}.`,
+    title: "Reset your password",
+    intro: `Enter this code in Control Point, then choose a new password. It expires in ${VERIFY_CODE_TTL_MINUTES} minutes.`,
+    body: codeTiles(code),
+    footnote: "You're getting this because a password reset was requested for this address. If it wasn't you, ignore this email; your password stays the same.",
+  });
+}
+
+export async function sendVerificationEmail(to: string, code: string, purpose: CodePurpose = "verify"): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
     // Dev/test fallback: no email provider configured.
-    console.log(`[email-verify] (no RESEND_API_KEY) verification code for ${to}: ${code}`);
+    console.log(`[email-verify] (no RESEND_API_KEY) ${purpose} code for ${to}: ${code}`);
     return;
   }
   const res = await fetch("https://api.resend.com/emails", {
@@ -80,8 +155,8 @@ export async function sendVerificationEmail(to: string, code: string): Promise<v
     body: JSON.stringify({
       from: emailFrom(),
       to: [to],
-      subject: `Your Control Point verification code: ${code}`,
-      html: verificationEmailHtml(code),
+      subject: purpose === "reset" ? `Your Control Point password reset code: ${code}` : `Your Control Point verification code: ${code}`,
+      html: purpose === "reset" ? resetEmailHtml(code) : verificationEmailHtml(code),
     }),
   });
   if (!res.ok) {
@@ -119,7 +194,7 @@ function codeExpiry(): string {
  * datetime('now')): SQLite's UTC-without-timezone format parses as *local*
  * time in JS, which skews expiry/cooldown by the server's UTC offset.
  */
-export async function issueVerificationCode(email: string): Promise<{ sent: true } | { sent: false; cooldownSeconds: number }> {
+export async function issueVerificationCode(email: string, purpose: CodePurpose = "verify"): Promise<{ sent: true } | { sent: false; cooldownSeconds: number }> {
   const normalized = String(email || "").trim().toLowerCase();
   const recent = (await dbGet(
     "SELECT created_at FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
@@ -141,7 +216,7 @@ export async function issueVerificationCode(email: string): Promise<{ sent: true
     codeExpiry(),
     nowIso
   );
-  await sendVerificationEmail(normalized, code);
+  await sendVerificationEmail(normalized, code, purpose);
   return { sent: true };
 }
 
@@ -257,16 +332,19 @@ export function taskAssignedEmailHtml(rawTitle: string, rawDescription: string, 
   const dueDate = escapeHtml(rawDueDate);
   const teamName = escapeHtml(rawTeamName);
   const assignerName = escapeHtml(rawAssignerName);
-  return emailTemplate(
-    'New task assigned',
-    `<p style="color:#a1a1aa;font-size:14px;margin:0 0 20px;">${assignerName} assigned you a task in ${teamName}:</p>
-<div style="background:#09090b;border:1px solid rgba(255,199,0,0.2);border-radius:12px;padding:20px;margin-bottom:20px;text-align:left;">
-<div style="color:#fafafa;font-size:16px;font-weight:700;margin-bottom:8px;">${taskTitle}</div>
-${taskDescription ? `<div style="color:#a1a1aa;font-size:14px;margin-bottom:12px;">${taskDescription}</div>` : ''}
-${dueDate ? `<div style="color:#ffc700;font-size:13px;font-weight:600;">Due: ${dueDate}</div>` : ''}
-</div>
-<p style="color:#71717a;font-size:12px;margin:0;">Open Control Point to view and update this task.</p>`
-  );
+  const card = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 0;"><tr><td style="border:1px solid ${LINE};border-left:4px solid ${BRAND};border-radius:12px;padding:16px 18px;background:#fafafa;">
+<div style="font-family:${FONT};font-size:16px;font-weight:700;color:${INK};">${taskTitle}</div>
+${taskDescription ? `<div style="margin-top:6px;font-family:${FONT};font-size:14px;line-height:1.55;color:${MUTED};">${taskDescription}</div>` : ''}
+${dueDate ? `<div style="margin-top:10px;font-family:${FONT};font-size:13px;font-weight:600;color:${INK};">Due: ${dueDate}</div>` : ''}
+</td></tr></table>`;
+  return emailTemplate({
+    preheader: `${rawAssignerName} assigned you: ${rawTitle}`,
+    title: "You have a new task",
+    intro: `${assignerName} assigned you a task in ${teamName}.`,
+    body: card,
+    cta: { label: "Open your tasks", href: appUrl("/tasks") },
+    footnote: "You're getting this because a teammate assigned you a task in Control Point.",
+  });
 }
 
 /**
