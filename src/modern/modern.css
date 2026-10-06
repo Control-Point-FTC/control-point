@@ -142,15 +142,15 @@ html[data-ui="modern"] :focus-visible { outline: 2px solid color-mix(in srgb, va
 
 /* Page enter: the page fades up, then its top-level sections rise in, staggered.
    (.m-page wraps the routed page; its child is the page root.) */
-html[data-ui="modern"] .m-page > * { animation: cp-fade 240ms var(--m-ease) both; }
-html[data-ui="modern"] .m-page > * > * { animation: cp-rise 420ms var(--m-ease) both; }
+html[data-ui="modern"] .m-page > * { animation: cp-fade 240ms var(--m-ease) backwards; }
+html[data-ui="modern"] .m-page > * > * { animation: cp-rise 420ms var(--m-ease) backwards; }
 html[data-ui="modern"] .m-page > * > *:nth-child(2) { animation-delay: 45ms; }
 html[data-ui="modern"] .m-page > * > *:nth-child(3) { animation-delay: 90ms; }
 html[data-ui="modern"] .m-page > * > *:nth-child(4) { animation-delay: 135ms; }
 html[data-ui="modern"] .m-page > * > *:nth-child(5) { animation-delay: 180ms; }
 html[data-ui="modern"] .m-page > * > *:nth-child(n + 6) { animation-delay: 220ms; }
 /* Grids of cards inside a page stagger too. */
-html[data-ui="modern"] .m-page :is(.grid) > .card-surface { animation: cp-rise 420ms var(--m-ease) both; }
+html[data-ui="modern"] .m-page :is(.grid) > .card-surface { animation: cp-rise 420ms var(--m-ease) backwards; }
 html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(2) { animation-delay: 50ms; }
 html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(3) { animation-delay: 100ms; }
 html[data-ui="modern"] .m-page .grid > .card-surface:nth-child(4) { animation-delay: 150ms; }
@@ -171,8 +171,9 @@ html[data-ui="modern"] [data-slot="skeleton"] {
   html[data-ui="modern"] *,
   html[data-ui="modern"] *::before,
   html[data-ui="modern"] *::after {
-    animation-duration: 1ms !important;
-    animation-delay: 0ms !important;
+    /* Off, not sped up: infinite loops (skeleton shimmer, chart dot) stop
+       at their static state. */
+    animation: none !important;
     transition-duration: 1ms !important;
   }
 }

@@ -18,7 +18,18 @@ export function interpolateNumbers(text: string, t: number): string {
   });
 }
 
-export function AnimatedValue({ value, duration = 700 }: { value: string | number; duration?: number }) {
+/**
+ * Pass `to` + `format` for locale-formatted amounts (e.g. a budget formatted
+ * with toLocaleString, where "3,5" may be a decimal): the raw number is
+ * animated and formatted each frame, so the text is never re-parsed.
+ * Plain strings ("12 / 18") are interpolated with interpolateNumbers.
+ */
+export function AnimatedValue({ value, to, format, duration = 700 }: {
+  value: string | number;
+  to?: number;
+  format?: (n: number) => string;
+  duration?: number;
+}) {
   const { mode } = useInterfaceMode();
   const text = String(value);
   const hasNumber = /\d/.test(text);
@@ -30,8 +41,10 @@ export function AnimatedValue({ value, duration = 700 }: { value: string | numbe
   useEffect(() => {
     if (!animate) { setT(1); return; }
     const start = performance.now();
-    const tick = (now: number) => {
-      const p = Math.min(1, (now - start) / duration);
+    const tick = () => {
+      // One clock (performance.now) and clamped progress: some environments
+      // pass rAF timestamps from a different time origin.
+      const p = Math.max(0, Math.min(1, (performance.now() - start) / duration));
       setT(1 - Math.pow(1 - p, 3)); // ease-out cubic
       if (p < 1) raf.current = requestAnimationFrame(tick);
     };
@@ -41,5 +54,7 @@ export function AnimatedValue({ value, duration = 700 }: { value: string | numbe
     // Re-run when the value itself changes.
   }, [text, animate, duration]);
 
-  return <>{t >= 1 ? text : interpolateNumbers(text, t)}</>;
+  if (t >= 1) return <>{text}</>;
+  if (to != null && format) return <>{format(to * t)}</>;
+  return <>{interpolateNumbers(text, t)}</>;
 }

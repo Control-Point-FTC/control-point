@@ -3,7 +3,7 @@
 // same App state; screens without a Modern page yet render their Legacy page
 // inside this shell.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { motion } from 'motion/react';
+import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Inbox, Bot, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
@@ -123,6 +123,8 @@ export function ModernShell(props: ModernShellProps) {
   };
 
   return (
+    // reducedMotion="user": Motion springs (the sliding nav pill) follow the OS setting.
+    <MotionConfig reducedMotion="user">
     <TooltipProvider>
       <div className="modern-shell flex h-dvh w-full overflow-hidden bg-primary text-text-base" data-ui-shell="modern">
         {!isMobile && (
@@ -197,6 +199,7 @@ export function ModernShell(props: ModernShellProps) {
         />
       </div>
     </TooltipProvider>
+    </MotionConfig>
   );
 }
 

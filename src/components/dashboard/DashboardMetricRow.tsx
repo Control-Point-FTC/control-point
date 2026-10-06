@@ -5,7 +5,7 @@ import '../../i18n';
 import { cn } from '../ui';
 import { AnimatedValue } from '../../modern/AnimatedValue';
 
-function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default', count = false }: any) {
+function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default', count = false, countTo, countFormat }: any) {
   return (
     <button
       onClick={onClick}
@@ -22,7 +22,7 @@ function KpiCard({ icon: Icon, label, value, sub, onClick, tone = 'default', cou
         tone === 'warn' ? 'text-rose-400' : tone === 'ok' ? 'text-emerald-400' : 'text-text-base'
       )}>
         {/* Numeric KPIs count up in the Modern experience. */}
-        {count ? <AnimatedValue value={value} /> : value}
+        {count ? <AnimatedValue value={value} to={countTo} format={countFormat} /> : value}
       </p>
       <p className="text-[11px] text-text-muted mt-0.5 truncate">{sub}</p>
     </button>
@@ -85,6 +85,8 @@ function DashboardMetricRow({
         icon={Wallet}
         label={t('nav.budget')}
         count
+        countTo={totalBudget}
+        countFormat={(n: number) => `$${(Math.round(n * 100) / 100).toLocaleString()}`}
         value={`$${totalBudget.toLocaleString()}`}
         sub={t('dashboard.netBalance')}
         tone={totalBudget < 0 ? 'warn' : 'ok'}

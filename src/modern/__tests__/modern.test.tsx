@@ -187,3 +187,31 @@ describe('interpolateNumbers', () => {
     expect(interpolateNumbers('Nothing', 0.3)).toBe('Nothing');
   });
 });
+
+import { AnimatedValue } from '../AnimatedValue';
+describe('AnimatedValue', () => {
+  it('formats the raw number (decimal-comma locales are never re-parsed)', () => {
+    // Outside a provider the mode is legacy, so it renders the final text immediately.
+    const de = (n: number) => `$${n.toLocaleString('de-DE')}`;
+    render(<AnimatedValue value={de(3.5)} to={3.5} format={de} />);
+    expect(screen.getByText('$3,5')).toBeInTheDocument();
+  });
+
+  it('animates the raw amount in Modern without re-parsing locale text', async () => {
+    const de = (n: number) => `$${(Math.round(n * 100) / 100).toLocaleString('de-DE')}`;
+    const seen: number[] = [];
+    render(
+      <InterfaceModeProvider user={{ id: 1, interface_mode: 'modern' }} team={{}} onUserSaved={() => {}}>
+        <span data-testid="amt"><AnimatedValue value={de(3.5)} to={3.5} format={de} duration={120} /></span>
+      </InterfaceModeProvider>,
+    );
+    for (let i = 0; i < 12; i++) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+      const txt = screen.getByTestId('amt').textContent || '';
+      seen.push(Number(txt.replace('$', '').replace(',', '.')));
+    }
+    // Every intermediate value stays within 0..3.5 (a misparse would show 35).
+    expect(seen.every((n) => Number.isFinite(n) && n >= 0 && n <= 3.5)).toBe(true);
+    expect(screen.getByTestId('amt').textContent).toBe('$3,5');
+  });
+});
