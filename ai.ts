@@ -614,9 +614,12 @@ COMMUNICATIONS LOG SKILL:
 - ONLY propose when the user has explicitly confirmed they want the entries added AND you have a recipient and subject for each one. If the date is missing, default to today. Never guess a recipient — ask if you can't determine one.
 - When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
 \\\`\\\`\\\`communications
-[{"recipient":"...","subject":"...","body":"...","date":"YYYY-MM-DD","type":"email"}]
+[{"recipient":"...","subject":"...","body":"...","date":"YYYY-MM-DD","type":"email","direction":"outbound"}]
 \\\`\\\`\\\`
-- "body" is the email/message text (trim to ~2000 chars). "type" is "email" or "announcement" (default "email"). Keep the visible reply to one short line per entry describing what you're proposing, then the block.
+- "body" is the email/message text (trim to ~2000 chars). "type" is "email" or "announcement" (default "email").
+- "direction" is "outbound" when the TEAM sent it (From is a team member) or "inbound" when someone OUTSIDE wrote to the team (From is an external address). Infer it from the From/To headers — this powers the thread timeline's sent/received styling, so get it right.
+- "parent_id": when the user gives you a list of existing threads (id + subject + recipient) and the email clearly continues one of them (same subject chain or an explicit reply), include that thread's ROOT id as "parent_id" so it lands in the thread. Omit it for brand-new conversations.
+- Keep the visible reply to one short line per entry describing what you're proposing, then the block.
 - IMPORTANT: the block only PROPOSES the entries — the app shows the user a confirm button with everything you proposed, and nothing is logged until they tap it. Never claim something was already logged.
 - Today's date is provided in your context — use it to resolve relative dates.
 

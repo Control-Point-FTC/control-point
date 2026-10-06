@@ -154,6 +154,7 @@ import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute }
 import BrunoIcon from './components/BrunoIcon';
 import FeedbackIcon from './components/FeedbackIcon';
 import EmailImportModal from './components/EmailImport';
+import BrunoQuickAdd from './components/BrunoQuickAdd';
 import TaskCompletionDialog from './components/TaskCompletionDialog';
 import {
   WelcomeScreen,
@@ -8289,6 +8290,7 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
   const canManage = hasScope ? hasScope('communications') : false;
   const [showAdd, setShowAdd] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [newComm, setNewComm] = useState({ recipient: '', subject: '', body: '', type: 'email', date: format(new Date(), 'yyyy-MM-dd HH:mm') });
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [replyingTo, setReplyingTo] = useState<any>(null);
@@ -8410,6 +8412,9 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
         </div>
         {canManage && (
           <div className="flex gap-2 w-full sm:w-auto">
+            <Button variant="secondary" onClick={() => setShowQuickAdd(true)} className="flex-1 sm:flex-none">
+              <Sparkles className="w-4 h-4" /> Bruno quick add
+            </Button>
             <Button variant="secondary" onClick={() => setShowImport(true)} className="flex-1 sm:flex-none">
               <Mail className="w-4 h-4" /> Import email
             </Button>
@@ -8422,6 +8427,14 @@ function CommunicationView({ communications, setCommunications, onRefresh, refre
         <EmailImportModal
           onClose={() => setShowImport(false)}
           onLogged={() => { setShowImport(false); refresh.communications(); }}
+        />
+      )}
+
+      {showQuickAdd && (
+        <BrunoQuickAdd
+          threads={threads.map((t: any) => ({ id: t.root.id, subject: t.root.subject, recipient: t.root.recipient, date: t.root.date }))}
+          onClose={() => setShowQuickAdd(false)}
+          onLogged={() => { setShowQuickAdd(false); refresh.communications(); }}
         />
       )}
 

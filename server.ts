@@ -9057,12 +9057,16 @@ Rules:
             date = c.date;
           }
           const type = c.type === "announcement" ? "announcement" : "email";
+          const direction = c.direction === "inbound" ? "inbound" : "outbound";
+          const parentId = Number.isInteger(c.parent_id) && (c.parent_id as number) > 0 ? (c.parent_id as number) : null;
           return {
             recipient: c.recipient.trim().slice(0, 200),
             subject: c.subject.trim().slice(0, 200),
             body: typeof c.body === "string" ? c.body.trim().slice(0, 2000) : "",
             date,
             type,
+            direction,
+            parent_id: parentId,
           };
         }).filter(Boolean);
         if (valid.length) entries = valid;
@@ -9550,9 +9554,18 @@ Rules:
           const { entries } = extractCommunicationsBlock("```communications\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
           for (const c of entries) {
+            // Resolve parent_id to the thread root (same rule as POST
+            // /api/communications): must belong to this team.
+            let parentId: number | null = null;
+            if (c.parent_id != null) {
+              const parent: any = (await dbGet("SELECT id, team_id, parent_id FROM communications WHERE id = ?", c.parent_id));
+              if (parent && parent.team_id === auth.teamId) {
+                parentId = parent.parent_id != null ? parent.parent_id : parent.id;
+              }
+            }
             (await dbRun(
-              "INSERT INTO communications (recipient, subject, body, date, type, team_id) VALUES (?, ?, ?, ?, ?, ?)",
-              c.recipient, c.subject, c.body, c.date, c.type, auth.teamId
+              "INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              c.recipient, c.subject, c.body, c.date, c.type, auth.teamId, parentId, c.direction || 'outbound'
             ));
           }
           applied.communication = (applied.communication || 0) + entries.length;
