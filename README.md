@@ -27,7 +27,7 @@ Control Point is a full-stack team management platform built for FIRST Tech Chal
 
 See [docs/predict/](docs/predict/) for the full methodology and back-test reports.
 
-**Team Stats — scouting that works.** Live event data, OPR breakdowns (auto / teleop / endgame), alliance scenario planning, and head-to-head comparisons.
+**Team Stats — scouting that works.** Live event data, OPR breakdowns (auto / teleop / endgame), and alliance scenario planning.
 
 **The fundamentals, done right.**
 - **Dashboard** — team health at a glance: attendance, tasks, budget, upcoming events, and Bruno’s briefing on what matters today
@@ -73,9 +73,9 @@ Copy the essentials into a `.env` file:
 # DISCORD_CLIENT_ID=""
 # DISCORD_CLIENT_SECRET=""
 
-# AI (Bruno) — Fireworks for chat, Gemini for grounded research + vision
-# FIREWORKS_API_KEY=""
+# AI (Bruno) — Gemini for chat, grounded research, and vision; Anthropic as fallback
 # GEMINI_API_KEY=""
+# ANTHROPIC_API_KEY=""
 ```
 
 Google sign-in only works for emails already on the team roster — an admin adds members first, then they link their Google account.
@@ -89,7 +89,7 @@ Production runs on an Oracle Cloud Always Free VM: nginx → the app on `:3000` 
 - **Frontend:** React 19 + TypeScript + Tailwind CSS 4 (Vite), shadcn/ui on Radix primitives
 - **Backend:** Express + WebSocket
 - **Database:** SQLite via `@libsql/client` — embedded file locally, Turso hosted in production
-- **AI:** Fireworks (chat) + Gemini (grounded research, vision), with per-user controls and usage tracking
+- **AI:** Gemini (chat, grounded research, vision) with Anthropic fallback, per-user controls and usage tracking
 
 ## Contributing
 
