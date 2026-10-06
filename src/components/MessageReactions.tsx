@@ -95,38 +95,12 @@ export default function MessageReactions({
   memberNames,
   onToggleEmoji,
 }: MessageReactionsProps) {
-  // Emojis with a request in flight — clicks still queue an optimistic flip;
-  // the set just guards against double-posting the same toggle twice.
-  const inFlight = useRef<Set<string>>(new Set());
-  const [, force] = useState(0);
+  const { handleToggle, namesFor } = useReactionToggle({ messageId, reactions, memberId, onReactionsChange, memberNames });
   // Discord-style rich hover card state — declared before the empty early
   // return so hook order stays stable when reactions come and go.
   const [hovered, setHovered] = useState<string | null>(null);
 
   if (!reactions || reactions.length === 0) return null;
-
-  const handleToggle = async (emoji: string) => {
-    if (inFlight.current.has(emoji)) return;
-    const prev = reactions;
-    onReactionsChange(messageId, applyReactionToggle(prev, emoji, memberId));
-    inFlight.current.add(emoji);
-    force((n) => n + 1);
-    try {
-      const server = await postReactionToggle(messageId, emoji);
-      onReactionsChange(messageId, server);
-    } catch (e: any) {
-      onReactionsChange(messageId, prev); // rollback
-      notify(e?.message || 'Could not update reaction.', 'error');
-    } finally {
-      inFlight.current.delete(emoji);
-      force((n) => n + 1);
-    }
-  };
-
-  // Discord-style rich hover card: big emoji + who reacted, instead of the
-  // browser's plain native tooltip.
-  const namesFor = (r: Reaction): string[] =>
-    (r.member_ids || []).map((id) => (id === memberId ? 'You' : memberNames?.[id] || 'Someone'));
 
   return (
     <div className="flex flex-wrap items-center gap-1 mt-1.5" aria-label="Message reactions">
@@ -186,4 +160,47 @@ export default function MessageReactions({
       })}
     </div>
   );
+}
+
+/**
+ * Shared reaction toggling (Classic chips and the Modern reaction bar):
+ * optimistic flip, server confirmation, rollback on failure, and one request
+ * per emoji at a time. Also names who reacted, for the hover card.
+ */
+export function useReactionToggle({ messageId, reactions, memberId, onReactionsChange, memberNames }: {
+  messageId: number;
+  reactions: Reaction[];
+  memberId: number;
+  onReactionsChange: (messageId: number, reactions: Reaction[]) => void;
+  memberNames?: Record<number, string>;
+}) {
+  // Emojis with a request in flight — clicks still queue an optimistic flip;
+  // the set just guards against double-posting the same toggle twice.
+  const inFlight = useRef<Set<string>>(new Set());
+  const [, force] = useState(0);
+
+  const handleToggle = async (emoji: string) => {
+    if (inFlight.current.has(emoji)) return;
+    const prev = reactions;
+    onReactionsChange(messageId, applyReactionToggle(prev, emoji, memberId));
+    inFlight.current.add(emoji);
+    force((n) => n + 1);
+    try {
+      const server = await postReactionToggle(messageId, emoji);
+      onReactionsChange(messageId, server);
+    } catch (e: any) {
+      onReactionsChange(messageId, prev); // rollback
+      notify(e?.message || 'Could not update reaction.', 'error');
+    } finally {
+      inFlight.current.delete(emoji);
+      force((n) => n + 1);
+    }
+  };
+
+  // Discord-style rich hover card: big emoji + who reacted, instead of the
+  // browser's plain native tooltip.
+  const namesFor = (r: Reaction): string[] =>
+    (r.member_ids || []).map((id) => (id === memberId ? 'You' : memberNames?.[id] || 'Someone'));
+
+  return { handleToggle, namesFor, isPending: (emoji: string) => inFlight.current.has(emoji) };
 }

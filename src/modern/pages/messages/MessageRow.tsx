@@ -7,8 +7,7 @@ import { Copy, CornerUpLeft, Download, FileText, Forward, ImageOff, SmilePlus, T
 import { cn } from '../../../components/cn';
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui-kit';
 import { apiFetch, assetUrl } from '../../../services/api';
-import MessageReactions from '../../../components/MessageReactions';
-import ReactionPicker from '../../../components/ReactionPicker';
+import { EmojiPicker, ReactionBar } from './Reactions';
 import { extractFirstUrl, formatFileSize, isImageFile, renderMessageText } from '../../../components/chat/chatFormat';
 import { PresenceAvatar } from '../people/MembersTab';
 
@@ -135,10 +134,10 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
           </div>
         )}
         {url && <LinkPreview url={url} />}
-        <MessageReactions messageId={msg.id} reactions={msg.reactions || []} memberId={currentUserId} onReactionsChange={onReactionsChange} memberNames={memberNames} />
+        <ReactionBar messageId={msg.id} reactions={msg.reactions || []} memberId={currentUserId} onReactionsChange={onReactionsChange} memberNames={memberNames} onAdd={() => onOpenPicker(msg.id)} />
         {pickerOpen && (
           <div className="relative z-20 mt-1" onClick={(e) => e.stopPropagation()}>
-            <ReactionPicker onPick={(emoji: string) => onPick(msg.id, emoji)} onClose={onClosePicker} />
+            <EmojiPicker onPick={(emoji: string) => onPick(msg.id, emoji)} onClose={onClosePicker} />
           </div>
         )}
       </div>
