@@ -8,7 +8,7 @@ import { Badge, Button, Input, Label } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { notify } from '../../../components/dialog';
 import { PRESENCE_SETTINGS, PRESENCE_SETTING_META } from '../../../components/presence';
-import { useDraft } from '../../drafts';
+import { getDraft, useDraft } from '../../drafts';
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 
@@ -24,7 +24,8 @@ function parseScopes(raw: unknown): string[] {
 
 export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusPick, setColorVersion, refresh }: any) {
   const user = currentUser || {};
-  const [draft, setDraft] = useDraft<ProfileDraft | null>(`settings:profile:${user.id ?? 0}`, null);
+  const draftKey = `settings:profile:${user.id ?? 0}`;
+  const [draft, setDraft] = useDraft<ProfileDraft | null>(draftKey, null);
   const form: ProfileDraft = draft ?? { name: user.name || '', role: user.role || '', accent: user.accent_color || '' };
   const set = (patch: Partial<ProfileDraft>) => setDraft({ ...form, ...patch });
   const dirty = !!draft && (form.name !== (user.name || '') || form.role !== (user.role || '') || form.accent !== (user.accent_color || ''));
@@ -36,17 +37,20 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
   const team = teams.find((t: any) => t.id === user.team_id);
 
   // Live accent preview while editing; back to the saved accent otherwise.
+  // An empty drafted accent means "team default" — exactly what Save sends.
   useEffect(() => {
     const root = document.documentElement;
-    const accent = draft ? form.accent : null;
-    const fallback = [user.accent_color, team?.accent_color].find(validHex);
-    const apply = validHex(accent) ? accent.trim() : fallback?.trim();
+    const candidates = draft ? [form.accent, team?.accent_color] : [user.accent_color, team?.accent_color];
+    const apply = candidates.find(validHex)?.trim();
     if (apply) root.style.setProperty('--color-accent', apply); else root.style.removeProperty('--color-accent');
     setColorVersion?.((v: number) => v + 1);
   }, [draft?.accent, user.accent_color, team?.accent_color]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     if (nameError) return;
+    // Remember exactly what was submitted: if the user keeps editing while
+    // this is in flight, a late success must not wipe the newer draft.
+    const submitted = draft;
     setSaving(true);
     try {
       const res = await apiFetch('/api/profile', {
@@ -58,9 +62,11 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
       if (!res.ok) { notify(data.error || 'Could not save.', 'error'); return; }
       if (data.user) onUserSaved?.(data.user);
       refresh?.members?.();
-      setDraft(null);
-      setJustSaved(true);
-      window.setTimeout(() => setJustSaved(false), 2500);
+      if (getDraft(draftKey, null) === submitted) {
+        setDraft(null);
+        setJustSaved(true);
+        window.setTimeout(() => setJustSaved(false), 2500);
+      }
       notify('Profile saved.', 'success');
     } catch {
       notify('Could not save.', 'error');
@@ -109,6 +115,10 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
       const res = await apiFetch('/api/theme/reset', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not reset theme');
+      // Apply the reset before dropping the draft, so the preview doesn't
+      // snap back to the old saved accent.
+      onUserSaved?.(data.user ?? { ...user, accent_color: null });
+      refresh?.teams?.();
       setDraft(null);
       const root = document.documentElement;
       root.style.removeProperty('--color-accent');

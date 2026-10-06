@@ -4,6 +4,7 @@
 // everyone; workspace/admin sections follow the same gates as before.
 import { useEffect, useRef, type ComponentType } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'motion/react';
 import { Bell, Bot, Building2, KeyRound, Palette, ShieldHalf, UserRound } from 'lucide-react';
 import { cn } from '../../../components/cn';
@@ -24,15 +25,17 @@ export function SettingsPage(props: any) {
   const { isAdmin, isOwner, hasPerm } = props;
   const showAdmin = !!(isAdmin || isOwner || hasPerm?.('manage_voice'));
   const [params, setParams] = useSearchParams();
+  const { t } = useTranslation();
+  const k = (key: string) => t(`settingsPage.${key}`);
   const sections: SectionDef[] = [
-    { id: 'profile', label: 'Profile', hint: 'Photo, name, status, accent', icon: UserRound, group: 'You' },
-    { id: 'appearance', label: 'Appearance', hint: 'Interface, theme, language', icon: Palette, group: 'You' },
-    { id: 'calls', label: 'Calls & sounds', hint: 'Devices, camera, chimes', icon: Bell, group: 'You' },
-    { id: 'bruno', label: 'Bruno AI', hint: 'How Bruno answers you', icon: Bot, group: 'You' },
-    { id: 'account', label: 'Account & privacy', hint: 'Password, data, deletion', icon: KeyRound, group: 'You' },
+    { id: 'profile', label: k('profile'), hint: k('profileHint'), icon: UserRound, group: 'You' },
+    { id: 'appearance', label: k('appearance'), hint: k('appearanceHint'), icon: Palette, group: 'You' },
+    { id: 'calls', label: k('calls'), hint: k('callsHint'), icon: Bell, group: 'You' },
+    { id: 'bruno', label: k('bruno'), hint: k('brunoHint'), icon: Bot, group: 'You' },
+    { id: 'account', label: k('account'), hint: k('accountHint'), icon: KeyRound, group: 'You' },
     // Team-wide settings. Each card inside keeps its own gate.
-    { id: 'workspace', label: 'Workspace', hint: isAdmin ? 'Team, invites, calendar' : 'Team and calendar', icon: Building2, group: 'Workspace' },
-    ...(showAdmin ? [{ id: 'admin' as const, label: 'Admin', hint: 'Calls policy, AI, storage, moderation', icon: ShieldHalf, group: 'Workspace' as const }] : []),
+    { id: 'workspace', label: k('workspace'), hint: isAdmin ? k('workspaceHintAdmin') : k('workspaceHint'), icon: Building2, group: 'Workspace' },
+    ...(showAdmin ? [{ id: 'admin' as const, label: k('admin'), hint: k('adminHint'), icon: ShieldHalf, group: 'Workspace' as const }] : []),
   ];
   const requested = params.get('section') as SettingsSectionId | null;
   // Google Calendar's OAuth redirect returns to /settings?cal_linked=1.
@@ -55,9 +58,9 @@ export function SettingsPage(props: any) {
 
   return (
     <Page>
-      <PageHeader eyebrow="Settings" title={current.label} description={current.hint} />
+      <PageHeader eyebrow={t('settings.title')} title={current.label} description={current.hint} />
       <div className="grid grid-cols-[minmax(0,1fr)] gap-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <nav aria-label="Settings sections" className="min-w-0 lg:sticky lg:top-6 lg:self-start">
+        <nav aria-label={k('sections')} className="min-w-0 lg:sticky lg:top-6 lg:self-start">
           {/* Phones: a scrollable chip row. Desktop: a grouped list. */}
           <ul ref={navRef} className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] lg:mx-0 lg:block lg:space-y-0.5 lg:overflow-visible lg:px-0 [&::-webkit-scrollbar]:hidden">
             {sections.map((s, i) => {
@@ -65,7 +68,7 @@ export function SettingsPage(props: any) {
               const showGroup = i === 0 || sections[i - 1].group !== s.group;
               return (
                 <li key={s.id} className="shrink-0">
-                  {showGroup && <p className="mb-1 mt-4 hidden px-3 text-xs font-medium text-muted-foreground first:mt-0 lg:block">{s.group}</p>}
+                  {showGroup && <p className="mb-1 mt-4 hidden px-3 text-xs font-medium text-muted-foreground first:mt-0 lg:block">{s.group === 'You' ? k('groupYou') : k('groupWorkspace')}</p>}
                   <button
                     type="button"
                     onClick={() => go(s.id)}

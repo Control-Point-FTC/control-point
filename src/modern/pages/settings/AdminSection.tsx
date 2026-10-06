@@ -7,7 +7,7 @@ import { Button, Input, Label, Skeleton, Textarea, ToggleGroup, ToggleGroupItem 
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { VoiceSettingsSection } from '../../../components/voice/VoiceSettingsSection';
-import { useDraft } from '../../drafts';
+import { getDraft, useDraft } from '../../drafts';
 import { EmptyState } from '../../ui/page';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 
@@ -48,16 +48,23 @@ export function AdminSection({ settings = {}, isAdmin, isOwner, hasPerm, refresh
   const [savingAi, setSavingAi] = useState(false);
 
   const saveCriteria = async () => {
+    const submitted = criteria;
     setSavingCriteria(true);
-    try { await saveSettings([{ key: 'excuse_criteria', value: criteriaValue }]); setCriteria(null); refresh?.settings?.(); notify('Settings saved', 'success'); }
+    try {
+      await saveSettings([{ key: 'excuse_criteria', value: criteriaValue }]);
+      if (getDraft('settings:admin:criteria', null) === submitted) setCriteria(null);
+      refresh?.settings?.(); notify('Settings saved', 'success');
+    }
     catch { notify('Could not save settings', 'error'); }
     finally { setSavingCriteria(false); }
   };
   const saveAi = async () => {
+    const submitted = ai;
     setSavingAi(true);
     try {
       await saveSettings([...AI_KEYS.map((k) => ({ key: k.key, value: aiValues[k.key] })), { key: 'chat_provider', value: aiValues.chat_provider }]);
-      setAi(null); refresh?.settings?.(); notify('AI limits saved', 'success');
+      if (getDraft('settings:admin:ai', null) === submitted) setAi(null);
+      refresh?.settings?.(); notify('AI limits saved', 'success');
     } catch { notify('Could not save AI limits', 'error'); }
     finally { setSavingAi(false); }
   };

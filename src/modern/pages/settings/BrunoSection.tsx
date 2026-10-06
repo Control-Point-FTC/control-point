@@ -58,7 +58,8 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
       next ? 'Teaching mode on — Bruno will walk you through it.' : 'Teaching mode off — Bruno will write the code for you.');
   };
   const changeLevel = (next: string) => {
-    if (!next || next === level) return;
+    // One save at a time (as in the Legacy modal), so replies can't land out of order.
+    if (!next || next === level || busy === 'level') return;
     const prev = level;
     setLevel(next);
     void saveProfile('level', { bruno_output_level: next }, () => setLevel(prev), `Output length: ${next}.`);
@@ -89,8 +90,8 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
     }
   };
 
-  const seg = (value: string, onChange: (v: string) => void, opts: [string, string][], label: string) => (
-    <ToggleGroup type="single" value={value} onValueChange={(v) => { if (v) onChange(v); }} aria-label={label} className="flex-wrap justify-start">
+  const seg = (value: string, onChange: (v: string) => void, opts: [string, string][], label: string, disabled?: boolean) => (
+    <ToggleGroup type="single" value={value} disabled={disabled} onValueChange={(v) => { if (v) onChange(v); }} aria-label={label} className="flex-wrap justify-start">
       {opts.map(([v, l]) => <ToggleGroupItem key={v} value={v} className="px-3 max-sm:h-10">{l}</ToggleGroupItem>)}
     </ToggleGroup>
   );
@@ -102,7 +103,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
           <span className="flex items-center gap-2"><GraduationCap className={cn('size-4', teach ? 'text-accent' : 'text-muted-foreground')} /><Switch id="bruno-teach" checked={teach} disabled={busy === 'teach'} onCheckedChange={toggleTeach} /></span>
         </SettingsRow>
         <SettingsRow label="Answer length" description="Longer answers use more AI tokens — typically only a few dollars a month for a team.">
-          {seg(level, changeLevel, [['low', 'Short'], ['medium', 'Medium'], ['high', 'Long']], 'Output length')}
+          {seg(level, changeLevel, [['low', 'Short'], ['medium', 'Medium'], ['high', 'Long']], 'Output length', busy === 'level')}
         </SettingsRow>
       </SettingsGroup>
 

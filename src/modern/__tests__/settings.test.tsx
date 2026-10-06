@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
+import i18n from '../../i18n';
 import { MemoryRouter } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
@@ -39,7 +40,7 @@ beforeEach(() => {
 const me = { id: 7, name: 'Ada', role: 'Builder', email: 'ada@x.test', team_id: 1, interface_mode: 'modern', hasPassword: true, presence_status: 'online', scopes: '["tasks"]', is_board: 1 };
 const team = { id: 1, name: 'Robo', number: '123', ftc_team_number: 123, access_code: 'JOIN-42' };
 
-function setup({ section = 'profile', admin = true, owner = false, teams = [team], user = me } = {}) {
+function setup({ section = 'profile', admin = true, owner = false, teams = [team] as any[], user = me as any } = {}) {
   const props = {
     currentUser: user, teams, isAdmin: admin, isOwner: owner, hasPerm: (p: string) => admin && p !== 'manage_voice',
     settings: { excuse_criteria: 'old rules' }, refresh: { members: vi.fn(), settings: vi.fn() },
@@ -151,3 +152,52 @@ describe('Modern Settings — workspace & admin', () => {
     expect(screen.getByText('2 KB')).toBeInTheDocument();
   });
 });
+
+describe('Modern Settings — review regressions', () => {
+  it('a profile save that finishes late never wipes newer edits', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/profile'
+      ? new Promise((res) => { finish = () => res({ ok: true, json: async () => ({ user: { id: 7, name: 'Ada L' } }) }); })
+      : json({})));
+    setup();
+    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Ada L' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Captain' } });
+    await act(async () => { finish(); });
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Captain');
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+  });
+
+  it('"Use team default" previews the team colour', () => {
+    const user = { ...me, accent_color: '#ff0000' };
+    setup({ user, teams: [{ ...team, accent_color: '#00ff00' }] });
+    expect(document.documentElement.style.getPropertyValue('--color-accent')).toBe('#ff0000');
+    fireEvent.click(screen.getByRole('button', { name: /Use team default/ }));
+    expect(document.documentElement.style.getPropertyValue('--color-accent')).toBe('#00ff00');
+  });
+
+  it('locks answer length while a save is in flight', async () => {
+    let finish: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/profile'
+      ? new Promise((res) => { finish = () => res({ ok: true, json: async () => ({ user: me }) }); })
+      : json({})));
+    setup({ section: 'bruno' });
+    fireEvent.click(screen.getByRole('radio', { name: 'Long' }));
+    expect(screen.getByRole('radio', { name: 'Short' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('radio', { name: 'Short' }));
+    expect(api.apiFetch.mock.calls.filter((c) => c[0] === '/api/profile')).toHaveLength(1);
+    await act(async () => { finish(); });
+    expect(screen.getByRole('radio', { name: 'Short' })).not.toBeDisabled();
+  });
+
+  it('section names follow the chosen language', async () => {
+    await act(async () => { await i18n.changeLanguage('es'); });
+    try {
+      setup();
+      expect(screen.getByRole('button', { name: 'Cuenta y privacidad' })).toBeInTheDocument();
+    } finally {
+      await act(async () => { await i18n.changeLanguage('en'); });
+    }
+  });
+});
+

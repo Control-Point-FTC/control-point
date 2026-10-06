@@ -9,7 +9,7 @@ import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../componen
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { WorkspaceInterfaceDefault } from '../../InterfaceModePicker';
-import { useDraft } from '../../drafts';
+import { getDraft, useDraft } from '../../drafts';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 
 interface TeamDraft { name: string; ftc: string }
@@ -18,7 +18,8 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
   const navigate = useNavigate();
   const team = teams.find((t: any) => t.id === currentUser?.team_id);
   const savedFtc = team?.ftc_team_number ? String(team.ftc_team_number) : /^\d+$/.test(String(team?.number ?? '').trim()) ? String(team.number).trim() : '';
-  const [draft, setDraft] = useDraft<TeamDraft | null>(`settings:team:${team?.id ?? 0}`, null);
+  const draftKey = `settings:team:${team?.id ?? 0}`;
+  const [draft, setDraft] = useDraft<TeamDraft | null>(draftKey, null);
   const form: TeamDraft = draft ?? { name: team?.name || '', ftc: savedFtc };
   const set = (p: Partial<TeamDraft>) => setDraft({ ...form, ...p });
   const dirty = !!draft && (form.name !== (team?.name || '') || form.ftc !== savedFtc);
@@ -50,6 +51,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
   // workspace's display number, sent only when it changed (or wasn't linked).
   const save = async () => {
     if (!team?.id || !form.name.trim()) return;
+    const submitted = draft;
     setSaving(true);
     try {
       const body: any = { name: form.name.trim() };
@@ -63,8 +65,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       if (!res.ok) { notify(data.error || 'Could not save team settings.', 'error'); return; }
       onTeamSaved?.({ id: team.id, ...body });
       refresh?.settings?.();
-      setDraft(null);
-      setVerified(null);
+      if (getDraft(draftKey, null) === submitted) { setDraft(null); setVerified(null); }
       notify('Team settings saved.', 'success');
     } catch {
       notify('Could not save team settings.', 'error');
