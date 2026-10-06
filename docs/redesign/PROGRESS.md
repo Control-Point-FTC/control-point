@@ -390,3 +390,66 @@ One page with route-driven tabs: **Members** (`/teams`), **Roles** (`/roles`) an
   - Found and fixed the top bar saying "Team Settings".
   - No overflow afterwards.
 - **Screenshots:** `docs/redesign/screenshots/phase5/settings-*.jpg`.
+
+## Phase 6c: Messages
+
+**Shared logic:** `src/components/chat/useChatController.ts` holds `ChatView`'s state and handlers, moved mechanically. Every name `ChatView` declared is returned, so the Legacy JSX is untouched. It covers:
+- Optimistic socket sends, reconciled by `client_id`.
+- File upload (10 MB limit, paste and drop).
+- Mentions: `@Name` → `@[Name]`, plus `@everyone` and `@here`.
+- Reply, forward, copy and delete (optimistic, with rollback).
+- Reactions and the reaction picker.
+- Paging with the `before=` cursor.
+- Collapsed categories.
+- Admin actions: create, rename, move and drag-to-category for channels; create and rename for categories; and a `togglePostRestricted` with the same PATCH as Legacy's inline menu.
+
+The composer text and the pending file stay drafted. Pure formatters (mention pills, linkify, first URL, day dividers, file size) live in `components/chat/chatFormat.tsx`.
+
+### Modern Messages (`src/modern/pages/messages/`)
+Three panes (channels · conversation · people). On phones the side panes become sheets.
+- **Channels:**
+  - A workspace switcher, and an admin "+" menu for a new channel or category.
+  - Collapsible categories; channel rows with a lock for admin-only posting.
+  - Admin menus. Channels: rename inline, Move to (submenu), Admin-only posting, Delete (not `#general`). Categories: new channel here, rename, delete.
+  - Drag a channel onto a category.
+  - Voice channels below.
+- **Conversation:**
+  - Header with the channel name and topic, and a people toggle.
+  - "Load older messages".
+  - Sticky day pills.
+  - **Grouped runs:** consecutive messages from one sender within 5 minutes share one avatar and name; hovering a grouped line shows its time.
+  - Reply quotes jump to the original. Forwarded labels, mention pills and links.
+  - Images with a "no longer available" fallback; file cards.
+  - Rebuilt link-preview cards (same `/api/link-preview`).
+  - Reactions.
+  - A floating action bar (React · Reply · Forward · Copy · Delete) on hover, keyboard focus, or tap on touch devices.
+  - A "Drop to attach" overlay.
+- **Composer:**
+  - An @-mention suggestion list (Tab inserts the first).
+  - Reply banner and attachment preview chip.
+  - Auto-growing input, paperclip, Send.
+  - In admin-only channels, members see an "Only admins can post" banner instead.
+- **Forward:** a Command dialog listing channels.
+- **People:** online and offline lists with voice and video call buttons.
+
+### Permissions (unchanged)
+- Delete is offered for your own messages or to admins. The server now enforces this too (Control-Point-FTC/control-point#37).
+- The channel and category admin menus need admin.
+- The client's "can post in a restricted channel" check still uses `isAdmin`, as in Legacy; the server uses `manage_members`.
+
+### Tests
+- **New (8 Modern Messages tests):**
+  - Same socket payload as Legacy, with the optimistic message.
+  - Mention suggestion, Tab to insert, and `@[Name]` conversion.
+  - Reply sends `reply_to_id`; forward sends `is_forwarded`, `forwarded_from` and the target channel.
+  - Members can delete only their own messages (optimistic DELETE).
+  - Admin-only channels block members from posting.
+  - **A half-typed message survives a remount.**
+  - The admin-only toggle sends the Legacy PATCH.
+  - Loading older messages uses the `before=` cursor.
+- **Totals:** frontend suite green apart from the known Windows-only ftcCache failures. `tsc` is clean.
+- **Local QA:**
+  - 1440 px three-pane layout.
+  - 375 px: no overflow, every target ≥44 px.
+  - A **live socket round trip** on the local server: the message appears once, as one row, confirmed by the server echo.
+- **Screenshots:** `docs/redesign/screenshots/phase6/messages-*.jpg`.
