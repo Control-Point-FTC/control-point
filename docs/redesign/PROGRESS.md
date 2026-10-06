@@ -441,3 +441,35 @@ The ⌘J side panel (`BrunoPanel`) is shared by both modes and still uses the Le
 - **Local QA:**
   - 1440 px: the empty state, and a live send. The server error ("AI not configured" locally) is shown.
   - 375 px: no overflow, every target ≥44 px, the composer sits above the tab bar, and the middle scrolls.
+
+## Phase 7a: Predict
+
+### Shared controller (`src/components/predict/usePredictController.ts`)
+Legacy `PredictView` logic moved into a hook; the Legacy JSX is unchanged. Both modes now share:
+- `?season=&event=` sync in both directions, the advancing-events filter (championship parents skipped), the one automatic step back to last season, and the "not connected" detection.
+- The latest-wins forecast request (`load(force)`), the stale-forecast guard (a forecast only shows under its own event), team names, and Bruno's `predictSeason` / `predictEvent` context.
+- Status loading on mount and whenever the accuracy sheet opens.
+- `usePartners` (Alliance scenarios; the cache is bypassed only for a Refresh made while the tab is open) and `preMatchCall` (Called it / Upset / No pre-match call).
+
+### Modern Predict (`src/modern/pages/predict/`)
+- **Header:** Compete · Beta eyebrow, and "How accurate is this?" as the page action.
+- **Event picker:** a season toggle plus a scrollable row of **event chips** (name, date, "upcoming"), replacing Legacy's dropdown.
+- **Stage stepper:** Before the event → Quals in progress → Quals finished → Alliances selected, with animated fills. Below it: slots (estimated or official), simulations, last update, and Refresh. Phones and tablets get short labels; screen readers always hear the full ones.
+- **Outlook:** a large animated chance-to-advance figure with a growing bar and the "from match results alone" comparison. Next to it, Captain / Picked / Win / Finalist stats. Below, a **seed strip** (one cell per seed: the likely range lit, the average marked) and an animated points breakdown.
+- **Alliance:** ranked partner or captain cards (two columns on desktop), with "Best fit", ± points badges and growing bars.
+- **Field:** a new **team search**. Desktop gets a table; phones get a list. Our team is marked "You", and prequalified teams show "Qualified".
+- **Matches:** new All / Upcoming / Played filter, plus the "Only team N's matches" switch. Each row shows the red side, a win-odds split bar and the blue side; scores sit next to each side. Results carry a Called it / Upset / No pre-match call badge.
+- **Accuracy:** a kit sheet (right side on desktop, bottom on phones). It shows live-season metric tiles, advancement scores per stage, back-test tiles, and a new **calibration scatter** (predicted vs actual against the diagonal).
+- **States:** "warming up" (503) with Try again, "No forecast for this event" (422), other errors with Try again, and "Connect your FTC team" → `/settings?section=workspace`.
+- **Assumptions:** a collapsible "What this assumes" section.
+
+### Tests
+- **New (9 Modern Predict tests):** default event and Bruno context; the stale guard when switching events; matches, results, calls and filters; field search; alliance ranking, with Refresh forcing both the forecast and the scenarios; the accuracy sheet refetching on open; advancement scores with no played calls; the 422 and 503 states; and the not-connected link.
+- The 7 Legacy PredictView tests still pass on the shared controller.
+- **Totals:** 471 frontend tests pass; the only failures are the 2 known Windows-only ftcCache tests. `tsc` is clean.
+- **Local QA** (real local engine, team 4215, 2025–26):
+  - 1440 dark: Outlook and Matches.
+  - 768 light: no page overflow.
+  - 390 dark: Field, Matches and the accuracy sheet. No overflow, and every target is ≥44 px (the switch uses the kit's 44 px hit area).
+  - No real phone was available.
+- Screenshots: `docs/redesign/screenshots/phase7/`.
