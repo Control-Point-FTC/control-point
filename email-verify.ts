@@ -147,36 +147,48 @@ export async function issueVerificationCode(email: string): Promise<{ sent: true
 
 export type CodeCheck = { ok: true } | { ok: false; reason: "expired" | "invalid" | "locked" };
 
-/** Validate a submitted code. Wrong guesses are counted; too many locks the code. */
-export async function checkVerificationCode(email: string, code: string): Promise<CodeCheck> {
+/**
+ * Shared guess check. Every guess first reserves one attempt with a single
+ * conditional UPDATE (`attempts < max`), so overlapping requests can never
+ * share a counted attempt: at most VERIFY_MAX_ATTEMPTS guesses are ever
+ * compared against a code, however many arrive at once.
+ */
+async function checkGuess(email: string, code: string): Promise<{ result: CodeCheck; rowId?: number }> {
   const normalized = String(email || "").trim().toLowerCase();
   const row = (await dbGet(
-    "SELECT id, code_hash, expires_at, attempts FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
+    "SELECT id, code_hash, expires_at FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
     normalized
   )) as any;
-  if (!row) return { ok: false, reason: "invalid" };
+  if (!row) return { result: { ok: false, reason: "invalid" } };
   if (new Date(row.expires_at).getTime() < Date.now()) {
     await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-    return { ok: false, reason: "expired" };
+    return { result: { ok: false, reason: "expired" } };
   }
-  if (row.attempts >= VERIFY_MAX_ATTEMPTS) {
+  // Reserve the attempt atomically before comparing.
+  const reserved = await dbRun(
+    "UPDATE email_verification_codes SET attempts = attempts + 1 WHERE id = ? AND attempts < ?",
+    row.id, VERIFY_MAX_ATTEMPTS
+  );
+  if (!reserved.changes) {
     await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-    return { ok: false, reason: "locked" };
+    return { result: { ok: false, reason: "locked" } };
   }
   const guess = hashCode(String(code || "").trim());
   const expected = Buffer.from(row.code_hash, "hex");
   const actual = Buffer.from(guess, "hex");
   const match = expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-  if (!match) {
-    const attempts = row.attempts + 1;
-    if (attempts >= VERIFY_MAX_ATTEMPTS) {
-      await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-      return { ok: false, reason: "locked" };
-    }
-    await dbRun("UPDATE email_verification_codes SET attempts = ? WHERE id = ?", attempts, row.id);
-    return { ok: false, reason: "invalid" };
+  if (match) return { result: { ok: true }, rowId: row.id };
+  const now = (await dbGet("SELECT attempts FROM email_verification_codes WHERE id = ?", row.id)) as any;
+  if (!now || now.attempts >= VERIFY_MAX_ATTEMPTS) {
+    await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
+    return { result: { ok: false, reason: "locked" } };
   }
-  return { ok: true };
+  return { result: { ok: false, reason: "invalid" } };
+}
+
+/** Validate a submitted code. Wrong guesses are counted; too many locks the code. */
+export async function checkVerificationCode(email: string, code: string): Promise<CodeCheck> {
+  return (await checkGuess(email, code)).result;
 }
 
 /**
@@ -187,36 +199,10 @@ export async function checkVerificationCode(email: string, code: string): Promis
  * password reset.
  */
 export async function consumeVerificationCode(email: string, code: string): Promise<CodeCheck> {
-  const normalized = String(email || "").trim().toLowerCase();
-  const row = (await dbGet(
-    "SELECT id, code_hash, expires_at, attempts FROM email_verification_codes WHERE email = ? ORDER BY id DESC LIMIT 1",
-    normalized
-  )) as any;
-  if (!row) return { ok: false, reason: "invalid" };
-  if (new Date(row.expires_at).getTime() < Date.now()) {
-    await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-    return { ok: false, reason: "expired" };
-  }
-  if (row.attempts >= VERIFY_MAX_ATTEMPTS) {
-    await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-    return { ok: false, reason: "locked" };
-  }
-  const guess = hashCode(String(code || "").trim());
-  const expected = Buffer.from(row.code_hash, "hex");
-  const actual = Buffer.from(guess, "hex");
-  const match = expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
-  if (!match) {
-    const attempts = row.attempts + 1;
-    if (attempts >= VERIFY_MAX_ATTEMPTS) {
-      await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-      return { ok: false, reason: "locked" };
-    }
-    await dbRun("UPDATE email_verification_codes SET attempts = ? WHERE id = ?", attempts, row.id);
-    return { ok: false, reason: "invalid" };
-  }
-  // Atomic consume: only the request that actually deletes the row wins.
-  const del = await dbRun("DELETE FROM email_verification_codes WHERE id = ?", row.id);
-  if (del.changes === 0) return { ok: false, reason: "invalid" };
+  const { result, rowId } = await checkGuess(email, code);
+  if (!result.ok || rowId == null) return result;
+  const del = await dbRun("DELETE FROM email_verification_codes WHERE id = ?", rowId);
+  if (!del.changes) return { ok: false, reason: "invalid" };
   return { ok: true };
 }
 

@@ -7,6 +7,28 @@ import { X, Check, ChevronRight } from 'lucide-react';
 import { cn } from '../cn';
 
 const panel = 'bg-elevated text-text-base border border-line shadow-2xl';
+
+/**
+ * Our own portalled menus (the themed Select, marked data-cp-portal) render
+ * outside a Radix dialog's DOM. Treat clicks there as inside the dialog, and
+ * let a focused control that owns Escape (data-esc-owner, e.g. an open Select)
+ * close itself instead of the whole dialog.
+ */
+function outsideGuards<P extends { onPointerDownOutside?: (e: any) => void; onInteractOutside?: (e: any) => void; onEscapeKeyDown?: (e: any) => void }>(props: P, slot: string) {
+  const inPortal = (e: any) => {
+    const t = (e?.detail?.originalEvent?.target ?? e?.target) as Element | null;
+    return !!t?.closest?.('[data-cp-portal]');
+  };
+  return {
+    onPointerDownOutside: (e: any) => { if (inPortal(e)) e.preventDefault(); props.onPointerDownOutside?.(e); },
+    onInteractOutside: (e: any) => { if (inPortal(e)) e.preventDefault(); props.onInteractOutside?.(e); },
+    onEscapeKeyDown: (e: any) => {
+      const owner = (document.activeElement as Element | null)?.closest?.('[data-esc-owner]');
+      if (owner && owner.getAttribute('data-slot') !== slot) e.preventDefault();
+      props.onEscapeKeyDown?.(e);
+    },
+  };
+}
 const fade = 'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0';
 
 // --- Dialog -----------------------------------------------------------------
@@ -33,6 +55,7 @@ export function DialogContent({ className, children, showClose = true, ...props 
           className,
         )}
         {...props}
+        {...outsideGuards(props, 'dialog-content')}
       >
         {children}
         {showClose && (
@@ -80,6 +103,7 @@ export function SheetContent({ className, children, side = 'right', ...props }: 
         data-esc-owner=""
         className={cn(panel, 'fixed z-[81] flex flex-col gap-4 overflow-y-auto p-6', sides[side], fade, className)}
         {...props}
+        {...outsideGuards(props, 'sheet-content')}
       >
         {children}
         <D.Close className="absolute right-4 top-4 rounded-full p-1.5 text-text-muted transition-colors hover:bg-text-base/[0.08] hover:text-text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60">

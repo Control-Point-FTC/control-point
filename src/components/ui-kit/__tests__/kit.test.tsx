@@ -3,6 +3,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { Button, Badge, Dialog, DialogTrigger, DialogContent, DialogTitle, DialogDescription, Tabs, TabsList, TabsTrigger, TabsContent } from '..';
 import { Button as LegacyButton } from '../../ui';
 import { Send } from 'lucide-react';
+import { useState } from 'react';
+import { Select } from '../../Select';
 
 afterEach(cleanup);
 
@@ -66,6 +68,36 @@ describe('UI kit', () => {
     } finally {
       window.removeEventListener('keydown', onKey, true);
     }
+  });
+
+  it('a themed Select inside a dialog is usable and Escape closes only the menu', () => {
+    function Harness() {
+      const [v, setV] = useState('a');
+      return (
+        <Dialog defaultOpen>
+          <DialogContent>
+            <DialogTitle>Pick</DialogTitle><DialogDescription>Body</DialogDescription>
+            <Select aria-label="fruit" value={v} onChange={(e) => setV(e.target.value)}>
+              <option value="a">Apple</option><option value="b">Banana</option>
+            </Select>
+            <span data-testid="v">{v}</span>
+          </DialogContent>
+        </Dialog>
+      );
+    }
+    render(<Harness />);
+    const box = screen.getByRole('combobox', { name: 'fruit' });
+    fireEvent.click(box);
+    const menu = screen.getByRole('listbox');
+    expect(menu).toHaveAttribute('data-cp-portal');
+    // Escape while the menu is open closes the menu, not the dialog.
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(box);
+    fireEvent.pointerDown(screen.getByRole('option', { name: 'Banana' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Banana' }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('v').textContent).toBe('b');
   });
 
   it('tabs switch content', () => {

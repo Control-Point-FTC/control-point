@@ -5,6 +5,7 @@ import { streamBuildHelper, extractActionProposals } from '../services/aiService
 import { apiFetch } from '../services/api';
 import { Button, Input, Card } from './ui';
 import { Select as ThemedSelect } from './Select';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui-kit';
 
 export interface QuickAddThread {
   id: number;
@@ -143,25 +144,22 @@ Email to parse:
 
   const showFields = parsed || manual;
 
+  // Radix Dialog: moves focus inside on open, traps Tab, closes on Escape and
+  // restores focus to the opener on close.
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-xl rounded-2xl border border-text-base/10 bg-elevated p-5 shadow-2xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="Bruno quick add"
-      >
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent showClose={false} className="max-w-xl gap-0 p-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
-          <h3 className="text-base font-bold text-text-base flex items-center gap-2">
+          <DialogTitle className="text-base font-bold text-text-base flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-accent" /> Bruno quick add
-          </h3>
+          </DialogTitle>
           <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-text-base/50 hover:text-text-base hover:bg-text-base/10">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <p className="text-xs text-text-muted mb-4">
+        <DialogDescription className="text-xs text-text-muted mb-4">
           Paste an email — a new message, a reply, or a follow-up. Bruno detects the contact, subject, direction, and thread automatically.
-        </p>
+        </DialogDescription>
 
         {!showFields ? (
           <div className="space-y-3">
@@ -252,7 +250,7 @@ Email to parse:
             </div>
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
