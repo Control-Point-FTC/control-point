@@ -121,4 +121,30 @@ describe('Modern Bruno', () => {
     await waitFor(() => expect(screen.queryByRole('switch', { name: 'Share with the team' })).not.toBeInTheDocument());
     expect(screen.queryByRole('button', { name: 'Chat options' })).not.toBeInTheDocument();
   });
+
+  it('a finished reply keeps its "Thought for Ns"', async () => {
+    ai.streamBuildHelper.mockImplementation(async (msgs: any[], onChunk: (c: string) => void, chatId: number) => {
+      await new Promise((r) => setTimeout(r, 600));
+      onChunk('Here you go.');
+      history[chatId] = [...msgs.map((m: any) => ({ role: m.role, text: m.text })), { role: 'model', text: 'Here you go.' }];
+    });
+    setup();
+    fireEvent.change(await screen.findByLabelText('Message Bruno'), { target: { value: 'Think hard' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByText('Here you go.')).toBeInTheDocument(), { timeout: 3000 });
+    await waitFor(() => expect(screen.getByText(/Thought for/)).toBeInTheDocument());
+  });
+
+  it('switching chats cancels a rename so it can never hit the other chat', async () => {
+    chats = [CHATS[0], { ...CHATS[0], id: 13, title: 'Second chat' }];
+    setup();
+    await screen.findByText('Start with P.');
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Chat options' }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Rename/ }));
+    fireEvent.change(screen.getByLabelText('Chat title'), { target: { value: 'Renamed A' } });
+    fireEvent.click(screen.getAllByRole('button', { name: /Second chat/ })[0]);
+    await waitFor(() => expect(screen.queryByLabelText('Chat title')).not.toBeInTheDocument());
+    expect(api.apiFetch.mock.calls.some((c) => c[1]?.method === 'PATCH')).toBe(false);
+  });
 });
+

@@ -45,6 +45,9 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [liveThink, setLiveThink] = useState<LiveThink | null>(null);
+  // Thinking record per finished reply (by message index), so a completed
+  // answer can still show "Thought for Ns" and its steps.
+  const [thinkByIndex, setThinkByIndex] = useState<Record<number, LiveThink>>({});
   const abortRef = useRef<AbortController | null>(null);
   // Screenshots / PDFs attached to the next message — cleared on send, never saved.
   const [attached, setAttached] = useState<AttachedImage[]>([]);
@@ -94,6 +97,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     }
     setDismissedSwitch([]);
     setProposalState({});
+    setThinkByIndex({});
     (async () => {
       try {
         const res = await apiFetch(`/api/bruno/chats/${activeId}`);
@@ -111,19 +115,18 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
     let agg = '';
     const startedAt = Date.now();
     let gotFirst = false;
-    setLiveThink({
-      steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: opts.images ?? 0, pdfs: opts.pdfs ?? 0, history: next.length }),
-      startedAt,
-      thoughtMs: null,
-    });
+    let think: LiveThink = { steps: thinkingSteps({ page: getScreenContext()?.view ?? null, images: opts.images ?? 0, pdfs: opts.pdfs ?? 0, history: next.length }), startedAt, thoughtMs: null };
+    setLiveThink(think);
     const ac = new AbortController();
     abortRef.current = ac;
+    const replyIndex = next.length;
     try {
       await streamBuildHelper(next, (chunk) => {
         agg += chunk;
         if (!gotFirst && chunk.trim()) {
           gotFirst = true;
           const ms = Date.now() - startedAt;
+          think = { ...think, thoughtMs: ms };
           setLiveThink((t) => (t ? { ...t, thoughtMs: ms } : t));
         }
         stream.push(chunk);
@@ -137,6 +140,8 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
       stream.finish();
       abortRef.current = null;
       setLiveThink(null);
+      const done = { ...think, thoughtMs: think.thoughtMs ?? Date.now() - startedAt };
+      setThinkByIndex((m) => ({ ...m, [replyIndex]: done }));
     }
   };
 
@@ -257,7 +262,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   };
 
   /** Start a fresh conversation (the chat is created on first send). */
-  const newChat = () => { if (!busyRef.current) { setActiveId(null); setMessages([]); } };
+  const newChat = () => { if (!busyRef.current) { setActiveId(null); setMessages([]); setThinkByIndex({}); } };
 
   const myChats = chats.filter((c) => currentUser && c.member_id === currentUser.id);
   const teamChats = chats.filter((c) => !(currentUser && c.member_id === currentUser.id));
@@ -266,7 +271,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   return {
     name, chats, myChats, teamChats, chatsHasMore, loading, fetchChats,
     activeId, setActiveId, activeChat, isOwner, isAdmin, newChat,
-    messages, lastModelIdx, input, setInput, busy, liveThink, stream, send, stop,
+    messages, lastModelIdx, input, setInput, busy, liveThink, thinkByIndex, stream, send, stop,
     attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
     personaByChat, dismissedSwitch, proposalState, confirmProposals, dismissProposal, dismissSwitch, switchToBruno,
     renameChat, togglePublic, removeChat,

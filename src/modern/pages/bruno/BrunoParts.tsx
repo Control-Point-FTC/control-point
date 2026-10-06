@@ -137,8 +137,10 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss }:
 }
 
 /** One complete Bruno reply. Memoized: parsing runs once per distinct text. */
-export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, busy, proposal, switchDismissed, onConfirmProposals, onDismissProposal, onSwitchToBruno, onDismissSwitch }: {
+export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, busy, proposal, switchDismissed, onConfirmProposals, onDismissProposal, onSwitchToBruno, onDismissSwitch, think }: {
   text: string; index: number; isLastModel: boolean; busy: boolean;
+  /** Finished reply's thinking record — shown collapsed as "Thought for Ns". */
+  think?: LiveThink | null;
   proposal: { status: ProposalStatus; error?: string } | undefined; switchDismissed: boolean;
   onConfirmProposals: (index: number, proposals: ActionProposal[]) => void; onDismissProposal: (index: number) => void;
   onSwitchToBruno: () => void; onDismissSwitch: (index: number) => void;
@@ -150,6 +152,7 @@ export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, b
     <div className="flex gap-3">
       <BrunoAvatar className="mt-0.5" />
       <div className="min-w-0 flex-1 text-sm leading-relaxed">
+        {think && <BrunoThinking steps={think.steps} startedAt={think.startedAt} thoughtMs={think.thoughtMs} phase="done" />}
         <div><BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown></div>
         {proposals.length > 0 && status !== 'dismissed' && (
           <ProposalCard proposals={proposals} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />

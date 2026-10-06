@@ -48,7 +48,9 @@ export function BrunoPage(props: any) {
   const narrow = useIsNarrow();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [query, setQuery] = useState('');
+  // Bound to the chat it started on: switching chats cancels the edit.
   const [renaming, setRenaming] = useState(false);
+  useEffect(() => { setRenaming(false); }, [c.activeId]);
   const [title, setTitle] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const [starters, setStarters] = useState(() => Object.fromEntries(STARTERS.map((g) => [g.label, nextStarters({ greeting: '', prompts: g.prompts }, [], 2)])));
@@ -160,7 +162,7 @@ export function BrunoPage(props: any) {
                   {c.messages.map((m, i) => (m.role === 'user'
                     ? <UserTurn key={i} text={m.text} images={(m as any).images?.length} pdfs={(m as any).pdfs?.length} />
                     : <BrunoReply
-                        key={i} text={m.text} index={i} isLastModel={i === c.lastModelIdx} busy={c.busy}
+                        key={i} text={m.text} index={i} isLastModel={i === c.lastModelIdx} busy={c.busy} think={c.thinkByIndex[i]}
                         proposal={c.proposalState[i]} switchDismissed={c.dismissedSwitch.includes(i)}
                         onConfirmProposals={c.confirmProposals} onDismissProposal={c.dismissProposal}
                         onSwitchToBruno={c.switchToBruno} onDismissSwitch={c.dismissSwitch}
