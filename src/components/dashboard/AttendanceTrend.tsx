@@ -23,6 +23,48 @@ export function nextMeetDate(events: { date?: string | null }[] | undefined, tod
   return best;
 }
 
+export interface AttendancePoint { date: string; count: number | null; next?: boolean }
+
+/** The 14-day (or 14-meeting-day) present check-in series, plus one empty
+ *  slot for the next calendar event. Shared by the Legacy and Modern charts. */
+export function buildAttendanceSeries(attendance: any[], hiddenDates: string[] | undefined, events: { date: string }[] | undefined): AttendancePoint[] {
+  const last14CalendarDays = () => Array.from({ length: 14 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (13 - i));
+    return format(d, 'yyyy-MM-dd');
+  });
+  let dates: string[];
+  if (hiddenDates) {
+    const hidden = new Set(hiddenDates);
+    // Dates with actual check-in records are meeting days by definition —
+    // never hide them from the trend, even if they're in the hidden list.
+    const datesWithData = new Set((attendance || []).map((r: any) => r.date));
+    const meetingDays: string[] = [];
+    const d = new Date();
+    for (let i = 0; i < 120 && meetingDays.length < 14; i++) {
+      const ds = format(d, 'yyyy-MM-dd');
+      if (!hidden.has(ds) || datesWithData.has(ds)) meetingDays.unshift(ds);
+      d.setDate(d.getDate() - 1);
+    }
+    // Degenerate case (e.g. every weekday hidden): fall back to plain
+    // calendar days so the chart still renders something.
+    dates = meetingDays.length > 0 ? meetingDays : last14CalendarDays();
+  } else {
+    dates = last14CalendarDays();
+  }
+  const points: { date: string; count: number | null; next?: boolean }[] = dates.map((date) => ({
+    date: format(new Date(date + 'T12:00:00'), 'MMM dd'),
+    count: attendance?.filter((r: any) => r.date === date && (r.status === 'P' || r.status === 'L')).length || 0,
+  }));
+  // One empty slot for the next calendar event after today, so the line
+  // visibly ends at today with the next meeting marked. No upcoming event,
+  // no marker.
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const next = nextMeetDate(events, today);
+  if (next) points.push({ date: format(new Date(next + 'T12:00:00'), 'MMM dd'), count: null, next: true });
+  return points;
+}
+
 interface AttendanceTrendProps {
   attendance: any[];
   onNavigate: (path: string) => void;
@@ -40,43 +82,7 @@ interface AttendanceTrendProps {
 export function AttendanceTrendChart({ attendance, className = 'h-44', hiddenDates, events }: { attendance: any[]; className?: string; hiddenDates?: string[]; events?: { date: string }[] }) {
   const { theme } = useTheme();
 
-  const chartData = useMemo(() => {
-    const last14CalendarDays = () => Array.from({ length: 14 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (13 - i));
-      return format(d, 'yyyy-MM-dd');
-    });
-    let dates: string[];
-    if (hiddenDates) {
-      const hidden = new Set(hiddenDates);
-      // Dates with actual check-in records are meeting days by definition —
-      // never hide them from the trend, even if they're in the hidden list.
-      const datesWithData = new Set((attendance || []).map((r: any) => r.date));
-      const meetingDays: string[] = [];
-      const d = new Date();
-      for (let i = 0; i < 120 && meetingDays.length < 14; i++) {
-        const ds = format(d, 'yyyy-MM-dd');
-        if (!hidden.has(ds) || datesWithData.has(ds)) meetingDays.unshift(ds);
-        d.setDate(d.getDate() - 1);
-      }
-      // Degenerate case (e.g. every weekday hidden): fall back to plain
-      // calendar days so the chart still renders something.
-      dates = meetingDays.length > 0 ? meetingDays : last14CalendarDays();
-    } else {
-      dates = last14CalendarDays();
-    }
-    const points: { date: string; count: number | null; next?: boolean }[] = dates.map((date) => ({
-      date: format(new Date(date + 'T12:00:00'), 'MMM dd'),
-      count: attendance?.filter((r: any) => r.date === date && (r.status === 'P' || r.status === 'L')).length || 0,
-    }));
-    // One empty slot for the next calendar event after today, so the line
-    // visibly ends at today with the next meeting marked. No upcoming event,
-    // no marker.
-    const today = format(new Date(), 'yyyy-MM-dd');
-    const next = nextMeetDate(events, today);
-    if (next) points.push({ date: format(new Date(next + 'T12:00:00'), 'MMM dd'), count: null, next: true });
-    return points;
-  }, [attendance, hiddenDates, events, theme]);
+  const chartData = useMemo(() => buildAttendanceSeries(attendance, hiddenDates, events), [attendance, hiddenDates, events, theme]);
 
   const dataMax = useMemo(() => Math.max(0, ...chartData.map((d) => d.count ?? 0)), [chartData]);
   const lastIdx = useMemo(() => chartData.reduce((acc, d, i) => (d.count != null ? i : acc), -1), [chartData]);

@@ -1,4 +1,5 @@
 // In-app dialog system — replaces every native confirm()/alert().
+import { toast as sonnerToast } from 'sonner';
 // A module-level singleton: call confirmDialog()/notify() from anywhere,
 // render <DialogHost /> once near the app root.
 
@@ -89,6 +90,14 @@ export function promptDialog(opts: PromptOptions): Promise<boolean> {
 
 /** Fire-and-forget toast notification. Auto-dismisses after ~4s. */
 export function notify(message: string, kind: ToastKind = 'info'): void {
+  // Modern experience: shadcn Sonner toasts (mounted by the Modern shell).
+  if (typeof document !== 'undefined' && document.documentElement.dataset.ui === 'modern') {
+    playNotificationSound();
+    if (kind === 'success') sonnerToast.success(message);
+    else if (kind === 'error') sonnerToast.error(message);
+    else sonnerToast(message);
+    return;
+  }
   const id = nextToastId++;
   toasts.push({ id, message, kind });
   emit();
