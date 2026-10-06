@@ -29,7 +29,9 @@ export function MessagesPage(props: any) {
     messages, setMessages, msgCache, msgExhausted, members, currentUser, socket, channels, setChannels, activeChannelId, setActiveChannelId,
     isAdmin, handleCreateChannel, handleCreateCategory, handleRenameCategory, handleMoveChannel, memberMenuItems,
   });
-  const [channelsOpen, setChannelsOpen] = useState(false);
+  // The controller owns the phone channel sheet (it closes it after a channel is created).
+  const channelsOpen = ctl.showChannelsMobile;
+  const setChannelsOpen = ctl.setShowChannelsMobile;
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [showPeople, setShowPeople] = useState(true);
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
@@ -54,7 +56,7 @@ export function MessagesPage(props: any) {
           <p className="mb-1 px-2 text-xs font-medium text-muted-foreground">{label} — {group.length}</p>
           <ul className="space-y-0.5">
             {group.map((m: any) => (
-              <li key={m.id} className="group/p flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60">
+              <li key={m.id} data-cm-type="member-chat" data-cm-id={m.id} className="group/p flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/60">
                 <PresenceAvatar member={m} className="size-8" />
                 <span className="min-w-0 flex-1">
                   <span className={cn('block truncate text-sm', label === 'Offline' && 'text-muted-foreground')}>{m.name}</span>
@@ -76,16 +78,16 @@ export function MessagesPage(props: any) {
 
   // Group consecutive messages from the same sender (within 5 minutes) and
   // insert a day divider whenever the date changes.
-  const rows: { key: string; node: React.ReactNode }[] = [];
+  // Each day is its own section, so its sticky pill stays pinned while that
+  // day's messages scroll past.
+  const days: { key: string; label: string; rows: { key: string; node: React.ReactNode }[] }[] = [];
+  let rows: { key: string; node: React.ReactNode }[] = [];
   let prev: any = null;
   for (const msg of list) {
     const day = msg.timestamp ? new Date(msg.timestamp).toDateString() : '';
     if (!prev || (prev.timestamp && new Date(prev.timestamp).toDateString() !== day)) {
-      rows.push({ key: `d-${day}-${msg.id}`, node: (
-        <div className="sticky top-0 z-10 my-3 flex justify-center" role="separator">
-          <span className="rounded-full border border-border bg-background/90 px-3 py-0.5 text-xs text-muted-foreground backdrop-blur">{msg.timestamp ? formatDayDivider(msg.timestamp) : ''}</span>
-        </div>
-      ) });
+      rows = [];
+      days.push({ key: `d-${day}-${msg.id}`, label: msg.timestamp ? formatDayDivider(msg.timestamp) : '', rows });
       prev = null;
     }
     const grouped = !!prev && prev.sender_id === msg.sender_id && !msg.reply_to_id && !msg.is_forwarded
@@ -148,7 +150,14 @@ export function MessagesPage(props: any) {
                 <p className="font-display text-xl font-semibold">Welcome to #{ch?.name || 'general'}</p>
                 <p className="mt-1 text-sm text-muted-foreground">{ch?.topic || 'This is the start of the channel.'}</p>
               </motion.div>
-            ) : rows.map((r) => <div key={r.key}>{r.node}</div>)}
+            ) : days.map((d) => (
+              <section key={d.key} aria-label={d.label}>
+                <div className="sticky top-0 z-10 my-3 flex justify-center" role="separator">
+                  <span className="rounded-full border border-border bg-background/90 px-3 py-0.5 text-xs text-muted-foreground backdrop-blur">{d.label}</span>
+                </div>
+                {d.rows.map((r) => <div key={r.key}>{r.node}</div>)}
+              </section>
+            ))}
           </div>
 
           {ctl.dragging && (
@@ -164,7 +173,7 @@ export function MessagesPage(props: any) {
                   <ul role="listbox" aria-label="Mention suggestions" className="absolute bottom-full left-0 mb-2 w-72 overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg">
                     {mentions.map((m: any, i: number) => (
                       <li key={m.id}>
-                        <button type="button" role="option" aria-selected={i === 0} onMouseDown={(e) => { e.preventDefault(); pickMention(m); }} className={cn('flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted', i === 0 && 'bg-muted/60')}>
+                        <button type="button" role="option" aria-selected={i === 0} onMouseDown={(e) => e.preventDefault()} onClick={() => pickMention(m)} className={cn('flex min-h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted', i === 0 && 'bg-muted/60')}>
                           {m.special ? <span className="flex size-6 items-center justify-center rounded-full bg-accent/15 text-xs text-accent">@</span> : <PresenceAvatar member={m} className="size-6" />}
                           <span className="font-medium">{m.special ? `@${m.name}` : m.name}</span>
                           {m.special && <span className="truncate text-xs text-muted-foreground">{m.special}</span>}

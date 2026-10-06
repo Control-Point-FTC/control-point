@@ -41,7 +41,7 @@ beforeEach(() => {
   clearDrafts();
 });
 
-function Harness({ admin = false, channel = 1, msgs = MSGS }: { admin?: boolean; channel?: number; msgs?: any[] }) {
+function Harness({ admin = false, channel = 1, msgs = MSGS, cats = [], createCategory = vi.fn() }: { admin?: boolean; channel?: number; msgs?: any[]; cats?: any[]; createCategory?: any }) {
   const [messages, setMessages] = useState<any[]>(msgs);
   const [channels, setChannels] = useState<any[]>(CHANNELS);
   const [activeChannelId, setActiveChannelId] = useState<number>(channel);
@@ -52,8 +52,8 @@ function Harness({ admin = false, channel = 1, msgs = MSGS }: { admin?: boolean;
       messages={messages} setMessages={setMessages} msgCache={msgCache} msgExhausted={msgExhausted}
       members={[me, grace]} currentUser={me} socket={socket} channels={channels} setChannels={setChannels}
       activeChannelId={activeChannelId} setActiveChannelId={setActiveChannelId} isAdmin={admin}
-      teams={[{ id: 1, name: 'Robo' }]} activeTeamName="Robo" chatCategories={[]}
-      handleCreateChannel={vi.fn()} handleDeleteChannel={vi.fn()} handleCreateCategory={vi.fn()} handleRenameCategory={vi.fn()}
+      teams={[{ id: 1, name: 'Robo' }]} activeTeamName="Robo" chatCategories={cats}
+      handleCreateChannel={vi.fn()} handleDeleteChannel={vi.fn()} handleCreateCategory={createCategory} handleRenameCategory={vi.fn()}
       handleDeleteCategory={vi.fn()} handleMoveChannel={vi.fn()} memberMenuItems={() => []}
     />
   );
@@ -137,4 +137,32 @@ describe('Modern Messages', () => {
     expect(api.apiFetch).toHaveBeenCalledWith('/api/messages?channel_id=1&limit=100&before=1000');
     expect(await screen.findByText('ancient')).toBeInTheDocument();
   });
+
+  it('mention suggestions work from the keyboard (click/Enter on an option)', () => {
+    setup();
+    const box = screen.getByLabelText('Message #general');
+    fireEvent.change(box, { target: { value: '@Gra' } });
+    fireEvent.click(screen.getByRole('option', { name: /Grace Hopper/ }));
+    expect((box as HTMLTextAreaElement).value).toBe('@Grace Hopper ');
+  });
+
+  it('keeps the new-category form open when creation fails', async () => {
+    setup({ admin: true, createCategory: vi.fn(async () => null) });
+    fireEvent.pointerDown(screen.getAllByRole('button', { name: 'New channel or category' })[0], { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /New category/ }));
+    fireEvent.change(screen.getAllByLabelText('Category name')[0], { target: { value: 'Build' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add' })[0]);
+    await waitFor(() => expect(screen.getAllByLabelText('Category name')[0]).toBeInTheDocument());
+  });
+
+  it('"New channel here" shows its form even on a collapsed category', async () => {
+    localStorage.setItem('cp-collapsed-cats-1', JSON.stringify([9]));
+    setup({ admin: true, cats: [{ id: 9, name: 'Build', position: 0 }] });
+    expect(screen.getAllByRole('button', { name: /Build/ })[0]).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.pointerDown(screen.getAllByRole('button', { name: 'Options for Build' })[0], { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /New channel here/ }));
+    expect(screen.getAllByLabelText('Channel name')[0]).toBeInTheDocument();
+    localStorage.removeItem('cp-collapsed-cats-1');
+  });
 });
+

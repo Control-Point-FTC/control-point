@@ -389,14 +389,17 @@ export function useChatController({ messages, setMessages, msgCache, msgExhauste
     }
   };
 
-  const handleCreateCategorySubmit = async () => {
+  /** Resolves true when the category was created (callers keep the form open on failure). */
+  const handleCreateCategorySubmit = async (): Promise<boolean> => {
     const name = newCategoryName.trim();
-    if (!name) return;
+    if (!name) return false;
     const cat = await handleCreateCategory(name);
     if (cat) {
       setNewCategoryName('');
       setCreatingCategory(false);
+      return true;
     }
+    return false;
   };
 
   const handleRenameCategorySubmit = async () => {

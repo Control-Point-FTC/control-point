@@ -125,7 +125,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
 
       <nav aria-label="Channels" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
         {newCatOpen && (
-          <form className="mx-2 mb-3 flex gap-1.5" onSubmit={async (e) => { e.preventDefault(); await ctl.handleCreateCategorySubmit(); setNewCatOpen(false); }}>
+          <form className="mx-2 mb-3 flex gap-1.5" onSubmit={async (e) => { e.preventDefault(); if (await ctl.handleCreateCategorySubmit()) setNewCatOpen(false); }}>
             <Input autoFocus value={ctl.newCategoryName} onChange={(e) => ctl.setNewCategoryName(e.target.value)} placeholder="Category name" aria-label="Category name" className="h-9" onKeyDown={(e) => { if (e.key === 'Escape') setNewCatOpen(false); }} />
             <Button type="submit" size="sm" disabled={!ctl.newCategoryName.trim()}>Add</Button>
           </form>
@@ -165,7 +165,9 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
                   </DropdownMenu>
                 )}
               </div>
-              {!collapsed && <div className="mt-0.5 space-y-0.5">{newChannelForm(cat.id)}{list.map(channelRow)}</div>}
+              {/* The new-channel form shows even on a collapsed category. */}
+              {newChannelForm(cat.id)}
+              {!collapsed && <div className="mt-0.5 space-y-0.5">{list.map(channelRow)}</div>}
             </section>
           );
         })}
