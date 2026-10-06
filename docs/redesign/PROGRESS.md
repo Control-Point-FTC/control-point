@@ -1101,6 +1101,19 @@ Everything that floats over every page now has a Modern version, chosen by `ByMo
 - **Rundown:** [`Control-Point-2026-Redesign.pdf`](Control-Point-2026-Redesign.pdf) covers every change, what was rebuilt and how, in 8 pages.
 - **Final suite:** 684 tests run, all pass except the 2 known Windows-only `ftcCache` tests.
 
+## Phase 10a: Call participant options
+
+Phase 10 rebuilds the last Classic widgets that were still embedded inside Modern pages. It starts with the call participant menu.
+- **Shared logic (`components/voice/useParticipantActions.ts`):** the same actions as Classic's `ParticipantMenu` (whose JSX is unchanged):
+  - Local pin, spotlight and volume.
+  - Moderator mute, deafen, disable video, stop screen share, move to channel, global spotlight, and remove after confirmation.
+- **Modern `ParticipantOptions`:**
+  - A kit Popover anchored where you tapped, with the participant's name and avatar.
+  - Personal options, and a kit Slider for their volume (hidden on yourself).
+  - A Moderate section for moderators, with an inline channel list for Move.
+  - It renders into the call stage, so it stays visible in fullscreen. The kit `PopoverContent` gained an optional `container` prop for this.
+- **Tests:** 3 new (pin, moderator deafen / move / remove with confirm, member-only view). The Classic voice suite still passes.
+
 ## Phase 10b: Messages widgets
 
 The last Classic pieces inside Modern Messages are rebuilt.

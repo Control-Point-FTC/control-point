@@ -246,3 +246,47 @@ describe('9f review fixes', () => {
   });
 });
 
+describe('Modern participant options (call stage)', () => {
+  const open = async (over: Record<string, unknown> = {}) => {
+    cleanup();
+    const v = makeVoiceMock({ status: 'connected', session, participants, expanded: true, canModerate: true, channels: [{ id: 3, name: 'Build room' }, { id: 4, name: 'Drive team' }], ...over });
+    setVoiceMock(v);
+    render(<CallStage />);
+    fireEvent.click(screen.getByRole('button', { name: /Ash, muted/ }));
+    return { v, menu: await screen.findByRole('menu', { name: 'Options for Ash' }) };
+  };
+
+  it('pins for me and closes', async () => {
+    const { v, menu } = await open();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Pin for me' }));
+    expect(v.setPersonalPin).toHaveBeenCalledWith(2);
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'Options for Ash' })).not.toBeInTheDocument());
+  });
+
+  it('moderators deafen, move to another channel and remove (after confirming)', async () => {
+    const { v, menu } = await open();
+    expect(within(menu).getByRole('menuitem', { name: 'Mute' })).toBeDisabled(); // already muted
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Deafen' }));
+    await waitFor(() => expect(v.moderate).toHaveBeenCalledWith('deafen', 2));
+    const second = await open();
+    const again = second.menu;
+    fireEvent.click(within(again).getByRole('menuitem', { name: 'Move to channel' }));
+    const targets = within(again).getByRole('menu', { name: 'Target channel' });
+    expect(within(targets).queryByText('Build room')).not.toBeInTheDocument(); // the current channel is left out
+    fireEvent.click(within(targets).getByRole('menuitem', { name: 'Drive team' }));
+    await waitFor(() => expect(second.v.moderate).toHaveBeenCalledWith('move', 2, { targetChannelId: 4 }));
+    dialog.confirmDialog.mockResolvedValueOnce(true);
+    const third3 = await open();
+    const third = third3.menu;
+    fireEvent.click(within(third).getByRole('menuitem', { name: 'Remove from call' }));
+    await waitFor(() => expect(third3.v.moderate).toHaveBeenCalledWith('remove', 2));
+    expect(dialog.confirmDialog).toHaveBeenCalled();
+  });
+
+  it('members without moderation see only personal options', async () => {
+    const { menu } = await open({ canModerate: false });
+    expect(within(menu).queryByText('Moderate')).not.toBeInTheDocument();
+    expect(within(menu).getByRole('slider', { name: 'Volume for Ash' })).toBeInTheDocument();
+  });
+});
+
