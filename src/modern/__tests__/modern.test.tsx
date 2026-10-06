@@ -87,6 +87,24 @@ describe('InterfaceModeProvider', () => {
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ interface_mode: 'legacy' }));
   });
 
+  it('falls back to the older successful save when the newer one fails', async () => {
+    const resolvers: ((v: any) => void)[] = [];
+    api.apiFetch.mockImplementation(() => new Promise((r) => { resolvers.push(r); }));
+    function Two() {
+      const { mode, setMode } = useInterfaceMode();
+      return (<div><span data-testid="mode">{mode}</span>
+        <button onClick={() => void setMode('modern')}>m</button><button onClick={() => void setMode('legacy')}>l</button></div>);
+    }
+    render(<InterfaceModeProvider user={{ id: 1, name: 'A', interface_mode: 'legacy' }} team={{}} onUserSaved={() => {}}><Two /></InterfaceModeProvider>);
+    fireEvent.click(screen.getByText('m'));
+    fireEvent.click(screen.getByText('l'));
+    await act(async () => { resolvers[0]({ ok: true, json: async () => ({ user: { id: 1, interface_mode: 'modern' } }) }); });
+    expect(screen.getByTestId('mode').textContent).toBe('legacy'); // newer choice still showing
+    await act(async () => { resolvers[1]({ ok: false, json: async () => ({ error: 'x' }) }); });
+    // The server holds Modern (the older save succeeded), so that's what shows.
+    expect(screen.getByTestId('mode').textContent).toBe('modern');
+  });
+
   it('uses the team default when the user has not chosen', () => {
     render(<InterfaceModeProvider user={{ id: 1 }} team={{ default_interface_mode: 'modern' }} onUserSaved={() => {}}><Probe /></InterfaceModeProvider>);
     expect(screen.getByTestId('mode').textContent).toBe('modern');

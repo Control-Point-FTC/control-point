@@ -47,7 +47,11 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
   const serverMode = isInterfaceMode(user?.interface_mode) ? user.interface_mode : null;
   // Optimistic override while a save is in flight (or after it fails we drop it).
   const [pending, setPending] = useState<InterfaceMode | null>(null);
-  useEffect(() => { setPending(null); }, [serverMode]);
+  // Last choice the server confirmed but that a newer save superseded before it
+  // returned. If that newer save then fails, this (not the stale prop) is what's
+  // actually stored, so the display falls back to it.
+  const [confirmed, setConfirmed] = useState<InterfaceMode | null>(null);
+  useEffect(() => { setPending(null); setConfirmed(null); }, [serverMode, user?.id]);
   // The membership currently shown. A save that finishes after a workspace
   // switch answers for the OLD membership and must not be merged into the new one.
   const memberIdRef = useRef<number | null>(user?.id ?? null);
@@ -55,7 +59,7 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
   // Only the newest save may apply its result; older responses are ignored.
   const saveSeq = useRef(0);
 
-  const mode = pending ?? resolveInterfaceMode(serverMode, teamDefault);
+  const mode = pending ?? confirmed ?? resolveInterfaceMode(serverMode, teamDefault);
 
   const setMode = useCallback(async (next: InterfaceMode) => {
     if (!user?.id) return false;
@@ -69,8 +73,12 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
         body: JSON.stringify({ name: user.name || '', role: user.role || '', interface_mode: next }),
       });
       const data = await res.json().catch(() => ({}));
-      if (seq !== saveSeq.current) return true; // superseded by a newer choice
       if (!res.ok || !data.user) throw new Error(data.error || 'save failed');
+      if (seq !== saveSeq.current) {
+        // Superseded: don't change the screen, but remember what the server holds.
+        if (memberIdRef.current === requestedFor) setConfirmed(next);
+        return true;
+      }
       // Stale answer (the user switched workspaces meanwhile): the choice is
       // saved per account on the server, so only adopt the mode, not the row.
       if (memberIdRef.current !== requestedFor || data.user.id !== requestedFor) {
@@ -80,7 +88,7 @@ export function InterfaceModeProvider({ user, team, onUserSaved, children }: {
       onUserSaved({ ...data.user, interface_mode: next });
       return true;
     } catch {
-      if (seq === saveSeq.current) setPending(null); // roll back to the saved mode
+      if (seq === saveSeq.current) setPending(null); // roll back to the last saved mode
       return false;
     }
   }, [user?.id, user?.name, user?.role, onUserSaved]);
