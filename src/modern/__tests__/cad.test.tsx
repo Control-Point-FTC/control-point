@@ -221,4 +221,33 @@ describe('Modern CAD', () => {
     expect(await screen.findByText('Late part')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByLabelText('Part name')).not.toBeInTheDocument());
   });
+
+  it('cancelling an invoice read drops it: the late reply never brings rows back', async () => {
+    let reply: (v: any) => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/cad/parts/import-invoice/parse') return new Promise((r) => { reply = r; });
+      return init?.method ? json({ id: 1 }) : json(db[url] ?? []);
+    });
+    setup('cad-parts');
+    fireEvent.click(await screen.findByRole('button', { name: /Import invoice/ }));
+    let dlg = await screen.findByRole('dialog');
+    fireEvent.change(within(dlg).getByLabelText(/Choose invoice files/), { target: { files: [new File(['x'], 'order.pdf')] } });
+    fireEvent.click(within(dlg).getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await act(async () => { reply({ ok: true, json: async () => ({ items: [{ name: 'Stale row', quantity: 1, unitPrice: 1 }] }) }); });
+    fireEvent.click(screen.getByRole('button', { name: /Import invoice/ }));
+    dlg = await screen.findByRole('dialog');
+    expect(within(dlg).queryByDisplayValue('Stale row')).not.toBeInTheDocument();
+    expect(within(dlg).getByRole('button', { name: /Parse with Bruno/ })).toBeInTheDocument();
+  });
+
+  it('a status change or delete refreshes every mounted CAD page', async () => {
+    setup('cad-reviews', true);
+    fireEvent.click(await screen.findByRole('button', { name: /Lift v2/ }));
+    const before = calls('/api/cad/reviews').length;
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: /Approve/ }));
+    await waitFor(() => expect(calls('/api/cad/reviews').length).toBeGreaterThan(before));
+  });
 });
+

@@ -127,7 +127,7 @@ export function useCadDocs() {
   const remove = async (id: number) => {
     if (!(await confirmDialog({ title: 'Unlink document?', message: 'This removes the link for the whole team.', confirmLabel: 'Unlink' }))) return;
     const r = await apiFetch(`/api/cad/docs/${id}`, { method: 'DELETE' }).catch(() => null);
-    if (r?.ok) { setDocs((p) => p.filter((d) => d.id !== id)); notify('Document unlinked.', 'success'); }
+    if (r?.ok) { setDocs((p) => p.filter((d) => d.id !== id)); cadChanged('/api/cad/docs'); notify('Document unlinked.', 'success'); }
     else notify('Could not unlink.', 'error');
   };
   return { docs, loaded, name, setName, url, setUrl, busy: lock.busy, add, remove };
@@ -149,12 +149,13 @@ export function useCadReviews({ currentUser, isAdmin }: { currentUser?: any; isA
     const d = r ? await r.json().catch(() => ({})) : {};
     if (!r?.ok) { notify(d.error || 'Status change failed.', 'error'); return; }
     setReviews((p) => p.map((x) => (x.id === id ? { ...x, status } : x)));
+    cadChanged('/api/cad/reviews');
     notify(`Marked as ${REVIEW_STATUS_LABELS[status]}.`, 'success');
   };
   const remove = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete review?', message: 'This removes the review and its comments.', confirmLabel: 'Delete' }))) return;
     const r = await apiFetch(`/api/cad/reviews/${id}`, { method: 'DELETE' }).catch(() => null);
-    if (r?.ok) { setReviews((p) => p.filter((x) => x.id !== id)); notify('Review deleted.', 'success'); }
+    if (r?.ok) { setReviews((p) => p.filter((x) => x.id !== id)); cadChanged('/api/cad/reviews'); notify('Review deleted.', 'success'); }
     else notify('Could not delete.', 'error');
   };
   /** Who may move a design to a status: admins anything (but never re-mark or leave Built); authors only submit / re-submit. */
@@ -252,7 +253,7 @@ export function useCadSnapshots({ currentUser, isAdmin }: { currentUser?: any; i
     try {
       const r = await apiFetch(`/api/cad/snapshots/${id}`, { method: 'DELETE' });
       const d = await r.json().catch(() => ({}));
-      if (r.ok) { setSnaps((p) => p.filter((x) => x.id !== id)); notify('Snapshot deleted.', 'success'); }
+      if (r.ok) { setSnaps((p) => p.filter((x) => x.id !== id)); cadChanged('/api/cad/snapshots'); notify('Snapshot deleted.', 'success'); }
       else notify(d.error || `Could not delete (HTTP ${r.status}).`, 'error');
     } catch (e: any) {
       notify(`Delete failed: ${e?.message || 'network error'}`, 'error');
@@ -307,7 +308,7 @@ export function useCadParts() {
   const remove = async (id: number) => {
     if (!(await confirmDialog({ title: 'Delete part?', message: 'Removes it from the BOM.', confirmLabel: 'Delete' }))) return;
     const r = await apiFetch(`/api/cad/parts/${id}`, { method: 'DELETE' }).catch(() => null);
-    if (r?.ok) { setParts((p) => p.filter((x) => x.id !== id)); notify('Part deleted.', 'success'); }
+    if (r?.ok) { setParts((p) => p.filter((x) => x.id !== id)); cadChanged('/api/cad/parts'); notify('Part deleted.', 'success'); }
     else notify('Could not delete.', 'error');
   };
   return { parts, loaded, load, grouped, total, remove, editing, setEditing, showInvoice, setShowInvoice };
@@ -452,7 +453,14 @@ export function useCadInvoiceImport(onDone: () => void) {
     }
   };
   /** Close the import: drop the reviewed rows. */
-  const discard = () => { if (!lock.held()) { rawSetItems([]); setFiles([]); } };
+  const discard = () => {
+    if (lock.held()) return;
+    // Invalidate a parse still running so it can't bring the rows back.
+    setDraft(INVOICE_SEQ_KEY, getDraft<number>(INVOICE_SEQ_KEY, 0) + 1);
+    setParsing(null);
+    rawSetItems([]);
+    setFiles([]);
+  };
   const selectedCount = items.filter((it) => it.selected).length;
   return { files, setFiles, parsing, items, importing: lock.busy, parse, updateItem, removeItem, toggleAll, importSelected, discard, selectedCount };
 }
