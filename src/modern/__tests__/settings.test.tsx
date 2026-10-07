@@ -190,14 +190,10 @@ describe('Modern Settings — review regressions', () => {
     expect(screen.getByRole('radio', { name: 'Short' })).not.toBeDisabled();
   });
 
-  it('section names follow the chosen language', async () => {
-    await act(async () => { await i18n.changeLanguage('es'); });
-    try {
-      setup();
-      expect(screen.getByRole('button', { name: 'Cuenta y privacidad' })).toBeInTheDocument();
-    } finally {
-      await act(async () => { await i18n.changeLanguage('en'); });
-    }
+  it('is English-only: no language picker', async () => {
+    setup({ section: 'appearance' });
+    expect(screen.queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument();
+    expect(i18n.language).toBe('en');
   });
 
   it('theme reset keeps unsaved name/title edits', async () => {
