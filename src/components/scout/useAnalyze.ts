@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamSearchHit, ShortlistEntry } from '../../types/ftcScout';
 import { fetchScoutEvent, fetchScoutTeam, pushRecentTeam, readRecentTeams, searchScoutTeams, type RecentTeam } from '../../services/ftcScoutApi';
 import { useDebounced } from '../../hooks/useDebounced';
-import { ANALYZE_GREETING, openBruno, setScoutingContext } from '../../services/brunoContext';
+import { setScoutingContext } from '../../services/brunoContext';
 import { eventAverages, teamMatches } from '../../utils/ftcAnalysis';
 import type { ShortlistPatch } from '../../utils/shortlist';
 import { setDraft, useDraft } from '../../modern/drafts';
@@ -37,15 +37,14 @@ export function useAnalyzeController({ season, myTeam, initialTeam = null }: { s
   const [recent, setRecent] = useState<RecentTeam[]>(readRecentTeams);
   const [pins, setPins] = useState<RecentTeam[]>(readPins);
 
-  // Tell Bruno what we're looking at, and open it with the scouting greeting.
+  // Tell Bruno what we're looking at, so the "Ask Bruno" buttons start with
+  // the scouting context. Bruno opens only when the user asks — opening it on
+  // every visit (audit UX-3) taught people to dismiss it.
   useEffect(() => {
     // The team open in the side panel wins while it's open.
     setScoutingContext({ mode: 'analyze', season, eventCode, selectedTeam: panelTeam?.number ?? selected?.number ?? null });
   }, [season, eventCode, selected, panelTeam]);
-  useEffect(() => {
-    openBruno({ greeting: ANALYZE_GREETING });
-    return () => setScoutingContext(null);
-  }, []);
+  useEffect(() => () => setScoutingContext(null), []);
 
   // Event picker defaults to the reference team's most recent/upcoming event.
   const refTeam = selected?.number ?? myTeam;
