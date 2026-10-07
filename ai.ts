@@ -499,12 +499,14 @@ export function buildCoachPrompt(digest: {
   const total = digest.openTaskTotal ?? digest.openTasks.length;
   const parts: string[] = [];
   if (digest.facts) {
+    // The facts are the single source for counts, dates and overdue status
+    // (computed in the team's timezone) — no second, differently-computed set.
     parts.push(digest.facts);
   } else {
     const taskLines = digest.openTasks.slice(0, 12).map((t) => `- [${t.status}] ${q(t.title)}${t.due ? ` (due ${t.due})` : ""}`);
     parts.push(`Open tasks (showing ${taskLines.length} of ${total}):\n${taskLines.join("\n") || "(none)"}`);
+    parts.push(`Team snapshot: ${digest.memberCount} active members, ${total} open tasks (${digest.overdueTasks} overdue), ${digest.recentMessages} messages in Control Point's team chat in the last 7 days, budget net $${digest.budgetNet.toFixed(2)}.`);
   }
-  parts.push(`Team snapshot: ${digest.memberCount} active members, ${total} open tasks (${digest.overdueTasks} overdue), ${digest.recentMessages} messages in Control Point's team chat in the last 7 days, budget net $${digest.budgetNet.toFixed(2)}.`);
   parts.push(`Low-stock parts (per inventory):\n${stockLines.join("\n") || "(none)"}`);
   parts.push(`Write the briefing.`);
   return parts.join("\n\n");

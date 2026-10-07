@@ -41,22 +41,40 @@ export function todayIn(tz: string, now: Date = new Date()): string {
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
-/** Weekday of a calendar date (a stored YYYY-MM-DD is already a local date). */
+/** A real YYYY-MM-DD calendar date (stored dates aren't always validated). */
+export function isCalendarDate(v: unknown): v is string {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/** Weekday of a calendar date (a stored YYYY-MM-DD is already a local date). "" if not a date. */
 export function weekdayOf(isoDate: string): string {
+  if (!isCalendarDate(isoDate)) return "";
   const [y, m, d] = isoDate.split("-").map(Number);
   return WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
 }
 
-/** "Sunday, October 11, 2026" */
+/** "Sunday, October 11, 2026" — a malformed stored value is shown quoted, never thrown on. */
 export function longDate(isoDate: string): string {
+  if (!isCalendarDate(isoDate)) return quoteUntrusted(String(isoDate ?? ""), 30);
   const [y, m, d] = isoDate.split("-").map(Number);
   return `${weekdayOf(isoDate)}, ${MONTHS[m - 1]} ${d}, ${y}`;
 }
 
-/** "Sun, Oct 11" */
+/** "Sun, Oct 11" — a malformed stored value is shown quoted, never thrown on. */
 export function shortDate(isoDate: string): string {
+  if (!isCalendarDate(isoDate)) return quoteUntrusted(String(isoDate ?? ""), 30);
   const [, m, d] = isoDate.split("-").map(Number);
   return `${weekdayOf(isoDate).slice(0, 3)}, ${MONTHS[m - 1].slice(0, 3)} ${d}`;
+}
+
+/** Local wall-clock time "HH:MM" in `tz`. */
+export function timeIn(tz: string, now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value || "00";
+  return `${get("hour")}:${get("minute")}`;
 }
 
 /** "14:00" -> "2:00 PM"; "" -> "" */
@@ -82,17 +100,27 @@ function daysBetween(a: string, b: string): number {
 
 export interface EventRow { id: number; title: string; date: string; start_time?: string; end_time?: string; location?: string; event_type?: string }
 
-export interface EventSeries { title: string; weekday: string; start?: string; end?: string; count: number; next: EventRow; ids: number[] }
+export interface EventSeries {
+  title: string; weekday: string; start?: string; end?: string;
+  /** 1 = every week, 2 = every other week. */
+  everyWeeks: 1 | 2;
+  count: number; next: EventRow;
+  /** Every occurrence, so later dates still map to their event ids. */
+  occurrences: { id: number; date: string }[];
+}
 
 /**
- * Weekly patterns among upcoming events: the same title on the same weekday
- * at the same time, at least 3 times. (The calendar stores each occurrence as
- * its own row, so "we meet on Sundays" has to be recognised, not assumed.)
+ * Recurring meetings among upcoming events: the same title, weekday, start
+ * and end time, at least 3 times, spaced exactly one week (or exactly two
+ * weeks) apart. Anything less regular is listed event by event — the facts
+ * must never claim a schedule the calendar doesn't show. (Each occurrence is
+ * its own calendar row, so a pattern has to be recognised, not assumed.)
  */
 export function findWeeklySeries(upcoming: EventRow[]): { series: EventSeries[]; rest: EventRow[] } {
   const groups = new Map<string, EventRow[]>();
   for (const e of upcoming) {
-    const key = `${String(e.title || "").trim().toLowerCase()}|${weekdayOf(e.date)}|${e.start_time || ""}`;
+    if (!isCalendarDate(e.date)) continue;
+    const key = `${String(e.title || "").trim().toLowerCase()}|${weekdayOf(e.date)}|${e.start_time || ""}|${e.end_time || ""}`;
     const g = groups.get(key);
     if (g) g.push(e); else groups.set(key, [e]);
   }
@@ -101,7 +129,14 @@ export function findWeeklySeries(upcoming: EventRow[]): { series: EventSeries[];
   for (const g of groups.values()) {
     if (g.length < 3) continue;
     g.sort((a, b) => a.date.localeCompare(b.date));
-    series.push({ title: g[0].title, weekday: weekdayOf(g[0].date), start: g[0].start_time, end: g[0].end_time, count: g.length, next: g[0], ids: g.map((e) => e.id) });
+    const gaps = g.slice(1).map((e, i) => daysBetween(g[i].date, e.date));
+    const step = gaps[0];
+    if ((step !== 7 && step !== 14) || gaps.some((x) => x !== step)) continue;
+    series.push({
+      title: g[0].title, weekday: weekdayOf(g[0].date), start: g[0].start_time, end: g[0].end_time,
+      everyWeeks: step === 7 ? 1 : 2, count: g.length, next: g[0],
+      occurrences: g.map((e) => ({ id: e.id, date: e.date })),
+    });
     for (const e of g) inSeries.add(e.id);
   }
   series.sort((a, b) => a.next.date.localeCompare(b.next.date) || String(a.start || "").localeCompare(String(b.start || "")));
@@ -112,6 +147,8 @@ export interface FactsInput {
   teamName: string;
   timeZone: string;
   today: string; // YYYY-MM-DD in timeZone
+  /** Local "HH:MM" in timeZone — an event that already ended today isn't "next". */
+  nowTime?: string;
   now: Date;
   activeMembers: { name: string }[];
   openTaskTotal: number;
@@ -145,7 +182,14 @@ export function formatWorkspaceFacts(f: FactsInput): string {
   L.push(`- Open tasks (per the task board): ${f.openTaskTotal} total — ${f.overdueTaskTotal} overdue, ${f.dueThisWeekTotal} due in the next 7 days, ${f.unassignedOpenTotal} unassigned. Completed in the last 7 days: ${f.doneLast7}.`);
 
   const { series, rest } = findWeeklySeries(f.upcoming);
-  const next = f.upcoming[0];
+  const nowTime = f.nowTime || "00:00";
+  // Next = first event not yet over: today's events count until they end
+  // (or start, when no end time is set; all-day events count all day).
+  const next = f.upcoming.find((e) => {
+    if (e.date !== f.today) return true;
+    const over = e.end_time || e.start_time;
+    return !over || over > nowTime;
+  });
   if (next) {
     const inDays = daysBetween(f.today, next.date);
     const when = inDays === 0 ? "today" : inDays === 1 ? "tomorrow" : `in ${inDays} days`;
@@ -154,7 +198,8 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     L.push(`- Upcoming calendar events: none scheduled.`);
   }
   for (const s of series) {
-    L.push(`- Recurring (per the calendar): ${q(s.title, 120)} — every ${s.weekday}${s.start ? `, ${timeRange(s.start, s.end)}` : ""}; next ${longDate(s.next.date)} (event #${s.next.id}); ${s.count} upcoming occurrences scheduled`);
+    const cadence = s.everyWeeks === 1 ? `every ${s.weekday}` : `every other ${s.weekday}`;
+    L.push(`- Recurring (per the calendar): ${q(s.title, 120)} — ${cadence}${s.start ? `, ${timeRange(s.start, s.end)}` : ""}; next ${longDate(s.next.date)} (event #${s.next.id}); ${s.count} upcoming occurrences scheduled`);
   }
   if (f.messagesLast7 != null) {
     L.push(`- Team chat (per Messaging, in Control Point): ${f.messagesLast7} message${f.messagesLast7 === 1 ? "" : "s"} in the last 7 days. (Control Point has no Discord, Slack or other chat integration.)`);
@@ -166,7 +211,8 @@ export function formatWorkspaceFacts(f: FactsInput): string {
   if (f.openTasks.length) {
     L.push(`OPEN TASKS — showing ${f.openTasks.length} of ${f.openTaskTotal}, soonest due first:`);
     for (const t of f.openTasks) {
-      const due = t.due_date ? `, due ${shortDate(String(t.due_date).slice(0, 10))}${String(t.due_date).slice(0, 10) < f.today ? " (overdue)" : ""}` : "";
+      const d = String(t.due_date || "").slice(0, 10);
+      const due = t.due_date ? `, due ${shortDate(d)}${isCalendarDate(d) && d < f.today ? " (overdue)" : ""}` : "";
       L.push(`  #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}`);
     }
   }
@@ -174,7 +220,9 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     // Event ids stay listed (Bruno proposes deletions by id); series are folded.
     L.push(`UPCOMING CALENDAR EVENTS — ${f.upcomingTotal} from today on${f.upcomingTotal > f.upcoming.length ? ` (first ${f.upcoming.length} shown)` : ""}:`);
     for (const s of series) {
-      L.push(`  ${q(s.title, 120)} every ${s.weekday}${s.start ? ` ${timeRange(s.start, s.end)}` : ""}: event ids ${s.ids.join(", ")}`);
+      // Every occurrence keeps its id and date (delete proposals need both).
+      const cadence = s.everyWeeks === 1 ? `every ${s.weekday}` : `every other ${s.weekday}`;
+      L.push(`  ${q(s.title, 120)} ${cadence}${s.start ? ` ${timeRange(s.start, s.end)}` : ""}: ${s.occurrences.map((o) => `#${o.id} ${shortDate(o.date)}`).join("; ")}`);
     }
     for (const e of rest) {
       L.push(`  #${e.id} ${q(e.title, 120)} — ${shortDate(e.date)}${e.start_time ? ` ${timeRange(e.start_time, e.end_time)}` : ""}${e.event_type && e.event_type !== "meeting" ? ` [${q(e.event_type, 20)}]` : ""}`);
@@ -188,18 +236,20 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
   const team = await db.dbGet("SELECT name FROM teams WHERE id = ?", teamId);
   if (!team) return null;
   const today = todayIn(timeZone, now);
+  // "Next 7 days" = today plus the following six dates; "last 7 days" = an
+  // exact 7×24 h cutoff (the same one the chat count uses).
   const weekAhead = (() => { const [y, m, d] = today.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + 7)).toISOString().slice(0, 10); })();
-  const weekAgo = (() => { const [y, m, d] = today.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d - 7)).toISOString().slice(0, 10); })();
+  const weekAgoIso = new Date(now.getTime() - 7 * 86400000).toISOString();
 
   const activeMembers = await db.dbAll("SELECT name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 ORDER BY name", teamId);
   const counts = await db.dbGet(
     `SELECT
        SUM(CASE WHEN status != 'done' THEN 1 ELSE 0 END) AS open_n,
        SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS overdue_n,
-       SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) >= ? AND substr(due_date, 1, 10) <= ? THEN 1 ELSE 0 END) AS week_n,
-       SUM(CASE WHEN status = 'done' AND completed_at IS NOT NULL AND substr(completed_at, 1, 10) >= ? THEN 1 ELSE 0 END) AS done7_n
+       SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) >= ? AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS week_n,
+       SUM(CASE WHEN status = 'done' AND completed_at IS NOT NULL AND completed_at >= ? THEN 1 ELSE 0 END) AS done7_n
      FROM tasks WHERE team_id = ?`,
-    today, today, weekAhead, weekAgo, teamId,
+    today, today, weekAhead, weekAgoIso, teamId,
   );
   // Assignees: the task_assignees join table, falling back to the legacy column.
   const unassigned = await db.dbGet(
@@ -235,7 +285,6 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     teamId, today,
   );
   const upcomingTotal = Number((await db.dbGet("SELECT COUNT(*) AS n FROM events WHERE team_id = ? AND date >= ?", teamId, today))?.n || 0);
-  const weekAgoIso = new Date(now.getTime() - 7 * 86400000).toISOString();
   const msgs = await db.dbGet(
     "SELECT COUNT(*) AS n FROM messages WHERE team_id = ? AND timestamp >= ? AND deleted_at IS NULL",
     teamId, weekAgoIso,
@@ -249,6 +298,7 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
     teamName: String(team.name || "the team"),
     timeZone,
     today,
+    nowTime: timeIn(timeZone, now),
     now,
     activeMembers: activeMembers.map((m: any) => ({ name: String(m.name || "") })),
     openTaskTotal: Number(counts?.open_n || 0),

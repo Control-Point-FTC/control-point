@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { FtcTeamProfile } from '../../../types/ftcScout';
 
@@ -45,15 +45,17 @@ describe('TeamScoutView', () => {
 });
 
 describe('AnalyzeView', () => {
-  it('opens Bruno with the Analyze greeting, sets the scouting context and has no compare UI', async () => {
+  it('sets the scouting context without opening Bruno unasked; Ask Bruno opens it with the greeting', async () => {
     api.fetchScoutTeam.mockResolvedValue(profile({ number: 4215, name: 'Mech', events: [] }));
     const opened: BrunoOpenDetail[] = [];
     const h = (e: Event) => opened.push((e as CustomEvent<BrunoOpenDetail>).detail);
     window.addEventListener(BRUNO_OPEN_EVENT, h);
     const { unmount } = render(<MemoryRouter><AnalyzeView season={2025} onSeasonChange={() => {}} myTeam={4215} /></MemoryRouter>);
-    await waitFor(() => expect(opened.length).toBeGreaterThan(0));
+    await waitFor(() => expect(getScoutingContext()).toMatchObject({ mode: 'analyze', season: 2025 }));
+    expect(opened).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: /Ask Bruno/ }));
+    await waitFor(() => expect(opened.length).toBe(1));
     expect(opened[0].greeting).toMatch(/scouting priorities/);
-    expect(getScoutingContext()).toMatchObject({ mode: 'analyze', season: 2025 });
     expect(screen.queryByText(/compare/i)).not.toBeInTheDocument();
     unmount();
     window.removeEventListener(BRUNO_OPEN_EVENT, h);
