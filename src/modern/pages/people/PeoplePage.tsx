@@ -17,6 +17,7 @@ import { WorkspacesTab } from './WorkspacesTab';
 import { InviteDialog } from './InviteDialog';
 import { JoinRequestsCard } from './JoinRequestsCard';
 import { JoinWorkspaceDialog } from './JoinWorkspaceDialog';
+import { CreateWorkspaceDialog } from './CreateWorkspaceDialog';
 
 type Tab = 'members' | 'roles' | 'workspaces';
 
@@ -28,25 +29,30 @@ export function PeoplePage(props: any) {
     : new URLSearchParams(location.search).get('tab') === 'workspaces' ? 'workspaces' : 'members';
   const go = (t: string) => navigate(t === 'roles' ? '/roles' : t === 'workspaces' ? '/teams?tab=workspaces' : '/teams');
 
-  const ctl = useMembersController({ members, refresh, onRefresh, currentUser, hasScope, onAddTeam });
+  const ctl = useMembersController({ members, refresh, onRefresh, currentUser, hasScope });
   const roles = useRolesController({ onRefresh, teamId: currentUser?.team_id });
   const canManageRoles = hasPerm ? hasPerm('manage_roles') : ctl.isAdmin;
   // Join links replace "Add member": admins and anyone with "Invite people".
   const canInvite = ctl.isAdmin || !!hasPerm?.('invite_members');
   const voice = useVoice();
   const params = new URLSearchParams(location.search);
-  const [inviteOpenLocal, setInviteOpenLocal] = useState(false);
-  const [joinOpen, setJoinOpen] = useState(false);
-  // /teams?invite=1 (from the workspace switcher and Settings) opens the
-  // dialog; the flag lives in the URL so it survives the page settling.
-  const inviteOpen = inviteOpenLocal || (params.get('invite') === '1' && canInvite);
-  const setInviteOpen = (open: boolean) => {
-    setInviteOpenLocal(open);
-    if (!open && params.has('invite')) {
-      params.delete('invite');
-      navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true });
-    }
-  };
+  // Dialogs the workspace switcher and Settings open in one hop with a URL
+  // flag (?invite=1, ?new=1, ?join=1); the flag lives in the URL so it
+  // survives the page settling, and closing the dialog clears it.
+  const [openLocal, setOpenLocal] = useState<Record<string, boolean>>({});
+  const flagDialog = (flag: string, allowed = true) => [
+    !!openLocal[flag] || (params.get(flag) === '1' && allowed),
+    (open: boolean) => {
+      setOpenLocal((o) => ({ ...o, [flag]: open }));
+      if (!open && params.has(flag)) {
+        params.delete(flag);
+        navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true });
+      }
+    },
+  ] as const;
+  const [inviteOpen, setInviteOpen] = flagDialog('invite', canInvite);
+  const [joinOpen, setJoinOpen] = flagDialog('join', !!onJoinTeam);
+  const [createOpen, setCreateOpen] = flagDialog('new', !!onAddTeam);
 
   const online = members.filter((m: any) => m.presence && m.presence !== 'offline').length;
   const action = tab === 'members' && canInvite ? <Button onClick={() => setInviteOpen(true)}><UserPlus /> Invite people</Button>
@@ -54,7 +60,7 @@ export function PeoplePage(props: any) {
     : tab === 'workspaces' ? (
       <div className="flex gap-2">
         {onJoinTeam && <Button variant="outline" onClick={() => setJoinOpen(true)}><LogIn /> Join</Button>}
-        {ctl.isAdmin && <Button onClick={ctl.openNewTeam}><Plus /> New workspace</Button>}
+        {onAddTeam && <Button onClick={() => setCreateOpen(true)}><Plus /> New workspace</Button>}
       </div>
     )
     : null;
@@ -88,13 +94,14 @@ export function PeoplePage(props: any) {
         )}
         {tab === 'roles' && <RolesTab ctl={roles} members={members} canManage={canManageRoles} />}
         {tab === 'workspaces' && (
-          <WorkspacesTab ctl={ctl} teams={teams} members={members} onSwitchTeam={onSwitchTeam} onDeleteTeam={onDeleteTeam} onLeaveTeam={onLeaveTeam} />
+          <WorkspacesTab ctl={ctl} teams={teams} members={members} onSwitchTeam={onSwitchTeam} onDeleteTeam={onDeleteTeam} onLeaveTeam={onLeaveTeam} onNewWorkspace={onAddTeam ? () => setCreateOpen(true) : undefined} />
         )}
       </motion.div>
       {/* Role picker for "Manage roles" from the Members tab. */}
       {tab !== 'roles' && canManageRoles && <MemberRolesDialog ctl={roles} />}
       {canInvite && <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} teamName={activeTeamName} />}
       {onJoinTeam && <JoinWorkspaceDialog open={joinOpen} onOpenChange={setJoinOpen} onJoin={onJoinTeam} />}
+      {onAddTeam && <CreateWorkspaceDialog open={createOpen} onOpenChange={setCreateOpen} onAddTeam={onAddTeam} />}
     </Page>
   );
 }

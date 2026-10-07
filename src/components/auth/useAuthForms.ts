@@ -23,6 +23,8 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
   const [lookup, setLookup] = useState<TeamLookup>('idle');
   const [foundName, setFoundName] = useState('');
   const [foundSchool, setFoundSchool] = useState<string | null>(null);
+  // Another workspace already holds this FTC number (one per number).
+  const [claimed, setClaimed] = useState(false);
   const [manual, setManual] = useState(false);
   const timer = useRef<any>(null);
   // Only the newest lookup may fill the name (typing fast fires several).
@@ -47,6 +49,7 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
         if (id !== seq.current) return;
         setFoundName(data.name || '');
         setFoundSchool(data.schoolName || null);
+        setClaimed(!!data.claimed);
         setLookup('found');
         setManual(false);
         setTeamName(data.name || '');
@@ -69,6 +72,7 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
 
   const onNumChange = (v: string) => {
     setTeamNumber(v);
+    setClaimed(false);
     if (timer.current) clearTimeout(timer.current);
     // Any edit retires the previous answer at once, so a reply for the old
     // number can't land (and look verified) during the next delay.
@@ -92,7 +96,7 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
 
   const retry = () => { setManual(false); setTeamName(''); void doLookup(teamNumber); };
 
-  return { lookup, foundName, foundSchool, manual, setManual, onNumChange, retry };
+  return { lookup, foundName, foundSchool, claimed, manual, setManual, onNumChange, retry };
 }
 
 /** Email + password signup for a new admin (creates a team) or student (joins one). */
@@ -113,11 +117,27 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The FTC number already has a workspace: offer to ask to join it.
+  const [takenNumber, setTakenNumber] = useState<number | null>(null);
+
+  const askToJoin = async () => {
+    if (busy || !takenNumber) return;
+    setError(null);
+    setBusy(true);
+    try {
+      onDone(await onSignup({ accountType: 'student', name, email, password, requestFtcNumber: takenNumber }));
+    } catch (err: any) {
+      setError(err.message || 'Could not send the request');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
     setError(null);
+    setTakenNumber(null);
     setBusy(true);
     try {
       const viaInvite = mode === 'student' && !!inviteToken;
@@ -128,6 +148,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
       });
       onDone(data);
     } catch (err: any) {
+      if (err?.data?.ftcTaken) setTakenNumber(Number(err.data.ftcTaken.number));
       setError(err.message || 'Signup failed');
     } finally {
       setBusy(false);
@@ -137,7 +158,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   return {
     name, setName, email, setEmail, password, setPassword, showPw, setShowPw,
     teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
-    error, busy, submit,
+    error, busy, submit, takenNumber, askToJoin,
   };
 }
 
@@ -163,9 +184,9 @@ export function useOAuthSignup({ token, intent, provider, onDone, inviteToken }:
   const [accessCode, setAccessCode] = useDraft(k('access-code'), '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [takenNumber, setTakenNumber] = useState<number | null>(null);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const send = async (body: Record<string, unknown>) => {
     if (busy) return;
     setError(null);
     setBusy(true);
@@ -173,13 +194,13 @@ export function useOAuthSignup({ token, intent, provider, onDone, inviteToken }:
       const res = await apiFetch('/api/auth/oauth/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider, token, teamName, teamNumber, role: needsRole ? pickedRole : undefined,
-          ...(viaInvite ? { inviteToken } : { accessCode }),
-        }),
+        body: JSON.stringify({ provider, token, ...body }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Signup failed');
+      if (!res.ok) {
+        if (data?.ftcTaken) setTakenNumber(Number(data.ftcTaken.number));
+        throw new Error(data.error || 'Signup failed');
+      }
       onDone(data);
     } catch (err: any) {
       setError(err.message || 'Signup failed');
@@ -187,8 +208,19 @@ export function useOAuthSignup({ token, intent, provider, onDone, inviteToken }:
       setBusy(false);
     }
   };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setTakenNumber(null);
+    void send({
+      teamName, teamNumber, role: needsRole ? pickedRole : undefined,
+      ...(viaInvite ? { inviteToken } : { accessCode }),
+    });
+  };
+  // The FTC number already has a workspace: ask to join it instead.
+  const askToJoin = () => { if (takenNumber) void send({ role: 'student', requestFtcNumber: takenNumber }); };
 
   return {
+    takenNumber, askToJoin,
     needsRole, pickedRole, setPickedRole, isAdmin, viaInvite,
     teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
     error, busy, submit,

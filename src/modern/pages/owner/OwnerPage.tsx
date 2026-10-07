@@ -104,6 +104,37 @@ function ErrorsTab() {
   );
 }
 
+/**
+ * Workspaces that share an FTC number from before the one-per-number rule.
+ * Read-only: sorting them out (merge, rename, clear a number) is done by hand.
+ */
+function FtcDuplicates() {
+  const [groups, setGroups] = useState<{ ftc: number; teams: { id: number; name: string; members: number }[] }[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    apiFetch('/api/owner/ftc-duplicates')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => { if (live) setGroups(Array.isArray(d) ? d : []); })
+      .catch(() => { if (live) setGroups([]); });
+    return () => { live = false; };
+  }, []);
+  if (!groups?.length) return null;
+  return (
+    <Section title="Shared FTC numbers" description="These workspaces claimed the same FTC team before each number got one workspace. Nothing was changed — sort them out by hand.">
+      <div className="grid gap-2">
+        {groups.map((g) => (
+          <div key={g.ftc} className="rounded-xl border border-warning/40 bg-warning/5 p-3 text-sm">
+            <p className="mb-1 font-semibold">Team #{g.ftc}</p>
+            <ul className="grid gap-0.5 text-muted-foreground">
+              {g.teams.map((t) => <li key={t.id}>{t.name} <span className="text-xs">· id {t.id} · {t.members} {t.members === 1 ? 'member' : 'members'}</span></li>)}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function OverviewTab({ ctl }: { ctl: Ctl }) {
   const t = ctl.totals;
   const teams = ctl.overview?.teams || [];
@@ -136,6 +167,7 @@ function OverviewTab({ ctl }: { ctl: Ctl }) {
           </div>
         ) : <EmptyState icon={Building2} title="No workspaces yet" />}
       </Section>
+      <FtcDuplicates />
     </>
   );
 }

@@ -6,18 +6,19 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ArrowRight, KeyRound, LogOut, Plus, Trash2 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Button, Input, Label } from '../../../components/ui-kit';
-import { DialogHost } from '../../../components/dialog';
+import { DialogHost, notify } from '../../../components/dialog';
+import { CreateWorkspaceForm } from '../people/CreateWorkspaceForm';
 import { useTeamless } from '../../../components/auth/useTeamless';
 import { AuthHeading, AuthLayout } from './AuthLayout';
 
 const OPTIONS = [
-  { id: 'create' as const, icon: Plus, title: 'Create a workspace', body: "Start your team's space and invite your members." },
+  { id: 'create' as const, icon: Plus, title: 'Create a workspace', body: "Start with your FTC team number, then invite your members." },
   { id: 'join' as const, icon: KeyRound, title: 'Join your team', body: 'Paste the invite link your team sent, or type an access code.' },
 ];
 
 export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSignOut }: {
   user: any;
-  onCreateTeam: (name: string) => Promise<void>;
+  onCreateTeam: (input: { ftc_number?: string; name?: string }) => Promise<void>;
   onJoinTeam: (accessCode: string) => Promise<void>;
   onDeleteAccount: () => Promise<void>;
   onSignOut: () => void;
@@ -49,7 +50,25 @@ export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, 
                 <ArrowRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
               </button>
               <AnimatePresence initial={false}>
-                {open && (
+                {open && o.id === 'create' && (
+                  <motion.div
+                    key="create"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="border-t border-border p-4">
+                      <CreateWorkspaceForm
+                        autoFocus
+                        onCreate={onCreateTeam}
+                        onRequested={(name) => notify(`Request sent — someone on ${name} will let you in. We'll email you.`, 'success')}
+                      />
+                    </div>
+                  </motion.div>
+                )}
+                {open && o.id === 'join' && (
                   <motion.form
                     key="form"
                     initial={{ height: 0, opacity: 0 }}
@@ -57,22 +76,15 @@ export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, 
                     exit={{ height: 0, opacity: 0 }}
                     transition={{ duration: 0.25 }}
                     className="overflow-hidden"
-                    onSubmit={(e) => { e.preventDefault(); void (o.id === 'create' ? t.doCreate() : t.doJoin()); }}
+                    onSubmit={(e) => { e.preventDefault(); void t.doJoin(); }}
                   >
                     <div className="grid gap-3 border-t border-border p-4">
-                      {o.id === 'create' ? (
-                        <div className="grid gap-2">
-                          <Label htmlFor="teamless-name">Team name</Label>
-                          <Input id="teamless-name" value={t.teamName} onChange={(e) => t.setTeamName(e.target.value)} placeholder="e.g. Hypnotic Robotics" autoFocus className="h-11" />
-                        </div>
-                      ) : (
-                        <div className="grid gap-2">
-                          <Label htmlFor="teamless-code">Invite link or access code</Label>
-                          <Input id="teamless-code" value={t.code} onChange={(e) => t.setCode(e.target.value)} placeholder="https://…/join/…  or  CP-XXXX-XXXXXX" autoFocus spellCheck={false} className="h-11 font-mono" />
-                        </div>
-                      )}
-                      <Button type="submit" disabled={t.busy || !(o.id === 'create' ? t.teamName.trim() : t.code.trim())} className="h-11">
-                        {o.id === 'create' ? (t.busy ? 'Creating…' : 'Create workspace') : (t.busy ? 'Joining…' : 'Join team')}
+                      <div className="grid gap-2">
+                        <Label htmlFor="teamless-code">Invite link or access code</Label>
+                        <Input id="teamless-code" value={t.code} onChange={(e) => t.setCode(e.target.value)} placeholder="https://…/join/…  or  CP-XXXX-XXXXXX" autoFocus spellCheck={false} className="h-11 font-mono" />
+                      </div>
+                      <Button type="submit" disabled={t.busy || !t.code.trim()} className="h-11">
+                        {t.busy ? 'Joining…' : 'Join team'}
                       </Button>
                     </div>
                   </motion.form>
