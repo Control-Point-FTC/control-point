@@ -14,9 +14,17 @@ interface Prefs { team_updates: Mode; everyone_pings: boolean }
 // One save queue for the whole app, not per mounted section: leaving and
 // reopening Notifications can't let an older queued save land after a newer
 // one, and a reopened section reads the prefs only after pending saves settle.
+// Each request is aborted after REQUEST_MS, so a stalled one can't hold the
+// queue (and a reopened section's loading state) forever.
+export const REQUEST_MS = 15_000;
 let saveQueue: Promise<unknown> = Promise.resolve();
-const enqueue = <T,>(job: () => Promise<T>): Promise<T> => {
-  const run = saveQueue.then(job, job);
+const enqueue = <T,>(job: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+  const start = () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), REQUEST_MS);
+    return job(ctrl.signal).finally(() => clearTimeout(timer));
+  };
+  const run = saveQueue.then(start, start);
   saveQueue = run.catch(() => undefined);
   return run;
 };
@@ -32,9 +40,9 @@ export function NotificationsSection() {
 
   useEffect(() => {
     let live = true;
-    void enqueue(async () => {
+    void enqueue(async (signal) => {
       try {
-        const res = await apiFetch('/api/notification-prefs');
+        const res = await apiFetch('/api/notification-prefs', { signal });
         if (!res.ok) throw new Error();
         const data = await res.json();
         if (live) { confirmed.current = data; setPrefs(data); }
@@ -49,16 +57,17 @@ export function NotificationsSection() {
     if (!prefs) return;
     setPrefs((p) => (p ? { ...p, ...patch } : p));
     pending.current++;
-    void enqueue(async () => {
+    void enqueue(async (signal) => {
       try {
         const res = await apiFetch('/api/notification-prefs', {
+          signal,
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Could not save — try again.');
         confirmed.current = data;
       } catch (e: any) {
-        notify(e?.message || 'Could not save — try again.', 'error');
+        notify(e?.name === 'AbortError' ? 'Saving took too long — try again.' : e?.message || 'Could not save — try again.', 'error');
         // Undo this change on screen; later queued changes re-apply below.
         if (confirmed.current) setPrefs(confirmed.current);
       } finally {

@@ -403,3 +403,30 @@ describe('Modern Settings — notifications across reopen', () => {
     expect(order).toEqual(['{"team_updates":"off"}', '{"everyone_pings":false}', expect.stringContaining('everyone_pings')]);
   });
 });
+
+describe('Modern Settings — notifications recover from a stalled request', () => {
+  it('a stalled read is abandoned after the timeout, so reopening recovers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let first = true;
+      api.apiFetch.mockImplementation((url: string, init?: any) => {
+        if (url === '/api/notification-prefs' && !init?.method) {
+          if (first) {
+            first = false;
+            return new Promise((_res, rej) => init?.signal?.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+          }
+          return json({ team_updates: 'instant', everyone_pings: true });
+        }
+        return json({});
+      });
+      const a = setup({ section: 'notifications' });
+      a.unmount();
+      setup({ section: 'notifications' });
+      await act(async () => { vi.advanceTimersByTime(15_000); });
+      await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+      expect(await screen.findByRole('radio', { name: 'Instant' })).toHaveAttribute('aria-checked', 'true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
