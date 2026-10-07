@@ -95,7 +95,7 @@ export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }
               <tr>
                 <th className="px-3 py-2 font-medium">Team</th>
                 <th className="px-3 py-2 font-medium">Entries</th>
-                {numericFields.map((f) => <th key={f.id} className="px-3 py-2 font-medium">{phaseShort(f.phase)} {f.label}</th>)}
+                {numericFields.map((f) => <th key={f.id} className="px-3 py-2 font-medium">{fieldLabel(f)}</th>)}
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -155,6 +155,12 @@ function phaseShort(p: ScoutField['phase']) {
   return p === 'auto' ? 'Auto' : p === 'teleop' ? 'TeleOp' : p === 'endgame' ? 'End' : '';
 }
 
+/** "Auto Artifacts scored", but not "Auto Auto points" when the label already says it. */
+function fieldLabel(f: ScoutField) {
+  const ph = phaseShort(f.phase);
+  return !ph || f.label.toLowerCase().startsWith(ph.toLowerCase()) ? f.label : `${ph} ${f.label}`;
+}
+
 function describe(e: ScoutEntry): string {
   const t = templateById(e.templateId);
   if (!t) return '';
@@ -162,7 +168,7 @@ function describe(e: ScoutEntry): string {
     .filter((f) => e.data[f.id] !== undefined && f.type !== 'text')
     .map((f) => {
       const v = e.data[f.id];
-      return f.type === 'toggle' ? (v ? f.label : null) : `${phaseShort(f.phase)} ${f.label}: ${v}`.trim();
+      return f.type === 'toggle' ? (v ? f.label : null) : `${fieldLabel(f)}: ${v}`;
     })
     .filter(Boolean)
     .join(' · ');
