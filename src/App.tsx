@@ -277,11 +277,8 @@ const navItems = [
   { id: 'stats', path: 'stats', labelKey: 'nav.teamStats', icon: Trophy, group: 'Compete' },
   { id: 'predict', path: 'predict', labelKey: 'nav.predict', icon: Sparkles, group: 'Compete', badge: 'beta' },
   {
-    id: 'teams', path: 'teams', labelKey: 'nav.teamsMembers', icon: Users, group: 'Team',
-    children: [
-      { id: 'teams', path: 'teams', labelKey: 'nav.members', icon: Users },
-      { id: 'roles', path: 'roles', labelKey: 'nav.roles', icon: ShieldCheck, perm: 'manage_roles' },
-    ],
+    // Roles moved to Settings → Roles; the sidebar keeps the directory.
+    id: 'teams', path: 'teams', labelKey: 'nav.members', icon: Users, group: 'Team',
   },
   { id: 'attendance', path: 'attendance', labelKey: 'nav.attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
   { id: 'calendar', path: 'calendar', labelKey: 'nav.calendar', icon: Calendar, group: 'Team' },
@@ -2155,7 +2152,8 @@ export default function App() {
         <Route path="/stats" element={<TeamStatsPage teamId={currentUser?.team_id} memberId={currentUser?.id} memberName={currentUser?.name} canManage={hasPerm('manage_members')} />} />
         <Route path="/predict" element={<PredictPage />} />
         <Route path="/teams" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
-        <Route path="/roles" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
+        {/* Roles live in Settings → Roles now; old links land there. */}
+        <Route path="/roles" element={<Navigate to="/settings?section=roles" replace />} />
         <Route path="/attendance" element={<AttendancePage {...viewProps} />} />
         <Route path="/tasks" element={<TasksPage {...viewProps} />} />
         <Route path="/calendar" element={<CalendarPage {...viewProps} />} />

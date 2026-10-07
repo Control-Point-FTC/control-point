@@ -503,7 +503,7 @@ function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwi
         {canInvite && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onNavigate('/teams?invite=1')}>
+            <DropdownMenuItem onSelect={() => onNavigate('/settings?section=members&invite=1')}>
               <UserPlus /> Invite people
             </DropdownMenuItem>
           </>

@@ -1,12 +1,14 @@
 // Modern Settings (phase 5b): one page for everything that used to be split
 // across the Settings modal, /profile and /settings. Sections are addressed by
-// ?section= so any entry point can deep-link. Personal sections are for
-// everyone; workspace/admin sections follow the same gates as before.
+// ?section= so any entry point can deep-link. Laid out like Discord's: User
+// Settings, then Workspace Settings (Overview, Members, Roles, Admin) under
+// the workspace's name; Esc leaves. Personal sections are for everyone;
+// workspace sections follow the same gates as before.
 import { useEffect, useRef, type ComponentType } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, Bot, Building2, KeyRound, Palette, ShieldHalf, UserRound } from 'lucide-react';
+import { Bell, Bot, Building2, KeyRound, Palette, ShieldCheck, ShieldHalf, UserRound, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Page, PageHeader } from '../../ui/page';
 import { ProfileSection } from './ProfileSection';
@@ -16,14 +18,18 @@ import { BrunoSection } from './BrunoSection';
 import { AccountSection } from './AccountSection';
 import { WorkspaceSection } from './WorkspaceSection';
 import { AdminSection } from './AdminSection';
+import { MembersSection, RolesSection } from './PeopleSections';
 
-export type SettingsSectionId = 'profile' | 'appearance' | 'calls' | 'bruno' | 'account' | 'workspace' | 'admin';
+export type SettingsSectionId = 'profile' | 'appearance' | 'calls' | 'bruno' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
 
 interface SectionDef { id: SettingsSectionId; label: string; hint: string; icon: ComponentType<{ className?: string }>; group: 'You' | 'Workspace' }
 
 export function SettingsPage(props: any) {
-  const { isAdmin, isOwner, hasPerm } = props;
+  const { isAdmin, isOwner, hasPerm, activeTeamName } = props;
   const showAdmin = !!(isAdmin || isOwner || hasPerm?.('manage_voice'));
+  // Members: anyone who can manage, invite or assign roles. Roles: manage_roles.
+  const showMembers = !!(isAdmin || hasPerm?.('manage_members') || hasPerm?.('invite_members') || hasPerm?.('manage_roles'));
+  const showRoles = !!hasPerm?.('manage_roles');
   const [params, setParams] = useSearchParams();
   const { t } = useTranslation();
   const k = (key: string) => t(`settingsPage.${key}`);
@@ -35,6 +41,8 @@ export function SettingsPage(props: any) {
     { id: 'account', label: k('account'), hint: k('accountHint'), icon: KeyRound, group: 'You' },
     // Team-wide settings. Each card inside keeps its own gate.
     { id: 'workspace', label: k('workspace'), hint: isAdmin ? k('workspaceHintAdmin') : k('workspaceHint'), icon: Building2, group: 'Workspace' },
+    ...(showMembers ? [{ id: 'members' as const, label: k('members'), hint: k('membersHint'), icon: Users, group: 'Workspace' as const }] : []),
+    ...(showRoles ? [{ id: 'roles' as const, label: k('roles'), hint: k('rolesHint'), icon: ShieldCheck, group: 'Workspace' as const }] : []),
     ...(showAdmin ? [{ id: 'admin' as const, label: k('admin'), hint: k('adminHint'), icon: ShieldHalf, group: 'Workspace' as const }] : []),
   ];
   const requested = params.get('section') as SettingsSectionId | null;
@@ -44,9 +52,30 @@ export function SettingsPage(props: any) {
   const go = (id: SettingsSectionId) => {
     const next = new URLSearchParams(params);
     next.set('section', id);
+    next.delete('invite');
     setParams(next, { replace: true });
   };
   const current = sections.find((s) => s.id === active)!;
+  // Like Discord: Esc closes Settings (back where you came from), unless a
+  // dialog, menu or text field has it.
+  const navigate = useNavigate();
+  // Is there a page of ours to go back to? The browser router numbers its
+  // entries (idx; section switches replace, so they don't count); in-memory
+  // routers mark the first entry with the key 'default'.
+  const locKey = useLocation().key;
+  const histIdx = (window.history.state as { idx?: number } | null)?.idx;
+  const canGoBack = typeof histIdx === 'number' ? histIdx > 0 : locKey !== 'default';
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const t = e.target;
+      if (t instanceof Element && t.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], [role="listbox"]')) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return;
+      if (canGoBack) navigate(-1); else navigate('/dashboard');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigate, canGoBack]);
   // Phones: keep the active chip in view in the scrolling row.
   const navRef = useRef<HTMLUListElement>(null);
   useEffect(() => {
@@ -68,7 +97,11 @@ export function SettingsPage(props: any) {
               const showGroup = i === 0 || sections[i - 1].group !== s.group;
               return (
                 <li key={s.id} className="shrink-0">
-                  {showGroup && <p className="mb-1 mt-4 hidden px-3 text-xs font-medium text-muted-foreground first:mt-0 lg:block">{s.group === 'You' ? k('groupYou') : k('groupWorkspace')}</p>}
+                  {showGroup && (
+                    <p className="mb-1 mt-5 hidden truncate px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground first:mt-0 lg:block">
+                      {s.group === 'You' ? k('groupYou') : activeTeamName ? `${activeTeamName} · ${k('groupWorkspace')}` : k('groupWorkspace')}
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={() => go(s.id)}
@@ -95,7 +128,9 @@ export function SettingsPage(props: any) {
               {active === 'calls' && <CallsSection />}
               {active === 'bruno' && <BrunoSection {...props} />}
               {active === 'account' && <AccountSection {...props} />}
-              {active === 'workspace' && <WorkspaceSection {...props} />}
+              {active === 'workspace' && <WorkspaceSection {...props} onOpenSection={go} />}
+              {active === 'members' && <MembersSection {...props} />}
+              {active === 'roles' && <RolesSection {...props} />}
               {active === 'admin' && <AdminSection {...props} />}
             </motion.div>
           </AnimatePresence>

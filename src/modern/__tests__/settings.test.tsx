@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import i18n from '../../i18n';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
 const dialog = vi.hoisted(() => ({ notify: vi.fn(), confirmDialog: vi.fn() }));
 vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()), ...dialog }));
 vi.mock('../../components/voice/DeviceSettingsSection', () => ({ DeviceSettingsSection: () => <div>device-panel</div> }));
+vi.mock('../../voice/VoiceContext', () => ({ useVoice: () => ({ startCall: vi.fn() }) }));
 vi.mock('../../components/voice/VoiceSettingsSection', () => ({ VoiceSettingsSection: () => <div>voice-policy</div> }));
 
 import { InterfaceModeProvider } from '../interfaceMode';
@@ -221,3 +222,75 @@ describe('Modern Settings — review regressions', () => {
   });
 });
 
+
+describe('Modern Settings — Discord-style workspace settings', () => {
+  const Where = () => { const l = useLocation(); return <output data-testid="where">{l.pathname + l.search}</output>; };
+  function at(url: string, { admin = true, perms = [] as string[] } = {}) {
+    const props = {
+      currentUser: me, teams: [team], members: [me], isAdmin: admin, isOwner: false, activeTeamName: 'Robo',
+      hasPerm: (p: string) => (admin ? p !== 'manage_voice' : perms.includes(p)), hasScope: (s: string) => s === 'admin' && admin,
+      settings: {}, refresh: { members: vi.fn(), settings: vi.fn() }, onRefresh: vi.fn(),
+      onUserSaved: vi.fn(), onTeamSaved: vi.fn(), onStatusPick: vi.fn(), setColorVersion: vi.fn(),
+    };
+    return render(
+      <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
+        <MemoryRouter initialEntries={['/tasks', url]} initialIndex={1}>
+          <Routes><Route path="*" element={<><SettingsPage {...props} /><Where /></>} /></Routes>
+        </MemoryRouter>
+      </InterfaceModeProvider>,
+    );
+  }
+  const nav = () => within(screen.getByRole('navigation', { name: /sections/i }));
+
+  it('groups User settings and the workspace’s settings; admins get Members and Roles', () => {
+    at('/settings?section=workspace');
+    expect(screen.getByText('User settings')).toBeInTheDocument();
+    expect(screen.getByText('Robo · Workspace settings')).toBeInTheDocument();
+    for (const name of ['Overview', 'Members', 'Roles', 'Admin']) expect(nav().getByRole('button', { name })).toBeInTheDocument();
+  });
+
+  it('members see neither; someone who can only invite gets Members but not Roles', () => {
+    at('/settings?section=roles', { admin: false });
+    expect(nav().queryByRole('button', { name: 'Members' })).not.toBeInTheDocument();
+    expect(nav().queryByRole('button', { name: 'Roles' })).not.toBeInTheDocument();
+    // An unknown/forbidden section falls back to Profile.
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Profile');
+    cleanup();
+    at('/settings?section=members', { admin: false, perms: ['invite_members'] });
+    expect(nav().getByRole('button', { name: 'Members' })).toBeInTheDocument();
+    expect(nav().queryByRole('button', { name: 'Roles' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Invite people/ })).toBeInTheDocument();
+  });
+
+  it('Roles lists the workspace roles with New role', async () => {
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/roles'
+      ? json([{ id: 2, name: 'Build Lead', color: '#3B82F6', permissions: [], is_system: 0, member_count: 0, position: 1, team_id: 1 }])
+      : json({})));
+    at('/settings?section=roles');
+    expect(await screen.findByText('Build Lead')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /New role/ })).toBeInTheDocument();
+  });
+
+  it('?invite=1 opens the invite dialog; closing it clears the flag', async () => {
+    at('/settings?section=members&invite=1');
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.keyDown(dlg, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByTestId('where').textContent).toBe('/settings?section=members');
+  });
+
+  it('Overview → Open roles goes to the Roles section', () => {
+    at('/settings?section=workspace');
+    fireEvent.click(screen.getByRole('button', { name: /Open roles/ }));
+    expect(screen.getByTestId('where').textContent).toBe('/settings?section=roles');
+  });
+
+  it('Esc leaves Settings, but not while typing', () => {
+    at('/settings?section=profile');
+    const input = screen.getAllByRole('textbox')[0];
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByTestId('where').textContent).toBe('/settings?section=profile');
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByTestId('where').textContent).toBe('/tasks');
+  });
+});
