@@ -127,7 +127,7 @@ describe('Modern People — members', () => {
     expect(((await screen.findByLabelText('Title')) as HTMLInputElement).value).toBe('Captain');
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/members/8', expect.objectContaining({ method: 'PATCH' })));
-    expect(JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/members/8')![1].body)).toMatchObject({ role: 'Captain', scopes: [] });
+    expect(JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/members/8')![1].body)).toMatchObject({ role: 'Captain', account_type: 'student' });
   });
 
   it('removes a member after confirming, and shows the server error if it fails', async () => {

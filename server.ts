@@ -5925,9 +5925,12 @@ async function startServer() {
     }
 
     // Only update color fields if they're explicitly provided (not undefined)
+    // Fields the caller leaves out keep their stored value (partial update).
     const updates: any = {
-      name, role, email,
-      is_board: is_board ? 1 : 0,
+      name: name === undefined ? target.name : name,
+      role: role === undefined ? target.role : role,
+      email,
+      is_board: is_board === undefined ? (target.is_board ? 1 : 0) : is_board ? 1 : 0,
       scopes: finalScopes,
       account_type: nextType,
     };
