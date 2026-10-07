@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { format } from 'date-fns';
 import type { Member, AttendanceRecord, Task, CalendarEvent, BudgetItem } from '../../types';
 import type { ActivityItem } from './TeamActivity';
+import { isTaskOverdue } from '../../utils/countdown';
 
 /**
  * Pure, memoized dashboard selectors.
@@ -101,10 +102,10 @@ export function selectActiveTasks(tasks: DashboardTask[]): DashboardTask[] {
   return tasks.filter((t) => t.status !== 'done');
 }
 
-export function countOverdue(tasks: DashboardTask[], today: string): number {
+export function countOverdue(tasks: DashboardTask[], _today: string, now = Date.now()): number {
   let n = 0;
   for (const t of tasks) {
-    if (t.due_date && t.due_date < today) n++;
+    if (isTaskOverdue(t as any, now)) n++;
   }
   return n;
 }
@@ -285,7 +286,7 @@ export function deriveDashboardData(input: DeriveInput): DashboardDerived {
   const todayAttendance = selectTodayAttendance(attendance, today);
   const presentCount = countPresent(todayAttendance);
   const activeTasks = selectActiveTasks(tasks);
-  const overdueCount = countOverdue(activeTasks, today);
+  const overdueCount = countOverdue(activeTasks, today, input.nowMs);
   const next = selectNextEvent(events, today);
   const totalBudget = selectTotalBudget(budget);
   const myTeam = (teams || []).find((t) => t.id === teamId);
@@ -329,6 +330,9 @@ export function useDashboardData(
   const events = data.events;
   const budget = data.budget;
   const attendance = data.attendance;
+  // Deadlines pass with time, not data changes: recompute each half minute
+  // (the page re-renders on that tick).
+  const tick = Math.floor(Date.now() / 30_000);
   return useMemo(
     () =>
       deriveDashboardData({
@@ -339,6 +343,6 @@ export function useDashboardData(
         nowMs: Date.now(),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [members, tasks, events, budget, attendance, teams, teamId, today],
+    [members, tasks, events, budget, attendance, teams, teamId, today, tick],
   );
 }

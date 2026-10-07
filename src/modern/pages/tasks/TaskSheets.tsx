@@ -11,6 +11,7 @@ import {
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
 import { AssigneePicker, AvatarStack } from './AssigneePicker';
+import { isTaskOverdue } from '../../../utils/countdown';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -21,8 +22,7 @@ export const STATUS_META: Record<string, { label: string; icon: typeof Circle; d
 };
 
 export function isOverdue(t: any) {
-  if (!t?.due_date || t.status === 'done') return false;
-  return String(t.due_date).slice(0, 10) < format(new Date(), 'yyyy-MM-dd');
+  return isTaskOverdue(t);
 }
 
 function useSheetSide() {
@@ -178,9 +178,15 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               <Label htmlFor="task-assignees">Assignees</Label>
               <AssigneePicker id="task-assignees" members={members} selected={f.assignee_ids} onChange={(ids) => set({ assignee_ids: ids })} />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="task-due">Due date</Label>
-              <Input id="task-due" type="date" value={f.due_date ? String(f.due_date).slice(0, 10) : ''} onChange={(e) => set({ due_date: e.target.value })} />
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <div className="grid gap-2">
+                <Label htmlFor="task-due">Due date</Label>
+                <Input id="task-due" type="date" value={f.due_date ? String(f.due_date).slice(0, 10) : ''} onChange={(e) => set({ due_date: e.target.value, ...(e.target.value ? {} : { due_time: '' }) })} />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="task-due-time">Time <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                <Input id="task-due-time" type="time" disabled={!f.due_date} value={f.due_time || ''} onChange={(e) => set({ due_time: e.target.value })} className="w-32" />
+              </div>
             </div>
             {ctl.isAdmin && (
               <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">

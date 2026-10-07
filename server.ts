@@ -8250,12 +8250,16 @@ Rules:
     }
   });
 
+  const TASK_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
   app.post("/api/tasks", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
       const { title, description, status, assigned_to, assignee_ids, due_date, is_board } = req.body;
       const createdAt = new Date().toISOString();
+      // Optional time of day it's due (HH:MM); only meaningful with a date.
+      const dueTime = due_date && TASK_TIME_RE.test(String(req.body?.due_time || "")) ? String(req.body.due_time) : null;
+      if (req.body?.due_time && !dueTime && due_date) return res.status(400).json({ error: "Use a time like 15:30" });
 
       // assignee_ids (array) is preferred; assigned_to (single) for legacy clients
       let targetIds: number[] = [];
@@ -8274,7 +8278,7 @@ Rules:
       }
       const legacyAssignedTo = validIds[0] || null;
 
-      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', legacyAssignedTo, due_date, is_board || 0, createdAt));
+      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', legacyAssignedTo, due_date, dueTime, is_board || 0, createdAt));
 
       const taskId = Number(info.lastInsertRowid);
       await setTaskAssignees(taskId, validIds, auth.teamId);
@@ -8428,8 +8432,8 @@ Rules:
       if (req.body?.status === 'done' && task.status !== 'done') {
         return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
       }
-      const { status, title, description, assigned_to, assignee_ids, due_date, is_board } = req.body;
-      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || is_board !== undefined)) {
+      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time } = req.body;
+      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined)) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
       const completedAt = status === 'done' ? new Date().toISOString() : null;
@@ -8444,6 +8448,14 @@ Rules:
       if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (due_date !== undefined) { sets.push('due_date = ?'); vals.push(due_date || null); }
+      if (due_time !== undefined || due_date !== undefined) {
+        // The time belongs to the resulting date: none without a date, and a
+        // request that sets only the date keeps the stored time.
+        const resultingDate = due_date !== undefined ? (due_date || null) : (task.due_date || null);
+        const wanted = due_time !== undefined ? (due_time ? String(due_time) : null) : (task.due_time ?? null);
+        if (due_time && !TASK_TIME_RE.test(String(due_time))) return res.status(400).json({ error: "Use a time like 15:30" });
+        sets.push('due_time = ?'); vals.push(resultingDate ? wanted : null);
+      }
       if (is_board !== undefined) { sets.push('is_board = ?'); vals.push(is_board ? 1 : 0); }
       if (assigned_to !== undefined || assignee_ids !== undefined) {
         let newIds: number[] = [];

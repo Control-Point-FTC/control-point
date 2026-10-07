@@ -15,6 +15,8 @@ export interface TaskForm {
   description: string;
   assignee_ids: number[];
   due_date: string;
+  /** Optional HH:MM; empty = end of the due date. */
+  due_time: string;
   status: string;
 }
 
@@ -34,7 +36,7 @@ export const TASK_COLUMNS = [
   { id: 'done', label: 'Done' },
 ] as const;
 
-const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', status: 'todo' };
+const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo' };
 const EMPTY_LIST: any[] = [];
 
 /** Completed-per-day for the last 7 days. */
@@ -135,7 +137,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   const openNewTask = (status = 'todo') => {
     bumpGen(EDITOR_GEN);
     setEditingTaskId(null);
-    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', status });
+    setNewTask({ team_id: defaultTeamId(teams, currentUser), title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status });
     setIsBoardTask(false);
     resetAiTask();
     setAiTaskOpen(false);
@@ -151,6 +153,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       description: task.description || '',
       assignee_ids: taskAssigneeIds(task),
       due_date: task.due_date || '',
+      due_time: task.due_time || '',
       status: task.status || 'todo',
     });
     setIsBoardTask(!!task.is_board);
@@ -179,6 +182,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
             description: newTask.description,
             assignee_ids: newTask.assignee_ids,
             due_date: newTask.due_date || null,
+            due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
             is_board: isBoardTask ? 1 : 0,
           }),
         });

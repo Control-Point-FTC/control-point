@@ -70,8 +70,10 @@ describe('dashboard selectors', () => {
     const data = makeData();
     const active = selectActiveTasks(data.tasks);
     expect(active.map((t) => t.id)).toEqual([1]);
-    expect(countOverdue(active, TODAY)).toBe(1);
-    expect(countOverdue(active, '2026-09-01')).toBe(0);
+    // Overdue is judged against the moment (the full deadline), not a date.
+    const noon = (d: string) => new Date(`${d}T12:00:00`).getTime();
+    expect(countOverdue(active, TODAY, noon(TODAY))).toBe(1);
+    expect(countOverdue(active, '2026-09-01', noon('2026-09-01'))).toBe(0);
   });
 
   it('picks the next event without sorting', () => {
