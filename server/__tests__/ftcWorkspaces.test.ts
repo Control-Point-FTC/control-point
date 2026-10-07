@@ -14,6 +14,7 @@ const KNOWN: Record<number, { name: string; schoolName: string }> = {
   4215: { name: "Hypnotic", schoolName: "Test High" },
   11115: { name: "Gluten Free", schoolName: "Test Middle" },
   20000: { name: "Fresh Bots", schoolName: "New School" },
+  20001: { name: "Race Bots", schoolName: "Race School" },
 };
 
 let scout: Server;
@@ -78,6 +79,19 @@ describe("one workspace per FTC number", () => {
     expect(created.body.team).toMatchObject({ name: "Fresh Bots", ftc_team_number: 20000 });
     // And now #20000 is claimed too.
     expect((await t.post("/api/teams", { ftc_number: "20000" }, admin)).status).toBe(409);
+  });
+
+  it("two simultaneous claims of a free number: exactly one wins", async () => {
+    const side = await seedTeam(t.db, "Racers");
+    const s1 = await t.session(await seedMember(t.db, side, "Racer 1", "racer1@test.local"));
+    const s2 = await t.session(await seedMember(t.db, side, "Racer 2", "racer2@test.local"));
+    const [a, b] = await Promise.all([
+      t.post("/api/teams", { ftc_number: "20001" }, s1),
+      t.post("/api/teams", { ftc_number: "20001" }, s2),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([200, 409]);
+    const n = (await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM teams WHERE ftc_team_number = 20001", args: [] })).rows[0] as any;
+    expect(Number(n.n)).toBe(1);
   });
 
   it("a workspace without an FTC number still needs a name", async () => {

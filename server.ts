@@ -1882,6 +1882,26 @@ async function ftcWorkspace(ftcNumber: number | null | undefined, exceptTeamId?:
   )) as any) || null;
 }
 
+/**
+ * Inserts a team, claiming its FTC number atomically: the existence check
+ * and the insert are one statement, so two simultaneous claims can't both
+ * win. Returns the new id, or null if another workspace holds the number.
+ */
+async function insertTeamClaimingFtc(cols: Record<string, any>): Promise<number | null> {
+  const keys = Object.keys(cols);
+  const vals = keys.map((k) => cols[k]);
+  const ftc = cols.ftc_team_number;
+  const r = (ftc == null
+    ? await dbRun(`INSERT INTO teams (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, ...vals)
+    : await dbRun(
+      `INSERT INTO teams (${keys.join(", ")}) SELECT ${keys.map(() => "?").join(", ")}
+        WHERE NOT EXISTS (SELECT 1 FROM teams WHERE ftc_team_number = ?)`,
+      ...vals, ftc
+    )) as any;
+  if (!Number(r?.changes ?? r?.rowsAffected ?? 0)) return null;
+  return Number(r.lastInsertRowid);
+}
+
 /** The 409 body when someone tries to create or claim a taken FTC number. */
 function ftcTakenBody(ftcNumber: number) {
   return {
@@ -2767,8 +2787,8 @@ async function startServer() {
         if (identity.error) return res.status(400).json({ error: identity.error });
         if (await ftcWorkspace(identity.ftcNumber)) return res.status(409).json(ftcTakenBody(identity.ftcNumber));
         const code = await uniqueAccessCode();
-        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number, navgpt_enabled) VALUES (?, ?, ?, ?, 0)", identity.name, identity.number, code, identity.ftcNumber)) as any;
-        const teamId = tInfo.lastInsertRowid;
+        const teamId = await insertTeamClaimingFtc({ name: identity.name, number: identity.number, access_code: code, ftc_team_number: identity.ftcNumber, navgpt_enabled: 0 });
+        if (teamId == null) return res.status(409).json(ftcTakenBody(identity.ftcNumber));
         const mInfo = (await dbRun(
           "INSERT INTO members (team_id, name, role, email, password, is_setup, is_board, account_type, scopes) VALUES (?, ?, ?, ?, ?, 1, 1, 'admin', ?)",
           teamId, cleanName, 'Admin', cleanEmail, hashedPassword, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'])
@@ -2793,7 +2813,7 @@ async function startServer() {
         const owner = await ftcWorkspace(parseInt(String(requestFtcNumber), 10));
         if (!owner) return res.status(400).json({ error: "No workspace has claimed that team number yet — create it instead" });
         if (priorRows.length) return res.status(400).json({ error: "You already have an account — sign in, then ask to join from Workspaces" });
-        await fileJoinRequest(owner, cleanEmail, cleanName, null, hashedPassword, "ftc");
+        await fileJoinRequest(owner, cleanEmail, cleanName, null, "ftc");
         return res.json({ pendingApproval: true, team: { name: owner.name } });
       }
 
@@ -2817,7 +2837,7 @@ async function startServer() {
           // when someone approves it (they then sign in and verify the email).
           if (priorRows.length) return res.status(400).json({ error: "You already have an account — sign in, then open the invite link again" });
           if (!(await consumeInvite(invite))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
-          await fileJoinRequest(team, cleanEmail, cleanName, invite.id, hashedPassword);
+          await fileJoinRequest(team, cleanEmail, cleanName, invite.id);
           return res.json({ pendingApproval: true, team: { id: team.id, name: team.name } });
         }
         const dupe = (await dbGet("SELECT id, is_active FROM members WHERE email = ? AND team_id = ?", cleanEmail, team.id)) as any;
@@ -3278,13 +3298,25 @@ async function startServer() {
       const effectiveIntent = pending.intent === 'signup'
         ? (role === 'admin' ? 'admin_signup' : 'student_signup')
         : pending.intent;
+      // "Ask to join" the workspace that owns an FTC number. Handled first so
+      // it works from an admin signup too (the number turned out to be taken).
+      if (requestFtcNumber && (effectiveIntent === 'admin_signup' || effectiveIntent === 'student_signup')) {
+        const owner = await ftcWorkspace(parseInt(String(requestFtcNumber), 10));
+        if (!owner) return retryable(400, { error: "No workspace has claimed that team number yet — create it instead" });
+        const dupe = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", cleanEmail, owner.id)) as any;
+        if (dupe) return res.status(400).json({ error: "This account is already on that team — sign in instead" });
+        // The provider verified the email; on approval they sign in with it.
+        await fileJoinRequest(owner, cleanEmail, cleanName, null, "ftc");
+        return res.json({ pendingApproval: true, team: { name: owner.name } });
+      }
+
       if (effectiveIntent === 'admin_signup') {
         const identity: any = await resolveTeamIdentity(teamNumber, teamName);
         if (identity.error) return retryable(400, { error: identity.error });
         if (await ftcWorkspace(identity.ftcNumber)) return retryable(409, ftcTakenBody(identity.ftcNumber));
         const code = await uniqueAccessCode();
-        const tInfo = (await dbRun("INSERT INTO teams (name, number, access_code, ftc_team_number, navgpt_enabled) VALUES (?, ?, ?, ?, 0)", identity.name, identity.number, code, identity.ftcNumber)) as any;
-        const teamId = tInfo.lastInsertRowid;
+        const teamId = await insertTeamClaimingFtc({ name: identity.name, number: identity.number, access_code: code, ftc_team_number: identity.ftcNumber, navgpt_enabled: 0 });
+        if (teamId == null) return retryable(409, ftcTakenBody(identity.ftcNumber));
         const mInfo = (await dbRun(
           `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes, avatar_url) VALUES (?, ?, ?, ?, NULL, ?, 1, 1, 'admin', ?, ?)`,
           teamId, cleanName, 'Admin', cleanEmail, pending.providerSub, JSON.stringify(['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin']), pending.avatarUrl || null
@@ -3295,16 +3327,6 @@ async function startServer() {
         await ensureOnboardingRow(cleanEmail);
         await inheritInterfaceMode(user);
         return res.json({ user: sanitizeMember(user), sessionId, team: { id: teamId, name: identity.name, access_code: code, verified: !!identity.ftcNumber } });
-      }
-
-      if (effectiveIntent === 'student_signup' && requestFtcNumber) {
-        const owner = await ftcWorkspace(parseInt(String(requestFtcNumber), 10));
-        if (!owner) return retryable(400, { error: "No workspace has claimed that team number yet — create it instead" });
-        const dupe = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", cleanEmail, owner.id)) as any;
-        if (dupe) return res.status(400).json({ error: "This account is already on that team — sign in instead" });
-        // The provider verified the email; on approval they sign in with it.
-        await fileJoinRequest(owner, cleanEmail, cleanName, null, null, "ftc");
-        return res.json({ pendingApproval: true, team: { name: owner.name } });
       }
 
       if (effectiveIntent === 'student_signup') {
@@ -3940,11 +3962,11 @@ async function startServer() {
     if (await ftcWorkspace(identity.ftcNumber)) return res.status(409).json(ftcTakenBody(identity.ftcNumber));
     const cleanName = String(identity.name).trim().slice(0, 80);
     const code = await uniqueAccessCode();
-    const tInfo = (await dbRun(
-      "INSERT INTO teams (name, number, access_code, ftc_team_number, accent_color, primary_color, text_color, navgpt_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-      cleanName, identity.number, code, identity.ftcNumber, cleanHex(accent_color), cleanHex(primary_color), cleanHex(text_color)
-    )) as any;
-    const teamId = tInfo.lastInsertRowid;
+    const teamId = await insertTeamClaimingFtc({
+      name: cleanName, number: identity.number, access_code: code, ftc_team_number: identity.ftcNumber,
+      accent_color: cleanHex(accent_color), primary_color: cleanHex(primary_color), text_color: cleanHex(text_color), navgpt_enabled: 0,
+    });
+    if (teamId == null) return res.status(409).json(ftcTakenBody(identity.ftcNumber));
     const me = auth.teamless
       ? (await dbGet("SELECT * FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", auth.email || "")) as any
       : (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
@@ -3975,7 +3997,7 @@ async function startServer() {
     )) as any;
     if (already) return res.status(400).json({ error: "You're already in that workspace — switch to it from the workspace menu" });
     const me = (await dbGet("SELECT name FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any;
-    await fileJoinRequest(owner, email, me?.name || email.split("@")[0], null, null, "ftc");
+    await fileJoinRequest(owner, email, me?.name || email.split("@")[0], null, "ftc");
     res.json({ pendingApproval: true, team: { name: owner.name } });
   });
 
@@ -4059,13 +4081,15 @@ async function startServer() {
   }
 
   // Files (or refreshes) a pending request and tells the people who can
-  // approve it. A brand-new account's password hash rides along.
-  async function fileJoinRequest(team: any, email: string, name: string, inviteId: number | null, passwordHash: string | null, source = "invite") {
+  // approve it. A request never carries credentials: nobody has proven they
+  // own the email yet, so a brand-new account is created password-less on
+  // approval and its owner sets a password through an emailed code (or signs
+  // in with Google/Discord/GitHub).
+  async function fileJoinRequest(team: any, email: string, name: string, inviteId: number | null, source = "invite") {
     await dbRun(
-      `INSERT INTO team_join_requests (team_id, email, name, password_hash, invite_id, source) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(team_id, email) WHERE status = 'pending' DO UPDATE SET name = excluded.name,
-         password_hash = COALESCE(excluded.password_hash, team_join_requests.password_hash), invite_id = excluded.invite_id`,
-      team.id, email, name, passwordHash, inviteId, source
+      `INSERT INTO team_join_requests (team_id, email, name, invite_id, source) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, email) WHERE status = 'pending' DO UPDATE SET name = excluded.name, invite_id = excluded.invite_id`,
+      team.id, email, name, inviteId, source
     );
     const approvers = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", team.id)) as any[];
     for (const m of approvers) {
@@ -4176,7 +4200,7 @@ async function startServer() {
       )) as any;
       if (!pending && !(await consumeInvite(inv))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
       const me = (await dbGet("SELECT name FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any;
-      await fileJoinRequest(team, email, me?.name || email.split("@")[0], inv.id, null);
+      await fileJoinRequest(team, email, me?.name || email.split("@")[0], inv.id);
       return res.json({ pendingApproval: true, team: { id: team.id, name: team.name } });
     }
     if (!(await consumeInvite(inv))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
@@ -4220,7 +4244,7 @@ async function startServer() {
         const hasAccount = (await dbGet("SELECT id FROM members WHERE email = ? LIMIT 1", reqRow.email)) as any;
         added = await addMembership(
           reqRow.email, team,
-          hasAccount ? undefined : { name: reqRow.name || reqRow.email.split("@")[0], passwordHash: reqRow.password_hash || null }
+          hasAccount ? undefined : { name: reqRow.name || reqRow.email.split("@")[0], passwordHash: null }
         );
         if (!hasAccount) await ensureOnboardingRow(reqRow.email);
       } catch (e) {
@@ -4237,7 +4261,7 @@ async function startServer() {
       const html = emailTemplate({
         preheader: `You're in ${team.name} on Control Point`,
         title: `You're in ${team.name}`,
-        intro: `Your request to join <strong>${escapeHtml(team.name)}</strong> was approved.`,
+        intro: `Your request to join <strong>${escapeHtml(team.name)}</strong> was approved. Sign in with this email — if you haven't set a password yet, we'll email you a code to set one (or use Google, Discord or GitHub).`,
         cta: { label: "Open Control Point", href: appUrl("/") },
         footnote: "You received this because you asked to join this workspace.",
       });
@@ -4308,6 +4332,7 @@ async function startServer() {
     if (accent_color !== undefined) { sets.push("accent_color = ?"); vals.push(cleanHex(accent_color)); }
     if (primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(cleanHex(primary_color)); }
     if (text_color !== undefined) { sets.push("text_color = ?"); vals.push(cleanHex(text_color)); }
+    let claimedFtc = false;
     if (ftc_team_number !== undefined) {
       const ftcNum = ftc_team_number === null || ftc_team_number === ''
         ? null
@@ -4318,10 +4343,19 @@ async function startServer() {
       // One workspace per FTC number. Workspaces that already shared a number
       // before this rule keep it (nothing is changed automatically).
       const current = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
-      if (ftcNum !== null && Number(current?.ftc_team_number) !== ftcNum && (await ftcWorkspace(ftcNum, auth.teamId))) {
-        return res.status(409).json({ error: `Team #${ftcNum} is already connected to another workspace on Control Point.` });
+      if (ftcNum !== null && Number(current?.ftc_team_number) !== ftcNum) {
+        // Check-and-set in one statement so two workspaces can't claim it at once.
+        const claimed = (await dbRun(
+          "UPDATE teams SET ftc_team_number = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM teams WHERE ftc_team_number = ? AND id != ?)",
+          ftcNum, auth.teamId, ftcNum, auth.teamId
+        )) as any;
+        if (!Number(claimed?.changes ?? claimed?.rowsAffected ?? 0)) {
+          return res.status(409).json({ error: `Team #${ftcNum} is already connected to another workspace on Control Point.` });
+        }
+        claimedFtc = true;
+      } else {
+        sets.push("ftc_team_number = ?"); vals.push(ftcNum);
       }
-      sets.push("ftc_team_number = ?"); vals.push(ftcNum);
     }
     if (default_interface_mode !== undefined) {
       if (default_interface_mode !== null && !INTERFACE_MODES.includes(default_interface_mode)) {
@@ -4338,9 +4372,9 @@ async function startServer() {
       }
       sets.push("timezone = ?"); vals.push(tz);
     }
-    if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
+    if (sets.length === 0 && !claimedFtc) return res.status(400).json({ error: "Nothing to update" });
     vals.push(req.params.id);
-    (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
+    if (sets.length) (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
     res.json({ success: true });
   });
 
