@@ -82,3 +82,30 @@ export function flattenNav(nav: { primary: ModernNavItem[]; sections: ModernNavS
 export function isActive(item: ModernNavItem, activeTab: string): boolean {
   return item.matches.includes(activeTab);
 }
+
+// ---------------------------------------------------------------------------
+// Sidebar order (owner spec: drag to reorder). Saved per device as section
+// ids plus, per section, item ids. Anything new or unknown keeps its default
+// place after the saved ones, so a saved order never hides a page.
+
+export interface NavOrder { sections?: string[]; items?: Record<string, string[]> }
+
+function orderBy<T extends { id: string }>(list: T[], saved: string[] | undefined): T[] {
+  if (!saved?.length) return list;
+  const rank = new Map(saved.map((id, i) => [id, i]));
+  return [...list].sort((a, b) => (rank.get(a.id) ?? 1e6 + list.indexOf(a)) - (rank.get(b.id) ?? 1e6 + list.indexOf(b)));
+}
+
+export function applyNavOrder(sections: ModernNavSection[], order: NavOrder | null | undefined): ModernNavSection[] {
+  if (!order) return sections;
+  return orderBy(sections, order.sections).map((s) => ({ ...s, items: orderBy(s.items, order.items?.[s.id]) }));
+}
+
+/** Move one id up or down (or onto another id's place) in an ordered list. */
+export function moveId(ids: string[], id: string, to: number): string[] {
+  const from = ids.indexOf(id);
+  if (from < 0) return ids;
+  const next = ids.filter((x) => x !== id);
+  next.splice(Math.max(0, Math.min(to, next.length)), 0, id);
+  return next;
+}
