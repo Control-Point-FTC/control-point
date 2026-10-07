@@ -6,12 +6,14 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ClockWeather } from './chrome/ClockWeather';
 import { useLocation } from 'react-router-dom';
 import { TipsBar } from './chrome/TipsBar';
+import { readMobileTabs, resolveMobileTabs, saveMobileTabs, type MobileTabChoice } from './chrome/mobileTabs';
+import { CustomizeTabsDialog } from './chrome/CustomizeTabsDialog';
 import { BugButton } from './chrome/BugButton';
 import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Inbox, Bot, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
-  Sparkles, MessageSquareHeart, Compass, Check, Menu, Home, MessageSquare, CheckSquare, Layers, Plus, UserPlus, LogIn,
+  Sparkles, MessageSquareHeart, Compass, Check, Menu, Layers, Plus, UserPlus, LogIn,
 } from 'lucide-react';
 import { cn } from '../components/cn';
 import { assetUrl } from '../services/api';
@@ -84,6 +86,11 @@ export function ModernShell(props: ModernShellProps) {
   const [collapsed, setCollapsed] = useState<boolean>(() => readJSON(COLLAPSE_KEY, false));
   const [cmdOpen, setCmdOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Phone tab bar: three chosen pages + Bruno + More (per device).
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [mobilePicks, setMobilePicks] = useState<string[]>(readMobileTabs);
+  const tabAllowed = (id: string) => props.visibleTabs.some((v) => v.id === id);
+  const mobileTabs = resolveMobileTabs(mobilePicks, tabAllowed);
   useEffect(() => writeJSON(COLLAPSE_KEY, collapsed), [collapsed]);
 
   // ⌘K / Ctrl+K: command menu. ⌘J / Ctrl+J: Bruno.
@@ -181,6 +188,7 @@ export function ModernShell(props: ModernShellProps) {
         {isMobile && (
           <MobileTabBar
             {...props}
+            tabs={mobileTabs}
             onOpenMenu={() => setMenuOpen(true)}
           />
         )}
@@ -190,8 +198,26 @@ export function ModernShell(props: ModernShellProps) {
               <SheetTitle className="sr-only">Menu</SheetTitle>
               <SheetDescription className="sr-only">All sections of Control Point</SheetDescription>
               {sidebar(true)}
+              <div className="border-t border-line p-2">
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); setCustomizeOpen(true); }}
+                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-sm text-text-muted hover:bg-text-base/[0.06] hover:text-text-base"
+                >
+                  <Settings className="size-4" /> Customize tab bar
+                </button>
+              </div>
             </SheetContent>
           </Sheet>
+        )}
+        {isMobile && (
+          <CustomizeTabsDialog
+            open={customizeOpen}
+            onOpenChange={setCustomizeOpen}
+            current={mobileTabs}
+            allowed={tabAllowed}
+            onSave={(ids) => { saveMobileTabs(ids); setMobilePicks(ids); }}
+          />
         )}
 
         <Toaster />
@@ -534,14 +560,7 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, workspac
   );
 }
 
-const MOBILE_TABS: { id: string; label: string; icon: typeof Home }[] = [
-  { id: 'dashboard', label: 'Home', icon: Home },
-  { id: 'chat', label: 'Messages', icon: MessageSquare },
-  { id: 'tasks', label: 'Tasks', icon: CheckSquare },
-];
-
-function MobileTabBar({ visibleTabs, activeTab, onNavigate, onOpenBruno, onOpenMenu, unreadMentions }: ModernShellProps & { onOpenMenu: () => void }) {
-  const tabs = MOBILE_TABS.filter((tab) => visibleTabs.some((v) => v.id === tab.id));
+function MobileTabBar({ activeTab, onNavigate, onOpenBruno, onOpenMenu, unreadMentions, tabs }: ModernShellProps & { onOpenMenu: () => void; tabs: MobileTabChoice[] }) {
   const btn = 'relative flex flex-1 flex-col items-center justify-center gap-1 min-h-[60px] text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60';
   return (
     <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-secondary/95 backdrop-blur-lg md:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -559,8 +578,8 @@ function MobileTabBar({ visibleTabs, activeTab, onNavigate, onOpenBruno, onOpenM
       <button type="button" onClick={onOpenBruno} className={cn(btn, 'text-text-muted')}>
         <Bot className="size-5" /> Bruno
       </button>
-      <button type="button" data-onboard="mtab-more" onClick={onOpenMenu} aria-label="Menu" className={cn(btn, 'text-text-muted')}>
-        <Menu className="size-5" /> Menu
+      <button type="button" data-onboard="mtab-more" onClick={onOpenMenu} aria-label="More" className={cn(btn, 'text-text-muted')}>
+        <Menu className="size-5" /> More
       </button>
     </nav>
   );
