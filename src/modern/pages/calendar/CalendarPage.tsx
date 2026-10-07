@@ -3,7 +3,7 @@
 // Legacy). Views: Month (days are buttons, "+N more" popover), Week, Agenda
 // (default on phones). Everyone can open an event's details; only calendar
 // managers can create, edit or delete. Dates use the browser locale.
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, List, MapPin, Pencil, Plus, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
@@ -46,7 +46,11 @@ export function CalendarPage(props: any) {
     if (!k) return null;
     return [
       ...(ctl.canManageCalendar ? [{ label: `New event on ${dayLabel(k)}`, icon: Plus, action: () => actions.newOn(k) }] : []),
-      { label: 'Show this day', icon: CalendarDays, action: () => setSelected(k) },
+      {
+        label: 'Show this day', icon: CalendarDays,
+        // The month view (and its day list) is where a selected day shows.
+        action: () => { setView('month'); setCursor(keyToDate(k)); setSelected(k); },
+      },
     ];
   });
   useContextMenu('calendar-event', (el) => {
@@ -226,6 +230,30 @@ function useDayProps(key: string) {
   };
 }
 
+/** For people who can edit, a single click on an event waits a moment so a
+ *  double-click can become "edit" instead (the first click would otherwise
+ *  open the details sheet, whose overlay swallows the second click). */
+const DOUBLE_CLICK_MS = 250;
+function useClickOrEdit(e: any, open: (e: any) => void) {
+  const a = useContext(CalendarActionsCtx);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+  if (!a.canManage) return { onClick: () => open(e), onDoubleClick: undefined };
+  return {
+    onClick: (ev: React.MouseEvent) => {
+      ev.stopPropagation();
+      if (ev.detail > 1) return; // part of a double-click
+      if (timer.current) window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => { timer.current = null; open(e); }, DOUBLE_CLICK_MS);
+    },
+    onDoubleClick: (ev: React.MouseEvent) => {
+      ev.stopPropagation();
+      if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+      a.edit(e);
+    },
+  };
+}
+
 /** Props that make an event draggable, double-click-to-edit and right-clickable. */
 function useEventProps(e: any) {
   const a = useContext(CalendarActionsCtx);
@@ -240,7 +268,6 @@ function useEventProps(e: any) {
       a.setDragging(e.id);
     } : undefined,
     onDragEnd: () => { a.setDragging(null); a.setOver(null); },
-    onDoubleClick: a.canManage ? (ev: React.MouseEvent) => { ev.stopPropagation(); a.edit(e); } : undefined,
   };
 }
 
@@ -259,12 +286,13 @@ function weekdayNames(format: 'short' | 'narrow') {
 function EventChip({ e, onOpen, finished }: { e: any; onOpen: (e: any) => void; finished: boolean }) {
   const meta = typeMeta(e.event_type);
   const dnd = useEventProps(e);
+  const clicks = useClickOrEdit(e, onOpen);
   const dragging = useContext(CalendarActionsCtx).dragging === e.id;
   return (
     <button
       type="button"
       {...dnd}
-      onClick={(ev) => { ev.stopPropagation(); onOpen(e); }}
+      {...clicks}
       className={cn(
         dnd.draggable && 'cursor-grab active:cursor-grabbing', dragging && 'opacity-40',
         'flex w-full items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -414,12 +442,13 @@ function WeekDay({ dateKey, className, children }: { dateKey: string; className?
 function WeekEvent({ e, done, onOpen }: { e: any; done: boolean; onOpen: (e: any) => void }) {
   const meta = typeMeta(e.event_type);
   const dnd = useEventProps(e);
+  const clicks = useClickOrEdit(e, onOpen);
   const dragging = useContext(CalendarActionsCtx).dragging === e.id;
   return (
     <button
       type="button"
       {...dnd}
-      onClick={() => onOpen(e)}
+      {...clicks}
       className={cn('w-full rounded-md border-l-2 bg-muted/50 px-2 py-1.5 text-left transition-colors hover:bg-muted', meta.bar, done && 'opacity-55',
         dnd.draggable && 'cursor-grab active:cursor-grabbing', dragging && 'opacity-40')}
     >
@@ -473,18 +502,14 @@ function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManag
 }
 
 function AgendaRow({ e, onOpen, finished, showDate }: { e: any; onOpen: (e: any) => void; finished: boolean; showDate?: boolean }) {
-  const a = useContext(CalendarActionsCtx);
-  const rowProps = {
-    'data-cm-type': 'calendar-event', 'data-cm-id': String(e.id),
-    onDoubleClick: a.canManage ? () => a.edit(e) : undefined,
-  };
+  const clicks = useClickOrEdit(e, onOpen);
+  const rowProps = { 'data-cm-type': 'calendar-event', 'data-cm-id': String(e.id), ...clicks };
   const meta = typeMeta(e.event_type);
   return (
     <motion.button
       type="button"
       layout
       {...rowProps}
-      onClick={() => onOpen(e)}
       whileHover={{ x: 2 }}
       className={cn('flex min-h-11 w-full items-start gap-3 rounded-xl border border-border border-l-[3px] bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', meta.bar)}
     >

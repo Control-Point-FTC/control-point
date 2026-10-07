@@ -2,7 +2,7 @@
 // page. Extracted verbatim from CalendarView (same endpoints, optimistic
 // updates, Bruno quick-add). The editor and quick-add text are drafted so an
 // open, half-written event survives a Legacy/Modern switch.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
@@ -229,9 +229,14 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
 
   /** Move an event to another day by drag-and-drop: only its date changes
    *  (times stay). Optimistic; on failure that event goes back. */
+  // One move per event at a time: a second drag while the first save is in
+  // flight is ignored, so a late failure can never undo a newer move.
+  const movingIds = useRef(new Set<number | string>());
   const moveEvent = async (id: number | string, dateKey: string) => {
     const ev = (events || []).find((e: any) => e.id === id);
     if (!ev || ev.date === dateKey || String(id).startsWith('temp-')) return;
+    if (movingIds.current.has(id)) { notify('Still saving the last move — try again in a moment.', 'info'); return; }
+    movingIds.current.add(id);
     const from = ev.date;
     const setDate = (d: string) => setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, date: d } : e)));
     setDate(dateKey);
@@ -242,6 +247,8 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     } catch (err: any) {
       setDate(from);
       notify((!(err instanceof TypeError) && err?.message) || 'Could not move the event — try again.', 'error');
+    } finally {
+      movingIds.current.delete(id);
     }
   };
 

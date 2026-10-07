@@ -254,6 +254,25 @@ describe('Calendar direct manipulation', () => {
     expect((within(sheet).getByLabelText(/Date/) as HTMLInputElement).value).toBe(today);
   });
 
+  it('a real double-click (click, click, dblclick) edits instead of opening details', async () => {
+    setup();
+    fireEvent.click(chip(1), { detail: 1 });
+    fireEvent.click(chip(1), { detail: 2 });
+    fireEvent.doubleClick(chip(1), { detail: 2 });
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('Edit event')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 350)); // the single-click timer never fires
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
+  it('a single click still opens the details sheet', async () => {
+    setup();
+    fireEvent.click(chip(1), { detail: 1 });
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByText('Edit event')).not.toBeInTheDocument();
+    expect(within(sheet).getByText('Shop')).toBeInTheDocument();
+  });
+
   it('double-clicking an event opens it for editing', async () => {
     setup();
     fireEvent.doubleClick(chip(1));
