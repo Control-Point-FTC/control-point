@@ -55,6 +55,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
     return (
       <div
         key={c.id}
+        data-cm-row-root
         draggable={isAdmin}
         onDragStart={(e) => { e.dataTransfer.setData('text/plain', String(c.id)); ctl.setDragChannelId(c.id); }}
         onDragEnd={() => { ctl.setDragChannelId(null); ctl.setDragOverTarget(null); }}
@@ -69,7 +70,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
         {isAdmin && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={`Options for #${c.name}`} className="mr-0.5 opacity-100 md:opacity-0 md:group-hover/ch:opacity-100 md:focus-visible:opacity-100 max-sm:size-11"><MoreHorizontal /></Button>
+              <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Options for #${c.name}`} className="mr-0.5 opacity-100 md:opacity-0 md:group-hover/ch:opacity-100 md:focus-visible:opacity-100 max-sm:size-11"><MoreHorizontal /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56">
               <DropdownMenuLabel>#{c.name}</DropdownMenuLabel>
@@ -139,7 +140,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
           const list = byCat.get(cat.id) || [];
           return (
             <section key={cat.id} className="mb-2" {...dropProps(`cat:${cat.id}`, cat.id)}>
-              <div className={cn('group/cat flex items-center rounded-md', ctl.dragOverTarget === `cat:${cat.id}` && 'bg-accent/10')}>
+              <div data-cm-row-root className={cn('group/cat flex items-center rounded-md', ctl.dragOverTarget === `cat:${cat.id}` && 'bg-accent/10')}>
                 {ctl.renamingCat === cat.id ? (
                   <form className="flex flex-1 gap-1.5 px-1 py-1" onSubmit={(e) => { e.preventDefault(); void ctl.handleRenameCategorySubmit(); }}>
                     <Input autoFocus value={ctl.renameCatName} onChange={(e) => ctl.setRenameCatName(e.target.value)} aria-label="New category name" className="h-8" onKeyDown={(e) => { if (e.key === 'Escape') ctl.setRenamingCat(null); }} />
@@ -154,7 +155,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
                 {isAdmin && ctl.renamingCat !== cat.id && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon-sm" aria-label={`Options for ${cat.name}`} className="opacity-100 md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 max-sm:size-11"><MoreHorizontal /></Button>
+                      <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Options for ${cat.name}`} className="opacity-100 md:opacity-0 md:group-hover/cat:opacity-100 md:focus-visible:opacity-100 max-sm:size-11"><MoreHorizontal /></Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
                       <DropdownMenuItem onSelect={() => { ctl.setCreatingIn(cat.id); ctl.setCreatingChannel(true); }}><Plus /> New channel here</DropdownMenuItem>

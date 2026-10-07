@@ -130,7 +130,7 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
                 </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" aria-label={`Actions for ${m.name}`} className="shrink-0"><MoreHorizontal /></Button>
+                    <Button data-cm-menu variant="ghost" size="icon" aria-label={`Actions for ${m.name}`} className="shrink-0"><MoreHorizontal /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">{actions(m)}</DropdownMenuContent>
                 </DropdownMenu>

@@ -54,7 +54,7 @@ export function TeamMenu({ n, name, season, actions, onViewMatches, label }: { n
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={label ?? `Actions for team ${n}`} className="max-sm:size-11"><MoreHorizontal /></Button>
+        <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={label ?? `Actions for team ${n}`} className="max-sm:size-11"><MoreHorizontal /></Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {actions.onViewTeam && <DropdownMenuItem onSelect={() => actions.onViewTeam!(n, name)}><Eye /> View team</DropdownMenuItem>}

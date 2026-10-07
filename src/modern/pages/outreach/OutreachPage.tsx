@@ -97,7 +97,7 @@ function Timeline({ ctl, outreach }: { ctl: Ctl; outreach: any[] }) {
                     <Badge variant="soft" className="shrink-0 tabular-nums"><Clock />{e.hours}h</Badge>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${e.title}`} className="-mr-1 -mt-1 max-sm:size-11"><MoreHorizontal /></Button>
+                        <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Actions for ${e.title}`} className="-mr-1 -mt-1 max-sm:size-11"><MoreHorizontal /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onSelect={() => ctl.openEdit(e)}><Pencil /> Edit event</DropdownMenuItem>
@@ -166,7 +166,7 @@ function Channels({ ctl, youtubeEnabled }: { ctl: Ctl; youtubeEnabled: boolean }
             const videos = Number(p.latest?.posts) || 0, views = Number(p.latest?.views) || 0;
             const url = p.custom_url ? `https://www.youtube.com/${String(p.custom_url)}` : p.external_id ? `https://www.youtube.com/channel/${p.external_id}` : null;
             return (
-              <StaggerItem key={p.id} className="flex flex-col rounded-2xl border border-border bg-card p-5">
+              <StaggerItem key={p.id} data-cm-row-root className="flex flex-col rounded-2xl border border-border bg-card p-5">
                 <div className="flex items-start gap-3">
                   {p.avatar_url ? <img src={assetUrl(p.avatar_url)} alt="" className="size-10 rounded-full object-cover" /> : (
                     <span className="flex size-10 items-center justify-center rounded-full bg-red-500/15 text-red-500">{yt ? <Youtube className="size-5" /> : <Globe className="size-5" />}</span>
@@ -178,7 +178,7 @@ function Channels({ ctl, youtubeEnabled }: { ctl: Ctl; youtubeEnabled: boolean }
                   {admin && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" aria-label={`Manage ${p.display_name || p.handle}`} className="max-sm:size-11"><MoreHorizontal /></Button>
+                        <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Manage ${p.display_name || p.handle}`} className="max-sm:size-11"><MoreHorizontal /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onSelect={() => void ctl.handlePinProfile(p.id, !!p.is_pinned)}>{p.is_pinned ? <><PinOff /> Unpin from top</> : <><Pin /> Pin to top</>}</DropdownMenuItem>

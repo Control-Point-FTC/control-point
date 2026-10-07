@@ -108,7 +108,7 @@ export function InboxPage({ notifications, actions, onOpenChannel }: {
                         </button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon-sm" aria-label="Notification actions" className="shrink-0 text-muted-foreground"><MoreHorizontal /></Button>
+                            <Button data-cm-menu variant="ghost" size="icon-sm" aria-label="Notification actions" className="shrink-0 text-muted-foreground"><MoreHorizontal /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             {target && <DropdownMenuItem onSelect={() => open(n)}><ArrowUpRight /> {target.label}</DropdownMenuItem>}

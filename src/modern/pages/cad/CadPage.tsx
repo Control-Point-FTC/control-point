@@ -148,7 +148,7 @@ function DocsTab() {
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${doc.name}`} className="max-sm:size-11"><MoreHorizontal /></Button>
+                    <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Actions for ${doc.name}`} className="max-sm:size-11"><MoreHorizontal /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem asChild><a href={doc.url} target="_blank" rel="noreferrer"><ExternalLink /> Open in Onshape</a></DropdownMenuItem>

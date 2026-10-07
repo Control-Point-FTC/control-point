@@ -61,7 +61,7 @@ function Action({ label, onClick, children, danger }: { label: string; onClick: 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={label} onClick={onClick} className={cn('max-sm:size-11', danger && 'text-destructive hover:text-destructive')}>{children}</Button>
+        <Button variant="ghost" size="icon-sm" aria-label={label} data-cm-action={danger ? 'danger' : ''} onClick={onClick} className={cn('max-sm:size-11', danger && 'text-destructive hover:text-destructive')}>{children}</Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
@@ -95,6 +95,8 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
   return (
     <div
       ref={(el) => onRef(msg.id, el)}
+      // Right-click / menu key: the hover toolbar's actions as a menu.
+      data-cm-row data-cm-label="Message actions"
       onClick={() => onActivate(msg.id)}
       className={cn(
         'group/msg relative flex gap-3 rounded-lg px-3 transition-colors hover:bg-muted/40 focus-within:bg-muted/40',
