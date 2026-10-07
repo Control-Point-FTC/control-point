@@ -1,11 +1,15 @@
 // Predict research — fit Platt scaling on the tuning season, evaluate on test.
 //
-//   npx tsx scripts/predict/fit-platt.mts [--tune 2024] [--test 2025]
+//   npx tsx scripts/predict/fit-platt.mts [--tune 2024] [--test 2025] [--from-tuned]
+//
+// --from-tuned: use the research settings in .cache/predict/tuned-<tune>.json
+// (a refit in progress) instead of the shipped model.json. Either way the
+// fitted values go to .cache/predict/platt-<tune>.json for export-model.
 //
 // Fits (a, b) on the tuning season's live predictions (held out from the
 // test season), then reports live + pre-event metrics on the test season
 // with and without calibration. Ship only if Brier improves out-of-sample.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { runBacktest, fitScale, summarize } from "./backtest-matches.mts";
 import { fitPlatt, plattNLL, type CalibrationParams } from "../../server/predict/calibration.ts";
 
@@ -17,9 +21,14 @@ if (!Number.isInteger(tuneSeason) || !Number.isInteger(testSeason) || !(tuneSeas
   process.exit(1);
 }
 
-const M = JSON.parse(readFileSync("server/predict/model.json", "utf8"));
-const params = M.rating;
-const noise = M.noise;
+let params, noise;
+if (process.argv.includes("--from-tuned")) {
+  const { a, b, preExtra, noiseFit: _nf, ...rating } = JSON.parse(readFileSync(`.cache/predict/tuned-${tuneSeason}.json`, "utf8")).best;
+  params = rating; noise = { a, b, preExtra };
+} else {
+  const M = JSON.parse(readFileSync("server/predict/model.json", "utf8"));
+  params = M.rating; noise = M.noise;
+}
 const seasons = [2022, 2023, tuneSeason, testSeason].filter((s, i, a) => a.indexOf(s) === i).sort();
 
 // 1. Fit on the tuning season.
@@ -27,6 +36,8 @@ const tuneRows = runBacktest({ params, noise, seasons, report: new Set([tuneSeas
 const tuneLive = tuneRows.map((r) => ({ p: r.live, y: r.y }));
 const cal: CalibrationParams = fitPlatt(tuneLive);
 console.log("fitted:", JSON.stringify(cal));
+// Record what it was fitted for: export-model refuses a fit for other settings.
+writeFileSync(`.cache/predict/platt-${tuneSeason}.json`, JSON.stringify({ calibration: cal, tuneSeason, rating: params, noise: { a: noise.a, b: noise.b } }, null, 1));
 console.log("tune NLL identity:", plattNLL(tuneLive, { a: 1, b: 0 }).toFixed(5),
   "fitted:", plattNLL(tuneLive, cal).toFixed(5));
 

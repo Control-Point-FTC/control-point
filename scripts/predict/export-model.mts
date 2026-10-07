@@ -6,7 +6,8 @@
 // shows. Run after the back-tests (see docs/predict/backtest-report.md).
 //
 //   npx tsx scripts/predict/export-model.mts
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { sameRatingParams } from "../../server/predict/rating.ts";
 
 const C = ".cache/predict";
 const read = (f: string) => JSON.parse(readFileSync(`${C}/${f}`, "utf8"));
@@ -17,6 +18,18 @@ const awards = read("awards-model.json");
 const ev = read("events-2025-model.json");
 const evNone = read("events-2025-none.json");
 const matches = read("final-test.json").result;
+// Platt calibration (fit-platt.mts). It's only valid for the settings it was
+// fitted with (live odds depend on rating, a and b), so a fit for different
+// settings is refused. Without a fit, keep the shipped one rather than
+// silently dropping it.
+let calibration = JSON.parse(readFileSync("server/predict/model.json", "utf8")).calibration;
+if (existsSync(`${C}/platt-2024.json`)) {
+  const platt = read("platt-2024.json");
+  if (!platt.rating || !sameRatingParams(platt.rating, rating) || platt.noise?.a !== a || platt.noise?.b !== b) {
+    throw new Error(`${C}/platt-2024.json was fitted for other settings than tuned-2024.json: rerun fit-platt.mts (--from-tuned)`);
+  }
+  calibration = platt.calibration;
+}
 
 const pickAdv = (st: string) => ({ brier: ev.advancement[st].brier, calibrationError: ev.advancement[st].ece });
 const model = {
@@ -51,6 +64,7 @@ const model = {
     partners: ev.partners ? { allianceWin: ev.partners.win, allianceWinGeneral: ev.partners.winUnconditional } : null,
     pickTop3: read("pick-2024.json").top3,
   },
+  ...(calibration ? { calibration } : {}),
 };
 writeFileSync("server/predict/model.json", JSON.stringify(model, null, 1) + "\n");
 console.log("wrote server/predict/model.json");
