@@ -79,7 +79,7 @@ export function useBrunoQuickAdd({ threads, onLogged, onRefresh }: { threads: Qu
       ).join('\n');
       await streamBuildHelper([
         { role: 'user', text:
-`You are helping quick-add an email to the team's communication log. The user pasted an email below and clicked "Parse with Bruno" — that click is their confirmation that they want the entry proposed.
+`You are helping quick-add an email to the team's communication log. The user pasted an email below and clicked "Bruno" — that click is their confirmation that they want the entry proposed.
 
 Extract every field and propose it with the \`\`\`communications block exactly as your communications log skill specifies (recipient, subject, body, date, type, direction, parent_id).
 

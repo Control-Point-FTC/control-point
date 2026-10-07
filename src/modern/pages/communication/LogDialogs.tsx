@@ -118,7 +118,7 @@ export function QuickAddDialog({ threads, onClose, onLogged, onRefresh }: { thre
                 placeholder={'Paste the email here, headers and all…\n\nFrom: sponsors@polymaker.com\nSubject: Re: Filament sponsorship'} />
               <ErrorLine error={q.error} />
               <Button onClick={() => void q.handleParse()} disabled={q.aiBusy || !q.paste.trim()} className="h-11">
-                {q.aiBusy ? <><Loader2 className="animate-spin" /> Bruno is reading…</> : <><Sparkles /> Parse with Bruno</>}
+                {q.aiBusy ? <><Loader2 className="animate-spin" /> Bruno is reading…</> : <><Sparkles /> Bruno</>}
               </Button>
               <Button variant="ghost" onClick={() => { q.setManual(true); q.setError(null); }} disabled={q.aiBusy} className="h-11">Fill in the fields myself</Button>
             </motion.div>
@@ -184,7 +184,7 @@ export function ImportEmailDialog({ onClose, onLogged, onRefresh }: { onClose: (
               <ReviewFields f={m} />
               <ErrorLine error={m.error} />
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={() => void m.handleAiParse()} disabled={m.aiBusy} className="h-11">{m.aiBusy ? <><Loader2 className="animate-spin" /> Bruno is reading…</> : <><Sparkles /> Refine with Bruno</>}</Button>
+                <Button type="button" variant="outline" onClick={() => void m.handleAiParse()} disabled={m.aiBusy} className="h-11">{m.aiBusy ? <><Loader2 className="animate-spin" /> Bruno is reading…</> : <><Sparkles /> Bruno</>}</Button>
                 <Button type="button" variant="ghost" onClick={m.startOver} className="h-11">Start over</Button>
                 <Button type="submit" disabled={m.saving || !m.recipient.trim() || !m.subject.trim()} className="h-11 sm:ml-auto">{m.saving ? <><Loader2 className="animate-spin" /> Logging…</> : 'Log it'}</Button>
               </div>

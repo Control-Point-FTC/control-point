@@ -221,7 +221,7 @@ function InvoiceDialog({ open, onClose, onDone }: { open: boolean; onClose: () =
         <DialogFooter>
           <Button variant="outline" onClick={close} disabled={inv.importing}>Cancel</Button>
           {!inv.items.length
-            ? <Button onClick={() => void inv.parse()} disabled={!inv.files.length || !!inv.parsing}><Sparkles /> Parse with Bruno</Button>
+            ? <Button onClick={() => void inv.parse()} disabled={!inv.files.length || !!inv.parsing}><Sparkles /> Bruno</Button>
             : <Button onClick={() => void inv.importSelected()} disabled={inv.importing || !inv.selectedCount}>{inv.importing ? <><Loader2 className="animate-spin" /> Importing…</> : <><Check /> Import selected ({inv.selectedCount})</>}</Button>}
         </DialogFooter>
       </DialogContent>
