@@ -104,7 +104,7 @@ describe("team updates", () => {
 
   it("a due digest arrives as one summary and empties the queue", async () => {
     // Count first, then queue the extra item and age the whole queue past the
-    // digest window in one statement: the flush runs every 500 ms, and if it
+    // digest window in one statement: the flush runs every 300 ms, and if it
     // fired between separate statements it would send a partial digest early.
     const before = await notes('digest');
     await t.db.execute({
