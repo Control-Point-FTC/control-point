@@ -2533,6 +2533,14 @@ async function startServer() {
   };
 
   // ---- Notification controls (audit item 26) ----
+  // A membership's prefs, or the account's from another membership (a
+  // workspace joined after saving inherits the choice). Use with alias m.
+  const PREFS_OF_M = `COALESCE(
+    CASE WHEN json_valid(m.notify_prefs) THEN m.notify_prefs END,
+    (SELECT p.notify_prefs FROM members p
+      WHERE m.email IS NOT NULL AND LOWER(p.email) = LOWER(m.email)
+        AND p.notify_prefs IS NOT NULL AND json_valid(p.notify_prefs)
+      ORDER BY p.id DESC LIMIT 1))`;
   // Team updates (budget, outreach, calendar) follow each recipient's choice:
   // instant, a digest every few hours, or off. The actor is never notified of
   // their own change. `count` > 1 bundles a batch (Bruno adding 9 events).
@@ -2544,7 +2552,7 @@ async function startServer() {
     if (!ids.length) return;
     try {
       const rows = (await dbAll(
-        `SELECT id, notify_prefs FROM members WHERE id IN (${ids.map(() => "?").join(",")}) AND team_id = ? AND COALESCE(is_active, 1) = 1`,
+        `SELECT m.id, ${PREFS_OF_M} AS notify_prefs FROM members m WHERE m.id IN (${ids.map(() => "?").join(",")}) AND m.team_id = ? AND COALESCE(m.is_active, 1) = 1`,
         ...ids, teamId,
       )) as any[];
       const now = new Date().toISOString();
@@ -2564,17 +2572,35 @@ async function startServer() {
   };
 
   // One summary per member once their oldest queued update is DIGEST_WINDOW old.
+  // Rows are claimed in one UPDATE, so two sweeps (an overrun, a second
+  // process) can never send the same rows; a claim left by a crashed sweep
+  // expires after an hour.
+  let flushing = false;
   const flushDigests = async () => {
+    if (flushing) return;
+    flushing = true;
     try {
       const cutoff = new Date(Date.now() - DIGEST_WINDOW_MS).toISOString();
+      const staleClaim = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       const due = (await dbAll(
-        "SELECT member_id FROM notification_digest GROUP BY member_id HAVING MIN(created_at) <= ?", cutoff,
+        "SELECT member_id FROM notification_digest WHERE claim IS NULL OR claim < ? GROUP BY member_id HAVING MIN(created_at) <= ?",
+        staleClaim, cutoff,
       )) as any[];
       for (const d of due) {
+        const token = `${new Date().toISOString()}|${crypto.randomUUID()}`;
+        const claimed = (await dbRun(
+          "UPDATE notification_digest SET claim = ? WHERE member_id = ? AND (claim IS NULL OR claim < ?)",
+          token, d.member_id, staleClaim,
+        )) as any;
+        if (!Number(claimed?.changes)) continue;
         const items = (await dbAll(
-          "SELECT id, team_id, kind, meta FROM notification_digest WHERE member_id = ? ORDER BY id", d.member_id,
+          "SELECT id, team_id, kind, meta FROM notification_digest WHERE claim = ? ORDER BY id", token,
         )) as any[];
+        await dbRun("DELETE FROM notification_digest WHERE claim = ?", token);
         if (!items.length) continue;
+        // Their current choice wins (they may have turned updates off since).
+        const cur = (await dbGet(`SELECT ${PREFS_OF_M} AS notify_prefs FROM members m WHERE m.id = ?`, d.member_id)) as any;
+        if (parsePrefs(cur?.notify_prefs).team_updates === "off") continue;
         const kinds: UpdateKind[] = [];
         for (const it of items) {
           let n = 1;
@@ -2583,16 +2609,31 @@ async function startServer() {
         }
         const team = (await dbGet("SELECT name FROM teams WHERE id = ?", items[items.length - 1].team_id)) as any;
         const text = digestText(String(team?.name || ""), kinds);
-        const maxId = items[items.length - 1].id;
-        // Delete first (up to what we read), so a crash can't send it twice.
-        await dbRun("DELETE FROM notification_digest WHERE member_id = ? AND id <= ?", d.member_id, maxId);
         if (text) await createNotification(d.member_id, text, "system", { digest: true, items: kinds.length });
       }
     } catch (e) {
       console.error("digest flush failed:", e);
+    } finally {
+      flushing = false;
     }
   };
   setInterval(() => void flushDigests(), Number(process.env.NOTIFY_DIGEST_FLUSH_MS) || 15 * 60 * 1000).unref();
+
+  // Members affected by a change to a whole role (edited, deleted): each hears
+  // what happened, plus whether it changed their admin rights. `before` holds
+  // { member_id, account_type } read before the change.
+  const notifyRoleHolders = async (teamId: number, actorId: number, before: any[], what: (team: string) => string) => {
+    if (!before.length) return;
+    const t = (await dbGet("SELECT name FROM teams WHERE id = ?", teamId)) as any;
+    const team = t?.name || "your workspace";
+    for (const h of before) {
+      if (h.member_id === actorId) continue;
+      const now = (await dbGet("SELECT account_type FROM members WHERE id = ?", h.member_id)) as any;
+      const adminNote = now && now.account_type !== h.account_type
+        ? (now.account_type === "admin" ? " You're now an admin." : " You're no longer an admin.") : "";
+      void createNotification(h.member_id, `${what(team)}${adminNote}`, "system", { roles_changed: true });
+    }
+  };
 
   // Caps one sender's @everyone / @here fan-out; the message still posts.
   const pingLimiter = new PingLimiter(3, 60 * 60 * 1000);
@@ -2719,7 +2760,7 @@ async function startServer() {
           const pingAllowed = wantsPing && pingLimiter.allow(teamId, message.sender_id);
           if (plainContent.includes('@everyone') && pingAllowed) {
             // Notify every active member of the team (except the sender) who takes @everyone pings
-            const all = (await dbAll("SELECT id, notify_prefs FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 AND id != ?", teamId, message.sender_id)) as any[];
+            const all = (await dbAll(`SELECT m.id, ${PREFS_OF_M} AS notify_prefs FROM members m WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND m.id != ?`, teamId, message.sender_id)) as any[];
             for (const u of all) {
               if (!parsePrefs(u.notify_prefs).everyone_pings) continue;
               createNotification(u.id, `${message.sender_name} pinged @everyone in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention', { channel_id: channelId, channel_name: chanName, message_id: info.lastInsertRowid });
@@ -2735,7 +2776,7 @@ async function startServer() {
             }
             const optedOut = viewers.size
               ? new Set(((await dbAll(
-                  `SELECT id, notify_prefs FROM members WHERE id IN (${[...viewers].map(() => "?").join(",")})`, ...viewers,
+                  `SELECT m.id, ${PREFS_OF_M} AS notify_prefs FROM members m WHERE m.id IN (${[...viewers].map(() => "?").join(",")})`, ...viewers,
                 )) as any[]).filter((r) => !parsePrefs(r.notify_prefs).everyone_pings).map((r) => r.id))
               : new Set<number>();
             for (const id of viewers) {
@@ -6354,8 +6395,14 @@ async function startServer() {
       await dbRun(`UPDATE roles SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`, ...Object.values(updates), roleId);
     }
     // Re-sync admin flags: a role gaining/losing manage_members promotes/demotes holders.
-    const holders = (await dbAll("SELECT member_id FROM member_roles WHERE role_id = ?", roleId)) as any[];
+    const holders = (await dbAll(
+      "SELECT mr.member_id, m.account_type FROM member_roles mr JOIN members m ON m.id = mr.member_id WHERE mr.role_id = ?", roleId,
+    )) as any[];
     for (const h of holders) await syncAccountType(h.member_id, auth.teamId!);
+    if (updates.permissions !== undefined && updates.permissions !== role.permissions) {
+      const name = updates.name ?? role.name;
+      await notifyRoleHolders(auth.teamId!, auth.memberId, holders, (team) => `The ${name} role's permissions in ${team} changed.`);
+    }
     broadcastToTeam(auth.teamId, { type: "roles_changed" });
     res.json({ success: true });
   });
@@ -6384,9 +6431,13 @@ async function startServer() {
     if (adminsAfter <= 0) {
       return res.status(400).json({ error: "Can't delete this role — the team would be left without an admin" });
     }
+    const before = (await dbAll(
+      "SELECT m.id AS member_id, m.account_type FROM member_roles mr JOIN members m ON m.id = mr.member_id WHERE mr.role_id = ?", roleId,
+    )) as any[];
     await dbRun("DELETE FROM member_roles WHERE role_id = ?", roleId);
     await dbRun("DELETE FROM roles WHERE id = ?", roleId);
     for (const h of holders) await syncAccountType(h.id, auth.teamId!);
+    await notifyRoleHolders(auth.teamId!, auth.memberId, before, (team) => `The ${role.name} role in ${team} was deleted, so you no longer have it.`);
     broadcastToTeam(auth.teamId, { type: "roles_changed" });
     res.json({ success: true });
   });
@@ -6398,7 +6449,7 @@ async function startServer() {
   app.get("/api/notification-prefs", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const row = (await dbGet("SELECT notify_prefs FROM members WHERE id = ?", auth.memberId)) as any;
+    const row = (await dbGet(`SELECT ${PREFS_OF_M} AS notify_prefs FROM members m WHERE m.id = ?`, auth.memberId)) as any;
     res.json(parsePrefs(row?.notify_prefs));
   });
   app.patch("/api/notification-prefs", async (req, res) => {
@@ -6406,11 +6457,27 @@ async function startServer() {
     if (!auth) return;
     const p = prefsPatch(req.body);
     if ("error" in p) return res.status(400).json({ error: p.error });
-    const row = (await dbGet("SELECT email, notify_prefs FROM members WHERE id = ?", auth.memberId)) as any;
-    const next = { ...parsePrefs(row?.notify_prefs), ...p.patch };
-    if (row?.email) await dbRun("UPDATE members SET notify_prefs = ? WHERE LOWER(email) = LOWER(?)", JSON.stringify(next), row.email);
-    else await dbRun("UPDATE members SET notify_prefs = ? WHERE id = ?", JSON.stringify(next), auth.memberId);
-    res.json(next);
+    // Merge in one statement (two quick saves can't undo each other), on
+    // every membership of the account.
+    const paths: string[] = [];
+    const args: any[] = [];
+    if (p.patch.team_updates !== undefined) { paths.push("'$.team_updates', ?"); args.push(p.patch.team_updates); }
+    if (p.patch.everyone_pings !== undefined) paths.push(`'$.everyone_pings', json('${p.patch.everyone_pings ? "true" : "false"}')`);
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    const where = me?.email ? "LOWER(m.email) = LOWER(?)" : "m.id = ?";
+    await dbRun(
+      `UPDATE members AS m SET notify_prefs = json_set(COALESCE(${PREFS_OF_M}, '{}'), ${paths.join(", ")}) WHERE ${where}`,
+      ...args, me?.email || auth.memberId,
+    );
+    // Off means off: drop anything already waiting in a digest.
+    if (p.patch.team_updates === "off") {
+      await dbRun(
+        `DELETE FROM notification_digest WHERE member_id IN (SELECT m.id FROM members m WHERE ${where})`,
+        me?.email || auth.memberId,
+      );
+    }
+    const row = (await dbGet(`SELECT ${PREFS_OF_M} AS notify_prefs FROM members m WHERE m.id = ?`, auth.memberId)) as any;
+    res.json(parsePrefs(row?.notify_prefs));
   });
 
   app.post("/api/members/:id/roles", async (req, res) => {

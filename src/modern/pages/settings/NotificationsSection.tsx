@@ -14,8 +14,10 @@ interface Prefs { team_updates: Mode; everyone_pings: boolean }
 export function NotificationsSection() {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [failed, setFailed] = useState(false);
-  // Only the newest save may roll back or settle the value.
+  // Only the newest save settles what's shown; a failure goes back to the
+  // last values the server confirmed (never to another unsaved change).
   const seq = useRef(0);
+  const confirmed = useRef<Prefs | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -24,7 +26,7 @@ export function NotificationsSection() {
         const res = await apiFetch('/api/notification-prefs');
         if (!res.ok) throw new Error();
         const data = await res.json();
-        if (live) setPrefs(data);
+        if (live) { confirmed.current = data; setPrefs(data); }
       } catch {
         if (live) setFailed(true);
       }
@@ -34,7 +36,6 @@ export function NotificationsSection() {
 
   const save = async (patch: Partial<Prefs>) => {
     if (!prefs) return;
-    const before = prefs;
     const mine = ++seq.current;
     setPrefs({ ...prefs, ...patch });
     try {
@@ -43,9 +44,10 @@ export function NotificationsSection() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not save — try again.');
+      confirmed.current = data;
       if (mine === seq.current) setPrefs(data);
     } catch (e: any) {
-      if (mine === seq.current) setPrefs(before);
+      if (mine === seq.current && confirmed.current) setPrefs(confirmed.current);
       notify(e?.message || 'Could not save — try again.', 'error');
     }
   };

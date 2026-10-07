@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS notification_digest (
   content TEXT NOT NULL,
   meta TEXT,
   created_at TEXT NOT NULL,
+  claim TEXT,              -- set by the sweep that is sending this row
   FOREIGN KEY(member_id) REFERENCES members(id) ON DELETE CASCADE
 );
 

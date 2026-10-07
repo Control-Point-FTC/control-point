@@ -332,3 +332,20 @@ describe('Modern Settings — notifications', () => {
     expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
   });
 });
+
+describe('Modern Settings — notifications review regressions', () => {
+  it('a failure goes back to what the server confirmed, not to another unsaved change', async () => {
+    let calls = 0;
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') { calls++; return json({ error: 'Offline' }, false); }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('switch', { name: '@everyone and @here' }));
+    await waitFor(() => expect(calls).toBe(2));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
