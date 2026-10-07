@@ -657,9 +657,12 @@ html.light .theme-dark .card-surface {
 @media (min-width: 768px) {
   .cp-fab { right: 1.5rem; bottom: calc(var(--cp-call-dock) + 1.5rem); }
 }
-.cp-above-fab {
-  bottom: calc(var(--cp-bottom-nav) + var(--cp-call-dock) + var(--cp-fab-size) + 1.5rem) !important;
-}
+/* Cards stack in lanes: the install banner right above the bug button, the
+   @mention card above the banner (if shown), toasts above both. Each card
+   reserves its height in --cp-slot-* while it is on screen (useCornerSlot). */
+:root { --cp-above-fab: calc(var(--cp-bottom-nav) + var(--cp-call-dock) + var(--cp-fab-size) + 1.5rem); }
 @media (min-width: 768px) {
-  .cp-above-fab { bottom: calc(var(--cp-call-dock) + var(--cp-fab-size) + 2.25rem) !important; }
+  :root { --cp-above-fab: calc(var(--cp-call-dock) + var(--cp-fab-size) + 2.25rem); }
 }
+.cp-slot-banner { bottom: var(--cp-above-fab) !important; }
+.cp-slot-mention { bottom: calc(var(--cp-above-fab) + var(--cp-slot-banner, 0px)) !important; }

@@ -13,7 +13,7 @@ const GENERAL = [
 const BY_PAGE: [prefix: string, tips: string[]][] = [
   ['/dashboard', ['Your dashboard shows what needs you today: check-in, tasks due and what’s next.']],
   ['/tasks', ['Drag a task between columns to change its status.', 'Paste a list into “Bruno” on Tasks to create many tasks at once.']],
-  ['/calendar', ['Click a day to add an event; recurring practices can repeat weekly.']],
+  ['/calendar', ['Click a day to add an event; everyone sees it on their dashboard.']],
   ['/attendance', ['Show the QR code at practice: members scan it to check in.']],
   ['/chat', ['Type @ to mention someone, or @everyone to ping the whole team.']],
   ['/teams', ['Invite people with a link — it can expire, cap its uses or need approval.']],
@@ -21,7 +21,7 @@ const BY_PAGE: [prefix: string, tips: string[]][] = [
   ['/stats', ['Scout works offline: entries save on this device and sync when you’re back online.', 'Analyze an event field to build your pick list.']],
   ['/predict', ['Predictions update as matches finish — percentages are calibrated, not guesses.']],
   ['/budget', ['Amounts over $10,000 ask for a second look before saving.']],
-  ['/inventory', ['Track parts by location so anyone can find them at the build space.']],
+  ['/inventory', ['Keep parts and quantities here so anyone can see what the team has.']],
   ['/cad', ['Drop a STEP file to view the model right in the browser.']],
   ['/code', ['Connect a GitHub repo to browse your robot code here.']],
   ['/bruno', ['Bruno only knows what’s in your workspace — it says so when it doesn’t know.']],

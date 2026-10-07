@@ -3,6 +3,8 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { TooltipProvider } from '../../components/ui-kit';
 import { TipsBar, tipsFor } from '../chrome/TipsBar';
 import { BugButton } from '../chrome/BugButton';
+import { useRef } from 'react';
+import { useCornerSlot } from '../chrome/useCornerSlot';
 
 afterEach(cleanup);
 
@@ -39,5 +41,19 @@ describe('Bug button', () => {
     expect(btn.className).toContain('fixed');
     fireEvent.click(btn);
     expect(onClick).toHaveBeenCalled();
+  });
+});
+
+describe('corner lanes', () => {
+  function Card({ visible }: { visible: boolean }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useCornerSlot('banner', ref, visible);
+    return visible ? <div ref={ref}>banner</div> : null;
+  }
+  it('a shown card reserves its lane; hiding it frees the lane', () => {
+    const { rerender } = render(<Card visible />);
+    expect(document.documentElement.style.getPropertyValue('--cp-slot-banner')).toMatch(/px$/);
+    rerender(<Card visible={false} />);
+    expect(document.documentElement.style.getPropertyValue('--cp-slot-banner')).toBe('');
   });
 });

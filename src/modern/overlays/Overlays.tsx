@@ -2,7 +2,9 @@
 // prompt and the mention toast. Same behaviour as Classic through the shared
 // hooks in components/overlays/useOverlays; the mention toast takes its data
 // from App like the Classic one.
+import { useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useCornerSlot } from '../chrome/useCornerSlot';
 import { AtSign, Check, Cookie, FileText, Paperclip, PlusSquare, Share, Smartphone, X } from 'lucide-react';
 import {
   Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Label, Select, SelectContent, SelectItem,
@@ -122,10 +124,12 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
 
 export function InstallBanner() {
   const i = useInstallPrompt();
+  const ref = useRef<HTMLDivElement>(null);
+  useCornerSlot('banner', ref, i.visible);
   return (
     <AnimatePresence>
       {i.visible && (
-        <motion.div {...rise} className="cp-above-fab fixed inset-x-3 z-[60] md:inset-x-auto md:right-6 md:w-96" role="region" aria-label="Install the app">
+        <motion.div ref={ref} {...rise} className="cp-slot-banner fixed inset-x-3 z-[60] md:inset-x-auto md:right-6 md:w-96" role="region" aria-label="Install the app">
           <div className="rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl">
             {!i.showIOSHelp ? (
               <div className="flex items-start gap-3">
@@ -166,16 +170,19 @@ export function MentionToastCard({ toast, channelName, canJump, onJump, onDismis
   onJump: () => void;
   onDismiss: () => void;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useCornerSlot('mention', ref, !!toast);
   return (
     <AnimatePresence>
       {toast && (
         <motion.div
+          ref={ref}
           initial={{ opacity: 0, x: 60 }}
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 60 }}
           transition={{ type: 'spring', stiffness: 320, damping: 30 }}
           role="status"
-          className="cp-above-fab fixed right-5 z-[90] w-80 max-w-[calc(100vw-2.5rem)] rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl"
+          className="cp-slot-mention fixed right-5 z-[90] w-80 max-w-[calc(100vw-2.5rem)] rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl"
         >
           <div className="flex items-start gap-3">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent/15"><AtSign className="size-4 text-accent" /></span>
