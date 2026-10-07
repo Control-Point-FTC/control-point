@@ -3,19 +3,45 @@
 // - Page loads (navigations): network first, so a deploy is picked up
 //   immediately; the last good copy of the app shell is kept and served when
 //   the network is down (competition venues, school Wi-Fi).
-// - /assets/* (content-hashed, never change): cache first.
+// - /assets/* (content-hashed, never change): cache first. On install the
+//   files Compete, Tasks and Calendar need are downloaded ahead of time
+//   (dist/sw-precache.json), so those pages open with no connection even on
+//   a device that never visited them online.
+// - Read-only data those pages show (OFFLINE_API below): network first with
+//   a short timeout, falling back to the last good copy. The app clears this
+//   copy on sign-out and on workspace switch, so one account never sees
+//   another's data.
 // - Other same-origin static files (icons, fonts, manifest): served from
 //   cache while a fresh copy is fetched in the background.
-// - Never cached: /api/* (live data), /uploads/* (user files), other origins.
+// - Never cached: other /api/* calls, /uploads/* (user files), other origins.
 // Bump CACHE to drop everything cached by an older worker.
-const CACHE = 'control-point-v3';
+const CACHE = 'control-point-v4';
+const API_CACHE = 'control-point-api-v1';
 const SHELL = '/index.html';
+const API_TIMEOUT_MS = 5000;
+
+// GET endpoints whose last answer is shown offline (exact path, or prefix
+// when it ends in "/").
+const OFFLINE_API = [
+  '/api/auth/me', '/api/teams', '/api/members', '/api/settings',
+  '/api/tasks', '/api/events', '/api/hidden-dates',
+  '/api/ftc/', '/api/predict/', '/api/scouting/entries',
+];
+function isOfflineApi(path) {
+  return OFFLINE_API.some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE)
-      .then((cache) => fetch(new Request('/', { cache: 'reload' })).then((res) => (res.ok ? cache.put(SHELL, res) : undefined)))
-      .catch(() => { /* offline install: the shell is cached on the first navigation instead */ })
+      .then((cache) => Promise.all([
+        fetch(new Request('/', { cache: 'reload' })).then((res) => (res.ok ? cache.put(SHELL, res) : undefined)),
+        // Best effort per file: one missing chunk must not fail the install.
+        fetch('/sw-precache.json', { cache: 'no-store' })
+          .then((r) => (r.ok ? r.json() : { files: [] }))
+          .then(({ files }) => Promise.all((files || []).map((f) => cache.add(f).catch(() => {})))),
+      ]))
+      .catch(() => { /* offline install: files are cached as they are first used instead */ })
       .then(() => self.skipWaiting())
   );
 });
@@ -23,13 +49,41 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== API_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
+// The app asks for the data copy to be dropped (sign-out, workspace switch).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'clear-api-cache') {
+    event.waitUntil(caches.delete(API_CACHE));
+  }
+});
+
 function isStaticAsset(url) {
   return /\.(png|jpe?g|svg|ico|webp|woff2?|webmanifest|wasm)$/.test(url.pathname);
+}
+
+/** Network first with a timeout; the last good copy when the network fails. */
+function networkFirstApi(event, req) {
+  let saved = null;
+  const network = fetch(req).then((res) => {
+    // Clone now, before the page starts reading the body.
+    if (res.ok) saved = res.clone();
+    return res;
+  });
+  event.waitUntil(
+    network.then(() => (saved ? caches.open(API_CACHE).then((c) => c.put(req, saved)) : undefined)).catch(() => {})
+  );
+  const fallback = () => caches.open(API_CACHE).then((c) => c.match(req));
+  const timedOut = new Promise((resolve) => setTimeout(resolve, API_TIMEOUT_MS)).then(fallback);
+  return Promise.race([
+    network.catch(() => fallback().then((cached) => cached || Response.error())),
+    // Slow venue Wi-Fi: use the copy after a few seconds if there is one;
+    // otherwise keep waiting for the network.
+    timedOut.then((cached) => cached || network),
+  ]);
 }
 
 self.addEventListener('fetch', (event) => {
@@ -37,7 +91,11 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) return;
+  if (url.pathname.startsWith('/api/')) {
+    if (isOfflineApi(url.pathname)) event.respondWith(networkFirstApi(event, req));
+    return;
+  }
+  if (url.pathname.startsWith('/uploads/')) return;
 
   if (req.mode === 'navigate') {
     // Take the offline copy before the page starts reading the body.

@@ -73,6 +73,7 @@ import { clearDrafts } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { streamAttendanceInsights, streamActivitySummary } from './services/aiService';
+import { clearOfflineData } from './services/offlineData';
 import { apiFetch, assetUrl } from './services/api';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
@@ -848,6 +849,7 @@ export default function App() {
   useEffect(() => {
     const onUnauthorized = () => {
       clearDrafts(); // a half-written form never follows a session to the next user
+      clearOfflineData();
       setIsLoggedIn(false);
       setCurrentUser(null);
       setSessionId(null);
@@ -1415,6 +1417,7 @@ export default function App() {
   // Team-scoped client caches live in localStorage under fixed keys; drop them
   // so the newly active team's data is fetched fresh.
   const clearTeamCaches = () => {
+    clearOfflineData(); // the service worker's offline copy of this workspace's data
     clearFtcCache();
     clearScoutCache();
     clearScreenContext();

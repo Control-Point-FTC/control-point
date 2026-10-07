@@ -34,6 +34,8 @@ export default defineConfig(({mode}) => {
     base: '/',
     build: {
       outDir: 'dist',
+      // dist/.vite/manifest.json → scripts/sw-precache.mjs (offline pages).
+      manifest: true,
       rollupOptions: {
         output: {
           // Third-party code changes far less often than the app: separate
