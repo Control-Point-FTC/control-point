@@ -5,7 +5,7 @@
 // History / Commit), an explorer (team files + the linked GitHub repo; a
 // drawer on small screens), the editor with its tab, and a status bar. A
 // history sheet and commit / new-file dialogs. Loaded lazily (Monaco is heavy).
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import {
   AlertCircle, Check, ChevronDown, ChevronRight, Code2, Download, FileCode2, Folder, GitBranch, GitCommitHorizontal, GitCompare, Github,
@@ -101,22 +101,22 @@ function Toolbar({ ctl, onOpenExplorer }: { ctl: Ctl; onOpenExplorer: () => void
   const file = ctl.selectedFile;
   return (
     <div className="flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border px-3 py-1.5">
-      <Button variant="ghost" size="sm" onClick={onOpenExplorer} className="lg:hidden" aria-label="Open the file explorer"><PanelLeft /> Files</Button>
+      <Button variant="ghost" size="sm" onClick={onOpenExplorer} className="lg:hidden" aria-label="Open the file explorer"><PanelLeft /> <span className="max-md:sr-only">Files</span></Button>
       <span className="hidden items-center gap-2 pr-1 text-sm font-semibold lg:flex">
         <Code2 className="size-4 text-accent" /> Code
         <span className="font-normal text-muted-foreground">· {ctl.currentTeam?.name ?? 'Your team'}</span>
       </span>
       {file && (
         <ToggleGroup type="single" aria-label="Branch" value={ctl.currentBranch} onValueChange={(v) => { if (v) ctl.switchBranch(v as 'main' | 'drafts'); }}>
-          <ToggleGroupItem value="drafts"><GitBranch /> Drafts</ToggleGroupItem>
-          <ToggleGroupItem value="main"><GitCommitHorizontal /> Main</ToggleGroupItem>
+          <ToggleGroupItem value="drafts"><GitBranch className="max-md:hidden" /> Drafts</ToggleGroupItem>
+          <ToggleGroupItem value="main"><GitCommitHorizontal className="max-md:hidden" /> Main</ToggleGroupItem>
         </ToggleGroup>
       )}
       {file && (
         <div className="ml-auto flex flex-wrap items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={ctl.formatDocument} className="max-sm:h-11"><Sparkles /> Format</Button>
-          <Button variant={ctl.compareMode ? 'secondary' : 'ghost'} size="sm" aria-pressed={ctl.compareMode} onClick={() => { ctl.setCompareMode(!ctl.compareMode); if (!ctl.compareMode) ctl.setShowHistory(true); }} className="max-sm:h-11"><GitCompare /> Compare</Button>
-          <Button variant="ghost" size="sm" onClick={() => ctl.setShowHistory(true)} className="max-sm:h-11"><History /> History</Button>
+          <Button variant="ghost" size="sm" onClick={ctl.formatDocument} className="max-sm:h-11"><Sparkles /> <span className="max-md:sr-only">Format</span></Button>
+          <Button variant={ctl.compareMode ? 'secondary' : 'ghost'} size="sm" aria-pressed={ctl.compareMode} onClick={() => { ctl.setCompareMode(!ctl.compareMode); if (!ctl.compareMode) ctl.setShowHistory(true); }} className="max-sm:h-11"><GitCompare /> <span className="max-md:sr-only">Compare</span></Button>
+          <Button variant="ghost" size="sm" onClick={() => ctl.setShowHistory(true)} className="max-sm:h-11"><History /> <span className="max-md:sr-only">History</span></Button>
           {ctl.currentBranch === 'drafts' && ctl.canManageCode && (
             <Button size="sm" onClick={() => ctl.setShowCommitModal(true)} disabled={ctl.loading || !(ctl.unsavedChanges || ctl.canCommit)} className="max-sm:h-11"><GitCommitHorizontal /> Commit</Button>
           )}
@@ -235,7 +235,28 @@ function FileList({ ctl, onPicked }: { ctl: Ctl; onPicked?: () => void }) {
 // Editor
 // ---------------------------------------------------------------------------
 
+/** The live pixel height of an element. Monaco measures its box once when it
+ *  mounts; in a flex layout that box can still be settling (a few px), so the
+ *  editor gets an explicit height that follows the space it really has. */
+function useBoxHeight<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setH(Math.floor(el.getBoundingClientRect().height));
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, h] as const;
+}
+
 function EditorPane({ ctl }: { ctl: Ctl }) {
+  const [boxRef, boxH] = useBoxHeight<HTMLDivElement>();
+  const editorHeight = boxH > 0 ? boxH : '100%';
   const { theme } = useTheme();
   const monacoTheme = theme === 'light' ? 'light' : 'vs-dark';
   const file = ctl.selectedFile!;
@@ -255,10 +276,10 @@ function EditorPane({ ctl }: { ctl: Ctl }) {
       {ctl.compareMode && !comparing && (
         <p className="border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">Compare: pick a <span className="font-medium text-foreground">base</span> and a <span className="font-medium text-foreground">head</span> commit in History.</p>
       )}
-      <div className="min-h-[20rem] flex-1">
+      <div ref={boxRef} className="min-h-0 flex-1 overflow-hidden">
         {comparing ? (
           <DiffEditor
-            height="100%"
+            height={editorHeight}
             language={lang}
             original={ctl.history.find((h) => h.id === ctl.comparePair.base)?.content || ''}
             modified={ctl.history.find((h) => h.id === ctl.comparePair.head)?.content || ''}
@@ -268,7 +289,7 @@ function EditorPane({ ctl }: { ctl: Ctl }) {
           />
         ) : (
           <Editor
-            height="100%"
+            height={editorHeight}
             language={lang}
             value={ctl.code}
             onMount={ctl.handleEditorMount}

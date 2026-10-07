@@ -458,7 +458,7 @@ describe('Code IDE layout', () => {
     expect(within(bar).getByRole('status')).toHaveTextContent(/saved|Unsaved|Saving/);
   });
 
-  it('on small screens the Files button opens the explorer as a drawer; picking a file closes it', async () => {
+  it("Files drawer interaction: opening it and picking a file closes it (breakpoints and bounds are checked in a real browser, see PR)", async () => {
     setup();
     fireEvent.click(screen.getByRole('button', { name: 'Open the file explorer' }));
     const drawer = await screen.findByRole('dialog');
