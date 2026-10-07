@@ -88,6 +88,16 @@ describe('Scout tab (manual scouting, H-4)', () => {
     expect(api.apiFetch).not.toHaveBeenCalledWith('/api/scouting/sync', expect.anything());
   });
 
+  it('switching season while a load is in flight still loads the new season', async () => {
+    online = true;
+    api.apiFetch.mockImplementation((url: string) => (url.includes('season=2025') ? new Promise(() => {}) : json({ entries: [] })));
+    const { rerender } = render(<ScoutingWorkspace season={2025} teamId={1} currentMemberId={7} />);
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/scouting/entries?season=2025', expect.anything()));
+    rerender(<ScoutingWorkspace season={2024} teamId={1} currentMemberId={7} />);
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/scouting/entries?season=2024', expect.anything()));
+    await waitFor(() => expect(screen.getByText('Synced')).toBeInTheDocument());
+  });
+
   it('a team number is required', async () => {
     api.apiFetch.mockImplementation(() => json({ entries: [] }));
     render(<ScoutingWorkspace season={2025} teamId={1} />);

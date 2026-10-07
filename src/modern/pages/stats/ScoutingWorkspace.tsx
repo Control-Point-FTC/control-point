@@ -80,7 +80,11 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
 
   const del = async (e: ScoutEntry) => {
     if (!(await confirmDialog({ title: 'Delete this entry?', message: `Team ${e.scoutedTeam}${e.matchLabel ? ` · ${e.matchLabel}` : ''}`, confirmLabel: 'Delete', danger: true }))) return;
-    sc.remove(e);
+    try {
+      sc.remove(e);
+    } catch (err) {
+      notify(err instanceof ScoutStorageError ? err.message.replace('entry', 'deletion') : 'Could not delete this entry', 'error');
+    }
   };
 
   const shown = focusTeam == null ? sc.entries : sc.entries.filter((e) => e.scoutedTeam === focusTeam);

@@ -53,7 +53,10 @@ export function useScouting({ teamId, memberId, season }: { teamId: number | nul
   const [queue, setQueue] = useState<ScoutEntry[]>([]);
   const [state, setState] = useState<SyncState>('idle');
   const [lastError, setLastError] = useState<string | null>(null);
-  const syncing = useRef(false);
+  // The generation whose sync is in flight (one at a time per generation;
+  // a new workspace/member/season starts its own right away).
+  const syncingGen = useRef<number | null>(null);
+  const inflight = useRef<AbortController | null>(null);
   const retryTimer = useRef<number | null>(null);
   // Bumped whenever the workspace, member or season changes or the view
   // closes: a sync started for the old one stops instead of continuing.
@@ -67,12 +70,13 @@ export function useScouting({ teamId, memberId, season }: { teamId: number | nul
   }, [ready, teamId, season, reloadQueue]);
 
   const sync = useCallback(async () => {
-    if (!ready || syncing.current) return;
+    if (!ready || syncingGen.current === gen.current) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { setState('offline'); return; }
     const my = gen.current;
     const ctrl = new AbortController();
+    inflight.current = ctrl;
     const stale = () => my !== gen.current;
-    syncing.current = true;
+    syncingGen.current = my;
     setState('syncing');
     let moreToSend = false;
     try {
@@ -118,7 +122,7 @@ export function useScouting({ teamId, memberId, season }: { teamId: number | nul
       setState(typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error');
       setLastError(e?.message || 'Sync failed');
     } finally {
-      syncing.current = false;
+      if (syncingGen.current === my) syncingGen.current = null;
     }
     // Another full batch waiting after a successful one: keep going now.
     // After a failure the 30-second timer retries instead.
@@ -138,6 +142,8 @@ export function useScouting({ teamId, memberId, season }: { teamId: number | nul
     retryTimer.current = window.setInterval(() => { if (readQueue(prefix).length) kick(); }, RETRY_MS);
     return () => {
       gen.current++;
+      // Stop the old workspace/season's request; the next one starts fresh.
+      inflight.current?.abort();
       window.removeEventListener('online', kick);
       window.removeEventListener('scouting-changed', kick);
       window.removeEventListener('storage', onStorage);
