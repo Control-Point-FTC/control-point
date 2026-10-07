@@ -4119,7 +4119,14 @@ async function startServer() {
         throw Object.assign(new Error(`FTC Scout responded with HTTP ${res.status}`), { status: res.status });
       }
       const json = await res.json();
-      recordSourceOk("ftc-scout");
+      // GraphQL reports failures as HTTP 200 + `errors`. With no data at all it
+      // is a failed request (counts against health); a partial answer with
+      // data is still contact with a working source.
+      if (Array.isArray(json?.errors) && json.errors.length && !json?.data) {
+        recordSourceFailure("ftc-scout", `GraphQL error: ${String(json.errors[0]?.message || "unknown").slice(0, 120)}`);
+      } else {
+        recordSourceOk("ftc-scout");
+      }
       return json;
     } catch (e: any) {
       if (e?.status === undefined) recordSourceFailure("ftc-scout", e?.name === "AbortError" ? "timeout" : "network error");
