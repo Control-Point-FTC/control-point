@@ -4097,7 +4097,9 @@ async function startServer() {
       // unsupported season) as "no data" and everything else as an outage.
       if (!res.ok) {
         // 400/404 = "no such data" (not an outage); anything else counts against health.
-        if (res.status !== 400 && res.status !== 404) recordSourceFailure("ftc-scout", `HTTP ${res.status}`);
+        // A 400/404 is a real answer ("no such data"): the source is up.
+        if (res.status === 400 || res.status === 404) recordSourceOk("ftc-scout");
+        else recordSourceFailure("ftc-scout", `HTTP ${res.status}`);
         throw Object.assign(new Error(`FTC Scout responded with HTTP ${res.status}`), { status: res.status });
       }
       const json = await res.json();
@@ -4258,7 +4260,7 @@ async function startServer() {
     });
     if (cached && Date.now() - cached.at < FTC_SWR_MAX) {
       refresh().catch(() => { /* keep serving the cached copy */ });
-      return res.json(ftcCachedBody(cached));
+      return res.json(ftcCachedBody(cached, true));
     }
 
     try {
@@ -4421,21 +4423,27 @@ async function startServer() {
 
     // Both sources in parallel (they used to run one after the other, so a
     // slow FIRST response delayed the FTC Scout fallback by up to ~20 s).
-    const firstP = (async () => {
-      if (!isFirstEventsConfigured()) return { team: null as any, events: [] as any[] };
-      const [team, events] = await Promise.all([getFirstEventsTeam(season, number), getFirstEventsTeamEvents(season, number)]);
-      return { team, events: team ? events : [] };
-    })();
-    const [firstRes, scoutRes] = await Promise.allSettled([firstP, getFtcTeamPayload(number, season)]);
+    const configured = isFirstEventsConfigured();
+    const [teamRes, eventsRes, scoutRes] = await Promise.allSettled([
+      configured ? getFirstEventsTeam(season, number) : Promise.resolve(null),
+      configured ? getFirstEventsTeamEvents(season, number) : Promise.resolve([] as any[]),
+      getFtcTeamPayload(number, season),
+    ]);
 
     let firstTeam: any = null;
     let firstEvents: any[] = [];
-    if (firstRes.status === "fulfilled") {
-      firstTeam = firstRes.value.team;
-      firstEvents = firstRes.value.events;
+    let firstEventsMissing = false;
+    if (teamRes.status === "fulfilled") {
+      firstTeam = teamRes.value;
+      // A failed events lookup keeps the team: its event list is just partial.
+      if (eventsRes.status === "fulfilled") firstEvents = firstTeam ? eventsRes.value : [];
+      else if (firstTeam) {
+        firstEventsMissing = true;
+        console.error(`[ftc] FIRST Events team events failed for ${number}/${season}: ${(eventsRes.reason as any)?.message || eventsRes.reason}`);
+      }
     } else {
       firstFailed = true;
-      console.error(`[ftc] FIRST Events team lookup failed for ${number}/${season}: ${(firstRes.reason as any)?.message || firstRes.reason}`);
+      console.error(`[ftc] FIRST Events team lookup failed for ${number}/${season}: ${(teamRes.reason as any)?.message || teamRes.reason}`);
     }
 
     let scout: any = null;
@@ -4511,7 +4519,7 @@ async function startServer() {
       oprSource: scout?.opr?.tot ? "ftc-scout" : null,
       events,
     };
-    return { source, fetchedAt, data, partial: firstFailed || scoutFailed };
+    return { source, fetchedAt, data, partial: firstFailed || scoutFailed || firstEventsMissing };
   }
 
   /**
@@ -4771,7 +4779,7 @@ async function startServer() {
     });
     if (cached && Date.now() - cached.at < FTC_SWR_MAX) {
       refresh().catch(() => { /* keep serving the cached copy */ });
-      return scoutCachedBody(cached.data as FtcEventFull) as FtcEventFull;
+      return scoutCachedBody(cached.data as FtcEventFull, true) as FtcEventFull;
     }
     try {
       return await refresh();
@@ -4864,7 +4872,7 @@ async function startServer() {
     });
     if (cached && Date.now() - cached.at < FTC_SWR_MAX) {
       refresh().catch(() => { /* keep serving the cached copy */ });
-      return scoutCachedBody(cached.data as FtcTeamProfile) as FtcTeamProfile;
+      return scoutCachedBody(cached.data as FtcTeamProfile, true) as FtcTeamProfile;
     }
     try {
       return await refresh();

@@ -20,6 +20,7 @@ type DbFns = {
 
 export class DurableFtcCache extends Map<string, CacheEntry> {
   private db: DbFns | null = null;
+  private lastWriteErrorLog = 0;
   private loading = new Map<string, Promise<CacheEntry | undefined>>();
 
   attach(db: DbFns) {
@@ -62,7 +63,15 @@ export class DurableFtcCache extends Map<string, CacheEntry> {
         this.db.dbRun(
           "INSERT INTO ftc_cache (key, at, data) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET at = excluded.at, data = excluded.data",
           key, entry.at, json,
-        ).catch(() => { /* persistence is best effort */ });
+        ).catch((e: any) => {
+          // Requests still work from memory, but the restart fallback has
+          // stopped being saved — say so (at most once a minute).
+          const now = Date.now();
+          if (now - this.lastWriteErrorLog > 60_000) {
+            this.lastWriteErrorLog = now;
+            console.error(`[ftc] saving the FTC cache failed (served from memory only): ${e?.message || e}`);
+          }
+        });
       }
     }
     return this;
