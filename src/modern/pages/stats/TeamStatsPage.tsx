@@ -10,7 +10,7 @@ import { TeamProfile } from './TeamProfile';
 import { AnalyzeWorkspace } from './AnalyzeWorkspace';
 import { ScoutingWorkspace } from './ScoutingWorkspace';
 
-export function TeamStatsPage({ teamId, memberId, canManage }: { teamId?: number | null; memberId?: number | null; canManage?: boolean } = {}) {
+export function TeamStatsPage({ teamId, memberId, memberName, canManage }: { teamId?: number | null; memberId?: number | null; memberName?: string | null; canManage?: boolean } = {}) {
   const ts = useTeamStats();
   return (
     <Page>
@@ -28,7 +28,7 @@ export function TeamStatsPage({ teamId, memberId, canManage }: { teamId?: number
         </Tabs>
       </PageHeader>
       {ts.mode === 'scout' ? (
-        <ScoutingWorkspace season={ts.season} onSeasonChange={ts.setSeason} teamId={teamId} currentMemberId={memberId} canManage={canManage} />
+        <ScoutingWorkspace season={ts.season} onSeasonChange={ts.setSeason} teamId={teamId} currentMemberId={memberId} currentMemberName={memberName} canManage={canManage} />
       ) : ts.mode === 'compete' ? (
         <TeamProfile number={null} season={ts.season} onSeasonChange={ts.setSeason} autoSeason actions={{ onViewTeam: ts.viewTeam }} />
       ) : (

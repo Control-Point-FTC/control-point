@@ -36,11 +36,13 @@ interface Draft {
 
 const LAST_EVENT_KEY = 'cp-scout-last-event';
 
-export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMemberId, canManage }: {
+export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMemberId, currentMemberName, canManage }: {
   season: number;
   onSeasonChange?: (s: number) => void;
   teamId: number | null | undefined;
   currentMemberId?: number | null;
+  /** Shown (and exported) as the scout of entries not synced yet. */
+  currentMemberName?: string | null;
   canManage?: boolean;
 }) {
   const sc = useScouting({ teamId, memberId: currentMemberId, season });
@@ -68,6 +70,8 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
       sc.save({
         uuid: draft.uuid, season, scoutedTeam: n, eventCode: draft.eventCode.trim() || null, matchLabel: draft.matchLabel.trim() || null,
         templateId: draft.templateId, data: draft.data, notes: draft.notes.trim(),
+        // Kept on the device so unsynced entries show (and export) their scout.
+        ...(draft.uuid ? {} : { scoutName: currentMemberName ?? null, scoutMemberId: currentMemberId ?? null }),
       });
     } catch (err) {
       // Not stored anywhere: keep the form (and what was typed) open.

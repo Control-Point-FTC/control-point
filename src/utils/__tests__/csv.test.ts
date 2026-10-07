@@ -24,6 +24,8 @@ describe('CSV export', () => {
 
   it('booleans and dates', () => {
     expect(toCsv([{ name: true, amount: Infinity }], cols)).toBe('\ufeffName,Amount\r\nyes,\r\n');
-    expect(datedName('budget', new Date('2026-10-07T12:00:00Z'))).toBe('budget-2026-10-07.csv');
+    // Local date, even where the UTC date has already rolled over.
+    const lateEvening = new Date(2026, 9, 7, 23, 30); // Oct 7, 23:30 local
+    expect(datedName('budget', lateEvening)).toBe('budget-2026-10-07.csv');
   });
 });

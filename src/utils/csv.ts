@@ -5,6 +5,8 @@
 // prefixed with ' so Excel/Sheets treat it as text, not a formula
 // ("CSV injection"). Numbers stay numbers.
 
+import { localIsoDate } from './validation';
+
 export interface CsvColumn<T> { header: string; value: (row: T) => unknown }
 
 function cell(v: unknown): string {
@@ -35,7 +37,7 @@ export function downloadCsv<T>(filename: string, rows: T[], columns: CsvColumn<T
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** "budget-2026-10-07.csv" */
+/** "budget-2026-10-07.csv" — the user's local date, like the rest of the app. */
 export function datedName(base: string, d = new Date()): string {
-  return `${base}-${d.toISOString().slice(0, 10)}.csv`;
+  return `${base}-${localIsoDate(d)}.csv`;
 }

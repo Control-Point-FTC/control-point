@@ -17,7 +17,7 @@ import {
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
 import { useTheme } from '../../../hooks/useTheme';
-import { parseLocalDate, useAttendanceController } from '../../../components/attendance/useAttendanceController';
+import { parseLocalDate, STATUS_LABELS, useAttendanceController } from '../../../components/attendance/useAttendanceController';
 import { Page, PageHeader, Section, EmptyState } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { AttendanceArea } from '../../ui/AttendanceArea';
@@ -142,12 +142,12 @@ function HistoryTab({ ctl, members, attendance }: { ctl: Ctl; members: any[]; at
   if (!rows.length) return <EmptyState icon={CalendarDays} title="No attendance history yet" description="Days you take attendance will show up here." />;
   const exportCsv = () => {
     const names = new Map(members.map((m: any) => [m.id, m.name]));
-    const label: Record<string, string> = { P: 'Present', L: 'Late', E: 'Excused', A: 'Absent' };
     const recs = [...attendance].sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)));
     downloadCsv(datedName('attendance'), recs, [
       { header: 'Date', value: (r: any) => r.date },
-      { header: 'Member', value: (r: any) => names.get(r.member_id) ?? `#${r.member_id}` },
-      { header: 'Status', value: (r: any) => label[r.status] ?? r.status },
+      // The row's own name keeps former members' history readable.
+      { header: 'Member', value: (r: any) => r.member_name ?? names.get(r.member_id) ?? `#${r.member_id}` },
+      { header: 'Status', value: (r: any) => STATUS_LABELS[r.status] ?? r.status },
     ]);
   };
   return (
