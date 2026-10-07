@@ -1,11 +1,12 @@
 // Calendar side sheets (Modern): event details for everyone, and the
 // create/edit form (Bruno quick-add first) for calendar managers. Open state
 // and form values live in the shared draft store via useCalendarController.
+import { useEffect, useState } from 'react';
 import { CalendarDays, Clock, Loader2, MapPin, Pencil, Sparkles, Trash2, Users, Wand2, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Textarea,
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, ToggleGroup, ToggleGroupItem,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Switch, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { EVENT_TYPES, type useCalendarController } from '../../../components/calendar/useCalendarController';
@@ -111,6 +112,17 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
   // Re-validated on every change, so fixing a time immediately unblocks Save.
   const timeError = eventTimeError(f.start_time, f.end_time);
   const editing = !!ctl.editingId;
+  // All day = no times. Starts on for an existing event saved without times.
+  const [allDay, setAllDay] = useState(false);
+  useEffect(() => {
+    if (ctl.showModal) setAllDay(editing && !f.start_time && !f.end_time);
+    // Only when the editor opens (or switches event), not on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctl.showModal, ctl.editingId]);
+  // Times filled in some other way (Bruno quick-add) mean it isn't all day.
+  useEffect(() => {
+    if (f.start_time || f.end_time) setAllDay(false);
+  }, [f.start_time, f.end_time]);
   return (
     <Sheet open={ctl.showModal} onOpenChange={(o) => { if (!o) ctl.closeEditor(); }}>
       <SheetContent side={side} className={cn('gap-0 p-0', side === 'right' ? 'sm:max-w-lg' : '')}>
@@ -182,14 +194,21 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 <Label htmlFor="event-date"><CalendarDays className="size-3.5" /> Date</Label>
                 <Input id="event-date" type="date" required value={f.date} onChange={(e) => set({ date: e.target.value })} />
               </div>
+              <div className="flex items-center justify-between gap-3 sm:col-span-3">
+                <Label htmlFor="event-all-day">All day</Label>
+                <Switch
+                  id="event-all-day" checked={allDay}
+                  onCheckedChange={(on) => { setAllDay(on); if (on) set({ start_time: '', end_time: '' }); }}
+                />
+              </div>
               <div className="grid gap-2 sm:col-span-1">
                 <Label htmlFor="event-start">Starts</Label>
-                <Input id="event-start" type="time" value={f.start_time} onChange={(e) => set({ start_time: e.target.value })} />
+                <Input id="event-start" type="time" disabled={allDay} value={f.start_time} onChange={(e) => set({ start_time: e.target.value })} />
               </div>
               <div className="grid gap-2 sm:col-span-1">
                 <Label htmlFor="event-end">Ends</Label>
                 <Input
-                  id="event-end" type="time" value={f.end_time} onChange={(e) => set({ end_time: e.target.value })}
+                  id="event-end" type="time" disabled={allDay} value={f.end_time} onChange={(e) => set({ end_time: e.target.value })}
                   aria-invalid={timeError ? true : undefined} aria-describedby={timeError ? 'event-time-error' : undefined}
                 />
               </div>

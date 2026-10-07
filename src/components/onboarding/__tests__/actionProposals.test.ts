@@ -62,3 +62,13 @@ describe('stripEventBlocks', () => {
     expect(stripEventBlocks(text)).not.toContain('delete-event');
   });
 });
+
+describe('event summaries show only a range the server keeps', async () => {
+  const { itemSummary } = await import('../../ActionProposalCard');
+  it('drops an end before the start or malformed', () => {
+    expect(itemSummary('event', { title: 'A', date: '2026-11-06', time: '15:00', end: '17:00' })).toBe('A — 2026-11-06 at 15:00–17:00');
+    expect(itemSummary('event', { title: 'B', date: '2026-11-06', time: '18:00', end: '17:00' })).toBe('B — 2026-11-06 at 18:00');
+    expect(itemSummary('event', { title: 'C', date: '2026-11-06', time: '18:00', end: '7pm' })).toBe('C — 2026-11-06 at 18:00');
+    expect(itemSummary('event', { title: 'D', date: '2026-11-06' })).toBe('D — 2026-11-06 (all day)');
+  });
+});

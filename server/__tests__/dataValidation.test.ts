@@ -165,3 +165,20 @@ describe("Bruno-applied writes", () => {
     expect(seen).toContain("events_changed");
   });
 });
+
+describe("Bruno-applied events keep their end time (L-2)", () => {
+  it("saves a valid end after the start, and drops an end that isn't", async () => {
+    const r = await t.post("/api/ai/apply-actions", {
+      actions: [{ kind: "event", items: [
+        { title: "Range night", date: "2026-11-06", time: "15:00", end: "17:00" },
+        { title: "Backwards end", date: "2026-11-07", time: "18:00", end: "17:00" },
+        { title: "No start", date: "2026-11-08", end: "17:00" },
+      ] }],
+    }, admin);
+    expect(r.status).toBe(200);
+    const row = async (title: string) => (await t.db.execute({ sql: "SELECT start_time, end_time FROM events WHERE title = ?", args: [title] })).rows[0] as any;
+    expect(await row("Range night")).toMatchObject({ start_time: "15:00", end_time: "17:00" });
+    expect(await row("Backwards end")).toMatchObject({ start_time: "18:00", end_time: "" });
+    expect(await row("No start")).toMatchObject({ start_time: "", end_time: "" });
+  });
+});

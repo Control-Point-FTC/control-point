@@ -8594,10 +8594,10 @@ Rules:
   });
 
   // Shared team-event insert (used by the admin route and by Bruno).
-  async function insertTeamEvent(teamId: number, memberId: number, e: { title: string; date: string; time?: string; notes?: string }) {
+  async function insertTeamEvent(teamId: number, memberId: number, e: { title: string; date: string; time?: string; end?: string; notes?: string }) {
     const info = (await dbRun(
       "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      e.title, e.notes || "", e.date, e.time || "", "", "", "meeting", teamId, memberId
+      e.title, e.notes || "", e.date, e.time || "", (e.time && e.end) || "", "", "meeting", teamId, memberId
     )) as any;
     const eventId = info.lastInsertRowid;
     // Push to linked personal Google Calendars (if the admin enabled sync)
@@ -10183,11 +10183,11 @@ Rules:
   // (a JSON object OR array) when the user confirms calendar events. Parse,
   // validate, strip. Events are only PROPOSED here — the client shows a
   // confirm button and the user confirms via POST /api/ai/apply-actions.
-  function extractEventBlock(fullText: string): { text: string; events: { title: string; date: string; time: string; notes: string }[] | null } {
+  function extractEventBlock(fullText: string): { text: string; events: { title: string; date: string; time: string; end: string; notes: string }[] | null } {
     const src = String(fullText || "");
     const m = src.match(EVENT_BLOCK_RE);
     if (!m) return { text: src, events: null };
-    let events: { title: string; date: string; time: string; notes: string }[] | null = null;
+    let events: { title: string; date: string; time: string; end: string; notes: string }[] | null = null;
     try {
       const raw = JSON.parse(m[1]);
       const arr = Array.isArray(raw) ? raw : [raw];
@@ -10195,10 +10195,15 @@ Rules:
         const okDate = typeof p?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && !isNaN(new Date(p.date + "T00:00:00").getTime());
         const okTime = !p?.time || (typeof p.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(p.time));
         if (!p || typeof p.title !== "string" || !p.title.trim() || !okDate || !okTime) return null;
+        const time = typeof p.time === "string" ? p.time : "";
+        // An end time is kept only when it is a valid HH:MM after the start
+        // (an invalid end is dropped rather than failing the whole event).
+        const end = typeof p.end === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(p.end) && time && p.end > time ? p.end : "";
         return {
           title: p.title.trim().slice(0, 120),
           date: p.date,
-          time: typeof p.time === "string" ? p.time : "",
+          time,
+          end,
           notes: typeof p.notes === "string" ? p.notes.trim().slice(0, 500) : "",
         };
       }).filter(Boolean);

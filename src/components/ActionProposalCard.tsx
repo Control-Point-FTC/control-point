@@ -13,7 +13,9 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
 export function itemSummary(kind: ActionProposal['kind'], it: any): string {
   const title = String(it.title || it.description || it.category || 'Untitled').slice(0, 60);
   if (kind === 'event') {
-    const when = it.time ? `${it.date} at ${it.time}` : it.date || '';
+    // Show an end only if the server will keep it (valid HH:MM after the start).
+    const end = typeof it.end === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(it.end) && it.time && it.end > it.time ? it.end : '';
+    const when = it.time ? `${it.date} at ${it.time}${end ? `–${end}` : ''}` : it.date ? `${it.date} (all day)` : '';
     return `${title}${when ? ` — ${when}` : ''}`;
   }
   if (kind === 'delete-event') {

@@ -95,6 +95,8 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
           description: e.notes || f.description,
           date: e.date || f.date,
           start_time: e.time || f.start_time,
+          // "from 3 to 5pm": the end time lands in Ends, not in the notes.
+          end_time: e.end || (e.time ? '' : f.end_time),
         }));
         setAiNote('Bruno filled in the form below — review it and hit Create Event.');
         setAiOpen(false);
