@@ -119,6 +119,10 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
     // Only when the editor opens (or switches event), not on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctl.showModal, ctl.editingId]);
+  // Times filled in some other way (Bruno quick-add) mean it isn't all day.
+  useEffect(() => {
+    if (f.start_time || f.end_time) setAllDay(false);
+  }, [f.start_time, f.end_time]);
   return (
     <Sheet open={ctl.showModal} onOpenChange={(o) => { if (!o) ctl.closeEditor(); }}>
       <SheetContent side={side} className={cn('gap-0 p-0', side === 'right' ? 'sm:max-w-lg' : '')}>

@@ -224,3 +224,19 @@ describe('Modern Calendar', () => {
     expect(screen.getByRole('button', { name: /Create all 1 events/ })).toBeInTheDocument();
   });
 });
+
+describe('L-2 review regressions', () => {
+  it('Bruno filling times turns All day off', async () => {
+    ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => {
+      onChunk('```event\n[{"title":"Build","date":"' + later + '","time":"15:00","end":"17:00"}]\n```');
+    });
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.click(await screen.findByRole('switch', { name: 'All day' }));
+    fireEvent.change(screen.getByLabelText(/Quick add with Bruno/), { target: { value: 'build 3 to 5pm' } });
+    fireEvent.click(screen.getByRole('button', { name: /Parse/ }));
+    await waitFor(() => expect((screen.getByLabelText(/Starts/) as HTMLInputElement).value).toBe('15:00'), { timeout: 5000 });
+    expect(screen.getByRole('switch', { name: 'All day' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByLabelText(/Starts/)).not.toBeDisabled();
+  }, 20000);
+});
