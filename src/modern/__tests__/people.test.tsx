@@ -22,6 +22,7 @@ const ROLES = [
 function routeApi(url: string) {
   if (url === '/api/roles') return json(ROLES);
   if (url === '/api/role-permissions') return json([{ key: 'view_ai', label: 'Use Bruno' }, { key: 'manage_members', label: 'Manage members' }]);
+  if (url === '/api/teams/1/access-code/reveal') return json({ access_code: 'JOIN42' });
   return json({});
 }
 
@@ -43,7 +44,8 @@ beforeEach(() => {
 
 const me = { id: 7, name: 'Ada', team_id: 1, email: 'ada@x.test', interface_mode: 'modern', presence: 'online', roles: [{ id: 1, name: 'Admin', color: '#FFC700' }] };
 const grace = { id: 8, name: 'Grace', team_id: 1, email: 'grace@x.test', role: 'Builder', is_board: 0, scopes: '[]', presence: 'offline', roles: [] };
-const teams = [{ id: 1, name: 'Robo', number: 123, access_code: 'JOIN42', member_count: 2 }, { id: 2, name: 'Other', number: 9, access_code: 'ZZZ', member_count: 3 }];
+// The team list never carries access codes (M-2): managers reveal them.
+const teams = [{ id: 1, name: 'Robo', number: 123, member_count: 2, can_manage: true }, { id: 2, name: 'Other', number: 9, member_count: 3 }];
 
 function setup({ admin = true, roles = true, url = '/teams', perms = [] as string[] } = {}) {
   const props = {
@@ -212,7 +214,13 @@ describe('Settings → Roles', () => {
 describe('Modern People — workspaces', () => {
   it('admins edit a workspace with the Legacy PATCH body; others can switch or leave', async () => {
     const { props } = setup({ url: '/teams?tab=workspaces' });
-    expect(screen.getByText('JOIN42')).toBeInTheDocument();
+    // Masked until revealed (the reveal is logged server-side).
+    expect(screen.queryByText('JOIN42')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    expect(await screen.findByText('JOIN42')).toBeInTheDocument();
+    expect(api.apiFetch).toHaveBeenCalledWith('/api/teams/1/access-code/reveal', { method: 'POST' });
+    // Only workspaces you manage show a code at all.
+    expect(screen.queryAllByRole('button', { name: /(Reveal|Hide) access code/ })).toHaveLength(1);
     fireEvent.click(screen.getAllByRole('button', { name: /Edit/ })[0]);
     fireEvent.change(await screen.findByLabelText('Team number'), { target: { value: '456' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -277,3 +285,15 @@ describe('Modern People — review regressions', () => {
   });
 });
 
+
+describe('Access code review regressions (M-2)', () => {
+  it('every Reveal and Copy fetches (and so logs) the current code', async () => {
+    setup({ url: '/teams?tab=workspaces' });
+    const reveal = () => api.apiFetch.mock.calls.filter((c) => c[0] === '/api/teams/1/access-code/reveal').length;
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    expect(await screen.findByText('JOIN42')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide access code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    await waitFor(() => expect(reveal()).toBe(2));
+  });
+});

@@ -128,7 +128,8 @@ describe('Modern Settings — workspace & admin', () => {
     fireEvent.click(screen.getByRole('button', { name: /Generate new code/ }));
     expect(api.apiFetch).not.toHaveBeenCalledWith('/api/teams/regenerate-code', expect.anything());
     fireEvent.click(screen.getByRole('button', { name: /Yes, replace it/ }));
-    await waitFor(() => expect(props.onTeamSaved).toHaveBeenCalledWith({ id: 1, access_code: 'NEW-1' }));
+    // The new code shows revealed to the admin who made it.
+    expect(await screen.findByText('NEW-1')).toBeInTheDocument();
   });
 
   it('members see the team read-only and no admin section', () => {
@@ -445,5 +446,25 @@ describe('Modern Settings — notifications body failures', () => {
     await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Saving took too long — try again.', 'error'));
     expect(screen.getByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Modern Settings — access code history', () => {
+  it('refreshes after a reveal, and a failed load says so instead of "nobody"', async () => {
+    let events = 0;
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/calendar/link') return json({ linked: false });
+      if (url === '/api/teams/1/access-code/reveal') return json({ access_code: 'JOIN-42' });
+      if (url === '/api/teams/1/access-code/events') {
+        events++;
+        return events === 1 ? json({ error: 'down' }, false) : json([{ action: 'view', created_at: new Date().toISOString(), member_name: 'Ada' }]);
+      }
+      return json({});
+    });
+    setup({ section: 'workspace' });
+    expect(await screen.findByText(/history couldn’t load/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    expect(await screen.findByText('JOIN-42')).toBeInTheDocument();
+    expect(await screen.findByText(/revealed the code/)).toBeInTheDocument();
   });
 });

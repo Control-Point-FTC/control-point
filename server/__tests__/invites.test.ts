@@ -61,7 +61,7 @@ describe("invite helpers", () => {
 });
 
 describe("access code visibility", () => {
-  it("members don't get the access code; admins do", async () => {
+  it("nobody gets the access code with the team list; admins reveal it (M-2)", async () => {
     const m = await t.api("/api/teams", { session: member });
     expect(m.status).toBe(200);
     expect(m.body[0].access_code).toBeUndefined();
@@ -69,8 +69,11 @@ describe("access code visibility", () => {
     const me = await t.api("/api/auth/me", { session: member });
     expect(JSON.stringify(me.body)).not.toContain("CP-ABCD-123456");
     const a = await t.api("/api/teams", { session: admin });
-    expect(a.body[0].access_code).toBe("CP-ABCD-123456");
+    expect(a.body[0].access_code).toBeUndefined();
+    expect(a.body[0].can_manage).toBe(true);
     expect(a.body[0].can_invite).toBe(true);
+    const rev = await t.post(`/api/teams/${team}/access-code/reveal`, {}, admin);
+    expect(rev.body.access_code).toBe("CP-ABCD-123456");
   });
 
   it("joining by code works with or without dashes and returns no code to the joiner", async () => {
@@ -79,8 +82,9 @@ describe("access code visibility", () => {
     expect(r.body.joined).toBe(true);
     expect(r.body.team.access_code).toBeUndefined();
     expect(r.body.user.teams.find((x: any) => x.id === team).access_code).toBeUndefined();
-    // Their own (admin) workspace still shows its code.
-    expect(r.body.user.teams.find((x: any) => x.id === otherTeam).access_code).toBe("CP-WXYZ-654321");
+    // Their own (admin) workspace's code stays masked too, revealed on demand.
+    expect(r.body.user.teams.find((x: any) => x.id === otherTeam).access_code).toBeUndefined();
+    expect((await t.post(`/api/teams/${otherTeam}/access-code/reveal`, {}, outsider)).body.access_code).toBe("CP-WXYZ-654321");
     await t.post("/api/teams/leave", { team_id: team }, outsider);
   });
 });
