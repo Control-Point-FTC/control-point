@@ -1,8 +1,6 @@
-// Modern setup (phase 9c), over the shared useSetupWizard: the same four
-// steps, saves and skip bookkeeping as Classic. A dialog with a vertical
-// stepper on wide screens (a progress bar on phones). The look step also picks
-// Modern or Classic; switching mid-setup carries on in Classic at the same
-// step with the same typed name and role (they're drafted).
+// Setup (phase 9c), over the shared useSetupWizard: profile, look and tour
+// steps with their saves and skip bookkeeping. A dialog with a vertical
+// stepper on wide screens (a progress bar on phones).
 import { useState } from 'react';
 import { AnimatePresence, motion, MotionConfig } from 'motion/react';
 import { ArrowLeft, ArrowRight, Check, Compass, LayoutDashboard, Moon, Sun, UserCircle } from 'lucide-react';

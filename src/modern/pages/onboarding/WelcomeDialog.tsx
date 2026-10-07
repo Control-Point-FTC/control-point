@@ -10,7 +10,7 @@ import { BrandLogo } from '../../../components/BrandMark';
 const ease = [0.2, 0.8, 0.2, 1] as const;
 const NEXT = [
   { icon: UserCircle, title: 'Your profile', body: 'Your name and role, so teammates know who you are.' },
-  { icon: Palette, title: 'Your look', body: 'Dark or light, Modern or Classic. You can change it anytime.' },
+  { icon: Palette, title: 'Your look', body: 'Dark or light. You can change it anytime.' },
   { icon: Compass, title: 'A one-minute tour', body: 'Where attendance, tasks, chat and Bruno live.' },
 ];
 
