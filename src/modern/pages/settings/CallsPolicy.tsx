@@ -52,7 +52,7 @@ export function CallsPolicy() {
       ))}
       <div className="flex items-start gap-2 border-t border-border px-4 py-3 text-sm text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0 text-accent" />
-        <p>Who can moderate calls (mute, deafen, remove, spotlight) is set by role permissions: <Link to="/settings?section=roles" className="font-medium text-foreground underline-offset-4 hover:underline">manage it in Roles</Link> with <code className="rounded bg-muted px-1 text-xs">moderate_calls</code> and <code className="rounded bg-muted px-1 text-xs">manage_voice</code>.</p>
+        <p>Who can moderate calls (mute, deafen, remove, spotlight) is set by role permissions: <Link to="/settings?section=roles" replace className="font-medium text-foreground underline-offset-4 hover:underline">manage it in Roles</Link> with <code className="rounded bg-muted px-1 text-xs">moderate_calls</code> and <code className="rounded bg-muted px-1 text-xs">manage_voice</code>.</p>
       </div>
       <AnimatePresence>
         {(v.dirty || v.saving) && (

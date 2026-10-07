@@ -280,6 +280,16 @@ describe('Modern Settings — Discord-style workspace settings', () => {
     expect(screen.getByTestId('where').textContent).toBe('/settings?section=members');
   });
 
+  it('links between sections replace history, so Esc still leaves Settings', async () => {
+    at('/settings?section=workspace');
+    fireEvent.click(screen.getByRole('button', { name: /Invite people/ }));
+    const dlg = await screen.findByRole('dialog');
+    fireEvent.keyDown(dlg, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByTestId('where').textContent).toBe('/tasks');
+  });
+
   it('Overview → Open roles goes to the Roles section', () => {
     at('/settings?section=workspace');
     fireEvent.click(screen.getByRole('button', { name: /Open roles/ }));
