@@ -7,7 +7,8 @@
 import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { motion } from 'motion/react';
-import { CalendarDays, ChevronRight, LayoutGrid, LineChart, ListChecks, RefreshCw, Sparkles, Sun } from 'lucide-react';
+import { CalendarDays, ChevronRight, Download, LayoutGrid, LineChart, ListChecks, RefreshCw, Sparkles, Sun } from 'lucide-react';
+import { datedName, downloadCsv } from '../../../utils/csv';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Progress, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Skeleton,
@@ -139,8 +140,21 @@ function HistoryTab({ ctl, members, attendance }: { ctl: Ctl; members: any[]; at
   }), [ctl.sessions, attendance]);
   const total = Math.max(1, members.length);
   if (!rows.length) return <EmptyState icon={CalendarDays} title="No attendance history yet" description="Days you take attendance will show up here." />;
+  const exportCsv = () => {
+    const names = new Map(members.map((m: any) => [m.id, m.name]));
+    const label: Record<string, string> = { P: 'Present', L: 'Late', E: 'Excused', A: 'Absent' };
+    const recs = [...attendance].sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)));
+    downloadCsv(datedName('attendance'), recs, [
+      { header: 'Date', value: (r: any) => r.date },
+      { header: 'Member', value: (r: any) => names.get(r.member_id) ?? `#${r.member_id}` },
+      { header: 'Status', value: (r: any) => label[r.status] ?? r.status },
+    ]);
+  };
   return (
     <>
+      <div className="mb-3 flex justify-end">
+        <Button variant="outline" size="sm" className="max-sm:h-11" onClick={exportCsv}><Download /> Export CSV</Button>
+      </div>
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {rows.map((r) => {
           const dt = parseLocalDate(r.date);

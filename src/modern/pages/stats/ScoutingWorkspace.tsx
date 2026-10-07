@@ -2,7 +2,8 @@
 // data and works offline. Entries save on this device first and sync when
 // there's a connection; the per-team table rolls them up.
 import { useMemo, useState } from 'react';
-import { CloudOff, Loader2, Minus, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
+import { CloudOff, Download, Loader2, Minus, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
+import { datedName, downloadCsv } from '../../../utils/csv';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Sheet, SheetContent,
@@ -98,7 +99,16 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
         {sc.lastError && (
           <button type="button" onClick={sc.clearError} className="text-xs text-destructive underline-offset-4 hover:underline" title="Dismiss">{sc.lastError}</button>
         )}
-        <Button className="ml-auto max-sm:h-11" onClick={() => startNew()}><Plus /> Scout a match</Button>
+        <Button variant="outline" className="ml-auto max-sm:h-11" disabled={!sc.entries.length} onClick={() => downloadCsv(datedName(`scouting-${season}`), sc.entries, [
+          { header: 'Team', value: (e) => e.scoutedTeam },
+          { header: 'Event', value: (e) => e.eventCode },
+          { header: 'Match', value: (e) => e.matchLabel },
+          { header: 'Scout', value: (e) => e.scoutName },
+          ...template.fields.map((f) => ({ header: fieldLabel(f), value: (e: ScoutEntry) => e.data[f.id] })),
+          { header: 'Notes', value: (e) => e.notes },
+          { header: 'Updated', value: (e) => new Date(e.updatedAt).toISOString() },
+        ])}><Download /> Export CSV</Button>
+        <Button className="max-sm:h-11" onClick={() => startNew()}><Plus /> Scout a match</Button>
       </div>
       <p className="text-xs text-muted-foreground">{template.name} sheet. Works without FTC data or Wi-Fi — entries save on this device and sync when you’re online.</p>
 

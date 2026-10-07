@@ -5,7 +5,8 @@
 // dense table, and drafted add / edit sheets. Only members with the
 // inventory scope can change anything.
 import { useState } from 'react';
-import { Boxes, Edit2, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
+import { Boxes, Download, Edit2, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
+import { datedName, downloadCsv } from '../../../utils/csv';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -33,13 +34,24 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         eyebrow="Operations"
         title="Inventory"
         description="Every part, tool and material the team owns — search it, add it, keep the counts right."
-        actions={ctl.canManage && (
+        actions={(
           <>
+            <Button variant="outline" className="max-sm:h-11" disabled={!inventory.length} onClick={() => downloadCsv(datedName('inventory'), inventory, [
+              { header: 'Name', value: (p: any) => p.name },
+              { header: 'SKU', value: (p: any) => p.sku },
+              { header: 'Part number', value: (p: any) => p.part_number },
+              { header: 'Category', value: (p: any) => p.category },
+              { header: 'Quantity', value: (p: any) => Number(p.quantity) || 0 },
+              { header: 'Unit cost', value: (p: any) => (p.cost == null ? '' : Number(p.cost)) },
+              { header: 'Location', value: (p: any) => p.location },
+            ])}><Download /> Export CSV</Button>
+            {ctl.canManage && (<>
             <Button variant="outline" onClick={() => ctl.invoiceFileRef.current?.click()} disabled={!!ctl.invoiceParsing} className="max-sm:h-11">
               {ctl.invoiceParsing ? <Loader2 className="animate-spin" /> : <FileUp />} {ctl.invoiceParsing || 'Import invoice'}
             </Button>
             <Button onClick={ctl.openAdd} className="max-sm:h-11"><Plus /> Add part</Button>
             <input ref={ctl.invoiceFileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple className="hidden" onChange={ctl.handleInvoiceFile} aria-label="Invoice files" />
+            </>)}
           </>
         )}
       />
