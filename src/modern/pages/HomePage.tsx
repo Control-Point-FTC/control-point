@@ -6,6 +6,7 @@
 // Admin and member dashboards are one layout; admin-only sections are gated
 // exactly like the Legacy split (isAdmin).
 import { useMemo, useState } from 'react';
+import { attendanceInsight } from '../../components/dashboard/attendanceInsight';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
@@ -121,6 +122,7 @@ export function HomePage(props: HomePageProps) {
                 onNavigate={navigate}
               />
               <PulseChart attendance={attendance ?? []} hiddenDates={hiddenDates} events={events ?? []} />
+              <AttendanceInsightCard attendance={attendance ?? []} members={members ?? []} hiddenDates={hiddenDates ?? []} today={mine.today} onNavigate={navigate} />
             </Section>
           ) : (
             <MyWork mine={mine} onNavigate={navigate} />
@@ -423,6 +425,42 @@ function NextEvent({ events }: { events: any[] }) {
       <span className="min-w-0 truncate font-medium">{next.e.title}</span>
       <Countdown to={next.at} className="text-accent" />
     </p>
+  );
+}
+
+/** Turnout trend, who's missed meetings in a row, best streak (admins). */
+function AttendanceInsightCard({ attendance, members, hiddenDates, today, onNavigate }: {
+  attendance: any[]; members: any[]; hiddenDates: string[]; today: string; onNavigate: (p: string) => void;
+}) {
+  const ins = useMemo(() => attendanceInsight(attendance, members, hiddenDates, today), [attendance, members, hiddenDates, today]);
+  if (ins.thisWeekRate == null && !ins.missingInARow.length && !ins.bestStreak) return null;
+  const delta = ins.thisWeekRate != null && ins.lastWeekRate != null ? ins.thisWeekRate - ins.lastWeekRate : null;
+  return (
+    <section aria-label="Attendance insight" className="mt-4 grid gap-2 rounded-xl border border-border bg-muted/30 p-3 text-sm">
+      {ins.thisWeekRate != null && (
+        <p>
+          <span className="font-semibold">{ins.thisWeekRate}%</span> turnout this week
+          {delta != null && delta !== 0 && (
+            <span className={cn('ml-1.5 text-xs', delta > 0 ? 'text-success' : 'text-destructive')}>
+              {delta > 0 ? '▲' : '▼'} {Math.abs(delta)} pts vs last week
+            </span>
+          )}
+        </p>
+      )}
+      {ins.missingInARow.length > 0 && (
+        <p className="text-muted-foreground">
+          Check in on{' '}
+          {ins.missingInARow.slice(0, 3).map((m, i) => (
+            <span key={m.id}>{i > 0 && ', '}<span className="font-medium text-foreground">{m.name}</span> ({m.misses} missed)</span>
+          ))}
+          {ins.missingInARow.length > 3 && ` and ${ins.missingInARow.length - 3} more`}
+          {' '}<button type="button" className="text-xs font-medium text-foreground underline underline-offset-4" onClick={() => onNavigate('/attendance')}>See attendance</button>
+        </p>
+      )}
+      {ins.bestStreak && (
+        <p className="text-muted-foreground">Best streak: <span className="font-medium text-foreground">{ins.bestStreak.name}</span>, {ins.bestStreak.days} meetings in a row</p>
+      )}
+    </section>
   );
 }
 
