@@ -4332,7 +4332,9 @@ async function startServer() {
     if (accent_color !== undefined) { sets.push("accent_color = ?"); vals.push(cleanHex(accent_color)); }
     if (primary_color !== undefined) { sets.push("primary_color = ?"); vals.push(cleanHex(primary_color)); }
     if (text_color !== undefined) { sets.push("text_color = ?"); vals.push(cleanHex(text_color)); }
-    let claimedFtc = false;
+    // A new FTC number is claimed in the same statement as the other fields,
+    // after every field has been validated (all or nothing).
+    let claimFtc: number | null = null;
     if (ftc_team_number !== undefined) {
       const ftcNum = ftc_team_number === null || ftc_team_number === ''
         ? null
@@ -4343,19 +4345,8 @@ async function startServer() {
       // One workspace per FTC number. Workspaces that already shared a number
       // before this rule keep it (nothing is changed automatically).
       const current = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
-      if (ftcNum !== null && Number(current?.ftc_team_number) !== ftcNum) {
-        // Check-and-set in one statement so two workspaces can't claim it at once.
-        const claimed = (await dbRun(
-          "UPDATE teams SET ftc_team_number = ? WHERE id = ? AND NOT EXISTS (SELECT 1 FROM teams WHERE ftc_team_number = ? AND id != ?)",
-          ftcNum, auth.teamId, ftcNum, auth.teamId
-        )) as any;
-        if (!Number(claimed?.changes ?? claimed?.rowsAffected ?? 0)) {
-          return res.status(409).json({ error: `Team #${ftcNum} is already connected to another workspace on Control Point.` });
-        }
-        claimedFtc = true;
-      } else {
-        sets.push("ftc_team_number = ?"); vals.push(ftcNum);
-      }
+      if (ftcNum !== null && Number(current?.ftc_team_number) !== ftcNum) claimFtc = ftcNum;
+      sets.push("ftc_team_number = ?"); vals.push(ftcNum);
     }
     if (default_interface_mode !== undefined) {
       if (default_interface_mode !== null && !INTERFACE_MODES.includes(default_interface_mode)) {
@@ -4372,9 +4363,20 @@ async function startServer() {
       }
       sets.push("timezone = ?"); vals.push(tz);
     }
-    if (sets.length === 0 && !claimedFtc) return res.status(400).json({ error: "Nothing to update" });
+    if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
     vals.push(req.params.id);
-    if (sets.length) (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
+    if (claimFtc !== null) {
+      // Check-and-set in one statement so two workspaces can't claim it at once.
+      const r = (await dbRun(
+        `UPDATE teams SET ${sets.join(", ")} WHERE id = ? AND NOT EXISTS (SELECT 1 FROM teams WHERE ftc_team_number = ? AND id != ?)`,
+        ...vals, claimFtc, auth.teamId
+      )) as any;
+      if (!Number(r?.changes ?? r?.rowsAffected ?? 0)) {
+        return res.status(409).json({ error: `Team #${claimFtc} is already connected to another workspace on Control Point.` });
+      }
+    } else {
+      (await dbRun(`UPDATE teams SET ${sets.join(", ")} WHERE id = ?`, ...vals));
+    }
     res.json({ success: true });
   });
 

@@ -126,6 +126,11 @@ describe("one workspace per FTC number", () => {
   it("connecting a number held by another workspace is refused; existing duplicates keep theirs", async () => {
     const r = await t.patch(`/api/teams/${ownedTeam}`, { ftc_team_number: 11115 }, admin);
     expect(r.status).toBe(409);
+    // A save that fails validation changes nothing, not even a free number.
+    const bad = await t.patch(`/api/teams/${ownedTeam}`, { ftc_team_number: 20000 + 99, timezone: "Mars/Olympus" }, admin);
+    expect(bad.status).toBe(400);
+    const still = (await t.db.execute({ sql: "SELECT ftc_team_number FROM teams WHERE id = ?", args: [ownedTeam] })).rows[0] as any;
+    expect(Number(still.ftc_team_number)).toBe(4215);
     // Re-saving its own number is fine.
     expect((await t.patch(`/api/teams/${ownedTeam}`, { ftc_team_number: 4215 }, admin)).status).toBe(200);
   });
