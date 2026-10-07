@@ -19,20 +19,21 @@ afterEach(() => {
 });
 
 describe('apiFetch', () => {
-  it('sends the session id as X-Session-ID, not in the URL', async () => {
-    localStorage.setItem('sessionId', 'abc123');
+  it('never puts a session token in the URL or a header — the HttpOnly cookie carries it', async () => {
+    localStorage.setItem('sessionId', 'abc123'); // a pre-cookie leftover must not be sent
     fetchMock.mockResolvedValue(jsonRes(200, {}));
     await apiFetch('/api/teams');
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('/api/teams'); // no ?sessionId= appended
-    expect(init.headers.get('X-Session-ID')).toBe('abc123');
+    expect(init.headers.get('X-Session-ID')).toBeNull();
+    expect(init.credentials).toBe('same-origin');
   });
 
-  it('works without a session and preserves caller headers', async () => {
+  it('sends the CSRF client header and preserves caller headers', async () => {
     fetchMock.mockResolvedValue(jsonRes(200, {}));
-    await apiFetch('/api/x', { headers: { 'Content-Type': 'application/json' } });
+    await apiFetch('/api/x', { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } });
     const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers.get('X-Session-ID')).toBeNull();
+    expect(init.headers.get('X-CP-Client')).toBe('1');
     expect(init.headers.get('Content-Type')).toBe('application/json');
   });
 });

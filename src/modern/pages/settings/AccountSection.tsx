@@ -80,7 +80,7 @@ export function AccountSection({ currentUser, teams = [] }: any) {
       const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        try { localStorage.removeItem('sessionId'); } catch { /* storage unavailable */ }
+        try { localStorage.removeItem('cp-session-tag'); localStorage.removeItem('sessionId'); } catch { /* storage unavailable */ }
         window.location.reload();
       } else notify(data.error || 'Could not delete your account.', 'error');
     } catch {

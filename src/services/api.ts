@@ -1,7 +1,9 @@
 // Session-aware fetch helpers.
 //
-// The session id travels in the X-Session-ID header (the server also accepts
-// it via query/body for backwards compatibility). Responses are parsed and
+// The session lives in an HttpOnly cookie the browser sends by itself; page
+// code never sees the token. Every request carries X-CP-Client, which the
+// server requires on state-changing calls (CSRF: another site can't add a
+// custom header to a cross-origin request). Responses are parsed and
 // normalized here so call sites don't repeat the same error handling.
 
 export class ApiError extends Error {
@@ -15,57 +17,19 @@ export class ApiError extends Error {
   }
 }
 
-function getStoredSessionId(): string | null {
-  try {
-    return typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * GitHub Pages mirror support: when the frontend is built with VITE_API_BASE
- * set, every API call, asset URL, and the WebSocket connection targets that
- * API origin instead of the page's own origin. Normal builds leave it unset
- * and everything stays same-origin.
- */
-export function apiBase(): string {
-  try {
-    const b = (import.meta as any)?.env?.VITE_API_BASE as string | undefined;
-    return (b || '').replace(/\/+$/, '');
-  } catch {
-    return '';
-  }
-}
-
-/** Prefix a root-relative API path with the API base when configured. Absolute URLs pass through. */
+/** API paths are same-origin. (Kept as a seam for call sites that build URLs.) */
 export function apiUrl(path: string): string {
-  const base = apiBase();
-  if (!base || /^https?:\/\//i.test(path)) return path;
-  return base + (path.startsWith('/') ? path : `/${path}`);
+  return path;
 }
 
-/** Asset URLs (avatars, uploads) are served by the API origin. */
+/** Asset URLs (avatars, uploads) are served by the app's own origin. */
 export function assetUrl(url: string | null | undefined): string | null | undefined {
-  if (typeof url !== 'string' || !url) return url;
-  return apiUrl(url);
+  return url;
 }
 
-/**
- * OAuth start URL. In mirror builds the API completion must redirect back to
- * the mirror's app root, so the mirror origin+base-path rides along as
- * return_to (validated server-side against MIRROR_ORIGINS).
- */
+/** OAuth start URL (a top-level navigation; the callback sets the cookie). */
 export function oauthUrl(path: string): string {
-  const base = apiBase();
-  if (!base) return apiUrl(path);
-  let returnTo = '';
-  try {
-    returnTo = new URL((import.meta as any).env.BASE_URL || '/', window.location.origin).href.replace(/\/$/, '');
-  } catch { /* fall through without return_to */ }
-  if (!returnTo) return apiUrl(path);
-  const sep = path.includes('?') ? '&' : '?';
-  return apiUrl(`${path}${sep}return_to=${encodeURIComponent(returnTo)}`);
+  return path;
 }
 
 export interface ApiFetchOptions extends RequestInit {
@@ -73,12 +37,11 @@ export interface ApiFetchOptions extends RequestInit {
   timeoutMs?: number;
 }
 
-/** Drop-in replacement for fetch: attaches X-Session-ID, supports timeoutMs. */
+/** Drop-in replacement for fetch: same-origin cookie session + CSRF header, supports timeoutMs. */
 export function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
   const { timeoutMs, ...rest } = init;
   const headers = new Headers(rest.headers || undefined);
-  const sid = getStoredSessionId();
-  if (sid && !headers.has('X-Session-ID')) headers.set('X-Session-ID', sid);
+  if (!headers.has('X-CP-Client')) headers.set('X-CP-Client', '1');
   // Default to JSON for string bodies (JSON.stringify payloads). FormData /
   // Blob / URLSearchParams bodies are left alone — fetch sets their content
   // type automatically, and an explicit header is never overridden.
@@ -93,12 +56,15 @@ export function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Respo
       /* older runtimes without AbortSignal.timeout — skip */
     }
   }
-  return fetch(apiUrl(url), { ...rest, headers, signal: signal ?? undefined });
+  return fetch(url, { ...rest, headers, credentials: 'same-origin', signal: signal ?? undefined });
 }
 
 function handleUnauthorized() {
   try {
-    if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('cp-session-tag');
+      localStorage.removeItem('sessionId');
+    }
   } catch {
     /* ignore */
   }
@@ -109,7 +75,7 @@ function handleUnauthorized() {
 
 /**
  * Fetch + parse JSON. Throws ApiError on non-2xx.
- * On 401 the stored session is cleared and a `cp:unauthorized` window event
+ * On 401 the signed-in marker is cleared and a `cp:unauthorized` window event
  * is dispatched so the app can return to the signed-out state.
  */
 export async function apiJson<T = any>(url: string, init: ApiFetchOptions = {}): Promise<T> {
