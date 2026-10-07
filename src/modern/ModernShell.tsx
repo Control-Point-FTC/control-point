@@ -22,7 +22,7 @@ import {
   DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuRadioGroup, DropdownMenuRadioItem,
   Sheet, SheetContent, SheetTitle, SheetDescription, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, Badge, Toaster,
 } from '../components/ui-kit';
-import { buildModernNav, isActive, type ModernNavItem, type NavItemLike } from './nav';
+import { applyNavOrder, buildModernNav, isActive, moveId, type ModernNavItem, type NavItemLike, type NavOrder } from './nav';
 import { CommandMenu, type CommandAction } from './CommandMenu';
 import { useInterfaceMode } from './interfaceMode';
 import { RouteErrorBoundary } from '../components/ErrorBoundary';
@@ -61,6 +61,7 @@ export interface ModernShellProps {
 
 const COLLAPSE_KEY = 'cp-modern-sidebar-collapsed';
 const SECTIONS_KEY = 'cp-modern-sections-closed';
+const ORDER_KEY = 'cp-sidebar-order';
 
 function readJSON<T>(key: string, fallback: T): T {
   try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; }
@@ -231,7 +232,26 @@ function SidebarContent(props: ModernShellProps & {
 }) {
   const { t } = useTranslation();
   const { collapsed } = props;
-  const nav = useMemo(() => buildModernNav(props.visibleTabs), [props.visibleTabs]);
+  const base = useMemo(() => buildModernNav(props.visibleTabs), [props.visibleTabs]);
+  // Drag (or Alt+↑/↓) to reorder sections and the pages inside them; saved
+  // on this device. The phone drawer and the compact rail keep the order but
+  // aren't reorderable there.
+  const [order, setOrder] = useState<NavOrder | null>(() => readJSON<NavOrder | null>(ORDER_KEY, null));
+  useEffect(() => { if (order) writeJSON(ORDER_KEY, order); else { try { localStorage.removeItem(ORDER_KEY); } catch { /* storage unavailable */ } } }, [order]);
+  const sections = useMemo(() => applyNavOrder(base.sections, order), [base.sections, order]);
+  const nav = { primary: base.primary, sections };
+  const reorderable = !collapsed && !props.inSheet;
+  const [drag, setDrag] = useState<{ kind: 'section' | 'item'; id: string; sec?: string } | null>(null);
+  const moveSection = (id: string, to: number) => setOrder((o) => ({ ...o, sections: moveId(sections.map((s) => s.id), id, to) }));
+  const moveItem = (sec: string, id: string, to: number) => {
+    const ids = sections.find((s) => s.id === sec)?.items.map((i) => i.id) ?? [];
+    setOrder((o) => ({ ...o, items: { ...(o?.items ?? {}), [sec]: moveId(ids, id, to) } }));
+  };
+  const keyMove = (e: React.KeyboardEvent, move: (delta: number) => void) => {
+    if (!reorderable || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    move(e.key === 'ArrowUp' ? -1 : 1);
+  };
   const [closed, setClosed] = useState<string[]>(() => readJSON(SECTIONS_KEY, []));
   useEffect(() => writeJSON(SECTIONS_KEY, closed), [closed]);
   const toggleSection = (id: string) => setClosed((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
@@ -261,11 +281,16 @@ function SidebarContent(props: ModernShellProps & {
           <NavButton collapsed={collapsed} icon={Bot} label={props.botName} onClick={props.onOpenBruno} hint="⌘J" onboard="header-bruno" />
         </div>
 
-        {nav.sections.map((sec) => {
+        {nav.sections.map((sec, secIndex) => {
           // The compact rail has no section headers to reopen, so it always shows every icon.
           const isClosed = !collapsed && closed.includes(sec.id) && !sec.items.some((i) => isActive(i, props.activeTab));
           return (
-            <div key={sec.id} className="mt-4">
+            <div
+              key={sec.id}
+              className={cn('mt-4', drag?.kind === 'section' && drag.id === sec.id && 'opacity-50')}
+              onDragOver={(e) => { if (drag?.kind === 'section') e.preventDefault(); }}
+              onDrop={(e) => { if (drag?.kind === 'section') { e.preventDefault(); moveSection(drag.id, secIndex); setDrag(null); } }}
+            >
               {collapsed ? (
                 <div className="mx-2 mb-1 h-px bg-line" aria-hidden="true" />
               ) : (
@@ -273,6 +298,11 @@ function SidebarContent(props: ModernShellProps & {
                   type="button"
                   onClick={() => toggleSection(sec.id)}
                   aria-expanded={!isClosed}
+                  draggable={reorderable}
+                  onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'section', id: sec.id }); }}
+                  onDragEnd={() => setDrag(null)}
+                  onKeyDown={(e) => keyMove(e, (d) => moveSection(sec.id, secIndex + d))}
+                  title={reorderable ? 'Drag to reorder (or Alt+↑/↓)' : undefined}
                   className="group flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-text-muted/80 hover:text-text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                 >
                   {sec.label}
@@ -281,12 +311,30 @@ function SidebarContent(props: ModernShellProps & {
               )}
               {!isClosed && (
                 <div className="mt-0.5 space-y-0.5">
-                  {sec.items.map((item) => <NavLink key={item.id} item={item} {...props} label={t(item.labelKey)} />)}
+                  {sec.items.map((item, i) => (
+                    <div
+                      key={item.id}
+                      draggable={reorderable}
+                      className={cn(drag?.kind === 'item' && drag.id === item.id && 'opacity-50')}
+                      onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'item', id: item.id, sec: sec.id }); }}
+                      onDragEnd={() => setDrag(null)}
+                      onDragOver={(e) => { if (drag?.kind === 'item' && drag.sec === sec.id) { e.preventDefault(); e.stopPropagation(); } }}
+                      onDrop={(e) => { if (drag?.kind === 'item' && drag.sec === sec.id) { e.preventDefault(); e.stopPropagation(); moveItem(sec.id, drag.id, i); setDrag(null); } }}
+                      onKeyDown={(e) => keyMove(e, (d) => moveItem(sec.id, item.id, i + d))}
+                    >
+                      <NavLink item={item} {...props} label={t(item.labelKey)} />
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           );
         })}
+        {order && reorderable && (
+          <button type="button" onClick={() => setOrder(null)} className="mt-4 px-2 text-xs text-text-muted underline-offset-4 hover:text-text-base hover:underline">
+            Reset sidebar order
+          </button>
+        )}
       </nav>
 
       <div className="border-t border-line p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
