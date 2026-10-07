@@ -7,6 +7,7 @@ vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...a
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { TasksPage } from '../pages/tasks/TasksPage';
+import { ContextMenuProvider } from '../../components/contextmenu/ContextMenuProvider';
 import { clearDrafts } from '../drafts';
 
 afterEach(cleanup);
@@ -28,7 +29,7 @@ function setup({ manage = true, admin = false, tasks = baseTasks, url = '/tasks'
   };
   const utils = render(
     <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
-      <MemoryRouter initialEntries={[url]}><TasksPage {...props} /></MemoryRouter>
+      <MemoryRouter initialEntries={[url]}><ContextMenuProvider><TasksPage {...props} /></ContextMenuProvider></MemoryRouter>
     </InterfaceModeProvider>,
   );
   return { ...utils, props, onRequestComplete };
@@ -53,6 +54,20 @@ describe('Modern Tasks', () => {
     fireEvent.click(within(sheet).getByRole('radio', { name: /In progress/ }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })));
     expect(JSON.parse(api.apiFetch.mock.calls[0][1].body)).toEqual({ status: 'in-progress' });
+  });
+
+  it('right-clicking a card offers open, edit, moves, copy and delete', async () => {
+    setup();
+    fireEvent.contextMenu(screen.getByRole('button', { name: /Mount the climber hooks/ }));
+    const menu = screen.getByRole('menu');
+    const labels = within(menu).getAllByRole('menuitem').map((b) => b.textContent);
+    expect(labels).toEqual(['Open', 'Edit', 'Move to In progress', 'Move to Done', 'Copy title', 'Delete']);
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Move to In progress' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PATCH' })));
+    cleanup();
+    setup({ manage: false });
+    fireEvent.contextMenu(screen.getByRole('button', { name: /Mount the climber hooks/ }));
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
   it('moving to Done asks for proof instead of PATCHing', async () => {

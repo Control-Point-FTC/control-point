@@ -80,7 +80,7 @@ export function CadPartsTab() {
                       <TableCell className="text-right">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${p.name}`} className="max-sm:size-11"><MoreHorizontal /></Button>
+                            <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Actions for ${p.name}`} className="max-sm:size-11"><MoreHorizontal /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onSelect={() => ctl.setEditing(p)}><Pencil /> Edit part</DropdownMenuItem>

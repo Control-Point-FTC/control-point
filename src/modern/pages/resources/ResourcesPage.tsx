@@ -89,7 +89,7 @@ export function ResourcesPage() {
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${r.title || domain}`} className="-mr-1 -mt-1 max-sm:size-11"><MoreHorizontal /></Button>
+                        <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Actions for ${r.title || domain}`} className="-mr-1 -mt-1 max-sm:size-11"><MoreHorizontal /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem asChild><a href={r.url} target="_blank" rel="noreferrer"><ExternalLink /> Open link</a></DropdownMenuItem>

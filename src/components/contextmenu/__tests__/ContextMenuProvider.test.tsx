@@ -259,3 +259,74 @@ describe('ContextMenuProvider keyboard navigation', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 });
+
+describe('context menus everywhere (rows without a registered handler)', async () => {
+  const { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } = await import('../../ui-kit');
+  const { Pencil, Trash2 } = await import('lucide-react');
+
+  function Row({ name, onEdit }: { name: string; onEdit: () => void }) {
+    return (
+      <li>
+        <span>{name}</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><button type="button" data-cm-menu aria-label={`Actions for ${name}`}>⋯</button></DropdownMenuTrigger>
+          <DropdownMenuContent><DropdownMenuItem onSelect={onEdit}>Edit {name}</DropdownMenuItem></DropdownMenuContent>
+        </DropdownMenu>
+      </li>
+    );
+  }
+
+  it('right-clicking a row opens that row’s own ⋯ menu', async () => {
+    const edits: string[] = [];
+    render(
+      <ContextMenuProvider>
+        <h1>Parts</h1>
+        <ul><Row name="Motor" onEdit={() => edits.push('Motor')} /><Row name="Servo" onEdit={() => edits.push('Servo')} /></ul>
+      </ContextMenuProvider>,
+    );
+    const ev = fireEvent.contextMenu(screen.getByText('Servo'));
+    expect(ev).toBe(false); // default prevented: our menu, not the browser's
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit Servo' }));
+    expect(edits).toEqual(['Servo']);
+  });
+
+  it('outside any row (even with a single row on the page) the browser menu stays', () => {
+    render(
+      <ContextMenuProvider>
+        <section><h1>Parts</h1><ul><Row name="Motor" onEdit={() => {}} /></ul></section>
+      </ContextMenuProvider>,
+    );
+    expect(fireEvent.contextMenu(screen.getByText('Parts'))).toBe(true);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('a row with a hover toolbar gets its buttons as a menu', () => {
+    const del = vi.fn();
+    render(
+      <ContextMenuProvider>
+        <div data-cm-row data-cm-label="Message actions">
+          <p>hello</p>
+          <button type="button" data-cm-action="" aria-label="Edit message"><Pencil /></button>
+          <button type="button" data-cm-action="danger" aria-label="Delete message" onClick={del}><Trash2 /></button>
+        </div>
+      </ContextMenuProvider>,
+    );
+    expect(fireEvent.contextMenu(screen.getByText('hello'))).toBe(false);
+    const menu = screen.getByRole('menu', { name: 'Message actions' });
+    expect(menu.querySelectorAll('svg')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete message' }));
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it('Shift+F10 on a focused row opens its menu too', async () => {
+    render(
+      <ContextMenuProvider>
+        <ul><li><button type="button">Motor</button><DropdownMenu><DropdownMenuTrigger asChild><button type="button" data-cm-menu aria-label="Actions for Motor">⋯</button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem>Edit Motor</DropdownMenuItem></DropdownMenuContent></DropdownMenu></li></ul>
+      </ContextMenuProvider>,
+    );
+    const btn = screen.getByRole('button', { name: 'Motor' });
+    btn.focus();
+    fireEvent.keyDown(btn, { key: 'F10', shiftKey: true });
+    expect(await screen.findByRole('menuitem', { name: 'Edit Motor' })).toBeInTheDocument();
+  });
+});

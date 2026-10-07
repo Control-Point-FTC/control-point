@@ -141,7 +141,7 @@ function RowMenu({ ctl, item }: { ctl: Ctl; item: any }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={`Actions for ${item.description || 'transaction'}`} className="max-sm:size-11"><MoreHorizontal /></Button>
+        <Button data-cm-menu variant="ghost" size="icon-sm" aria-label={`Actions for ${item.description || 'transaction'}`} className="max-sm:size-11"><MoreHorizontal /></Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onSelect={() => ctl.openEditEntry(item)}><Pencil /> Edit transaction</DropdownMenuItem>

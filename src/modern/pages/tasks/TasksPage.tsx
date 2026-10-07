@@ -8,8 +8,10 @@ import { format } from 'date-fns';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
-  CalendarDays, ChevronDown, Crown, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Plus, Search, Sparkles,
+  ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
 } from 'lucide-react';
+import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
+import { notify } from '../../../components/dialog';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, ChartContainer, ChartTooltip, ChartTooltipContent, DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -33,6 +35,26 @@ export function TasksPage(props: any) {
   const [who, setWho] = useState<string>('all'); // 'all' | 'mine' | member id
   const [viewTaskId, setViewTaskId] = useState<number | null>(null);
   const [params, setParams] = useSearchParams();
+
+  // Right-click / menu key on a task (board card or list row).
+  useContextMenu('task-card', (el) => {
+    const task = (tasks || []).find((t: any) => String(t.id) === el.dataset.cmId);
+    if (!task) return null;
+    return [
+      { label: 'Open', icon: Eye, action: () => setViewTaskId(task.id) },
+      ...(ctl.canManageTasks ? [{ label: 'Edit', icon: Pencil, action: () => ctl.openEditTask(task) }] : []),
+      { separator: true },
+      ...TASK_COLUMNS.filter((c) => c.id !== task.status).map((c) => ({
+        label: `Move to ${STATUS_META[c.id].label}`, icon: ArrowRight, action: () => void ctl.updateStatus(task.id, c.id),
+      })),
+      { separator: true },
+      {
+        label: 'Copy title', icon: Copy,
+        action: () => { void navigator.clipboard?.writeText(task.title || '').then(() => notify('Copied', 'success'), () => notify('Could not copy', 'error')); },
+      },
+      ...(ctl.canManageTasks ? [{ label: 'Delete', icon: Trash2, danger: true, action: () => void ctl.handleDeleteTask(task.id) }] : []),
+    ];
+  });
 
   // Deep link from a notification: open that task's sheet.
   const linked = Number(params.get('task')) || null;
@@ -204,6 +226,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen }: {
                         <button
                           type="button"
                           draggable
+                          data-cm-type="task-card" data-cm-id={t.id}
                           onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
                           onDragEnd={() => { setDragId(null); setOverCol(null); }}
                           onClick={() => onOpen(t.id)}
@@ -261,7 +284,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
         </TableHeader>
         <TableBody>
           {sorted.map((t) => (
-            <TableRow key={t.id} className="cursor-pointer" onClick={() => onOpen(t.id)}>
+            <TableRow key={t.id} data-cm-type="task-card" data-cm-id={t.id} className="cursor-pointer" onClick={() => onOpen(t.id)}>
               <TableCell>
                 <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(t.id); }} className="text-left font-medium outline-none focus-visible:underline">
                   {t.title}

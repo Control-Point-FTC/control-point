@@ -22,6 +22,8 @@ export interface CtxMenuItem {
   /** When true, renders a divider instead of an item. */
   separator?: boolean;
   action?: () => void | Promise<void>;
+  /** Icon markup copied from an on-page action button (row toolbars). */
+  iconHtml?: string;
 }
 
 /**
@@ -64,6 +66,58 @@ function nativeMenuPreferred(target: EventTarget | null): boolean {
   // Links: open in new tab, copy link address, etc.
   if (el.closest('a[href]')) return true;
   return false;
+}
+
+// --- Rows without a registered handler ("context menus everywhere") -------
+// A row's own "⋯" menu trigger is tagged data-cm-menu: right-click (or the
+// menu key) anywhere in that row opens the same menu, so its items are never
+// defined twice. A row with a hover toolbar instead (data-cm-row, buttons
+// tagged data-cm-action) gets those buttons as a menu.
+
+const ROW = 'li, tr, [role="row"], [role="listitem"], [data-cm-row-root]';
+
+/** The ⋯ trigger of the row under `target`: the nearest ancestor holding
+ *  exactly one trigger (once one holds several we're above row level), and
+ *  only if `target` sits inside that trigger's own row, so right-clicking
+ *  a page header never opens the menu of a list's only row. */
+export function rowMenuTrigger(target: Element): HTMLElement | null {
+  const own = target.closest<HTMLElement>('[data-cm-menu]');
+  if (own) return own;
+  for (let a: Element | null = target; a && a !== document.body; a = a.parentElement) {
+    const found = a.querySelectorAll<HTMLElement>('[data-cm-menu]');
+    if (found.length > 1) return null;
+    if (found.length === 1) {
+      const row = found[0].closest(ROW);
+      return row && row.contains(target) ? found[0] : null;
+    }
+  }
+  return null;
+}
+
+/** Menu items mirroring a row toolbar's buttons (label, icon, danger). */
+export function rowToolbarItems(target: Element): CtxMenuItem[] | null {
+  const row = target.closest('[data-cm-row]');
+  if (!row) return null;
+  const items: CtxMenuItem[] = [];
+  row.querySelectorAll<HTMLButtonElement>('button[data-cm-action]').forEach((b) => {
+    if (b.closest('[data-cm-row]') !== row) return; // a nested row's buttons
+    const label = b.getAttribute('aria-label') || b.textContent?.trim() || '';
+    if (!label) return;
+    items.push({
+      label,
+      danger: b.dataset.cmAction === 'danger',
+      disabled: b.disabled,
+      iconHtml: b.querySelector('svg')?.outerHTML,
+      action: () => b.click(),
+    });
+  });
+  return items.length ? items : null;
+}
+
+/** Open a Radix dropdown the way a primary-button press would. */
+function pressTrigger(trigger: HTMLElement) {
+  const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+  trigger.dispatchEvent(new Ctor('pointerdown', { bubbles: true, cancelable: true, button: 0, ctrlKey: false }));
 }
 
 function isActionable(it: CtxMenuItem): boolean {
@@ -115,13 +169,15 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const openMenu = useCallback((anchor: HTMLElement, x: number, y: number) => {
-    const set = handlers.current.get(anchor.dataset.cmType || '');
-    if (!set) return false;
-    let items: CtxMenuItem[] | null = null;
-    for (const h of set) {
-      items = h(anchor);
-      if (items && items.length) break;
+  const openMenu = useCallback((anchor: HTMLElement, x: number, y: number, preset?: CtxMenuItem[]) => {
+    let items: CtxMenuItem[] | null = preset ?? null;
+    if (!items) {
+      const set = handlers.current.get(anchor.dataset.cmType || '');
+      if (!set) return false;
+      for (const h of set) {
+        items = h(anchor);
+        if (items && items.length) break;
+      }
     }
     // Never open a menu with nothing actionable — leave the native menu alone.
     if (!items || !items.some(isActionable)) return false;
@@ -131,12 +187,26 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
       y: Math.max(MENU_PAD, Math.min(y, window.innerHeight - 120)),
       items,
       opener,
-      label: anchor.getAttribute('aria-label') || anchor.dataset.cmType || 'Actions',
+      label: anchor.getAttribute('aria-label') || anchor.dataset.cmLabel || anchor.dataset.cmType || 'Actions',
     };
     menuState.current = m;
     setMenu(m);
     return true;
   }, []);
+
+  /** No registered handler: open the row's own ⋯ menu, or its toolbar as a menu. */
+  const openFallback = useCallback((target: Element | null, x: number, y: number) => {
+    if (!(target instanceof Element)) return false;
+    const toolbar = rowToolbarItems(target);
+    if (toolbar) {
+      const row = target.closest<HTMLElement>('[data-cm-row]')!;
+      return openMenu(row, x, y, toolbar);
+    }
+    const trigger = rowMenuTrigger(target);
+    if (!trigger || (trigger as HTMLButtonElement).disabled) return false;
+    pressTrigger(trigger);
+    return true;
+  }, [openMenu]);
 
   // Correct the position against the real measured size so the menu never
   // overflows any viewport edge.
@@ -235,9 +305,12 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
       closeMenu(false);
       if (nativeMenuPreferred(e.target)) return;
       const el = (e.target as HTMLElement).closest?.('[data-cm-type]') as HTMLElement | null;
-      if (!el) return; // nothing custom here — leave the native menu alone
-      if (!openMenu(el, e.clientX, e.clientY)) return;
-      e.preventDefault();
+      if (el) {
+        if (openMenu(el, e.clientX, e.clientY)) e.preventDefault();
+        return;
+      }
+      if (openFallback(e.target as Element, e.clientX, e.clientY)) e.preventDefault();
+      // otherwise nothing custom here — leave the native menu alone
     };
     const onPointerDown = (e: PointerEvent) => {
       if (!menuState.current) return;
@@ -256,7 +329,12 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
         }
         if (nativeMenuPreferred(e.target)) return;
         const el = (e.target as HTMLElement).closest?.('[data-cm-type]') as HTMLElement | null;
-        if (!el) return;
+        if (!el) {
+          const t = e.target as Element;
+          const r = t.getBoundingClientRect();
+          if (openFallback(t, r.left, r.bottom + 4)) e.preventDefault();
+          return;
+        }
         e.preventDefault();
         const r = el.getBoundingClientRect();
         openMenu(el, r.left, r.bottom + 4);
@@ -280,7 +358,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('resize', onScrollResize);
       window.removeEventListener('blur', onScrollResize);
     };
-  }, [openMenu, closeMenu]);
+  }, [openMenu, closeMenu, openFallback]);
 
   const renderPos = pos ?? (menu ? { x: menu.x, y: menu.y } : { x: 0, y: 0 });
 
@@ -328,6 +406,10 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
                 )}
               >
                 {Icon && <Icon className="w-4 h-4 shrink-0 opacity-70" aria-hidden="true" />}
+                {!Icon && it.iconHtml && (
+                  // Markup copied from our own rendered icon (see rowToolbarItems).
+                  <span className="flex w-4 h-4 shrink-0 opacity-70 [&>svg]:w-4 [&>svg]:h-4" aria-hidden="true" dangerouslySetInnerHTML={{ __html: it.iconHtml }} />
+                )}
                 <span className="truncate flex-1">{it.label}</span>
                 {it.hint && (
                   <span className="text-[11px] text-text-muted shrink-0" aria-hidden="true">
