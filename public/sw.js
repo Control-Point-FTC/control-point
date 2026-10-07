@@ -1,46 +1,81 @@
-// Control Point service worker — basic offline support.
-// Caches the app shell so the app loads fast and works offline-ish.
-// Bump to drop cached static files (e.g. after the app icons change).
-const CACHE = 'control-point-v2';
+// Control Point service worker.
+//
+// - Page loads (navigations): network first, so a deploy is picked up
+//   immediately; the last good copy of the app shell is kept and served when
+//   the network is down (competition venues, school Wi-Fi).
+// - /assets/* (content-hashed, never change): cache first.
+// - Other same-origin static files (icons, fonts, manifest): served from
+//   cache while a fresh copy is fetched in the background.
+// - Never cached: /api/* (live data), /uploads/* (user files), other origins.
+// Bump CACHE to drop everything cached by an older worker.
+const CACHE = 'control-point-v3';
+const SHELL = '/index.html';
 
 self.addEventListener('install', (event) => {
-  // Activate immediately
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => fetch(new Request('/', { cache: 'reload' })).then((res) => (res.ok ? cache.put(SHELL, res) : undefined)))
+      .catch(() => { /* offline install: the shell is cached on the first navigation instead */ })
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
-// Network-first for API, cache-first for static assets
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  // Never cache API calls
-  if (url.pathname.startsWith('/api/')) return;
-  // Only handle GET
-  if (event.request.method !== 'GET') return;
+function isStaticAsset(url) {
+  return /\.(png|jpe?g|svg|ico|webp|woff2?|webmanifest|wasm)$/.test(url.pathname);
+}
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((res) => {
-        // Cache successful static responses
-        if (res.ok && (url.pathname.startsWith('/assets/') || url.pathname.match(/\.(png|jpg|svg|woff2?|css|js)$/))) {
-          const clone = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, clone));
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) return;
+
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
+    );
+    return;
+  }
+
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(req).then((cached) => cached || fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(req, copy));
         }
         return res;
-      }).catch(() => {
-        // Offline fallback: serve index.html for navigation
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-        throw new Error('offline');
-      });
-    })
-  );
+      }))
+    );
+    return;
+  }
+
+  if (isStaticAsset(url)) {
+    event.respondWith(
+      caches.open(CACHE).then((cache) => cache.match(req).then((cached) => {
+        const fresh = fetch(req).then((res) => {
+          if (res.ok) cache.put(req, res.clone());
+          return res;
+        }).catch(() => cached || Response.error());
+        return cached || fresh;
+      }))
+    );
+  }
 });

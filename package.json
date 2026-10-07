@@ -32,7 +32,7 @@
     "dev": "tsx server.ts",
     "setup": "tsx setup.ts",
     "start": "node bin/cli.js",
-    "build": "vite build",
+    "build": "vite build && node scripts/compress-dist.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
