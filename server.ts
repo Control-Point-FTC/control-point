@@ -6363,7 +6363,7 @@ async function startServer() {
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const { date } = req.query;
-      let query = "SELECT a.* FROM attendance a JOIN members m ON a.member_id = m.id WHERE m.team_id = ?";
+      let query = "SELECT a.*, m.name AS member_name FROM attendance a JOIN members m ON a.member_id = m.id WHERE m.team_id = ?";
       let params: any[] = [auth.teamId];
       if (date) {
         query += " AND a.date = ?";

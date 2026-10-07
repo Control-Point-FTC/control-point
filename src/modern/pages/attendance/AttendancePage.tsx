@@ -7,7 +7,8 @@
 import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { motion } from 'motion/react';
-import { CalendarDays, ChevronRight, LayoutGrid, LineChart, ListChecks, RefreshCw, Sparkles, Sun } from 'lucide-react';
+import { CalendarDays, ChevronRight, Download, LayoutGrid, LineChart, ListChecks, RefreshCw, Sparkles, Sun } from 'lucide-react';
+import { datedName, downloadCsv } from '../../../utils/csv';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Progress, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Skeleton,
@@ -16,7 +17,7 @@ import {
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
 import { useTheme } from '../../../hooks/useTheme';
-import { parseLocalDate, useAttendanceController } from '../../../components/attendance/useAttendanceController';
+import { parseLocalDate, STATUS_LABELS, useAttendanceController } from '../../../components/attendance/useAttendanceController';
 import { Page, PageHeader, Section, EmptyState } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { AttendanceArea } from '../../ui/AttendanceArea';
@@ -139,8 +140,21 @@ function HistoryTab({ ctl, members, attendance }: { ctl: Ctl; members: any[]; at
   }), [ctl.sessions, attendance]);
   const total = Math.max(1, members.length);
   if (!rows.length) return <EmptyState icon={CalendarDays} title="No attendance history yet" description="Days you take attendance will show up here." />;
+  const exportCsv = () => {
+    const names = new Map(members.map((m: any) => [m.id, m.name]));
+    const recs = [...attendance].sort((a: any, b: any) => String(b.date).localeCompare(String(a.date)));
+    downloadCsv(datedName('attendance'), recs, [
+      { header: 'Date', value: (r: any) => r.date },
+      // The row's own name keeps former members' history readable.
+      { header: 'Member', value: (r: any) => r.member_name ?? names.get(r.member_id) ?? `#${r.member_id}` },
+      { header: 'Status', value: (r: any) => STATUS_LABELS[r.status] ?? r.status },
+    ]);
+  };
   return (
     <>
+      <div className="mb-3 flex justify-end">
+        <Button variant="outline" size="sm" className="max-sm:h-11" onClick={exportCsv}><Download /> Export CSV</Button>
+      </div>
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {rows.map((r) => {
           const dt = parseLocalDate(r.date);

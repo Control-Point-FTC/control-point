@@ -6,7 +6,8 @@
 // only members with the budget scope can add or edit.
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { ArrowDownLeft, ArrowUpRight, Copy, MoreHorizontal, Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Copy, Download, MoreHorizontal, Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
+import { datedName, downloadCsv } from '../../../utils/csv';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, ChartContainer, ChartTooltip, ChartTooltipContent, DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -38,7 +39,18 @@ export function BudgetPage({ budget, setBudget, teams, refresh, hasScope, curren
         eyebrow="Operations"
         title="Budget"
         description="Team money at a glance — every dollar in and out. Everyone can view; members whose role has the budget permission can log and edit entries."
-        actions={ctl.isAdmin && <Button onClick={ctl.openNewEntry}><Plus /> Log transaction</Button>}
+        actions={
+          <>
+            <Button variant="outline" className="max-sm:h-11" disabled={!budget?.length} onClick={() => downloadCsv(datedName('budget'), budget ?? [], [
+              { header: 'Date', value: (b: any) => String(b.date || '').slice(0, 10) },
+              { header: 'Type', value: (b: any) => (b.type === 'income' ? 'Income' : 'Expense') },
+              { header: 'Category', value: (b: any) => b.category },
+              { header: 'Description', value: (b: any) => b.description },
+              { header: 'Amount', value: (b: any) => Number(b.amount) },
+            ])}><Download /> Export CSV</Button>
+            {ctl.isAdmin && <Button onClick={ctl.openNewEntry}><Plus /> Log transaction</Button>}
+          </>
+        }
       />
       <Reveal className="mb-8 grid gap-6 rounded-2xl border border-border bg-card p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
         <div className="min-w-0">
