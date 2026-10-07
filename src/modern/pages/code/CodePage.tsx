@@ -1,14 +1,15 @@
 // Modern Code (phase 8e), rebuilt on the shadcn kit over the shared
 // useCodeController / useGitHubRepo (same codeService endpoints, drafts →
 // main workflow, auto-save, history / compare / revert and code-scope rules
-// as Legacy). A file rail with the linked GitHub repo, an editor card with the
-// branch switch and save status, a history sheet, and commit / new-file
-// dialogs. Loaded lazily (Monaco is heavy).
-import { useMemo, useState } from 'react';
+// as Legacy). Laid out like an IDE: a toolbar (branch, Format / Compare /
+// History / Commit), an explorer (team files + the linked GitHub repo; a
+// drawer on small screens), the editor with its tab, and a status bar. A
+// history sheet and commit / new-file dialogs. Loaded lazily (Monaco is heavy).
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Editor, { DiffEditor } from '@monaco-editor/react';
 import {
   AlertCircle, Check, ChevronDown, ChevronRight, Code2, Download, FileCode2, Folder, GitBranch, GitCommitHorizontal, GitCompare, Github,
-  History, Link2, Loader2, MoreHorizontal, Plus, RefreshCw, RotateCcw, Search, Sparkles, Trash2, Unlink, X,
+  History, Link2, Loader2, MoreHorizontal, PanelLeft, Plus, RefreshCw, RotateCcw, Search, Sparkles, Trash2, Unlink, X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '../../../components/cn';
@@ -22,99 +23,72 @@ import { useTheme } from '../../../hooks/useTheme';
 import { CODE_LANGUAGES, useCodeController } from '../../../components/code/useCodeController';
 import { guessLanguage, monacoLanguage, useGitHubRepo, type TreeNode } from '../../../components/code/useGitHubRepo';
 import type { Member, Team } from '../../../types';
-import { Page, PageHeader, EmptyState } from '../../ui/page';
-import { Reveal } from '../../ui/motion';
+import { EmptyState } from '../../ui/page';
 
 type Ctl = ReturnType<typeof useCodeController>;
 const LANG_LABEL = Object.fromEntries(CODE_LANGUAGES);
 
 export function CodePage({ teams, currentUser, hasScope, activeTeamId }: { teams: Team[]; currentUser?: Member; hasScope?: (s: string) => boolean; activeTeamId?: number | null }) {
   const ctl = useCodeController({ teams, currentUser, hasScope, activeTeamId });
+  // Phones and small tablets: the explorer is a drawer (Files button).
+  const [explorerOpen, setExplorerOpen] = useState(false);
+  const explorer = (inDrawer: boolean) => (
+    <Explorer ctl={ctl} onPicked={inDrawer ? () => setExplorerOpen(false) : undefined} />
+  );
   return (
-    <Page>
-      <PageHeader
-        eyebrow={<>Build · {ctl.currentTeam?.name ?? 'Your team'}</>}
-        title="Code"
-        description="Robot code with a safe drafts branch: edits auto-save to drafts, and a commit promotes them to main."
-        actions={ctl.canManageCode && <Button onClick={() => ctl.setShowNewFileModal(true)}><Plus /> New file</Button>}
-      />
+    // IDE layout (audit: "the Code page as an editor layout"): a toolbar, the
+    // explorer on the left, the editor filling the rest, a status bar below.
+    <div className="flex min-h-0 flex-1 flex-col">
+      <h1 className="sr-only">Code</h1>
+      <Toolbar ctl={ctl} onOpenExplorer={() => setExplorerOpen(true)} />
       {ctl.error && (
-        <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
+        <div role="alert" className="flex items-start gap-3 border-b border-destructive/30 bg-destructive/5 px-4 py-2.5 text-sm">
           <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
           <p className="min-w-0 flex-1">{ctl.error}</p>
           <Button variant="ghost" size="icon-sm" onClick={() => ctl.setError(null)} aria-label="Dismiss" className="max-sm:size-11"><X /></Button>
         </div>
       )}
-      <div className="grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
-        <aside className="min-w-0 space-y-6">
-          <FileRail ctl={ctl} />
-          <RepoPanel teamId={ctl.selectedTeamId} isAdmin={ctl.canManageCode} />
+      <div className="flex min-h-0 flex-1">
+        <aside aria-label="Explorer" className="hidden w-64 shrink-0 flex-col border-r border-border bg-card/40 lg:flex">
+          {explorer(false)}
         </aside>
-        <div className="min-w-0">
-          {ctl.selectedFile ? <EditorCard ctl={ctl} /> : (
-            <EmptyState
-              icon={FileCode2}
-              title="Pick a file to open it"
-              description={ctl.files.length ? 'Choose a file on the left.' : 'No code files yet.'}
-              action={ctl.canManageCode && <Button onClick={() => ctl.setShowNewFileModal(true)}><Plus /> Create a file</Button>}
-              className="min-h-80"
-            />
+        <section aria-label="Editor" className="flex min-w-0 flex-1 flex-col">
+          {ctl.selectedFile ? <EditorPane ctl={ctl} /> : (
+            <div className="flex flex-1 items-center justify-center p-6">
+              <EmptyState
+                icon={FileCode2}
+                title="Pick a file to open it"
+                description={ctl.files.length ? 'Choose a file in the explorer.' : 'No code files yet.'}
+                action={(
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button variant="outline" onClick={() => setExplorerOpen(true)} className="lg:hidden"><PanelLeft /> Files</Button>
+                    {ctl.canManageCode && <Button onClick={() => ctl.setShowNewFileModal(true)}><Plus /> Create a file</Button>}
+                  </div>
+                )}
+              />
+            </div>
           )}
-        </div>
+        </section>
       </div>
+      <StatusBar ctl={ctl} />
+      <Sheet open={explorerOpen} onOpenChange={setExplorerOpen}>
+        <SheetContent side="left" className="w-[85vw] max-w-xs gap-0 p-0">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Explorer</SheetTitle>
+            <SheetDescription>Team files and the linked GitHub repo</SheetDescription>
+          </SheetHeader>
+          {explorerOpen && explorer(true)}
+        </SheetContent>
+      </Sheet>
       <HistorySheet ctl={ctl} />
       <CommitDialog ctl={ctl} />
       <NewFileDialog ctl={ctl} />
-    </Page>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Files
-// ---------------------------------------------------------------------------
-
-function FileRail({ ctl }: { ctl: Ctl }) {
-  const [q, setQ] = useState('');
-  const files = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return t ? ctl.files.filter((f) => f.file_name.toLowerCase().includes(t)) : ctl.files;
-  }, [ctl.files, q]);
-  return (
-    <Reveal>
-      <h2 className="mb-2 text-sm font-semibold">Files</h2>
-      {ctl.files.length > 6 && (
-        <div className="relative mb-2">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a file" aria-label="Find a file" className="h-9 pl-8 max-sm:h-11" />
-        </div>
-      )}
-      {!ctl.files.length && ctl.loading ? <div className="space-y-1.5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-9" />)}</div> : (
-        <ul className="space-y-0.5" aria-label="Code files">
-          {files.map((f) => {
-            const active = ctl.selectedFile?.id === f.id;
-            return (
-              <li key={f.id}>
-                <button
-                  onClick={() => ctl.setSelectedFile(f)}
-                  aria-current={active ? 'true' : undefined}
-                  className={cn('flex min-h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11', active ? 'bg-accent/15 font-medium text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
-                >
-                  <FileCode2 className={cn('size-4 shrink-0', active && 'text-accent')} />
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.file_name}</span>
-                  <span className="text-[10px] uppercase text-muted-foreground">{f.language}</span>
-                </button>
-              </li>
-            );
-          })}
-          {!ctl.files.length && <li className="px-2.5 py-2 text-sm text-muted-foreground">No files yet.</li>}
-        </ul>
-      )}
-    </Reveal>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Editor
+// Toolbar · status bar
 // ---------------------------------------------------------------------------
 
 const SAVE_STATUS = {
@@ -123,33 +97,26 @@ const SAVE_STATUS = {
   unsaved: { label: 'Unsaved changes', icon: AlertCircle, cls: 'text-amber-500' },
 } as const;
 
-function EditorCard({ ctl }: { ctl: Ctl }) {
-  const { theme } = useTheme();
-  const monacoTheme = theme === 'light' ? 'light' : 'vs-dark';
-  const file = ctl.selectedFile!;
-  const lang = file.language === 'java' ? 'java' : 'plaintext';
-  const status = SAVE_STATUS[ctl.autoSaveStatus];
-  const comparing = ctl.compareMode && ctl.comparePair.base && ctl.comparePair.head;
+function Toolbar({ ctl, onOpenExplorer }: { ctl: Ctl; onOpenExplorer: () => void }) {
+  const file = ctl.selectedFile;
   return (
-    <Reveal className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Code2 className="size-4 shrink-0 text-accent" />
-          <span className="truncate font-mono text-sm font-medium">{file.file_name}</span>
-          <Badge variant="secondary">{LANG_LABEL[file.language] ?? file.language}</Badge>
-        </div>
+    <div className="flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border px-3 py-1.5">
+      <Button variant="ghost" size="sm" onClick={onOpenExplorer} className="lg:hidden" aria-label="Open the file explorer"><PanelLeft /> <span className="max-md:sr-only">Files</span></Button>
+      <span className="hidden items-center gap-2 pr-1 text-sm font-semibold lg:flex">
+        <Code2 className="size-4 text-accent" /> Code
+        <span className="font-normal text-muted-foreground">· {ctl.currentTeam?.name ?? 'Your team'}</span>
+      </span>
+      {file && (
         <ToggleGroup type="single" aria-label="Branch" value={ctl.currentBranch} onValueChange={(v) => { if (v) ctl.switchBranch(v as 'main' | 'drafts'); }}>
-          <ToggleGroupItem value="drafts"><GitBranch /> Drafts</ToggleGroupItem>
-          <ToggleGroupItem value="main"><GitCommitHorizontal /> Main</ToggleGroupItem>
+          <ToggleGroupItem value="drafts"><GitBranch className="max-md:hidden" /> Drafts</ToggleGroupItem>
+          <ToggleGroupItem value="main"><GitCommitHorizontal className="max-md:hidden" /> Main</ToggleGroupItem>
         </ToggleGroup>
-        {ctl.currentBranch === 'drafts' && (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><status.icon className={cn('size-3.5', status.cls)} />{status.label}</span>
-        )}
-        {ctl.selectedCommit && <Badge variant="outline">Viewing {ctl.selectedCommit.hash.substring(0, 8)}</Badge>}
-        <div className="ml-auto flex flex-wrap items-center gap-1.5">
-          <Button variant="ghost" size="sm" onClick={ctl.formatDocument} className="max-sm:h-11"><Sparkles /> Format</Button>
-          <Button variant={ctl.compareMode ? 'secondary' : 'ghost'} size="sm" aria-pressed={ctl.compareMode} onClick={() => { ctl.setCompareMode(!ctl.compareMode); if (!ctl.compareMode) ctl.setShowHistory(true); }} className="max-sm:h-11"><GitCompare /> Compare</Button>
-          <Button variant="ghost" size="sm" onClick={() => ctl.setShowHistory(true)} className="max-sm:h-11"><History /> History</Button>
+      )}
+      {file && (
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={ctl.formatDocument} className="max-sm:h-11"><Sparkles /> <span className="max-md:sr-only">Format</span></Button>
+          <Button variant={ctl.compareMode ? 'secondary' : 'ghost'} size="sm" aria-pressed={ctl.compareMode} onClick={() => { ctl.setCompareMode(!ctl.compareMode); if (!ctl.compareMode) ctl.setShowHistory(true); }} className="max-sm:h-11"><GitCompare /> <span className="max-md:sr-only">Compare</span></Button>
+          <Button variant="ghost" size="sm" onClick={() => ctl.setShowHistory(true)} className="max-sm:h-11"><History /> <span className="max-md:sr-only">History</span></Button>
           {ctl.currentBranch === 'drafts' && ctl.canManageCode && (
             <Button size="sm" onClick={() => ctl.setShowCommitModal(true)} disabled={ctl.loading || !(ctl.unsavedChanges || ctl.canCommit)} className="max-sm:h-11"><GitCommitHorizontal /> Commit</Button>
           )}
@@ -163,14 +130,156 @@ function EditorCard({ ctl }: { ctl: Ctl }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+      )}
+    </div>
+  );
+}
+
+function StatusBar({ ctl }: { ctl: Ctl }) {
+  const file = ctl.selectedFile;
+  const status = SAVE_STATUS[ctl.autoSaveStatus];
+  return (
+    <footer className="flex h-7 shrink-0 items-center gap-3 overflow-hidden border-t border-border bg-card/60 px-3 text-[11px] text-muted-foreground">
+      {file ? (
+        <>
+          <span className="flex items-center gap-1"><GitBranch className="size-3" /> {ctl.currentBranch}</span>
+          {ctl.currentBranch === 'drafts' && (
+            <span className="flex items-center gap-1" role="status"><status.icon className={cn('size-3', status.cls)} />{status.label}</span>
+          )}
+          {ctl.selectedCommit && <span className="truncate">Viewing {ctl.selectedCommit.hash.substring(0, 8)}</span>}
+          <span className="ml-auto flex shrink-0 items-center gap-3">
+            {!ctl.canManageCode && <span>Read-only</span>}
+            <span>{LANG_LABEL[file.language] ?? file.language}</span>
+          </span>
+        </>
+      ) : <span>{ctl.files.length} {ctl.files.length === 1 ? 'file' : 'files'}</span>}
+    </footer>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Explorer (team files + GitHub repo)
+// ---------------------------------------------------------------------------
+
+function ExplorerSection({ title, action, children, className }: { title: React.ReactNode; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={cn('flex min-h-0 flex-col', className)}>
+      <div className="flex h-9 shrink-0 items-center gap-2 px-3">
+        <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Explorer({ ctl, onPicked }: { ctl: Ctl; onPicked?: () => void }) {
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <ExplorerSection
+        title="Files"
+        className="max-h-[55%] shrink-0"
+        action={ctl.canManageCode && (
+          <Button variant="ghost" size="icon-sm" aria-label="New file" title="New file" onClick={() => ctl.setShowNewFileModal(true)} className="max-sm:size-11"><Plus /></Button>
+        )}
+      >
+        <FileList ctl={ctl} onPicked={onPicked} />
+      </ExplorerSection>
+      <div className="min-h-0 flex-1 overflow-y-auto border-t border-border">
+        <RepoPanel teamId={ctl.selectedTeamId} isAdmin={ctl.canManageCode} />
+      </div>
+    </div>
+  );
+}
+
+function FileList({ ctl, onPicked }: { ctl: Ctl; onPicked?: () => void }) {
+  const [q, setQ] = useState('');
+  const files = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return t ? ctl.files.filter((f) => f.file_name.toLowerCase().includes(t)) : ctl.files;
+  }, [ctl.files, q]);
+  return (
+    <div className="flex min-h-0 flex-col px-1.5 pb-2">
+      {ctl.files.length > 6 && (
+        <div className="relative mb-1.5 px-1.5">
+          <Search className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a file" aria-label="Find a file" className="h-8 pl-8 text-xs max-sm:h-11" />
+        </div>
+      )}
+      {!ctl.files.length && ctl.loading ? <div className="space-y-1 px-1.5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-7" />)}</div> : (
+        <ul className="min-h-0 space-y-px overflow-y-auto" aria-label="Code files">
+          {files.map((f) => {
+            const active = ctl.selectedFile?.id === f.id;
+            return (
+              <li key={f.id}>
+                <button
+                  onClick={() => { ctl.setSelectedFile(f); onPicked?.(); }}
+                  aria-current={active ? 'true' : undefined}
+                  className={cn('flex min-h-7 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:min-h-11', active ? 'bg-accent/15 font-medium text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}
+                >
+                  <FileCode2 className={cn('size-3.5 shrink-0', active && 'text-accent')} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{f.file_name}</span>
+                  <span className="text-[10px] uppercase text-muted-foreground">{f.language}</span>
+                </button>
+              </li>
+            );
+          })}
+          {!ctl.files.length && <li className="px-2 py-1.5 text-xs text-muted-foreground">No files yet.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Editor
+// ---------------------------------------------------------------------------
+
+/** The live pixel height of an element. Monaco measures its box once when it
+ *  mounts; in a flex layout that box can still be settling (a few px), so the
+ *  editor gets an explicit height that follows the space it really has. */
+function useBoxHeight<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [h, setH] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setH(Math.floor(el.getBoundingClientRect().height));
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, h] as const;
+}
+
+function EditorPane({ ctl }: { ctl: Ctl }) {
+  const [boxRef, boxH] = useBoxHeight<HTMLDivElement>();
+  const editorHeight = boxH > 0 ? boxH : '100%';
+  const { theme } = useTheme();
+  const monacoTheme = theme === 'light' ? 'light' : 'vs-dark';
+  const file = ctl.selectedFile!;
+  const lang = file.language === 'java' ? 'java' : 'plaintext';
+  const comparing = ctl.compareMode && ctl.comparePair.base && ctl.comparePair.head;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Tab strip: the open file (one at a time). */}
+      <div className="flex h-9 shrink-0 items-end border-b border-border bg-card/40 px-2">
+        <div className="-mb-px flex h-8 max-w-full items-center gap-2 rounded-t-md border border-b-0 border-border bg-background px-3 text-xs">
+          <FileCode2 className="size-3.5 shrink-0 text-accent" />
+          <span className="truncate font-mono font-medium">{file.file_name}</span>
+          {ctl.currentBranch === 'drafts' && ctl.autoSaveStatus === 'unsaved' && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />}
+          {comparing && <Badge variant="outline" className="h-4 px-1 text-[10px]">diff</Badge>}
+        </div>
       </div>
       {ctl.compareMode && !comparing && (
         <p className="border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">Compare: pick a <span className="font-medium text-foreground">base</span> and a <span className="font-medium text-foreground">head</span> commit in History.</p>
       )}
-      <div className="h-[clamp(24rem,calc(100dvh-20rem),56rem)] min-h-0">
+      <div ref={boxRef} className="min-h-0 flex-1 overflow-hidden">
         {comparing ? (
           <DiffEditor
-            height="100%"
+            height={editorHeight}
             language={lang}
             original={ctl.history.find((h) => h.id === ctl.comparePair.base)?.content || ''}
             modified={ctl.history.find((h) => h.id === ctl.comparePair.head)?.content || ''}
@@ -180,7 +289,7 @@ function EditorCard({ ctl }: { ctl: Ctl }) {
           />
         ) : (
           <Editor
-            height="100%"
+            height={editorHeight}
             language={lang}
             value={ctl.code}
             onMount={ctl.handleEditorMount}
@@ -190,7 +299,7 @@ function EditorCard({ ctl }: { ctl: Ctl }) {
           />
         )}
       </div>
-    </Reveal>
+    </div>
   );
 }
 
@@ -314,12 +423,8 @@ function RepoPanel({ teamId, isAdmin }: { teamId: number | null; isAdmin: boolea
     </li>
   );
   return (
-    <Reveal delay={0.05}>
-      <div className="mb-2 flex items-center gap-2">
-        <Github className="size-4" />
-        <h2 className="text-sm font-semibold">GitHub repo</h2>
-        {r.repo && <Badge variant="soft" className="ml-auto">{r.repo.branch}</Badge>}
-      </div>
+    <ExplorerSection title={<><Github className="size-3.5" /> GitHub repo</>} action={r.repo && <Badge variant="soft">{r.repo.branch}</Badge>}>
+      <div className="px-3 pb-3">
       {r.error && <p role="alert" className="mb-2 rounded-lg bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">{r.error}</p>}
       {r.loading ? <Skeleton className="h-24" /> : !r.repo ? (
         isAdmin ? (
@@ -341,7 +446,7 @@ function RepoPanel({ teamId, isAdmin }: { teamId: number | null; isAdmin: boolea
               <Button variant="ghost" size="sm" onClick={() => void r.handleUnlink()} className="max-sm:h-11"><Unlink /> Unlink</Button>
             </div>
           )}
-          <ul className="max-h-72 overflow-y-auto rounded-lg border border-border p-1" aria-label="Repository files">
+          <ul className="-mx-1.5" aria-label="Repository files">
             {r.tree.length ? r.tree.map((n) => node(n, 0)) : <li className="p-2 text-xs text-muted-foreground">No files found in this repo.</li>}
           </ul>
         </div>
@@ -362,6 +467,7 @@ function RepoPanel({ teamId, isAdmin }: { teamId: number | null; isAdmin: boolea
           </DialogContent>
         )}
       </Dialog>
-    </Reveal>
+      </div>
+    </ExplorerSection>
   );
 }

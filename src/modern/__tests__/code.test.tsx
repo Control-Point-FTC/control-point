@@ -444,3 +444,26 @@ describe('Modern Code', () => {
     }, 15000);
   });
 });
+
+describe('Code IDE layout', () => {
+  it('explorer on the left, editor with its tab, and a status bar', async () => {
+    setup();
+    const explorer = screen.getByRole('complementary', { name: 'Explorer' });
+    expect(await within(explorer).findByRole('list', { name: 'Code files' })).toBeInTheDocument();
+    await open('Drive.java');
+    const editor = screen.getByRole('region', { name: 'Editor' });
+    expect(within(editor).getByText('Drive.java')).toBeInTheDocument();
+    const bar = screen.getByRole('contentinfo');
+    expect(within(bar).getByText('drafts')).toBeInTheDocument();
+    expect(within(bar).getByRole('status')).toHaveTextContent(/saved|Unsaved|Saving/);
+  });
+
+  it("Files drawer interaction: opening it and picking a file closes it (breakpoints and bounds are checked in a real browser, see PR)", async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: 'Open the file explorer' }));
+    const drawer = await screen.findByRole('dialog');
+    fireEvent.click(await within(drawer).findByRole('button', { name: /Drive\.java/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText('Code editor')).toHaveValue(server[1].drafts));
+  });
+});
