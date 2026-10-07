@@ -4,6 +4,7 @@
  * the API must never trust them.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import WebSocket from "ws";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -80,13 +81,18 @@ describe("budget entries (M-1 / H-6 / L-1)", () => {
   it("stores a valid amount rounded to cents and notifies with a single $", async () => {
     const r = await t.post("/api/budget", { ...entry, type: "income", amount: "1500.004", category: "Sponsor" }, admin);
     expect(r.status).toBe(200);
-    const row = (await t.db.execute({ sql: "SELECT amount FROM budget WHERE id = ?", args: [r.body.id] })).rows[0] as any;
+    // Through the API too — see the note below about reading the DB file.
+    const list = await t.api("/api/budget", { session: admin });
+    const row = list.body.find((b: any) => b.id === r.body.id);
     expect(Number(row.amount)).toBe(1500);
     // Notifications are written fire-and-forget after the response.
+    // Read through the API, not the DB file: a second process reading the
+    // SQLite file while the server writes can make that write fail BUSY.
     let note: any;
-    for (let i = 0; i < 100 && !note; i++) {
-      note = (await t.db.execute({ sql: "SELECT content FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1", args: [adminId] })).rows[0];
-      if (!note) await new Promise((r) => setTimeout(r, 100));
+    for (let i = 0; i < 30 && !note; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      const list = await t.api(`/api/notifications/${adminId}`, { session: admin });
+      note = Array.isArray(list.body) ? list.body.find((n: any) => String(n.content).includes("Sponsor")) : undefined;
     }
     expect(note.content).toBe("New budget income: $1,500 for Sponsor");
     expect(note.content).not.toContain("$$");
@@ -123,5 +129,39 @@ describe("attendance marks (L-4)", () => {
   it("still allows clearing a mark", async () => {
     const r = await t.post("/api/attendance/batch", { date: iso(5), records: [{ member_id: memberId, status: null }] }, admin);
     expect(r.status).toBe(200);
+  });
+});
+
+describe("Bruno-applied writes", () => {
+  it("budget items follow the same rules, and budget/calendar writes are live-synced", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${t.port}`);
+    const seen: string[] = [];
+    ws.on("message", (d) => { try { seen.push(JSON.parse(String(d)).type); } catch { /* ignore */ } });
+    await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
+    ws.send(JSON.stringify({ type: "hello", sessionId: admin }));
+    await new Promise((r) => setTimeout(r, 400));
+
+    const before = Number(((await t.db.execute("SELECT COUNT(*) AS n FROM budget")).rows[0] as any).n);
+    const r = await t.post("/api/ai/apply-actions", {
+      actions: [
+        { kind: "budget", items: [
+          { type: "expense", amount: 0.004, category: "Rounds to zero" },
+          { type: "expense", amount: 2000000, category: "Over the cap" },
+          { type: "expense", amount: 12, category: "Bad date", date: "2026-02-30" },
+        ] },
+        { kind: "event", items: [{ title: "Bruno practice", date: "2026-11-05", time: "17:00" }] },
+      ],
+    }, admin);
+    expect(r.status).toBe(200);
+    const rows = (await t.db.execute(`SELECT amount, category, date FROM budget ORDER BY id DESC LIMIT ${3}`)).rows as any[];
+    const after = Number(((await t.db.execute("SELECT COUNT(*) AS n FROM budget")).rows[0] as any).n);
+    expect(after - before).toBe(1); // only the valid one, dated today instead of Feb 30
+    expect(rows[0].category).toBe("Bad date");
+    expect(rows[0].date).not.toBe("2026-02-30");
+
+    await new Promise((r2) => setTimeout(r2, 500));
+    ws.close();
+    expect(seen).toContain("budget_changed");
+    expect(seen).toContain("events_changed");
   });
 });

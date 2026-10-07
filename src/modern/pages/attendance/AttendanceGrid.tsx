@@ -158,7 +158,7 @@ export function AttendanceGrid({ ctl, members }: { ctl: Ctl; members: any[] }) {
                           </PopoverTrigger>
                           <PopoverContent className="w-auto p-2" align="center">
                             <p className="mb-2 px-0.5 text-xs text-muted-foreground">{m.name} · {parseLocalDate(d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-                            <StatusPicker value={status} size="sm" autoFocus onPick={(s) => { setOpenCell(null); void ctl.setStatus(m.id, d, s); }} />
+                            <StatusPicker value={status} size="sm" autoFocus date={d} onPick={(s) => { setOpenCell(null); void ctl.setStatus(m.id, d, s); }} />
                           </PopoverContent>
                         </Popover>
                       </td>

@@ -135,7 +135,7 @@ import {
   type ScoutEventParsed,
 } from "./server/ftcScout.js";
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
-import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth, MONEY_MAX } from "./src/utils/validation.js";
+import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
@@ -9609,21 +9609,18 @@ Rules:
       const p = JSON.parse(m[1]);
       if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
         const today = new Date().toISOString().slice(0, 10);
+        // Same rules as the budget form and API (budgetEntryFrom); Bruno only
+        // gets defaults for type (expense) and date (today), and long text is
+        // trimmed rather than refused.
         const valid = p.map((b: any) => {
-          const amount = parseFloat(b?.amount);
-          if (isNaN(amount) || amount <= 0 || amount > MONEY_MAX) return null;
-          const type = b?.type === "income" ? "income" : "expense";
-          let date = today;
-          if (typeof b?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && !isNaN(new Date(b.date + "T00:00:00").getTime())) {
-            date = b.date;
-          }
-          return {
-            type,
-            amount: Math.round(amount * 100) / 100,
+          const entry = budgetEntryFrom({
+            type: b?.type === "income" ? "income" : "expense",
+            amount: b?.amount,
+            date: isIsoDate(b?.date) ? b.date : today,
             category: typeof b?.category === "string" ? b.category.trim().slice(0, 80) : "",
             description: typeof b?.description === "string" ? b.description.trim().slice(0, 500) : "",
-            date,
-          };
+          }, null);
+          return "error" in entry ? null : entry;
         }).filter(Boolean);
         if (valid.length) entries = valid;
       }
@@ -10095,6 +10092,9 @@ Rules:
       if (!Object.keys(applied).length) {
         return res.status(400).json({ error: "Nothing valid to add — please try again" });
       }
+      // Bruno's writes are live-synced like the direct API's.
+      if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
+      if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, applied });
     } catch (error) {
       console.error("AI apply-actions error:", error);

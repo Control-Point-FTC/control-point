@@ -1,7 +1,7 @@
 // Shared harness for integration tests that boot the real server against a
 // throwaway SQLite file. Each suite gets its own port, DB and process.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,16 +41,31 @@ export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> 
   const proc: ChildProcess = spawn("npx", ["tsx", "server.ts"], {
     cwd: REPO,
     env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off" },
-    stdio: "ignore",
+    // CP_TEST_SERVER_LOG=<file> captures the server's output for debugging.
+    stdio: process.env.CP_TEST_SERVER_LOG ? ["ignore", openSync(process.env.CP_TEST_SERVER_LOG, "a"), openSync(process.env.CP_TEST_SERVER_LOG, "a")] : "ignore",
     shell: process.platform === "win32",
   });
-  for (let i = 0; ; i++) {
-    try {
-      const r = await fetch(`${base}/api/auth/config`);
-      if (r.ok || r.status === 404) break;
-    } catch { /* not up yet */ }
-    if (i > 200) throw new Error("server did not boot in time");
-    await new Promise((r) => setTimeout(r, 250));
+  const kill = async () => {
+    if (proc.pid) {
+      if (process.platform === "win32") spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
+      else proc.kill("SIGTERM");
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
+  };
+  try {
+    for (let i = 0; ; i++) {
+      try {
+        const r = await fetch(`${base}/api/auth/config`);
+        if (r.ok || r.status === 404) break;
+      } catch { /* not up yet */ }
+      if (i > 200) throw new Error("server did not boot in time");
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  } catch (e) {
+    // A failed boot must not leave the server process or temp dir behind.
+    await kill();
+    throw e;
   }
   const db = createClient({ url: `file:${dbPath}` });
 
@@ -78,12 +93,7 @@ export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> 
     },
     stop: async () => {
       try { db.close(); } catch { /* ignore */ }
-      if (proc.pid) {
-        if (process.platform === "win32") spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
-        else proc.kill("SIGTERM");
-      }
-      await new Promise((r) => setTimeout(r, 500));
-      try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
+      await kill();
     },
   };
 }
