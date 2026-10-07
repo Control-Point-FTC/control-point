@@ -109,7 +109,7 @@ export function MessagesPage(props: any) {
         currentUserId={currentUser?.id} memberNames={memberNames}
         onRef={(id, el) => { if (el) ctl.msgRefs.current.set(id, el); else ctl.msgRefs.current.delete(id); }}
         onActivate={(id) => { if (ctl.isTouchDevice) ctl.setActiveMsgId((cur: number | null) => (cur === id ? null : id)); }}
-        onReply={ctl.startReply} onForward={ctl.setForwardMsg} onCopy={ctl.copyMessageText} onDelete={ctl.handleDeleteMessage}
+        onReply={ctl.startReply} onForward={ctl.setForwardMsg} onCopy={ctl.copyMessageText} onDelete={ctl.handleDeleteMessage} onEdit={ctl.handleEditMessage}
         onOpenPicker={(id) => ctl.setReactPickerFor(id)} onClosePicker={() => ctl.setReactPickerFor(null)} onPick={ctl.handlePickReaction}
         onReactionsChange={ctl.handleReactionsChange} onJumpTo={ctl.scrollToMessage}
       />

@@ -7292,17 +7292,25 @@ async function startServer() {
       return res.status(400).json({ error: "Content is required for message update" });
     }
 
-    const existing: any = (await dbGet("SELECT team_id FROM messages WHERE id = ?", messageId));
-    if (!existing || existing.team_id !== auth.teamId) {
+    const existing: any = (await dbGet("SELECT team_id, sender_id, channel_id, deleted_at FROM messages WHERE id = ?", messageId));
+    if (!existing || existing.team_id !== auth.teamId || existing.deleted_at) {
       return res.status(404).json({ error: "Message not found" });
     }
-    // Silent edits are a moderation tool (Settings → Admin).
-    if (!messageActionAllowed({ action: "edit", isAuthor: false, moderator: await canModerateMessages(auth.memberId, auth.teamId) })) {
-      return res.status(403).json({ error: "Only moderators can edit messages" });
-    }
+    const text = String(content).trim().slice(0, 4000);
+    if (!text) return res.status(400).json({ error: "A message can't be empty — delete it instead" });
+    const now = new Date().toISOString();
 
-    (await dbRun("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", content, new Date().toISOString(), messageId));
-    
+    // The author's own edit: everyone sees it, marked "edited".
+    if (messageActionAllowed({ action: "edit-own", isAuthor: existing.sender_id === auth.memberId, moderator: false })) {
+      await dbRun("UPDATE messages SET content = ?, updated_at = ?, edited_at = ? WHERE id = ?", text, now, now, messageId);
+      broadcastToTeam(auth.teamId, { type: "message_updated", id: Number(messageId), channel_id: existing.channel_id ?? null, content: text, edited_at: now });
+      return res.json({ success: true, content: text, edited_at: now });
+    }
+    // Someone else's message: a silent moderation edit (Settings → Admin).
+    if (!messageActionAllowed({ action: "edit", isAuthor: false, moderator: await canModerateMessages(auth.memberId, auth.teamId) })) {
+      return res.status(403).json({ error: "You can only edit your own messages" });
+    }
+    (await dbRun("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", text, now, messageId));
     // No broadcast for silent edit
     res.json({ success: true });
   });
