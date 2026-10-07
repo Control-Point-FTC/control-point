@@ -6,7 +6,8 @@
 //   2. unplayed qualification matches are simulated (played ones keep their
 //      real results); ranking points + tiebreakers per season rules;
 //   3. alliance selection: captains in rank order pick by a softmax over
-//      perceived strength (fitted pick model);
+//      perceived strength (fitted pick model), where a team that would
+//      otherwise captain a later alliance may decline (captainAccept);
 //   4. double-elimination playoffs on the real bracket;
 //   5. advancement: 2025+ points (quals + alliance + playoffs + awards) or the
 //      2024 fixed order, then slots, skipping teams that already qualified.
@@ -59,10 +60,27 @@ export interface QualMatch {
 /** P(bonus RP) = logistic(c0 + c1 · alliance non-penalty score), per bonus (2025+). */
 export interface BonusModel { movement: [number, number]; goal: [number, number]; pattern: [number, number] }
 
-/** Captain's pick: softmax over candidates of (strength / tau − rankWeight · rank / n). */
-export interface PickModel { tau: number; rankWeight: number }
+/**
+ * Captain's pick: softmax over candidates of (strength / tau − rankWeight · rank / n).
+ * A candidate who would captain a later alliance if left unpicked can
+ * decline the invitation; captainAccept (0–1, default 1 = never declines)
+ * scales that candidate's weight by the chance they accept.
+ */
+export interface PickModel { tau: number; rankWeight: number; captainAccept?: number }
 
 export const DEFAULT_PICK: PickModel = { tau: 12, rankWeight: 0 };
+
+/**
+ * Pick weights for the captain of alliance `k` (0-based) of `A`, over the
+ * still-unpicked `cands` in rank order. Shared by the simulation and the
+ * pick-model fit so both describe the same choice.
+ */
+export function pickWeights(pm: PickModel, cands: number[], k: number, A: number, strength: (t: number) => number, rank: (t: number) => number, n: number): number[] {
+  // Left unpicked, the best-ranked remaining teams captain the alliances still to form.
+  const laterCaptains = new Set(cands.slice(0, Math.max(0, A - k - 1)));
+  const accept = pm.captainAccept ?? 1;
+  return cands.map((t) => Math.exp(strength(t) / pm.tau - pm.rankWeight * (rank(t) / n)) * (laterCaptains.has(t) ? accept : 1));
+}
 
 export type AwardInput =
   | { mode: "none" }
@@ -208,7 +226,7 @@ export function simulateEvent(input: SimInput): Map<number, TeamOutcome> {
         else {
           const cands = ranked.filter((t) => !taken.has(t) && !(fp && (t === fp.team || t === fp.partner)));
           if (cands.length) {
-            const w = cands.map((t) => Math.exp(str.get(t)!.np / pick.tau - pick.rankWeight * (rankOf.get(t)! / n)));
+            const w = pickWeights(pick, cands, k, A, (t) => str.get(t)!.np, (t) => rankOf.get(t)!, n);
             const sum = w.reduce((a, b) => a + b, 0);
             let x = r() * sum, i = 0;
             while (i < w.length - 1 && (x -= w[i]) > 0) i++;

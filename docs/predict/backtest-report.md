@@ -100,6 +100,18 @@ Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 5–8 read it.
 
 - Robot changes between events only show up once a team plays again.
 - Bonus-RP chances (2025–26) were fitted on the season's earliest 20% of matches (bonuses didn't exist before).
-- Alliance declines and 3-team championship alliances aren't modelled.
+- Alliance declines and 3-team championship alliances aren't modelled (declines were tried and rejected: see §9).
 - An event's award line-up (which awards exist) is taken as known; winners are not.
 - 2026–27 (BIOBUZZ) rules aren't published; the 2025–26 points system is assumed until they are.
+
+## 9. Tried and rejected
+
+**Alliance declines** (Oct 2026). A team that would captain a later alliance if left unpicked may turn an invitation down. This was modelled as `captainAccept`, a factor on those teams' pick weight (`pickWeights` in `server/predict/sim.ts`; it defaults to 1, meaning no declines). The factor was fitted jointly with `tau` and `rankWeight` by pick log-likelihood on 2024–25.
+
+- **2024–25 (fit):** the best model accepts 85% of invitations to future captains (`tau` 25, `rankWeight` 4). Log-likelihood is −4076.7 vs −4080.9 without declines over 2,072 picks. Top-3 hit rate is 68.9% vs 69.7%.
+- **2025–26 (test, `--eval-pick`):** log-likelihood is −5080.2 vs **−4952.4** without declines over 2,540 picks.
+- **2025–26 events** (1000 runs, award model, 508 events): every advancement number gets slightly worse. Brier goes from 0.1287 to 0.1290 before the event and from 0.0855 to 0.0866 after quals. P(picked) Brier goes from 0.1249 to 0.1268, and partner-scenario win Brier from 0.0719 to 0.0727.
+
+The current pick model already fits the real picks' preference for strong, high-ranked teams; a decline factor only overfits. The related question of whether super-alliances are over-predicted points the other way at match level. On 2024–25, the strongest alliances score below their prediction in qualification matches (top tenth: −21 points, about −8%). In playoff matches, though, favourites win *more* often than predicted (84.8% predicted vs 89.9% actual for 80–90% favourites). So "soften stacked alliances" isn't supported by the data. A playoff-specific sharpening is a better lead, and it should be tested through `backtest-matches.mts` like everything else.
+
+Reproduce: `npx tsx scripts/predict/backtest-events.mts --season 2024 --fit-pick --declines --awards none --runs 50 --limit 1 --pick-file .cache/predict/pick-2024-declines.json --out <file>`, then `--season 2025 --runs 1000 --awards model --partners --eval-pick --pick-file <either pick file> --out <file>`. Declines are opt-in (`--declines`, which requires an explicit `--pick-file`), so the shipped reproduction in §7 is unchanged.
