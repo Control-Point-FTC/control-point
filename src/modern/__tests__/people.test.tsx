@@ -130,6 +130,29 @@ describe('Modern People — members', () => {
     expect(JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/members/8')![1].body)).toMatchObject({ role: 'Captain', account_type: 'student' });
   });
 
+  it('demotes an admin with the Admin switch (H-2)', async () => {
+    const admin2 = { ...grace, id: 9, name: 'Hopper', email: 'hopper@x.test', account_type: 'admin' };
+    const props = {
+      members: [me, admin2], teams, currentUser: me, refresh: { members: vi.fn() }, onRefresh: vi.fn(),
+      hasScope: () => true, hasPerm: () => true, onAddTeam: vi.fn(), onSwitchTeam: vi.fn(), onDeleteTeam: vi.fn(), onLeaveTeam: vi.fn(), activeTeamName: 'Robo',
+    };
+    render(
+      <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
+        <MemoryRouter initialEntries={['/teams']}><Routes><Route path="/teams" element={<PeoplePage {...props} />} /></Routes></MemoryRouter>
+      </InterfaceModeProvider>,
+    );
+    fireEvent.click(within(await openMenu('Hopper')).getByRole('menuitem', { name: /Edit member/ }));
+    const toggle = await screen.findByRole('switch', { name: 'Admin' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/members/9', expect.objectContaining({ method: 'PATCH' })));
+    const body = JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/members/9')![1].body);
+    expect(body.account_type).toBe('student');
+    expect(body).not.toHaveProperty('scopes');
+  });
+
   it('removes a member after confirming, and shows the server error if it fails', async () => {
     api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/members/8' && init?.method === 'DELETE' ? json({ error: 'Last admin' }, false) : routeApi(url)));
     setup();
