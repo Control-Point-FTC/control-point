@@ -9869,10 +9869,13 @@ Rules:
    * (or "" when there was no request). Shared by the streamed and the plain
    * reply paths — streamed replies used to promise a lookup and never run it.
    */
-  async function scoutingAppendix(rawText: string, teamId: number | null): Promise<string> {
+  async function scoutingAppendix(rawText: string, teamId: number | null, signal?: AbortSignal): Promise<string> {
     const scout = extractScoutBlock(String(rawText || ""));
     const scoutEvent = extractScoutEventBlock(String(rawText || ""));
     let out = "";
+    // A stopped reply stops its lookups too (no fetches for an answer nobody sees).
+    const stopped = () => !!signal?.aborted;
+    if (stopped()) return "";
     // If Bruno requested team scouting, fetch the stats and append a summary.
     // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
     const srcName = (src: string) => (src === "first-events" ? "FIRST Events" : "FTC Scout");
@@ -9880,6 +9883,7 @@ Rules:
       const season = currentFtcSeason();
       const sources = new Set<string>();
       const summaries = await mapLimit(scout.numbers, 4, async (num: number) => {
+        if (stopped()) return "";
         try {
           const payload = await getTeamData(num, season);
           const p = payload?.data;
@@ -9921,6 +9925,7 @@ Rules:
             ? [...field].sort((a, b) => (rankMap.get(a) ?? 9999) - (rankMap.get(b) ?? 9999)).slice(0, 15)
             : field.slice(0, 40);
           const rows = (await mapLimit(candidates, 6, async (n: number) => {
+            if (stopped()) return null;
             try {
               const d = (await getTeamData(n, season))?.data;
               if (!d) return null;
@@ -10108,7 +10113,9 @@ Rules:
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
           // Scouting lookups the reply asked for run now and stream after it.
-          const appendix = await scoutingAppendix(fullText, auth.teamId).catch(() => "");
+          const appendix = await scoutingAppendix(fullText, auth.teamId, streamAbort.signal).catch(() => "");
+          // Stopped during the lookups: the user has the reply they saw; nothing more is written or saved.
+          if (streamAbort.signal.aborted) { res.end(); return; }
           if (appendix) res.write(appendix);
           const finalText = stripActionBlocks(fullText) + appendix;
           if (chat && String(finalText || "").trim()) {
@@ -10142,7 +10149,8 @@ Rules:
       });
       const result = aiReply.text;
       let finalResult = stripActionBlocks(String(result || ""));
-      finalResult += await scoutingAppendix(String(result || ""), auth.teamId);
+      finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
+      if (nonStreamAbort.signal.aborted) return;
       const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
       logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
       if (chat) {
