@@ -405,7 +405,8 @@ export default function App() {
   // Bruno gets the same immersive full-height treatment as chat: no app
   // header/footer, no outer scroll — the conversation fills the viewport.
   const isBrunoRoute = activeTab === 'bruno';
-  const isImmersiveRoute = isChatRoute || isBrunoRoute;
+  // Code is an IDE: toolbar, explorer, editor and status bar fill the screen.
+  const isImmersiveRoute = isChatRoute || isBrunoRoute || activeTab === 'code';
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const isMobile = useIsMobile();
   // Teams & Members submenu (Members / Roles), Discord-style settings popup,
