@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RatingBook, npOf, type RatingParams } from "./rating.js";
 import { predictMatch, type NoiseParams } from "./matchModel.js";
+import type { CalibrationParams } from "./calibration.js";
 import { rng, simulateEvent, type AwardInput, type BonusModel, type PickModel, type QualMatch, type SimInput, type TeamOutcome } from "./sim.js";
 import { awardFeatures, indexAwards, sampleAwards, MODELLED_AWARDS, type AwardModel, type AwardRecord } from "./awards.js";
 import { ADVANCING_TYPES } from "./scoutData.js";
@@ -24,6 +25,7 @@ import type { FtcEventFull } from "../../src/types/ftcScout.js";
 const M = JSON.parse(readFileSync(join(process.cwd(), "server", "predict", "model.json"), "utf8")) as {
   rating: RatingParams; noise: Required<NoiseParams>; pick: PickModel;
   bonus: Record<string, BonusModel>; awards: AwardModel; accuracy: unknown;
+  calibration?: CalibrationParams;
 };
 
 export type Stage = "pre" | "live" | "quals" | "selected";
@@ -182,7 +184,7 @@ export class PredictEngine {
   match(season: number, red: number[], blue: number[]) {
     const book = this.book(season);
     if (!book) return null;
-    return predictMatch(book, red, blue, M.noise);
+    return predictMatch(book, red, blue, M.noise, M.calibration);
   }
 
   // -------------------------------------------------------------------------
@@ -402,7 +404,7 @@ export class PredictEngine {
     const teams: ForecastTeam[] = [...res.values()].map((o) => this.teamView(o, book, o.team === myTeam));
     const matches: ForecastMatch[] = ev.matches.filter((m) => m.red.teams.length && m.blue.teams.length).slice(0, 400).map((m) => {
       const red = m.red.teams.map((t) => t.number), blue = m.blue.teams.map((t) => t.number);
-      const p = !m.played && red.length <= 2 && blue.length <= 2 ? predictMatch(book, red, blue, M.noise) : null;
+      const p = !m.played && red.length <= 2 && blue.length <= 2 ? predictMatch(book, red, blue, M.noise, M.calibration) : null;
       return {
         key: m.key, label: m.label, level: m.level, red, blue, pRedWin: p?.pRedWin ?? null, redMean: p?.red.mean ?? null, blueMean: p?.blue.mean ?? null,
         played: m.played && m.red.score?.total != null && m.blue.score?.total != null ? { red: m.red.score.total, blue: m.blue.score.total } : null,
