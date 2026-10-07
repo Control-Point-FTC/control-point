@@ -1,6 +1,5 @@
 // Integration tests for the voice wiring (App.tsx <-> VoiceProvider).
-// These compose the REAL VoiceProvider with the REAL call UI (CallBar,
-// VoiceChannelList, IncomingCallModal) and mock only the engine layers
+// These compose the REAL VoiceProvider and mock only the engine layers
 // (REST api, media devices, WebRTC engine) — i.e. everything below the
 // provider, exactly as App.tsx sees it. This verifies the wiring contract:
 //
@@ -9,11 +8,11 @@
 //   - ws.onopen / onclose: attachSocket/detachSocket drive the engine's
 //     send path (used by leave(), the same call App makes on team
 //     switch / logout).
-//   - The mounted UI reacts to provider state (channels list, incoming
-//     call modal, call bar on join).
+//   - Provider state the call UI reads (channels list, incoming call,
+//     the active session and its participants) follows join / leave.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, act } from '@testing-library/react';
+import { render, cleanup, act, waitFor } from '@testing-library/react';
 import React from 'react';
 import { VoiceProvider, useVoice } from '../../../voice';
 
@@ -202,6 +201,67 @@ describe('ws.onmessage routing contract', () => {
 });
 
 describe('VoiceProvider socket lifecycle', () => {
+  it('loads the channel list on mount', async () => {
+    renderHarness();
+    await waitFor(() => expect(captured.channels.map((c: any) => c.name)).toContain('Build room'));
+    expect(mocks.voiceApi.getChannels).toHaveBeenCalled();
+  });
+
+  it('voice:incoming sets incomingCall; declineCall clears it and tells the server', async () => {
+    renderHarness();
+    expect(captured.incomingCall).toBeNull();
+    act(() => {
+      captured.handleSocketMessage({
+        type: 'voice:incoming',
+        invite_id: 5,
+        session_id: 42,
+        kind: 'dm',
+        media: 'audio',
+        inviter: { id: 2, name: 'Rida' },
+      });
+    });
+    expect(captured.incomingCall).toMatchObject({ sessionId: 42 });
+    await act(async () => {
+      await captured.declineCall();
+    });
+    expect(captured.incomingCall).toBeNull();
+    expect(mocks.voiceApi.declineCall).toHaveBeenCalledWith(42);
+  });
+
+  it('joining a channel starts the engine and maps participants; leave() tears it down over the attached socket', async () => {
+    const sent: any[] = [];
+    renderHarness();
+    await waitFor(() => expect(captured.channels.length).toBeGreaterThan(0));
+
+    // Same attach the app socket does in ws.onopen.
+    act(() => {
+      captured.attachSocket((m: any) => sent.push(m));
+    });
+
+    await act(async () => {
+      await captured.joinChannel(3);
+    });
+    expect(mocks.voiceApi.joinChannel).toHaveBeenCalledWith(3);
+    expect(mocks.engineInstances.length).toBe(1);
+    // Join announces state over the attached socket.
+    expect(sent.some((m) => m.type === 'voice:state')).toBe(true);
+    await waitFor(() => expect(captured.session?.name).toBe('Build room'));
+    // The other participant arrived via presence mapping (provider state +
+    // engine peer list).
+    const ids = captured.participants.map((p: any) => p.memberId).sort();
+    expect(ids).toEqual([1, 2]);
+    expect(mocks.engineInstances[0].peers.sort()).toEqual([1, 2]);
+
+    // leave(): the exact call App makes on team switch / logout.
+    await act(async () => {
+      await captured.leave();
+    });
+    expect(sent.some((m) => m.type === 'voice:leave')).toBe(true);
+    expect(mocks.voiceApi.leave).toHaveBeenCalled();
+    expect(mocks.engineInstances[0].disposed).toBe(true);
+    await waitFor(() => expect(captured.session).toBeNull());
+  });
+
   it('detachSocket stops engine sends (ws.onclose path)', async () => {
     const sent: any[] = [];
     renderHarness();
