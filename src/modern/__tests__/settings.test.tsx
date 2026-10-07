@@ -245,7 +245,8 @@ describe('Modern Settings — Discord-style workspace settings', () => {
   it('groups User settings and the workspace’s settings; admins get Members and Roles', () => {
     at('/settings?section=workspace');
     expect(screen.getByText('User settings')).toBeInTheDocument();
-    expect(screen.getByText('Robo · Workspace settings')).toBeInTheDocument();
+    // Like Discord, the workspace's own name heads its settings.
+    expect(screen.getByText('Robo', { selector: 'p' })).toBeInTheDocument();
     for (const name of ['Overview', 'Members', 'Roles', 'Admin']) expect(nav().getByRole('button', { name })).toBeInTheDocument();
   });
 

@@ -435,7 +435,7 @@ export default function App() {
 
   // Auto-expand the Teams submenu when we're on one of its pages.
   useEffect(() => {
-    if (activeTab === 'teams' || activeTab === 'roles') setTeamsNavOpen(true);
+    if (activeTab === 'teams') setTeamsNavOpen(true);
     if (activeTab === 'cad' || activeTab === 'cad-docs' || activeTab === 'cad-reviews' || activeTab === 'cad-snapshots' || activeTab === 'cad-parts') setCadNavOpen(true);
   }, [activeTab]);
 
@@ -1818,8 +1818,7 @@ export default function App() {
   // Keep students (and scope-restricted users) on tabs they can actually see
   // (Bruno is intentionally not a nav tab — reachable via the header button)
   // Note: profile/settings/roles are reachable pages even when they aren't
-  // top-level sidebar items (settings + profile live in the settings popup;
-  // roles is nested under Teams & Members).
+  // sidebar items (/roles redirects to Settings → Roles, which gates itself).
   const allVisibleTabIds = useMemo(() => {
     const ids = new Set<string>();
     for (const t of visibleTabs) {
@@ -1828,6 +1827,7 @@ export default function App() {
     }
     ids.add('profile');
     ids.add('settings');
+    ids.add('roles');
     ids.add('inbox'); // Modern page; Legacy redirects it to the dashboard
     return ids;
   }, [visibleTabs]);

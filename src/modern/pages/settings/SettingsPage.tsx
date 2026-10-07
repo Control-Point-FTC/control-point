@@ -99,7 +99,7 @@ export function SettingsPage(props: any) {
                 <li key={s.id} className="shrink-0">
                   {showGroup && (
                     <p className="mb-1 mt-5 hidden truncate px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground first:mt-0 lg:block">
-                      {s.group === 'You' ? k('groupYou') : activeTeamName ? `${activeTeamName} · ${k('groupWorkspace')}` : k('groupWorkspace')}
+                      {s.group === 'You' ? k('groupYou') : activeTeamName || k('groupWorkspace')}
                     </p>
                   )}
                   <button
