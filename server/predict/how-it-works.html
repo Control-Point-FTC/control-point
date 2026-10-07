@@ -559,7 +559,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 
   <div class="col reveal">
     <h3>A final calibration touch</h3>
-    <p>Even good models are a little over- or under-confident. Muse added <strong>Platt scaling</strong>: a tiny correction, fitted on 2024–25, that gently pulls probabilities toward 50% (multiply the log-odds by 0.937, nudge by 0.020). It never changes who's favoured. It just makes "70%" mean 70%. On the test season it cut calibration error from 0.017 to 0.0105.</p>
+    <p>Even good models are a little over- or under-confident. Muse added <strong>Platt scaling</strong>: a tiny correction, fitted on 2024–25, that gently pulls probabilities toward 50% (multiply the log-odds by 0.937, nudge by 0.020). It keeps every prediction in the same order; only a call that was already within half a point of 50% can tip to the other side. It just makes "70%" mean 70%. On the test season it cut calibration error from 0.017 to 0.0105.</p>
   </div>
 
   <figure class="reveal">
@@ -621,7 +621,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
             <span class="note">Your robot</span>
             <div class="seg" role="group" aria-label="Your robot's strength" id="simSeg">
               <span class="seg-ind" aria-hidden="true"></span>
-              <button type="button" aria-pressed="false" data-v="98">Top-3 robot</button>
+              <button type="button" aria-pressed="false" data-v="105">Top-3 robot</button>
               <button type="button" aria-pressed="true" data-v="72">Mid-pack</button>
               <button type="button" aria-pressed="false" data-v="52">Underdog</button>
             </div>
@@ -744,9 +744,9 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
   </div>
 
   <div class="verdicts">
-    <div class="verdict reveal" style="--i:0"><span class="tag ship">Shipped</span><b>Platt calibration</b><p>A two-number correction to win probabilities. Calibration error on the test season fell from 0.017 to 0.0105, and accuracy is unchanged because favourites stay favourites.</p>
+    <div class="verdict reveal" style="--i:0"><span class="tag ship">Shipped</span><b>Platt calibration</b><p>A two-number correction to win probabilities. Calibration error on the test season fell from 0.017 to 0.0105, and accuracy barely moved, because favourites almost always stay favourites.</p>
       <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
-      <div class="expand"><div><div class="inner">Fitted by maximum likelihood on 2024–25 live predictions: a = 0.937, b = 0.020. On 2025–26, live Brier went from 0.1791 to 0.1789 and pre-event accuracy from 68.65% to 68.78%. Because the correction is monotonic, it never swaps a favourite and an underdog.</div></div></div></div>
+      <div class="expand"><div><div class="inner">Fitted by maximum likelihood on 2024–25 live predictions: a = 0.937, b = 0.020. On 2025–26, live Brier went from 0.1791 to 0.1789 and pre-event accuracy from 68.65% to 68.78%. The correction keeps predictions in the same order. Its small offset can tip a raw call between about 49.5% and 50% to the other side, which is where that small accuracy change comes from.</div></div></div></div>
     <div class="verdict reveal" style="--i:1"><span class="tag ship">Shipped</span><b>Fair starting ratings</b><p>A newcomer on the blue side used to get a slightly different starting rating than one on red, because red's result was counted first. Now both sides see the same starting point.</p>
       <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
       <div class="expand"><div><div class="inner">It affects about one match per season replay, so every test metric moved by 0.0002 or less. It's a correctness fix: swapping red and blue now gives mirrored ratings, and a blue newcomer's start no longer depends on red's score.</div></div></div></div>
@@ -938,7 +938,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
   const pal = $("pal"), palBack = $("palBack"), palInput = $("palInput"), palList = $("palList");
   const items = [...sections.map((s) => ({ id: s.id, name: s.dataset.name, hint: s.querySelector("h2") ? s.querySelector("h2").textContent : "" })),
     { id: "__home", name: "Control Point home", hint: "tryctrlpoint.org" }];
-  let sel = 0, shown = items;
+  let sel = 0, shown = items, opener = null, palIsOpen = false;
   function renderPal() {
     const q = palInput.value.trim().toLowerCase();
     shown = items.filter((i) => !q || (i.name + " " + i.hint).toLowerCase().includes(q));
@@ -956,12 +956,20 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     }));
   }
   function openPal() {
+    opener = document.activeElement;
+    palIsOpen = true;
     pal.hidden = false; palBack.hidden = false; palInput.value = ""; sel = 0; renderPal();
-    requestAnimationFrame(() => { pal.classList.add("open"); palBack.classList.add("open"); palInput.focus(); });
+    palInput.focus();
+    requestAnimationFrame(() => { if (!palIsOpen) return; pal.classList.add("open"); palBack.classList.add("open"); });
   }
   function closePal() {
+    palIsOpen = false;
     pal.classList.remove("open"); palBack.classList.remove("open");
-    setTimeout(() => { pal.hidden = true; palBack.hidden = true; }, reduce ? 0 : 220);
+    setTimeout(() => { if (!palIsOpen) { pal.hidden = true; palBack.hidden = true; } }, reduce ? 0 : 220);
+    // Back to whatever opened it; Safari doesn't focus a clicked button, so fall back to the ⌘K button.
+    const back = opener && opener !== document.body && document.contains(opener) ? opener : $("palBtn");
+    back.focus({ preventScroll: true });
+    opener = null;
   }
   function go(i) {
     closePal();
@@ -975,6 +983,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName) && document.activeElement !== palInput;
     if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing && pal.hidden)) { e.preventDefault(); pal.hidden ? openPal() : closePal(); return; }
     if (pal.hidden) return;
+    if (e.key === "Tab") { e.preventDefault(); palInput.focus(); return; } // focus stays in the dialog
     if (e.key === "Escape") closePal();
     else if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(shown.length - 1, sel + 1); renderPal(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(0, sel - 1); renderPal(); }
@@ -1231,8 +1240,8 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     }
     function animateTo(instant) {
       const t = target();
+      cancelAnimationFrame(raf); // a newer change always wins over a tween in flight
       if (!cur || instant || reduce) { cur = t; render(cur); return; }
-      cancelAnimationFrame(raf);
       const from = { ...cur }, t0 = performance.now();
       const step = (now) => {
         const k = Math.min(1, (now - t0) / 420), e = 1 - Math.pow(1 - k, 3);
@@ -1278,7 +1287,13 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     const svg = $("simChart");
     const NT = 24, ROUNDS = 6, RUNS = 1000;
     const field = []; for (let i = 0; i < NT - 1; i++) field.push(40 + (i * 70) / (NT - 2)); // 40..110 pts per robot
-    const strengthSeg = seg("simSeg", () => { counts = new Array(NT).fill(0); runs = 0; drawHist(); kpis(); });
+    // Picking another robot stops any run in progress and clears the results.
+    const strengthSeg = seg("simSeg", () => {
+      cancelAnimationFrame(raf);
+      counts = new Array(NT).fill(0); runs = 0;
+      const btn = $("simRun"); btn.disabled = false; btn.textContent = "▶ Run 1,000 events";
+      drawHist(); kpis();
+    });
     let counts = new Array(NT).fill(0), runs = 0, raf;
     function oneEvent(you) {
       const ratings = [you, ...field];
