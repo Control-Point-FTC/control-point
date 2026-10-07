@@ -29,6 +29,7 @@ import { CommandMenu, type CommandAction } from './CommandMenu';
 import { useInterfaceMode } from './interfaceMode';
 import { RouteErrorBoundary } from '../components/ErrorBoundary';
 import { installPrintTheme } from './ui/ExportMenu';
+import { GRID_PREFS_EVENT, applyGridPrefs, readGridPrefs, type GridPrefs } from './gridPrefs';
 
 export interface ModernShellProps {
   visibleTabs: NavItemLike[];
@@ -96,6 +97,41 @@ export function ModernShell(props: ModernShellProps) {
   useEffect(() => writeJSON(COLLAPSE_KEY, collapsed), [collapsed]);
   // Printing (Export → Print): light theme on paper, the reader's theme after.
   useEffect(() => installPrintTheme(), []);
+  // The background grid as this person set it up (Settings → Appearance).
+  const [gridGlow, setGridGlow] = useState(() => readGridPrefs().glow);
+  useEffect(() => {
+    const p = readGridPrefs();
+    applyGridPrefs(p);
+    setGridGlow(p.enabled && p.glow);
+    const on = (e: Event) => { const n = (e as CustomEvent<GridPrefs>).detail; setGridGlow(n.enabled && n.glow); };
+    window.addEventListener(GRID_PREFS_EVENT, on);
+    return () => window.removeEventListener(GRID_PREFS_EVENT, on);
+  }, []);
+  // Cursor glow: follow the pointer over the page canvas (one update per frame).
+  useEffect(() => {
+    if (!gridGlow) return;
+    const main = document.getElementById('main');
+    if (!main) return;
+    let frame = 0;
+    let last: PointerEvent | null = null;
+    const paint = () => {
+      frame = 0;
+      if (!last) return;
+      const r = main.getBoundingClientRect();
+      main.style.setProperty('--cp-mx', `${last.clientX - r.left + main.scrollLeft}px`);
+      main.style.setProperty('--cp-my', `${last.clientY - r.top + main.scrollTop}px`);
+    };
+    const move = (e: PointerEvent) => { last = e; if (!frame) frame = requestAnimationFrame(paint); };
+    const leave = () => { last = null; main.style.removeProperty('--cp-mx'); main.style.removeProperty('--cp-my'); };
+    main.addEventListener('pointermove', move);
+    main.addEventListener('pointerleave', leave);
+    return () => {
+      main.removeEventListener('pointermove', move);
+      main.removeEventListener('pointerleave', leave);
+      if (frame) cancelAnimationFrame(frame);
+      leave();
+    };
+  }, [gridGlow, props.activeTab]);
 
   // ⌘K / Ctrl+K: command menu. ⌘J / Ctrl+J: Bruno.
   useEffect(() => {
