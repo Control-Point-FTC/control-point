@@ -15,7 +15,10 @@ export function CustomizeTabsDialog({ open, onOpenChange, current, allowed, onSa
 }) {
   const choices = MOBILE_TAB_CHOICES.filter((c) => allowed(c.id));
   const [slots, setSlots] = useState<string[]>(() => current.map((c) => c.id));
-  useEffect(() => { if (open) setSlots(current.map((c) => c.id)); }, [open, current]);
+  // Reset the draft when the dialog opens or the saved picks really change —
+  // not when the shell re-renders with an equal (new) array.
+  const currentKey = current.map((c) => c.id).join(',');
+  useEffect(() => { if (open) setSlots(currentKey ? currentKey.split(',') : []); }, [open, currentKey]);
   const duplicate = new Set(slots).size !== slots.length;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

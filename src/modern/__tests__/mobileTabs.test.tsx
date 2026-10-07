@@ -33,11 +33,24 @@ describe('phone tab bar', () => {
     expect(readMobileTabs()).toEqual(DEFAULT_MOBILE_TABS);
   });
 
-  it('the customize dialog refuses duplicates and saves three picks', () => {
+  it('the customize dialog changes a pick, refuses duplicates, and survives re-renders', async () => {
     const onSave = vi.fn();
-    render(<CustomizeTabsDialog open onOpenChange={() => {}} current={resolveMobileTabs(DEFAULT_MOBILE_TABS, all)} allowed={all} onSave={onSave} />);
-    expect(screen.getByText(/Bruno and More always stay/)).toBeInTheDocument();
+    const props = { open: true, onOpenChange: () => {}, allowed: all, onSave };
+    const { rerender } = render(<CustomizeTabsDialog {...props} current={resolveMobileTabs(DEFAULT_MOBILE_TABS, all)} />);
+    const pick = async (slot: string, label: string) => {
+      fireEvent.keyDown(screen.getByRole('combobox', { name: slot }), { key: 'Enter' });
+      fireEvent.click(await screen.findByRole('option', { name: label }));
+    };
+    await pick('Tab 2', 'Messages');
+    // The shell re-renders with an equal (new) array: the unsaved pick stays.
+    rerender(<CustomizeTabsDialog {...props} current={resolveMobileTabs(DEFAULT_MOBILE_TABS, all)} />);
+    expect(screen.getByRole('combobox', { name: 'Tab 2' })).toHaveTextContent('Messages');
+    // A duplicate disables Save and says why.
+    await pick('Tab 3', 'Messages');
+    expect(screen.getByRole('alert')).toHaveTextContent(/different page/);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    await pick('Tab 3', 'Calendar');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(onSave).toHaveBeenCalledWith(['dashboard', 'stats', 'tasks']);
+    expect(onSave).toHaveBeenCalledWith(['dashboard', 'chat', 'calendar']);
   });
 });
