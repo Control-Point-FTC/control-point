@@ -58,6 +58,7 @@ import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } fr
 import { workspaceFactsBlock, resolveTimeZone } from "./server/workspaceFacts.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
+import { registerScoutingRoutes } from "./server/scouting.js";
 import { buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
@@ -4468,6 +4469,7 @@ async function startServer() {
       { sql: "DELETE FROM resources WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_invites WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_join_requests WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM scouting_entries WHERE team_id = ?", args: [teamId] },
       { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
       // Keep the caller's session alive so they stay signed in (teamless when
       // this was their last team); every other session on the team is dropped.
@@ -6817,6 +6819,14 @@ async function startServer() {
 
   // ---- Voice & video calling ----
   registerVoiceRoutes(app, voiceDeps);
+
+  // ---- Manual scouting (works with no FTC data; synced from devices) ----
+  registerScoutingRoutes(app, {
+    dbAll, dbGet, dbRun,
+    requireAuth: requireAuth as any,
+    hasPerm: hasPerm as any,
+    broadcastToTeam: (teamId, msg) => broadcastToTeam(teamId, msg),
+  });
 
   // Periodic voice maintenance: expire stale ringing invites, end sessions
   // whose participants all vanished (crashed tabs, killed apps).
