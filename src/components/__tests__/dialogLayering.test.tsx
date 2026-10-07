@@ -4,7 +4,7 @@
 // body { pointer-events: none }, lost focus to the sheet's trap and was
 // aria-hidden, so the destructive action could never be confirmed.
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, waitFor, act, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '../ui-kit/overlay';
@@ -69,18 +69,50 @@ describe('confirm dialogs opened inside a sheet (C-1)', () => {
     await waitFor(() => expect(results).toEqual([false, true]));
   });
 
-  it('typed confirmation only resolves true on an exact match', async () => {
+  it('typed confirmation inside a sheet: typing, exact-match confirm, and Escape keep the sheet open', async () => {
     const user = userEvent.setup();
-    render(<DialogHost />);
-    let result: boolean | undefined;
-    act(() => { promptDialog({ title: 'Delete workspace', message: 'Type the name', expected: 'Team A', confirmLabel: 'Delete' }).then((v) => { result = v; }); });
+    const results: boolean[] = [];
+    function PromptHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetContent>
+              <SheetTitle>Workspace</SheetTitle>
+              <SheetDescription>Danger zone</SheetDescription>
+              <button
+                type="button"
+                onClick={async () => results.push(await promptDialog({ title: 'Delete workspace', message: 'Type the name', expected: 'Team A', confirmLabel: 'Delete', danger: true }))}
+              >
+                Delete workspace
+              </button>
+            </SheetContent>
+          </Sheet>
+          <span data-testid="prompt-sheet-state">{open ? 'open' : 'closed'}</span>
+          <DialogHost />
+        </>
+      );
+    }
+    render(<PromptHarness />);
+
+    // Escape cancels only the prompt.
+    await user.click(screen.getByRole('button', { name: 'Delete workspace' }));
+    await screen.findByRole('alertdialog', { name: 'Delete workspace' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(results).toEqual([false]));
+    expect(screen.getByTestId('prompt-sheet-state').textContent).toBe('open');
+
+    // Typing works (focus is in the input), a near-miss stays disabled, the exact text confirms.
+    await user.click(screen.getByRole('button', { name: 'Delete workspace' }));
     const input = await screen.findByRole('textbox');
     await waitFor(() => expect(input).toHaveFocus());
     const del = screen.getByRole('button', { name: 'Delete' });
+    await user.keyboard('Team');
     expect(del).toBeDisabled();
-    await user.type(input, 'Team A');
+    await user.keyboard(' A');
     expect(del).toBeEnabled();
     await user.click(del);
-    await waitFor(() => expect(result).toBe(true));
+    await waitFor(() => expect(results).toEqual([false, true]));
+    expect(screen.getByTestId('prompt-sheet-state').textContent).toBe('open');
   });
 });
