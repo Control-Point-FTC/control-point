@@ -1822,18 +1822,21 @@ async function userTeams(email: string): Promise<any[]> {
     const perms = row ? await getMemberPerms(row.id, t.id) : new Set<string>();
     (t as any).can_manage = perms.has("*") || perms.has("manage_members");
     (t as any).can_invite = (t as any).can_manage || perms.has("invite_members");
-    // Members never see the access code: only people who manage the
-    // workspace (they can rotate it). Everyone else joins by invite link.
-    if (!(t as any).can_manage) delete (t as any).access_code;
+    // The access code is never sent with the list (audit M-2): people who
+    // manage the workspace reveal it on demand, and each reveal is logged.
+    // Everyone else joins by invite link.
+    delete (t as any).access_code;
   }
   return teams;
 }
 
 /** A team row for a client response: no access code unless they manage it. */
-async function teamForClient(team: any, email: string): Promise<any> {
+async function teamForClient(team: any, email: string, opts: { reveal?: boolean } = {}): Promise<any> {
   if (!team) return team;
   const out = { ...team };
-  if (!(await hasPermInTeam(email, Number(team.id), "manage_members"))) delete out.access_code;
+  // Only the one-time reveal right after creating a workspace carries the
+  // code; otherwise managers reveal it on demand (logged).
+  if (!opts.reveal || !(await hasPermInTeam(email, Number(team.id), "manage_members"))) delete out.access_code;
   return out;
 }
 
@@ -3061,7 +3064,7 @@ async function startServer() {
     res.json({
       user: sanitizeMember(picked),
       sessionId,
-      team: teamRow ? await teamForClient({ id: teamRow.id, name: teamRow.name, access_code: teamRow.access_code }, picked.email) : undefined,
+      team: teamRow ? await teamForClient({ id: teamRow.id, name: teamRow.name, access_code: teamRow.access_code }, picked.email, { reveal: true }) : undefined,
     });
   });
 
@@ -4639,7 +4642,43 @@ async function startServer() {
     if (!auth) return;
     const code = await uniqueAccessCode();
     (await dbRun("UPDATE teams SET access_code = ? WHERE id = ?", code, auth.teamId));
+    await dbRun("INSERT INTO access_code_events (team_id, member_id, action, created_at) VALUES (?, ?, 'regenerate', ?)",
+      auth.teamId, auth.memberId, new Date().toISOString());
     res.json({ access_code: code });
+  });
+
+  // Access code, masked by default (audit M-2): a manager of the workspace
+  // reveals it here, and every reveal is logged with who and when.
+  const codeManager = async (req: any, res: any) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return null;
+    const teamId = parseInt(req.params.id, 10);
+    const email = auth.teamless ? (auth.email || "")
+      : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
+    if (!Number.isFinite(teamId) || !email || !(await hasPermInTeam(email, teamId, "manage_members"))) {
+      res.status(403).json({ error: "Only people who manage this workspace can see its access code" });
+      return null;
+    }
+    const me = (await dbGet("SELECT id FROM members WHERE LOWER(email) = LOWER(?) AND team_id = ? AND COALESCE(is_active, 1) = 1", email, teamId)) as any;
+    return { teamId, memberId: me?.id ?? null };
+  };
+  app.post("/api/teams/:id/access-code/reveal", async (req, res) => {
+    const who = await codeManager(req, res);
+    if (!who) return;
+    const team = (await dbGet("SELECT access_code FROM teams WHERE id = ?", who.teamId)) as any;
+    if (!team) return res.status(404).json({ error: "Workspace not found" });
+    await dbRun("INSERT INTO access_code_events (team_id, member_id, action, created_at) VALUES (?, ?, 'view', ?)",
+      who.teamId, who.memberId, new Date().toISOString());
+    res.json({ access_code: team.access_code });
+  });
+  app.get("/api/teams/:id/access-code/events", async (req, res) => {
+    const who = await codeManager(req, res);
+    if (!who) return;
+    const rows = await dbAll(
+      `SELECT e.action, e.created_at, m.name AS member_name FROM access_code_events e
+       LEFT JOIN members m ON m.id = e.member_id
+       WHERE e.team_id = ? ORDER BY e.id DESC LIMIT 20`, who.teamId);
+    res.json(rows);
   });
 
   // --- FTC integration (ftcscout.org, community mirror of official FIRST data) ---

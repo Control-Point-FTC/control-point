@@ -4,12 +4,13 @@
 // President; personal calendar link: everyone).
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, Check, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unlink, UserPlus } from 'lucide-react';
+import { CalendarDays, Check, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unlink, UserPlus } from 'lucide-react';
 import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { getDraft, useDraft } from '../../drafts';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
+import { AccessCode, AccessCodeHistory } from '../people/AccessCode';
 
 interface TeamDraft { name: string; ftc: string }
 
@@ -26,7 +27,9 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState<any>(null);
   const [verifyError, setVerifyError] = useState('');
-  const [copied, setCopied] = useState(false);
+  // A code this admin just generated shows revealed (no extra reveal logged).
+  const [freshCode, setFreshCode] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [confirmRegen, setConfirmRegen] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
@@ -73,17 +76,17 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
     }
   };
 
-  const copyCode = async () => {
-    try { await navigator.clipboard.writeText(team?.access_code || ''); setCopied(true); window.setTimeout(() => setCopied(false), 1500); }
-    catch { notify('Could not copy — try again.', 'error'); }
-  };
   const regenerate = async () => {
     if (!confirmRegen) { setConfirmRegen(true); return; }
     setRegenerating(true);
     try {
       const res = await apiFetch('/api/teams/regenerate-code', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.access_code) { onTeamSaved?.({ id: team?.id, access_code: data.access_code }); notify('New access code created. The old one no longer works.', 'success'); }
+      if (res.ok && data.access_code) {
+        setFreshCode(data.access_code);
+        setHistoryVersion((v) => v + 1);
+        notify('New access code created. The old one no longer works.', 'success');
+      }
       else notify(data.error || 'Could not create a new code.', 'error');
     } catch {
       notify('Could not create a new code.', 'error');
@@ -137,11 +140,11 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
             <Button variant="outline" onClick={() => navigate('/settings?section=members&invite=1', { replace: true })}><UserPlus /> Invite people</Button>
           </SettingsRow>
           {isAdmin && (<>
-          <SettingsRow label="Access code" description="Only admins see this. People can also join by typing it.">
-            <span className="flex items-center gap-2">
-              <code className="rounded-md bg-muted px-2.5 py-1.5 font-mono text-sm tracking-widest">{team.access_code}</code>
-              <Button variant="outline" size="icon" onClick={() => void copyCode()} aria-label="Copy access code">{copied ? <Check /> : <Copy />}</Button>
-            </span>
+          <SettingsRow label="Access code" description="Hidden until you reveal it; each reveal is logged. People can also join by typing it.">
+            <AccessCode teamId={team.id} fresh={freshCode} />
+          </SettingsRow>
+          <SettingsRow label="Code history" description="Who revealed or replaced the code recently." stack>
+            <AccessCodeHistory teamId={team.id} version={historyVersion} />
           </SettingsRow>
           <SettingsRow label="New access code" description={confirmRegen ? 'The current code will stop working immediately.' : 'Use this if the code leaked.'}>
             <span className="flex gap-2">

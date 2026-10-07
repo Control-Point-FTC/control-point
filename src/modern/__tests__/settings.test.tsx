@@ -128,7 +128,8 @@ describe('Modern Settings — workspace & admin', () => {
     fireEvent.click(screen.getByRole('button', { name: /Generate new code/ }));
     expect(api.apiFetch).not.toHaveBeenCalledWith('/api/teams/regenerate-code', expect.anything());
     fireEvent.click(screen.getByRole('button', { name: /Yes, replace it/ }));
-    await waitFor(() => expect(props.onTeamSaved).toHaveBeenCalledWith({ id: 1, access_code: 'NEW-1' }));
+    // The new code shows revealed to the admin who made it.
+    expect(await screen.findByText('NEW-1')).toBeInTheDocument();
   });
 
   it('members see the team read-only and no admin section', () => {
