@@ -40,13 +40,18 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) return;
 
   if (req.mode === 'navigate') {
-    const network = fetch(req);
+    // Take the offline copy before the page starts reading the body.
+    let shellCopy = null;
+    const network = fetch(req).then((res) => {
+      if (res.ok) shellCopy = res.clone();
+      return res;
+    });
     event.respondWith(
       network.catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
     );
     // Keep the worker alive until the offline copy of the shell is saved.
     event.waitUntil(
-      network.then((res) => (res.ok ? caches.open(CACHE).then((cache) => cache.put(SHELL, res.clone())) : undefined)).catch(() => {})
+      network.then(() => (shellCopy ? caches.open(CACHE).then((cache) => cache.put(SHELL, shellCopy)) : undefined)).catch(() => {})
     );
     return;
   }
