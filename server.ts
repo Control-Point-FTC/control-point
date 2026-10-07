@@ -1575,7 +1575,9 @@ for (const t of codelessTeams) {
 // SESSION_TTL_MS; an idle session expires.
 const SESSION_COOKIE = "cp_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const SESSION_TOUCH_MS = 5 * 60 * 1000;
+// Must stay under the 3-minute "online" window in computePresence(), which
+// reads sessions.last_activity.
+const SESSION_TOUCH_MS = 60 * 1000;
 const TOKEN_PREFIX = "cps_";
 
 function generateSessionToken(): string {
@@ -1613,7 +1615,7 @@ async function createSessionIfCredential(memberId: number, email: string, passwo
   return Number(info?.changes) > 0 ? sessionId : null;
 }
 
-async function validateSession(token: string): Promise<{ valid: boolean; memberId?: number; legacy?: boolean }> {
+async function validateSession(token: string): Promise<{ valid: boolean; memberId?: number; legacy?: boolean; touched?: boolean }> {
   try {
     if (!token || typeof token !== "string" || token.startsWith("h:")) return { valid: false };
     const key = sessionKey(token);
@@ -1629,10 +1631,12 @@ async function validateSession(token: string): Promise<{ valid: boolean; memberI
     const legacy = !token.startsWith(TOKEN_PREFIX);
     // Sliding expiry, written at most every SESSION_TOUCH_MS (not per request).
     const last = Date.parse(session.last_activity || "") || 0;
+    let touched = false;
     if (!legacy && nowMs - last > SESSION_TOUCH_MS) {
       (await dbRun("UPDATE sessions SET last_activity = ?, expires_at = ? WHERE id = ?", now, new Date(nowMs + SESSION_TTL_MS).toISOString(), key));
+      touched = true;
     }
-    return { valid: true, memberId: session.member_id, legacy };
+    return { valid: true, memberId: session.member_id, legacy, touched };
   } catch (e) {
     return { valid: false };
   }
@@ -1724,7 +1728,9 @@ function sanitizeBrunoPdfs(input: any): { mimeType: string; data: string; name: 
 async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string; email?: string; teamless?: boolean } | null> {
   const sessionId = getSessionId(req);
   if (!sessionId) return null;
-  const { valid, memberId } = await validateSession(sessionId);
+  // The /api middleware already validated this token for the request.
+  const pre = req.cpSessionCheck;
+  const { valid, memberId } = pre && pre.token === sessionId ? pre : await validateSession(sessionId);
   if (!valid || !memberId) return null;
   const member = (await dbGet("SELECT id, team_id, account_type FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", memberId)) as any;
   if (member) return { memberId: member.id, teamId: member.team_id ?? null, accountType: member.account_type || 'student' };
@@ -2133,18 +2139,43 @@ async function startServer() {
     }
     try {
       const cookieToken = readCookie(req, SESSION_COOKIE);
-      if (!cookieToken && legacyHeader && !legacyHeader.startsWith(TOKEN_PREFIX)) {
-        const v = await validateSession(legacyHeader);
-        if (v.valid && v.legacy && v.memberId) {
-          const fresh = await createSession(v.memberId);
-          await dbRun("DELETE FROM sessions WHERE id = ?", legacyHeader);
-          issue(fresh);
-          req.cpSessionToken = fresh;
+      if (cookieToken) {
+        // Validate once per request (getAuth reuses it). When the sliding
+        // expiry moved, re-issue the cookie too, so an active user's browser
+        // cookie never runs out before the stored session does.
+        const v = await validateSession(cookieToken);
+        req.cpSessionCheck = { token: cookieToken, ...v };
+        if (v.valid && v.touched) issue(cookieToken);
+      } else if (legacyHeader && !legacyHeader.startsWith(TOKEN_PREFIX)) {
+        // An old tab may fire several requests at once with the same token
+        // before the new cookie arrives: they all get the same replacement,
+        // and the old token keeps working for a short grace period.
+        const prior = rotatedLegacy.get(legacyHeader);
+        if (prior && prior.expires > Date.now()) {
+          issue(prior.token);
+          req.cpSessionToken = prior.token;
+        } else {
+          const v = await validateSession(legacyHeader);
+          if (v.valid && v.legacy && v.memberId) {
+            const fresh = await createSession(v.memberId);
+            const graceEnds = Date.now() + LEGACY_GRACE_MS;
+            rotatedLegacy.set(legacyHeader, { token: fresh, expires: graceEnds });
+            await dbRun("UPDATE sessions SET expires_at = ? WHERE id = ?", new Date(graceEnds).toISOString(), legacyHeader);
+            issue(fresh);
+            req.cpSessionToken = fresh;
+          }
         }
       }
-    } catch (e) { console.error("session rotation failed:", e); }
+    } catch (e) { console.error("session check failed:", e); }
     next();
   });
+  // Pre-cookie tokens already rotated (legacy -> fresh), kept for the grace period.
+  const LEGACY_GRACE_MS = 2 * 60 * 1000;
+  const rotatedLegacy = new Map<string, { token: string; expires: number }>();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of rotatedLegacy) if (v.expires < now) rotatedLegacy.delete(k);
+  }, 60 * 1000).unref();
 
   // No CORS: the app and its API share one origin (the GitHub Pages mirror,
   // which called the API cross-origin, is retired). Browsers therefore refuse
@@ -2880,10 +2911,11 @@ async function startServer() {
 
   // OAuth completion may return to either first-party domain (so a login
   // started on control-point.onrender.com finishes there).
-  function isAllowedOAuthReturnOrigin(origin: string): boolean {
-    try {
-      return firstPartyOrigins().includes(new URL(origin).origin);
-    } catch { return false; }
+  // Sign-in completes on the host whose callback ran: the session cookie is
+  // host-only, so handing off to another domain would arrive signed out.
+  // No cross-domain return_to is accepted.
+  function isAllowedOAuthReturnOrigin(_origin: string): boolean {
+    return false;
   }
 
   app.get("/api/auth/config", async (req, res) => {

@@ -359,12 +359,27 @@ describe("moving existing sign-ins to the cookie", () => {
     const set = first.headers.get("set-cookie") || "";
     expect(set).toMatch(/cp_session=cps_/);
     expect(set).toContain("HttpOnly");
-    // The old token is gone; the new cookie works on its own.
-    const gone = (await db.execute({ sql: "SELECT COUNT(*) AS n FROM sessions WHERE id = ?", args: [legacy] })).rows[0] as any;
-    expect(Number(gone.n)).toBe(0);
-    expect((await fetch(`${base}/api/auth/me`, { headers: { "x-session-id": legacy } })).status).toBe(401);
     const token = decodeURIComponent(/cp_session=([^;]+)/.exec(set)![1]);
+    // The old token now expires within a short grace period…
+    const old = (await db.execute({ sql: "SELECT expires_at FROM sessions WHERE id = ?", args: [legacy] })).rows[0] as any;
+    expect(Date.parse(old.expires_at) - Date.now()).toBeLessThanOrEqual(2 * 60 * 1000);
+    // …during which a request already in flight from the old tab gets the
+    // same replacement (no second session, no sign-out).
+    const second = await fetch(`${base}/api/auth/me`, { headers: { "x-session-id": legacy } });
+    expect(second.status).toBe(200);
+    expect(decodeURIComponent(/cp_session=([^;]+)/.exec(second.headers.get("set-cookie") || "")![1])).toBe(token);
+    // The new cookie works on its own.
     expect((await api("/api/auth/me", { session: token })).status).toBe(200);
+  });
+
+  it("an active session re-issues its cookie when the sliding expiry moves", async () => {
+    const r = await post("/api/auth/login", { email: "admin-a@test.local", password: PW });
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(r.setCookie)![1]);
+    // Pretend the last touch was long ago.
+    await db.execute({ sql: "UPDATE sessions SET last_activity = ? WHERE id = ?", args: [new Date(Date.now() - 10 * 60 * 1000).toISOString(), sessionDbId(token)] });
+    const res = await fetch(`${base}/api/auth/me`, { headers: { cookie: `cp_session=${token}` } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie") || "").toContain(`cp_session=${token}`);
   });
 });
 
