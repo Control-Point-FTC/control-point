@@ -49,7 +49,7 @@ export function isPrivateAddress(ip: string): boolean {
 export class UnsafeUrlError extends Error {}
 
 /** dns.lookup replacement that refuses private results (pins the checked IP). */
-function guardedLookup(hostname: string, options: any, callback: any) {
+export function guardedLookup(hostname: string, options: any, callback: any) {
   const cb = typeof options === "function" ? options : callback;
   const opts = typeof options === "function" ? {} : (options || {});
   dns.lookup(hostname, { ...opts, all: true }, (err, addresses: any) => {

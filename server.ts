@@ -101,6 +101,7 @@ import {
   voiceMaintenance,
   scheduleVoiceDisconnectCleanup,
   cancelVoiceDisconnectCleanup,
+  removeParticipantEverywhere,
 } from "./server/voice.js";
 import {
   isFirstEventsConfigured,
@@ -2442,7 +2443,13 @@ async function startServer() {
       // roster) proves ownership of its email with a code — never with
       // whatever was typed in the password box.
       if (rows.every((r) => !r.password)) {
-        try { await issueVerificationCode(email, "reset"); } catch (e) { console.error("setup code issue failed:", e); }
+        try {
+          // A cooldown means a code went out under a minute ago — still valid.
+          await issueVerificationCode(email, "reset");
+        } catch (e) {
+          console.error("setup code issue failed:", e);
+          return res.status(502).json({ error: "We couldn't send your setup email — try again in a minute" });
+        }
         return res.json({ needsPasswordSetup: true, email });
       }
       return res.status(401).json({ error: BAD_LOGIN });
@@ -3510,8 +3517,8 @@ async function startServer() {
     const newHash = bcrypt.hashSync(String(newPassword), 10);
     // The password is account-wide: update every membership row for this email,
     // and kill every other session on all of them.
-    (await dbRun("UPDATE members SET password = ? WHERE email = ?", newHash, member.email));
-    const siblingIds = ((await dbAll("SELECT id FROM members WHERE email = ?", member.email)) as any[]).map((r) => r.id);
+    (await dbRun("UPDATE members SET password = ? WHERE LOWER(email) = LOWER(?)", newHash, member.email));
+    const siblingIds = ((await dbAll("SELECT id FROM members WHERE LOWER(email) = LOWER(?)", member.email)) as any[]).map((r) => r.id);
     const sid = currentSessionId(req);
     if (siblingIds.length) {
       const placeholders = siblingIds.map(() => "?").join(",");
@@ -5178,7 +5185,9 @@ async function startServer() {
   app.post("/api/members", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
-    const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const { name, role, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
     // An admin may add a member to any of their own teams (defaults to the active one)
     const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
     let targetTeamId = auth.teamId!;
@@ -5216,12 +5225,15 @@ async function startServer() {
     if (!target || target.team_id !== auth.teamId) {
       return res.status(404).json({ error: "Member not found" });
     }
-    const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const { name, role, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const email = req.body?.email == null ? target.email : String(req.body.email).trim().toLowerCase();
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
+    const emailChanged = email !== String(target.email || "").toLowerCase();
 
     // Email must stay unique within the team
-    if (email && email !== target.email) {
-      const clash = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND id != ?", email, auth.teamId, memberId)) as any;
+    if (emailChanged) {
+      const clash = (await dbGet("SELECT id FROM members WHERE LOWER(email) = ? AND team_id = ? AND id != ?", email, auth.teamId, memberId)) as any;
       if (clash) return res.status(400).json({ error: "That email is already on the roster" });
     }
 
@@ -5248,6 +5260,18 @@ async function startServer() {
     const setClause = columns.map(col => `${col} = ?`).join(', ');
 
     (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), memberId));
+    if (emailChanged) {
+      // The row now belongs to a different email (account). Its old password
+      // and sessions belong to the previous address and must not carry over —
+      // otherwise an admin could point a row whose password they know at
+      // someone else's email and sign in as them. The new owner sets a
+      // password through the emailed code.
+      await dbBatch([
+        { sql: "UPDATE members SET password = NULL, is_setup = 0, google_id = NULL, discord_id = NULL, github_id = NULL WHERE id = ?", args: [memberId] },
+        { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
+      ]);
+      disconnectMember(auth.teamId, memberId);
+    }
 
     // Keep the system Admin role aligned with an explicit admin/student change,
     // then reconcile account_type with any custom roles the member holds.
@@ -5447,6 +5471,10 @@ async function startServer() {
       { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [memberId] },
       { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
     ]);
+    // Drop them from any live call (tells their client to tear down media and
+    // updates everyone else's participant list) before closing their sockets.
+    cancelVoiceDisconnectCleanup(auth.teamId!, memberId);
+    try { await removeParticipantEverywhere(voiceDeps, auth.teamId!, memberId, "removed"); } catch (e) { console.error("voice cleanup on removal failed:", e); }
     disconnectMember(auth.teamId, memberId);
     broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
     res.json({ success: true });

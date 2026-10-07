@@ -200,6 +200,27 @@ describe("admin password reset", () => {
   });
 });
 
+describe("admin email edits", () => {
+  it("moving a row to another email drops its password and sessions", async () => {
+    // Admin B points their roster member (who has a known password) at the
+    // victim's email. That password must not then unlock the victim.
+    const r = await api(`/api/members/${ids.victimB}`, { method: "PATCH", body: JSON.stringify({ name: "Victim", role: "Member", account_type: "student", email: "member-a@test.local" }), session: SESS.adminB });
+    expect(r.status).toBe(200);
+    const row = (await db.execute({ sql: "SELECT email, password FROM members WHERE id = ?", args: [ids.victimB] })).rows[0] as any;
+    expect(row.email).toBe("member-a@test.local");
+    expect(row.password).toBeNull();
+    // member-a's own password still works; the moved row's old one doesn't add a way in.
+    expect((await post("/api/auth/login", { email: "member-a@test.local", password: PW })).status).toBe(200);
+  });
+
+  it("stores emails lowercase when an admin adds a member", async () => {
+    const r = await post("/api/members", { name: "New Kid", role: "Member", email: "  New.Kid@TEST.local " }, SESS.adminA);
+    expect(r.status).toBe(200);
+    const row = (await db.execute({ sql: "SELECT email FROM members WHERE id = ?", args: [r.body.id] })).rows[0] as any;
+    expect(row.email).toBe("new.kid@test.local");
+  });
+});
+
 describe("notifications", () => {
   it("an admin can't read another member's notifications", async () => {
     await db.execute({ sql: "INSERT INTO notifications (user_id, content, type, timestamp) VALUES (?, 'secret', 'mention', ?)", args: [ids.memberA, new Date().toISOString()] });
@@ -268,6 +289,8 @@ describe("SSRF guards", () => {
 
 describe("Bruno apply-actions", () => {
   it("needs calendar permission to add events, and applies nothing when refused", async () => {
+    // A member with no roles (the default Member role does grant calendar).
+    await db.execute({ sql: "DELETE FROM member_roles WHERE member_id = ?", args: [ids.memberA] });
     const r = await post("/api/ai/apply-actions", {
       actions: [
         { kind: "outreach", items: [{ title: "Should not land", date: "2026-11-01" }] },
