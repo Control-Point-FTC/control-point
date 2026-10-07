@@ -47,12 +47,14 @@ export function pickEncoding(acceptEncoding: string, file: string, exists: (p: s
   return null;
 }
 
-export function serveDist(app: express.Express, distDir: string) {
+export function serveDist(app: express.Express, distDir: string, opts: { csp?: { header: string; value: string } } = {}) {
   const root = path.resolve(distDir);
   const indexFile = path.join(root, "index.html");
 
   const sendIndex = (req: express.Request, res: express.Response) => {
     res.setHeader("Cache-Control", "no-cache");
+    // The page's Content-Security-Policy (report-only until enforced).
+    if (opts.csp) res.setHeader(opts.csp.header, opts.csp.value);
     res.setHeader("Vary", "Accept-Encoding");
     const enc = pickEncoding(String(req.headers["accept-encoding"] || ""), indexFile);
     if (enc) {
@@ -89,6 +91,9 @@ export function serveDist(app: express.Express, distDir: string) {
     });
   });
 
+  // The page itself always goes through sendIndex (CSP + no-cache), also
+  // when asked for by name.
+  app.get("/index.html", sendIndex);
   app.use(express.static(root, {
     index: false,
     setHeaders: (res, filePath) => {

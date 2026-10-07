@@ -58,6 +58,7 @@ import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } fr
 import { workspaceFactsBlock, resolveTimeZone } from "./server/workspaceFacts.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
+import { buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
   getAISetting,
@@ -2198,8 +2199,8 @@ async function startServer() {
   // so req.ip is the real client (rate limits key on it).
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
-  // Baseline security headers on every response. (A full Content-Security-
-  // Policy is rolled out separately, once every asset origin is inventoried.)
+  // Baseline security headers on every response. The Content-Security-Policy
+  // is sent with the HTML page (see serveDist below), report-only for now.
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
@@ -2210,6 +2211,35 @@ async function startServer() {
     res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
     next();
   });
+
+  // CSP violation reports from browsers. Registered before the /api session
+  // and CSRF guard: browsers send these without our client header, and they
+  // change nothing. Stored (origin only, rate-limited) in client_errors so
+  // the owner's Errors tab shows what the policy would block.
+  const cspLimiter = new RateLimiter();
+  setInterval(() => cspLimiter.sweep(), 10 * 60 * 1000).unref();
+  // client_errors (crashes + CSP reports) keeps only the newest 5,000 rows:
+  // trimmed now and then on insert, and hourly whatever arrives.
+  const pruneClientErrors = () =>
+    dbRun("DELETE FROM client_errors WHERE id <= (SELECT id FROM client_errors ORDER BY id DESC LIMIT 1 OFFSET 5000)").catch(() => {});
+  setInterval(() => void pruneClientErrors(), 60 * 60 * 1000).unref();
+  app.post(
+    "/api/csp-report",
+    express.json({ type: ["application/csp-report", "application/reports+json", "application/json"], limit: "16kb" }),
+    async (req, res) => {
+      res.status(204).end();
+      if (cspLimiter.hit(clientIp(req), { max: 20, windowMs: 10 * 60 * 1000 }) > 0) return;
+      const s = summarizeCspReport(req.body);
+      if (!s) return;
+      try {
+        await dbRun(
+          "INSERT INTO client_errors (kind, message, route, user_agent) VALUES ('csp', ?, ?, ?)",
+          s.message, s.route, String(req.headers["user-agent"] || "").slice(0, 300),
+        );
+        if (Math.random() < 0.05) await pruneClientErrors();
+      } catch { /* best effort */ }
+    },
+  );
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
@@ -7650,7 +7680,7 @@ Rules:
         String(req.headers["user-agent"] || "").slice(0, 300),
       );
       // Keep the table bounded: drop everything but the newest 5,000 rows.
-      if (Math.random() < 0.05) await dbRun("DELETE FROM client_errors WHERE id <= (SELECT id FROM client_errors ORDER BY id DESC LIMIT 1 OFFSET 5000)");
+      if (Math.random() < 0.05) await pruneClientErrors();
     } catch (e) { console.error("client error report failed:", e); }
     res.status(204).end();
   });
@@ -12112,7 +12142,20 @@ Rules:
     app.use(vite.middlewares);
   } else {
     // Pre-compressed assets + long-lived caching for hashed files.
-    serveDist(app, path.join(__dirname, "dist"));
+    // CSP: hash the inline script(s) of the built page once at startup.
+    // Report-only unless CSP_ENFORCE=1 (flip once the reports are clean).
+    const distIndex = path.join(__dirname, "dist", "index.html");
+    let csp: { header: string; value: string } | undefined;
+    try {
+      const html = fs.readFileSync(distIndex, "utf8");
+      csp = {
+        header: process.env.CSP_ENFORCE === "1" ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only",
+        value: buildCsp({ scriptHashes: inlineScriptHashes(html), reportUri: "/api/csp-report" }),
+      };
+    } catch (e) {
+      console.error("[csp] could not read dist/index.html — no CSP header:", e);
+    }
+    serveDist(app, path.join(__dirname, "dist"), { csp });
   }
 
   // Centralized error handler (reached via express-async-errors for async

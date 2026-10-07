@@ -24,7 +24,7 @@ beforeAll(async () => {
   writeFileSync(join(dir, "icon.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   writeFileSync(join(tmpdir(), "cp-secret.txt"), "secret");
   const app = express();
-  serveDist(app, dir);
+  serveDist(app, dir, { csp: { header: "Content-Security-Policy-Report-Only", value: "default-src 'self'" } });
   await new Promise<void>((r) => { server = app.listen(0, "127.0.0.1", () => r()); });
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -89,6 +89,16 @@ describe("serveDist", () => {
     expect(r.status).toBe(200);
     expect(r.headers["content-type"]).toMatch(/html/);
     expect(r.headers["cache-control"]).toBe("no-cache");
+    expect(r.headers["content-security-policy-report-only"]).toBe("default-src 'self'");
+  });
+
+  it("the page asked for by name gets the same CSP and caching", async () => {
+    for (const path of ["/", "/index.html"]) {
+      const r = await raw(path);
+      expect(r.status).toBe(200);
+      expect(r.headers["content-security-policy-report-only"]).toBe("default-src 'self'");
+      expect(r.headers["cache-control"]).toBe("no-cache");
+    }
   });
 
   it("a missing hashed asset is a 404, not the HTML shell", async () => {
