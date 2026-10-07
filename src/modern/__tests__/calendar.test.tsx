@@ -333,3 +333,14 @@ describe('Calendar: one sheet at a time', () => {
     expect(within(open[0]).getByText('Edit event')).toBeInTheDocument();
   });
 });
+
+describe('Calendar: pending opens follow the view', () => {
+  it('switching view right after a click cancels the pending details open', async () => {
+    setup();
+    const chip = document.querySelector('[data-cm-type="calendar-event"][data-cm-id="1"]') as HTMLElement;
+    fireEvent.click(chip, { detail: 1 });
+    fireEvent.click(screen.getByRole('radio', { name: /Agenda/ }));
+    await new Promise((r) => setTimeout(r, 350));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});

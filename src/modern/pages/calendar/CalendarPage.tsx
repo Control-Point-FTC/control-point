@@ -34,6 +34,8 @@ export function CalendarPage(props: any) {
   const pendingOpen = useRef<number | null>(null);
   const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
   useEffect(() => cancelPendingOpen, []);
+  // A different view, filter or month: whatever was about to open is gone.
+  useEffect(() => { cancelPendingOpen(); }, [view, types, ctl.cursor]); // eslint-disable-line react-hooks/exhaustive-deps
   // Every action that opens a sheet first cancels a pending single-click open.
   const actions: CalendarActions = {
     canManage: !!ctl.canManageCalendar,
@@ -246,13 +248,20 @@ function useDayProps(key: string) {
 const DOUBLE_CLICK_MS = 250;
 function useClickOrEdit(e: any, open: (e: any) => void) {
   const a = useContext(CalendarActionsCtx);
+  // The open this button scheduled; if the button goes away (filtered out,
+  // another month), its pending open goes with it.
+  const mine = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (mine.current != null && a.pendingOpen.current === mine.current) a.cancelPendingOpen();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (!a.canManage) return { onClick: () => open(e), onDoubleClick: undefined };
   return {
     onClick: (ev: React.MouseEvent) => {
       ev.stopPropagation();
       if (ev.detail > 1) return; // part of a double-click
       a.cancelPendingOpen();
-      a.pendingOpen.current = window.setTimeout(() => { a.pendingOpen.current = null; open(e); }, DOUBLE_CLICK_MS);
+      a.pendingOpen.current = window.setTimeout(() => { a.pendingOpen.current = null; mine.current = null; open(e); }, DOUBLE_CLICK_MS);
+      mine.current = a.pendingOpen.current;
     },
     onDoubleClick: (ev: React.MouseEvent) => {
       ev.stopPropagation();
