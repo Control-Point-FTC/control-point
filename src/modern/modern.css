@@ -69,10 +69,25 @@ html[data-ui="modern"] body {
 }
 
 /* Faint top gradient behind every Modern page (the brief's only decoration). */
+/* Page canvas: a soft accent glow and a fine grid in the team's colour
+   (--grid-rgb, set from the workspace's branding) that fades out from the
+   top of the page — visible behind headers, gone behind content. It scrolls
+   with the page and never sits over the content (background only). */
+html[data-ui="modern"] {
+  --cp-grid-alpha: 0.07;
+  --cp-grid-size: 32px;
+  --cp-grid-fade: 520px;
+}
+html[data-ui="modern"].light { --cp-grid-alpha: 0.09; }
 html[data-ui="modern"] .m-canvas {
+  --cp-grid-line: rgb(var(--grid-rgb, 255 199 0) / var(--cp-grid-alpha));
   background:
     radial-gradient(1200px 320px at 50% -120px, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 70%),
+    radial-gradient(120% var(--cp-grid-fade) at 50% 0, transparent 0%, var(--sh-background) 100%) no-repeat,
+    linear-gradient(var(--cp-grid-line) 1px, transparent 1px) 0 0 / var(--cp-grid-size) var(--cp-grid-size),
+    linear-gradient(90deg, var(--cp-grid-line) 1px, transparent 1px) 0 0 / var(--cp-grid-size) var(--cp-grid-size),
     var(--sh-background);
+  background-attachment: local;
 }
 
 /* ---------- motion keyframes (components use motion/react or tw-animate) ---------- */
