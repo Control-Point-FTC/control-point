@@ -1,7 +1,7 @@
 // Shared harness for integration tests that boot the real server against a
 // throwaway SQLite file. Each suite gets its own port, DB and process.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, openSync } from "node:fs";
+import { mkdtempSync, rmSync, openSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,13 +38,21 @@ export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> 
   const dbPath = join(tmpDir, "test.db");
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
-  const proc: ChildProcess = spawn("npx", ["tsx", "server.ts"], {
-    cwd: REPO,
-    env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off" },
-    // CP_TEST_SERVER_LOG=<file> captures the server's output for debugging.
-    stdio: process.env.CP_TEST_SERVER_LOG ? ["ignore", openSync(process.env.CP_TEST_SERVER_LOG, "a"), openSync(process.env.CP_TEST_SERVER_LOG, "a")] : "ignore",
-    shell: process.platform === "win32",
-  });
+  // CP_TEST_SERVER_LOG=<file> captures the server's output for debugging.
+  // The child gets its own copy of the descriptor, so ours is closed as soon
+  // as it has spawned (or failed to).
+  const logFd = process.env.CP_TEST_SERVER_LOG ? openSync(process.env.CP_TEST_SERVER_LOG, "a") : null;
+  let proc: ChildProcess;
+  try {
+    proc = spawn("npx", ["tsx", "server.ts"], {
+      cwd: REPO,
+      env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off" },
+      stdio: logFd != null ? ["ignore", logFd, logFd] : "ignore",
+      shell: process.platform === "win32",
+    });
+  } finally {
+    if (logFd != null) closeSync(logFd);
+  }
   const kill = async () => {
     if (proc.pid) {
       if (process.platform === "win32") spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
