@@ -1,0 +1,86 @@
+// Regression for C-1: a confirm opened from inside an open Radix Sheet/Dialog
+// (e.g. Delete in a task's detail sheet) must be clickable and keyboard
+// reachable. The old in-tree overlay inherited the sheet's
+// body { pointer-events: none }, lost focus to the sheet's trap and was
+// aria-hidden, so the destructive action could never be confirmed.
+import { describe, it, expect, afterEach } from 'vitest';
+import { render, screen, waitFor, act, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from '../ui-kit/overlay';
+import { DialogHost, confirmDialog, promptDialog } from '../dialog';
+
+function Harness({ onResult }: { onResult: (v: boolean) => void }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <>
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent>
+          <SheetTitle>Task detail</SheetTitle>
+          <SheetDescription>Details</SheetDescription>
+          <button
+            type="button"
+            onClick={async () => onResult(await confirmDialog({ title: 'Delete task', message: 'Delete this task?', confirmLabel: 'Delete', danger: true }))}
+          >
+            Delete from sheet
+          </button>
+        </SheetContent>
+      </Sheet>
+      <span data-testid="sheet-state">{open ? 'open' : 'closed'}</span>
+      <DialogHost />
+    </>
+  );
+}
+
+afterEach(cleanup);
+
+describe('confirm dialogs opened inside a sheet (C-1)', () => {
+  it('the confirm button is clickable and resolves true, and the sheet stays open', async () => {
+    const user = userEvent.setup();
+    const results: boolean[] = [];
+    render(<Harness onResult={(v) => results.push(v)} />);
+    await user.click(screen.getByRole('button', { name: 'Delete from sheet' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete task' });
+    expect(dialog).toBeInTheDocument();
+    // Must not be under aria-hidden/inert content — i.e. reachable by role query.
+    const confirm = screen.getByRole('button', { name: 'Delete' });
+    await waitFor(() => expect(confirm).toHaveFocus());
+    expect(getComputedStyle(confirm).pointerEvents).not.toBe('none');
+    await user.click(confirm);
+    await waitFor(() => expect(results).toEqual([true]));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sheet-state').textContent).toBe('open');
+  });
+
+  it('keyboard: Enter confirms; Escape cancels only the confirm, not the sheet', async () => {
+    const user = userEvent.setup();
+    const results: boolean[] = [];
+    render(<Harness onResult={(v) => results.push(v)} />);
+    await user.click(screen.getByRole('button', { name: 'Delete from sheet' }));
+    await screen.findByRole('alertdialog');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(results).toEqual([false]));
+    expect(screen.getByTestId('sheet-state').textContent).toBe('open');
+
+    await user.click(screen.getByRole('button', { name: 'Delete from sheet' }));
+    await screen.findByRole('alertdialog');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).toHaveFocus());
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(results).toEqual([false, true]));
+  });
+
+  it('typed confirmation only resolves true on an exact match', async () => {
+    const user = userEvent.setup();
+    render(<DialogHost />);
+    let result: boolean | undefined;
+    act(() => { promptDialog({ title: 'Delete workspace', message: 'Type the name', expected: 'Team A', confirmLabel: 'Delete' }).then((v) => { result = v; }); });
+    const input = await screen.findByRole('textbox');
+    await waitFor(() => expect(input).toHaveFocus());
+    const del = screen.getByRole('button', { name: 'Delete' });
+    expect(del).toBeDisabled();
+    await user.type(input, 'Team A');
+    expect(del).toBeEnabled();
+    await user.click(del);
+    await waitFor(() => expect(result).toBe(true));
+  });
+});
