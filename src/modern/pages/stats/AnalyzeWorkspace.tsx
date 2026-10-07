@@ -21,7 +21,7 @@ import type { FtcMatchFull, FtcTeamEventStats } from '../../../types/ftcScout';
 import { EmptyState } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { TeamProfile } from './TeamProfile';
-import { MatchDetailSheet, MatchLine, RankMedal, SeasonToggle, SourceLine, TeamMenu } from './statsUi';
+import { MatchDetailSheet, MatchLine, OfficialSourceLinks, RankMedal, SeasonToggle, SourceLine, TeamMenu, officialEventLinks } from './statsUi';
 import { ShortlistBoard } from './ShortlistBoard';
 
 type Ctl = ReturnType<typeof useAnalyzeController>;
@@ -299,6 +299,7 @@ function EventFieldView({ season, code, myTeam, ctl }: { season: number; code: s
       )}
       <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
         <SourceLine f={ev} />
+        <OfficialSourceLinks links={officialEventLinks(ev.code, ev.season)} />
         <span>Data freshness: {relTime(ev.fetchedAt)}{ev.partial ? ' · some requests failed, figures may be incomplete' : ''}. OPR via FTC Scout; ranks, records and matches via {ev.source === 'cache' ? 'cache' : ev.source === 'first-events' ? 'FIRST Events' : 'FTC Scout'}.</span>
       </p>
 
