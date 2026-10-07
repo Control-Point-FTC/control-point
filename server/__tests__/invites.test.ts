@@ -162,7 +162,7 @@ describe("invite links", () => {
     expect(Number(inTeam.n)).toBe(1);
   });
 
-  it("a brand-new signup on an approval link creates the account only when approved", async () => {
+  it("a brand-new signup on an approval link creates a password-less account only when approved", async () => {
     const { body } = await t.post("/api/invites", { requires_approval: true }, admin);
     const email = "pending@test.local";
     const r = await t.post("/api/auth/signup", { accountType: "student", name: "Pending", email, password: "pass-word-2", inviteToken: body.token });
@@ -175,11 +175,16 @@ describe("invite links", () => {
     const mine = reqs.body.find((x: any) => x.email === email);
     expect(JSON.stringify(reqs.body)).not.toContain("password");
     expect((await t.post(`/api/join-requests/${mine.id}/approve`, {}, admin)).status).toBe(200);
+    // No credentials ride on a request (nobody proved they own the email):
+    // the owner sets a password through an emailed code when they sign in.
     const row = (await t.db.execute({ sql: "SELECT password, team_id FROM members WHERE email = ?", args: [email] })).rows[0] as any;
     expect(Number(row.team_id)).toBe(team);
-    expect(bcrypt.compareSync("pass-word-2", String(row.password))).toBe(true);
+    expect(row.password).toBeNull();
     const left = (await t.db.execute({ sql: "SELECT password_hash FROM team_join_requests WHERE id = ?", args: [mine.id] })).rows[0] as any;
     expect(left.password_hash).toBeNull();
+    const login = await t.post("/api/auth/login", { email, password: "pass-word-2" });
+    expect(login.body.sessionId).toBeUndefined();
+    expect(login.body.needsPasswordSetup).toBe(true);
   });
 
   it("an existing member signing up again doesn't spend a single-use link", async () => {

@@ -361,7 +361,9 @@ function TeamNumberField({ teamNumber, setTeamNumber, teamName, setTeamName }: {
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{t.foundName}</p>
                 {t.foundSchool && <p className="truncate text-xs text-muted-foreground">{t.foundSchool}</p>}
-                <p className="mt-0.5 text-xs font-medium text-success">Verified FTC team</p>
+                {t.claimed
+                  ? <p className="mt-0.5 text-xs font-medium text-warning">This team already has a workspace — you can ask to join it.</p>
+                  : <p className="mt-0.5 text-xs font-medium text-success">Verified FTC team</p>}
               </div>
             </div>
           </motion.div>
@@ -435,6 +437,11 @@ export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn, invite }:
             : !viaInvite && <AccessCodeField value={f.accessCode} onChange={f.setAccessCode} />}
         </fieldset>
         {f.error && <FormError>{f.error}</FormError>}
+        {f.takenNumber && (
+          <Button type="button" variant="outline" size="lg" disabled={f.busy} onClick={() => void f.askToJoin()} className="h-11">
+            Ask to join team #{f.takenNumber} instead
+          </Button>
+        )}
         <Button type="submit" size="lg" disabled={f.busy} className="h-11">
           {f.busy ? <><Loader2 className="animate-spin" /> Creating account…</> : admin ? 'Create workspace' : 'Join team'}
         </Button>
@@ -494,6 +501,11 @@ export function OAuthSignupPage({ token, intent, provider, onBack, onDone, invit
             : !f.viaInvite && <AccessCodeField value={f.accessCode} onChange={f.setAccessCode} />}
         </fieldset>
         {f.error && <FormError>{f.error}</FormError>}
+        {f.takenNumber && (
+          <Button type="button" variant="outline" size="lg" disabled={f.busy} onClick={() => void f.askToJoin()} className="h-11">
+            Ask to join team #{f.takenNumber} instead
+          </Button>
+        )}
         <Button type="submit" size="lg" disabled={f.busy} className="h-11">
           {f.busy ? <><Loader2 className="animate-spin" /> Creating account…</> : f.isAdmin ? 'Create workspace' : 'Join team'}
         </Button>

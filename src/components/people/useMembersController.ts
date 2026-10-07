@@ -23,13 +23,12 @@ export function parseScopes(scopes: unknown): string[] {
   return Array.isArray(s) ? (s as string[]) : [];
 }
 
-export function useMembersController({ members, refresh, onRefresh, currentUser, hasScope, onAddTeam }: {
+export function useMembersController({ members, refresh, onRefresh, currentUser, hasScope }: {
   members: any[];
   refresh: { members: () => any };
   onRefresh: () => any;
   currentUser: any;
   hasScope: (s: string) => boolean;
-  onAddTeam: (name: string) => Promise<any>;
 }) {
   const isAdmin = hasScope('admin');
   const activeTeamId = currentUser?.team_id;
@@ -147,12 +146,6 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
   const savingTeam = teamSavingGen !== 0 && teamSavingGen === teamGen;
   const bumpTeamGen = () => setTeamGen(newSessionId());
 
-  const openNewTeam = () => {
-    bumpTeamGen();
-    setEditingTeam(null);
-    setNewTeam(EMPTY_TEAM);
-    setShowAddTeam(true);
-  };
   const openEditTeam = (team: any) => {
     bumpTeamGen();
     setEditingTeam(team);
@@ -175,6 +168,8 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     const done = () => { if (getDraft<number>('teams:editor-gen', 0) === gen) closeTeamEditor(); };
     setTeamSavingGen(gen);
     try {
+      // New workspaces are created by CreateWorkspaceForm (FTC number first);
+      // this editor only edits.
       if (editingTeam) {
         const { name, number, accent_color } = newTeam;
         const res = await apiFetch(`/api/teams/${editingTeam.id}`, {
@@ -187,11 +182,6 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
         notify('Team updated', 'success');
         done();
         onRefresh();
-      } else {
-        // Creating a new workspace switches the session to it
-        const data = await onAddTeam(newTeam.name);
-        notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
-        done();
       }
     } catch (e: any) {
       notify(e.message || 'Could not save team', 'error');
@@ -204,6 +194,6 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     isAdmin, activeTeamId,
     showAddMember, editingMember, newMember, setNewMember, savingMember, openNewMember, openEditMember, closeMemberEditor, toggleMemberScope, handleAddMember,
     memberToRemove, setMemberToRemove, askRemoveMember, removeError, removingMember, handleDeleteMember, handleResetPassword,
-    showAddTeam, editingTeam, newTeam, setNewTeam, savingTeam, openNewTeam, openEditTeam, closeTeamEditor, handleAddTeam,
+    showAddTeam, editingTeam, newTeam, setNewTeam, savingTeam, openEditTeam, closeTeamEditor, handleAddTeam,
   };
 }

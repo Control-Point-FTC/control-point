@@ -28,7 +28,7 @@ export function JoinInvitePage({ token, pendingTeam, onCreateAccount, onSignIn, 
       <AuthLayout onBack={onDismiss} backLabel="Home">
         <AuthHeading
           title="Request sent"
-          description={<>Someone on <span className="font-medium text-foreground">{pendingTeam}</span> needs to approve you. We’ll email you when you’re in — then sign in.</>}
+          description={<>Someone on <span className="font-medium text-foreground">{pendingTeam}</span> needs to approve you. We’ll email you when you’re in. Then sign in — if you don’t have a password yet, we’ll email you a code to set one.</>}
         />
         <Button className="h-11 w-full" onClick={onSignIn}>Go to sign in</Button>
       </AuthLayout>

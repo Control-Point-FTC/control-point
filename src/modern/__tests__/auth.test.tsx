@@ -281,7 +281,7 @@ describe('Modern zero-team screen', () => {
     fireEvent.click(screen.getByRole('button', { name: /Create a workspace/ }));
     fireEvent.change(await screen.findByLabelText('Team name'), { target: { value: '  Gears  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
-    await waitFor(() => expect(p.onCreateTeam).toHaveBeenCalledWith('Gears'));
+    await waitFor(() => expect(p.onCreateTeam).toHaveBeenCalledWith({ ftc_number: undefined, name: 'Gears' }));
     fireEvent.click(screen.getByRole('button', { name: /Join your team/ }));
     fireEvent.change(await screen.findByLabelText('Invite link or access code'), { target: { value: 'CP-1234' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join team' }));

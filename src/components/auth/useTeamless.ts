@@ -9,7 +9,7 @@ export type TeamlessMode = 'menu' | 'create' | 'join' | 'delete';
 
 export function useTeamless({ user, onCreateTeam, onJoinTeam, onDeleteAccount }: {
   user: any;
-  onCreateTeam: (name: string) => Promise<void>;
+  onCreateTeam: (input: { ftc_number?: string; name?: string }) => Promise<void>;
   onJoinTeam: (accessCode: string) => Promise<void>;
   onDeleteAccount: () => Promise<void>;
 }) {
@@ -24,7 +24,7 @@ export function useTeamless({ user, onCreateTeam, onJoinTeam, onDeleteAccount }:
     if (!teamName.trim() || busy) return;
     setBusy(true);
     try {
-      await onCreateTeam(teamName.trim());
+      await onCreateTeam({ name: teamName.trim() });
     } catch (e: any) {
       notify(e.message || 'Could not create team', 'error');
     } finally {

@@ -1458,14 +1458,16 @@ export default function App() {
   };
 
   // Create a brand-new team for this account; the server switches the session to it.
-  const handleAddTeam = async (name: string) => {
+  // FTC number first (`{ ftc_number }`), or a plain name. A taken number
+  // rejects with `err.data.ftcTaken` so the form can offer "Ask to join".
+  const handleAddTeam = async (input: string | { ftc_number?: string; name?: string }) => {
     const res = await apiFetch('/api/teams', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify(typeof input === 'string' ? { name: input } : input)
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not create team');
+    if (!res.ok) throw Object.assign(new Error(data.error || 'Could not create team'), { data });
     clearTeamCaches();
     persistSession(data.sessionId, data.user);
     setTeams((data.user as any)?.teams || []);
@@ -1620,7 +1622,8 @@ export default function App() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Signup failed");
+    // `data` rides along so the form can react (e.g. a taken FTC number).
+    if (!res.ok) throw Object.assign(new Error(data.error || "Signup failed"), { data });
     if (data.needsVerification) {
       setVerifyState({ email: data.email, mode: payload.accountType === 'admin' ? 'admin' : 'student' });
       return data;
@@ -2203,6 +2206,12 @@ export default function App() {
       const onBack = () => { setOauthSignup(null); setAuthScreen('landing'); };
       const onDone = (data: any) => {
         clearInvite();
+        if (data?.pendingApproval) {
+          setOauthSignup(null);
+          setInvitePendingTeam(data.team?.name || 'the team');
+          setAuthScreen('landing');
+          return;
+        }
         persistSession(data.sessionId, data.user);
         setOauthSignup(null);
         if (data?.team?.access_code) setSignupTeam(data.team);
@@ -2240,11 +2249,10 @@ export default function App() {
       const mode = authScreen === 'signup-admin' ? 'admin' : 'student';
       const invite = mode === 'student' ? peekInvite() : null;
       const onDone = (data: any) => {
-        if (invite) {
-          // The membership (or the request) exists now; nothing left to use.
-          clearInvite();
-          if (data?.pendingApproval) { setInvitePendingTeam(data.team?.name || 'the team'); setAuthScreen('landing'); }
-        }
+        // The membership (or the request) exists now; nothing left to use.
+        if (invite) clearInvite();
+        // An approval link, or "ask to join" a team that's already here.
+        if (data?.pendingApproval) { setInvitePendingTeam(data.team?.name || 'the team'); setAuthScreen('landing'); return; }
         if (mode === 'admin' && data?.team?.access_code) setSignupTeam(data.team);
       };
       return (
@@ -2282,8 +2290,8 @@ export default function App() {
     // device's look, like the signed-out screens.
     const teamless = {
       user: currentUser,
-      onCreateTeam: async (name: string) => {
-        const data = await handleAddTeam(name);
+      onCreateTeam: async (input: { ftc_number?: string; name?: string }) => {
+        const data = await handleAddTeam(input);
         notify(`Team "${data.team?.name || 'created'}" created`, 'success');
       },
       onJoinTeam: handleJoinTeam,

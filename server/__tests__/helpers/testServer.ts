@@ -34,7 +34,7 @@ export interface TestServer {
   stop: () => Promise<void>;
 }
 
-export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> {
+export async function startTestServer(prefix = "cp-test-", extraEnv: Record<string, string> = {}): Promise<TestServer> {
   const tmpDir = mkdtempSync(join(tmpdir(), prefix));
   const dbPath = join(tmpDir, "test.db");
   const port = await freePort();
@@ -47,7 +47,7 @@ export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> 
   try {
     proc = spawn("npx", ["tsx", "server.ts"], {
       cwd: REPO,
-      env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off" },
+      env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off", ...extraEnv },
       stdio: logFd != null ? ["ignore", logFd, logFd] : "ignore",
       shell: process.platform === "win32",
     });

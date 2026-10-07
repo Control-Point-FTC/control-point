@@ -7,7 +7,7 @@ import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Inbox, Bot, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
-  Sparkles, MessageSquareHeart, Compass, Check, Menu, Home, MessageSquare, CheckSquare, Layers, Plus, UserPlus,
+  Sparkles, MessageSquareHeart, Compass, Check, Menu, Home, MessageSquare, CheckSquare, Layers, Plus, UserPlus, LogIn,
 } from 'lucide-react';
 import { cn } from '../components/cn';
 import { assetUrl } from '../services/api';
@@ -408,8 +408,11 @@ function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwi
             {tm.id === activeTeam?.id && <Check className="text-accent" />}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuItem onSelect={() => onNavigate('/teams?tab=workspaces')}>
-          <Plus /> Create or join a workspace
+        <DropdownMenuItem onSelect={() => onNavigate('/teams?tab=workspaces&new=1')}>
+          <Plus /> New workspace
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onNavigate('/teams?tab=workspaces&join=1')}>
+          <LogIn /> Join a workspace
         </DropdownMenuItem>
         {canInvite && (
           <>

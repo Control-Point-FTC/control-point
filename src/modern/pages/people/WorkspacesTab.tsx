@@ -13,8 +13,10 @@ import { Stagger, StaggerItem } from '../../ui/motion';
 
 type Ctl = ReturnType<typeof useMembersController>;
 
-export function WorkspacesTab({ ctl, teams, members, onSwitchTeam, onDeleteTeam, onLeaveTeam }: {
+export function WorkspacesTab({ ctl, teams, members, onSwitchTeam, onDeleteTeam, onLeaveTeam, onNewWorkspace }: {
   ctl: Ctl; teams: any[]; members: any[];
+  /** Anyone can start a workspace (FTC number first). */
+  onNewWorkspace?: () => void;
   onSwitchTeam: (id: number) => any; onDeleteTeam: (team: any) => any; onLeaveTeam: (team: any) => any;
 }) {
   const copy = async (code: string) => {
@@ -70,9 +72,9 @@ export function WorkspacesTab({ ctl, teams, members, onSwitchTeam, onDeleteTeam,
             </StaggerItem>
           );
         })}
-        {ctl.isAdmin && (
+        {onNewWorkspace && (
           <StaggerItem>
-            <button type="button" onClick={ctl.openNewTeam} className="flex h-full min-h-40 w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground transition-colors hover:border-accent/50 hover:text-foreground">
+            <button type="button" onClick={onNewWorkspace} className="flex h-full min-h-40 w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground transition-colors hover:border-accent/50 hover:text-foreground">
               <Plus className="size-5" /> New workspace
             </button>
           </StaggerItem>
