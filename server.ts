@@ -1568,63 +1568,114 @@ for (const t of codelessTeams) {
 
 
 
-// Session Management
-function generateSessionId(): string {
-  // 256 bits from the CSPRNG. (The old Math.random ids were predictable.)
-  return 'session_' + crypto.randomBytes(32).toString('base64url');
+// ---- Session Management ----
+// A session token lives only in the HttpOnly `cp_session` cookie (never in a
+// URL, a JSON body the page can read, or localStorage). The database stores
+// a SHA-256 of the token, so a leaked sessions table can't be replayed.
+// Sessions slide: each use (at most every few minutes) pushes expiry out to
+// SESSION_TTL_MS; an idle session expires.
+const SESSION_COOKIE = "cp_session";
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// Must stay under the 3-minute "online" window in computePresence(), which
+// reads sessions.last_activity.
+const SESSION_TOUCH_MS = 60 * 1000;
+const TOKEN_PREFIX = "cps_";
+
+function generateSessionToken(): string {
+  return TOKEN_PREFIX + crypto.randomBytes(32).toString('base64url');
+}
+/** DB key for a token: hashed for current tokens; legacy (pre-cookie,
+ *  plaintext-stored) tokens are looked up as-is until they are rotated. */
+function sessionKey(token: string): string {
+  return token.startsWith(TOKEN_PREFIX)
+    ? "h:" + crypto.createHash("sha256").update(token).digest("hex")
+    : token;
 }
 
-
-
 async function createSession(memberId: number): Promise<string> {
-  const sessionId = generateSessionId();
+  const token = generateSessionToken();
   const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
-  (await dbRun("INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", sessionId, memberId, now, expiresAt, now));
-  return sessionId;
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  (await dbRun("INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", sessionKey(token), memberId, now, expiresAt, now));
+  return token;
+}
+
+/**
+ * The signed-in user moved to another of their memberships (team switch, new
+ * or joined team, left/deleted the current one): point this device's
+ * existing session at the new membership. The token — and so the cookie —
+ * stays the same, so no in-flight response can roll the switch back.
+ */
+async function rebindSession(req: any, memberId: number): Promise<string> {
+  const token = getSessionId(req);
+  if (token && token.startsWith(TOKEN_PREFIX)) {
+    const info = (await dbRun("UPDATE sessions SET member_id = ?, last_activity = ? WHERE id = ?", memberId, new Date().toISOString(), sessionKey(token))) as any;
+    if (Number(info?.changes) > 0) return token;
+  }
+  return createSession(memberId);
 }
 
 /** createSession, but only while `memberId` still belongs to `email` and the
  *  account still has `passwordHash` — checked in the INSERT itself. */
 async function createSessionIfCredential(memberId: number, email: string, passwordHash: string): Promise<string | null> {
-  const sessionId = generateSessionId();
+  const sessionId = generateSessionToken();
   const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
   const info = (await dbRun(
     `INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity)
      SELECT ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND LOWER(email) = LOWER(?) AND COALESCE(is_active, 1) = 1)
        AND EXISTS (SELECT 1 FROM members WHERE LOWER(email) = LOWER(?) AND password = ?)`,
-    sessionId, memberId, now, expiresAt, now, memberId, email, email, passwordHash
+    sessionKey(sessionId), memberId, now, expiresAt, now, memberId, email, email, passwordHash
   )) as any;
   return Number(info?.changes) > 0 ? sessionId : null;
 }
 
-async function validateSession(sessionId: string): Promise<{ valid: boolean; memberId?: number }> {
+async function validateSession(token: string): Promise<{ valid: boolean; memberId?: number; legacy?: boolean; touched?: boolean }> {
   try {
-    const session = (await dbGet("SELECT * FROM sessions WHERE id = ?", sessionId)) as any;
+    if (!token || typeof token !== "string" || token.startsWith("h:")) return { valid: false };
+    const key = sessionKey(token);
+    const session = (await dbGet("SELECT * FROM sessions WHERE id = ?", key)) as any;
     if (!session) return { valid: false };
-    
-    const now = new Date().toISOString();
+
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
     if (now > session.expires_at) {
-      (await dbRun("DELETE FROM sessions WHERE id = ?", sessionId));
+      (await dbRun("DELETE FROM sessions WHERE id = ?", key));
       return { valid: false };
     }
-    
-    // Update last activity
-    (await dbRun("UPDATE sessions SET last_activity = ? WHERE id = ?", now, sessionId));
-    return { valid: true, memberId: session.member_id };
+    const legacy = !token.startsWith(TOKEN_PREFIX);
+    // Sliding expiry, written at most every SESSION_TOUCH_MS (not per request).
+    const last = Date.parse(session.last_activity || "") || 0;
+    let touched = false;
+    if (!legacy && nowMs - last > SESSION_TOUCH_MS) {
+      (await dbRun("UPDATE sessions SET last_activity = ?, expires_at = ? WHERE id = ?", now, new Date(nowMs + SESSION_TTL_MS).toISOString(), key));
+      touched = true;
+    }
+    return { valid: true, memberId: session.member_id, legacy, touched };
   } catch (e) {
     return { valid: false };
   }
 }
 
-// Stored files (/api/files/:id — avatars, chat images, emoji, …) are loaded
-// by plain <img> tags, which can't send the X-Session-ID header. The session
-// id is therefore mirrored into an HttpOnly cookie scoped to /api/files/ only
-// (see the middleware in startServer), and accepted from that cookie for GET
-// /api/files/* requests alone — every other route still needs the header, so
-// the cookie adds no CSRF surface beyond read-only file fetches.
+// The cookie outlives any session (browsers cap it at 400 days); the
+// server-side sliding expiry is what actually ends a session. So the cookie
+// never needs re-issuing on activity — and a slow, older response can never
+// overwrite a newer cookie with a stale value.
+const SESSION_COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60;
+/** Set-Cookie value for a session token (or a clearing value for null). */
+function sessionCookie(token: string | null, secure: boolean): string {
+  const attrs = `Path=/; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
+  return token
+    ? `${SESSION_COOKIE}=${encodeURIComponent(token)}; ${attrs}; Max-Age=${SESSION_COOKIE_MAX_AGE_S}`
+    : `${SESSION_COOKIE}=; ${attrs}; Max-Age=0`;
+}
+function requestIsHttps(req: any): boolean {
+  return !!req.secure || String(req.headers?.["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+}
+
+// Retired: the old /api/files/-scoped cookie (the session cookie now covers
+// every path). Cleared on sight.
 const FILES_COOKIE = "cp_files_sid";
 // Stored-file MIME types rendered inline (video/audio are allowed by prefix).
 // SVG is included: it can't run script inside <img>, and opened directly the
@@ -1644,17 +1695,12 @@ function readCookie(req: any, name: string): string | null {
   }
   return null;
 }
-function isFilesGet(req: any): boolean {
-  return req.method === "GET" && String(req.path || req.url || "").startsWith("/api/files/");
-}
-
-// Resolve the calling user + their workspace from a session id.
-// Looks in query (?sessionId=), JSON body, then the x-session-id header —
-// plus the files cookie, for GET /api/files/* only.
+// The caller's session token: the HttpOnly cookie only. (A legacy header
+// token from a tab opened before the cookie switch is rotated into the
+// cookie by the /api middleware, which stores the result on the request.)
+// Never from a query string or body — URLs end up in logs and history.
 function getSessionId(req: any): string | null {
-  return (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string)
-    || (isFilesGet(req) ? readCookie(req, FILES_COOKIE) : null)
-    || null;
+  return (req.cpSessionToken as string | undefined) || readCookie(req, SESSION_COOKIE) || null;
 }
 
 /**
@@ -1703,7 +1749,9 @@ function sanitizeBrunoPdfs(input: any): { mimeType: string; data: string; name: 
 async function getAuth(req: any): Promise<{ memberId: number; teamId: number | null; accountType: string; email?: string; teamless?: boolean } | null> {
   const sessionId = getSessionId(req);
   if (!sessionId) return null;
-  const { valid, memberId } = await validateSession(sessionId);
+  // The /api middleware already validated this token for the request.
+  const pre = req.cpSessionCheck;
+  const { valid, memberId } = pre && pre.token === sessionId ? pre : await validateSession(sessionId);
   if (!valid || !memberId) return null;
   const member = (await dbGet("SELECT id, team_id, account_type FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", memberId)) as any;
   if (member) return { memberId: member.id, teamId: member.team_id ?? null, accountType: member.account_type || 'student' };
@@ -2038,6 +2086,18 @@ async function startServer() {
   // so req.ip is the real client (rate limits key on it).
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
+  // Baseline security headers on every response. (A full Content-Security-
+  // Policy is rolled out separately, once every asset origin is inventoried.)
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    // Camera (QR check-in, video calls), microphone and screen share are used
+    // by the app itself; nothing else is.
+    res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=(), serial=(), bluetooth=()");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    next();
+  });
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
@@ -2064,47 +2124,80 @@ async function startServer() {
     app.get(p, limit(authLimiter, "oauthstart", [byIp(40, 15 * MIN)]));
   }
 
-  // Keep the /api/files/ cookie in step with the session, so <img> tags for
-  // stored files authenticate (see FILES_COOKIE): from the X-Session-ID
-  // header on any API call, and from a sessionId handed out in a JSON
-  // response (login / signup / verify), so the very first render after
-  // signing in already has it. The value is validated on use.
-  app.use("/api", (req, res, next) => {
-    const have = readCookie(req, FILES_COOKIE);
-    const secure = req.secure || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
-    let set: string | null = null;
-    const setFilesCookie = (sid: string) => {
-      if (!sid || sid === have || sid === set || res.headersSent) return;
-      set = sid;
-      res.append(
-        "Set-Cookie",
-        `${FILES_COOKIE}=${encodeURIComponent(sid)}; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=2592000${secure ? "; Secure" : ""}`
-      );
+  // ---- Session cookie + CSRF guard (every /api request) ----
+  // 1. Any session a route issues (login, signup, verify, team switch…) is
+  //    moved from the JSON body into the HttpOnly cookie, so page scripts
+  //    never see a token.
+  // 2. Transition: a tab opened before the cookie switch still sends its old
+  //    token in X-Session-ID. A valid legacy token is rotated once into a
+  //    fresh cookie session and deleted, so nobody is signed out by the move.
+  // 3. CSRF: cookies ride along on cross-site requests, so every state-
+  //    changing /api call must carry X-CP-Client (or the legacy header).
+  //    Cross-origin pages can't add custom headers without a CORS preflight,
+  //    and no cross-origin access is allowed.
+  app.use("/api", async (req: any, res, next) => {
+    const secure = requestIsHttps(req);
+    let issued: string | null = null;
+    const issue = (token: string) => {
+      if (!token || token === issued || res.headersSent) return;
+      issued = token;
+      res.append("Set-Cookie", sessionCookie(token, secure));
     };
-    const headerSid = req.headers["x-session-id"];
-    if (typeof headerSid === "string") setFilesCookie(headerSid);
     const json = res.json.bind(res);
     res.json = (body: any) => {
-      if (body && typeof body.sessionId === "string") setFilesCookie(body.sessionId);
+      if (body && typeof body === "object") {
+        if (typeof body.sessionId === "string") { issue(body.sessionId); delete body.sessionId; }
+        if (body.switched && typeof body.switched.sessionId === "string") { issue(body.switched.sessionId); delete body.switched.sessionId; }
+      }
       return json(body);
     };
-    next();
-  });
+    if (readCookie(req, FILES_COOKIE)) res.append("Set-Cookie", `${FILES_COOKIE}=; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=0`);
 
-  // CORS for the GitHub Pages mirror (MIRROR_ORIGINS). Header-based sessions
-  // mean no credentials flag is needed; the X-Session-ID header is allowlisted
-  // for preflight. No origins configured = same-origin only, as before.
-  app.use((req, res, next) => {
-    const origin = req.headers.origin as string | undefined;
-    if (origin && isAllowedMirrorOrigin(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'X-Session-ID, Content-Type');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-      if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
+    const legacyHeader = typeof req.headers["x-session-id"] === "string" ? String(req.headers["x-session-id"]) : "";
+    const unsafe = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+    if (unsafe && !req.headers["x-cp-client"] && !legacyHeader) {
+      return res.status(403).json({ error: "Missing client header" });
     }
+    try {
+      const cookieToken = readCookie(req, SESSION_COOKIE);
+      if (cookieToken) {
+        // Validate once per request (getAuth reuses it).
+        const v = await validateSession(cookieToken);
+        req.cpSessionCheck = { token: cookieToken, ...v };
+      } else if (legacyHeader && !legacyHeader.startsWith(TOKEN_PREFIX)) {
+        // An old tab may fire several requests at once with the same token
+        // before the new cookie arrives: they all get the same replacement,
+        // and the old token keeps working for a short grace period.
+        const prior = rotatedLegacy.get(legacyHeader);
+        if (prior && prior.expires > Date.now()) {
+          issue(prior.token);
+          req.cpSessionToken = prior.token;
+        } else {
+          const v = await validateSession(legacyHeader);
+          if (v.valid && v.legacy && v.memberId) {
+            const fresh = await createSession(v.memberId);
+            const graceEnds = Date.now() + LEGACY_GRACE_MS;
+            rotatedLegacy.set(legacyHeader, { token: fresh, expires: graceEnds });
+            await dbRun("UPDATE sessions SET expires_at = ? WHERE id = ?", new Date(graceEnds).toISOString(), legacyHeader);
+            issue(fresh);
+            req.cpSessionToken = fresh;
+          }
+        }
+      }
+    } catch (e) { console.error("session check failed:", e); }
     next();
   });
+  // Pre-cookie tokens already rotated (legacy -> fresh), kept for the grace period.
+  const LEGACY_GRACE_MS = 2 * 60 * 1000;
+  const rotatedLegacy = new Map<string, { token: string; expires: number }>();
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of rotatedLegacy) if (v.expires < now) rotatedLegacy.delete(k);
+  }, 60 * 1000).unref();
+
+  // No CORS: the app and its API share one origin (the GitHub Pages mirror,
+  // which called the API cross-origin, is retired). Browsers therefore refuse
+  // cross-origin reads, and the CSRF header above can't be forged.
 
   // Health check for Render/uptime monitors. Cheap, unauthenticated, no AI/DB writes.
   app.get("/api/health", (_req, res) => {
@@ -2291,7 +2384,17 @@ async function startServer() {
     }
   };
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    // Same-origin sockets only (the session cookie must not authenticate a
+    // socket opened by another site), and identity comes from that cookie.
+    const origin = String(req.headers.origin || "");
+    const host = String(req.headers.host || "");
+    if (origin) {
+      let ok = false;
+      try { ok = new URL(origin).host === host; } catch { ok = false; }
+      if (!ok) { try { ws.close(4003, "origin not allowed"); } catch {} return; }
+    }
+    (ws as any).cookieToken = readCookie(req, SESSION_COOKIE);
     clients.add(ws);
     ws.on("close", () => {
       const teamId = (ws as any).teamId;
@@ -2310,8 +2413,12 @@ async function startServer() {
       try {
         const message = JSON.parse(data.toString());
         // Client identifies its workspace right after connecting: { type: 'hello', sessionId }
-        if (message.type === "hello" && message.sessionId) {
-          const { valid, memberId } = await validateSession(message.sessionId);
+        // Identify the socket: the session cookie sent with the upgrade (a tab
+        // from before the cookie switch may still name its token in hello).
+        if (message.type === "hello") {
+          const token = (ws as any).cookieToken || (typeof message.sessionId === "string" ? message.sessionId : "");
+          if (!token) return;
+          const { valid, memberId } = await validateSession(token);
           if (valid && memberId) {
             // Removed members' sessions are revoked, but check anyway: only an
             // active membership may join the team's live feed.
@@ -2770,22 +2877,26 @@ async function startServer() {
     return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
   }
 
-  // GitHub Pages mirror support: extra frontend origins (comma-separated) that
-  // may call the API cross-origin and receive OAuth completions. Set
-  // MIRROR_ORIGINS="https://sushilm20.github.io" on Render. Sessions travel in
-  // the X-Session-ID header, so no cross-site cookies are involved.
-  function mirrorOrigins(): string[] {
-    return String(process.env.MIRROR_ORIGINS || '').split(',')
-      .map(s => s.trim().replace(/\/+$/, '')).filter(Boolean);
-  }
-  function isAllowedMirrorOrigin(origin: string): boolean {
-    try {
-      const u = new URL(origin);
-      if (u.protocol !== 'https:') return false;
-      return mirrorOrigins().includes(u.origin);
-    } catch { return false; }
-  }
   const oauthStates = new Map<string, { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number }>(); // state -> {expiry, intent, provider}
+  // OAuth state is bound to the browser that started the flow (a short-lived
+  // HttpOnly cookie), so a victim can't be fed someone else's callback URL
+  // (login CSRF). Expired entries are swept on every start.
+  const OAUTH_STATE_COOKIE = "cp_oauth_state";
+  function startOAuthState(req: any, res: any, state: string, entry: { expiry: number; intent: string; provider: string; returnTo?: string; memberId?: number }) {
+    const now = Date.now();
+    for (const [k, v] of oauthStates) if (v.expiry < now) oauthStates.delete(k);
+    oauthStates.set(state, entry);
+    res.append("Set-Cookie", `${OAUTH_STATE_COOKIE}=${state}; Path=/api/auth; HttpOnly; SameSite=Lax; Max-Age=600${requestIsHttps(req) ? "; Secure" : ""}`);
+  }
+  /** The pending entry for a callback's state — only from the browser that started it. Single-use. */
+  function takeOAuthState(req: any, res: any, state: string | undefined) {
+    if (!state) return undefined;
+    const pending = oauthStates.get(state);
+    oauthStates.delete(state);
+    res.append("Set-Cookie", `${OAUTH_STATE_COOKIE}=; Path=/api/auth; HttpOnly; SameSite=Lax; Max-Age=0`);
+    if (readCookie(req, OAUTH_STATE_COOKIE) !== state) return undefined;
+    return pending;
+  }
   // Pending OAuth signups: token -> {provider, providerSub, email, name, intent, expiry}. Single-use, 10 min.
   const pendingOAuthSignups = new Map<string, { provider: string; providerSub: string; email: string; name: string; avatarUrl: string | null; intent: string; expiry: number }>();
 
@@ -2816,13 +2927,13 @@ async function startServer() {
     return `${reqOrigin}/api/auth/${provider}/callback`;
   }
 
-  // OAuth completion may return to a mirror origin or to either first-party
-  // domain (so a login started on control-point.onrender.com finishes there).
-  function isAllowedOAuthReturnOrigin(origin: string): boolean {
-    if (isAllowedMirrorOrigin(origin)) return true;
-    try {
-      return firstPartyOrigins().includes(new URL(origin).origin);
-    } catch { return false; }
+  // OAuth completion may return to either first-party domain (so a login
+  // started on control-point.onrender.com finishes there).
+  // Sign-in completes on the host whose callback ran: the session cookie is
+  // host-only, so handing off to another domain would arrive signed out.
+  // No cross-domain return_to is accepted.
+  function isAllowedOAuthReturnOrigin(_origin: string): boolean {
+    return false;
   }
 
   app.get("/api/auth/config", async (req, res) => {
@@ -2839,7 +2950,6 @@ async function startServer() {
   app.get("/api/auth/me", async (req, res) => {
     const auth = await getAuth(req);
     if (!auth) return res.status(401).json({ error: "Invalid session" });
-    const sessionId = getSessionId(req);
     // Teamless account (deleted/left their last team): no workspace, but the
     // session stays valid so they can create or join a team, or delete the account.
     if (auth.teamless) {
@@ -2851,7 +2961,7 @@ async function startServer() {
           team_id: null, account_type: "student", roles: [], permissions: [],
           teams: [], teamless: true,
         },
-        sessionId, isOwner,
+        isOwner,
       });
     }
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
@@ -2873,7 +2983,7 @@ async function startServer() {
       const pm = await presenceMap([user.id]);
       (user as any).presence = pm[user.id] || "offline";
     }
-    res.json({ user: sanitizeMember(user), sessionId, isOwner });
+    res.json({ user: sanitizeMember(user), isOwner });
   });
 
   app.get("/api/auth/google", async (req, res) => {
@@ -2892,7 +3002,7 @@ async function startServer() {
     try {
       if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google', returnTo });
+    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'google', returnTo });
     const params = new URLSearchParams({
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'google'),
@@ -3006,7 +3116,10 @@ async function startServer() {
     // OAuth providers verify email ownership — no OTP needed.
     await markEmailVerified(email);
     const sessionId = await createSession(member.id);
-    res.redirect(`${base}/?oauth_session=${sessionId}`);
+    // The session goes straight into the HttpOnly cookie on this top-level
+    // redirect — never into the URL (history, logs, Referer).
+    res.append("Set-Cookie", sessionCookie(sessionId, requestIsHttps(res.req)));
+    res.redirect(`${base}/?oauth=ok`);
   }
 
   // Shared completion step for every OAuth provider: the identity is verified,
@@ -3093,7 +3206,7 @@ async function startServer() {
     try {
       if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord', returnTo });
+    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'discord', returnTo });
     const params = new URLSearchParams({
       client_id: DISCORD_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'discord'),
@@ -3108,8 +3221,7 @@ async function startServer() {
   app.get("/api/auth/discord/callback", async (req, res) => {
     try {
       const { code, state } = req.query as { code?: string; state?: string };
-      const pending = state ? oauthStates.get(state) : undefined;
-      if (state) oauthStates.delete(state);
+      const pending = takeOAuthState(req, res, state);
       if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'discord') {
         return res.redirect("/?oauth_error=invalid_state");
       }
@@ -3162,7 +3274,7 @@ async function startServer() {
     try {
       if (rt && isAllowedOAuthReturnOrigin(rt)) returnTo = new URL(rt).href.replace(/\/$/, '');
     } catch { /* invalid URL — fall back to API host */ }
-    oauthStates.set(state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github', returnTo });
+    startOAuthState(req, res, state, { expiry: Date.now() + 10 * 60 * 1000, intent, provider: 'github', returnTo });
     const params = new URLSearchParams({
       client_id: GITHUB_CLIENT_ID,
       redirect_uri: getOAuthRedirectUri(req, 'github'),
@@ -3175,8 +3287,7 @@ async function startServer() {
   app.get("/api/auth/github/callback", async (req, res) => {
     try {
       const { code, state } = req.query as { code?: string; state?: string };
-      const pending = state ? oauthStates.get(state) : undefined;
-      if (state) oauthStates.delete(state);
+      const pending = takeOAuthState(req, res, state);
       if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'github') {
         return res.redirect("/?oauth_error=invalid_state");
       }
@@ -3225,8 +3336,7 @@ async function startServer() {
   app.get("/api/auth/google/callback", async (req, res) => {
     try {
       const { code, state } = req.query as { code?: string; state?: string };
-      const pending = state ? oauthStates.get(state) : undefined;
-      if (state) oauthStates.delete(state);
+      const pending = takeOAuthState(req, res, state);
       if (!code || !pending || pending.expiry < Date.now() || pending.provider !== 'google') {
         return res.redirect("/?oauth_error=invalid_state");
       }
@@ -3325,7 +3435,7 @@ async function startServer() {
         return res.status(400).json({ error: "Google sign-in is not configured" });
       }
       const state = randomHex(16);
-      oauthStates.set(state, {
+      startOAuthState(req, res, state, {
         expiry: Date.now() + 10 * 60 * 1000,
         intent: 'calendar_link',
         provider: 'google',
@@ -3352,8 +3462,7 @@ async function startServer() {
   app.get("/api/auth/google/calendar/callback", async (req, res) => {
     try {
       const { code, state } = req.query as { code?: string; state?: string };
-      const pending = state ? oauthStates.get(state) : undefined;
-      if (state) oauthStates.delete(state);
+      const pending = takeOAuthState(req, res, state);
       if (!code || !pending || pending.expiry < Date.now() || pending.intent !== 'calendar_link') {
         return res.redirect("/settings?cal_error=invalid_state");
       }
@@ -3515,17 +3624,30 @@ async function startServer() {
 
   // --- Self-service account management ---
 
-  const currentSessionId = (req: any): string | null =>
-    (req.query?.sessionId as string) || req.body?.sessionId || (req.headers?.['x-session-id'] as string) || null;
+  /** DB key of the caller's session (for "delete this one / all but this one"). */
+  const currentSessionId = (req: any): string | null => {
+    const token = getSessionId(req);
+    return token ? sessionKey(token) : null;
+  };
 
   // Log out: invalidate the current session server-side
   app.post("/api/auth/logout", async (req, res) => {
-    // Expire the files cookie first, so it's cleared even if the session
+    // Expire the cookies first, so they're cleared even if the session
     // delete below fails.
+    res.append("Set-Cookie", sessionCookie(null, requestIsHttps(req)));
     res.append("Set-Cookie", `${FILES_COOKIE}=; Path=/api/files/; HttpOnly; SameSite=Lax; Max-Age=0`);
     try {
       const sid = currentSessionId(req);
       if (sid) await dbRun("DELETE FROM sessions WHERE id = ?", sid);
+      // A pre-cookie token rotated into this session may still be in its
+      // grace period — it must die with the session.
+      const token = getSessionId(req);
+      for (const [legacy, v] of rotatedLegacy) {
+        if (v.token === token) {
+          rotatedLegacy.delete(legacy);
+          await dbRun("DELETE FROM sessions WHERE id = ?", legacy);
+        }
+      }
       res.json({ ok: true });
     } catch (e) {
       res.json({ ok: true }); // logout should never fail client-side
@@ -3673,7 +3795,7 @@ async function startServer() {
     )) as any;
     await ensureRolesSeeded(teamId);
     await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
-    const sessionId = await createSession(mInfo.lastInsertRowid);
+    const sessionId = await rebindSession(req, mInfo.lastInsertRowid);
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
     await inheritInterfaceMode(user);
     (user as any).teams = me?.email ? await userTeams(me.email) : [];
@@ -3712,7 +3834,7 @@ async function startServer() {
     )) as any;
     if (!row) return res.status(403).json({ error: "You're not a member of that team" });
     await inheritInterfaceMode(row);
-    const sessionId = await createSession(row.id);
+    const sessionId = await rebindSession(req, row.id);
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
     res.json({ user: sanitizeMember(row), sessionId, team });
   });
@@ -3753,7 +3875,7 @@ async function startServer() {
       await assignSystemRole(team.id, row.id, "Member");
     }
     await inheritInterfaceMode(row);
-    const sessionId = await createSession(row.id);
+    const sessionId = await rebindSession(req, row.id);
     const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
     const wasNew = !existing || (existing.is_active ?? 1) !== 1;
     if (wasNew) {
@@ -3795,7 +3917,7 @@ async function startServer() {
         "SELECT * FROM members WHERE email = ? AND team_id != ? AND COALESCE(is_active, 1) = 1 ORDER BY id DESC LIMIT 1", email, teamId
       )) as any;
       if (other) {
-        const sessionId = await createSession(other.id);
+        const sessionId = await rebindSession(req, other.id);
         switched = { sessionId, user: sanitizeMember({ ...(other as any), teams: await userTeams(email) }), team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any };
       } else {
         teamless = true;
@@ -3861,7 +3983,8 @@ async function startServer() {
     )) as any[];
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
-    const currentSessionId = getSessionId(req);
+    const callerToken = getSessionId(req);
+    const currentSessionId = callerToken ? sessionKey(callerToken) : "";
     // The caller's membership row in the team being deleted becomes an
     // inactive ghost anchor (team_id nulled so the team delete passes FKs) —
     // rows in their other teams are untouched.
@@ -3923,7 +4046,7 @@ async function startServer() {
           "SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, other.team_id
         )) as any;
         if (otherRow) {
-          const sessionId = await createSession(otherRow.id);
+          const sessionId = await rebindSession(req, otherRow.id);
           switched = {
             sessionId,
             user: otherRow,
