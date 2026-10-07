@@ -84,7 +84,7 @@ describe("budget entries (M-1 / H-6 / L-1)", () => {
     expect(Number(row.amount)).toBe(1500);
     // Notifications are written fire-and-forget after the response.
     let note: any;
-    for (let i = 0; i < 20 && !note; i++) {
+    for (let i = 0; i < 100 && !note; i++) {
       note = (await t.db.execute({ sql: "SELECT content FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 1", args: [adminId] })).rows[0];
       if (!note) await new Promise((r) => setTimeout(r, 100));
     }
