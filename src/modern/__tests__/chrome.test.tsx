@@ -58,3 +58,36 @@ describe('corner lanes', () => {
     expect(document.documentElement.style.getPropertyValue('--cp-slot-banner')).toBe('');
   });
 });
+
+describe('Export menu and printing', async () => {
+  const { ExportMenu, installPrintTheme } = await import('../ui/ExportMenu');
+  it('offers CSV and print', async () => {
+    const onCsv = vi.fn();
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    render(<ExportMenu onCsv={onCsv} />);
+    fireEvent.pointerDown(screen.getByRole('button', { name: /Export/ }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Download CSV/ }));
+    expect(onCsv).toHaveBeenCalled();
+    fireEvent.pointerDown(screen.getByRole('button', { name: /Export/ }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Print or save as PDF/ }));
+    expect(print).toHaveBeenCalled();
+    print.mockRestore();
+  });
+
+  it('prints in the light theme and puts the reader’s theme back', () => {
+    const root = document.documentElement;
+    root.classList.remove('light');
+    const off = installPrintTheme();
+    window.dispatchEvent(new Event('beforeprint'));
+    expect(root.classList.contains('light')).toBe(true);
+    window.dispatchEvent(new Event('afterprint'));
+    expect(root.classList.contains('light')).toBe(false);
+    // A light-theme reader stays light.
+    root.classList.add('light');
+    window.dispatchEvent(new Event('beforeprint'));
+    window.dispatchEvent(new Event('afterprint'));
+    expect(root.classList.contains('light')).toBe(true);
+    root.classList.remove('light');
+    off();
+  });
+});

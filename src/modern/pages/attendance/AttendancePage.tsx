@@ -7,8 +7,9 @@
 import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { motion } from 'motion/react';
-import { CalendarDays, ChevronRight, Download, LayoutGrid, LineChart, ListChecks, RefreshCw, Sparkles, Sun } from 'lucide-react';
+import { CalendarDays, ChevronRight, LayoutGrid, LineChart, ListChecks, RefreshCw, Sparkles, Sun } from 'lucide-react';
 import { datedName, downloadCsv } from '../../../utils/csv';
+import { ExportMenu } from '../../ui/ExportMenu';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Progress, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Skeleton,
@@ -153,7 +154,7 @@ function HistoryTab({ ctl, members, attendance }: { ctl: Ctl; members: any[]; at
   return (
     <>
       <div className="mb-3 flex justify-end">
-        <Button variant="outline" size="sm" className="max-sm:h-11" onClick={exportCsv}><Download /> Export CSV</Button>
+        <ExportMenu size="sm" onCsv={exportCsv} />
       </div>
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {rows.map((r) => {

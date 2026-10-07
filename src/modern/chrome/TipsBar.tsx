@@ -40,7 +40,7 @@ export function TipsBar({ path }: { path: string }) {
   useEffect(() => setI(0), [path]);
   const tip = tips[i % tips.length];
   return (
-    <div role="note" aria-label="Tip" className="flex min-h-9 items-center gap-2 border-b border-line bg-secondary/40 px-4 text-xs text-text-muted sm:px-6 lg:px-8">
+    <div data-print-hide role="note" aria-label="Tip" className="flex min-h-9 items-center gap-2 border-b border-line bg-secondary/40 px-4 text-xs text-text-muted sm:px-6 lg:px-8">
       <Lightbulb className="size-3.5 shrink-0 text-accent" aria-hidden="true" />
       <p className="min-w-0 flex-1 truncate" title={tip} aria-live="polite">{tip}</p>
       {tips.length > 1 && (

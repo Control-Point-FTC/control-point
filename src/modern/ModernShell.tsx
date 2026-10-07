@@ -28,6 +28,7 @@ import { applyNavOrder, buildModernNav, isActive, moveId, type ModernNavItem, ty
 import { CommandMenu, type CommandAction } from './CommandMenu';
 import { useInterfaceMode } from './interfaceMode';
 import { RouteErrorBoundary } from '../components/ErrorBoundary';
+import { installPrintTheme } from './ui/ExportMenu';
 
 export interface ModernShellProps {
   visibleTabs: NavItemLike[];
@@ -93,6 +94,8 @@ export function ModernShell(props: ModernShellProps) {
   const tabAllowed = (id: string) => props.visibleTabs.some((v) => v.id === id);
   const mobileTabs = resolveMobileTabs(mobilePicks, tabAllowed);
   useEffect(() => writeJSON(COLLAPSE_KEY, collapsed), [collapsed]);
+  // Printing (Export → Print): light theme on paper, the reader's theme after.
+  useEffect(() => installPrintTheme(), []);
 
   // ⌘K / Ctrl+K: command menu. ⌘J / Ctrl+J: Bruno.
   useEffect(() => {
@@ -142,6 +145,7 @@ export function ModernShell(props: ModernShellProps) {
       <div className="modern-shell flex h-dvh w-full overflow-hidden bg-primary text-text-base" data-ui-shell="modern">
         {!isMobile && (
           <aside
+            data-print-hide
             aria-label="Sidebar"
             className={cn(
               'hidden md:flex flex-col shrink-0 border-r border-line bg-secondary/60 transition-[width] duration-150 ease-out',
@@ -578,7 +582,7 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, workspac
   workspaceId?: number | null;
 }) {
   return (
-    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4 pt-[env(safe-area-inset-top)] sm:px-6 lg:px-8 md:pt-0">
+    <header data-print-hide className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4 pt-[env(safe-area-inset-top)] sm:px-6 lg:px-8 md:pt-0">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
         {!isMobile && <span className="truncate text-text-muted">{teamName}</span>}
         {!isMobile && <span className="text-text-muted/50" aria-hidden="true">/</span>}
@@ -613,7 +617,7 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, workspac
 function MobileTabBar({ activeTab, onNavigate, onOpenBruno, onOpenMenu, unreadMentions, tabs }: ModernShellProps & { onOpenMenu: () => void; tabs: MobileTabChoice[] }) {
   const btn = 'relative flex flex-1 flex-col items-center justify-center gap-1 min-h-[60px] text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60';
   return (
-    <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-secondary/95 backdrop-blur-lg md:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+    <nav data-print-hide aria-label="Primary" className="fixed inset-x-0 bottom-0 z-40 flex border-t border-line bg-secondary/95 backdrop-blur-lg md:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
       {tabs.map((tab) => {
         const active = activeTab === tab.id;
         return (

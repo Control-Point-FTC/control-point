@@ -116,6 +116,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
             transition={{ type: 'spring', stiffness: 380, damping: 40 }}
             className="flex flex-col overflow-hidden border-border bg-background max-md:fixed max-md:right-0 max-md:top-0 max-md:z-50 max-md:h-full max-md:w-[400px] max-md:max-w-[94vw] max-md:border-l max-md:shadow-2xl md:relative md:z-30 md:h-full md:shrink-0 md:border-l"
             role="complementary"
+            data-print-hide
             aria-label={`${c.name} quick chat`}
           >
             {/* Fixed-width inner so the docking animation clips instead of squashing. */}
