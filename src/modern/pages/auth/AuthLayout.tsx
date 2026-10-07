@@ -129,12 +129,10 @@ function BrandPanel() {
   );
 }
 
-export function AuthLayout({ children, onBack, backLabel = 'Back', onClassic, wide }: {
+export function AuthLayout({ children, onBack, backLabel = 'Back', wide }: {
   children: ReactNode;
   onBack?: () => void;
   backLabel?: string;
-  /** Switch this device back to the Classic look. */
-  onClassic?: () => void;
   /** Wider form column (role picker). */
   wide?: boolean;
 }) {
@@ -147,14 +145,7 @@ export function AuthLayout({ children, onBack, backLabel = 'Back', onClassic, wi
             {onBack ? (
               <Button variant="ghost" onClick={onBack} className="-ml-2 h-11 px-3"><ArrowLeft /> {backLabel}</Button>
             ) : <span />}
-            <div className="flex items-center gap-3">
-              {onClassic && (
-                <button type="button" onClick={onClassic} className="min-h-11 px-1 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-                  Use the Classic look
-                </button>
-              )}
-              <BrandLogo className="size-8 rounded-lg lg:hidden" />
-            </div>
+            <BrandLogo className="size-8 rounded-lg lg:hidden" />
           </div>
           <div className="flex flex-1 items-center justify-center py-8">
             <motion.div

@@ -15,17 +15,16 @@ const OPTIONS = [
   { id: 'join' as const, icon: KeyRound, title: 'Join with a code', body: 'Use the access code from your team admin.' },
 ];
 
-export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSignOut, onClassic }: {
+export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSignOut }: {
   user: any;
   onCreateTeam: (name: string) => Promise<void>;
   onJoinTeam: (accessCode: string) => Promise<void>;
   onDeleteAccount: () => Promise<void>;
   onSignOut: () => void;
-  onClassic: () => void;
 }) {
   const t = useTeamless({ user, onCreateTeam, onJoinTeam, onDeleteAccount });
   return (
-    <AuthLayout onClassic={onClassic} wide>
+    <AuthLayout wide>
       <DialogHost />
       <AuthHeading
         title="You're not on a team yet"

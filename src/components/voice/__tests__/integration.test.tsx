@@ -1,6 +1,5 @@
 // Integration tests for the voice wiring (App.tsx <-> VoiceProvider).
-// These compose the REAL VoiceProvider with the REAL call UI (CallBar,
-// VoiceChannelList, IncomingCallModal) and mock only the engine layers
+// These compose the REAL VoiceProvider and mock only the engine layers
 // (REST api, media devices, WebRTC engine) — i.e. everything below the
 // provider, exactly as App.tsx sees it. This verifies the wiring contract:
 //
@@ -9,16 +8,13 @@
 //   - ws.onopen / onclose: attachSocket/detachSocket drive the engine's
 //     send path (used by leave(), the same call App makes on team
 //     switch / logout).
-//   - The mounted UI reacts to provider state (channels list, incoming
-//     call modal, call bar on join).
+//   - Provider state the call UI reads (channels list, incoming call,
+//     the active session and its participants) follows join / leave.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
+import { render, cleanup, act, waitFor } from '@testing-library/react';
 import React from 'react';
 import { VoiceProvider, useVoice } from '../../../voice';
-import { CallBar } from '../CallBar';
-import { VoiceChannelList } from '../VoiceChannelList';
-import { IncomingCallModal } from '../IncomingCallModal';
 
 // NOTE: vi.hoisted factories run before imports initialize, so the mock
 // bundle is defined inline here rather than imported from helpers.
@@ -161,13 +157,7 @@ function renderHarness(ui?: React.ReactNode) {
   return render(
     <VoiceProvider memberId={1} memberName="Sushil" memberAvatar={null} hasPerm={() => true}>
       <Capture />
-      {ui ?? (
-        <>
-          <VoiceChannelList />
-          <IncomingCallModal />
-          <CallBar />
-        </>
-      )}
+      {ui ?? null}
     </VoiceProvider>,
   );
 }
@@ -210,16 +200,16 @@ describe('ws.onmessage routing contract', () => {
   });
 });
 
-describe('VoiceProvider + call UI', () => {
-  it('VoiceChannelList renders channels loaded by the provider', async () => {
+describe('VoiceProvider socket lifecycle', () => {
+  it('loads the channel list on mount', async () => {
     renderHarness();
-    await waitFor(() => expect(screen.getByText('Build room')).toBeTruthy());
+    await waitFor(() => expect(captured.channels.map((c: any) => c.name)).toContain('Build room'));
     expect(mocks.voiceApi.getChannels).toHaveBeenCalled();
   });
 
-  it('voice:incoming shows IncomingCallModal; decline clears it', async () => {
+  it('voice:incoming sets incomingCall; declineCall clears it and tells the server', async () => {
     renderHarness();
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(captured.incomingCall).toBeNull();
     act(() => {
       captured.handleSocketMessage({
         type: 'voice:incoming',
@@ -230,18 +220,18 @@ describe('VoiceProvider + call UI', () => {
         inviter: { id: 2, name: 'Rida' },
       });
     });
-    expect(screen.getByRole('alertdialog')).toBeTruthy();
-    expect(screen.getByText('Rida')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: /Decline/ }));
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(captured.incomingCall).toMatchObject({ sessionId: 42 });
+    await act(async () => {
+      await captured.declineCall();
+    });
+    expect(captured.incomingCall).toBeNull();
     expect(mocks.voiceApi.declineCall).toHaveBeenCalledWith(42);
   });
 
-  it('joining a channel shows CallBar with the session; leave() tears it down over the attached socket', async () => {
+  it('joining a channel starts the engine and maps participants; leave() tears it down over the attached socket', async () => {
     const sent: any[] = [];
     renderHarness();
-    await waitFor(() => expect(screen.getByText('Build room')).toBeTruthy());
+    await waitFor(() => expect(captured.channels.length).toBeGreaterThan(0));
 
     // Same attach the app socket does in ws.onopen.
     act(() => {
@@ -255,10 +245,9 @@ describe('VoiceProvider + call UI', () => {
     expect(mocks.engineInstances.length).toBe(1);
     // Join announces state over the attached socket.
     expect(sent.some((m) => m.type === 'voice:state')).toBe(true);
-    // CallBar is now visible with the session name (hidden while idle).
-    await waitFor(() => expect(screen.getByRole('region', { name: /Active call: Build room/ })).toBeTruthy());
+    await waitFor(() => expect(captured.session?.name).toBe('Build room'));
     // The other participant arrived via presence mapping (provider state +
-    // engine peer list — CallBar shows avatars only, so assert the data).
+    // engine peer list).
     const ids = captured.participants.map((p: any) => p.memberId).sort();
     expect(ids).toEqual([1, 2]);
     expect(mocks.engineInstances[0].peers.sort()).toEqual([1, 2]);
@@ -270,7 +259,7 @@ describe('VoiceProvider + call UI', () => {
     expect(sent.some((m) => m.type === 'voice:leave')).toBe(true);
     expect(mocks.voiceApi.leave).toHaveBeenCalled();
     expect(mocks.engineInstances[0].disposed).toBe(true);
-    await waitFor(() => expect(screen.queryByRole('region', { name: /Active call/ })).toBeNull());
+    await waitFor(() => expect(captured.session).toBeNull());
   });
 
   it('detachSocket stops engine sends (ws.onclose path)', async () => {

@@ -35,7 +35,6 @@ export function CommandMenu({ open, onOpenChange, visibleTabs, onNavigate, teams
 }) {
   const { t } = useTranslation();
   const { theme, toggle } = useTheme();
-  const { setMode } = useInterfaceMode();
   const pages = useMemo(() => flattenNav(buildModernNav(visibleTabs)), [visibleTabs]);
   const run = (fn: () => void) => { onOpenChange(false); fn(); };
 
@@ -88,9 +87,6 @@ export function CommandMenu({ open, onOpenChange, visibleTabs, onNavigate, teams
           <CommandItem value="settings preferences" onSelect={() => run(onOpenSettings)}><Settings /> Settings</CommandItem>
           <CommandItem value="theme toggle dark light" onSelect={() => run(toggle)}>
             {theme === 'light' ? <Moon /> : <Sun />} {theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
-          </CommandItem>
-          <CommandItem value="classic legacy experience interface old" onSelect={() => run(() => void setMode('legacy'))}>
-            <ArrowLeftRight /> Switch to Classic experience
           </CommandItem>
         </CommandGroup>
       </CommandList>

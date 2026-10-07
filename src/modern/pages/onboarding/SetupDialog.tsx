@@ -73,19 +73,7 @@ export function SetupDialog(props: SetupWizardProps) {
   const confirmLeave = () => new Promise<boolean>((resolve) => setAsk(() => resolve));
   const answer = (ok: boolean) => { ask?.(ok); setAsk(null); };
   const w = useSetupWizard(props, confirmLeave);
-  const { mode, setMode } = useInterfaceMode();
   const { state, onStartTour } = props;
-  // Drafted: a failed save flips the look and back, remounting this dialog.
-  const [layoutError, setLayoutError] = useDraft<string | null>('onboarding:layout-error', null);
-  const pick = async (m: InterfaceMode) => {
-    if (m === mode) return;
-    setLayoutError(null);
-    // Only this setup (or its look-switched twin) may show the error.
-    if (!(await setMode(m)) && w.stillOpen()) {
-      setLayoutError("Couldn't save your layout. Check your connection and try again.");
-      notify("Couldn't save your layout.", 'error');
-    }
-  };
 
   return (
     <MotionConfig reducedMotion="user">
@@ -187,16 +175,6 @@ export function SetupDialog(props: SetupWizardProps) {
                           <Choice checked={w.theme === 'dark'} onClick={() => w.setTheme('dark')} title={<><Moon className="size-4" /> Dark</>} hint="Easy on the eyes" preview={themePreview('#0a0a0b', '#27272a')} />
                           <Choice checked={w.theme === 'light'} onClick={() => w.setTheme('light')} title={<><Sun className="size-4" /> Light</>} hint="Bright and clear" preview={themePreview('#ffffff', '#e4e4e7')} />
                         </div>
-                      </div>
-                      <div>
-                        <p className="mb-2 text-sm font-medium">Layout</p>
-                        <div role="radiogroup" aria-label="Layout" className="grid grid-cols-2 gap-3">
-                          <Choice checked={mode === 'modern'} onClick={() => void pick('modern')} title={<><LayoutDashboard className="size-4" /> Modern</>} hint="This look" preview={layoutPreview(true)} />
-                          <Choice checked={mode === 'legacy'} onClick={() => void pick('legacy')} title="Classic" hint="The original look" preview={layoutPreview(false)} />
-                        </div>
-                        {layoutError
-                          ? <p role="alert" className="mt-2 text-xs text-destructive">{layoutError}</p>
-                          : <p className="mt-2 text-xs text-muted-foreground">Both apply instantly. The theme is kept on this device; the layout is saved to your account.</p>}
                       </div>
                       <div className="flex items-center justify-between gap-2">
                         <Button variant="ghost" onClick={() => w.setStep(0)} className="h-11"><ArrowLeft /> Back</Button>

@@ -1,33 +1,8 @@
-// Signed-out look (2026 redesign, phase 9b). There is no account to read the
-// interface mode from yet, so the landing and auth screens follow the look this
-// device last used (InterfaceModeProvider mirrors it into localStorage), else
-// the app default. A link on the Modern screens switches back to Classic.
-import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+// Signed-out screens (landing, auth): Modern theme tokens + toasts while no
+// InterfaceModeProvider is mounted.
+import { useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { MotionConfig } from 'motion/react';
-import { DEFAULT_INTERFACE_MODE, isInterfaceMode, type InterfaceMode } from './interfaceMode';
 import { Toaster } from '../components/ui-kit';
-
-const KEY = 'cp-interface-mode';
-
-export function readDeviceMode(): InterfaceMode {
-  try {
-    const v = localStorage.getItem(KEY);
-    if (isInterfaceMode(v)) return v;
-  } catch { /* storage unavailable */ }
-  return DEFAULT_INTERFACE_MODE;
-}
-
-/** The signed-out look and a setter that remembers it on this device. */
-export function useSignedOutMode(signedIn: boolean) {
-  const [mode, setModeState] = useState<InterfaceMode>(readDeviceMode);
-  // Signing out: pick up the look the session just used.
-  useEffect(() => { if (!signedIn) setModeState(readDeviceMode()); }, [signedIn]);
-  const setMode = (next: InterfaceMode) => {
-    try { localStorage.setItem(KEY, next); } catch { /* storage unavailable */ }
-    setModeState(next);
-  };
-  return [mode, setMode] as const;
-}
 
 /**
  * Wraps a Modern signed-out screen: turns on the Modern theme tokens (scoped to

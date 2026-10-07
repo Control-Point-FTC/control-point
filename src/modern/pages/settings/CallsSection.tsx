@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { soundsEnabled, setSoundsEnabled } from '../../../utils/sounds';
-import { getCameraDefault, setCameraDefault, type CameraDefault } from '../../../components/SettingsModal';
+import { getCameraDefault, setCameraDefault, type CameraDefault } from '../../../components/voice/cameraDefault';
 import { DeviceSettings } from './DeviceSettings';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 

@@ -231,7 +231,6 @@ const FAQ = [
   { q: 'Who is Control Point for?', a: 'Robotics teams, built around FIRST Tech Challenge. Admins (coaches, mentors or captains) create the workspace, and members join with a code.' },
   { q: 'Do members need their own accounts?', a: 'Yes. Each person signs up (with email, or a Google, Discord or GitHub account where available) and joins your workspace with the access code. Their role decides what they can see and change.' },
   { q: 'Does it work on phones?', a: 'Yes. Every screen works on a phone, including QR check-in and the task board.' },
-  { q: 'Can I keep the look I am used to?', a: 'Yes. Control Point has a Classic look and this Modern one. You can switch any time in Settings, and your choice is saved to your account.' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -247,7 +246,7 @@ function useScrolled() {
   return scrolled;
 }
 
-export function ModernLanding({ onSignIn, onGetStarted, onClassic }: { onSignIn: () => void; onGetStarted: () => void; onClassic: () => void }) {
+export function ModernLanding({ onSignIn, onGetStarted }: { onSignIn: () => void; onGetStarted: () => void }) {
   const scrolled = useScrolled();
   return (
     <SignedOutModern>
@@ -372,7 +371,6 @@ export function ModernLanding({ onSignIn, onGetStarted, onClassic }: { onSignIn:
             <nav className="flex flex-wrap items-center justify-center gap-x-4" aria-label="Footer">
               <a href="/privacy" className="inline-flex min-h-11 items-center hover:text-foreground">Privacy</a>
               <a href="/terms" className="inline-flex min-h-11 items-center hover:text-foreground">Terms</a>
-              <button type="button" onClick={onClassic} className="inline-flex min-h-11 items-center hover:text-foreground">Use the Classic look</button>
             </nav>
           </div>
         </footer>

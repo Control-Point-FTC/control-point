@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEmailFile } from '../EmailImport';
+import { parseEmailFile } from '../emailParse';
 
 describe('parseEmailFile', () => {
   it('parses a plain-text email with To/Subject/Date headers', () => {
