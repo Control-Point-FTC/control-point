@@ -69,7 +69,7 @@ import { useTasksController } from './components/tasks/useTasksController';
 import { parseOutreachRows } from './components/outreach/parseOutreachRows';
 import type { CommandAction } from './modern/CommandMenu';
 import type { NotificationActions } from './modern/notifications';
-import { clearDrafts } from './modern/drafts';
+import { clearDrafts, setDraft } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { streamAttendanceInsights, streamActivitySummary } from './services/aiService';
@@ -2448,6 +2448,7 @@ export default function App() {
             onOpenBruno={handleBrunoButton}
             botName={botName}
             onOpenFeedback={() => setShowFeedback(true)}
+            onReportBug={() => { setDraft('feedback:category', 'bug'); setShowFeedback(true); }}
             onSetupGuide={openSetupGuide}
             onOpenWhatsNew={() => setWhatsNewOpen(true)}
             onStatusPick={(st) => void handleStatusPick(st)}

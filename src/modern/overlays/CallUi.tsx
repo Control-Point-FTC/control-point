@@ -5,6 +5,7 @@
 //   IncomingCall  — an alert dialog with a ringing avatar
 //   CallStage     — the expanded call: tiles or a featured stage, a control
 //                   dock at the bottom and a People sheet.
+import { useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   ArrowRightLeft, Check, ChevronDown, Expand, Headphones, Maximize, Mic, MicOff, Minimize, MonitorUp, Phone, PhoneOff, Pin, PinOff,
@@ -91,7 +92,14 @@ function MediaButtons({ size = 'size-5', compact = false }: { size?: string; com
 
 export function CallDock({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const { status, session, participants, setExpanded, leave } = useVoice();
-  if (!session || status === 'idle' || status === 'ended') return null;
+  const shown = !!session && status !== 'idle' && status !== 'ended';
+  // Reserve the dock's height at the bottom so the bug button and toasts sit above it.
+  useEffect(() => {
+    if (!shown) return;
+    document.documentElement.style.setProperty('--cp-call-dock', '72px');
+    return () => { document.documentElement.style.removeProperty('--cp-call-dock'); };
+  }, [shown]);
+  if (!shown || !session) return null;
   const others = participants.filter((p) => !p.isSelf).slice(0, 4);
   return (
     <TooltipProvider>

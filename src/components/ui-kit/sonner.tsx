@@ -8,6 +8,10 @@ export function Toaster(props: ToasterProps) {
     <SonnerToaster
       theme={theme === 'light' ? 'light' : 'dark'}
       position="bottom-right"
+      // Top lane of the bottom-right corner: above the bug button and any
+      // install banner / @mention card on screen (see index.css).
+      offset={{ bottom: 'calc(var(--cp-above-fab, 0px) + var(--cp-slot-banner, 0px) + var(--cp-slot-mention, 0px))', right: '1.5rem' }}
+      mobileOffset={{ bottom: 'calc(var(--cp-above-fab, 0px) + var(--cp-slot-banner, 0px) + var(--cp-slot-mention, 0px))' }}
       closeButton
       toastOptions={{
         classNames: {
