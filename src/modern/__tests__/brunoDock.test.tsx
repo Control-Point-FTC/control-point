@@ -8,7 +8,7 @@ const ai = vi.hoisted(() => ({ streamBuildHelper: vi.fn() }));
 vi.mock('../../services/aiService', async (orig) => ({ ...(await orig<object>()), ...ai }));
 
 import { InterfaceModeProvider } from '../interfaceMode';
-import { BrunoDock } from '../BrunoDock';
+import { BrunoDock, BRUNO_TIPS } from '../BrunoDock';
 import BrunoPanel from '../../components/BrunoPanel';
 import { clearDrafts, inEpoch } from '../drafts';
 import { BRUNO_OPEN_EVENT } from '../../services/brunoContext';
@@ -147,3 +147,38 @@ describe('Modern Bruno dock', () => {
   });
 });
 
+
+describe('Bruno dock layout (UX-13)', () => {
+  it('welcomes by name and keeps the capability statement and Try one prompts', async () => {
+    render(wrap(<BrunoDock {...props()} />));
+    expect(screen.getByRole('heading', { name: 'Hi Ada.' })).toBeInTheDocument();
+    expect(screen.getByText('Try one')).toBeInTheDocument();
+    const starters = screen.getAllByRole('button').filter((b) => b.closest('ul') && !b.getAttribute('aria-label'));
+    expect(starters.length).toBeGreaterThanOrEqual(3);
+    // No second toolbar row: answer length lives in the composer, Resources in the header.
+    expect(screen.getByRole('button', { name: 'Bruno output length' }).closest('form')).not.toBeNull();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Resources' }), { button: 0, ctrlKey: false });
+    expect(await screen.findByText('FTC resources')).toBeInTheDocument();
+  });
+
+  it('shows a tip that rotates while open', () => {
+    vi.useFakeTimers();
+    try {
+      render(wrap(<BrunoDock {...props()} />));
+      expect(screen.getByText(BRUNO_TIPS[0])).toBeInTheDocument();
+      act(() => { vi.advanceTimersByTime(9000); });
+      expect(screen.getByText(BRUNO_TIPS[1])).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Bruno dock and the corner', () => {
+  it('reserves the right edge while open so the bug button moves left of it', () => {
+    const r = render(wrap(<BrunoDock {...props()} />));
+    expect(document.documentElement.style.getPropertyValue('--cp-side-dock')).toBe('400px');
+    r.rerender(wrap(<BrunoDock {...props({ open: false })} />));
+    expect(document.documentElement.style.getPropertyValue('--cp-side-dock')).toBe('');
+  });
+});
