@@ -448,3 +448,23 @@ describe('Modern Settings — notifications body failures', () => {
     expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
   });
 });
+
+describe('Modern Settings — access code history', () => {
+  it('refreshes after a reveal, and a failed load says so instead of "nobody"', async () => {
+    let events = 0;
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/calendar/link') return json({ linked: false });
+      if (url === '/api/teams/1/access-code/reveal') return json({ access_code: 'JOIN-42' });
+      if (url === '/api/teams/1/access-code/events') {
+        events++;
+        return events === 1 ? json({ error: 'down' }, false) : json([{ action: 'view', created_at: new Date().toISOString(), member_name: 'Ada' }]);
+      }
+      return json({});
+    });
+    setup({ section: 'workspace' });
+    expect(await screen.findByText(/history couldn’t load/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    expect(await screen.findByText('JOIN-42')).toBeInTheDocument();
+    expect(await screen.findByText(/revealed the code/)).toBeInTheDocument();
+  });
+});

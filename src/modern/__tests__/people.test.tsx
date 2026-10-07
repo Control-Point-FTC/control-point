@@ -285,3 +285,15 @@ describe('Modern People — review regressions', () => {
   });
 });
 
+
+describe('Access code review regressions (M-2)', () => {
+  it('every Reveal and Copy fetches (and so logs) the current code', async () => {
+    setup({ url: '/teams?tab=workspaces' });
+    const reveal = () => api.apiFetch.mock.calls.filter((c) => c[0] === '/api/teams/1/access-code/reveal').length;
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    expect(await screen.findByText('JOIN42')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide access code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal access code' }));
+    await waitFor(() => expect(reveal()).toBe(2));
+  });
+});

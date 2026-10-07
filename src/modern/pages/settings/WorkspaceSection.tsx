@@ -141,7 +141,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
           </SettingsRow>
           {isAdmin && (<>
           <SettingsRow label="Access code" description="Hidden until you reveal it; each reveal is logged. People can also join by typing it.">
-            <AccessCode teamId={team.id} fresh={freshCode} />
+            <AccessCode teamId={team.id} fresh={freshCode} onRevealed={() => setHistoryVersion((v) => v + 1)} />
           </SettingsRow>
           <SettingsRow label="Code history" description="Who revealed or replaced the code recently." stack>
             <AccessCodeHistory teamId={team.id} version={historyVersion} />

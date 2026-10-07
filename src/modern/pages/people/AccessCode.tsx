@@ -8,9 +8,11 @@ import { Button } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { notify } from '../../../components/dialog';
 
-/** Reveal (logged) and copy a workspace's access code. `fresh` is a code the
- *  viewer just generated: it starts revealed, with no extra reveal logged. */
-export function AccessCode({ teamId, fresh, compact }: { teamId: number; fresh?: string | null; compact?: boolean }) {
+/** Reveal (logged) and copy a workspace's access code. Every Reveal and
+ *  Copy fetches the current code, so each is logged and never returns a code
+ *  someone has since replaced. `fresh` is a code the viewer just generated:
+ *  it starts revealed, with no extra reveal logged. */
+export function AccessCode({ teamId, fresh, compact, onRevealed }: { teamId: number; fresh?: string | null; compact?: boolean; onRevealed?: () => void }) {
   const [code, setCode] = useState<string | null>(fresh ?? null);
   const [shown, setShown] = useState(!!fresh);
   const [busy, setBusy] = useState(false);
@@ -20,13 +22,13 @@ export function AccessCode({ teamId, fresh, compact }: { teamId: number; fresh?:
   useEffect(() => { if (!fresh) { setCode(null); setShown(false); } }, [teamId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reveal = async (): Promise<string | null> => {
-    if (code) return code;
     setBusy(true);
     try {
       const res = await apiFetch(`/api/teams/${teamId}/access-code/reveal`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.access_code) throw new Error(data.error || 'Could not show the code.');
       setCode(data.access_code);
+      onRevealed?.();
       return data.access_code as string;
     } catch (e: any) {
       notify(e?.message || 'Could not show the code.', 'error');
@@ -71,17 +73,26 @@ interface CodeEvent { action: 'view' | 'regenerate'; created_at: string; member_
 /** Who revealed or replaced the code recently. `version` reloads it. */
 export function AccessCodeHistory({ teamId, version = 0 }: { teamId: number; version?: number }) {
   const [rows, setRows] = useState<CodeEvent[] | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
+    setFailed(false);
     void (async () => {
       try {
         const res = await apiFetch(`/api/teams/${teamId}/access-code/events`);
-        if (res.ok && live) setRows(await res.json());
-      } catch { /* offline: no history */ }
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        if (live) setRows(Array.isArray(data) ? data : []);
+      } catch {
+        if (live) setFailed(true);
+      }
     })();
     return () => { live = false; };
   }, [teamId, version]);
-  if (!rows?.length) return <p className="text-sm text-muted-foreground">Nobody has revealed or replaced the code yet.</p>;
+  // Only a successful, empty answer means "nobody yet".
+  if (failed && !rows) return <p className="text-sm text-muted-foreground">The code history couldn’t load. Check your connection and reopen Settings.</p>;
+  if (!rows) return <p className="text-sm text-muted-foreground">Loading history…</p>;
+  if (!rows.length) return <p className="text-sm text-muted-foreground">Nobody has revealed or replaced the code yet.</p>;
   return (
     <ul className="space-y-1 text-sm text-muted-foreground">
       {rows.slice(0, 5).map((r, i) => (
