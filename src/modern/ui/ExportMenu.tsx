@@ -15,7 +15,8 @@ export function ExportMenu({ onCsv, disabled, size, className }: { onCsv: () => 
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size={size} disabled={disabled} className={className} data-print-hide><Download /> Export</Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      {/* Portalled to <body>, so it needs its own print-hide. */}
+      <DropdownMenuContent align="end" data-print-hide>
         <DropdownMenuItem onSelect={onCsv}><FileSpreadsheet /> Download CSV</DropdownMenuItem>
         <DropdownMenuItem onSelect={printPage}><Printer /> Print or save as PDF</DropdownMenuItem>
       </DropdownMenuContent>

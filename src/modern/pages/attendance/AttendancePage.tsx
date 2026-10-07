@@ -154,7 +154,7 @@ function HistoryTab({ ctl, members, attendance }: { ctl: Ctl; members: any[]; at
   return (
     <>
       <div className="mb-3 flex justify-end">
-        <ExportMenu size="sm" onCsv={exportCsv} />
+        <ExportMenu size="sm" className="max-sm:h-11" onCsv={exportCsv} />
       </div>
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {rows.map((r) => {

@@ -108,7 +108,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
       {open && (
         <>
           {/* Phones: the dock is an overlay; tap outside to close. */}
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={onClose} aria-hidden="true" />
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={onClose} aria-hidden="true" data-print-hide />
           <motion.aside
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 400, opacity: 1 }}
