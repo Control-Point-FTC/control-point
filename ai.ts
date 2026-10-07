@@ -478,7 +478,8 @@ export const COACH_SYSTEM = `You are Control Point's AI Coach, a briefing assist
 - Start each section with a bold label on the same line, e.g. **Low stock:** detail here.
 - Put a blank line between sections so each part stands visually apart.
 - End with one **Focus this week:** recommendation.
-Under 220 words. No markdown tables, no headings.`;
+Under 220 words. No markdown tables, no headings.
+Ground every statement in the data you are given: use its counts, dates and weekdays exactly, and name the source in passing ("per the calendar", "on the task board"). Never mention tools or integrations that aren't in the data (Control Point has no Discord or Slack connection). If a section has nothing to report, skip it rather than guessing.`;
 
 export function buildCoachPrompt(digest: {
   openTasks: { title: string; status: string; due?: string }[];
@@ -487,17 +488,28 @@ export function buildCoachPrompt(digest: {
   budgetNet: number;
   lowStock: { name: string; quantity: number }[];
   memberCount: number;
+  /** Total open tasks (openTasks is only the soonest-due slice). */
+  openTaskTotal?: number;
+  /** WORKSPACE FACTS block (server/workspaceFacts.ts): authoritative numbers and dates. */
+  facts?: string;
 }): string {
-  const taskLines = digest.openTasks.slice(0, 12).map(
-    (t) => `- [${t.status}] ${t.title}${t.due ? ` (due ${t.due})` : ""}`
-  );
-  const stockLines = digest.lowStock.slice(0, 8).map((s) => `- ${s.name}: ${s.quantity} left`);
-  return [
-    `Team snapshot: ${digest.memberCount} members, ${digest.openTasks.length} open tasks (${digest.overdueTasks} overdue), ${digest.recentMessages} messages in the last 7 days, budget net $${digest.budgetNet.toFixed(2)}.`,
-    `Open tasks:\n${taskLines.join("\n") || "(none)"}`,
-    `Low-stock parts:\n${stockLines.join("\n") || "(none)"}`,
-    `Write the briefing.`,
-  ].join("\n\n");
+  // Member-written text is quoted: it's data for the briefing, not instructions.
+  const q = (v: string, max = 120) => JSON.stringify(String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max));
+  const stockLines = digest.lowStock.slice(0, 8).map((s) => `- ${q(s.name, 80)}: ${s.quantity} left`);
+  const total = digest.openTaskTotal ?? digest.openTasks.length;
+  const parts: string[] = [];
+  if (digest.facts) {
+    // The facts are the single source for counts, dates and overdue status
+    // (computed in the team's timezone) — no second, differently-computed set.
+    parts.push(digest.facts);
+  } else {
+    const taskLines = digest.openTasks.slice(0, 12).map((t) => `- [${t.status}] ${q(t.title)}${t.due ? ` (due ${t.due})` : ""}`);
+    parts.push(`Open tasks (showing ${taskLines.length} of ${total}):\n${taskLines.join("\n") || "(none)"}`);
+    parts.push(`Team snapshot: ${digest.memberCount} active members, ${total} open tasks (${digest.overdueTasks} overdue), ${digest.recentMessages} messages in Control Point's team chat in the last 7 days, budget net $${digest.budgetNet.toFixed(2)}.`);
+  }
+  parts.push(`Low-stock parts (per inventory):\n${stockLines.join("\n") || "(none)"}`);
+  parts.push(`Write the briefing.`);
+  return parts.join("\n\n");
 }
 
 export { getMaxTokens };

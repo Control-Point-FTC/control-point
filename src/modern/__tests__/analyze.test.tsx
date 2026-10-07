@@ -73,14 +73,17 @@ const tab = (name: RegExp) => fireEvent.mouseDown(screen.getByRole('tab', { name
 const teamOrder = () => screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[1].textContent?.match(/^\d+/)?.[0]);
 
 describe('Modern Analyze', () => {
-  it('greets with Bruno, sets the scouting context and has no compare UI', async () => {
+  it('sets the scouting context without opening Bruno unasked (UX-3), and has no compare UI', async () => {
     const opened: BrunoOpenDetail[] = [];
     const h = (e: Event) => opened.push((e as CustomEvent<BrunoOpenDetail>).detail);
     window.addEventListener(BRUNO_OPEN_EVENT, h);
     const { unmount } = setup();
-    await waitFor(() => expect(opened.length).toBeGreaterThan(0));
-    expect(opened[0].greeting).toMatch(/scouting priorities/);
     await waitFor(() => expect(getScoutingContext()).toMatchObject({ mode: 'analyze', season: 2025, eventCode: 'USNJQ1' }));
+    expect(opened).toHaveLength(0);
+    // The explicit button still opens Bruno with the scouting greeting.
+    fireEvent.click(screen.getByRole('button', { name: /Ask Bruno/ }));
+    await waitFor(() => expect(opened.length).toBe(1));
+    expect(opened[0].greeting).toMatch(/scouting priorities/);
     expect(screen.queryByText(/compare/i)).not.toBeInTheDocument();
     unmount();
     window.removeEventListener(BRUNO_OPEN_EVENT, h);
