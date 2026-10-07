@@ -7,8 +7,26 @@ import { motion } from 'motion/react';
 // Monaco (via CodeView), and three.js (via CadModelViewer, already lazy).
 const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
 const CodePage = React.lazy(() => import('./modern/pages/code/CodePage').then(m => ({ default: m.CodePage })));
-import { OwnerPage } from './modern/pages/owner/OwnerPage';
-import { CheckinPage } from './modern/pages/attendance/CheckinPage';
+// Route-level code splitting: each page downloads when first opened (the
+// dashboard stays in the main bundle so the first screen paints at once).
+const OwnerPage = React.lazy(() => import('./modern/pages/owner/OwnerPage').then((m) => ({ default: m.OwnerPage })));
+const CheckinPage = React.lazy(() => import('./modern/pages/attendance/CheckinPage').then((m) => ({ default: m.CheckinPage })));
+const PredictPage = React.lazy(() => import('./modern/pages/predict/PredictPage').then((m) => ({ default: m.PredictPage })));
+const TeamStatsPage = React.lazy(() => import('./modern/pages/stats/TeamStatsPage').then((m) => ({ default: m.TeamStatsPage })));
+const InboxPage = React.lazy(() => import('./modern/pages/InboxPage').then((m) => ({ default: m.InboxPage })));
+const TasksPage = React.lazy(() => import('./modern/pages/tasks/TasksPage').then((m) => ({ default: m.TasksPage })));
+const CalendarPage = React.lazy(() => import('./modern/pages/calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })));
+const AttendancePage = React.lazy(() => import('./modern/pages/attendance/AttendancePage').then((m) => ({ default: m.AttendancePage })));
+const PeoplePage = React.lazy(() => import('./modern/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })));
+const CommunicationPage = React.lazy(() => import('./modern/pages/communication/CommunicationPage').then((m) => ({ default: m.CommunicationPage })));
+const MessagesPage = React.lazy(() => import('./modern/pages/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })));
+const BrunoPage = React.lazy(() => import('./modern/pages/bruno/BrunoPage').then((m) => ({ default: m.BrunoPage })));
+const SettingsPage = React.lazy(() => import('./modern/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const BudgetPage = React.lazy(() => import('./modern/pages/budget/BudgetPage').then((m) => ({ default: m.BudgetPage })));
+const InventoryPage = React.lazy(() => import('./modern/pages/inventory/InventoryPage').then((m) => ({ default: m.InventoryPage })));
+const OutreachPage = React.lazy(() => import('./modern/pages/outreach/OutreachPage').then((m) => ({ default: m.OutreachPage })));
+const ResourcesPage = React.lazy(() => import('./modern/pages/resources/ResourcesPage').then((m) => ({ default: m.ResourcesPage })));
+const CadPage = React.lazy(() => import('./modern/pages/cad/CadPage').then((m) => ({ default: m.CadPage })));
 
 /** Lightweight placeholder while a heavy lazy chunk (charts, code editor) loads. */
 function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
@@ -20,8 +38,6 @@ function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
 }
 import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
 import { SetupChecklist, fetchOnboardingState, saveOnboardingState, defaultOnboardingState, shouldShowWelcome, shouldShowChecklist, firstIncompleteWizardStep, resolveTourSteps, type OnboardingState } from './components/onboarding';
-import { PredictPage } from './modern/pages/predict/PredictPage';
-import { TeamStatsPage } from './modern/pages/stats/TeamStatsPage';
 import { clearFtcCache } from './components/ftcCache';
 import { clearScoutCache } from './services/ftcScoutApi';
 import { clearPredictCache } from './services/predictApi';
@@ -46,23 +62,11 @@ import { clearInvite, inviteTokenFromPath, joinWithCodeOrLink, peekInvite, stash
 import { JOIN_REQUESTS_EVENT } from './modern/pages/people/JoinRequestsCard';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
-import { InboxPage } from './modern/pages/InboxPage';
-import { TasksPage } from './modern/pages/tasks/TasksPage';
 import { CompletionDialog } from './modern/pages/tasks/TaskDialogs';
-import { CalendarPage } from './modern/pages/calendar/CalendarPage';
-import { AttendancePage } from './modern/pages/attendance/AttendancePage';
-import { PeoplePage } from './modern/pages/people/PeoplePage';
-import { CommunicationPage } from './modern/pages/communication/CommunicationPage';
-import { MessagesPage } from './modern/pages/messages/MessagesPage';
-import { BrunoPage } from './modern/pages/bruno/BrunoPage';
 import { BrunoPanelSwitch } from './modern/BrunoDock';
-import { SettingsPage } from './modern/pages/settings/SettingsPage';
 import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController } from './components/tasks/useTasksController';
-import { BudgetPage } from './modern/pages/budget/BudgetPage';
-import { InventoryPage } from './modern/pages/inventory/InventoryPage';
 import { parseOutreachRows } from './components/outreach/parseOutreachRows';
-import { OutreachPage } from './modern/pages/outreach/OutreachPage';
 import type { CommandAction } from './modern/CommandMenu';
 import type { NotificationActions } from './modern/notifications';
 import { clearDrafts } from './modern/drafts';
@@ -70,8 +74,6 @@ import { clearDrafts } from './modern/drafts';
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { streamAttendanceInsights, streamActivitySummary } from './services/aiService';
 import { apiFetch, assetUrl } from './services/api';
-import { ResourcesPage } from './modern/pages/resources/ResourcesPage';
-import { CadPage } from './modern/pages/cad/CadPage';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import LegalPage from './Legal';
@@ -330,6 +332,16 @@ function useIsMobile() {
 
 // Sequence for refreshAttendance's latest-wins check (App is a singleton).
 let attendanceRefreshSeq = 0;
+
+/** Shown for the moment a page's code is downloading (first visit only). */
+function PageLoadingFallback() {
+  return (
+    <div role="status" aria-live="polite" className="flex min-h-[40vh] items-center justify-center text-sm text-muted-foreground">
+      <span className="mr-2 inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+      Loading…
+    </div>
+  );
+}
 
 export default function App() {
   const { t } = useTranslation();
@@ -2129,6 +2141,7 @@ export default function App() {
       ? <DashboardView {...viewProps} teams={teams} data={{ attendance, tasks, budget, outreach, insights, summary, members, events }} />
       : <StudentDashboardView {...viewProps} />;
     return (
+      <Suspense fallback={<PageLoadingFallback />}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<HomePage {...viewProps} notifications={notifications} unreadMentions={unreadMentions} />} />
@@ -2144,7 +2157,7 @@ export default function App() {
         <Route path="/budget" element={<BudgetPage {...viewProps} />} />
         <Route path="/inventory" element={<InventoryPage {...viewProps} />} />
         <Route path="/outreach" element={<OutreachPage {...viewProps} />} />
-        <Route path="/code" element={<Suspense fallback={<ChartLoadingFallback label="Loading code editor…" />}><CodePage {...viewProps} /></Suspense>} />
+        <Route path="/code" element={<CodePage {...viewProps} />} />
         <Route path="/cad" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-docs" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-reviews" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
@@ -2162,6 +2175,7 @@ export default function App() {
         <Route path="/join/:token" element={<p className="p-8 text-sm text-muted-foreground">Joining workspace…</p>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
+      </Suspense>
     );
   };
 
