@@ -376,3 +376,30 @@ describe('Modern Settings — notifications save order', () => {
     expect(screen.getByRole('radio', { name: 'Off' })).toHaveAttribute('aria-checked', 'true');
   });
 });
+
+describe('Modern Settings — notifications across reopen', () => {
+  it('a save queued before closing runs before one made after reopening', async () => {
+    const order: string[] = [];
+    let releaseFirst: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') {
+        const body = JSON.parse(init.body);
+        order.push(JSON.stringify(body));
+        if (body.team_updates === 'off') return new Promise((res) => { releaseFirst = () => res({ ok: true, json: async () => ({ team_updates: 'off', everyone_pings: true }) }); });
+        return json({ team_updates: 'off', everyone_pings: !!body.everyone_pings });
+      }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    const first = setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('switch', { name: '@everyone and @here' })); // queued behind the slow one
+    await waitFor(() => expect(order.length).toBe(1)); // the slow save is in flight
+    first.unmount();
+    setup({ section: 'notifications' });
+    await act(async () => { releaseFirst(); });
+    fireEvent.click(await screen.findByRole('switch', { name: '@everyone and @here' }));
+    await waitFor(() => expect(order.length).toBe(3));
+    expect(order).toEqual(['{"team_updates":"off"}', '{"everyone_pings":false}', expect.stringContaining('everyone_pings')]);
+  });
+});

@@ -11,6 +11,16 @@ import { SettingsGroup, SettingsRow } from './SettingsPage';
 type Mode = 'instant' | 'digest' | 'off';
 interface Prefs { team_updates: Mode; everyone_pings: boolean }
 
+// One save queue for the whole app, not per mounted section: leaving and
+// reopening Notifications can't let an older queued save land after a newer
+// one, and a reopened section reads the prefs only after pending saves settle.
+let saveQueue: Promise<unknown> = Promise.resolve();
+const enqueue = <T,>(job: () => Promise<T>): Promise<T> => {
+  const run = saveQueue.then(job, job);
+  saveQueue = run.catch(() => undefined);
+  return run;
+};
+
 export function NotificationsSection() {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [failed, setFailed] = useState(false);
@@ -18,12 +28,11 @@ export function NotificationsSection() {
   // order they were made and the last one is always the truth. A failure
   // goes back to the last values the server confirmed.
   const confirmed = useRef<Prefs | null>(null);
-  const chain = useRef<Promise<void>>(Promise.resolve());
   const pending = useRef(0);
 
   useEffect(() => {
     let live = true;
-    void (async () => {
+    void enqueue(async () => {
       try {
         const res = await apiFetch('/api/notification-prefs');
         if (!res.ok) throw new Error();
@@ -32,7 +41,7 @@ export function NotificationsSection() {
       } catch {
         if (live) setFailed(true);
       }
-    })();
+    });
     return () => { live = false; };
   }, []);
 
@@ -40,7 +49,7 @@ export function NotificationsSection() {
     if (!prefs) return;
     setPrefs((p) => (p ? { ...p, ...patch } : p));
     pending.current++;
-    chain.current = chain.current.then(async () => {
+    void enqueue(async () => {
       try {
         const res = await apiFetch('/api/notification-prefs', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
