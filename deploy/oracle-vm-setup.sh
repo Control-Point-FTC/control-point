@@ -139,6 +139,16 @@ write_nginx_site() {
     # Largest legit request: CAD snapshot (25MiB model + 25MiB screenshot) plus multipart framing.
     client_max_body_size 64m;
 
+    # API JSON is compressed here (static assets arrive pre-compressed from
+    # the app with Content-Encoding set, which nginx leaves alone). Streamed
+    # text/plain responses (Bruno) are excluded so they aren't buffered.
+    gzip on;
+    gzip_proxied any;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types application/json application/manifest+json;
+
     location / {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;

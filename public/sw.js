@@ -1,46 +1,89 @@
-// Control Point service worker — basic offline support.
-// Caches the app shell so the app loads fast and works offline-ish.
-// Bump to drop cached static files (e.g. after the app icons change).
-const CACHE = 'control-point-v2';
+// Control Point service worker.
+//
+// - Page loads (navigations): network first, so a deploy is picked up
+//   immediately; the last good copy of the app shell is kept and served when
+//   the network is down (competition venues, school Wi-Fi).
+// - /assets/* (content-hashed, never change): cache first.
+// - Other same-origin static files (icons, fonts, manifest): served from
+//   cache while a fresh copy is fetched in the background.
+// - Never cached: /api/* (live data), /uploads/* (user files), other origins.
+// Bump CACHE to drop everything cached by an older worker.
+const CACHE = 'control-point-v3';
+const SHELL = '/index.html';
 
 self.addEventListener('install', (event) => {
-  // Activate immediately
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => fetch(new Request('/', { cache: 'reload' })).then((res) => (res.ok ? cache.put(SHELL, res) : undefined)))
+      .catch(() => { /* offline install: the shell is cached on the first navigation instead */ })
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
-// Network-first for API, cache-first for static assets
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-  // Never cache API calls
-  if (url.pathname.startsWith('/api/')) return;
-  // Only handle GET
-  if (event.request.method !== 'GET') return;
+function isStaticAsset(url) {
+  return /\.(png|jpe?g|svg|ico|webp|woff2?|webmanifest|wasm)$/.test(url.pathname);
+}
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((res) => {
-        // Cache successful static responses
-        if (res.ok && (url.pathname.startsWith('/assets/') || url.pathname.match(/\.(png|jpg|svg|woff2?|css|js)$/))) {
-          const clone = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, clone));
-        }
-        return res;
-      }).catch(() => {
-        // Offline fallback: serve index.html for navigation
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-        throw new Error('offline');
-      });
-    })
-  );
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) return;
+
+  if (req.mode === 'navigate') {
+    // Take the offline copy before the page starts reading the body.
+    let shellCopy = null;
+    const network = fetch(req).then((res) => {
+      if (res.ok) shellCopy = res.clone();
+      return res;
+    });
+    event.respondWith(
+      network.catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
+    );
+    // Keep the worker alive until the offline copy of the shell is saved.
+    event.waitUntil(
+      network.then(() => (shellCopy ? caches.open(CACHE).then((cache) => cache.put(SHELL, shellCopy)) : undefined)).catch(() => {})
+    );
+    return;
+  }
+
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then((res) => {
+          if (res.ok) {
+            // Clone now, before the page starts reading the body.
+            const copy = res.clone();
+            event.waitUntil(caches.open(CACHE).then((cache) => cache.put(req, copy)));
+          }
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
+  if (isStaticAsset(url)) {
+    // Stale-while-revalidate; the refresh is kept alive with waitUntil. The
+    // copy is taken before the response is handed to the page.
+    const refresh = fetch(req).then((res) => {
+      if (!res.ok) return res;
+      const copy = res.clone();
+      return caches.open(CACHE).then((cache) => cache.put(req, copy)).then(() => res);
+    });
+    event.waitUntil(refresh.catch(() => {}));
+    event.respondWith(
+      caches.match(req).then((cached) => cached || refresh.catch(() => Response.error()))
+    );
+  }
 });
