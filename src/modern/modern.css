@@ -129,5 +129,8 @@ html[data-ui="modern"] .m-canvas {
   html[data-ui="modern"] .m-canvas { background: none !important; }
   html[data-ui="modern"] *, html[data-ui="modern"] *::before, html[data-ui="modern"] *::after { animation: none !important; transition: none !important; }
   html[data-ui="modern"] li, html[data-ui="modern"] tr { break-inside: avoid; }
+  /* Rows mounted just before printing (long lists render in full) may still
+     be at their entrance animation's start; print them as they'll look. */
+  html[data-ui="modern"] li, html[data-ui="modern"] tr { opacity: 1 !important; transform: none !important; }
   @page { margin: 14mm; }
 }

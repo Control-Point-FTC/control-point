@@ -8,6 +8,7 @@ import { useState } from 'react';
 import { Boxes, Edit2, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
 import { datedName, downloadCsv } from '../../../utils/csv';
 import { ExportMenu } from '../../ui/ExportMenu';
+import { LoadMore, Spacer, useIncrementalGroups, useVirtualRows } from '../../ui/windowing';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -27,6 +28,10 @@ const money = (n: number) => `$${(n || 0).toLocaleString(undefined, { maximumFra
 export function InventoryPage({ inventory, setInventory, teams, refresh, currentUser, hasScope }: any) {
   const ctl = useInventoryController({ inventory, setInventory, teams, refresh, currentUser, hasScope });
   const [layout, setLayout] = useState<'grid' | 'table'>('grid');
+  // Long inventories: the table renders only rows near the screen; the card
+  // grid shows 60 and adds more as you scroll. A new search starts over.
+  const vr = useVirtualRows(layout === 'table' ? ctl.filteredParts.length : 0, 49);
+  const inc = useIncrementalGroups(60, `${ctl.searchTerm}|${ctl.filterCategory}|${layout}`);
   const units = inventory.reduce((a: number, p: any) => a + (Number(p.quantity) || 0), 0);
   const uncategorized = inventory.some((p: any) => !p.category);
   return (
@@ -97,9 +102,10 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
             <TableHeader>
               <TableRow><TableHead>Name</TableHead><TableHead>SKU</TableHead><TableHead>Part #</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Category</TableHead><TableHead className="text-right">Value</TableHead>{ctl.canManage && <TableHead><span className="sr-only">Actions</span></TableHead>}</TableRow>
             </TableHeader>
-            <TableBody>
-              {ctl.filteredParts.map((p: any) => (
-                <TableRow key={p.id} data-cm-type="inventory-part" data-cm-id={p.id}>
+            <TableBody ref={vr.ref as any}>
+              <Spacer height={vr.paddingTop} colSpan={7} />
+              {vr.rows(ctl.filteredParts).map(({ item: p, rowProps }: { item: any; rowProps: Record<string, unknown> }) => (
+                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id}>
                   <TableCell className="font-medium">{p.name}</TableCell>
                   <TableCell className="font-mono text-xs text-accent">{p.sku}</TableCell>
                   <TableCell className="text-muted-foreground">{p.part_number || '—'}</TableCell>
@@ -109,12 +115,13 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
                   {ctl.canManage && <TableCell className="text-right"><PartMenu ctl={ctl} part={p} /></TableCell>}
                 </TableRow>
               ))}
+              <Spacer height={vr.paddingBottom} colSpan={7} />
             </TableBody>
           </Table>
         </div>
-      ) : (
+      ) : (<>
         <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {ctl.filteredParts.map((p: any) => (
+          {inc.slice('grid', ctl.filteredParts).map((p: any) => (
             <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} className="group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40">
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
@@ -136,7 +143,8 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
             </StaggerItem>
           ))}
         </Stagger>
-      )}
+        <LoadMore hidden={inc.hidden('grid', ctl.filteredParts.length)} onMore={() => inc.more('grid')} />
+      </>)}
 
       <PartSheet ctl={ctl} teams={teams} />
       <InvoiceReview ctl={ctl} />

@@ -11,6 +11,7 @@ import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
+import { LoadMore, Spacer, useIncrementalGroups, useVirtualRows } from '../../ui/windowing';
 import { notify } from '../../../components/dialog';
 import { cn } from '../../../components/cn';
 import {
@@ -139,7 +140,7 @@ export function TasksPage(props: any) {
       </PageHeader>
 
       {view === 'board' && (
-        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} />
+        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} />
       )}
       {view === 'list' && (
         visible.length === 0
@@ -176,11 +177,16 @@ function DueChip({ task }: { task: any }) {
   );
 }
 
-function Board({ tasks, ctl, assigneesOf, onOpen }: {
-  tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void;
+function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
+  tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
+  // Long columns show 40 cards, then more as you scroll (audit: scale); a new
+  // search or filter starts over. Cards dropped into a column stay in view.
+  const inc = useIncrementalGroups(40, filterKey);
+  const [moved, setMoved] = useState<Set<number>>(() => new Set());
+  const keepMoved = (t: any) => moved.has(t.id);
   return (
     <LayoutGroup>
       <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
@@ -198,7 +204,10 @@ function Board({ tasks, ctl, assigneesOf, onOpen }: {
                 const id = dragId;
                 setDragId(null); setOverCol(null);
                 const task = tasks.find((t) => t.id === id);
-                if (task && task.status !== col.id) void ctl.updateStatus(task.id, col.id);
+                if (task && task.status !== col.id) {
+                  setMoved((s) => new Set(s).add(task.id));
+                  void ctl.updateStatus(task.id, col.id);
+                }
               }}
               className={cn(
                 'flex w-[82vw] shrink-0 snap-start flex-col rounded-xl bg-muted/40 p-2 transition-colors sm:w-80 md:w-auto',
@@ -215,7 +224,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen }: {
               </header>
               <ul className="flex min-h-24 flex-col gap-2">
                 <AnimatePresence initial={false}>
-                  {items.map((t) => {
+                  {inc.slice(col.id, items, keepMoved).map((t) => {
                     const people = assigneesOf(t);
                     return (
                       <motion.li
@@ -252,6 +261,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen }: {
                     );
                   })}
                 </AnimatePresence>
+                <LoadMore as="li" hidden={inc.hidden(col.id, items, keepMoved)} onMore={() => inc.more(col.id)} />
                 {items.length === 0 && (
                   <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
                     {col.id === 'done' ? 'Finished tasks land here' : 'Nothing here'}
@@ -275,6 +285,8 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
 }) {
   const order: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2 };
   const sorted = [...tasks].sort((a, b) => (order[a.status] - order[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
+  // Only the rows near the screen are rendered once the list is long.
+  const vr = useVirtualRows(sorted.length, 57);
   return (
     <div className="overflow-hidden rounded-xl border border-border">
       <Table>
@@ -286,9 +298,10 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
             <TableHead className="w-40">Status</TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {sorted.map((t) => (
-            <TableRow key={t.id} data-cm-type="task-card" data-cm-id={t.id} className="cursor-pointer" onClick={() => onOpen(t.id)}>
+        <TableBody ref={vr.ref as any}>
+          <Spacer height={vr.paddingTop} colSpan={4} />
+          {vr.rows(sorted).map(({ item: t, rowProps }) => (
+            <TableRow key={t.id} {...rowProps} data-cm-type="task-card" data-cm-id={t.id} className="cursor-pointer" onClick={() => onOpen(t.id)}>
               <TableCell>
                 <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(t.id); }} className="text-left font-medium outline-none focus-visible:underline">
                   {t.title}
@@ -312,6 +325,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
               </TableCell>
             </TableRow>
           ))}
+          <Spacer height={vr.paddingBottom} colSpan={4} />
         </TableBody>
       </Table>
     </div>
