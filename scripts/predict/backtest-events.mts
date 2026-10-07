@@ -8,12 +8,15 @@
 // Awards use the real results ("oracle") so this isolates the match /
 // selection / playoff model; the award model is tested separately.
 //
-//   npx tsx scripts/predict/backtest-events.mts --season 2024 [--runs 2000] [--limit 0] [--fit-pick] [--fit-bonus]
+//   npx tsx scripts/predict/backtest-events.mts --season 2024 [--runs 2000] [--limit 0] [--fit-pick] [--fit-bonus] [--pick-file f] [--out f]
+//
+// --pick-file: pick model to write (with --fit-pick) or read (default .cache/predict/pick-2024.json).
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadSeason } from "./load.mts";
 import { RatingBook, npOf } from "../../server/predict/rating.ts";
-import { simulateEvent, DEFAULT_PICK, type BonusModel, type PickModel, type QualMatch } from "../../server/predict/sim.ts";
+import { simulateEvent, pickWeights, DEFAULT_PICK, type BonusModel, type PickModel, type QualMatch } from "../../server/predict/sim.ts";
+import { allianceCount } from "../../server/predict/rules.ts";
 import { brier, calibration, ece, logLoss, type ProbOutcome } from "../../server/predict/metrics.ts";
 import type { EventRecord, MatchRecord, TeamRating } from "../../server/predict/types.ts";
 import { awardFeatures, indexAwards, sampleAwards, MODELLED_AWARDS, type AwardModel, type AwardRecord } from "../../server/predict/awards.ts";
@@ -129,11 +132,12 @@ function pickLogLik(pm: PickModel, list: { ranked: number[]; alliances: number[]
   for (const ev of list) {
     const n = ev.ranked.length, rankOf = new Map(ev.ranked.map((t, i) => [t, i + 1]));
     const taken = new Set<number>();
-    for (const al of ev.alliances) {
+    const A = allianceCount(n);
+    for (const [k, al] of ev.alliances.entries()) {
       if (al.length < 2) continue;
       taken.add(al[0]);
       const cands = ev.ranked.filter((t) => !taken.has(t));
-      const w = cands.map((t) => Math.exp((ev.strength.get(t) ?? 0) / pm.tau - pm.rankWeight * (rankOf.get(t)! / n)));
+      const w = pickWeights(pm, cands, k, A, (t) => ev.strength.get(t) ?? 0, (t) => rankOf.get(t)!, n);
       const sum = w.reduce((x, y) => x + y, 0);
       const i = cands.indexOf(al[1]);
       if (i >= 0) ll += Math.log(Math.max(1e-12, w[i] / sum));
@@ -144,7 +148,7 @@ function pickLogLik(pm: PickModel, list: { ranked: number[]; alliances: number[]
 }
 
 let pick: PickModel = DEFAULT_PICK;
-const pickFile = ".cache/predict/pick-2024.json";
+const pickFile = arg("pick-file") ?? ".cache/predict/pick-2024.json";
 const work = events.filter((e) => snapPre.has(e.code) && snapQuals.has(e.code)).map((e) => ({ e, off: official(e.code, e) })).filter((x) => x.off);
 if (process.argv.includes("--fit-pick")) {
   const list = work.filter((x) => x.off!.alliances.length && x.e.ranks.size >= 6).map(({ e, off }) => ({
@@ -153,28 +157,50 @@ if (process.argv.includes("--fit-pick")) {
     strength: new Map([...snapQuals.get(e.code)!.entries()].map(([t, r]) => [t, npOf(r)])),
   }));
   let best = { pm: DEFAULT_PICK, ll: -Infinity };
+  const accepts = process.argv.includes("--no-declines") ? [1] : [1, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.1, 0.05];
+  for (const tau of [3, 5, 8, 12, 18, 25, 35, 50]) for (const rankWeight of [0, 1, 2, 3, 4, 6]) for (const captainAccept of accepts) {
+    const pm: PickModel = captainAccept === 1 ? { tau, rankWeight } : { tau, rankWeight, captainAccept };
+    const ll = pickLogLik(pm, list);
+    if (ll > best.ll) best = { pm, ll };
+  }
+  // For comparison: the best model without declines.
+  let noDecline = { pm: DEFAULT_PICK, ll: -Infinity };
   for (const tau of [3, 5, 8, 12, 18, 25, 35, 50]) for (const rankWeight of [0, 1, 2, 3, 4, 6]) {
     const ll = pickLogLik({ tau, rankWeight }, list);
-    if (ll > best.ll) best = { pm: { tau, rankWeight }, ll };
+    if (ll > noDecline.ll) noDecline = { pm: { tau, rankWeight }, ll };
   }
+  console.error(`best without declines: ${JSON.stringify(noDecline)}`);
   // Top-3 hit rate: was the real first pick among the model's 3 likeliest?
   let hit = 0, tot = 0;
   for (const ev of list) {
     const n = ev.ranked.length, rankOf = new Map(ev.ranked.map((t, i) => [t, i + 1]));
     const taken = new Set<number>();
-    for (const al of ev.alliances) {
+    const A = allianceCount(n);
+    for (const [k, al] of ev.alliances.entries()) {
       if (al.length < 2) continue;
       taken.add(al[0]);
-      const cands = ev.ranked.filter((t) => !taken.has(t)).map((t) => ({ t, s: (ev.strength.get(t) ?? 0) / best.pm.tau - best.pm.rankWeight * (rankOf.get(t)! / n) }));
+      const ts = ev.ranked.filter((t) => !taken.has(t));
+      const w = pickWeights(best.pm, ts, k, A, (t) => ev.strength.get(t) ?? 0, (t) => rankOf.get(t)!, n);
+      const cands = ts.map((t, i) => ({ t, s: w[i] }));
       cands.sort((x, y) => y.s - x.s);
       tot++; if (cands.slice(0, 3).some((c) => c.t === al[1])) hit++;
       taken.add(al[1]);
     }
   }
   pick = best.pm;
-  writeFileSync(pickFile, JSON.stringify({ pick, logLik: best.ll, top3: hit / tot, picks: tot }, null, 1));
+  writeFileSync(pickFile, JSON.stringify({ pick, logLik: best.ll, top3: hit / tot, picks: tot, noDecline }, null, 1));
   console.error(`pick model ${JSON.stringify(pick)} — real pick in model's top 3: ${(100 * hit / tot).toFixed(1)}% of ${tot}`);
 } else if (existsSync(pickFile)) pick = JSON.parse(readFileSync(pickFile, "utf8")).pick;
+// --eval-pick: score the loaded pick model on this season's real picks (no fitting).
+if (process.argv.includes("--eval-pick")) {
+  const list = work.filter((x) => x.off!.alliances.length && x.e.ranks.size >= 6).map(({ e, off }) => ({
+    ranked: [...e.ranks.entries()].sort((p, q) => p[1] - q[1]).map(([t]) => t),
+    alliances: off!.alliances,
+    strength: new Map([...snapQuals.get(e.code)!.entries()].map(([t, r]) => [t, npOf(r)])),
+  }));
+  const picks = list.reduce((s, ev) => s + ev.alliances.filter((al) => al.length >= 2).length, 0);
+  console.error(`pick model ${JSON.stringify(pick)} on ${season}: log-lik ${pickLogLik(pick, list).toFixed(2)} over ${picks} picks`);
+}
 
 // ---------------------------------------------------------------------------
 // Simulate every event from the three starting points.
@@ -277,5 +303,5 @@ const report = {
   partners: partnerCheck ? Object.fromEntries(Object.entries(partnerOut).map(([k, v]) => [k, summary(v)])) : undefined,
   partnerCalibrationWin: partnerCheck ? calibration(partnerOut.win) : undefined,
 };
-writeFileSync(`.cache/predict/events-${season}-${awardMode}.json`, JSON.stringify(report, null, 1));
+writeFileSync(arg("out") ?? `.cache/predict/events-${season}-${awardMode}.json`, JSON.stringify(report, null, 1));
 console.log(JSON.stringify(report.advancement, null, 1), "\nranks", JSON.stringify(report.ranks), "\nselection", JSON.stringify(report.selection), partnerCheck ? "\npartners " + JSON.stringify(report.partners, null, 1) : "");
