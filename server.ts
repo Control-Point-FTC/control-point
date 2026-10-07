@@ -34,7 +34,15 @@ import {
   checkVerificationCode,
   consumeVerificationCode,
   notifyTaskAssignees,
+  sendEmail,
+  emailTemplate,
+  escapeHtml,
+  appUrl,
 } from "./email-verify.js";
+import {
+  newInviteToken, hashInviteToken, looksLikeInviteToken, inviteHint, inviteState,
+  parseInviteOptions, INVITE_STATE_MESSAGE, type InviteRow,
+} from "./server/invites.js";
 import {
   ONBOARDING_DDL,
   defaultOnboardingState,
@@ -1808,8 +1816,67 @@ async function userTeams(email: string): Promise<any[]> {
     const row = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, t.id)) as any;
     const perms = row ? await getMemberPerms(row.id, t.id) : new Set<string>();
     (t as any).can_manage = perms.has("*") || perms.has("manage_members");
+    (t as any).can_invite = (t as any).can_manage || perms.has("invite_members");
+    // Members never see the access code: only people who manage the
+    // workspace (they can rotate it). Everyone else joins by invite link.
+    if (!(t as any).can_manage) delete (t as any).access_code;
   }
   return teams;
+}
+
+/** A team row for a client response: no access code unless they manage it. */
+async function teamForClient(team: any, email: string): Promise<any> {
+  if (!team) return team;
+  const out = { ...team };
+  if (!(await hasPermInTeam(email, Number(team.id), "manage_members"))) delete out.access_code;
+  return out;
+}
+
+// Adds an account (by email) to a team as a Member, or reactivates a
+// membership they left / were removed from. Identity (name, password hash,
+// linked providers) is copied from the account's newest row, unless this is
+// a brand-new account (`fresh`).
+async function addMembership(email: string, team: any, fresh?: { name: string; passwordHash: string | null }) {
+  const existing = (await dbGet("SELECT * FROM members WHERE email = ? AND team_id = ?", email, team.id)) as any;
+  if (existing && (existing.is_active ?? 1) === 1) return { row: existing, joined: false };
+  let row: any;
+  if (existing) {
+    await dbRun("UPDATE members SET is_active = 1 WHERE id = ?", existing.id);
+    row = await dbGet("SELECT * FROM members WHERE id = ?", existing.id);
+  } else {
+    // NOTE: members get NO default scopes — permissions come from roles
+    // (the "Member" system role) or explicit admin grants.
+    const src = fresh ? null : ((await dbGet("SELECT * FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any);
+    const info = (await dbRun(
+      "INSERT INTO members (team_id, name, role, email, password, avatar_url, is_setup, account_type, scopes, google_id, discord_id, github_id) VALUES (?, ?, ?, ?, ?, ?, 1, 'student', ?, ?, ?, ?)",
+      team.id, fresh?.name || src?.name || email.split("@")[0], "Member", email, fresh ? fresh.passwordHash : (src?.password || null), src?.avatar_url || null,
+      JSON.stringify([]), src?.google_id || null, src?.discord_id || null, src?.github_id || null
+    )) as any;
+    row = await dbGet("SELECT * FROM members WHERE id = ?", info.lastInsertRowid);
+  }
+  // Removal strips roles, so a returning member gets the Member role back too.
+  await assignSystemRole(team.id, row.id, "Member");
+  return { row, joined: true };
+}
+
+/** Looks up an invite by its link token (no state checks). */
+async function inviteByToken(token: unknown): Promise<(InviteRow & { team_name: string; team_number: string | null; ftc_team_number: string | null }) | null> {
+  if (!looksLikeInviteToken(token)) return null;
+  return ((await dbGet(
+    `SELECT i.*, t.name AS team_name, t.number AS team_number, t.ftc_team_number
+       FROM team_invites i JOIN teams t ON t.id = i.team_id WHERE i.token_hash = ?`,
+    hashInviteToken(token)
+  )) as any) || null;
+}
+
+/** Counts a use, refusing a revoked, expired or used-up link (atomic). */
+async function consumeInvite(inv: InviteRow): Promise<boolean> {
+  const r = (await dbRun(
+    `UPDATE team_invites SET uses = uses + 1
+      WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND (max_uses IS NULL OR uses < max_uses)`,
+    inv.id, new Date().toISOString()
+  )) as any;
+  return Number(r?.changes ?? r?.rowsAffected ?? 0) > 0;
 }
 // Does this account hold an active membership in teamId with `perm`?
 async function hasPermInTeam(email: string, teamId: number, perm: string): Promise<boolean> {
@@ -1842,6 +1909,7 @@ async function requireAdmin(req: any, res: any) {
 // ---- Discord-like roles ----
 const ROLE_PERMISSIONS = [
   { key: "manage_members", label: "Manage members" },
+  { key: "invite_members", label: "Invite people" },
   { key: "manage_roles", label: "Manage roles" },
   { key: "manage_budget", label: "Manage budget" },
   { key: "manage_inventory", label: "Manage inventory" },
@@ -2123,6 +2191,8 @@ async function startServer() {
   app.post("/api/auth/oauth/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
   app.post("/api/auth/google/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
   app.post("/api/teams/join", limit(authLimiter, "join", [byIp(20, 15 * MIN)]));
+  app.get("/api/invites/preview/:token", limit(authLimiter, "invitepeek", [byIp(60, 15 * MIN)]));
+  app.post("/api/invites/accept", limit(authLimiter, "join", [byIp(20, 15 * MIN)]));
   for (const p of ["/api/auth/google", "/api/auth/discord", "/api/auth/github"]) {
     app.get(p, limit(authLimiter, "oauthstart", [byIp(40, 15 * MIN)]));
   }
@@ -2643,7 +2713,7 @@ async function startServer() {
   // accountType 'student': joins an existing workspace via the admin's access code.
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { accountType, name, email, password, teamName, teamNumber, accessCode } = req.body || {};
+      const { accountType, name, email, password, teamName, teamNumber, accessCode, inviteToken } = req.body || {};
       const cleanName = (name || '').trim();
       const cleanEmail = (email || '').trim().toLowerCase();
       if (!cleanName || !cleanEmail || !password || password.length < 6) {
@@ -2695,14 +2765,34 @@ async function startServer() {
       }
 
       if (accountType === 'student') {
-        const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
-        const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
+        let team: any;
+        let invite: Awaited<ReturnType<typeof inviteByToken>> = null;
+        if (inviteToken) {
+          invite = await inviteByToken(inviteToken);
+          if (!invite) return res.status(400).json({ error: "That invite link isn't valid — ask your team for a new one" });
+          const state = inviteState(invite);
+          if (state !== "active") return res.status(400).json({ error: INVITE_STATE_MESSAGE[state] });
+          team = await dbGet("SELECT * FROM teams WHERE id = ?", invite.team_id);
+        } else {
+          const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
+          team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
+        }
         if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
+        if (invite?.requires_approval) {
+          // Nothing is created yet: the account is made from the request
+          // when someone approves it (they then sign in and verify the email).
+          if (priorRows.length) return res.status(400).json({ error: "You already have an account — sign in, then open the invite link again" });
+          if (!(await consumeInvite(invite))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
+          await fileJoinRequest(team, cleanEmail, cleanName, invite.id, hashedPassword);
+          return res.json({ pendingApproval: true, team: { id: team.id, name: team.name } });
+        }
         const dupe = (await dbGet("SELECT id, is_active FROM members WHERE email = ? AND team_id = ?", cleanEmail, team.id)) as any;
         if (dupe && dupe.is_active !== 0) {
           return res.status(400).json({ error: "You're already a member of this team — sign in instead" });
         }
+        // Only now, when someone will actually join, does the link spend a use.
+        if (invite && !(await consumeInvite(invite))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
         let memberId: number;
         if (dupe) {
           // Rejoining a team they were removed from: restore the membership.
@@ -2715,6 +2805,7 @@ async function startServer() {
           )) as any;
           memberId = mInfo.lastInsertRowid;
         }
+        broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(await dbGet("SELECT * FROM members WHERE id = ?", memberId)) });
         // Unverified emails get a code, not a session — the membership row
         // already exists, so verifying later lands them right back here.
         if (!(await isEmailVerified(cleanEmail))) {
@@ -2726,7 +2817,7 @@ async function startServer() {
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
         await ensureOnboardingRow(cleanEmail);
         await inheritInterfaceMode(user);
-        return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name } });
       }
 
       return res.status(400).json({ error: "Choose whether you're signing up as an admin or a student" });
@@ -2766,7 +2857,7 @@ async function startServer() {
     res.json({
       user: sanitizeMember(picked),
       sessionId,
-      team: teamRow ? { id: teamRow.id, name: teamRow.name, access_code: teamRow.access_code } : undefined,
+      team: teamRow ? await teamForClient({ id: teamRow.id, name: teamRow.name, access_code: teamRow.access_code }, picked.email) : undefined,
     });
   });
 
@@ -3129,7 +3220,7 @@ async function startServer() {
   // now collect the role-specific details (team name for admins, access code for students).
   async function completeOAuthSignup(provider: string, req: any, res: any) {
     try {
-      const { token, teamName, teamNumber, accessCode, role } = req.body || {};
+      const { token, teamName, teamNumber, accessCode, role, inviteToken } = req.body || {};
       const pending = token ? pendingOAuthSignups.get(token) : undefined;
       if (pending) pendingOAuthSignups.delete(token); // single-use
       if (!pending || pending.expiry < Date.now() || pending.provider !== provider) {
@@ -3167,12 +3258,25 @@ async function startServer() {
       }
 
       if (effectiveIntent === 'student_signup') {
-        const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
-        const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
+        let team: any;
+        let invite: Awaited<ReturnType<typeof inviteByToken>> = null;
+        if (inviteToken) {
+          invite = await inviteByToken(inviteToken);
+          if (!invite) return res.status(400).json({ error: "That invite link isn't valid — ask your team for a new one" });
+          const state = inviteState(invite);
+          if (state !== "active") return res.status(400).json({ error: INVITE_STATE_MESSAGE[state] });
+          // Approval links need an account first: sign in, then open the link.
+          if (invite.requires_approval) return res.status(400).json({ error: "This invite needs approval — create your account with email and password, or sign in first" });
+          team = await dbGet("SELECT * FROM teams WHERE id = ?", invite.team_id);
+        } else {
+          const norm = (accessCode || '').toString().toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (!norm) return res.status(400).json({ error: "Enter the access code from your team admin" });
+          team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
+        }
         if (!team) return res.status(400).json({ error: "That access code doesn't match any team — check it with your admin" });
         const dupe = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", cleanEmail, team.id)) as any;
         if (dupe) return res.status(400).json({ error: "This account is already on that team — sign in instead" });
+        if (invite && !(await consumeInvite(invite))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
         const mInfo = (await dbRun(
           `INSERT INTO members (team_id, name, role, email, password, ${idColumn}, is_setup, is_board, account_type, scopes, avatar_url) VALUES (?, ?, ?, ?, NULL, ?, 1, 0, 'student', ?, ?)`,
           team.id, cleanName, 'Member', cleanEmail, pending.providerSub, JSON.stringify([]), pending.avatarUrl || null
@@ -3182,7 +3286,8 @@ async function startServer() {
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
         await ensureOnboardingRow(cleanEmail);
         await inheritInterfaceMode(user);
-        return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name, access_code: team.access_code } });
+        broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(user) });
+        return res.json({ user: sanitizeMember(user), sessionId, team: { id: team.id, name: team.name } });
       }
 
       return res.status(400).json({ error: "Signup expired — please try again" });
@@ -3839,7 +3944,7 @@ async function startServer() {
     await inheritInterfaceMode(row);
     const sessionId = await rebindSession(req, row.id);
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
-    res.json({ user: sanitizeMember(row), sessionId, team });
+    res.json({ user: sanitizeMember(row), sessionId, team: await teamForClient(team, row.email) });
   });
 
   // Join a team with its access code. Works for teamless accounts and for
@@ -3851,41 +3956,230 @@ async function startServer() {
       ? (auth.email || "")
       : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
     if (!email) return res.status(401).json({ error: "Not signed in" });
-    const code = String(req.body?.access_code || "").trim().toUpperCase();
-    if (!code) return res.status(400).json({ error: "Enter an access code" });
-    const team = (await dbGet("SELECT * FROM teams WHERE access_code = ?", code)) as any;
+    // Codes are shown as CP-XXXX-XXXXXX; accept them with or without dashes.
+    const norm = String(req.body?.access_code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!norm) return res.status(400).json({ error: "Enter an access code" });
+    const team = (await dbGet("SELECT * FROM teams WHERE REPLACE(access_code, '-', '') = ?", norm)) as any;
     if (!team) return res.status(404).json({ error: "No team found with that access code" });
-    const existing = (await dbGet("SELECT * FROM members WHERE email = ? AND team_id = ?", email, team.id)) as any;
-    let row = existing;
-    if (existing && (existing.is_active ?? 1) === 1) {
-      // Already a member — just switch to it.
-    } else if (existing) {
-      await dbRun("UPDATE members SET is_active = 1 WHERE id = ?", existing.id);
-      row = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id)) as any;
-    } else {
-      // New membership: carry the account's identity (name, password hash,
-      // linked providers) so sign-in keeps working everywhere.
-      // NOTE: members get NO default scopes — permissions come from roles
-      // (the "Member" system role) or explicit admin grants via Edit scopes.
-      const src = (await dbGet("SELECT * FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any;
-      const info = (await dbRun(
-        "INSERT INTO members (team_id, name, role, email, password, avatar_url, is_setup, account_type, scopes, google_id, discord_id, github_id) VALUES (?, ?, ?, ?, ?, ?, 1, 'student', ?, ?, ?, ?)",
-        team.id, src?.name || email.split("@")[0], "Member", email, src?.password || null, src?.avatar_url || null,
-        JSON.stringify([]), src?.google_id || null, src?.discord_id || null, src?.github_id || null
-      )) as any;
-      row = (await dbGet("SELECT * FROM members WHERE id = ?", info.lastInsertRowid)) as any;
-      await ensureRolesSeeded(team.id);
-      await assignSystemRole(team.id, row.id, "Member");
-    }
+    await joinAndRespond(req, res, email, team);
+  });
+
+  // Shared tail of every "join this workspace" path: add the membership,
+  // move the session there, tell the team.
+  async function joinAndRespond(req: any, res: any, email: string, team: any) {
+    const { row, joined } = await addMembership(email, team);
     await inheritInterfaceMode(row);
     const sessionId = await rebindSession(req, row.id);
     const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
-    const wasNew = !existing || (existing.is_active ?? 1) !== 1;
-    if (wasNew) {
+    if (joined) {
       // Live mission control: everyone sees the new member without refreshing.
       broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(row) });
     }
-    res.json({ user, sessionId, team, joined: wasNew });
+    res.json({ user, sessionId, team: await teamForClient(team, email), joined });
+  }
+
+  async function authEmail(auth: { teamless?: boolean; email?: string; memberId: number }): Promise<string> {
+    return auth.teamless
+      ? (auth.email || "")
+      : (((await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any)?.email || "");
+  }
+
+  async function canInvite(auth: any): Promise<boolean> {
+    if (!auth || auth.teamless || !auth.teamId) return false;
+    return (await hasPerm(auth, "manage_members")) || (await hasPerm(auth, "invite_members"));
+  }
+
+  // Files (or refreshes) a pending request and tells the people who can
+  // approve it. A brand-new account's password hash rides along.
+  async function fileJoinRequest(team: any, email: string, name: string, inviteId: number | null, passwordHash: string | null, source = "invite") {
+    await dbRun(
+      `INSERT INTO team_join_requests (team_id, email, name, password_hash, invite_id, source) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(team_id, email) WHERE status = 'pending' DO UPDATE SET name = excluded.name,
+         password_hash = COALESCE(excluded.password_hash, team_join_requests.password_hash), invite_id = excluded.invite_id`,
+      team.id, email, name, passwordHash, inviteId, source
+    );
+    const approvers = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", team.id)) as any[];
+    for (const m of approvers) {
+      const perms = await getMemberPerms(m.id, team.id);
+      if (perms.has("*") || perms.has("manage_members") || perms.has("invite_members")) {
+        await createNotification(m.id, `${name || email} asked to join ${team.name}`, "system", { join_request: true });
+      }
+    }
+    broadcastToTeam(team.id, { type: "join_requests_changed" });
+  }
+
+  // ---- Invite links ----
+  // Admins and anyone with "Invite people" create links; members never need
+  // (or see) the access code.
+  const inviteView = (i: any) => ({
+    id: i.id, label: i.label, hint: i.token_hint, created_at: i.created_at, created_by_name: i.created_by_name || null,
+    expires_at: i.expires_at, max_uses: i.max_uses, uses: i.uses, requires_approval: !!i.requires_approval,
+    revoked_at: i.revoked_at, state: inviteState(i),
+  });
+
+  app.get("/api/invites", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
+    // Live links first (at most 50 can exist, see below), so a working link
+    // never drops off the list behind newer revoked or expired ones.
+    const rows = (await dbAll(
+      `SELECT i.*, m.name AS created_by_name FROM team_invites i LEFT JOIN members m ON m.id = i.created_by
+        WHERE i.team_id = ?
+        ORDER BY (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > ?) AND (i.max_uses IS NULL OR i.uses < i.max_uses)) DESC, i.id DESC
+        LIMIT 100`, auth.teamId, new Date().toISOString()
+    )) as any[];
+    res.json(rows.map(inviteView));
+  });
+
+  app.post("/api/invites", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
+    const opts = parseInviteOptions(req.body);
+    if ("error" in opts) return res.status(400).json({ error: opts.error });
+    // Only links that still work count (used-up links can't be seen or revoked).
+    const live = (await dbGet(
+      `SELECT COUNT(*) AS n FROM team_invites
+        WHERE team_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND (max_uses IS NULL OR uses < max_uses)`,
+      auth.teamId, new Date().toISOString()
+    )) as any;
+    if ((live?.n || 0) >= 50) return res.status(400).json({ error: "This workspace has 50 active links — turn some off first" });
+    const token = newInviteToken();
+    const info = (await dbRun(
+      "INSERT INTO team_invites (team_id, token_hash, token_hint, label, created_by, expires_at, max_uses, requires_approval) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      auth.teamId, hashInviteToken(token), inviteHint(token), opts.label, auth.memberId, opts.expiresAt, opts.maxUses, opts.requiresApproval ? 1 : 0
+    )) as any;
+    const row = await dbGet(
+      "SELECT i.*, m.name AS created_by_name FROM team_invites i LEFT JOIN members m ON m.id = i.created_by WHERE i.id = ?",
+      info.lastInsertRowid
+    );
+    // The full link is only returned now; afterwards only its last 4 characters.
+    res.json({ invite: inviteView(row), token, url: appUrl(`/join/${token}`) });
+  });
+
+  app.delete("/api/invites/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
+    const r = (await dbRun(
+      "UPDATE team_invites SET revoked_at = datetime('now') WHERE id = ? AND team_id = ? AND revoked_at IS NULL",
+      Number(req.params.id) || 0, auth.teamId
+    )) as any;
+    if (!Number(r?.changes ?? r?.rowsAffected ?? 0)) return res.status(404).json({ error: "That link was not found" });
+    res.json({ ok: true });
+  });
+
+  // Public: what a link leads to, so the join page can say "Join <team>".
+  // Reveals only the team's name and number.
+  app.get("/api/invites/preview/:token", async (req, res) => {
+    const inv = await inviteByToken(req.params.token);
+    if (!inv) return res.status(404).json({ error: "That invite link isn't valid — ask your team for a new one" });
+    const state = inviteState(inv);
+    res.json({
+      team: { name: inv.team_name, number: inv.ftc_team_number || inv.team_number || null },
+      requires_approval: !!inv.requires_approval,
+      state,
+      message: state === "active" ? null : INVITE_STATE_MESSAGE[state],
+    });
+  });
+
+  // Signed in (or teamless): use a link.
+  app.post("/api/invites/accept", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const email = await authEmail(auth);
+    if (!email) return res.status(401).json({ error: "Not signed in" });
+    const inv = await inviteByToken(req.body?.token);
+    if (!inv) return res.status(404).json({ error: "That invite link isn't valid — ask your team for a new one" });
+    const team = (await dbGet("SELECT * FROM teams WHERE id = ?", inv.team_id)) as any;
+    if (!team) return res.status(404).json({ error: "That workspace no longer exists" });
+    const already = (await dbGet(
+      "SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, team.id
+    )) as any;
+    // Already in: just switch there (costs no use, works on a dead link too).
+    if (already) return joinAndRespond(req, res, email, team);
+    const state = inviteState(inv);
+    if (state !== "active") return res.status(400).json({ error: INVITE_STATE_MESSAGE[state] });
+    if (inv.requires_approval) {
+      const pending = (await dbGet(
+        "SELECT id FROM team_join_requests WHERE team_id = ? AND email = ? AND status = 'pending'", team.id, email
+      )) as any;
+      if (!pending && !(await consumeInvite(inv))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
+      const me = (await dbGet("SELECT name FROM members WHERE email = ? ORDER BY id DESC LIMIT 1", email)) as any;
+      await fileJoinRequest(team, email, me?.name || email.split("@")[0], inv.id, null);
+      return res.json({ pendingApproval: true, team: { id: team.id, name: team.name } });
+    }
+    if (!(await consumeInvite(inv))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
+    await joinAndRespond(req, res, email, team);
+  });
+
+  // ---- Join requests (approval links) ----
+  app.get("/api/join-requests", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
+    const rows = (await dbAll(
+      `SELECT id, email, name, source, created_at FROM team_join_requests WHERE team_id = ? AND (status = 'pending' OR (status = 'deciding' AND decided_at < datetime('now', '-5 minutes'))) ORDER BY id`,
+      auth.teamId
+    )) as any[];
+    res.json(rows);
+  });
+
+  app.post("/api/join-requests/:id/:decision", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
+    const decision = req.params.decision;
+    if (decision !== "approve" && decision !== "deny") return res.status(400).json({ error: "Approve or deny" });
+    const reqRow = (await dbGet(
+      `SELECT * FROM team_join_requests WHERE id = ? AND team_id = ? AND (status = 'pending' OR (status = 'deciding' AND decided_at < datetime('now', '-5 minutes')))`, Number(req.params.id) || 0, auth.teamId
+    )) as any;
+    if (!reqRow) return res.status(404).json({ error: "That request was already handled" });
+    // Claim it first ('deciding') so two approvers can't both act on it. A
+    // claim abandoned by a crash frees itself after 5 minutes.
+    const claimed = (await dbRun(
+      `UPDATE team_join_requests SET status = 'deciding', decided_by = ?, decided_at = datetime('now')
+        WHERE id = ? AND (status = 'pending' OR (status = 'deciding' AND decided_at < datetime('now', '-5 minutes')))`,
+      auth.memberId, reqRow.id
+    )) as any;
+    if (!Number(claimed?.changes ?? claimed?.rowsAffected ?? 0)) return res.status(404).json({ error: "That request was already handled" });
+    const team = (await dbGet("SELECT * FROM teams WHERE id = ?", auth.teamId)) as any;
+    if (decision === "approve") {
+      let added: { row: any; joined: boolean };
+      try {
+        const hasAccount = (await dbGet("SELECT id FROM members WHERE email = ? LIMIT 1", reqRow.email)) as any;
+        added = await addMembership(
+          reqRow.email, team,
+          hasAccount ? undefined : { name: reqRow.name || reqRow.email.split("@")[0], passwordHash: reqRow.password_hash || null }
+        );
+        if (!hasAccount) await ensureOnboardingRow(reqRow.email);
+      } catch (e) {
+        // Nothing lost: the request (and any saved password) goes back to pending.
+        await dbRun("UPDATE team_join_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?", reqRow.id).catch(() => {});
+        console.error("join request approval failed:", e);
+        return res.status(500).json({ error: "Could not add them — try again" });
+      }
+      await dbRun(
+        "UPDATE team_join_requests SET status = 'approved', decided_at = datetime('now'), password_hash = NULL WHERE id = ?", reqRow.id
+      );
+      const { row, joined } = added;
+      if (joined) broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(row) });
+      const html = emailTemplate({
+        preheader: `You're in ${team.name} on Control Point`,
+        title: `You're in ${team.name}`,
+        intro: `Your request to join <strong>${escapeHtml(team.name)}</strong> was approved.`,
+        cta: { label: "Open Control Point", href: appUrl("/") },
+        footnote: "You received this because you asked to join this workspace.",
+      });
+      sendEmail(reqRow.email, `You're in ${team.name}`, html).catch((e) => console.error("approval email failed:", e));
+    } else {
+      await dbRun(
+        "UPDATE team_join_requests SET status = 'denied', decided_at = datetime('now'), password_hash = NULL WHERE id = ?", reqRow.id
+      );
+    }
+    broadcastToTeam(team.id, { type: "join_requests_changed" });
+    res.json({ ok: true });
   });
 
   // Leave a team (non-admin path). History is preserved via soft-remove; the
@@ -3921,7 +4215,7 @@ async function startServer() {
       )) as any;
       if (other) {
         const sessionId = await rebindSession(req, other.id);
-        switched = { sessionId, user: sanitizeMember({ ...(other as any), teams: await userTeams(email) }), team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any };
+        switched = { sessionId, user: sanitizeMember({ ...(other as any), teams: await userTeams(email) }), team: await teamForClient(await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id), email) };
       } else {
         teamless = true;
       }
@@ -4031,6 +4325,8 @@ async function startServer() {
       { sql: "DELETE FROM channel_categories WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM custom_emoji WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM resources WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM team_invites WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM team_join_requests WHERE team_id = ?", args: [teamId] },
       { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
       // Keep the caller's session alive so they stay signed in (teamless when
       // this was their last team); every other session on the team is dropped.
@@ -4062,7 +4358,7 @@ async function startServer() {
           switched = {
             sessionId,
             user: otherRow,
-            team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any,
+            team: await teamForClient(await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id), other.email),
           };
         } else {
           teamless = true;

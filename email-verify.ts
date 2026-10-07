@@ -322,7 +322,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
 
 // Task fields, names and team names are user-controlled — escape them so a
 // teammate can't inject HTML/links into an email sent from our domain.
-function escapeHtml(v: string): string {
+export function escapeHtml(v: string): string {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 }
 

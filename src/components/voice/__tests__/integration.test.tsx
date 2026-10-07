@@ -207,6 +207,21 @@ describe('VoiceProvider socket lifecycle', () => {
     expect(mocks.voiceApi.getChannels).toHaveBeenCalled();
   });
 
+  it('a slow channel response never overwrites a newer one (latest wins)', async () => {
+    renderHarness();
+    await waitFor(() => expect(captured.channels.length).toBeGreaterThan(0));
+    let releaseOld: (v: any) => void = () => {};
+    mocks.voiceApi.getChannels
+      .mockImplementationOnce(() => new Promise((r) => { releaseOld = r; }))
+      .mockImplementationOnce(async () => [{ ...channelSummary, id: 99, name: 'New room' }]);
+    let first: Promise<void> = Promise.resolve();
+    act(() => { first = captured.refreshChannels(); });
+    await act(async () => { await captured.refreshChannels(); });
+    expect(captured.channels.map((c: any) => c.name)).toEqual(['New room']);
+    await act(async () => { releaseOld([{ ...channelSummary, id: 1, name: 'Old room' }]); await first; });
+    expect(captured.channels.map((c: any) => c.name)).toEqual(['New room']);
+  });
+
   it('voice:incoming sets incomingCall; declineCall clears it and tells the server', async () => {
     renderHarness();
     expect(captured.incomingCall).toBeNull();

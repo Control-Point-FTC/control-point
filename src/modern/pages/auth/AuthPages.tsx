@@ -389,7 +389,7 @@ function TeamNumberField({ teamNumber, setTeamNumber, teamName, setTeamName }: {
 function AccessCodeField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const id = useId();
   return (
-    <Field label="Team access code" htmlFor={id} hint="Your team admin can find it in Settings.">
+    <Field label="Team access code" htmlFor={id} hint="Ask your team admin for it — or open the invite link they sent.">
       <div className="relative">
         <KeyRound className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input id={id} required value={value} onChange={(e) => onChange(e.target.value)} placeholder="CP-XXXX-XXXX" className="h-11 pl-9 font-mono uppercase tracking-wider" />
@@ -401,20 +401,23 @@ function AccessCodeField({ value, onChange }: { value: string; onChange: (v: str
 // ---------------------------------------------------------------------------
 // Email signup
 
-export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn }: {
+export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn, invite }: {
   mode: 'admin' | 'student';
   onBack: () => void; onSignup: (payload: any) => Promise<any>; onDone: (data: any) => void;
   onSignIn: () => void;
+  /** Signing up from an invite link (students only). */
+  invite?: { token: string; teamName: string } | null;
 }) {
-  const f = useSignupForm({ mode, onSignup, onDone });
+  const viaInvite = mode === 'student' && !!invite;
+  const f = useSignupForm({ mode, onSignup, onDone, inviteToken: viaInvite ? invite!.token : null });
   const id = useId();
   const admin = mode === 'admin';
   return (
-    <AuthLayout onBack={onBack} backLabel="Change role">
+    <AuthLayout onBack={onBack} backLabel={viaInvite ? 'Back' : 'Change role'}>
       <AuthHeading
         icon={<IconTile tone={admin ? 'accent' : 'sky'}>{admin ? <ShieldCheck className="size-5" /> : <GraduationCap className="size-5" />}</IconTile>}
-        title={admin ? 'Create your workspace' : 'Join your team'}
-        description={admin ? 'Set up your team and get an access code for your members.' : 'Enter the access code from your team admin.'}
+        title={admin ? 'Create your workspace' : viaInvite ? `Join ${invite!.teamName}` : 'Join your team'}
+        description={admin ? 'Set up your team and get an access code for your members.' : viaInvite ? 'Create your account to join.' : 'Enter the access code or open the invite link from your team.'}
       />
       <form onSubmit={f.submit} className="grid gap-5">
         <fieldset disabled={f.busy} className="grid gap-5">
@@ -429,7 +432,7 @@ export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn }: {
           </Field>
           {admin
             ? <TeamNumberField teamNumber={f.teamNumber} setTeamNumber={f.setTeamNumber} teamName={f.teamName} setTeamName={f.setTeamName} />
-            : <AccessCodeField value={f.accessCode} onChange={f.setAccessCode} />}
+            : !viaInvite && <AccessCodeField value={f.accessCode} onChange={f.setAccessCode} />}
         </fieldset>
         {f.error && <FormError>{f.error}</FormError>}
         <Button type="submit" size="lg" disabled={f.busy} className="h-11">
@@ -447,18 +450,22 @@ export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn }: {
 // ---------------------------------------------------------------------------
 // Finish an OAuth signup
 
-export function OAuthSignupPage({ token, intent, provider, onBack, onDone }: {
+export function OAuthSignupPage({ token, intent, provider, onBack, onDone, invite }: {
   token: string; intent: 'admin_signup' | 'student_signup' | 'signup'; provider: OAuthProvider;
   onBack: () => void; onDone: (data: any) => void;
+  /** Finishing a signup that started from an invite link. */
+  invite?: { token: string; teamName?: string } | null;
 }) {
-  const f = useOAuthSignup({ token, intent, provider, onDone });
+  const f = useOAuthSignup({ token, intent, provider, onDone, inviteToken: invite?.token });
   const Icon = PROVIDER_ICON[provider];
   return (
     <AuthLayout onBack={onBack} backLabel="Home">
       <AuthHeading
         icon={<span className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-card"><Icon /></span>}
         title="One more step"
-        description={`You're signed in with ${PROVIDER_LABEL[provider]}. Tell us about your team to finish.`}
+        description={f.viaInvite
+          ? `You're signed in with ${PROVIDER_LABEL[provider]}. Finish to join ${invite?.teamName || 'your team'}.`
+          : `You're signed in with ${PROVIDER_LABEL[provider]}. Tell us about your team to finish.`}
       />
       <form onSubmit={f.submit} className="grid gap-5">
         <fieldset disabled={f.busy} className="grid gap-5">
@@ -484,7 +491,7 @@ export function OAuthSignupPage({ token, intent, provider, onBack, onDone }: {
           )}
           {f.isAdmin
             ? <TeamNumberField teamNumber={f.teamNumber} setTeamNumber={f.setTeamNumber} teamName={f.teamName} setTeamName={f.setTeamName} />
-            : <AccessCodeField value={f.accessCode} onChange={f.setAccessCode} />}
+            : !f.viaInvite && <AccessCodeField value={f.accessCode} onChange={f.setAccessCode} />}
         </fieldset>
         {f.error && <FormError>{f.error}</FormError>}
         <Button type="submit" size="lg" disabled={f.busy} className="h-11">

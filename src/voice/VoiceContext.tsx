@@ -377,16 +377,24 @@ export function VoiceProvider({ memberId, memberName, memberAvatar, hasPerm, chi
     await refreshChannelsSafe();
   }, [leaveLocal]);
 
+  // Latest-wins: a slow response that started before a newer refresh, or
+  // before the account moved to another workspace (a different member row),
+  // must not overwrite the current workspace's channels.
+  const refreshSeqRef = useRef(0);
   const refreshChannelsSafe = useCallback(async () => {
+    const seq = ++refreshSeqRef.current;
+    const forMember = memberIdRef.current;
+    const current = () => seq === refreshSeqRef.current && forMember === memberIdRef.current;
     try {
       const list = await voiceApi.getChannels();
-      setChannels(list);
+      if (current()) setChannels(list);
     } catch {
       /* channels list is best-effort; call UI shows its own empty state */
     }
     // Keep the engine's Opus bitrate in sync with team_voice_settings.
     try {
       const settings = await voiceApi.getSettings();
+      if (!current()) return;
       const q = settings?.default_audio_quality;
       if (q === 'low' || q === 'medium' || q === 'high') {
         audioQualityRef.current = q;

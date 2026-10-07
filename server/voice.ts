@@ -496,7 +496,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   // ---- Voice channels ----
   app.get("/api/voice/channels", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.json([]); // teamless: no channels
     await ensureVoiceSeeded(deps, auth.teamId);
     const channels = (await dbAll(
       "SELECT * FROM voice_channels WHERE team_id = ? ORDER BY position ASC, id ASC",
@@ -528,7 +529,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.post("/api/voice/channels", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     await ensureVoiceSeeded(deps, auth.teamId);
     const name = sanitizeVoiceChannelName(req.body?.name);
     if (!name) return res.status(400).json({ error: "Channel name can't be empty" });
@@ -560,7 +562,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.patch("/api/voice/channels/:id", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const id = parseInt(req.params.id, 10);
     const channel = (await dbGet("SELECT * FROM voice_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
     if (!channel) return res.status(404).json({ error: "Voice channel not found" });
@@ -600,7 +603,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.delete("/api/voice/channels/:id", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const id = parseInt(req.params.id, 10);
     const channel = (await dbGet("SELECT * FROM voice_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
     if (!channel) return res.status(404).json({ error: "Voice channel not found" });
@@ -620,7 +624,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.post("/api/voice/channels/reorder", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const order = req.body?.order;
     if (!Array.isArray(order)) return res.status(400).json({ error: "order must be an array of channel ids" });
     for (let i = 0; i < order.length; i++) {
@@ -635,7 +640,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.get("/api/voice/channels/:id/role-perms", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const id = parseInt(req.params.id, 10);
     const channel = (await dbGet("SELECT id FROM voice_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
     if (!channel) return res.status(404).json({ error: "Voice channel not found" });
@@ -645,7 +651,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.put("/api/voice/channels/:id/role-perms", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const id = parseInt(req.params.id, 10);
     const channel = (await dbGet("SELECT * FROM voice_channels WHERE id = ? AND team_id = ?", id, auth.teamId)) as any;
     if (!channel) return res.status(404).json({ error: "Voice channel not found" });
@@ -671,7 +678,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   // ---- Join / leave ----
   app.post("/api/voice/channels/:id/join", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     // Rejoin inside the reconnect grace window: cancel the pending
     // disconnect cleanup so the scheduled timer can't yank the member
     // out after they just rejoined.
@@ -709,7 +717,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.post("/api/voice/leave", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     await removeParticipantEverywhere(deps, auth.teamId, auth.memberId, "leave");
     res.json({ ok: true });
   });
@@ -717,7 +726,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   // ---- Moderation (server-validated; clients enforce via voice:moderated) ----
   app.post("/api/voice/moderate", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     if (!(await deps.hasPerm(auth, "moderate_calls")) && !(await deps.hasPerm(auth, "manage_voice"))) {
       return res.status(403).json({ error: "You don't have permission to moderate calls" });
     }
@@ -837,7 +847,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   // the team can see the channel in the sidebar and join while it's live.
   app.post("/api/voice/calls", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const kind = req.body?.kind === "group" ? "group" : "dm";
     const media = req.body?.media === "video" ? "video" : "audio";
     const settings = await getVoiceSettings(deps, auth.teamId);
@@ -903,7 +914,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.post("/api/voice/calls/:id/accept", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     // Same as join: accepting inside the grace window cancels the pending
     // disconnect cleanup for this member.
     cancelVoiceDisconnectCleanup(auth.teamId, auth.memberId);
@@ -934,7 +946,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.post("/api/voice/calls/:id/decline", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const sessionId = parseInt(req.params.id, 10);
     const invite = (await dbGet("SELECT * FROM call_invites WHERE session_id = ? AND invitee_id = ? AND status = 'ringing'", sessionId, auth.memberId)) as any;
     if (!invite) return res.status(404).json({ error: "Invite not found" });
@@ -954,7 +967,8 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
 
   app.post("/api/voice/calls/:id/end", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     const sessionId = parseInt(req.params.id, 10);
     const session = (await dbGet("SELECT * FROM call_sessions WHERE id = ? AND team_id = ? AND ended_at IS NULL", sessionId, auth.teamId)) as any;
     if (!session) return res.status(404).json({ error: "Call not found" });
@@ -986,13 +1000,15 @@ export function registerVoiceRoutes(app: any, deps: VoiceDeps): void {
   // ---- Settings & ICE ----
   app.get("/api/voice/settings", async (req: any, res: any) => {
     const auth = await deps.requireAuth(req, res);
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     res.json({ settings: await getVoiceSettings(deps, auth.teamId) });
   });
 
   app.put("/api/voice/settings", async (req: any, res: any) => {
     const auth = await deps.requirePerm(req, res, "manage_voice");
-    if (!auth || auth.teamId == null) return;
+    if (!auth) return;
+    if (auth.teamId == null) return res.status(400).json({ error: "Join a workspace first" });
     await ensureVoiceSeeded(deps, auth.teamId);
     const bit = (v: any, fallback: number) => (v === undefined ? fallback : v ? 1 : 0);
     const cur = await getVoiceSettings(deps, auth.teamId);

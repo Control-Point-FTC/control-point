@@ -96,10 +96,12 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
 }
 
 /** Email + password signup for a new admin (creates a team) or student (joins one). */
-export function useSignupForm({ mode, onSignup, onDone }: {
+export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   mode: 'admin' | 'student';
   onSignup: (payload: any) => Promise<any>;
   onDone: (data: any) => void;
+  /** Joining through an invite link: no access code needed. */
+  inviteToken?: string | null;
 }) {
   const k = (f: string) => `auth:signup:${mode}:${f}`;
   const [name, setName] = useDraft(k('name'), '');
@@ -118,9 +120,11 @@ export function useSignupForm({ mode, onSignup, onDone }: {
     setError(null);
     setBusy(true);
     try {
+      const viaInvite = mode === 'student' && !!inviteToken;
       const data = await onSignup({
         accountType: mode, name, email, password,
-        teamName, teamNumber, accessCode,
+        teamName, teamNumber,
+        ...(viaInvite ? { inviteToken } : { accessCode }),
       });
       onDone(data);
     } catch (err: any) {
@@ -141,16 +145,19 @@ export type OAuthProvider = 'google' | 'discord' | 'github';
 export const PROVIDER_LABEL: Record<OAuthProvider, string> = { google: 'Google', discord: 'Discord', github: 'GitHub' };
 
 /** After OAuth: the identity is verified; collect the role-specific details. */
-export function useOAuthSignup({ token, intent, provider, onDone }: {
+export function useOAuthSignup({ token, intent, provider, onDone, inviteToken }: {
   token: string;
   intent: 'admin_signup' | 'student_signup' | 'signup';
   provider: OAuthProvider;
   onDone: (data: any) => void;
+  /** Joining through an invite link: no role choice, no access code. */
+  inviteToken?: string | null;
 }) {
-  const needsRole = intent === 'signup';
+  const viaInvite = !!inviteToken && intent !== 'admin_signup';
+  const needsRole = intent === 'signup' && !viaInvite;
   const k = (f: string) => `auth:oauth-signup:${f}`;
   const [pickedRole, setPickedRole] = useDraft<'admin' | 'student'>(k('role'), 'student');
-  const isAdmin = intent === 'admin_signup' || (needsRole && pickedRole === 'admin');
+  const isAdmin = !viaInvite && (intent === 'admin_signup' || (needsRole && pickedRole === 'admin'));
   const [teamName, setTeamName] = useDraft(k('team-name'), '');
   const [teamNumber, setTeamNumber] = useDraft(k('team-number'), '');
   const [accessCode, setAccessCode] = useDraft(k('access-code'), '');
@@ -166,7 +173,10 @@ export function useOAuthSignup({ token, intent, provider, onDone }: {
       const res = await apiFetch('/api/auth/oauth/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, token, teamName, teamNumber, accessCode, role: needsRole ? pickedRole : undefined }),
+        body: JSON.stringify({
+          provider, token, teamName, teamNumber, role: needsRole ? pickedRole : undefined,
+          ...(viaInvite ? { inviteToken } : { accessCode }),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Signup failed');
@@ -179,7 +189,7 @@ export function useOAuthSignup({ token, intent, provider, onDone }: {
   };
 
   return {
-    needsRole, pickedRole, setPickedRole, isAdmin,
+    needsRole, pickedRole, setPickedRole, isAdmin, viaInvite,
     teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
     error, busy, submit,
   };

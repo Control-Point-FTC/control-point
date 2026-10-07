@@ -41,6 +41,9 @@ import { ModernLanding } from './modern/pages/auth/ModernLanding';
 import { OAuthSignupPage, RolePage, SignInPage, SignupPage, VerifyEmailPage } from './modern/pages/auth/AuthPages';
 import { CodeRevealDialog } from './modern/pages/auth/CodeRevealDialog';
 import { TeamlessPage } from './modern/pages/auth/TeamlessPage';
+import { JoinInvitePage } from './modern/pages/join/JoinInvitePage';
+import { clearInvite, inviteTokenFromPath, joinWithCodeOrLink, peekInvite, stashInvite } from './modern/pages/join/joinLink';
+import { JOIN_REQUESTS_EVENT } from './modern/pages/people/JoinRequestsCard';
 import { notifMeta } from './modern/notifications';
 import { HomePage } from './modern/pages/HomePage';
 import { InboxPage } from './modern/pages/InboxPage';
@@ -252,6 +255,8 @@ function VoiceSocketBridge({ voiceRef }: { voiceRef: { current: VoiceSocketApi |
       leave: voice.leave,
     };
   }, [voice, voiceRef]);
+  // Unmounted (signed out / teamless): don't leave a stale API behind.
+  useEffect(() => () => { voiceRef.current = null; }, [voiceRef]);
   return null;
 }
 
@@ -529,6 +534,10 @@ export default function App() {
   // marketing homepage before the app shell appears.
   const [authReady, setAuthReady] = useState(false);
   const [authScreen, setAuthScreen] = useState<'landing' | 'login' | 'role' | 'signup-admin' | 'signup-student' | 'code-reveal'>('landing');
+  // Invite links (/join/<token>): the team the link leads to (for the signup
+  // heading) and, after a signup that needs approval, the team asked.
+  const [inviteTeamName, setInviteTeamName] = useState<string | null>(null);
+  const [invitePendingTeam, setInvitePendingTeam] = useState<string | null>(null);
   // Email+password signups must verify ownership before getting a session.
   const [verifyState, setVerifyState] = useState<{ email: string; mode: 'admin' | 'student' | 'login' | 'setup' } | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -1065,6 +1074,8 @@ export default function App() {
           }
         } else if (msg.type === 'member_removed') {
           setMembers((prev: any[]) => prev.filter((m: any) => m.id !== msg.id));
+        } else if (msg.type === 'join_requests_changed') {
+          window.dispatchEvent(new CustomEvent(JOIN_REQUESTS_EVENT));
         } else if (msg.type === 'resources_changed') {
           // ResourcesView owns its list — nudge it to refetch.
           window.dispatchEvent(new CustomEvent('resources-changed'));
@@ -1428,6 +1439,24 @@ export default function App() {
     }
   };
 
+  // Join a workspace with an invite link or an access code. Approval links
+  // only file a request; otherwise the session moves to the joined team.
+  const applyJoin = async (data: any) => {
+    if (data.pendingApproval) {
+      notify(`Request sent — someone on ${data.team?.name || 'the team'} will approve you`, 'success');
+      return;
+    }
+    clearTeamCaches();
+    persistSession(data.sessionId, data.user);
+    setTeams((data.user as any)?.teams || []);
+    await fetchData();
+    notify(data.joined === false ? `You're already in ${data.team?.name || 'that team'} — switched to it` : `Joined ${data.team?.name || 'the team'}`, 'success');
+  };
+  const handleJoinTeam = async (input: string) => {
+    try { await voiceApiRef.current?.leave(); } catch { /* best effort */ }
+    await applyJoin(await joinWithCodeOrLink(input));
+  };
+
   // Create a brand-new team for this account; the server switches the session to it.
   const handleAddTeam = async (name: string) => {
     const res = await apiFetch('/api/teams', {
@@ -1596,6 +1625,8 @@ export default function App() {
       setVerifyState({ email: data.email, mode: payload.accountType === 'admin' ? 'admin' : 'student' });
       return data;
     }
+    // An approval link or "ask to join": no account or session yet.
+    if (data.pendingApproval) return data;
     persistSession(data.sessionId, data.user);
     return data;
   };
@@ -1724,7 +1755,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);
@@ -1797,6 +1828,38 @@ export default function App() {
       setIsOwner(false);
     }
   }, [isLoggedIn]);
+
+  // An invite link: kept for this tab while signed out, used once signed in
+  // (teamless accounts too — this is how they get their first team).
+  // Stashed once per visit to the link, so a used (cleared) link isn't
+  // picked up again while the address bar still shows it.
+  const joinPath = inviteTokenFromPath(location.pathname);
+  const stashedJoinPath = useRef<string | null>(null);
+  if (joinPath && stashedJoinPath.current !== joinPath) {
+    stashedJoinPath.current = joinPath;
+    stashInvite(joinPath);
+  }
+  useEffect(() => {
+    if (!isLoggedIn || !teamsLoaded) return;
+    const token = peekInvite();
+    if (!token) {
+      // Already used (e.g. by the signup it started): just leave the page.
+      if (joinPath) navigate('/dashboard', { replace: true });
+      return;
+    }
+    clearInvite();
+    setInviteTeamName(null);
+    // Like a manual join or switch: end any call before the session moves
+    // (teamless accounts have none; never let cleanup hold up the join).
+    const leaveCall = teams.length && voiceApiRef.current
+      ? Promise.race([voiceApiRef.current.leave(), new Promise((r) => setTimeout(r, 3000))])
+      : Promise.resolve();
+    Promise.resolve(leaveCall).catch(() => { /* best effort */ })
+      .then(() => joinWithCodeOrLink(token))
+      .then(applyJoin)
+      .catch((e) => notify(e.message || 'Could not use that invite link', 'error'))
+      .finally(() => { if (inviteTokenFromPath(window.location.pathname)) navigate('/dashboard', { replace: true }); });
+  }, [isLoggedIn, teamsLoaded, joinPath]);
 
   // A scanned QR deep link opened while logged out: after login, bounce back
   // to the check-in page to finish checking in.
@@ -1970,6 +2033,7 @@ export default function App() {
       colorVersion, setColorVersion,
       // multi-team: switcher, add/delete/leave, active team name
       onSwitchTeam: handleSwitchTeam, onAddTeam: handleAddTeam, onDeleteTeam: handleDeleteTeam, onLeaveTeam: handleLeaveTeam,
+      onJoinTeam: handleJoinTeam,
       activeTeamName, activeTeamId: currentTeamId, botName, navGptQualified, navGptActive,
       // app owner (OWNER_EMAILS) — gates owner-only UI like AI limit config
       isOwner,
@@ -2091,6 +2155,8 @@ export default function App() {
         <Route path="/settings" element={<SettingsPage {...viewProps} {...settingsCallbacks} hasPerm={hasPerm} />} />
         <Route path="/owner" element={<OwnerPage />} />
         <Route path="/checkin/:token" element={<CheckinPage currentUser={currentUser} onRefresh={fetchData} />} />
+        {/* The invite effect joins and then leaves this page. */}
+        <Route path="/join/:token" element={<p className="p-8 text-sm text-muted-foreground">Joining workspace…</p>} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     );
@@ -2128,7 +2194,7 @@ export default function App() {
       const onVerified = (data: any) => {
         persistSession(data.sessionId, data.user);
         setVerifyState(null);
-        if (verifyState.mode === 'admin' && data?.team) setSignupTeam(data.team);
+        if (verifyState.mode === 'admin' && data?.team?.access_code) setSignupTeam(data.team);
         if (verifyState.mode === 'setup') setNeedsSetup(false);
       };
       return <VerifyEmailPage email={verifyState.email} onBack={() => setVerifyState(null)} onVerified={onVerified} />;
@@ -2136,11 +2202,31 @@ export default function App() {
     if (oauthSignup) {
       const onBack = () => { setOauthSignup(null); setAuthScreen('landing'); };
       const onDone = (data: any) => {
+        clearInvite();
         persistSession(data.sessionId, data.user);
         setOauthSignup(null);
-        if (data?.team) setSignupTeam(data.team);
+        if (data?.team?.access_code) setSignupTeam(data.team);
       };
-      return <OAuthSignupPage token={oauthSignup.token} intent={oauthSignup.intent} provider={oauthSignup.provider} onBack={onBack} onDone={onDone} />;
+      const invite = peekInvite();
+      return (
+        <OAuthSignupPage
+          token={oauthSignup.token} intent={oauthSignup.intent} provider={oauthSignup.provider} onBack={onBack} onDone={onDone}
+          invite={invite ? { token: invite, teamName: inviteTeamName || undefined } : null}
+        />
+      );
+    }
+    const pendingInvite = peekInvite();
+    if (authScreen === 'landing' && (pendingInvite || invitePendingTeam)) {
+      const dismiss = () => { clearInvite(); setInvitePendingTeam(null); setInviteTeamName(null); navigate('/', { replace: true }); };
+      return (
+        <JoinInvitePage
+          token={pendingInvite || ''}
+          pendingTeam={invitePendingTeam}
+          onCreateAccount={(teamName) => { setInviteTeamName(teamName); setAuthScreen('signup-student'); }}
+          onSignIn={() => { setInvitePendingTeam(null); setAuthScreen('login'); }}
+          onDismiss={dismiss}
+        />
+      );
     }
     if (authScreen === 'landing') {
       return <ModernLanding onSignIn={() => setAuthScreen('login')} onGetStarted={() => setAuthScreen('role')} />;
@@ -2152,10 +2238,21 @@ export default function App() {
 
     if (authScreen === 'signup-admin' || authScreen === 'signup-student') {
       const mode = authScreen === 'signup-admin' ? 'admin' : 'student';
+      const invite = mode === 'student' ? peekInvite() : null;
       const onDone = (data: any) => {
-        if (mode === 'admin' && data?.team) setSignupTeam(data.team);
+        if (invite) {
+          // The membership (or the request) exists now; nothing left to use.
+          clearInvite();
+          if (data?.pendingApproval) { setInvitePendingTeam(data.team?.name || 'the team'); setAuthScreen('landing'); }
+        }
+        if (mode === 'admin' && data?.team?.access_code) setSignupTeam(data.team);
       };
-      return <SignupPage mode={mode} onBack={() => setAuthScreen('role')} onSignup={handleSignup} onDone={onDone} onSignIn={() => setAuthScreen('login')} />;
+      return (
+        <SignupPage
+          mode={mode} onBack={() => setAuthScreen(invite ? 'landing' : 'role')} onSignup={handleSignup} onDone={onDone} onSignIn={() => setAuthScreen('login')}
+          invite={invite ? { token: invite, teamName: inviteTeamName || 'your team' } : null}
+        />
+      );
     }
     return (
         <SignInPage
@@ -2187,22 +2284,9 @@ export default function App() {
       user: currentUser,
       onCreateTeam: async (name: string) => {
         const data = await handleAddTeam(name);
-        notify(`Team "${data.team?.name || 'created'}" created — code ${data.team?.access_code}`, 'success');
+        notify(`Team "${data.team?.name || 'created'}" created`, 'success');
       },
-      onJoinTeam: async (accessCode: string) => {
-        const res = await apiFetch('/api/teams/join', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ access_code: accessCode })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Could not join team');
-        clearTeamCaches();
-        persistSession(data.sessionId, data.user);
-        setTeams((data.user as any)?.teams || []);
-        await fetchData();
-        notify(`Joined "${data.team?.name || 'team'}"`, 'success');
-      },
+      onJoinTeam: handleJoinTeam,
       onDeleteAccount: async () => {
         const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
         const data = await res.json().catch(() => ({}));

@@ -2,9 +2,10 @@
 // Workspaces (/teams?tab=workspaces), rebuilt on the shadcn kit over the
 // shared useMembersController / useRolesController (same endpoints and
 // permissions as Legacy TeamsView + RolesView).
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Building2, Plus, ShieldCheck, Users } from 'lucide-react';
+import { Building2, LogIn, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react';
 import { Button, Tabs, TabsList, TabsTrigger } from '../../../components/ui-kit';
 import { useMembersController } from '../../../components/people/useMembersController';
 import { useRolesController } from '../../../components/people/useRolesController';
@@ -13,11 +14,14 @@ import { Page, PageHeader } from '../../ui/page';
 import { MembersTab } from './MembersTab';
 import { MemberRolesDialog, RolesTab } from './RolesTab';
 import { WorkspacesTab } from './WorkspacesTab';
+import { InviteDialog } from './InviteDialog';
+import { JoinRequestsCard } from './JoinRequestsCard';
+import { JoinWorkspaceDialog } from './JoinWorkspaceDialog';
 
 type Tab = 'members' | 'roles' | 'workspaces';
 
 export function PeoplePage(props: any) {
-  const { members = [], teams = [], currentUser, hasScope, hasPerm, refresh, onRefresh, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam, activeTeamName } = props;
+  const { members = [], teams = [], currentUser, hasScope, hasPerm, refresh, onRefresh, onAddTeam, onSwitchTeam, onDeleteTeam, onLeaveTeam, onJoinTeam, activeTeamName } = props;
   const location = useLocation();
   const navigate = useNavigate();
   const tab: Tab = location.pathname.startsWith('/roles') ? 'roles'
@@ -27,12 +31,32 @@ export function PeoplePage(props: any) {
   const ctl = useMembersController({ members, refresh, onRefresh, currentUser, hasScope, onAddTeam });
   const roles = useRolesController({ onRefresh, teamId: currentUser?.team_id });
   const canManageRoles = hasPerm ? hasPerm('manage_roles') : ctl.isAdmin;
+  // Join links replace "Add member": admins and anyone with "Invite people".
+  const canInvite = ctl.isAdmin || !!hasPerm?.('invite_members');
   const voice = useVoice();
+  const params = new URLSearchParams(location.search);
+  const [inviteOpenLocal, setInviteOpenLocal] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+  // /teams?invite=1 (from the workspace switcher and Settings) opens the
+  // dialog; the flag lives in the URL so it survives the page settling.
+  const inviteOpen = inviteOpenLocal || (params.get('invite') === '1' && canInvite);
+  const setInviteOpen = (open: boolean) => {
+    setInviteOpenLocal(open);
+    if (!open && params.has('invite')) {
+      params.delete('invite');
+      navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true });
+    }
+  };
 
   const online = members.filter((m: any) => m.presence && m.presence !== 'offline').length;
-  const action = tab === 'members' && ctl.isAdmin ? <Button onClick={ctl.openNewMember}><Plus /> Add member</Button>
+  const action = tab === 'members' && canInvite ? <Button onClick={() => setInviteOpen(true)}><UserPlus /> Invite people</Button>
     : tab === 'roles' && canManageRoles ? <Button onClick={() => roles.openRole('new')}><Plus /> New role</Button>
-    : tab === 'workspaces' && ctl.isAdmin ? <Button onClick={ctl.openNewTeam}><Plus /> New workspace</Button>
+    : tab === 'workspaces' ? (
+      <div className="flex gap-2">
+        {onJoinTeam && <Button variant="outline" onClick={() => setJoinOpen(true)}><LogIn /> Join</Button>}
+        {ctl.isAdmin && <Button onClick={ctl.openNewTeam}><Plus /> New workspace</Button>}
+      </div>
+    )
     : null;
 
   return (
@@ -46,15 +70,17 @@ export function PeoplePage(props: any) {
         <Tabs value={tab} onValueChange={go}>
           <TabsList className="max-sm:w-full">
             <TabsTrigger value="members" className="max-sm:h-10 max-sm:flex-1 max-sm:px-1.5 max-sm:[&>svg]:hidden"><Users /> Members</TabsTrigger>
-            <TabsTrigger value="roles" className="max-sm:h-10 max-sm:flex-1 max-sm:px-1.5 max-sm:[&>svg]:hidden"><ShieldCheck /> Roles</TabsTrigger>
+            {canManageRoles && <TabsTrigger value="roles" className="max-sm:h-10 max-sm:flex-1 max-sm:px-1.5 max-sm:[&>svg]:hidden"><ShieldCheck /> Roles</TabsTrigger>}
             <TabsTrigger value="workspaces" className="max-sm:h-10 max-sm:flex-1 max-sm:px-1.5 max-sm:[&>svg]:hidden"><Building2 /> Workspaces</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
 
       <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+        {tab === 'members' && canInvite && <JoinRequestsCard onDecided={onRefresh} />}
         {tab === 'members' && (
           <MembersTab
+            canInvite={canInvite} onInvite={() => setInviteOpen(true)}
             ctl={ctl} members={members} teams={teams} currentUser={currentUser}
             canManageRoles={canManageRoles} onManageRoles={roles.openMemberRoles}
             onCall={(id, media) => voice.startCall([id], media)}
@@ -67,6 +93,8 @@ export function PeoplePage(props: any) {
       </motion.div>
       {/* Role picker for "Manage roles" from the Members tab. */}
       {tab !== 'roles' && canManageRoles && <MemberRolesDialog ctl={roles} />}
+      {canInvite && <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} teamName={activeTeamName} />}
+      {onJoinTeam && <JoinWorkspaceDialog open={joinOpen} onOpenChange={setJoinOpen} onJoin={onJoinTeam} />}
     </Page>
   );
 }
