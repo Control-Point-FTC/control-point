@@ -91,6 +91,9 @@ export function serveDist(app: express.Express, distDir: string, opts: { csp?: {
     });
   });
 
+  // The page itself always goes through sendIndex (CSP + no-cache), also
+  // when asked for by name.
+  app.get("/index.html", sendIndex);
   app.use(express.static(root, {
     index: false,
     setHeaders: (res, filePath) => {

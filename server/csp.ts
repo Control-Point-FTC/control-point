@@ -32,7 +32,9 @@ export function inlineScriptHashes(html: string): string[] {
 export function buildCsp({ scriptHashes, reportUri }: { scriptHashes: string[]; reportUri?: string }): string {
   const directives: [string, string[]][] = [
     ["default-src", ["'self'"]],
-    ["script-src", ["'self'", ...scriptHashes]],
+    // 'wasm-unsafe-eval' lets the STEP viewer compile its WebAssembly parser;
+    // it does not allow JavaScript eval / new Function.
+    ["script-src", ["'self'", "'wasm-unsafe-eval'", ...scriptHashes]],
     ["style-src", ["'self'", "'unsafe-inline'"]],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["font-src", ["'self'", "data:"]],

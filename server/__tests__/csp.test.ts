@@ -21,9 +21,10 @@ describe("CSP policy", () => {
 
   it("locks down scripts, objects, framing and base; reports violations", () => {
     const p = buildCsp({ scriptHashes: ["'sha256-abc'"], reportUri: "/api/csp-report" });
-    expect(p).toContain("script-src 'self' 'sha256-abc'");
+    expect(p).toContain("script-src 'self' 'wasm-unsafe-eval' 'sha256-abc'");
     expect(p).not.toMatch(/script-src[^;]*unsafe-inline/);
-    expect(p).not.toMatch(/unsafe-eval/);
+    // WebAssembly compilation only — never JavaScript eval.
+    expect(p).not.toMatch(/(^|[\s;])'unsafe-eval'/);
     expect(p).toContain("object-src 'none'");
     expect(p).toContain("frame-ancestors 'none'");
     expect(p).toContain("base-uri 'self'");

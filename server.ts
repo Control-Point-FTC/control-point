@@ -2177,6 +2177,11 @@ async function startServer() {
   // the owner's Errors tab shows what the policy would block.
   const cspLimiter = new RateLimiter();
   setInterval(() => cspLimiter.sweep(), 10 * 60 * 1000).unref();
+  // client_errors (crashes + CSP reports) keeps only the newest 5,000 rows:
+  // trimmed now and then on insert, and hourly whatever arrives.
+  const pruneClientErrors = () =>
+    dbRun("DELETE FROM client_errors WHERE id <= (SELECT id FROM client_errors ORDER BY id DESC LIMIT 1 OFFSET 5000)").catch(() => {});
+  setInterval(() => void pruneClientErrors(), 60 * 60 * 1000).unref();
   app.post(
     "/api/csp-report",
     express.json({ type: ["application/csp-report", "application/reports+json", "application/json"], limit: "16kb" }),
@@ -2190,6 +2195,7 @@ async function startServer() {
           "INSERT INTO client_errors (kind, message, route, user_agent) VALUES ('csp', ?, ?, ?)",
           s.message, s.route, String(req.headers["user-agent"] || "").slice(0, 300),
         );
+        if (Math.random() < 0.05) await pruneClientErrors();
       } catch { /* best effort */ }
     },
   );
@@ -7545,7 +7551,7 @@ Rules:
         String(req.headers["user-agent"] || "").slice(0, 300),
       );
       // Keep the table bounded: drop everything but the newest 5,000 rows.
-      if (Math.random() < 0.05) await dbRun("DELETE FROM client_errors WHERE id <= (SELECT id FROM client_errors ORDER BY id DESC LIMIT 1 OFFSET 5000)");
+      if (Math.random() < 0.05) await pruneClientErrors();
     } catch (e) { console.error("client error report failed:", e); }
     res.status(204).end();
   });
