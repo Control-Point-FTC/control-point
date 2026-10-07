@@ -85,8 +85,9 @@ npx tsx scripts/predict/ingest.mts 2025 2024 2023 2022                 # 1. FTC 
 npx tsx scripts/predict/ingest-first.mts 2025 2024                     # 2. FIRST advancement data → .cache/predict/first
 npx tsx scripts/predict/tune.mts --tune 2024 --rounds 2                # 3. rating settings (2024–25)
 npx tsx scripts/predict/fit-noise.mts --tune 2024                      # 4. score uncertainty a, b, preExtra (2024–25)
+npx tsx scripts/predict/fit-platt.mts --tune 2024 --test 2025 --from-tuned   # 4b. Platt calibration → .cache/predict/platt-2024.json
 npx tsx scripts/predict/backtest-matches.mts --seasons 2022,2023,2024,2025 --report 2024,2025 \
-  --params '<rating settings>' --noise '<a, b, preExtra>' --quiet --json .cache/predict/final-test.json   # 5. match test
+  --params '<rating settings>' --noise '<a, b, preExtra>' --calibration '<platt a, b>' --quiet --json .cache/predict/final-test.json   # 5. match test
 npx tsx scripts/predict/backtest-events.mts --season 2024 --fit-pick --awards none --runs 50 --limit 1   # 6. pick model (2024–25)
 npx tsx scripts/predict/fit-awards.mts                                  # 7. award model (fit 2024–25, test 2025–26)
 npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards model --partners   # 8. event test
@@ -94,17 +95,17 @@ npx tsx scripts/predict/backtest-events.mts --season 2025 --runs 1000 --awards n
 python scripts/predict/report.py                                       # 9. this report
 ```
 
-Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 5–8 read it.
+Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 4b–8 read it. Then `npx tsx scripts/predict/export-model.mts` writes `server/predict/model.json`. It refuses a `platt-2024.json` fitted for other settings than `tuned-2024.json`, and without one it keeps the shipped calibration.
 
 ## 8. Known limits
 
-- Robot changes between events only show up once a team plays again.
+- Robot changes between events only show up once a team plays again. Break/rebuild handling exists but is off; see §9.
 - Bonus-RP chances (2025–26) were fitted on the season's earliest 20% of matches (bonuses didn't exist before).
 - Alliance declines and 3-team championship alliances aren't modelled (declines were tried and rejected: see §9).
 - An event's award line-up (which awards exist) is taken as known; winners are not.
 - 2026–27 (BIOBUZZ) rules aren't published; the 2025–26 points system is assumed until they are.
 
-## 9. Tried and rejected
+## 9. Tried and not shipped
 
 **Alliance declines** (Oct 2026). A team that would captain a later alliance if left unpicked may turn an invitation down. This was modelled as `captainAccept`, a factor on those teams' pick weight (`pickWeights` in `server/predict/sim.ts`; it defaults to 1, meaning no declines). The factor was fitted jointly with `tau` and `rankWeight` by pick log-likelihood on 2024–25.
 
@@ -115,3 +116,25 @@ Steps 3–4 write `.cache/predict/tuned-2024.json`; steps 5–8 read it.
 The current pick model already fits the real picks' preference for strong, high-ranked teams; a decline factor only overfits. The related question of whether super-alliances are over-predicted points the other way at match level. On 2024–25, the strongest alliances score below their prediction in qualification matches (top tenth: −21 points, about −8%). In playoff matches, though, favourites win *more* often than predicted (84.8% predicted vs 89.9% actual for 80–90% favourites). So "soften stacked alliances" isn't supported by the data. A playoff-specific sharpening is a better lead, and it should be tested through `backtest-matches.mts` like everything else.
 
 Reproduce: `npx tsx scripts/predict/backtest-events.mts --season 2024 --fit-pick --declines --awards none --runs 50 --limit 1 --pick-file .cache/predict/pick-2024-declines.json --out <file>`, then `--season 2025 --runs 1000 --awards model --partners --eval-pick --pick-file <either pick file> --out <file>`. Declines are opt-in (`--declines`, which requires an explicit `--pick-file`), so the shipped reproduction in §7 is unchanged.
+
+**Breaks between events / robot rebuilds** (Oct 2026, built but **not shipped**). On 2024–25 (`scripts/predict/gap-residuals.mts`), alliances whose robots are back from a long break are badly mispredicted. On the first match after 8+ weeks off, the error is 58 points MAE with a bias of −44, against 22 points for teams without a break. The flat season growth overshoots, and the error stays high for about 3–5 matches. `RatingBook` can now handle breaks of at least `rebuildGapWeeks`. Such a break adds `rebuildUncPerWeek` points² of uncertainty per week away, and caps the gain's experience at `rebuildN`, so the next matches move the rating faster. The match count shown in the app is unchanged. It is off by default (`rebuildGapWeeks` 0).
+
+Fitted on 2024–25: `rebuildGapWeeks` 4, `rebuildN` 4, `rebuildUncPerWeek` 200, then a full retune (`tune.mts --rebuild`).
+
+- **Tune objective:** 0.17612 shipped → 0.17475, against 0.17529 for an equally retuned control without rebuild handling.
+- **Season growth:** the retune moved it to 8%/week, which raised score MAE (2024–25: 28.0 → 28.9; 2025–26: 27.95 → 28.78). It was held at the shipped 5%/week.
+- **Pipeline order:** noise, then Platt, then `preExtra` chosen with calibration applied (`fit-noise.mts --calibrated`, preExtra 300). Then the pick and award models were refit and exported.
+
+On 2025–26 (test):
+- **Win odds:** neutral. Live is unchanged (72.74% / 0.1789). Pre-event goes from 68.78% / 0.1986 / ECE 0.0168 to 68.80% / 0.1988 / 0.0170.
+- **Scores:** slightly better. MAE goes from 27.95 to 27.88, bias from −2.14 to −1.76, and 80% coverage from 0.820 to 0.826.
+- **The cases it targets:** better. After 8+ weeks off, 2nd–3rd match back, MAE goes from 32.9 to 31.4 (bias −14.6 → −10.7), and 4th–6th match back from 28.6 to 28.0. The first match back is unchanged (a rebuild can't be seen before the team plays).
+- **Advancement:** slightly worse after the pick and award refits. Brier before the event goes from 0.1286 to 0.1291, and after quals from 0.0855 to 0.0863 (ECE 0.0122 → 0.0138). Partner-scenario win Brier goes from 0.0719 to 0.0733.
+
+Because advancement regresses, it wasn't shipped. Leads for a retry:
+- Fit the pick model on more than one season, so it doesn't shift with every rating refit.
+- Choose growth by score likelihood rather than win-probability Brier.
+- Separately, choosing `preExtra` on calibrated pre-event odds (`--calibrated`) lowered pre-event calibration error on 2024–25 (0.019 → 0.013 for these settings). That alone may be worth a refit of the shipped model.
+
+The experiment's outputs are kept in `.cache/predict/*-rebuild-experiment.json`.
+

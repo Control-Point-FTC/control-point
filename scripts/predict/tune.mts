@@ -5,7 +5,13 @@
 // seasons replayed only to build priors. The test season (2025) is never
 // looked at here.
 //
-//   npx tsx scripts/predict/tune.mts [--tune 2024] [--rounds 2]
+//   npx tsx scripts/predict/tune.mts [--tune 2024] [--rounds 2] [--start file] [--only k1,k2] [--out file] [--rebuild]
+//
+// --rebuild also searches the break/rebuild settings (rebuildGapWeeks,
+// rebuildN, rebuildUncPerWeek); without it they stay off, as shipped (see the
+// back-test report §9).
+// --only limits the search to some parameters (e.g. new ones, before a full
+// retune); --out writes somewhere other than .cache/predict/tuned-<season>.json.
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadSeason } from "./load.mts";
 import { runBacktest } from "./backtest-matches.mts";
@@ -39,9 +45,17 @@ const grid: Partial<Record<keyof P, number[]>> = {
   a: [12, 18, 24, 30, 36, 42],
   b: [0.1, 0.14, 0.18, 0.24, 0.3],
 };
+if (process.argv.includes("--rebuild")) Object.assign(grid, {
+  rebuildGapWeeks: [0, 2, 3, 4, 6],
+  rebuildN: [0, 1, 2, 4, 6],
+  rebuildUncPerWeek: [0, 25, 50, 100, 200, 400],
+});
+const only = arg("only")?.split(",");
+if (only) for (const k of Object.keys(grid) as (keyof P)[]) if (!only.includes(k)) delete grid[k];
 
 const startFrom = arg("start");
-let best: P = startFrom ? JSON.parse(readFileSync(startFrom, "utf8")).best : { ...DEFAULT_RATING_PARAMS, ...DEFAULT_NOISE };
+// Parameters missing from a start file (added since it was written) take their defaults.
+let best: P = { ...DEFAULT_RATING_PARAMS, ...DEFAULT_NOISE, ...(startFrom ? JSON.parse(readFileSync(startFrom, "utf8")).best : {}) };
 const cache = new Map<string, number>();
 function score(p: P): number {
   const key = JSON.stringify(p);
@@ -65,4 +79,4 @@ for (let round = 0; round < rounds; round++) {
   }
   console.log(`round ${round + 1}: ${bestScore.toFixed(5)} ${JSON.stringify(best)}`);
 }
-writeFileSync(`.cache/predict/tuned-${tuneSeason}.json`, JSON.stringify({ best, bestScore }, null, 1));
+writeFileSync(arg("out") ?? `.cache/predict/tuned-${tuneSeason}.json`, JSON.stringify({ best, bestScore }, null, 1));

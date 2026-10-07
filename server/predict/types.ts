@@ -62,6 +62,9 @@ export interface TeamRating {
   uncertainty: number;
   /** Epoch ms the rating was last brought up to date (for season growth). */
   asOf?: number;
+  /** Experience used for the update gain, when a break between events has
+   *  lowered it below `n` (see RatingParams.rebuildGapWeeks). */
+  gainN?: number;
 }
 
 export const COMPONENTS = ["auto", "teleop", "endgame", "pen"] as const;

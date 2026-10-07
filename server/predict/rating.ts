@@ -12,6 +12,12 @@
 // with decay (ρ1 for last season, ρ2 for the one before), scaled into the
 // new season's units using the population seen so far. Teams with no
 // history (rookies) start from a fitted rookie z with a wider uncertainty.
+//
+// Breaks between events: teams often come back from a few weeks off with a
+// changed (rebuilt) robot. After a break of at least `rebuildGapWeeks`, a
+// team's prediction is less certain (extra variance per week away) and its
+// next matches move its rating faster (its gain experience is capped at
+// `rebuildN`), so a rebuilt robot is picked up within a few matches.
 import { COMPONENTS, type Component, type MatchRecord, type TeamRating } from "./types.js";
 
 export interface RatingParams {
@@ -41,6 +47,15 @@ export interface RatingParams {
   growthPerWeek: number;
   /** Cap on weeks of growth applied at once (long breaks). */
   growthMaxWeeks: number;
+  /** A break (weeks since a team's last match) at least this long counts as a
+   *  possible rebuild; 0 turns rebuild handling off. */
+  rebuildGapWeeks: number;
+  /** After such a break, the gain is computed as if the team had played at
+   *  most this many matches. */
+  rebuildN: number;
+  /** Extra prediction variance (points², per robot) per week of break,
+   *  counting at most growthMaxWeeks. */
+  rebuildUncPerWeek: number;
 }
 
 export const DEFAULT_RATING_PARAMS: RatingParams = {
@@ -58,6 +73,9 @@ export const DEFAULT_RATING_PARAMS: RatingParams = {
   baseAlpha: 0.002,
   growthPerWeek: 0.02,
   growthMaxWeeks: 8,
+  rebuildGapWeeks: 0,
+  rebuildN: 3,
+  rebuildUncPerWeek: 0,
 };
 
 type Vec = Record<Component, number>;
@@ -118,6 +136,14 @@ export class RatingBook {
     return 1 + this.params.growthPerWeek * weeks;
   }
 
+  /** Weeks of break counted for rebuild handling (0 if it doesn't apply). */
+  private breakWeeks(r: TeamRating, at: number): number {
+    const { rebuildGapWeeks, growthMaxWeeks } = this.params;
+    if (!rebuildGapWeeks || !r.n || r.asOf == null) return 0;
+    const weeks = (at - r.asOf) / (7 * 864e5);
+    return weeks >= rebuildGapWeeks ? Math.min(weeks, growthMaxWeeks) : 0;
+  }
+
   /** Spread of per-robot contributions in this season so far (per component). */
   private sd(c: Component): number {
     const v = this.baseSq[c] - this.base[c] ** 2;
@@ -162,7 +188,8 @@ export class RatingBook {
   get(team: number): TeamRating {
     const r = this.ratings.get(team) ?? this.priorFor(team);
     const f = this.growth(r.asOf, this.now);
-    return { ...r, auto: r.auto * f, teleop: r.teleop * f, endgame: r.endgame * f };
+    const unc = r.uncertainty + this.params.rebuildUncPerWeek * this.breakWeeks(r, this.now);
+    return { ...r, auto: r.auto * f, teleop: r.teleop * f, endgame: r.endgame * f, uncertainty: unc };
   }
 
   /** Stored rating, created from the prior on a team's first match. */
@@ -205,15 +232,22 @@ export class RatingBook {
     for (const { al, exp, actual, share } of sides) {
       for (const t of al.teams) {
         const r = this.stored(t);
+        // Back from a break: less certain, and quicker to move (possible rebuild).
+        const away = this.breakWeeks(r, this.now);
+        if (away) {
+          r.uncertainty += p.rebuildUncPerWeek * away;
+          r.gainN = Math.min(r.gainN ?? r.n, p.rebuildN);
+        }
         // Fold growth since the team's last match into the stored rating.
         const f = this.growth(r.asOf, this.now);
         r.auto *= f; r.teleop *= f; r.endgame *= f; r.asOf = this.now;
-        const k = Math.max(p.kMin, p.k0 / (1 + r.n / p.n0)) * weight;
+        const k = Math.max(p.kMin, p.k0 / (1 + (r.gainN ?? r.n) / p.n0)) * weight;
         for (const c of COMPONENTS) {
           r[c] += k * (actual[c] - exp[c]) * share;
           if (r[c] < 0) r[c] = 0; // contributions and penalties are never negative
         }
         r.n += 1;
+        if (r.gainN != null) r.gainN += 1;
         r.uncertainty = Math.max(p.uncMin, r.uncertainty * p.uncDecay);
       }
     }

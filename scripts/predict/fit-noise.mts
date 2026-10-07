@@ -8,10 +8,16 @@
 // 2. preExtra (points² per robot) for predictions made from an event-start
 //    snapshot: minimise the log loss of pre-event win probabilities.
 //
-//   npx tsx scripts/predict/fit-noise.mts [--tune 2024]
+//   npx tsx scripts/predict/fit-noise.mts [--tune 2024] [--calibrated]
+//
+// --calibrated: choose preExtra with the Platt calibration from
+// .cache/predict/platt-<tune>.json applied, as the server applies it. Platt
+// is fitted on live predictions, which don't depend on preExtra, so the
+// order is: fit-noise (a, b) → fit-platt → fit-noise --calibrated (preExtra).
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadSeason } from "./load.mts";
 import { runBacktest } from "./backtest-matches.mts";
+import type { CalibrationParams } from "../../server/predict/calibration.ts";
 import { logLoss, ece, brier } from "../../server/predict/metrics.ts";
 import type { EventRecord } from "../../server/predict/types.ts";
 
@@ -19,12 +25,16 @@ const arg = (n: string) => { const i = process.argv.indexOf(`--${n}`); return i 
 const tuneSeason = Number(arg("tune") ?? 2024);
 const file = `.cache/predict/tuned-${tuneSeason}.json`;
 const tuned = JSON.parse(readFileSync(file, "utf8"));
-const { a: _a, b: _b, preExtra: _p, ...rating } = tuned.best;
+const { a: _a, b: _b, preExtra: _p, noiseFit: _nf, ...rating } = tuned.best;
 
 const seasons = [2022, 2023, 2024, 2025].filter((s) => s <= tuneSeason);
 const events = new Map<number, EventRecord[]>();
 for (const s of seasons) events.set(s, loadSeason(s));
 const report = new Set([tuneSeason]);
+const calibration: CalibrationParams | undefined = process.argv.includes("--calibrated")
+  ? JSON.parse(readFileSync(`.cache/predict/platt-${tuneSeason}.json`, "utf8")).calibration
+  : undefined;
+if (calibration) console.log(`choosing preExtra with calibration ${JSON.stringify(calibration)}`);
 
 // 1. a, b by likelihood of live scores (rows don't depend on a, b except through sd).
 const rows = runBacktest({ params: rating, noise: { a: 14, b: 0.21 }, seasons, report, events });
@@ -49,7 +59,7 @@ console.log(`a=${best.a} b=${best.b} (log-lik ${best.ll.toFixed(4)}), 80% range 
 // 2. preExtra by log loss of pre-event win probabilities.
 let bestPre = { preExtra: 0, logLoss: Infinity };
 for (const preExtra of [0, 100, 200, 300, 400, 500, 650, 800, 1000, 1200]) {
-  const rs = runBacktest({ params: rating, noise: { a: best.a, b: best.b, preExtra }, seasons, report, events });
+  const rs = runBacktest({ params: rating, noise: { a: best.a, b: best.b, preExtra }, seasons, report, events, calibration });
   const xs = rs.map((r) => ({ p: r.pre, y: r.y }));
   const ll = logLoss(xs);
   console.log(`  preExtra ${preExtra}: pre-event log loss ${ll.toFixed(5)}, Brier ${brier(xs).toFixed(5)}, calibration error ${ece(xs).toFixed(4)}`);
@@ -58,6 +68,6 @@ for (const preExtra of [0, 100, 200, 300, 400, 500, 650, 800, 1000, 1200]) {
 console.log(`preExtra=${bestPre.preExtra}`);
 
 tuned.best = { ...tuned.best, a: best.a, b: best.b, preExtra: bestPre.preExtra };
-tuned.noiseFit = `scripts/predict/fit-noise.mts on ${tuneSeason}: a, b by Gaussian log-likelihood of live scores; preExtra by pre-event log loss`;
+tuned.noiseFit = `scripts/predict/fit-noise.mts on ${tuneSeason}: a, b by Gaussian log-likelihood of live scores; preExtra by ${calibration ? "calibrated " : ""}pre-event log loss`;
 writeFileSync(file, JSON.stringify(tuned, null, 1));
 console.log(`updated ${file}`);
