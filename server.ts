@@ -1869,11 +1869,12 @@ async function inviteByToken(token: unknown): Promise<(InviteRow & { team_name: 
   )) as any) || null;
 }
 
-/** Counts a use, refusing once the cap is reached (atomic). */
+/** Counts a use, refusing a revoked, expired or used-up link (atomic). */
 async function consumeInvite(inv: InviteRow): Promise<boolean> {
   const r = (await dbRun(
-    "UPDATE team_invites SET uses = uses + 1 WHERE id = ? AND revoked_at IS NULL AND (max_uses IS NULL OR uses < max_uses)",
-    inv.id
+    `UPDATE team_invites SET uses = uses + 1
+      WHERE id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND (max_uses IS NULL OR uses < max_uses)`,
+    inv.id, new Date().toISOString()
   )) as any;
   return Number(r?.changes ?? r?.rowsAffected ?? 0) > 0;
 }
@@ -2786,11 +2787,12 @@ async function startServer() {
           await fileJoinRequest(team, cleanEmail, cleanName, invite.id, hashedPassword);
           return res.json({ pendingApproval: true, team: { id: team.id, name: team.name } });
         }
-        if (invite && !(await consumeInvite(invite))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
         const dupe = (await dbGet("SELECT id, is_active FROM members WHERE email = ? AND team_id = ?", cleanEmail, team.id)) as any;
         if (dupe && dupe.is_active !== 0) {
           return res.status(400).json({ error: "You're already a member of this team — sign in instead" });
         }
+        // Only now, when someone will actually join, does the link spend a use.
+        if (invite && !(await consumeInvite(invite))) return res.status(400).json({ error: INVITE_STATE_MESSAGE.used_up });
         let memberId: number;
         if (dupe) {
           // Rejoining a team they were removed from: restore the membership.
@@ -4019,9 +4021,13 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
+    // Live links first (at most 50 can exist, see below), so a working link
+    // never drops off the list behind newer revoked or expired ones.
     const rows = (await dbAll(
       `SELECT i.*, m.name AS created_by_name FROM team_invites i LEFT JOIN members m ON m.id = i.created_by
-        WHERE i.team_id = ? ORDER BY i.id DESC LIMIT 100`, auth.teamId
+        WHERE i.team_id = ?
+        ORDER BY (i.revoked_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > ?) AND (i.max_uses IS NULL OR i.uses < i.max_uses)) DESC, i.id DESC
+        LIMIT 100`, auth.teamId, new Date().toISOString()
     )) as any[];
     res.json(rows.map(inviteView));
   });
@@ -4032,8 +4038,10 @@ async function startServer() {
     if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
     const opts = parseInviteOptions(req.body);
     if ("error" in opts) return res.status(400).json({ error: opts.error });
+    // Only links that still work count (used-up links can't be seen or revoked).
     const live = (await dbGet(
-      "SELECT COUNT(*) AS n FROM team_invites WHERE team_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+      `SELECT COUNT(*) AS n FROM team_invites
+        WHERE team_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND (max_uses IS NULL OR uses < max_uses)`,
       auth.teamId, new Date().toISOString()
     )) as any;
     if ((live?.n || 0) >= 50) return res.status(400).json({ error: "This workspace has 50 active links — turn some off first" });
@@ -4112,7 +4120,7 @@ async function startServer() {
     if (!auth) return;
     if (!(await canInvite(auth))) return res.status(403).json({ error: "You don't have permission for that" });
     const rows = (await dbAll(
-      "SELECT id, email, name, source, created_at FROM team_join_requests WHERE team_id = ? AND status = 'pending' ORDER BY id",
+      `SELECT id, email, name, source, created_at FROM team_join_requests WHERE team_id = ? AND (status = 'pending' OR (status = 'deciding' AND decided_at < datetime('now', '-5 minutes'))) ORDER BY id`,
       auth.teamId
     )) as any[];
     res.json(rows);
@@ -4125,23 +4133,37 @@ async function startServer() {
     const decision = req.params.decision;
     if (decision !== "approve" && decision !== "deny") return res.status(400).json({ error: "Approve or deny" });
     const reqRow = (await dbGet(
-      "SELECT * FROM team_join_requests WHERE id = ? AND team_id = ? AND status = 'pending'", Number(req.params.id) || 0, auth.teamId
+      `SELECT * FROM team_join_requests WHERE id = ? AND team_id = ? AND (status = 'pending' OR (status = 'deciding' AND decided_at < datetime('now', '-5 minutes')))`, Number(req.params.id) || 0, auth.teamId
     )) as any;
     if (!reqRow) return res.status(404).json({ error: "That request was already handled" });
-    // Claim it first so two approvers can't both act on it.
+    // Claim it first ('deciding') so two approvers can't both act on it. A
+    // claim abandoned by a crash frees itself after 5 minutes.
     const claimed = (await dbRun(
-      "UPDATE team_join_requests SET status = ?, decided_by = ?, decided_at = datetime('now'), password_hash = NULL WHERE id = ? AND status = 'pending'",
-      decision === "approve" ? "approved" : "denied", auth.memberId, reqRow.id
+      `UPDATE team_join_requests SET status = 'deciding', decided_by = ?, decided_at = datetime('now')
+        WHERE id = ? AND (status = 'pending' OR (status = 'deciding' AND decided_at < datetime('now', '-5 minutes')))`,
+      auth.memberId, reqRow.id
     )) as any;
     if (!Number(claimed?.changes ?? claimed?.rowsAffected ?? 0)) return res.status(404).json({ error: "That request was already handled" });
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", auth.teamId)) as any;
     if (decision === "approve") {
-      const hasAccount = (await dbGet("SELECT id FROM members WHERE email = ? LIMIT 1", reqRow.email)) as any;
-      const { row, joined } = await addMembership(
-        reqRow.email, team,
-        hasAccount ? undefined : { name: reqRow.name || reqRow.email.split("@")[0], passwordHash: reqRow.password_hash || null }
+      let added: { row: any; joined: boolean };
+      try {
+        const hasAccount = (await dbGet("SELECT id FROM members WHERE email = ? LIMIT 1", reqRow.email)) as any;
+        added = await addMembership(
+          reqRow.email, team,
+          hasAccount ? undefined : { name: reqRow.name || reqRow.email.split("@")[0], passwordHash: reqRow.password_hash || null }
+        );
+        if (!hasAccount) await ensureOnboardingRow(reqRow.email);
+      } catch (e) {
+        // Nothing lost: the request (and any saved password) goes back to pending.
+        await dbRun("UPDATE team_join_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?", reqRow.id).catch(() => {});
+        console.error("join request approval failed:", e);
+        return res.status(500).json({ error: "Could not add them — try again" });
+      }
+      await dbRun(
+        "UPDATE team_join_requests SET status = 'approved', decided_at = datetime('now'), password_hash = NULL WHERE id = ?", reqRow.id
       );
-      if (!hasAccount) await ensureOnboardingRow(reqRow.email);
+      const { row, joined } = added;
       if (joined) broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(row) });
       const html = emailTemplate({
         preheader: `You're in ${team.name} on Control Point`,
@@ -4151,6 +4173,10 @@ async function startServer() {
         footnote: "You received this because you asked to join this workspace.",
       });
       sendEmail(reqRow.email, `You're in ${team.name}`, html).catch((e) => console.error("approval email failed:", e));
+    } else {
+      await dbRun(
+        "UPDATE team_join_requests SET status = 'denied', decided_at = datetime('now'), password_hash = NULL WHERE id = ?", reqRow.id
+      );
     }
     broadcastToTeam(team.id, { type: "join_requests_changed" });
     res.json({ ok: true });

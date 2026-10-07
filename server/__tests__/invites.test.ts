@@ -181,4 +181,37 @@ describe("invite links", () => {
     const left = (await t.db.execute({ sql: "SELECT password_hash FROM team_join_requests WHERE id = ?", args: [mine.id] })).rows[0] as any;
     expect(left.password_hash).toBeNull();
   });
+
+  it("an existing member signing up again doesn't spend a single-use link", async () => {
+    const { body } = await t.post("/api/invites", { max_uses: 1 }, admin);
+    const r = await t.post("/api/auth/signup", { accountType: "student", name: "Newbie", email: "newbie@test.local", password: "pass-word-1", inviteToken: body.token });
+    expect(r.status).toBe(400);
+    const row = (await t.db.execute({ sql: "SELECT uses FROM team_invites WHERE id = ?", args: [body.invite.id] })).rows[0] as any;
+    expect(Number(row.uses)).toBe(0);
+  });
+
+  it("a link that expired after it was checked can't be used", async () => {
+    const { body } = await t.post("/api/invites", {}, admin);
+    await t.db.execute({ sql: "UPDATE team_invites SET expires_at = ? WHERE id = ?", args: [new Date(Date.now() - 1000).toISOString(), body.invite.id] });
+    const r = await t.post("/api/invites/accept", { token: body.token }, member);
+    // Already a member → switched without spending; a newcomer is refused:
+    expect(r.status).toBe(200);
+    await t.db.execute({ sql: "INSERT INTO verified_emails (email, verified_at) VALUES (?, ?)", args: ["late@test.local", new Date().toISOString()] });
+    const s = await t.post("/api/auth/signup", { accountType: "student", name: "Late", email: "late@test.local", password: "pass-word-3", inviteToken: body.token });
+    expect(s.status).toBe(400);
+    expect(s.body.error).toMatch(/expired/);
+  });
+
+  it("working links stay listed ahead of newer revoked ones", async () => {
+    const keep = await t.post("/api/invites", { expires_in_hours: null }, admin);
+    for (let i = 0; i < 3; i++) {
+      const { body } = await t.post("/api/invites", {}, admin);
+      await t.api(`/api/invites/${body.invite.id}`, { method: "DELETE", session: admin });
+    }
+    const list = await t.api("/api/invites", { session: admin });
+    const firstDead = list.body.findIndex((l: any) => l.state !== "active");
+    const keepAt = list.body.findIndex((l: any) => l.id === keep.body.invite.id);
+    expect(keepAt).toBeGreaterThanOrEqual(0);
+    expect(keepAt).toBeLessThan(firstDead);
+  });
 });

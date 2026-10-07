@@ -1623,6 +1623,8 @@ export default function App() {
       setVerifyState({ email: data.email, mode: payload.accountType === 'admin' ? 'admin' : 'student' });
       return data;
     }
+    // An approval link or "ask to join": no account or session yet.
+    if (data.pendingApproval) return data;
     persistSession(data.sessionId, data.user);
     return data;
   };
@@ -1845,7 +1847,9 @@ export default function App() {
     }
     clearInvite();
     setInviteTeamName(null);
-    joinWithCodeOrLink(token)
+    // Like a manual join or switch: end any call before the session moves.
+    Promise.resolve(voiceApiRef.current?.leave()).catch(() => { /* best effort */ })
+      .then(() => joinWithCodeOrLink(token))
       .then(applyJoin)
       .catch((e) => notify(e.message || 'Could not use that invite link', 'error'))
       .finally(() => { if (inviteTokenFromPath(window.location.pathname)) navigate('/dashboard', { replace: true }); });
