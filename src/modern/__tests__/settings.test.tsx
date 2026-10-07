@@ -305,3 +305,30 @@ describe('Modern Settings — Discord-style workspace settings', () => {
     expect(screen.getByTestId('where').textContent).toBe('/tasks');
   });
 });
+
+describe('Modern Settings — notifications', () => {
+  it('loads your choices and saves a change with one PATCH', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') return json({ team_updates: 'instant', everyone_pings: true });
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    expect(await screen.findByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('radio', { name: 'Instant' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/notification-prefs', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ team_updates: 'instant' }) })));
+    expect(screen.getByText(/always reach you/)).toBeInTheDocument();
+  });
+
+  it('rolls back and says so when the save fails', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') return json({ error: 'Nope' }, false);
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('switch', { name: '@everyone and @here' }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Nope', 'error'));
+    expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});

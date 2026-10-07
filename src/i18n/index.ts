@@ -41,6 +41,8 @@ const resources = {
         profileHint: "Photo, name, status, accent",
         appearance: "Appearance",
         appearanceHint: "Light or dark theme",
+        notifications: "Notifications",
+        notificationsHint: "Team updates, digests, @everyone",
         calls: "Calls & sounds",
         callsHint: "Devices, camera, chimes",
         bruno: "Bruno AI",

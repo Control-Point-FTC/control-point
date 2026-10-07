@@ -152,6 +152,7 @@ import {
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
 import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
+import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
 
@@ -2531,6 +2532,72 @@ async function startServer() {
     }
   };
 
+  // ---- Notification controls (audit item 26) ----
+  // Team updates (budget, outreach, calendar) follow each recipient's choice:
+  // instant, a digest every few hours, or off. The actor is never notified of
+  // their own change. `count` > 1 bundles a batch (Bruno adding 9 events).
+  const notifyTeamUpdate = async (
+    teamId: number, actorId: number | null, recipientIds: number[], kind: UpdateKind,
+    content: string, meta: Record<string, any>, count = 1,
+  ) => {
+    const ids = [...new Set(recipientIds)].filter((id) => id && id !== actorId);
+    if (!ids.length) return;
+    try {
+      const rows = (await dbAll(
+        `SELECT id, notify_prefs FROM members WHERE id IN (${ids.map(() => "?").join(",")}) AND team_id = ? AND COALESCE(is_active, 1) = 1`,
+        ...ids, teamId,
+      )) as any[];
+      const now = new Date().toISOString();
+      for (const r of rows) {
+        const mode = parsePrefs(r.notify_prefs).team_updates;
+        if (mode === "instant") void createNotification(r.id, content, "system", meta);
+        else if (mode === "digest") {
+          await dbRun(
+            "INSERT INTO notification_digest (member_id, team_id, kind, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            r.id, teamId, kind, content, JSON.stringify({ ...meta, count }), now,
+          );
+        }
+      }
+    } catch (e) {
+      console.error("notifyTeamUpdate failed:", e);
+    }
+  };
+
+  // One summary per member once their oldest queued update is DIGEST_WINDOW old.
+  const flushDigests = async () => {
+    try {
+      const cutoff = new Date(Date.now() - DIGEST_WINDOW_MS).toISOString();
+      const due = (await dbAll(
+        "SELECT member_id FROM notification_digest GROUP BY member_id HAVING MIN(created_at) <= ?", cutoff,
+      )) as any[];
+      for (const d of due) {
+        const items = (await dbAll(
+          "SELECT id, team_id, kind, meta FROM notification_digest WHERE member_id = ? ORDER BY id", d.member_id,
+        )) as any[];
+        if (!items.length) continue;
+        const kinds: UpdateKind[] = [];
+        for (const it of items) {
+          let n = 1;
+          try { n = Math.max(1, Math.min(50, Number(JSON.parse(it.meta || "{}").count) || 1)); } catch { /* 1 */ }
+          for (let i = 0; i < n; i++) kinds.push(it.kind as UpdateKind);
+        }
+        const team = (await dbGet("SELECT name FROM teams WHERE id = ?", items[items.length - 1].team_id)) as any;
+        const text = digestText(String(team?.name || ""), kinds);
+        const maxId = items[items.length - 1].id;
+        // Delete first (up to what we read), so a crash can't send it twice.
+        await dbRun("DELETE FROM notification_digest WHERE member_id = ? AND id <= ?", d.member_id, maxId);
+        if (text) await createNotification(d.member_id, text, "system", { digest: true, items: kinds.length });
+      }
+    } catch (e) {
+      console.error("digest flush failed:", e);
+    }
+  };
+  setInterval(() => void flushDigests(), Number(process.env.NOTIFY_DIGEST_FLUSH_MS) || 15 * 60 * 1000).unref();
+
+  // Caps one sender's @everyone / @here fan-out; the message still posts.
+  const pingLimiter = new PingLimiter(3, 60 * 60 * 1000);
+  setInterval(() => pingLimiter.sweep(), 10 * 60 * 1000).unref();
+
   wss.on("connection", (ws, req) => {
     // Same-origin sockets only (the session cookie must not authenticate a
     // socket opened by another site), and identity comes from that cookie.
@@ -2647,13 +2714,17 @@ async function startServer() {
           // Handle mentions (scoped to the sender's workspace)
           const plainContent = String(message.content || '').replace(/@\[([^\]]+)\]/g, '@$1');
           const chanName = (restrictedChan as any)?.name || 'general';
-          if (plainContent.includes('@everyone')) {
-            // Notify every active member of the team (except the sender)
-            const all = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 AND id != ?", teamId, message.sender_id)) as any[];
+          const wantsPing = plainContent.includes('@everyone') || plainContent.includes('@here');
+          // Past 3 pings an hour, one sender's @everyone/@here stop fanning out.
+          const pingAllowed = wantsPing && pingLimiter.allow(teamId, message.sender_id);
+          if (plainContent.includes('@everyone') && pingAllowed) {
+            // Notify every active member of the team (except the sender) who takes @everyone pings
+            const all = (await dbAll("SELECT id, notify_prefs FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1 AND id != ?", teamId, message.sender_id)) as any[];
             for (const u of all) {
+              if (!parsePrefs(u.notify_prefs).everyone_pings) continue;
               createNotification(u.id, `${message.sender_name} pinged @everyone in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention', { channel_id: channelId, channel_name: chanName, message_id: info.lastInsertRowid });
             }
-          } else if (plainContent.includes('@here')) {
+          } else if (plainContent.includes('@here') && pingAllowed) {
             // Notify members currently viewing this channel (except the sender)
             const viewers = new Set<number>();
             for (const c of clients) {
@@ -2662,7 +2733,13 @@ async function startServer() {
                 viewers.add(mid);
               }
             }
+            const optedOut = viewers.size
+              ? new Set(((await dbAll(
+                  `SELECT id, notify_prefs FROM members WHERE id IN (${[...viewers].map(() => "?").join(",")})`, ...viewers,
+                )) as any[]).filter((r) => !parsePrefs(r.notify_prefs).everyone_pings).map((r) => r.id))
+              : new Set<number>();
             for (const id of viewers) {
+              if (optedOut.has(id)) continue;
               createNotification(id, `${message.sender_name} pinged @here in #${chanName}: "${plainContent.slice(0, 120)}"`, 'mention', { channel_id: channelId, channel_name: chanName, message_id: info.lastInsertRowid });
             }
           }
@@ -5987,6 +6064,12 @@ async function startServer() {
 
     const updatedMember = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
     broadcastToTeam(auth.teamId, { type: "member_updated", member: await memberWithPresence(updatedMember) });
+    if (updatedMember && updatedMember.account_type !== target.account_type && memberId !== auth.memberId) {
+      const t = (await dbGet("SELECT name FROM teams WHERE id = ?", auth.teamId)) as any;
+      void createNotification(memberId, updatedMember.account_type === 'admin'
+        ? `You're now an admin of ${t?.name || "your workspace"}.`
+        : `You're no longer an admin of ${t?.name || "your workspace"}.`, "system", { roles_changed: true });
+    }
     broadcastToTeam(auth.teamId, { type: "member_roles_changed", member_id: memberId });
     // Asked to demote, but a custom role still grants admin: say which (H-2 —
     // never report success for a change that didn't happen).
@@ -6309,6 +6392,27 @@ async function startServer() {
   });
 
   // Assign a role to a member (manage_roles only) — this is how you make extra admins.
+  // Your own notification controls (Settings → Notifications). The prefs live
+  // on every membership row of your account, so they follow you across
+  // workspaces.
+  app.get("/api/notification-prefs", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const row = (await dbGet("SELECT notify_prefs FROM members WHERE id = ?", auth.memberId)) as any;
+    res.json(parsePrefs(row?.notify_prefs));
+  });
+  app.patch("/api/notification-prefs", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const p = prefsPatch(req.body);
+    if ("error" in p) return res.status(400).json({ error: p.error });
+    const row = (await dbGet("SELECT email, notify_prefs FROM members WHERE id = ?", auth.memberId)) as any;
+    const next = { ...parsePrefs(row?.notify_prefs), ...p.patch };
+    if (row?.email) await dbRun("UPDATE members SET notify_prefs = ? WHERE LOWER(email) = LOWER(?)", JSON.stringify(next), row.email);
+    else await dbRun("UPDATE members SET notify_prefs = ? WHERE id = ?", JSON.stringify(next), auth.memberId);
+    res.json(next);
+  });
+
   app.post("/api/members/:id/roles", async (req, res) => {
     const auth = await requirePerm(req, res, "manage_roles");
     if (!auth) return;
@@ -6324,8 +6428,14 @@ async function startServer() {
     if (!target) return res.status(404).json({ error: "Member not found" });
     const role = (await dbGet("SELECT id FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
     if (!role) return res.status(404).json({ error: "Role not found" });
-    await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, roleId);
+    const added = (await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, roleId)) as any;
     await syncAccountType(memberId, auth.teamId!);
+    // Admin changes that affect you always reach you.
+    if (Number(added?.changes) && memberId !== auth.memberId) {
+      const r = (await dbGet("SELECT name FROM roles WHERE id = ?", roleId)) as any;
+      const t = (await dbGet("SELECT name FROM teams WHERE id = ?", auth.teamId)) as any;
+      void createNotification(memberId, `You were given the ${r?.name || "new"} role in ${t?.name || "your workspace"}.`, "system", { roles_changed: true });
+    }
     // Live mission control: the affected member's permissions change — push it
     // so their client picks it up without a refresh.
     broadcastToTeam(auth.teamId, { type: "member_roles_changed", member_id: memberId });
@@ -6351,8 +6461,12 @@ async function startServer() {
     if (!(await wouldBeAdmin(memberId, auth.teamId!, roleId)) && (await countAdmins(auth.teamId!)) <= 1) {
       return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
     }
-    await dbRun("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?", memberId, roleId);
+    const removed = (await dbRun("DELETE FROM member_roles WHERE member_id = ? AND role_id = ?", memberId, roleId)) as any;
     await syncAccountType(memberId, auth.teamId!);
+    if (Number(removed?.changes) && memberId !== auth.memberId) {
+      const t = (await dbGet("SELECT name FROM teams WHERE id = ?", auth.teamId)) as any;
+      void createNotification(memberId, `Your ${role.name} role in ${t?.name || "your workspace"} was removed.`, "system", { roles_changed: true });
+    }
     broadcastToTeam(auth.teamId, { type: "member_roles_changed", member_id: memberId });
     res.json({ success: true });
   });
@@ -8621,6 +8735,9 @@ Rules:
       (await dbRun("UPDATE events SET end_time = ?, location = ?, event_type = ? WHERE id = ?",
         end_time || '', location || '', event_type || 'meeting', id));
       broadcastToTeam(auth.teamId, { type: "events_changed" });
+      const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+      void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
+        `New calendar event: ${String(title).trim()} on ${date}${start_time ? ` at ${start_time}` : ""}`, { event_id: Number(id) });
       res.json({ id });
     } catch (error) {
       console.error("Error creating event:", error);
@@ -8700,11 +8817,11 @@ Rules:
       const { type, amount, category, description, date } = entry;
       const info = (await dbRun("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)", auth.teamId, type, amount, category, description, date));
 
-      // Notify board members of budget changes
-      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1 AND team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId));
-      boardMembers.forEach((m: any) => {
-        createNotification(m.id, `New budget ${type}: ${formatMoney(amount)}${category ? ` for ${category}` : ""}`, 'system', { budget_id: Number(info.lastInsertRowid) });
-      });
+      // Board members hear about budget changes, as each of them chose
+      // (instant, digest or off; never the person who logged it).
+      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1 AND team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+      void notifyTeamUpdate(auth.teamId!, auth.memberId, boardMembers.map((m) => m.id), "budget",
+        `New budget ${type}: ${formatMoney(amount)}${category ? ` for ${category}` : ""}`, { budget_id: Number(info.lastInsertRowid) });
       broadcastToTeam(auth.teamId, { type: "budget_changed" });
 
       res.json({ id: info.lastInsertRowid });
@@ -8770,11 +8887,10 @@ Rules:
       const { title, description, date, hours, location, attendees, funds_raised } = req.body;
       const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", title, description, date, hours, location, Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), auth.teamId));
 
-      // Notify everyone of new outreach
-      const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ?", auth.teamId));
-      allMembers.forEach((m: any) => {
-        createNotification(m.id, `New outreach event: ${title} at ${location}`, 'system', { outreach_id: Number(info.lastInsertRowid) });
-      });
+      // Everyone hears about new outreach, as each of them chose.
+      const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+      void notifyTeamUpdate(auth.teamId!, auth.memberId, allMembers.map((m) => m.id), "outreach",
+        `New outreach event: ${title}${location ? ` at ${location}` : ""}`, { outreach_id: Number(info.lastInsertRowid) });
 
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
@@ -10811,6 +10927,10 @@ Rules:
             (await insertTeamEvent(auth.teamId, auth.memberId, e));
           }
           applied.event = (applied.event || 0) + events.length;
+          const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+          void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
+            events.length === 1 ? `New calendar event: ${events[0].title} on ${events[0].date}` : `${events.length} calendar events were added`,
+            { events: events.length }, events.length);
         } else if (kind === "delete-event") {
           const ids = items
             .map((it: any) => (typeof it?.id === "number" ? it.id : parseInt(it?.id)))
