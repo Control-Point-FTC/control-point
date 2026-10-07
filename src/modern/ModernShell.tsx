@@ -288,8 +288,8 @@ function SidebarContent(props: ModernShellProps & {
             <div
               key={sec.id}
               className={cn('mt-4', drag?.kind === 'section' && drag.id === sec.id && 'opacity-50')}
-              onDragOver={(e) => { if (drag?.kind === 'section') e.preventDefault(); }}
-              onDrop={(e) => { if (drag?.kind === 'section') { e.preventDefault(); moveSection(drag.id, secIndex); setDrag(null); } }}
+              onDragOver={(e) => { if (reorderable && drag?.kind === 'section') e.preventDefault(); }}
+              onDrop={(e) => { if (reorderable && drag?.kind === 'section') { e.preventDefault(); moveSection(drag.id, secIndex); setDrag(null); } }}
             >
               {collapsed ? (
                 <div className="mx-2 mb-1 h-px bg-line" aria-hidden="true" />
@@ -299,7 +299,7 @@ function SidebarContent(props: ModernShellProps & {
                   onClick={() => toggleSection(sec.id)}
                   aria-expanded={!isClosed}
                   draggable={reorderable}
-                  onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'section', id: sec.id }); }}
+                  onDragStart={(e) => { if (!reorderable) return; e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'section', id: sec.id }); }}
                   onDragEnd={() => setDrag(null)}
                   onKeyDown={(e) => keyMove(e, (d) => moveSection(sec.id, secIndex + d))}
                   title={reorderable ? 'Drag to reorder (or Alt+↑/↓)' : undefined}
@@ -316,10 +316,12 @@ function SidebarContent(props: ModernShellProps & {
                       key={item.id}
                       draggable={reorderable}
                       className={cn(drag?.kind === 'item' && drag.id === item.id && 'opacity-50')}
-                      onDragStart={(e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'item', id: item.id, sec: sec.id }); }}
+                      // A link inside is natively draggable: ignore its drags where
+                      // reordering is off (collapsed rail, phone drawer).
+                      onDragStart={(e) => { e.stopPropagation(); if (!reorderable) return; e.dataTransfer.effectAllowed = 'move'; setDrag({ kind: 'item', id: item.id, sec: sec.id }); }}
                       onDragEnd={() => setDrag(null)}
-                      onDragOver={(e) => { if (drag?.kind === 'item' && drag.sec === sec.id) { e.preventDefault(); e.stopPropagation(); } }}
-                      onDrop={(e) => { if (drag?.kind === 'item' && drag.sec === sec.id) { e.preventDefault(); e.stopPropagation(); moveItem(sec.id, drag.id, i); setDrag(null); } }}
+                      onDragOver={(e) => { if (reorderable && drag?.kind === 'item' && drag.sec === sec.id) { e.preventDefault(); e.stopPropagation(); } }}
+                      onDrop={(e) => { if (reorderable && drag?.kind === 'item' && drag.sec === sec.id) { e.preventDefault(); e.stopPropagation(); moveItem(sec.id, drag.id, i); setDrag(null); } }}
                       onKeyDown={(e) => keyMove(e, (d) => moveItem(sec.id, item.id, i + d))}
                     >
                       <NavLink item={item} {...props} label={t(item.labelKey)} />
