@@ -430,3 +430,20 @@ describe('Modern Settings — notifications recover from a stalled request', () 
     }
   });
 });
+
+describe('Modern Settings — notifications body failures', () => {
+  it('a save whose body never arrives keeps the confirmed choices and says so', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' })) });
+      }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Saving took too long — try again.', 'error'));
+    expect(screen.getByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});

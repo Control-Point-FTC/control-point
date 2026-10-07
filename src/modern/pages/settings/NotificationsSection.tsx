@@ -10,6 +10,8 @@ import { SettingsGroup, SettingsRow } from './SettingsPage';
 
 type Mode = 'instant' | 'digest' | 'off';
 interface Prefs { team_updates: Mode; everyone_pings: boolean }
+const isPrefs = (x: any): x is Prefs =>
+  !!x && ['instant', 'digest', 'off'].includes(x.team_updates) && typeof x.everyone_pings === 'boolean';
 
 // One save queue for the whole app, not per mounted section: leaving and
 // reopening Notifications can't let an older queued save land after a newer
@@ -45,6 +47,7 @@ export function NotificationsSection() {
         const res = await apiFetch('/api/notification-prefs', { signal });
         if (!res.ok) throw new Error();
         const data = await res.json();
+        if (!isPrefs(data)) throw new Error();
         if (live) { confirmed.current = data; setPrefs(data); }
       } catch {
         if (live) setFailed(true);
@@ -63,8 +66,14 @@ export function NotificationsSection() {
           signal,
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || 'Could not save — try again.');
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Could not save — try again.');
+        }
+        // A body that fails to arrive (timeout) or isn't prefs is an error,
+        // never an empty "confirmed" value.
+        const data = await res.json();
+        if (!isPrefs(data)) throw new Error('Could not save — try again.');
         confirmed.current = data;
       } catch (e: any) {
         notify(e?.name === 'AbortError' ? 'Saving took too long — try again.' : e?.message || 'Could not save — try again.', 'error');
