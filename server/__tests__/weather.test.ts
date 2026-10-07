@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { currentWeather, resetWeatherCache, unitFor, weatherSummary } from "../weather";
+import { currentWeather, placeMatches, resetWeatherCache, unitFor, weatherSummary } from "../weather";
 
 const geo = {
   results: [
     { name: "Paramus", admin1: "Ohio", country: "United States", country_code: "US", latitude: 40, longitude: -80 },
-    { name: "Paramus", admin1: "New Jersey", admin1_code: "NJ", country: "United States", country_code: "US", latitude: 40.94, longitude: -74.07 },
+    { name: "Paramus", admin1: "New Jersey", country: "United States", country_code: "US", latitude: 40.94, longitude: -74.07 },
   ],
 };
 const wx = { current: { temperature_2m: 22.2, weather_code: 2 } };
@@ -41,5 +41,26 @@ describe("weather widget data", () => {
     const fetchJson = vi.fn(async () => ({ results: [] }));
     expect(await currentWeather({ city: "" }, fetchJson)).toBeNull();
     expect(await currentWeather({ city: "Nowhere" }, fetchJson)).toBeNull();
+  });
+
+  it("matches state abbreviations to full names, and never falls back to a namesake elsewhere", async () => {
+    expect(placeMatches({ admin1: "New Jersey", country_code: "US" }, { state: "NJ", country: "USA" })).toBe(true);
+    expect(placeMatches({ admin1: "Ohio", country_code: "US" }, { state: "NJ", country: "USA" })).toBe(false);
+    const onlyOhio = vi.fn(async (url: string) => (url.includes("geocoding") ? { results: [geo.results[0]] } : wx));
+    expect(await currentWeather({ city: "Paramus", state: "NJ", country: "USA" }, onlyOhio)).toBeNull();
+  });
+
+  it("a burst of requests shares one fetch per key", async () => {
+    let calls = 0;
+    const slow = vi.fn(async (url: string) => { calls++; await new Promise((r) => setTimeout(r, 20)); return url.includes("geocoding") ? geo : wx; });
+    const place = { city: "Paramus", state: "NJ", country: "USA" };
+    const all = await Promise.all([1, 2, 3, 4, 5].map(() => currentWeather(place, slow, 1)));
+    expect(all.every((w) => w?.tempF === 72)).toBe(true);
+    expect(calls).toBe(2); // one geocode + one reading
+  });
+
+  it("a missing reading is no reading (not 0°)", async () => {
+    const empty = vi.fn(async (url: string) => (url.includes("geocoding") ? geo : { current: { temperature_2m: null, weather_code: null } }));
+    expect(await currentWeather({ city: "Paramus", state: "NJ", country: "USA" }, empty)).toBeNull();
   });
 });
