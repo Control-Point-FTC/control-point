@@ -4,6 +4,7 @@
 import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify } from '../dialog';
+import { isTaskOverdue } from '../../utils/countdown';
 
 export function assigneeIds(t: any): any[] {
   return Array.isArray(t.assignee_ids) ? t.assignee_ids : (t.assigned_to ? [t.assigned_to] : []);
@@ -21,7 +22,8 @@ export function useMyWork({ tasks, setTasks, attendance, events, currentUser, on
   const tomorrow = format(new Date(Date.now() + 864e5), 'yyyy-MM-dd');
   const myTasks = (tasks || []).filter((t: any) => assigneeIds(t).includes(currentUser?.id));
   const openTasks = myTasks.filter((t: any) => t.status !== 'done');
-  const overdueMine = openTasks.filter((t: any) => t.due_date && String(t.due_date).slice(0, 10) < today);
+  // Past the full deadline: a task due today at 15:30 is overdue at 16:00.
+  const overdueMine = openTasks.filter((t: any) => isTaskOverdue(t));
   const myAttendance = (attendance || []).filter((r: any) => r.member_id === currentUser?.id);
   const todayRecord = myAttendance.find((r: any) => r.date === today);
   const checkedIn = !!(todayRecord && (todayRecord.status === 'P' || todayRecord.status === 'L'));

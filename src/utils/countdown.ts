@@ -12,6 +12,13 @@ export function dueMoment(date: string | null | undefined, time?: string | null)
   return Number.isNaN(m.getTime()) ? null : m;
 }
 
+/** An open task past its full deadline (its time, or the end of its date). */
+export function isTaskOverdue(t: { due_date?: string | null; due_time?: string | null; status?: string } | null | undefined, now = Date.now()): boolean {
+  if (!t?.due_date || t.status === 'done') return false;
+  const at = dueMoment(t.due_date, t.due_time);
+  return !!at && at.getTime() < now;
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** "2d 03:14:22", "03:14:22" — always to the second. */

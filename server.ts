@@ -8448,11 +8448,13 @@ Rules:
       if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (due_date !== undefined) { sets.push('due_date = ?'); vals.push(due_date || null); }
-      if (due_time !== undefined || (due_date !== undefined && !due_date)) {
-        // Clearing the date clears its time too.
-        const t = due_date === null || due_date === '' ? null : due_time ? String(due_time) : null;
-        if (t && !TASK_TIME_RE.test(t)) return res.status(400).json({ error: "Use a time like 15:30" });
-        sets.push('due_time = ?'); vals.push(t);
+      if (due_time !== undefined || due_date !== undefined) {
+        // The time belongs to the resulting date: none without a date, and a
+        // request that sets only the date keeps the stored time.
+        const resultingDate = due_date !== undefined ? (due_date || null) : (task.due_date || null);
+        const wanted = due_time !== undefined ? (due_time ? String(due_time) : null) : (task.due_time ?? null);
+        if (due_time && !TASK_TIME_RE.test(String(due_time))) return res.status(400).json({ error: "Use a time like 15:30" });
+        sets.push('due_time = ?'); vals.push(resultingDate ? wanted : null);
       }
       if (is_board !== undefined) { sets.push('is_board = ?'); vals.push(is_board ? 1 : 0); }
       if (assigned_to !== undefined || assignee_ids !== undefined) {

@@ -38,4 +38,15 @@ describe("task due time", () => {
     expect((await row(d.body.id)).due_time).toBe("18:45");
     expect((await t.patch(`/api/tasks/${d.body.id}`, { due_time: "7pm" }, admin)).status).toBe(400);
   });
+
+  it("a time sent for an undated task is not stored; setting only the date keeps a stored time", async () => {
+    const r = await t.post("/api/tasks", { title: "Undated" }, admin);
+    await t.patch(`/api/tasks/${r.body.id}`, { due_time: "09:00" }, admin);
+    expect((await row(r.body.id)).due_time).toBeNull();
+    await t.patch(`/api/tasks/${r.body.id}`, { due_date: "2026-10-23" }, admin);
+    expect(await row(r.body.id)).toMatchObject({ due_date: "2026-10-23", due_time: null }); // end of day, no hidden 09:00
+    await t.patch(`/api/tasks/${r.body.id}`, { due_time: "10:30" }, admin);
+    await t.patch(`/api/tasks/${r.body.id}`, { due_date: "2026-10-24" }, admin);
+    expect(await row(r.body.id)).toMatchObject({ due_date: "2026-10-24", due_time: "10:30" });
+  });
 });

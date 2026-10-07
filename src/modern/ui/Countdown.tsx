@@ -23,6 +23,15 @@ export function useNow(): number {
   return now;
 }
 
+/** Re-render every 30 s (deadline-based counts flip without a reload). */
+export function useHalfMinuteTick(): void {
+  const [, setN] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setN((n) => n + 1), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+}
+
 export function Countdown({ to, className, overdueLabel = 'Overdue by' }: { to: Date; className?: string; overdueLabel?: string }) {
   const now = useNow();
   const left = to.getTime() - now;

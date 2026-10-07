@@ -34,7 +34,7 @@ import { Page, PageHeader, Section, EmptyState } from '../ui/page';
 import { AttendanceArea } from '../ui/AttendanceArea';
 import { Stagger, StaggerItem, Reveal } from '../ui/motion';
 import { useTheme } from '../../hooks/useTheme';
-import { Countdown, useNow } from '../ui/Countdown';
+import { Countdown, useHalfMinuteTick, useNow } from '../ui/Countdown';
 import { dueMoment } from '../../utils/countdown';
 
 const ACTIVITY_ROUTE: Record<ActivityItem['kind'], string> = {
@@ -67,6 +67,8 @@ export function HomePage(props: HomePageProps) {
     currentUser?.team_id,
     today,
   );
+  // Overdue counts use the full deadline (date + time): re-check every 30 s.
+  useHalfMinuteTick();
   const mine = useMyWork({ tasks: tasks ?? [], setTasks, attendance: attendance ?? [], events: events ?? [], currentUser, onRequestComplete });
   const self = useSelfReport({
     currentUser, attendance: attendance ?? [], setAttendance, setLoading, onRefresh,
@@ -158,7 +160,7 @@ export function HomePage(props: HomePageProps) {
         </div>
 
         <aside className="min-w-0">
-          <ThisWeek events={mine.upcomingEvents} dayLabel={mine.dayLabel} onNavigate={navigate} />
+          <ThisWeek events={mine.upcomingEvents} allEvents={events ?? []} dayLabel={mine.dayLabel} onNavigate={navigate} />
           <Season onNavigate={navigate} isAdmin={isAdmin} />
           {isAdmin && (
             <Briefing
@@ -424,11 +426,12 @@ function NextEvent({ events }: { events: any[] }) {
   );
 }
 
-function ThisWeek({ events, dayLabel, onNavigate }: { events: any[]; dayLabel: (d: string) => string; onNavigate: (p: string) => void }) {
+function ThisWeek({ events, allEvents, dayLabel, onNavigate }: { events: any[]; allEvents: any[]; dayLabel: (d: string) => string; onNavigate: (p: string) => void }) {
   return (
     <Section title="This week" delay={0.06}
       action={<Button variant="ghost" size="sm" onClick={() => onNavigate('/calendar')} aria-label="Open calendar"><CalendarDays /></Button>}>
-      <NextEvent events={events} />
+      {/* From the whole schedule: the listed five may all have started already. */}
+      <NextEvent events={allEvents} />
       {events.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing scheduled.</p>
       ) : (

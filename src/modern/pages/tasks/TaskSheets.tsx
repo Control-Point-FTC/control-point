@@ -11,6 +11,7 @@ import {
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
 import { AssigneePicker, AvatarStack } from './AssigneePicker';
+import { isTaskOverdue } from '../../../utils/countdown';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -21,8 +22,7 @@ export const STATUS_META: Record<string, { label: string; icon: typeof Circle; d
 };
 
 export function isOverdue(t: any) {
-  if (!t?.due_date || t.status === 'done') return false;
-  return String(t.due_date).slice(0, 10) < format(new Date(), 'yyyy-MM-dd');
+  return isTaskOverdue(t);
 }
 
 function useSheetSide() {

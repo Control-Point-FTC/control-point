@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dueMoment, formatCountdown } from '../countdown';
+import { dueMoment, formatCountdown, isTaskOverdue } from '../countdown';
 
 describe('countdowns', () => {
   it('a due time is local; no time means the end of the day', () => {
@@ -14,5 +14,14 @@ describe('countdowns', () => {
     expect(formatCountdown((3 * 3600 + 14 * 60 + 22) * 1000)).toBe('03:14:22');
     expect(formatCountdown((2 * 86400 + 5) * 1000)).toBe('2d 00:00:05');
     expect(formatCountdown(-61_000)).toBe('00:01:01'); // overdue reads as elapsed time
+  });
+
+  it('overdue uses the full deadline', () => {
+    const at = (s: string) => new Date(s).getTime();
+    const task = { due_date: '2026-10-09', due_time: '15:30', status: 'todo' };
+    expect(isTaskOverdue(task, at('2026-10-09T15:00:00'))).toBe(false);
+    expect(isTaskOverdue(task, at('2026-10-09T16:00:00'))).toBe(true);
+    expect(isTaskOverdue({ ...task, status: 'done' }, at('2026-10-10T00:00:00'))).toBe(false);
+    expect(isTaskOverdue({ due_date: '2026-10-09', status: 'todo' }, at('2026-10-09T23:00:00'))).toBe(false); // end of day
   });
 });
