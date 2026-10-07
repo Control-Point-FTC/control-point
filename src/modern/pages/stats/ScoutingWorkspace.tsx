@@ -5,13 +5,14 @@ import { useMemo, useState } from 'react';
 import { CloudOff, Loader2, Minus, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
-  Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Switch, Textarea,
-  ToggleGroup, ToggleGroupItem,
+  Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Sheet, SheetContent,
+  SheetDescription, SheetHeader, SheetTitle, Switch, Textarea, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import { useScouting } from '../../../components/scout/useScouting';
-import { templateById, templateFor, type ScoutEntry, type ScoutField, type ScoutTemplate, type ScoutValue } from '../../../utils/scouting';
+import { ScoutStorageError, useScouting } from '../../../components/scout/useScouting';
+import { currentFtcSeason } from '../../../components/FtcStats';
+import { templateById, templateFor, type ScoutEntry, type ScoutField, type ScoutTeamSummary, type ScoutTemplate, type ScoutValue } from '../../../utils/scouting';
 import { EmptyState } from '../../ui/page';
 
 const PHASES: { id: ScoutField['phase']; label: string }[] = [
@@ -23,6 +24,8 @@ const PHASES: { id: ScoutField['phase']; label: string }[] = [
 
 interface Draft {
   uuid?: string;
+  /** An edit keeps the sheet it was made with (a newer season sheet must not drop its fields). */
+  templateId: string;
   scoutedTeam: string;
   eventCode: string;
   matchLabel: string;
@@ -32,13 +35,14 @@ interface Draft {
 
 const LAST_EVENT_KEY = 'cp-scout-last-event';
 
-export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }: {
+export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMemberId, canManage }: {
   season: number;
+  onSeasonChange?: (s: number) => void;
   teamId: number | null | undefined;
   currentMemberId?: number | null;
   canManage?: boolean;
 }) {
-  const sc = useScouting({ teamId, season });
+  const sc = useScouting({ teamId, memberId: currentMemberId, season });
   const template = templateFor(season);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [focusTeam, setFocusTeam] = useState<number | null>(null);
@@ -46,10 +50,11 @@ export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }
   const startNew = (team?: number) => {
     let lastEvent = '';
     try { lastEvent = localStorage.getItem(LAST_EVENT_KEY) || ''; } catch { /* storage unavailable */ }
-    setDraft({ scoutedTeam: team ? String(team) : '', eventCode: lastEvent, matchLabel: '', data: {}, notes: '' });
+    setDraft({ templateId: template.id, scoutedTeam: team ? String(team) : '', eventCode: lastEvent, matchLabel: '', data: {}, notes: '' });
   };
   const startEdit = (e: ScoutEntry) => setDraft({
-    uuid: e.uuid, scoutedTeam: String(e.scoutedTeam), eventCode: e.eventCode || '', matchLabel: e.matchLabel || '', data: { ...e.data }, notes: e.notes,
+    uuid: e.uuid, templateId: templateById(e.templateId) ? e.templateId : template.id,
+    scoutedTeam: String(e.scoutedTeam), eventCode: e.eventCode || '', matchLabel: e.matchLabel || '', data: { ...e.data }, notes: e.notes,
   });
 
   const canEdit = (e: ScoutEntry) => !!canManage || e.scoutMemberId == null || e.scoutMemberId === currentMemberId;
@@ -58,11 +63,17 @@ export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }
     if (!draft) return;
     const n = parseInt(draft.scoutedTeam, 10);
     if (!Number.isInteger(n) || n <= 0) { notify('Enter the team number you scouted', 'error'); return; }
+    try {
+      sc.save({
+        uuid: draft.uuid, season, scoutedTeam: n, eventCode: draft.eventCode.trim() || null, matchLabel: draft.matchLabel.trim() || null,
+        templateId: draft.templateId, data: draft.data, notes: draft.notes.trim(),
+      });
+    } catch (err) {
+      // Not stored anywhere: keep the form (and what was typed) open.
+      notify(err instanceof ScoutStorageError ? err.message : 'Could not save this entry', 'error');
+      return;
+    }
     try { localStorage.setItem(LAST_EVENT_KEY, draft.eventCode.trim()); } catch { /* storage unavailable */ }
-    sc.save({
-      uuid: draft.uuid, season, scoutedTeam: n, eventCode: draft.eventCode.trim() || null, matchLabel: draft.matchLabel.trim() || null,
-      templateId: template.id, data: draft.data, notes: draft.notes.trim(),
-    });
     notify(navigator.onLine === false ? 'Saved on this device — it will sync when you’re back online' : 'Scouting saved', 'success');
     setDraft(null);
   };
@@ -79,6 +90,7 @@ export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center gap-2">
         <SyncChip state={sc.state} pending={sc.pending} onRetry={() => void sc.sync()} />
+        {onSeasonChange && <SeasonPicker season={season} onChange={(s) => { setFocusTeam(null); onSeasonChange(s); }} />}
         {sc.lastError && (
           <button type="button" onClick={sc.clearError} className="text-xs text-destructive underline-offset-4 hover:underline" title="Dismiss">{sc.lastError}</button>
         )}
@@ -119,6 +131,11 @@ export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }
         </section>
       )}
 
+      {focusTeam != null && (() => {
+        const s = sc.summary.find((x) => x.team === focusTeam);
+        return s ? <TeamDetail summary={s} template={template} /> : null;
+      })()}
+
       {shown.length > 0 && (
         <section aria-label="Scouting entries" className="grid gap-2">
           <p className="text-xs font-medium text-muted-foreground">
@@ -146,7 +163,7 @@ export function ScoutingWorkspace({ season, teamId, currentMemberId, canManage }
         </section>
       )}
 
-      <EntrySheet template={template} draft={draft} onChange={setDraft} onClose={() => setDraft(null)} onSubmit={submit} />
+      <EntrySheet template={(draft && templateById(draft.templateId)) || template} draft={draft} onChange={setDraft} onClose={() => setDraft(null)} onSubmit={submit} />
     </div>
   );
 }
@@ -172,6 +189,44 @@ function describe(e: ScoutEntry): string {
     })
     .filter(Boolean)
     .join(' · ');
+}
+
+function SeasonPicker({ season, onChange }: { season: number; onChange: (s: number) => void }) {
+  const now = currentFtcSeason();
+  const seasons = [now, now - 1, now - 2, now - 3].filter((s, i, a) => a.indexOf(s) === i);
+  if (!seasons.includes(season)) seasons.push(season);
+  return (
+    <Select value={String(season)} onValueChange={(v) => onChange(Number(v))}>
+      <SelectTrigger className="h-8 w-36 text-xs" aria-label="Season"><SelectValue /></SelectTrigger>
+      <SelectContent>{seasons.map((s) => <SelectItem key={s} value={String(s)}>{s}–{String(s + 1).slice(2)} season</SelectItem>)}</SelectContent>
+    </Select>
+  );
+}
+
+/** Everything the rollup knows about one team: averages, toggle rates, usual choices. */
+function TeamDetail({ summary, template }: { summary: ScoutTeamSummary; template: ScoutTemplate }) {
+  const rows = template.fields
+    .map((f) => {
+      if ((f.type === 'counter' || f.type === 'rating') && summary.averages[f.id] != null) return { f, v: summary.averages[f.id].toFixed(1) };
+      if (f.type === 'toggle' && summary.shares[f.id] != null) return { f, v: `${Math.round(summary.shares[f.id] * 100)}%` };
+      if (f.type === 'choice' && summary.modes[f.id] != null) return { f, v: `Usually ${summary.modes[f.id]}` };
+      return null;
+    })
+    .filter(Boolean) as { f: ScoutField; v: string }[];
+  return (
+    <section aria-label={`Team ${summary.team} summary`} className="rounded-xl border border-border bg-card p-4">
+      <p className="mb-2 text-sm font-semibold">#{summary.team} · {summary.entries} {summary.entries === 1 ? 'entry' : 'entries'}{summary.lastEvent ? ` · last at ${summary.lastEvent}` : ''}</p>
+      {rows.length ? (
+        <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          {rows.map(({ f, v }) => (
+            <div key={f.id} className="flex justify-between gap-3 border-b border-border/60 py-1">
+              <dt className="text-muted-foreground">{fieldLabel(f)}</dt><dd className="font-medium tabular-nums">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : <p className="text-xs text-muted-foreground">Nothing measured yet on this sheet.</p>}
+    </section>
+  );
 }
 
 function SyncChip({ state, pending, onRetry }: { state: string; pending: number; onRetry: () => void }) {

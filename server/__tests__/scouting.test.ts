@@ -83,6 +83,27 @@ describe("scouting API", () => {
     expect(list.body.entries.find((x: any) => x.uuid === e.uuid).deleted).toBe(true);
   });
 
+  it("the same new entry arriving twice at once is saved once, newest version wins", async () => {
+    const e = entry({ updatedAt: 5000 });
+    const [a, b] = await Promise.all([
+      t.post("/api/scouting/sync", { season: 2025, entries: [{ ...e, notes: "older", updatedAt: 5000 }] }, scoutA),
+      t.post("/api/scouting/sync", { season: 2025, entries: [{ ...e, notes: "newer", updatedAt: 6000 }] }, scoutA),
+    ]);
+    expect(a.body.results[0].ok && b.body.results[0].ok).toBe(true);
+    const list = await t.api("/api/scouting/entries?season=2025", { session: scoutA });
+    const rows = list.body.entries.filter((x: any) => x.uuid === e.uuid);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].notes).toBe("newer");
+  });
+
+  it("an entry's season never changes after it is saved", async () => {
+    const e = entry();
+    await t.post("/api/scouting/sync", { season: 2025, entries: [e] }, scoutA);
+    await t.post("/api/scouting/sync", { season: 2025, entries: [{ ...e, season: 2024, updatedAt: Date.now() + 1 }] }, scoutA);
+    const in2024 = await t.api("/api/scouting/entries?season=2024", { session: scoutA });
+    expect(in2024.body.entries.find((x: any) => x.uuid === e.uuid)).toBeUndefined();
+  });
+
   it("rejects bad input and teamless accounts", async () => {
     expect((await t.post("/api/scouting/sync", { entries: "x" }, scoutA)).status).toBe(400);
     const r = await t.post("/api/scouting/sync", { season: 2025, entries: [entry({ scoutedTeam: -1 })] }, scoutA);

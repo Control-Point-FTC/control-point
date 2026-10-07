@@ -21,6 +21,9 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+/** Entries this member has waiting on the device (one storage key each). */
+const queued = () => Object.keys(localStorage).filter((k) => k.startsWith('cp-scout-q:1:7:')).length;
+
 function fillAndSave(team: string) {
   fireEvent.click(screen.getAllByRole('button', { name: /Scout a match/ })[0]);
   fireEvent.change(screen.getByLabelText('Team #'), { target: { value: team } });
@@ -40,7 +43,7 @@ describe('Scout tab (manual scouting, H-4)', () => {
     expect(await screen.findByRole('button', { name: '#4215' })).toBeInTheDocument();
     expect(screen.getByText(/Offline · 1 waiting/)).toBeInTheDocument();
     expect(api.apiFetch).not.toHaveBeenCalledWith('/api/scouting/sync', expect.anything());
-    expect(JSON.parse(localStorage.getItem('cp-scout-outbox:1') || '[]')).toHaveLength(1);
+    expect(queued()).toBe(1);
 
     // Back online: the outbox is sent and cleared.
     online = true;
@@ -56,10 +59,33 @@ describe('Scout tab (manual scouting, H-4)', () => {
     const sent = JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/scouting/sync')![1].body);
     expect(sent.entries[0]).toMatchObject({ season: 2025, scoutedTeam: 4215, templateId: 'decode-2025', data: { teleop_artifacts: 2 } });
     await waitFor(() => expect(screen.getByText('Synced')).toBeInTheDocument());
-    expect(JSON.parse(localStorage.getItem('cp-scout-outbox:1') || '[]')).toHaveLength(0);
+    expect(queued()).toBe(0);
     // The team table rolls it up.
     const row = screen.getByRole('button', { name: '#4215' }).closest('tr')!;
     expect(within(row).getByText('2.0')).toBeInTheDocument();
+  });
+
+  it('if the device can’t store the entry, the form stays open with an error', async () => {
+    online = false;
+    api.apiFetch.mockImplementation(() => json({ entries: [] }));
+    render(<ScoutingWorkspace season={2025} teamId={1} currentMemberId={7} />);
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k: string) => {
+      if (k.startsWith('cp-scout-q:')) throw new DOMException('full', 'QuotaExceededError');
+    });
+    fillAndSave('4215');
+    expect(dialog.notify).toHaveBeenCalledWith(expect.stringMatching(/couldn’t store the entry/), 'error');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument(); // still open
+    expect(screen.queryByRole('button', { name: '#4215' })).not.toBeInTheDocument();
+    setItem.mockRestore();
+  });
+
+  it('only this member’s queue is sent', async () => {
+    online = true;
+    localStorage.setItem('cp-scout-q:1:99:' + 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', JSON.stringify({ uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', season: 2025, scoutedTeam: 1, templateId: 'generic', data: {}, notes: 'someone else', updatedAt: 1 }));
+    api.apiFetch.mockImplementation(() => json({ entries: [] }));
+    render(<ScoutingWorkspace season={2025} teamId={1} currentMemberId={7} />);
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalled());
+    expect(api.apiFetch).not.toHaveBeenCalledWith('/api/scouting/sync', expect.anything());
   });
 
   it('a team number is required', async () => {

@@ -74,39 +74,57 @@ export function registerScoutingRoutes(app: any, deps: ScoutingDeps) {
     const canManage = await deps.hasPerm(auth, "manage_members");
     const results: { uuid: string; ok: boolean; error?: string }[] = [];
     const seasons = new Set<number>();
+    // An existing entry: only its author (or an admin) may change it; last
+    // write wins; its season never changes (it was counted there).
+    const applyToExisting = async (existing: any, e: ScoutEntry) => {
+      if (existing.scout_member_id !== auth.memberId && !canManage) {
+        return { ok: false, error: "Only the scout who made this entry (or an admin) can change it" };
+      }
+      // An older edit arriving late is acknowledged but ignored.
+      await deps.dbRun(
+        `UPDATE scouting_entries SET scouted_team = ?, event_code = ?, match_label = ?, template_id = ?, data = ?, notes = ?,
+           updated_at = ?, deleted = ? WHERE id = ? AND updated_at <= ?`,
+        e.scoutedTeam, e.eventCode, e.matchLabel, e.templateId, JSON.stringify(e.data), e.notes,
+        e.updatedAt, e.deleted ? 1 : 0, existing.id, e.updatedAt
+      );
+      return { ok: true };
+    };
+    const findExisting = (e: ScoutEntry) =>
+      deps.dbGet("SELECT id, scout_member_id, season FROM scouting_entries WHERE team_id = ? AND uuid = ?", auth.teamId, e.uuid);
+
     for (const raw of incoming) {
       const c = cleanScoutEntry(raw);
       if ("error" in c) { results.push({ uuid: String(raw?.uuid || ""), ok: false, error: c.error }); continue; }
       const e = c.entry;
-      const existing = await deps.dbGet("SELECT id, scout_member_id, updated_at FROM scouting_entries WHERE team_id = ? AND uuid = ?", auth.teamId, e.uuid);
+      let existing = await findExisting(e);
+      let outcome: { ok: boolean; error?: string };
       if (existing) {
-        if (existing.scout_member_id !== auth.memberId && !canManage) {
-          results.push({ uuid: e.uuid, ok: false, error: "Only the scout who made this entry (or an admin) can change it" });
-          continue;
-        }
-        // Last write wins; an older edit arriving late is acknowledged but ignored.
-        await deps.dbRun(
-          `UPDATE scouting_entries SET season = ?, scouted_team = ?, event_code = ?, match_label = ?, template_id = ?, data = ?, notes = ?,
-             updated_at = ?, deleted = ? WHERE id = ? AND updated_at <= ?`,
-          e.season, e.scoutedTeam, e.eventCode, e.matchLabel, e.templateId, JSON.stringify(e.data), e.notes,
-          e.updatedAt, e.deleted ? 1 : 0, existing.id, e.updatedAt
-        );
+        outcome = await applyToExisting(existing, e);
       } else {
-        const n = await deps.dbGet("SELECT COUNT(*) AS n FROM scouting_entries WHERE team_id = ? AND season = ?", auth.teamId, e.season);
-        if (Number(n?.n || 0) >= MAX_ENTRIES_PER_SEASON) {
-          results.push({ uuid: e.uuid, ok: false, error: "This workspace has reached the scouting limit for the season" });
-          continue;
+        // New: the season limit is checked in the same statement as the
+        // insert, so simultaneous saves can't overshoot it.
+        let inserted = 0;
+        try {
+          const r = await deps.dbRun(
+            `INSERT INTO scouting_entries (team_id, uuid, season, scouted_team, event_code, match_label, template_id, data, notes, scout_member_id, updated_at, deleted)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE (SELECT COUNT(*) FROM scouting_entries WHERE team_id = ? AND season = ?) < ?`,
+            auth.teamId, e.uuid, e.season, e.scoutedTeam, e.eventCode, e.matchLabel, e.templateId, JSON.stringify(e.data), e.notes,
+            auth.memberId, e.updatedAt, e.deleted ? 1 : 0,
+            auth.teamId, e.season, MAX_ENTRIES_PER_SEASON
+          );
+          inserted = Number(r?.changes ?? r?.rowsAffected ?? 0);
+          outcome = inserted ? { ok: true } : { ok: false, error: "This workspace has reached the scouting limit for the season" };
+        } catch (err: any) {
+          // The same entry arrived at the same moment from elsewhere (another
+          // tab, a retry): treat it as the update it is.
+          if (!/UNIQUE|constraint/i.test(String(err?.message || err))) throw err;
+          existing = await findExisting(e);
+          outcome = existing ? await applyToExisting(existing, e) : { ok: false, error: "Could not save — try again" };
         }
-        await deps.dbRun(
-          `INSERT INTO scouting_entries (team_id, uuid, season, scouted_team, event_code, match_label, template_id, data, notes, scout_member_id, updated_at, deleted)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(team_id, uuid) DO NOTHING`,
-          auth.teamId, e.uuid, e.season, e.scoutedTeam, e.eventCode, e.matchLabel, e.templateId, JSON.stringify(e.data), e.notes,
-          auth.memberId, e.updatedAt, e.deleted ? 1 : 0
-        );
       }
-      seasons.add(e.season);
-      results.push({ uuid: e.uuid, ok: true });
+      if (outcome.ok) seasons.add(existing ? Number(existing.season) : e.season);
+      results.push({ uuid: e.uuid, ...outcome });
     }
     if (seasons.size) deps.broadcastToTeam(auth.teamId, { type: "scouting_changed", seasons: [...seasons] });
     const season = parseInt(String(req.body?.season || ""), 10);

@@ -28,7 +28,7 @@ export function TeamStatsPage({ teamId, memberId, canManage }: { teamId?: number
         </Tabs>
       </PageHeader>
       {ts.mode === 'scout' ? (
-        <ScoutingWorkspace season={ts.season} teamId={teamId} currentMemberId={memberId} canManage={canManage} />
+        <ScoutingWorkspace season={ts.season} onSeasonChange={ts.setSeason} teamId={teamId} currentMemberId={memberId} canManage={canManage} />
       ) : ts.mode === 'compete' ? (
         <TeamProfile number={null} season={ts.season} onSeasonChange={ts.setSeason} autoSeason actions={{ onViewTeam: ts.viewTeam }} />
       ) : (

@@ -1,20 +1,34 @@
 // Manual scouting on this device (audit H-4). Every save lands in a local
 // outbox first, so scouting keeps working with bad or no Wi-Fi at an event;
-// the outbox syncs whenever the app is online (on save, when the connection
-// comes back, and every 30 s while anything is waiting). The last list the
-// server sent is cached per workspace + season so it shows offline too.
+// the outbox syncs whenever the app is online.
+//
+// The outbox belongs to one member in one workspace: each queued entry is
+// its own storage key (`cp-scout-q:<workspace>:<member>:<uuid>`), so two
+// tabs never overwrite each other's work, and only the signed-in member's
+// own entries are ever sent with their session. A queued entry leaves the
+// outbox only once the exact version that was sent has been accepted.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { summarizeScouting, type ScoutEntry } from '../../utils/scouting';
 
-const outboxKey = (teamId: number | string) => `cp-scout-outbox:${teamId}`;
-const cacheKey = (teamId: number | string, season: number) => `cp-scout-cache:${teamId}:${season}`;
+const qPrefix = (teamId: number, memberId: number) => `cp-scout-q:${teamId}:${memberId}:`;
+const cacheKey = (teamId: number, season: number) => `cp-scout-cache:${teamId}:${season}`;
+const RETRY_MS = 30_000;
 
-function readJSON<T>(key: string, fallback: T): T {
-  try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; }
+function readQueue(prefix: string): ScoutEntry[] {
+  const out: ScoutEntry[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(prefix)) continue;
+      try { out.push(JSON.parse(localStorage.getItem(k) || 'null')); } catch { /* skip a corrupt item */ }
+    }
+  } catch { /* storage unavailable */ }
+  return out.filter(Boolean);
 }
-function writeJSON(key: string, v: unknown) {
-  try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage full / unavailable */ }
+
+function readCache(key: string): ScoutEntry[] {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : []; } catch { return []; }
 }
 
 export function newScoutId(): string {
@@ -29,86 +43,121 @@ export function newScoutId(): string {
 
 export type SyncState = 'idle' | 'syncing' | 'offline' | 'error';
 
-export function useScouting({ teamId, season }: { teamId: number | null | undefined; season: number }) {
-  const tid = teamId ?? 'none';
-  const [server, setServer] = useState<ScoutEntry[]>(() => readJSON(cacheKey(tid, season), []));
-  const [outbox, setOutbox] = useState<ScoutEntry[]>(() => readJSON(outboxKey(tid), []));
+/** Thrown by save() when this device can't store the entry (storage full or blocked). */
+export class ScoutStorageError extends Error {}
+
+export function useScouting({ teamId, memberId, season }: { teamId: number | null | undefined; memberId: number | null | undefined; season: number }) {
+  const ready = !!teamId && !!memberId;
+  const prefix = ready ? qPrefix(teamId!, memberId!) : '';
+  const [server, setServer] = useState<ScoutEntry[]>([]);
+  const [queue, setQueue] = useState<ScoutEntry[]>([]);
   const [state, setState] = useState<SyncState>('idle');
   const [lastError, setLastError] = useState<string | null>(null);
   const syncing = useRef(false);
-  const outboxRef = useRef(outbox);
-  outboxRef.current = outbox;
+  const retryTimer = useRef<number | null>(null);
+  // Bumped whenever the workspace, member or season changes or the view
+  // closes: a sync started for the old one stops instead of continuing.
+  const gen = useRef(0);
 
-  // Workspace or season changed: load what this device has for it.
+  const reloadQueue = useCallback(() => setQueue(ready ? readQueue(prefix) : []), [ready, prefix]);
+
   useEffect(() => {
-    setServer(readJSON(cacheKey(tid, season), []));
-    setOutbox(readJSON(outboxKey(tid), []));
-  }, [tid, season]);
-
-  const persistOutbox = (next: ScoutEntry[]) => { outboxRef.current = next; setOutbox(next); writeJSON(outboxKey(tid), next); };
+    setServer(ready ? readCache(cacheKey(teamId!, season)) : []);
+    reloadQueue();
+  }, [ready, teamId, season, reloadQueue]);
 
   const sync = useCallback(async () => {
-    if (!teamId || syncing.current) return;
+    if (!ready || syncing.current) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { setState('offline'); return; }
+    const my = gen.current;
+    const ctrl = new AbortController();
+    const stale = () => my !== gen.current;
     syncing.current = true;
     setState('syncing');
+    let moreToSend = false;
     try {
-      const pending = outboxRef.current.slice(0, 200);
+      const pending = readQueue(prefix).slice(0, 200);
       let body: any;
       if (pending.length) {
         const res = await apiFetch('/api/scouting/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ season, entries: pending }),
+          signal: ctrl.signal,
         });
+        if (stale()) return;
         body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || 'Sync failed');
-        // Accepted or permanently refused entries leave the outbox; a refused
-        // one is reported once rather than retried forever.
-        const done = new Set((body.results || []).map((r: any) => r.uuid));
-        const refused = (body.results || []).filter((r: any) => !r.ok);
-        if (refused.length) setLastError(refused[0].error || 'Some entries were not saved');
-        persistOutbox(outboxRef.current.filter((e) => !done.has(e.uuid)));
+        const sent = new Map(pending.map((e) => [e.uuid, e.updatedAt]));
+        for (const r of body.results || []) {
+          // Accepted or permanently refused: drop it — but only if nobody
+          // edited it again on this device while it was on its way.
+          if (!r.ok) setLastError(r.error || 'Some entries were not saved');
+          try {
+            const k = prefix + r.uuid;
+            const now = JSON.parse(localStorage.getItem(k) || 'null');
+            if (now && now.updatedAt === sent.get(r.uuid)) localStorage.removeItem(k);
+          } catch { /* storage unavailable: it will be re-sent (idempotent) */ }
+        }
+        moreToSend = readQueue(prefix).length > 0;
       } else {
-        const res = await apiFetch(`/api/scouting/entries?season=${season}`);
+        const res = await apiFetch(`/api/scouting/entries?season=${season}`, { signal: ctrl.signal });
+        if (stale()) return;
         body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error || 'Could not load scouting');
       }
-      if (Array.isArray(body.entries)) { setServer(body.entries); writeJSON(cacheKey(tid, season), body.entries); }
+      if (stale()) return;
+      if (Array.isArray(body.entries)) {
+        setServer(body.entries);
+        try { localStorage.setItem(cacheKey(teamId!, season), JSON.stringify(body.entries)); } catch { /* cache is optional */ }
+      }
+      reloadQueue();
       setState('idle');
     } catch (e: any) {
+      if (stale()) return;
       setState(typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'error');
       setLastError(e?.message || 'Sync failed');
     } finally {
       syncing.current = false;
     }
-    // More than one batch waiting: keep going.
-    if (outboxRef.current.length && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
-      setTimeout(() => { void sync(); }, 0);
-    }
-  }, [teamId, tid, season]);
+    // Another full batch waiting after a successful one: keep going now.
+    // After a failure the 30-second timer retries instead.
+    if (moreToSend && !stale()) void sync();
+  }, [ready, prefix, season, teamId, reloadQueue]);
 
   useEffect(() => {
+    if (!ready) return;
+    const my = ++gen.current;
     void sync();
-    const online = () => void sync();
-    const changed = () => void sync();
-    window.addEventListener('online', online);
-    window.addEventListener('scouting-changed', changed);
-    const timer = window.setInterval(() => { if (outboxRef.current.length) void sync(); }, 30_000);
+    const kick = () => { if (my === gen.current) void sync(); };
+    // Another tab changed this member's queue: show it.
+    const onStorage = (e: StorageEvent) => { if (!e.key || e.key.startsWith(prefix)) reloadQueue(); };
+    window.addEventListener('online', kick);
+    window.addEventListener('scouting-changed', kick);
+    window.addEventListener('storage', onStorage);
+    retryTimer.current = window.setInterval(() => { if (readQueue(prefix).length) kick(); }, RETRY_MS);
     return () => {
-      window.removeEventListener('online', online);
-      window.removeEventListener('scouting-changed', changed);
-      window.clearInterval(timer);
+      gen.current++;
+      window.removeEventListener('online', kick);
+      window.removeEventListener('scouting-changed', kick);
+      window.removeEventListener('storage', onStorage);
+      if (retryTimer.current) window.clearInterval(retryTimer.current);
     };
-  }, [sync]);
+  }, [ready, prefix, sync, reloadQueue]);
 
-  /** Save (create or edit) on this device first, then sync. */
+  /** Save (create or edit) on this device first, then sync. Throws ScoutStorageError if it can't be stored. */
   const save = useCallback((e: Omit<ScoutEntry, 'updatedAt' | 'uuid'> & { uuid?: string }) => {
+    if (!ready) throw new ScoutStorageError('Join a workspace first');
     const entry: ScoutEntry = { ...e, uuid: e.uuid || newScoutId(), updatedAt: Date.now() };
-    persistOutbox([...outboxRef.current.filter((x) => x.uuid !== entry.uuid), entry]);
+    try {
+      localStorage.setItem(prefix + entry.uuid, JSON.stringify(entry));
+    } catch {
+      throw new ScoutStorageError('This device couldn’t store the entry (storage is full or blocked). It was not saved.');
+    }
+    reloadQueue();
     void sync();
     return entry;
-  }, [sync]);
+  }, [ready, prefix, reloadQueue, sync]);
 
   const remove = useCallback((e: ScoutEntry) => save({ ...e, deleted: true }), [save]);
 
@@ -116,12 +165,11 @@ export function useScouting({ teamId, season }: { teamId: number | null | undefi
   const entries = useMemo(() => {
     const byId = new Map<string, ScoutEntry>();
     for (const e of server) byId.set(e.uuid, e);
-    for (const e of outbox) if (e.season === season) byId.set(e.uuid, { ...byId.get(e.uuid), ...e });
+    for (const e of queue) if (e.season === season) byId.set(e.uuid, { ...byId.get(e.uuid), ...e });
     return [...byId.values()].filter((e) => !e.deleted).sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [server, outbox, season]);
+  }, [server, queue, season]);
 
   const summary = useMemo(() => summarizeScouting(entries), [entries]);
-  const pending = outbox.length;
 
-  return { entries, summary, pending, state, lastError, clearError: () => setLastError(null), save, remove, sync };
+  return { entries, summary, pending: queue.length, state, lastError, clearError: () => setLastError(null), save, remove, sync };
 }
