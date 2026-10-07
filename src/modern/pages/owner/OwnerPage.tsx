@@ -3,11 +3,11 @@
 // Tabs: Overview (workspaces), Users, AI control, Flags and Feedback; a user
 // sheet holds the AI kill switch, timeouts, budgets, warnings, move and the
 // danger zone.
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 import {
-  AlertTriangle, Ban, Building2, Clock, FileText, Flag, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
+  AlertTriangle, Ban, Bug, Building2, Clock, FileText, Flag, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
@@ -22,6 +22,7 @@ import { Page, PageHeader, Section, EmptyState, Stat } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
 import { MemberAvatar } from '../tasks/AssigneePicker';
+import { apiFetch } from '../../../services/api';
 
 type Ctl = ReturnType<typeof useOwnerConsole>;
 // Legacy status classes are tuned for dark; Modern badges get their own tones.
@@ -44,6 +45,7 @@ export function OwnerPage() {
             <TabsTrigger value="ai" className="shrink-0 max-sm:h-11"><Zap /> AI control</TabsTrigger>
             <TabsTrigger value="flags" className="shrink-0 max-sm:h-11"><Flag /> Flags{ctl.openFlagCount > 0 && <Badge variant="destructive" className="ml-1">{ctl.openFlagCount}</Badge>}</TabsTrigger>
             <TabsTrigger value="feedback" className="shrink-0 max-sm:h-11"><MessageSquareHeart /> Feedback{ctl.totals.new_feedback > 0 && <Badge variant="soft" className="ml-1">{ctl.totals.new_feedback}</Badge>}</TabsTrigger>
+            <TabsTrigger value="errors" className="shrink-0 max-sm:h-11"><Bug /> Errors</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
@@ -54,12 +56,51 @@ export function OwnerPage() {
           {ctl.tab === 'ai' && <AiTab ctl={ctl} />}
           {ctl.tab === 'flags' && <FlagsTab ctl={ctl} />}
           {ctl.tab === 'feedback' && <FeedbackTab ctl={ctl} />}
+          {ctl.tab === 'errors' && <ErrorsTab />}
         </>
       )}
       {ctl.selectedId !== null && (
         <UserSheet key={ctl.selectedId} userId={ctl.selectedId} teams={ctl.overview?.teams || []} onClose={() => ctl.setSelectedId(null)} onChanged={ctl.reloadAfterChange} />
       )}
     </Page>
+  );
+}
+
+/** Browser crash reports from the last 7 days, grouped by message + page. */
+function ErrorsTab() {
+  const [data, setData] = useState<{ groups: any[]; recent: any[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    apiFetch('/api/owner/client-errors')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d) => { if (live) setData(d); })
+      .catch(() => { if (live) setFailed(true); });
+    return () => { live = false; };
+  }, []);
+  if (failed) return <EmptyState icon={AlertTriangle} title="Couldn't load error reports" description="Try again in a moment." />;
+  if (!data) return <Skeleton className="h-40" />;
+  if (!data.groups.length) return <EmptyState icon={Bug} title="No crashes reported this week" description="Render errors and failed page loads from users' browsers show up here." />;
+  return (
+    <Section title="Crashes this week" description="Grouped by message and page. Each report is also kept individually (newest 5,000).">
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <Table>
+          <TableHeader>
+            <TableRow><TableHead>Error</TableHead><TableHead>Page</TableHead><TableHead className="text-right">Count</TableHead><TableHead>Last seen</TableHead></TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.groups.map((g, i) => (
+              <TableRow key={i}>
+                <TableCell className="max-w-md"><span className="line-clamp-2 font-mono text-xs">{g.message}</span><span className="text-xs text-muted-foreground">{g.kind}</span></TableCell>
+                <TableCell className="font-mono text-xs">{g.route || '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{g.n}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{g.last_seen ? format(new Date(g.last_seen.replace(' ', 'T') + 'Z'), 'MMM d, h:mm a') : ''}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </Section>
   );
 }
 

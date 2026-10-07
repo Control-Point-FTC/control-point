@@ -47,6 +47,7 @@ import {
 import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
 import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
+import { serveDist } from "./server/staticAssets.js";
 import {
   isAIConfigured,
   getAISetting,
@@ -7179,6 +7180,52 @@ Rules:
     res.json({ totals, teams });
   });
 
+  // ---- Client error reports (browser crashes) ----
+  // Anyone may report (a crash can happen before or after sign-in); input is
+  // size-capped, rate-limited per IP and stored without query strings or
+  // form contents. Only the owner can read them.
+  const clientErrorLimiter = new RateLimiter();
+  setInterval(() => clientErrorLimiter.sweep(), 10 * 60 * 1000).unref();
+  const CLIENT_ERROR_KINDS = new Set(["render", "uncaught", "unhandledrejection", "chunk"]);
+  app.post("/api/client-errors", async (req, res) => {
+    if (clientErrorLimiter.hit(clientIp(req), { max: 30, windowMs: 10 * 60 * 1000 }) > 0) return res.status(204).end();
+    const b = req.body || {};
+    const kind = CLIENT_ERROR_KINDS.has(b.kind) ? b.kind : "uncaught";
+    const message = String(b.message || "").slice(0, 500);
+    if (!message) return res.status(204).end();
+    const auth = await getAuth(req).catch(() => null);
+    try {
+      await dbRun(
+        "INSERT INTO client_errors (member_id, team_id, kind, message, stack, component_stack, route, release, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        auth?.memberId || null, auth?.teamId ?? null, kind, message,
+        String(b.stack || "").slice(0, 4000), String(b.componentStack || "").slice(0, 4000),
+        String(b.route || "").split("?")[0].slice(0, 200), String(b.release || "").slice(0, 80),
+        String(req.headers["user-agent"] || "").slice(0, 300),
+      );
+      // Keep the table bounded: drop everything but the newest 5,000 rows.
+      if (Math.random() < 0.05) await dbRun("DELETE FROM client_errors WHERE id <= (SELECT id FROM client_errors ORDER BY id DESC LIMIT 1 OFFSET 5000)");
+    } catch (e) { console.error("client error report failed:", e); }
+    res.status(204).end();
+  });
+
+  app.get("/api/owner/client-errors", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const rows = await dbAll(
+      `SELECT e.id, e.created_at, e.kind, e.message, e.stack, e.component_stack, e.route, e.release, e.user_agent,
+              e.team_id, t.name AS team_name
+       FROM client_errors e LEFT JOIN teams t ON t.id = e.team_id
+       ORDER BY e.id DESC LIMIT 200`
+    );
+    // Grouped view: same message + route counts once with its latest sighting.
+    const groups = await dbAll(
+      `SELECT message, route, kind, COUNT(*) AS n, MAX(created_at) AS last_seen
+       FROM client_errors WHERE created_at >= datetime('now', '-7 days')
+       GROUP BY message, route, kind ORDER BY n DESC LIMIT 50`
+    );
+    res.json({ recent: rows, groups });
+  });
+
   app.get("/api/owner/feedback", async (req, res) => {
     const auth = await requireOwner(req, res);
     if (!auth) return;
@@ -9319,6 +9366,7 @@ Rules:
       } catch { /* news works fine without team context */ }
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
         res.setHeader("Cache-Control", "no-cache");
         try {
           const streamedNews = await scoutNews(teamCtx, maxTokens, (chunk) => res.write(chunk));
@@ -9532,6 +9580,7 @@ Rules:
       const stream = req.query.stream === "true";
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
         res.setHeader("Cache-Control", "no-cache");
         try {
           const streamedInsights = await aiStream(ATTENDANCE_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
@@ -10010,6 +10059,7 @@ Rules:
       }
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
         res.setHeader("Cache-Control", "no-cache");
         // If the browser goes away mid-stream, abort the upstream Gemini
         // request instead of burning tokens on a reply nobody will read.
@@ -10430,6 +10480,7 @@ Rules:
       const stream = req.query.stream === "true";
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
         res.setHeader("Cache-Control", "no-cache");
         try {
           const streamedSummary = await aiStream(COACH_SYSTEM, prompt, maxTokens, (chunk) => res.write(chunk));
@@ -11591,10 +11642,8 @@ Rules:
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", async (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
-    });
+    // Pre-compressed assets + long-lived caching for hashed files.
+    serveDist(app, path.join(__dirname, "dist"));
   }
 
   // Centralized error handler (reached via express-async-errors for async
