@@ -319,3 +319,17 @@ describe('Calendar direct manipulation', () => {
     expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open']);
   });
 });
+
+describe('Calendar: one sheet at a time', () => {
+  it('choosing Edit from the menu right after a click cancels the pending details open', async () => {
+    setup();
+    const chip = document.querySelector('[data-cm-type="calendar-event"][data-cm-id="1"]') as HTMLElement;
+    fireEvent.click(chip, { detail: 1 });
+    fireEvent.contextMenu(chip);
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Edit' }));
+    await new Promise((r) => setTimeout(r, 350));
+    const open = screen.getAllByRole('dialog');
+    expect(open).toHaveLength(1);
+    expect(within(open[0]).getByText('Edit event')).toBeInTheDocument();
+  });
+});

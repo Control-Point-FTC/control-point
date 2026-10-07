@@ -31,10 +31,15 @@ export function CalendarPage(props: any) {
   const [viewId, setViewId] = useState<number | string | null>(null);
   const [dragging, setDragging] = useState<number | string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const pendingOpen = useRef<number | null>(null);
+  const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
+  useEffect(() => cancelPendingOpen, []);
+  // Every action that opens a sheet first cancels a pending single-click open.
   const actions: CalendarActions = {
     canManage: !!ctl.canManageCalendar,
-    newOn: (k) => { setSelected(k); ctl.openNew(k); },
-    edit: (e) => { setViewId(null); ctl.openEdit(e); },
+    newOn: (k) => { cancelPendingOpen(); setSelected(k); ctl.openNew(k); },
+    edit: (e) => { cancelPendingOpen(); setViewId(null); ctl.openEdit(e); },
+    pendingOpen, cancelPendingOpen,
     move: (id, k) => void ctl.moveEvent(id, k),
     dragging, setDragging, over, setOver,
   };
@@ -57,7 +62,7 @@ export function CalendarPage(props: any) {
     const e = eventById(el.dataset.cmId);
     if (!e) return null;
     return [
-      { label: 'Open', icon: Eye, action: () => setViewId(e.id) },
+      { label: 'Open', icon: Eye, action: () => { cancelPendingOpen(); setViewId(e.id); } },
       ...(ctl.canManageCalendar && !String(e.id).startsWith('temp-') ? [
         { label: 'Edit', icon: Pencil, action: () => actions.edit(e) },
         { separator: true },
@@ -196,9 +201,14 @@ interface CalendarActions {
   setDragging: (id: number | string | null) => void;
   over: string | null;
   setOver: (k: string | null) => void;
+  /** The one pending single-click open (page-wide), so any other action
+   *  that opens a sheet can cancel it. */
+  pendingOpen: { current: number | null };
+  cancelPendingOpen: () => void;
 }
 const NO_ACTIONS: CalendarActions = {
   canManage: false, newOn: () => {}, edit: () => {}, move: () => {}, dragging: null, setDragging: () => {}, over: null, setOver: () => {},
+  pendingOpen: { current: null }, cancelPendingOpen: () => {},
 };
 const CalendarActionsCtx = createContext<CalendarActions>(NO_ACTIONS);
 const DRAG_TYPE = 'application/x-cp-event';
@@ -236,20 +246,17 @@ function useDayProps(key: string) {
 const DOUBLE_CLICK_MS = 250;
 function useClickOrEdit(e: any, open: (e: any) => void) {
   const a = useContext(CalendarActionsCtx);
-  const timer = useRef<number | null>(null);
-  useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
   if (!a.canManage) return { onClick: () => open(e), onDoubleClick: undefined };
   return {
     onClick: (ev: React.MouseEvent) => {
       ev.stopPropagation();
       if (ev.detail > 1) return; // part of a double-click
-      if (timer.current) window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => { timer.current = null; open(e); }, DOUBLE_CLICK_MS);
+      a.cancelPendingOpen();
+      a.pendingOpen.current = window.setTimeout(() => { a.pendingOpen.current = null; open(e); }, DOUBLE_CLICK_MS);
     },
     onDoubleClick: (ev: React.MouseEvent) => {
       ev.stopPropagation();
-      if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
-      a.edit(e);
+      a.edit(e); // edit() cancels the pending single-click open
     },
   };
 }
