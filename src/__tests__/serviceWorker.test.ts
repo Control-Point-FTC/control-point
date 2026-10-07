@@ -1,7 +1,7 @@
 // Runs public/sw.js against fake caches and a fake network: precaching on
 // install, network-first API data with an offline fallback, clearing that
 // data on request, and leaving other API calls alone.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { precacheList } from '../../scripts/sw-precache.mjs';
@@ -37,18 +37,24 @@ function boot(network: (req: Request) => Promise<Response>) {
   // In a worker, relative URLs resolve against the worker's origin.
   const SWRequest = function (input: any, init?: any) { return new Request(new URL(input, ORIGIN).href, init); } as any;
   new Function('self', 'caches', 'fetch', 'Request', SW)(self, cacheStorage, fetchFn, SWRequest);
-  const fire = async (type: string, extra: any = {}) => {
+  /** Dispatch an event: what the page gets, separately from background work. */
+  const dispatch = (type: string, extra: any = {}) => {
     const waits: Promise<any>[] = [];
     let responded: Promise<Response> | undefined;
     const e = { ...extra, waitUntil: (p: Promise<any>) => waits.push(p), respondWith: (p: Promise<Response>) => { responded = p; } };
     listeners[type](e);
-    const res = responded ? await responded : undefined;
-    await Promise.all(waits);
+    return { response: responded, done: () => Promise.all(waits) };
+  };
+  const fire = async (type: string, extra: any = {}) => {
+    const d = dispatch(type, extra);
+    const res = d.response ? await d.response : undefined;
+    await d.done();
     return res;
   };
   // A plain stand-in for FetchEvent.request (url, method, mode).
   const get = (path: string, mode = 'cors') => fire('fetch', { request: { url: ORIGIN + path, method: 'GET', mode } });
-  return { caches, fire, get };
+  const start = (path: string) => dispatch('fetch', { request: { url: ORIGIN + path, method: 'GET', mode: 'cors' } });
+  return { caches, fire, get, start };
 }
 
 const json = (body: any) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -97,6 +103,49 @@ describe('service worker (offline Compete)', () => {
     await sw.fire('message', { data: { type: 'clear-api-cache' } });
     const after = await sw.get('/api/auth/me');
     expect(after!.type).toBe('error');
+  });
+
+  it('a response for the previous account that arrives after a clear is not saved', async () => {
+    let release: (r: Response) => void = () => {};
+    const sw = boot((req) => (new URL(req.url).pathname === '/api/tasks' ? new Promise((r) => { release = r; }) : network(req)));
+    const pending = sw.start('/api/tasks');
+    await sw.fire('message', { data: { type: 'clear-api-cache' } }); // signed out / switched meanwhile
+    release(json({ old: 'account' }));
+    await pending.response;
+    await pending.done();
+    expect(await (await sw.caches.get('control-point-api-v1'))?.match('/api/tasks')).toBeUndefined();
+  });
+
+  describe('slow venue Wi-Fi (5 s fallback)', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('serves the saved copy after 5 s while the network hangs', async () => {
+      const sw = boot(network);
+      await sw.get('/api/events'); // saved copy
+      const hang = boot(() => new Promise(() => {}));
+      // Same device: hand the saved copy to the worker whose network hangs.
+      hang.caches.set('control-point-api-v1', sw.caches.get('control-point-api-v1')!);
+      const p = hang.start('/api/events').response!;
+      let got: Response | undefined;
+      p.then((r) => { got = r; });
+      await vi.advanceTimersByTimeAsync(4900);
+      expect(got).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(got && (await got.json()).path).toBe('/api/events');
+    });
+
+    it('with no saved copy it keeps waiting for the network', async () => {
+      let release: (r: Response) => void = () => {};
+      const sw = boot(() => new Promise((r) => { release = r; }));
+      let got: Response | undefined;
+      sw.start('/api/events').response!.then((r) => { got = r; });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(got).toBeUndefined();
+      release(json({ fresh: true }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(got && (await got.json()).fresh).toBe(true);
+    });
   });
 
   it('leaves other API calls and uploads to the network', async () => {

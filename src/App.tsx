@@ -73,7 +73,7 @@ import { clearDrafts } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { streamAttendanceInsights, streamActivitySummary } from './services/aiService';
-import { clearOfflineData } from './services/offlineData';
+import { clearOfflineData, warmOfflineSession } from './services/offlineData';
 import { apiFetch, assetUrl } from './services/api';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
@@ -1402,6 +1402,8 @@ export default function App() {
     // An open socket is still authenticated as the previous session (e.g.
     // the old team) — reopen it under the new cookie.
     reopenSocket();
+    // Save who is signed in now for offline reloads (the old copy was cleared).
+    warmOfflineSession();
   };
 
   // Re-read the signed-in user (used after teamless transitions).

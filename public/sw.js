@@ -19,6 +19,11 @@ const CACHE = 'control-point-v4';
 const API_CACHE = 'control-point-api-v1';
 const SHELL = '/index.html';
 const API_TIMEOUT_MS = 5000;
+// Bumped each time the app drops the data copy (sign-out, workspace switch):
+// a response that was already on its way for the previous account is then
+// thrown away instead of being saved. Saves also wait for a pending clear.
+let apiGen = 0;
+let clearing = Promise.resolve();
 
 // GET endpoints whose last answer is shown offline (exact path, or prefix
 // when it ends in "/").
@@ -34,12 +39,15 @@ function isOfflineApi(path) {
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE)
+      // Each part catches its own failure, so install keeps waiting for the
+      // rest (a failed shell fetch must not cut the page downloads short).
       .then((cache) => Promise.all([
-        fetch(new Request('/', { cache: 'reload' })).then((res) => (res.ok ? cache.put(SHELL, res) : undefined)),
+        fetch(new Request('/', { cache: 'reload' })).then((res) => (res.ok ? cache.put(SHELL, res) : undefined)).catch(() => {}),
         // Best effort per file: one missing chunk must not fail the install.
         fetch('/sw-precache.json', { cache: 'no-store' })
           .then((r) => (r.ok ? r.json() : { files: [] }))
-          .then(({ files }) => Promise.all((files || []).map((f) => cache.add(f).catch(() => {})))),
+          .then(({ files }) => Promise.all((files || []).map((f) => cache.add(f).catch(() => {}))))
+          .catch(() => {}),
       ]))
       .catch(() => { /* offline install: files are cached as they are first used instead */ })
       .then(() => self.skipWaiting())
@@ -57,7 +65,9 @@ self.addEventListener('activate', (event) => {
 // The app asks for the data copy to be dropped (sign-out, workspace switch).
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'clear-api-cache') {
-    event.waitUntil(caches.delete(API_CACHE));
+    apiGen++;
+    clearing = clearing.then(() => caches.delete(API_CACHE)).catch(() => {});
+    event.waitUntil(clearing);
   }
 });
 
@@ -67,6 +77,7 @@ function isStaticAsset(url) {
 
 /** Network first with a timeout; the last good copy when the network fails. */
 function networkFirstApi(event, req) {
+  const gen = apiGen;
   let saved = null;
   const network = fetch(req).then((res) => {
     // Clone now, before the page starts reading the body.
@@ -74,9 +85,13 @@ function networkFirstApi(event, req) {
     return res;
   });
   event.waitUntil(
-    network.then(() => (saved ? caches.open(API_CACHE).then((c) => c.put(req, saved)) : undefined)).catch(() => {})
+    network
+      .then(() => clearing)
+      // Only if the account/workspace hasn't changed since the request started.
+      .then(() => (saved && gen === apiGen ? caches.open(API_CACHE).then((c) => c.put(req, saved)) : undefined))
+      .catch(() => {})
   );
-  const fallback = () => caches.open(API_CACHE).then((c) => c.match(req));
+  const fallback = () => clearing.then(() => caches.open(API_CACHE)).then((c) => c.match(req));
   const timedOut = new Promise((resolve) => setTimeout(resolve, API_TIMEOUT_MS)).then(fallback);
   return Promise.race([
     network.catch(() => fallback().then((cached) => cached || Response.error())),
