@@ -60,10 +60,14 @@ export async function fetchFtcTeam(
   signal?: AbortSignal,
   teamId?: string | number
 ): Promise<FtcTeamPayload> {
-  const key = teamId != null ? cacheKey(teamId, season) : season;
-  const hit = cache.get(key as any);
+  // Always a string key: a bare-number key made invalidateFtcSeason() throw
+  // (key.endsWith is not a function) on the explicit refresh path. Without a
+  // team id the entry belongs to the active workspace, and clearFtcCache()
+  // drops it on every team switch.
+  const key = cacheKey(teamId ?? 'active', season);
+  const hit = cache.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.data;
-  if (hit) cache.delete(key as any);
+  if (hit) cache.delete(key);
 
   const res = await apiFetch(`/api/ftc/team?season=${season}`, { signal });
   const body = await res.json().catch(() => ({}));
@@ -74,7 +78,7 @@ export async function fetchFtcTeam(
     throw new Error(body?.error || `FTC request failed (${res.status})`);
   }
   const data = body as FtcTeamPayload;
-  cache.set(key as any, { expiresAt: Date.now() + TTL_MS, data });
+  cache.set(key, { expiresAt: Date.now() + TTL_MS, data });
   return data;
 }
 

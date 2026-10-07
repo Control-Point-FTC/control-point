@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, renderHook, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
@@ -11,7 +11,6 @@ import { CodeRevealDialog } from '../pages/auth/CodeRevealDialog';
 import { TeamlessPage } from '../pages/auth/TeamlessPage';
 import { AuthLayout } from '../pages/auth/AuthLayout';
 import { notify } from '../../components/dialog';
-import { readDeviceMode, useSignedOutMode } from '../signedOut';
 import { clearDrafts } from '../drafts';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
@@ -36,37 +35,15 @@ afterEach(cleanup);
 const providers = { google: true, discord: false, github: true };
 
 describe('Modern signed-out look', () => {
-  it('follows the look this device last used, else the default', () => {
-    expect(readDeviceMode()).toBe('modern'); // the app default since 9e
-    localStorage.setItem('cp-interface-mode', 'legacy');
-    expect(readDeviceMode()).toBe('legacy');
-    localStorage.setItem('cp-interface-mode', 'nonsense');
-    expect(readDeviceMode()).toBe('modern');
-  });
-
-  it('switching to Classic is remembered, and signing out picks up the session look', () => {
-    localStorage.setItem('cp-interface-mode', 'modern');
-    const h = renderHook(({ signedIn }) => useSignedOutMode(signedIn), { initialProps: { signedIn: false } });
-    expect(h.result.current[0]).toBe('modern');
-    act(() => h.result.current[1]('legacy'));
-    expect(h.result.current[0]).toBe('legacy');
-    expect(localStorage.getItem('cp-interface-mode')).toBe('legacy');
-    h.rerender({ signedIn: true });
-    localStorage.setItem('cp-interface-mode', 'modern'); // the signed-in provider mirrors the account's look
-    h.rerender({ signedIn: false });
-    expect(h.result.current[0]).toBe('modern');
-  });
-
-  it('landing: turns on the Modern tokens while shown, and both exits work', () => {
-    const onSignIn = vi.fn(); const onGetStarted = vi.fn(); const onClassic = vi.fn();
-    const v = render(<ModernLanding onSignIn={onSignIn} onGetStarted={onGetStarted} onClassic={onClassic} />);
+  it('landing: turns on the Modern tokens while shown, and both exits work (no Classic link)', () => {
+    const onSignIn = vi.fn(); const onGetStarted = vi.fn();
+    const v = render(<ModernLanding onSignIn={onSignIn} onGetStarted={onGetStarted} />);
     expect(document.documentElement.dataset.ui).toBe('modern');
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     fireEvent.click(screen.getByRole('button', { name: /Create your workspace/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Use the Classic look' }));
     expect(onSignIn).toHaveBeenCalled();
     expect(onGetStarted).toHaveBeenCalled();
-    expect(onClassic).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /Classic/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
     v.unmount();
     expect(document.documentElement.dataset.ui).toBeUndefined();
@@ -78,7 +55,7 @@ describe('Modern sign in', () => {
     const p = {
       email: '', setEmail: vi.fn(), password: '', setPassword: vi.fn(), needsSetup: false, error: null, busy: false,
       onSubmit: vi.fn((e: any) => e.preventDefault()), oauthError: null, providers,
-      showForgot: false, setShowForgot: vi.fn(), onPasswordReset: vi.fn(), onBack: vi.fn(), onCreateAccount: vi.fn(), onClassic: vi.fn(),
+      showForgot: false, setShowForgot: vi.fn(), onPasswordReset: vi.fn(), onBack: vi.fn(), onCreateAccount: vi.fn(),
       ...over,
     };
     render(<SignInPage {...p} />);
@@ -138,7 +115,7 @@ describe('Modern sign in', () => {
 describe('Modern signup', () => {
   it('role choice', () => {
     const onSelect = vi.fn();
-    render(<RolePage providers={providers} onBack={vi.fn()} onSelect={onSelect} onClassic={vi.fn()} />);
+    render(<RolePage providers={providers} onBack={vi.fn()} onSelect={onSelect} />);
     fireEvent.click(screen.getByRole('button', { name: /I'm joining a team/ }));
     expect(onSelect).toHaveBeenCalledWith('student');
     expect(screen.getByRole('link', { name: 'Continue with Google' }).getAttribute('href')).toMatch(/intent=signup$/);
@@ -147,7 +124,7 @@ describe('Modern signup', () => {
   it('admin: the FTC number fills the team name, and the payload matches Classic', async () => {
     const onSignup = vi.fn(async () => ({ team: { id: 1 } }));
     const onDone = vi.fn();
-    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={onSignup} onDone={onDone} onSignIn={vi.fn()} onClassic={vi.fn()} />);
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={onSignup} onDone={onDone} onSignIn={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Ada' } });
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ada@x.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
@@ -160,13 +137,13 @@ describe('Modern signup', () => {
 
   it('an unknown number falls back to a typed name; a drafted name survives coming back', async () => {
     fetchMock.mockImplementation(async () => ({ ok: false, json: async () => ({}) }));
-    const first = render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} onClassic={vi.fn()} />);
+    const first = render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('FTC team number'), { target: { value: '99999' } });
     fireEvent.click(await screen.findByRole('button', { name: 'Enter your team name instead' }, { timeout: 2000 }));
     fireEvent.change(screen.getByLabelText('Team name'), { target: { value: 'Garage Bots' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     first.unmount();
-    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} onClassic={vi.fn()} />);
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} />);
     expect(screen.getByLabelText('FTC team number')).toHaveValue('99999');
     expect(await screen.findByLabelText('Team name')).toHaveValue('Garage Bots');
     expect(screen.getByLabelText('Password')).toHaveValue(''); // passwords are never kept
@@ -174,7 +151,7 @@ describe('Modern signup', () => {
 
   it('student: a signup error shows and the button comes back', async () => {
     const onSignup = vi.fn(async () => { throw new Error('Invalid access code'); });
-    render(<SignupPage mode="student" onBack={vi.fn()} onSignup={onSignup} onDone={vi.fn()} onSignIn={vi.fn()} onClassic={vi.fn()} />);
+    render(<SignupPage mode="student" onBack={vi.fn()} onSignup={onSignup} onDone={vi.fn()} onSignIn={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Bo' } });
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'bo@x.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
@@ -188,7 +165,7 @@ describe('Modern signup', () => {
   it('OAuth: picks a role, then completes with the same request as Classic', async () => {
     const onDone = vi.fn();
     api.apiFetch.mockImplementation(() => json({ sessionId: 's', user: { id: 1 } }));
-    render(<OAuthSignupPage token="tok" intent="signup" provider="github" onBack={vi.fn()} onDone={onDone} onClassic={vi.fn()} />);
+    render(<OAuthSignupPage token="tok" intent="signup" provider="github" onBack={vi.fn()} onDone={onDone} />);
     expect(screen.getByText(/signed in with GitHub/)).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Joining a team/ })).toHaveAttribute('aria-checked', 'true');
     fireEvent.change(screen.getByLabelText('Team access code'), { target: { value: 'CP-1' } });
@@ -202,7 +179,7 @@ describe('Modern signup', () => {
   it('verify email: six digits, then the session goes to App', async () => {
     const onVerified = vi.fn();
     api.apiFetch.mockImplementation(() => json({ sessionId: 's', user: { id: 1 } }));
-    render(<VerifyEmailPage email="ada@x.test" onBack={vi.fn()} onVerified={onVerified} onClassic={vi.fn()} />);
+    render(<VerifyEmailPage email="ada@x.test" onBack={vi.fn()} onVerified={onVerified} />);
     fireEvent.click(screen.getByRole('button', { name: 'Verify email' }));
     expect(api.apiFetch).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText('Verification code'), { target: { value: '654321' } });
@@ -232,7 +209,7 @@ describe('Phase 9b review fixes', () => {
   it("an old number's lookup can't verify the number now in the field", async () => {
     const replies: Record<string, (v: any) => void> = {};
     fetchMock.mockImplementation((u: string) => new Promise((r) => { replies[new URL(u, 'http://x').searchParams.get('number')!] = r; }));
-    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} onClassic={vi.fn()} />);
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} />);
     const num = screen.getByLabelText('FTC team number');
     fireEvent.change(num, { target: { value: '4215' } });
     await waitFor(() => expect(replies['4215']).toBeDefined(), { timeout: 2000 });
@@ -246,7 +223,7 @@ describe('Phase 9b review fixes', () => {
   });
 
   it('a pasted code with spaces keeps all six digits', async () => {
-    render(<VerifyEmailPage email="ada@x.test" onBack={vi.fn()} onVerified={vi.fn()} onClassic={vi.fn()} />);
+    render(<VerifyEmailPage email="ada@x.test" onBack={vi.fn()} onVerified={vi.fn()} />);
     const input = screen.getByLabelText('Verification code');
     const user = userEvent.setup();
     await user.click(input);
@@ -294,7 +271,7 @@ describe('signed-out toasts', () => {
 
 describe('Modern zero-team screen', () => {
   const mount = () => {
-    const p = { onCreateTeam: vi.fn(async () => {}), onJoinTeam: vi.fn(async () => {}), onDeleteAccount: vi.fn(async () => {}), onSignOut: vi.fn(), onClassic: vi.fn() };
+    const p = { onCreateTeam: vi.fn(async () => {}), onJoinTeam: vi.fn(async () => {}), onDeleteAccount: vi.fn(async () => {}), onSignOut: vi.fn() };
     render(<TeamlessPage user={{ email: 'ada@x.test' }} {...p} />);
     return p;
   };

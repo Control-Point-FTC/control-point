@@ -86,11 +86,11 @@ export function SignInPage(p: {
   oauthError: string | null; providers: Providers;
   showForgot: boolean; setShowForgot: (v: boolean) => void; onPasswordReset: () => void;
   forgotStartAtCode?: boolean;
-  onBack: () => void; onCreateAccount: () => void; onClassic: () => void;
+  onBack: () => void; onCreateAccount: () => void;
 }) {
   const id = useId();
   return (
-    <AuthLayout onBack={p.onBack} backLabel="Home" onClassic={p.onClassic}>
+    <AuthLayout onBack={p.onBack} backLabel="Home">
       <AuthHeading
         title={p.needsSetup ? 'Set your password' : 'Welcome back'}
         description={p.needsSetup ? 'Choose a password to finish setting up your account.' : 'Sign in to your team workspace.'}
@@ -255,12 +255,12 @@ function Resend({ cooldown, resending, onResend }: { cooldown: number; resending
 // ---------------------------------------------------------------------------
 // Email check after signup / first login
 
-export function VerifyEmailPage({ email, onBack, onVerified, onClassic }: {
-  email: string; onBack: () => void; onVerified: (data: any) => void; onClassic: () => void;
+export function VerifyEmailPage({ email, onBack, onVerified }: {
+  email: string; onBack: () => void; onVerified: (data: any) => void;
 }) {
   const v = useVerifyEmail({ email, onVerified });
   return (
-    <AuthLayout onBack={onBack} onClassic={onClassic}>
+    <AuthLayout onBack={onBack}>
       <AuthHeading
         icon={<IconTile><Mail className="size-5" /></IconTile>}
         title="Check your inbox"
@@ -292,11 +292,11 @@ const ROLES = [
   { mode: 'student' as const, icon: GraduationCap, tone: 'sky' as const, title: "I'm joining a team", body: 'Use the access code from your team admin to join their workspace.', points: ['Takes under a minute', 'Your admin sets your role'] },
 ];
 
-export function RolePage({ onBack, onSelect, providers, onClassic }: {
-  onBack: () => void; onSelect: (mode: 'admin' | 'student') => void; providers: Providers; onClassic: () => void;
+export function RolePage({ onBack, onSelect, providers }: {
+  onBack: () => void; onSelect: (mode: 'admin' | 'student') => void; providers: Providers;
 }) {
   return (
-    <AuthLayout onBack={onBack} backLabel="Home" onClassic={onClassic} wide>
+    <AuthLayout onBack={onBack} backLabel="Home" wide>
       <AuthHeading title="Create your account" description="How will you use Control Point?" />
       <div className="grid gap-3 sm:grid-cols-2">
         {ROLES.map((r, i) => (
@@ -401,16 +401,16 @@ function AccessCodeField({ value, onChange }: { value: string; onChange: (v: str
 // ---------------------------------------------------------------------------
 // Email signup
 
-export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn, onClassic }: {
+export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn }: {
   mode: 'admin' | 'student';
   onBack: () => void; onSignup: (payload: any) => Promise<any>; onDone: (data: any) => void;
-  onSignIn: () => void; onClassic: () => void;
+  onSignIn: () => void;
 }) {
   const f = useSignupForm({ mode, onSignup, onDone });
   const id = useId();
   const admin = mode === 'admin';
   return (
-    <AuthLayout onBack={onBack} backLabel="Change role" onClassic={onClassic}>
+    <AuthLayout onBack={onBack} backLabel="Change role">
       <AuthHeading
         icon={<IconTile tone={admin ? 'accent' : 'sky'}>{admin ? <ShieldCheck className="size-5" /> : <GraduationCap className="size-5" />}</IconTile>}
         title={admin ? 'Create your workspace' : 'Join your team'}
@@ -447,14 +447,14 @@ export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn, onClassic
 // ---------------------------------------------------------------------------
 // Finish an OAuth signup
 
-export function OAuthSignupPage({ token, intent, provider, onBack, onDone, onClassic }: {
+export function OAuthSignupPage({ token, intent, provider, onBack, onDone }: {
   token: string; intent: 'admin_signup' | 'student_signup' | 'signup'; provider: OAuthProvider;
-  onBack: () => void; onDone: (data: any) => void; onClassic: () => void;
+  onBack: () => void; onDone: (data: any) => void;
 }) {
   const f = useOAuthSignup({ token, intent, provider, onDone });
   const Icon = PROVIDER_ICON[provider];
   return (
-    <AuthLayout onBack={onBack} backLabel="Home" onClassic={onClassic}>
+    <AuthLayout onBack={onBack} backLabel="Home">
       <AuthHeading
         icon={<span className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-card"><Icon /></span>}
         title="One more step"

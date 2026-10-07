@@ -8,7 +8,6 @@ import { CalendarDays, Check, Copy, ExternalLink, Loader2, RefreshCw, ShieldChec
 import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
-import { WorkspaceInterfaceDefault } from '../../InterfaceModePicker';
 import { getDraft, useDraft } from '../../drafts';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 
@@ -151,7 +150,6 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
           <SettingsRow label="Roles & permissions" description="Group permissions and hand them to members.">
             <Button variant="outline" onClick={() => navigate('/roles')} className="max-sm:h-11"><ShieldCheck /> Open roles</Button>
           </SettingsRow>
-          <div className="border-t border-border p-4"><WorkspaceInterfaceDefault team={team} onTeamSaved={onTeamSaved} /></div>
         </SettingsGroup>
       )}
 

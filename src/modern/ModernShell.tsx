@@ -434,7 +434,6 @@ function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwi
 
 function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, onSetupGuide, onOpenWhatsNew, onStatusPick }: ModernShellProps & { collapsed: boolean }) {
   const { theme, toggle } = useTheme();
-  const { setMode } = useInterfaceMode();
   const presence = user?.presence || 'offline';
   return (
     <DropdownMenu>
@@ -476,7 +475,6 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
         <DropdownMenuItem onSelect={(e) => { e.preventDefault(); toggle(); }}>
           {theme === 'light' ? <Moon /> : <Sun />} {theme === 'light' ? 'Dark theme' : 'Light theme'}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void setMode('legacy')}><ArrowLeftRight /> Switch to Classic experience</DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onOpenWhatsNew}><Sparkles /> What's new</DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpenFeedback}><MessageSquareHeart /> Send feedback</DropdownMenuItem>

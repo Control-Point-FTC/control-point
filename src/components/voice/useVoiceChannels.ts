@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useVoice, type VoiceChannelSummary } from '../../voice';
 import { confirmDialog } from '../dialog';
-import { getCameraDefault } from '../SettingsModal';
+import { getCameraDefault } from './cameraDefault';
 import { voiceAdminApi } from '../../voice/api';
 
 export function useVoiceChannels() {

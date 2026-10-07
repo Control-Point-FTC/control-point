@@ -12,7 +12,6 @@ import {
 import { useTheme, type Theme } from '../../../hooks/useTheme';
 import { SUPPORTED_LANGUAGES, setLanguage } from '../../../i18n';
 import { notify } from '../../../components/dialog';
-import { InterfaceModePicker } from '../../InterfaceModePicker';
 import { useGridSettings } from '../../../components/settings/useGridSettings';
 import { PULSE_ORIGIN_OPTIONS } from '../../../utils/gridPulse';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
@@ -35,10 +34,6 @@ export function AppearanceSection() {
 
   return (
     <div>
-      <SettingsGroup title="Interface">
-        <div className="p-4"><InterfaceModePicker /></div>
-      </SettingsGroup>
-
       <SettingsGroup title="Display">
         <SettingsRow label="Theme" description="Follows you on this device.">
           <ToggleGroup type="single" value={theme} onValueChange={(v) => { if (v) setTheme(v as Theme); }} aria-label="Theme">

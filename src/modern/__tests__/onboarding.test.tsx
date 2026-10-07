@@ -10,9 +10,6 @@ import { InterfaceModeProvider } from '../interfaceMode';
 import { WelcomeDialog } from '../pages/onboarding/WelcomeDialog';
 import { SetupDialog } from '../pages/onboarding/SetupDialog';
 import { TourCard } from '../pages/onboarding/TourCard';
-import SetupWizard from '../../components/onboarding/SetupWizard';
-import Walkthrough from '../../components/onboarding/Walkthrough';
-import { clearTourDraft } from '../../components/onboarding/useWalkthrough';
 import { defaultOnboardingState, type OnboardingState, type TourStep } from '../../components/onboarding/onboardingState';
 import { clearSetupDrafts } from '../../components/onboarding/useSetupWizard';
 import { clearDrafts } from '../drafts';
@@ -90,27 +87,12 @@ describe('Modern setup', () => {
     expect(p.onSaveProfile).not.toHaveBeenCalled();
   });
 
-  it('the theme applies at once, and Classic layout is saved to the account', async () => {
+  it('the theme applies at once, and there is no Classic layout choice any more', async () => {
     mount(setupProps({ initialStep: 1 }));
     fireEvent.click(screen.getByRole('radio', { name: /Light/ }));
     expect(document.documentElement.classList.contains('light')).toBe(true);
     fireEvent.click(screen.getByRole('radio', { name: /Dark/ }));
-    fireEvent.click(screen.getByRole('radio', { name: /Classic/ }));
-    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/profile', expect.objectContaining({ method: 'PATCH' })));
-    expect(JSON.parse(api.apiFetch.mock.calls.at(-1)![1].body).interface_mode).toBe('legacy');
-  });
-
-  it('a look switch mid-setup carries on in Classic with the typed name and the same step', async () => {
-    const p = setupProps();
-    const first = mount(p);
-    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Half typed' } });
-    first.unmount();
-    render(<SetupWizard {...(p as any)} />);
-    expect(screen.getByLabelText(/display name/i)).toHaveValue('Half typed');
-    cleanup();
-    clearSetupDrafts();
-    mount(p);
-    expect(screen.getByLabelText('Display name')).toHaveValue('');
+    expect(screen.queryByRole('radio', { name: /Classic/ })).not.toBeInTheDocument();
   });
 
   it('closing with unsaved edits asks inside the dialog (Keep editing / Leave)', async () => {
@@ -138,19 +120,6 @@ describe('Modern setup', () => {
     expect(screen.getByRole('button', { name: 'Keep editing' }).closest('[inert]')).toBeNull();
   });
 
-  it("an old setup's failed layout save doesn't show its error in a reopened setup", async () => {
-    let fail: () => void = () => {};
-    api.apiFetch.mockImplementation(() => new Promise((r) => { fail = () => r({ ok: false, status: 500, json: async () => ({}) }); }));
-    const first = mount(setupProps({ initialStep: 1 }));
-    fireEvent.click(screen.getByRole('radio', { name: /Classic/ }));
-    await waitFor(() => expect(api.apiFetch).toHaveBeenCalled());
-    first.unmount();
-    clearSetupDrafts();
-    mount(setupProps({ initialStep: 1 }));
-    await act(async () => { fail(); });
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
   it('a save that lands after setup closed never moves a reopened setup', async () => {
     let finish: () => void = () => {};
     const p = setupProps({ onSaveProfile: vi.fn(() => new Promise<void>((r) => { finish = () => r(); })) });
@@ -165,14 +134,6 @@ describe('Modern setup', () => {
     await act(async () => { finish(); });
     expect(screen.getByRole('listitem', { current: 'step' })).toHaveTextContent('Your profile');
     expect(screen.getByLabelText('Display name')).toHaveValue('Unfinished');
-  });
-
-  it("a layout that couldn't be saved says so", async () => {
-    api.apiFetch.mockImplementation(() => json({ error: 'nope' }, false));
-    mount(setupProps({ initialStep: 1 }));
-    fireEvent.click(screen.getByRole('radio', { name: /Classic/ }));
-    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't save your layout");
-    expect(dialog.notify).toHaveBeenCalledWith("Couldn't save your layout.", 'error');
   });
 
   it('the tour step starts or retakes the tour', async () => {
@@ -215,19 +176,6 @@ describe('Modern tour', () => {
     expect(await screen.findByRole('heading', { name: "You're ready" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Continue setup' }));
     expect(p.onFinish).toHaveBeenCalledWith('setup');
-  });
-
-  it('a look switch mid-tour carries on at the same step', async () => {
-    mount();
-    fireEvent.click(screen.getByRole('button', { name: /Next/ }));
-    expect(await screen.findByRole('heading', { name: 'Step Two' })).toBeInTheDocument();
-    cleanup();
-    render(<Walkthrough steps={STEPS} initialStep={0} onFinish={vi.fn()} onExit={vi.fn()} />);
-    expect(screen.getByRole('heading', { name: 'Step Two' })).toBeInTheDocument();
-    cleanup();
-    clearTourDraft(); // App does this when the tour closes
-    render(<TourCard steps={STEPS} initialStep={0} onFinish={vi.fn()} onExit={vi.fn()} />);
-    expect(screen.getByRole('heading', { name: 'Step One' })).toBeInTheDocument();
   });
 
   it('dots jump, arrows move and Escape exits', async () => {
