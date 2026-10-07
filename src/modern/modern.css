@@ -95,8 +95,8 @@ html[data-ui="modern"] .m-canvas {
     linear-gradient(90deg, var(--cp-grid-line) var(--cp-grid-width), transparent var(--cp-grid-width)) 0 0 / var(--cp-grid-size) var(--cp-grid-size);
   background:
     radial-gradient(1200px 320px at 50% -120px, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 70%),
+    var(--cp-layer-glow),     /* above the fade: the fade shapes the grid, not the pointer light */
     var(--cp-layer-fade),
-    var(--cp-layer-glow),
     var(--cp-layer-pattern),
     var(--sh-background);
   background-attachment: local;

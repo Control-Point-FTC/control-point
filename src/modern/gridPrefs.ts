@@ -47,6 +47,8 @@ const clamp = (n: unknown, [lo, hi]: readonly [number, number], d: number) => {
 export function readGridPrefs(raw: string | null = safeGet()): GridPrefs {
   let o: any = {};
   try { o = raw ? JSON.parse(raw) : {}; } catch { o = {}; }
+  // Stored JSON that isn't an object (null, a number, a list) means defaults.
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) o = {};
   const d = GRID_DEFAULTS;
   return {
     enabled: typeof o.enabled === 'boolean' ? o.enabled : d.enabled,

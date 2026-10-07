@@ -122,11 +122,15 @@ export function ModernShell(props: ModernShellProps) {
       main.style.setProperty('--cp-my', `${last.clientY - r.top + main.scrollTop}px`);
     };
     const move = (e: PointerEvent) => { last = e; if (!frame) frame = requestAnimationFrame(paint); };
+    // Scrolling under a still pointer moves the content: keep the glow on the pointer.
+    const scroll = () => { if (last && !frame) frame = requestAnimationFrame(paint); };
     const leave = () => { last = null; main.style.removeProperty('--cp-mx'); main.style.removeProperty('--cp-my'); };
     main.addEventListener('pointermove', move);
+    main.addEventListener('scroll', scroll, { passive: true });
     main.addEventListener('pointerleave', leave);
     return () => {
       main.removeEventListener('pointermove', move);
+      main.removeEventListener('scroll', scroll);
       main.removeEventListener('pointerleave', leave);
       if (frame) cancelAnimationFrame(frame);
       leave();

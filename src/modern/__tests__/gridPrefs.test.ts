@@ -7,6 +7,10 @@ describe('grid preferences', () => {
   it('defaults anything missing, unknown or out of range', () => {
     expect(readGridPrefs(null)).toEqual(GRID_DEFAULTS);
     expect(readGridPrefs('not json')).toEqual(GRID_DEFAULTS);
+    // Valid JSON that isn't an object must not crash startup.
+    expect(readGridPrefs('null')).toEqual(GRID_DEFAULTS);
+    expect(readGridPrefs('42')).toEqual(GRID_DEFAULTS);
+    expect(readGridPrefs('[1,2]')).toEqual(GRID_DEFAULTS);
     const p = readGridPrefs(JSON.stringify({ style: 'stars', size: 999, intensity: -1, thickness: 7, fade: 'forever', pulseSpeed: 0 }));
     expect(p.style).toBe('lines');
     expect(p.size).toBe(80);
