@@ -349,3 +349,30 @@ describe('Modern Settings — notifications review regressions', () => {
     expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
   });
 });
+
+describe('Modern Settings — notifications save order', () => {
+  it('saves one at a time, so a slow first answer never undoes a later change', async () => {
+    const order: string[] = [];
+    let releaseFirst: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') {
+        const body = JSON.parse(init.body);
+        order.push(Object.keys(body)[0]);
+        if (body.team_updates) return new Promise((res) => { releaseFirst = () => res({ ok: true, json: async () => ({ team_updates: 'off', everyone_pings: true }) }); });
+        return json({ team_updates: 'off', everyone_pings: false });
+      }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('switch', { name: '@everyone and @here' }));
+    // The second save waits for the first.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(order).toEqual(['team_updates']);
+    await act(async () => { releaseFirst(); });
+    await waitFor(() => expect(order).toEqual(['team_updates', 'everyone_pings']));
+    await waitFor(() => expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'false'));
+    expect(screen.getByRole('radio', { name: 'Off' })).toHaveAttribute('aria-checked', 'true');
+  });
+});

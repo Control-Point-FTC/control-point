@@ -14,10 +14,12 @@ interface Prefs { team_updates: Mode; everyone_pings: boolean }
 export function NotificationsSection() {
   const [prefs, setPrefs] = useState<Prefs | null>(null);
   const [failed, setFailed] = useState(false);
-  // Only the newest save settles what's shown; a failure goes back to the
-  // last values the server confirmed (never to another unsaved change).
-  const seq = useRef(0);
+  // Saves run one at a time, in order, so the server's answers arrive in the
+  // order they were made and the last one is always the truth. A failure
+  // goes back to the last values the server confirmed.
   const confirmed = useRef<Prefs | null>(null);
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  const pending = useRef(0);
 
   useEffect(() => {
     let live = true;
@@ -34,22 +36,27 @@ export function NotificationsSection() {
     return () => { live = false; };
   }, []);
 
-  const save = async (patch: Partial<Prefs>) => {
+  const save = (patch: Partial<Prefs>) => {
     if (!prefs) return;
-    const mine = ++seq.current;
-    setPrefs({ ...prefs, ...patch });
-    try {
-      const res = await apiFetch('/api/notification-prefs', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Could not save — try again.');
-      confirmed.current = data;
-      if (mine === seq.current) setPrefs(data);
-    } catch (e: any) {
-      if (mine === seq.current && confirmed.current) setPrefs(confirmed.current);
-      notify(e?.message || 'Could not save — try again.', 'error');
-    }
+    setPrefs((p) => (p ? { ...p, ...patch } : p));
+    pending.current++;
+    chain.current = chain.current.then(async () => {
+      try {
+        const res = await apiFetch('/api/notification-prefs', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Could not save — try again.');
+        confirmed.current = data;
+      } catch (e: any) {
+        notify(e?.message || 'Could not save — try again.', 'error');
+        // Undo this change on screen; later queued changes re-apply below.
+        if (confirmed.current) setPrefs(confirmed.current);
+      } finally {
+        // Once nothing else is queued, show exactly what the server holds.
+        if (--pending.current === 0 && confirmed.current) setPrefs(confirmed.current);
+      }
+    });
   };
 
   if (failed) return <p className="text-sm text-muted-foreground">Notification settings couldn’t load. Check your connection and reopen this page.</p>;

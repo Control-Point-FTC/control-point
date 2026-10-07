@@ -20,3 +20,7 @@ CREATE TABLE IF NOT EXISTS notification_digest (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notification_digest_member ON notification_digest(member_id, created_at);
+
+-- Prefs are per account: a membership without its own falls back to the
+-- account's others, looked up by LOWER(email). Index that expression.
+CREATE INDEX IF NOT EXISTS idx_members_email_lower ON members(LOWER(email));
