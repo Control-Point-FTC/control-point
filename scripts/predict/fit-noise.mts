@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { loadSeason } from "./load.mts";
 import { runBacktest } from "./backtest-matches.mts";
 import type { CalibrationParams } from "../../server/predict/calibration.ts";
+import { sameRatingParams } from "../../server/predict/rating.ts";
 import { logLoss, ece, brier } from "../../server/predict/metrics.ts";
 import type { EventRecord } from "../../server/predict/types.ts";
 
@@ -31,9 +32,12 @@ const seasons = [2022, 2023, 2024, 2025].filter((s) => s <= tuneSeason);
 const events = new Map<number, EventRecord[]>();
 for (const s of seasons) events.set(s, loadSeason(s));
 const report = new Set([tuneSeason]);
-const calibration: CalibrationParams | undefined = process.argv.includes("--calibrated")
-  ? JSON.parse(readFileSync(`.cache/predict/platt-${tuneSeason}.json`, "utf8")).calibration
-  : undefined;
+const platt = process.argv.includes("--calibrated") ? JSON.parse(readFileSync(`.cache/predict/platt-${tuneSeason}.json`, "utf8")) : undefined;
+// The calibration must belong to these rating settings (a, b are checked once refit below).
+if (platt && (!platt.rating || !sameRatingParams(platt.rating, rating))) {
+  throw new Error(`.cache/predict/platt-${tuneSeason}.json was fitted for other rating settings: run fit-noise, then fit-platt --from-tuned, then fit-noise --calibrated`);
+}
+const calibration: CalibrationParams | undefined = platt?.calibration;
 if (calibration) console.log(`choosing preExtra with calibration ${JSON.stringify(calibration)}`);
 
 // 1. a, b by likelihood of live scores (rows don't depend on a, b except through sd).
@@ -55,6 +59,10 @@ for (let a = 2; a <= 30; a += 1) for (let b = 0.05; b <= 0.35; b += 0.01) {
 }
 const coverage = obs.filter((o) => Math.abs(o.act - o.mu) <= 1.2816 * Math.sqrt((best.a + best.b * Math.max(0, o.mu)) ** 2 + o.unc)).length / obs.length;
 console.log(`a=${best.a} b=${best.b} (log-lik ${best.ll.toFixed(4)}), 80% range covers ${(coverage * 100).toFixed(1)}% on ${tuneSeason}`);
+
+if (platt && (platt.noise?.a !== best.a || platt.noise?.b !== best.b)) {
+  throw new Error(`.cache/predict/platt-${tuneSeason}.json was fitted with a=${platt.noise?.a}, b=${platt.noise?.b}, not the a=${best.a}, b=${best.b} fitted now: rerun fit-platt --from-tuned`);
+}
 
 // 2. preExtra by log loss of pre-event win probabilities.
 let bestPre = { preExtra: 0, logLoss: Infinity };

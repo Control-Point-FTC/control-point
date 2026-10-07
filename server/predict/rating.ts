@@ -78,6 +78,13 @@ export const DEFAULT_RATING_PARAMS: RatingParams = {
   rebuildUncPerWeek: 0,
 };
 
+/** True when two (possibly partial) settings objects mean the same RatingBook:
+ *  missing fields take their defaults, unknown fields are ignored. */
+export function sameRatingParams(x: Partial<RatingParams>, y: Partial<RatingParams>): boolean {
+  const fx = { ...DEFAULT_RATING_PARAMS, ...x }, fy = { ...DEFAULT_RATING_PARAMS, ...y };
+  return (Object.keys(DEFAULT_RATING_PARAMS) as (keyof RatingParams)[]).every((k) => fx[k] === fy[k]);
+}
+
 type Vec = Record<Component, number>;
 const zero = (): Vec => ({ auto: 0, teleop: 0, endgame: 0, pen: 0 });
 

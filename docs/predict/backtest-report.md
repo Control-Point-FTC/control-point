@@ -128,7 +128,7 @@ Fitted on 2024–25: `rebuildGapWeeks` 4, `rebuildN` 4, `rebuildUncPerWeek` 200,
 On 2025–26 (test):
 - **Win odds:** neutral. Live is unchanged (72.74% / 0.1789). Pre-event goes from 68.78% / 0.1986 / ECE 0.0168 to 68.80% / 0.1988 / 0.0170.
 - **Scores:** slightly better. MAE goes from 27.95 to 27.88, bias from −2.14 to −1.76, and 80% coverage from 0.820 to 0.826.
-- **The cases it targets:** better. After 8+ weeks off, 2nd–3rd match back, MAE goes from 32.9 to 31.4 (bias −14.6 → −10.7), and 4th–6th match back from 28.6 to 28.0. The first match back is unchanged (a rebuild can't be seen before the team plays).
+- **The cases it targets:** better. After 8+ weeks off, 2nd–3rd match back, MAE goes from 33.6 to 32.1 (bias −15.4 → −11.2), and 4th–6th match back from 28.8 to 28.2 (bias −5.1 → −2.6). Each alliance is bucketed by its robot with the longest break. The first match back is unchanged (a rebuild can't be seen before the team plays).
 - **Advancement:** slightly worse after the pick and award refits. Brier before the event goes from 0.1286 to 0.1291, and after quals from 0.0855 to 0.0863 (ECE 0.0122 → 0.0138). Partner-scenario win Brier goes from 0.0719 to 0.0733.
 
 Because advancement regresses, it wasn't shipped. Leads for a retry:

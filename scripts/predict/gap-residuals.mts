@@ -45,8 +45,10 @@ for (const s of [2022, 2023, 2024, 2025].filter((x) => x <= season)) {
         const err = al.np - npOf(exp);
         const back = al.teams.filter((t) => since.has(t) && since.get(t)! < 12);
         if (!back.length) { add("no recent break", err); continue; }
-        const g = Math.max(...back.map((t) => gapOf.get(t)!));
-        const i = Math.min(...back.map((t) => since.get(t)!));
+        // Describe one robot: the one back from the longest break.
+        const t = back.reduce((x, y) => (gapOf.get(y)! > gapOf.get(x)! ? y : x));
+        const g = gapOf.get(t)!;
+        const i = since.get(t)!;
         const gk = g < 4 ? "2-4w" : g < 8 ? "4-8w" : "8w+";
         const ik = i === 0 ? "1st match" : i < 3 ? "2nd-3rd" : i < 6 ? "4th-6th" : "7th-12th";
         add(`break ${gk}, ${ik} back`, err);

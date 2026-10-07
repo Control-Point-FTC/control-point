@@ -51,11 +51,21 @@ if (process.argv.includes("--rebuild")) Object.assign(grid, {
   rebuildUncPerWeek: [0, 25, 50, 100, 200, 400],
 });
 const only = arg("only")?.split(",");
-if (only) for (const k of Object.keys(grid) as (keyof P)[]) if (!only.includes(k)) delete grid[k];
+if (only) {
+  const unknown = only.filter((k) => !Object.prototype.hasOwnProperty.call(grid, k));
+  if (unknown.length) throw new Error(`unknown or unavailable --only keys: ${unknown.join(",")} (rebuild settings need --rebuild)`);
+  for (const k of Object.keys(grid) as (keyof P)[]) if (!only.includes(k)) delete grid[k];
+}
+if (!Object.keys(grid).length) throw new Error("nothing to search");
 
 const startFrom = arg("start");
 // Parameters missing from a start file (added since it was written) take their defaults.
 let best: P = { ...DEFAULT_RATING_PARAMS, ...DEFAULT_NOISE, ...(startFrom ? JSON.parse(readFileSync(startFrom, "utf8")).best : {}) };
+// Without --rebuild, rebuild handling stays off even if the start file had it on.
+if (!process.argv.includes("--rebuild") && best.rebuildGapWeeks !== DEFAULT_RATING_PARAMS.rebuildGapWeeks) {
+  console.log("start file has rebuild handling on; turning it off (pass --rebuild to keep it)");
+  best = { ...best, rebuildGapWeeks: DEFAULT_RATING_PARAMS.rebuildGapWeeks, rebuildN: DEFAULT_RATING_PARAMS.rebuildN, rebuildUncPerWeek: DEFAULT_RATING_PARAMS.rebuildUncPerWeek };
+}
 const cache = new Map<string, number>();
 function score(p: P): number {
   const key = JSON.stringify(p);

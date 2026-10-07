@@ -7,6 +7,7 @@
 //
 //   npx tsx scripts/predict/export-model.mts
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { sameRatingParams } from "../../server/predict/rating.ts";
 
 const C = ".cache/predict";
 const read = (f: string) => JSON.parse(readFileSync(`${C}/${f}`, "utf8"));
@@ -24,8 +25,7 @@ const matches = read("final-test.json").result;
 let calibration = JSON.parse(readFileSync("server/predict/model.json", "utf8")).calibration;
 if (existsSync(`${C}/platt-2024.json`)) {
   const platt = read("platt-2024.json");
-  const same = (x: object, y: object) => JSON.stringify(Object.entries(x).sort()) === JSON.stringify(Object.entries(y).sort());
-  if (!platt.rating || !same(platt.rating, rating) || platt.noise?.a !== a || platt.noise?.b !== b) {
+  if (!platt.rating || !sameRatingParams(platt.rating, rating) || platt.noise?.a !== a || platt.noise?.b !== b) {
     throw new Error(`${C}/platt-2024.json was fitted for other settings than tuned-2024.json: rerun fit-platt.mts (--from-tuned)`);
   }
   calibration = platt.calibration;
