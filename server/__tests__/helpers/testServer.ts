@@ -77,6 +77,9 @@ export async function startTestServer(prefix = "cp-test-", extraEnv: Record<stri
     throw e;
   }
   const db = createClient({ url: `file:${dbPath}` });
+  // The server writes the same SQLite file in the background (digest flush,
+  // R2 copier, …). Wait for its lock instead of failing with SQLITE_BUSY.
+  await db.execute("PRAGMA busy_timeout = 5000");
 
   const api: TestServer["api"] = async (path, opts = {}) => {
     const headers = new Headers(opts.headers);
