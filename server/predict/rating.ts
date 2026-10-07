@@ -189,10 +189,20 @@ export class RatingBook {
     const p = this.params;
     this.setTime(m.time);
     const weight = m.level === "playoff" ? p.playoffWeight : 1;
-    for (const al of [m.red, m.blue]) {
-      const exp = this.allianceExpectation(al.teams);
-      const actual: Vec = { auto: al.auto, teleop: al.teleop, endgame: al.endgame, pen: al.penCommitted };
-      const share = 1 / al.teams.length;
+    // Both alliances are judged against the book as it stood before this
+    // match: expectations (and any newcomer's prior, which depends on the
+    // population baseline) are taken first, and the baseline only moves
+    // after both alliances are folded in. Before, red's result moved the
+    // baseline before blue's newcomers got their priors, so the two sides of
+    // one match saw different priors (and blue's saw this match's result).
+    const sides = [m.red, m.blue].map((al) => ({
+      al,
+      exp: this.allianceExpectation(al.teams),
+      actual: { auto: al.auto, teleop: al.teleop, endgame: al.endgame, pen: al.penCommitted } as Vec,
+      share: 1 / al.teams.length,
+    }));
+    for (const t of [...m.red.teams, ...m.blue.teams]) this.stored(t); // priors from the pre-match baseline
+    for (const { al, exp, actual, share } of sides) {
       for (const t of al.teams) {
         const r = this.stored(t);
         // Fold growth since the team's last match into the stored rating.
@@ -206,7 +216,10 @@ export class RatingBook {
         r.n += 1;
         r.uncertainty = Math.max(p.uncMin, r.uncertainty * p.uncDecay);
       }
-      // Population baseline from raw per-robot shares (independent of ratings).
+    }
+    // Population baseline from raw per-robot shares (independent of ratings),
+    // after both alliances, in the same red-then-blue order as before.
+    for (const { actual, share } of sides) {
       for (const c of COMPONENTS) {
         const x = actual[c] * share;
         if (!this.baseReady) { this.base[c] = x; this.baseSq[c] = x * x; }
