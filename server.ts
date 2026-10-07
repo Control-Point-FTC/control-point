@@ -58,6 +58,7 @@ import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } fr
 import { workspaceFactsBlock, resolveTimeZone } from "./server/workspaceFacts.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
+import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
@@ -4617,6 +4618,26 @@ async function startServer() {
       res.json({ number: team.number, name: team.name, schoolName: team.schoolName || null, claimed: !!(await ftcWorkspace(team.number)) });
     } catch (e: any) {
       res.status(502).json({ error: "Could not reach FTC Scout — try again in a moment" });
+    }
+  });
+
+  // Small weather widget ("72° · Sunny") for the team's town, from its FTC
+  // record. Cached 15 minutes per place (server/weather.ts). Teams without a
+  // connected FTC number, or a lookup that fails, simply get no widget.
+  app.get("/api/weather", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (auth.teamless || !auth.teamId) return res.json({ available: false });
+    try {
+      const team = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
+      const number = Number(team?.ftc_team_number);
+      if (!number) return res.json({ available: false });
+      const t = await lookupFtcTeam(number);
+      const w = t?.location ? await currentWeather(t.location) : null;
+      if (!w) return res.json({ available: false });
+      res.json({ available: true, ...w });
+    } catch {
+      res.json({ available: false });
     }
   });
 

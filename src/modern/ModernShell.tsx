@@ -3,6 +3,7 @@
 // same App state; screens without a Modern page yet render their Legacy page
 // inside this shell.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ClockWeather } from './chrome/ClockWeather';
 import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -498,6 +499,7 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno }: {
         <h1 className="truncate font-semibold text-text-base">{title}</h1>
       </nav>
       <div className="ml-auto flex items-center gap-1">
+        <ClockWeather />
         <button
           type="button"
           onClick={onOpenSearch}
