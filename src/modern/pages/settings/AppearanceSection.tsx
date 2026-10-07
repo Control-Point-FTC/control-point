@@ -13,8 +13,8 @@ export function AppearanceSection() {
       <SettingsGroup title="Display">
         <SettingsRow label="Theme" description="Follows you on this device.">
           <ToggleGroup type="single" value={theme} onValueChange={(v) => { if (v) setTheme(v as Theme); }} aria-label="Theme">
-            <ToggleGroupItem value="light" className="px-3 max-sm:h-10"><Sun /> {t('settings.lightMode')}</ToggleGroupItem>
-            <ToggleGroupItem value="dark" className="px-3 max-sm:h-10"><Moon /> {t('settings.darkMode')}</ToggleGroupItem>
+            <ToggleGroupItem value="light"><Sun /> {t('settings.lightMode')}</ToggleGroupItem>
+            <ToggleGroupItem value="dark"><Moon /> {t('settings.darkMode')}</ToggleGroupItem>
           </ToggleGroup>
         </SettingsRow>
       </SettingsGroup>

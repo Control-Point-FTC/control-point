@@ -137,10 +137,10 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
           <MemberAvatar member={user} className="size-16 border-0 text-lg" />
           <div className="flex flex-wrap gap-2">
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void uploadAvatar(e.target.files?.[0])} aria-label="Upload profile picture" />
-            <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading} className="max-sm:h-11">
+            <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={uploading}>
               {uploading ? <Loader2 className="animate-spin" /> : <ImagePlus />} Change picture
             </Button>
-            {user.avatar_url && <Button variant="ghost" onClick={() => void removeAvatar()} className="text-destructive hover:text-destructive max-sm:h-11"><Trash2 /> Remove</Button>}
+            {user.avatar_url && <Button variant="ghost" onClick={() => void removeAvatar()} className="text-destructive hover:text-destructive"><Trash2 /> Remove</Button>}
           </div>
           <p className="w-full text-xs text-muted-foreground">PNG, JPG or GIF, up to 2 MB.</p>
         </div>

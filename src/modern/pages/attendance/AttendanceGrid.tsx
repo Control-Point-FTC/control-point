@@ -23,7 +23,7 @@ export function MeetingDaysMenu({ ctl }: { ctl: Ctl }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="max-sm:h-11"><Settings2 /> Meeting days</Button>
+        <Button variant="outline"><Settings2 /> Meeting days</Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>Show these days</DropdownMenuLabel>
@@ -81,9 +81,9 @@ export function AttendanceGrid({ ctl, members }: { ctl: Ctl; members: any[] }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center rounded-lg border border-border">
-          <Button variant="ghost" size="icon" className="rounded-r-none max-sm:size-11" aria-label="Earlier dates" disabled={ctl.calendarStart === 0} onClick={() => ctl.setCalendarStart(Math.max(0, ctl.calendarStart - 1))}><ChevronLeft /></Button>
+          <Button variant="ghost" size="icon" className="rounded-r-none" aria-label="Earlier dates" disabled={ctl.calendarStart === 0} onClick={() => ctl.setCalendarStart(Math.max(0, ctl.calendarStart - 1))}><ChevronLeft /></Button>
           <span className="min-w-36 border-x border-border px-3 text-center text-sm font-medium tabular-nums max-sm:leading-[44px] sm:leading-9">{ctl.rangeLabel}</span>
-          <Button variant="ghost" size="icon" className="rounded-l-none max-sm:size-11" aria-label="Later dates" disabled={!ctl.hasMoreDates} onClick={() => ctl.setCalendarStart(ctl.calendarStart + 1)}><ChevronRight /></Button>
+          <Button variant="ghost" size="icon" className="rounded-l-none" aria-label="Later dates" disabled={!ctl.hasMoreDates} onClick={() => ctl.setCalendarStart(ctl.calendarStart + 1)}><ChevronRight /></Button>
         </div>
         <span className="flex h-6 items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
           {ctl.savingStatus === 'saving' && <><Loader2 className="size-3.5 animate-spin" /> Saving…</>}

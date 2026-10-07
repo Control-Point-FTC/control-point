@@ -291,9 +291,9 @@ export function MatchesTab({ fc, myTeam }: FcProps) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <ToggleGroup type="single" aria-label="Show matches" value={filter} onValueChange={(v) => { if (v) setFilter(v as MatchFilter); }}>
-          <ToggleGroupItem value="all" className="max-sm:h-11">All</ToggleGroupItem>
-          <ToggleGroupItem value="upcoming" className="max-sm:h-11">Upcoming</ToggleGroupItem>
-          <ToggleGroupItem value="played" className="max-sm:h-11">Played</ToggleGroupItem>
+          <ToggleGroupItem value="all">All</ToggleGroupItem>
+          <ToggleGroupItem value="upcoming">Upcoming</ToggleGroupItem>
+          <ToggleGroupItem value="played">Played</ToggleGroupItem>
         </ToggleGroup>
         {myTeam && (
           <div className="flex items-center gap-2">

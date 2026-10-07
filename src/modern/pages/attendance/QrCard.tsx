@@ -43,11 +43,11 @@ export function QrCard({ teamName }: { teamName: string }) {
                 className="flex-wrap justify-start"
               >
                 {QR_DURATIONS.map((d) => (
-                  <ToggleGroupItem key={d.label} value={String(d.value)} className="px-3 max-sm:h-11">{d.label}</ToggleGroupItem>
+                  <ToggleGroupItem key={d.label} value={String(d.value)}>{d.label}</ToggleGroupItem>
                 ))}
               </ToggleGroup>
             </div>
-            <Button onClick={() => void qr.start()} disabled={qr.busy} className="max-sm:h-11 max-sm:w-full">
+            <Button onClick={() => void qr.start()} disabled={qr.busy} className="max-sm:w-full">
               {qr.busy ? <Loader2 className="animate-spin" /> : <QrCode />} Start check-in
             </Button>
           </motion.div>
@@ -62,8 +62,8 @@ export function QrCard({ teamName }: { teamName: string }) {
                 <p className="font-mono text-3xl font-semibold tracking-[0.2em]">{qr.session.code}</p>
               </div>
               <div className="flex flex-wrap justify-center gap-2">
-                <Button variant="outline" onClick={() => setPresenting(true)} className="max-sm:h-11"><Maximize2 /> Present</Button>
-                <Button variant="ghost" className="text-destructive hover:text-destructive max-sm:h-11" disabled={qr.busy} onClick={async () => { await qr.stop(); setPresenting(false); }}>
+                <Button variant="outline" onClick={() => setPresenting(true)}><Maximize2 /> Present</Button>
+                <Button variant="ghost" className="text-destructive hover:text-destructive" disabled={qr.busy} onClick={async () => { await qr.stop(); setPresenting(false); }}>
                   <Square /> End session
                 </Button>
               </div>

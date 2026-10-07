@@ -113,3 +113,37 @@ describe('UI kit', () => {
     expect(screen.getByText('Panel B')).toBeInTheDocument();
   });
 });
+
+describe('UI kit — one set of controls', async () => {
+  const { ToggleGroup, ToggleGroupItem } = await import('..');
+
+  it('default and icon buttons are 44px touch targets on phones; a call site can still override', () => {
+    render(<><Button>Go</Button><Button size="icon" aria-label="Add"><Send /></Button><Button size="sm">Small</Button><Button className="max-sm:h-10">Dense</Button></>);
+    expect(screen.getByRole('button', { name: 'Go' }).className).toContain('max-sm:h-11');
+    expect(screen.getByRole('button', { name: 'Add' }).className).toContain('max-sm:size-11');
+    expect(screen.getByRole('button', { name: 'Small' }).className).not.toContain('max-sm:h-11');
+    const dense = screen.getByRole('button', { name: 'Dense' }).className;
+    expect(dense).toContain('max-sm:h-10');
+    expect(dense).not.toContain('max-sm:h-11');
+  });
+
+  it('segmented items take the group’s look: segment, chips or cards', () => {
+    render(
+      <>
+        <ToggleGroup type="single" aria-label="View"><ToggleGroupItem value="a">A</ToggleGroupItem></ToggleGroup>
+        <ToggleGroup type="single" variant="chips" aria-label="Filter"><ToggleGroupItem value="b">B</ToggleGroupItem></ToggleGroup>
+        <ToggleGroup type="single" variant="cards" aria-label="Event"><ToggleGroupItem value="c">C</ToggleGroupItem></ToggleGroup>
+      </>,
+    );
+    const a = screen.getByRole('radio', { name: 'A' }).className;
+    const b = screen.getByRole('radio', { name: 'B' }).className;
+    const c = screen.getByRole('radio', { name: 'C' }).className;
+    expect(a).toContain('max-sm:h-10');
+    expect(a).toContain('data-[state=on]:bg-background');
+    expect(b).toContain('rounded-full');
+    expect(b).toContain('max-sm:h-11');
+    expect(c).toContain('flex-col');
+    expect(screen.getByLabelText('Filter').className).not.toContain('bg-muted');
+    expect(screen.getByLabelText('View').className).toContain('bg-muted');
+  });
+});

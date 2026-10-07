@@ -49,7 +49,7 @@ export function PredictPage() {
         title="Predict"
         description="Your odds of advancing, simulated from every team's match history. Estimates, not guarantees."
         actions={
-          <Button variant="outline" onClick={() => ctl.setShowAccuracy(true)} className="max-sm:h-11">
+          <Button variant="outline" onClick={() => ctl.setShowAccuracy(true)}>
             <CircleHelp /> How accurate is this?
           </Button>
         }
@@ -87,12 +87,12 @@ function EventPicker({ ctl }: { ctl: Ctl }) {
           <Button size="sm" variant="outline" onClick={ctl.retryTeam} className="max-sm:h-11">Try again</Button>
         </div>
       ) : ctl.events.length ? (
-        <ToggleGroup
+        <ToggleGroup variant="cards"
           type="single"
           aria-label="Event"
           value={ctl.code ?? ''}
           onValueChange={(v) => { if (v) ctl.chooseEvent(v); }}
-          className="-mx-1 flex w-[calc(100%+0.5rem)] snap-x justify-start gap-2 overflow-x-auto bg-transparent px-1 pb-1"
+          className="-mx-1 w-[calc(100%+0.5rem)] snap-x overflow-x-auto px-1 pb-1"
         >
           {ctl.events.map((e) => {
             const upcoming = (e.date ?? '') >= today;
@@ -100,7 +100,7 @@ function EventPicker({ ctl }: { ctl: Ctl }) {
               <ToggleGroupItem
                 key={e.code}
                 value={e.code}
-                className="h-auto min-h-14 shrink-0 snap-start flex-col items-start gap-0.5 rounded-xl border border-border bg-card px-4 py-2.5 text-left data-[state=on]:border-accent/60 data-[state=on]:bg-accent/10 data-[state=on]:shadow-none"
+                className="min-h-14 snap-start bg-card px-4 py-2.5"
               >
                 <span className="max-w-[15rem] truncate text-sm font-medium text-foreground">{e.name}</span>
                 <span className="text-xs text-muted-foreground">{e.date ?? 'Date TBA'}{upcoming ? ' · upcoming' : ''}</span>

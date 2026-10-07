@@ -21,11 +21,13 @@ export const buttonVariants = cva(
         destructive: 'bg-rose-500/15 text-rose-500 border border-rose-500/30 hover:bg-rose-500/25',
         link: 'text-accent underline-offset-4 hover:underline px-0 active:scale-100',
       },
+      // default and icon grow to 44px on phones (touch targets), so call
+      // sites don't each add max-sm:h-11 / max-sm:size-11.
       size: {
-        default: 'h-10 px-4',
+        default: 'h-10 px-4 max-sm:h-11',
         sm: 'h-8 rounded-lg px-3 text-xs',
         lg: 'h-11 px-6 text-base',
-        icon: 'size-10',
+        icon: 'size-10 max-sm:size-11',
         'icon-sm': 'size-8 rounded-lg',
       },
     },

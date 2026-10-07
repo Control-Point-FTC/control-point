@@ -96,7 +96,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
 
   const seg = (value: string, onChange: (v: string) => void, opts: [string, string][], label: string, disabled?: boolean) => (
     <ToggleGroup type="single" value={value} disabled={disabled} onValueChange={(v) => { if (v) onChange(v); }} aria-label={label} className="flex-wrap justify-start">
-      {opts.map(([v, l]) => <ToggleGroupItem key={v} value={v} className="px-3 max-sm:h-10">{l}</ToggleGroupItem>)}
+      {opts.map(([v, l]) => <ToggleGroupItem key={v} value={v}>{l}</ToggleGroupItem>)}
     </ToggleGroup>
   );
 

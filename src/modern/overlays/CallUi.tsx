@@ -169,8 +169,8 @@ export function IncomingCall() {
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
-              <Button variant="destructive" onClick={() => void c.handleDecline()} className="h-12 !bg-destructive !text-white"><PhoneOff /> Decline</Button>
-              <Button onClick={() => void c.handleAccept()} disabled={c.busy != null} className="h-12 !bg-success !text-white">
+              <Button variant="destructive" onClick={() => void c.handleDecline()} className="h-12 max-sm:h-12 !bg-destructive !text-white"><PhoneOff /> Decline</Button>
+              <Button onClick={() => void c.handleAccept()} disabled={c.busy != null} className="h-12 max-sm:h-12 !bg-success !text-white">
                 {c.isVideo ? <Video /> : <Phone />} {c.busy === 'accept' ? 'Joining…' : 'Accept'}
               </Button>
             </div>

@@ -39,15 +39,15 @@ function ReviewFields({ f, extra }: { f: Fields; extra?: React.ReactNode }) {
         <div className="grid gap-2">
           <Label id="log-direction">Who sent it</Label>
           <ToggleGroup type="single" value={f.direction} onValueChange={(v) => { if (v) f.setDirection(v as 'inbound' | 'outbound'); }} aria-labelledby="log-direction">
-            <ToggleGroupItem value="outbound" className="max-sm:h-11"><ArrowUpRight /> We did</ToggleGroupItem>
-            <ToggleGroupItem value="inbound" className="max-sm:h-11"><ArrowDownLeft /> They did</ToggleGroupItem>
+            <ToggleGroupItem value="outbound"><ArrowUpRight /> We did</ToggleGroupItem>
+            <ToggleGroupItem value="inbound"><ArrowDownLeft /> They did</ToggleGroupItem>
           </ToggleGroup>
         </div>
         <div className="grid gap-2">
           <Label id="log-type">Type</Label>
           <ToggleGroup type="single" value={f.type} onValueChange={(v) => { if (v) f.setType(v); }} aria-labelledby="log-type">
-            <ToggleGroupItem value="email" className="max-sm:h-11">Email</ToggleGroupItem>
-            <ToggleGroupItem value="announcement" className="max-sm:h-11">Announcement</ToggleGroupItem>
+            <ToggleGroupItem value="email">Email</ToggleGroupItem>
+            <ToggleGroupItem value="announcement">Announcement</ToggleGroupItem>
           </ToggleGroup>
         </div>
         {extra}

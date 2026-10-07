@@ -207,7 +207,7 @@ export function MatchDetailSheet({ sel, team, onClose, actions }: { sel: { m: Ft
                     {' '}{m.breakdownSource === 'first-events' ? 'TeleOp/endgame splits aren’t available for this match (FTC Scout has no breakdown) — shown as n/a.' : 'Final score, auto and penalties from FIRST Events; TeleOp/endgame split from FTC Scout.'}
                   </p>
                   {p && (
-                    <Button variant="outline" onClick={() => scoutWithBruno(team, '', ev.season)} className="max-sm:h-11"><Bot /> Scout {team} with Bruno</Button>
+                    <Button variant="outline" onClick={() => scoutWithBruno(team, '', ev.season)}><Bot /> Scout {team} with Bruno</Button>
                   )}
                 </>
               )}

@@ -132,7 +132,7 @@ function DocsTab() {
               <Label htmlFor="doc-url">Onshape link</Label>
               <Input id="doc-url" value={d.url} onChange={(e) => d.setUrl(e.target.value)} placeholder="https://cad.onshape.com/documents/…" className="max-sm:h-11" />
             </div>
-            <Button type="submit" className="max-sm:h-11"><Link2 /> {d.busy ? 'Linking…' : 'Link'}</Button>
+            <Button type="submit"><Link2 /> {d.busy ? 'Linking…' : 'Link'}</Button>
           </fieldset>
         </form>
       </Reveal>

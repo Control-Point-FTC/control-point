@@ -65,14 +65,14 @@ export function CalendarPage(props: any) {
       >
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center rounded-lg border border-border">
-            <Button variant="ghost" size="icon" className="rounded-r-none max-sm:size-11" onClick={() => step(-1)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}><ChevronLeft /></Button>
-            <Button variant="ghost" className="rounded-none border-x border-border max-sm:h-11" onClick={goToday}>Today</Button>
-            <Button variant="ghost" size="icon" className="rounded-l-none max-sm:size-11" onClick={() => step(1)} aria-label={view === 'week' ? 'Next week' : 'Next month'}><ChevronRight /></Button>
+            <Button variant="ghost" size="icon" className="rounded-r-none" onClick={() => step(-1)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}><ChevronLeft /></Button>
+            <Button variant="ghost" className="rounded-none border-x border-border" onClick={goToday}>Today</Button>
+            <Button variant="ghost" size="icon" className="rounded-l-none" onClick={() => step(1)} aria-label={view === 'week' ? 'Next week' : 'Next month'}><ChevronRight /></Button>
           </div>
           <ToggleGroup type="single" value={view} onValueChange={(v) => { if (v) setView(v as View); }} aria-label="Calendar view">
-            <ToggleGroupItem value="month" aria-label="Month" className="max-sm:h-10 max-sm:px-3"><CalendarDays /> <span className="max-sm:sr-only">Month</span></ToggleGroupItem>
-            <ToggleGroupItem value="week" aria-label="Week" className="max-sm:h-10 max-sm:px-3"><CalendarRange /> <span className="max-sm:sr-only">Week</span></ToggleGroupItem>
-            <ToggleGroupItem value="agenda" aria-label="Agenda" className="max-sm:h-10 max-sm:px-3"><List /> <span className="max-sm:sr-only">Agenda</span></ToggleGroupItem>
+            <ToggleGroupItem value="month" aria-label="Month"><CalendarDays /> <span className="max-sm:sr-only">Month</span></ToggleGroupItem>
+            <ToggleGroupItem value="week" aria-label="Week"><CalendarRange /> <span className="max-sm:sr-only">Week</span></ToggleGroupItem>
+            <ToggleGroupItem value="agenda" aria-label="Agenda"><List /> <span className="max-sm:sr-only">Agenda</span></ToggleGroupItem>
           </ToggleGroup>
           <ToggleGroup type="multiple" value={types} onValueChange={setTypes} aria-label="Filter by type" className="flex-wrap sm:ml-auto">
             {EVENT_TYPES.map((t) => (

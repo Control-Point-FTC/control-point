@@ -36,7 +36,7 @@ export function CodePage({ teams, currentUser, hasScope, activeTeamId }: { teams
         eyebrow={<>Build · {ctl.currentTeam?.name ?? 'Your team'}</>}
         title="Code"
         description="Robot code with a safe drafts branch: edits auto-save to drafts, and a commit promotes them to main."
-        actions={ctl.canManageCode && <Button onClick={() => ctl.setShowNewFileModal(true)} className="max-sm:h-11"><Plus /> New file</Button>}
+        actions={ctl.canManageCode && <Button onClick={() => ctl.setShowNewFileModal(true)}><Plus /> New file</Button>}
       />
       {ctl.error && (
         <div role="alert" className="mb-5 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
@@ -139,8 +139,8 @@ function EditorCard({ ctl }: { ctl: Ctl }) {
           <Badge variant="secondary">{LANG_LABEL[file.language] ?? file.language}</Badge>
         </div>
         <ToggleGroup type="single" aria-label="Branch" value={ctl.currentBranch} onValueChange={(v) => { if (v) ctl.switchBranch(v as 'main' | 'drafts'); }}>
-          <ToggleGroupItem value="drafts" className="max-sm:h-11"><GitBranch /> Drafts</ToggleGroupItem>
-          <ToggleGroupItem value="main" className="max-sm:h-11"><GitCommitHorizontal /> Main</ToggleGroupItem>
+          <ToggleGroupItem value="drafts"><GitBranch /> Drafts</ToggleGroupItem>
+          <ToggleGroupItem value="main"><GitCommitHorizontal /> Main</ToggleGroupItem>
         </ToggleGroup>
         {ctl.currentBranch === 'drafts' && (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><status.icon className={cn('size-3.5', status.cls)} />{status.label}</span>
@@ -230,7 +230,7 @@ function HistorySheet({ ctl }: { ctl: Ctl }) {
           })}
           {!ctl.history.length && <li className="px-6 py-8 text-center text-sm text-muted-foreground">No commits yet.</li>}
           {ctl.historyHasMore && ctl.history.length > 0 && (
-            <li className="px-6 py-3"><Button variant="outline" className="w-full max-sm:h-11" onClick={() => void ctl.loadHistory(true)}>Load more commits</Button></li>
+            <li className="px-6 py-3"><Button variant="outline" className="w-full" onClick={() => void ctl.loadHistory(true)}>Load more commits</Button></li>
           )}
         </ol>
       </SheetContent>
@@ -276,7 +276,7 @@ function NewFileDialog({ ctl }: { ctl: Ctl }) {
             <div className="grid gap-2">
               <Label id="nf-lang">Language</Label>
               <ToggleGroup type="single" aria-labelledby="nf-lang" value={ctl.newFileLanguage} onValueChange={(v) => { if (v) ctl.setNewFileLanguage(v); }} className="grid w-full grid-cols-4">
-                {CODE_LANGUAGES.map(([v, l]) => <ToggleGroupItem key={v} value={v} className="max-sm:h-11">{l}</ToggleGroupItem>)}
+                {CODE_LANGUAGES.map(([v, l]) => <ToggleGroupItem key={v} value={v}>{l}</ToggleGroupItem>)}
               </ToggleGroup>
             </div>
           </fieldset>

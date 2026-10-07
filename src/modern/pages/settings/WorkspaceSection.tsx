@@ -134,25 +134,25 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       {(isAdmin || hasPerm?.('invite_members')) && (
         <SettingsGroup title="Invites & access">
           <SettingsRow label="Invite links" description="Make a link people can join with. Links can expire, cap their uses and need approval.">
-            <Button variant="outline" onClick={() => navigate('/settings?section=members&invite=1', { replace: true })} className="max-sm:h-11"><UserPlus /> Invite people</Button>
+            <Button variant="outline" onClick={() => navigate('/settings?section=members&invite=1', { replace: true })}><UserPlus /> Invite people</Button>
           </SettingsRow>
           {isAdmin && (<>
           <SettingsRow label="Access code" description="Only admins see this. People can also join by typing it.">
             <span className="flex items-center gap-2">
               <code className="rounded-md bg-muted px-2.5 py-1.5 font-mono text-sm tracking-widest">{team.access_code}</code>
-              <Button variant="outline" size="icon" onClick={() => void copyCode()} aria-label="Copy access code" className="max-sm:size-11">{copied ? <Check /> : <Copy />}</Button>
+              <Button variant="outline" size="icon" onClick={() => void copyCode()} aria-label="Copy access code">{copied ? <Check /> : <Copy />}</Button>
             </span>
           </SettingsRow>
           <SettingsRow label="New access code" description={confirmRegen ? 'The current code will stop working immediately.' : 'Use this if the code leaked.'}>
             <span className="flex gap-2">
               {confirmRegen && <Button variant="ghost" onClick={() => setConfirmRegen(false)}>Cancel</Button>}
-              <Button variant={confirmRegen ? 'destructive' : 'outline'} onClick={() => void regenerate()} disabled={regenerating} className="max-sm:h-11">
+              <Button variant={confirmRegen ? 'destructive' : 'outline'} onClick={() => void regenerate()} disabled={regenerating}>
                 {regenerating ? <Loader2 className="animate-spin" /> : <RefreshCw />} {confirmRegen ? 'Yes, replace it' : 'Generate new code'}
               </Button>
             </span>
           </SettingsRow>
           <SettingsRow label="Roles & permissions" description="Group permissions and hand them to members.">
-            <Button variant="outline" onClick={() => (onOpenSection ? onOpenSection('roles') : navigate('/settings?section=roles', { replace: true }))} className="max-sm:h-11"><ShieldCheck /> Open roles</Button>
+            <Button variant="outline" onClick={() => (onOpenSection ? onOpenSection('roles') : navigate('/settings?section=roles', { replace: true }))}><ShieldCheck /> Open roles</Button>
           </SettingsRow>
           </>)}
         </SettingsGroup>
@@ -218,8 +218,8 @@ function GoogleCalendarGroup({ settings, canSync, onRefresh }: { settings: any; 
         <>
           <SettingsRow label="Your calendar" description={link?.linked ? `Linked as ${link.google_email || 'your Google account'}` : 'Get team events on your personal Google Calendar.'}>
             {link?.linked
-              ? <Button variant="outline" onClick={() => void unlink()} className="max-sm:h-11"><Unlink /> Unlink</Button>
-              : <Button asChild className="max-sm:h-11"><a href="/api/auth/google/calendar"><CalendarDays /> Link Google Calendar <ExternalLink className="size-3.5" /></a></Button>}
+              ? <Button variant="outline" onClick={() => void unlink()}><Unlink /> Unlink</Button>
+              : <Button asChild><a href="/api/auth/google/calendar"><CalendarDays /> Link Google Calendar <ExternalLink className="size-3.5" /></a></Button>}
           </SettingsRow>
           {canSync && (
             <SettingsRow label="Sync team events to members’ calendars" description="Meetings, league meets and other events appear on every linked member’s calendar." htmlFor="cal-sync">

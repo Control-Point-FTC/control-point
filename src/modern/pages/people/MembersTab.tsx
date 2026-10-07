@@ -96,9 +96,9 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people or roles" aria-label="Search members" className="pl-9 max-sm:h-11" />
         </div>
         <ToggleGroup type="single" value={filter} onValueChange={(v) => { if (v) setFilter(v as Filter); }} aria-label="Filter members">
-          <ToggleGroupItem value="all" className="px-3 max-sm:h-10">All</ToggleGroupItem>
-          <ToggleGroupItem value="online" className="px-3 max-sm:h-10">Online</ToggleGroupItem>
-          <ToggleGroupItem value="board" className="px-3 max-sm:h-10">Board</ToggleGroupItem>
+          <ToggleGroupItem value="all">All</ToggleGroupItem>
+          <ToggleGroupItem value="online">Online</ToggleGroupItem>
+          <ToggleGroupItem value="board">Board</ToggleGroupItem>
         </ToggleGroup>
       </div>
 
@@ -130,7 +130,7 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
                 </button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" aria-label={`Actions for ${m.name}`} className="shrink-0 max-sm:size-11"><MoreHorizontal /></Button>
+                    <Button variant="ghost" size="icon" aria-label={`Actions for ${m.name}`} className="shrink-0"><MoreHorizontal /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">{actions(m)}</DropdownMenuContent>
                 </DropdownMenu>

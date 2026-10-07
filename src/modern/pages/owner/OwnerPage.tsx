@@ -280,8 +280,8 @@ function FlagsTab({ ctl }: { ctl: Ctl }) {
   return (
     <>
       <ToggleGroup type="single" aria-label="Flag filter" value={ctl.flagFilter} onValueChange={(v) => { if (v) ctl.chooseFlagFilter(v as 'open' | 'all'); }} className="mb-5">
-        <ToggleGroupItem value="open" className="max-sm:h-11">Open</ToggleGroupItem>
-        <ToggleGroupItem value="all" className="max-sm:h-11">All</ToggleGroupItem>
+        <ToggleGroupItem value="open">Open</ToggleGroupItem>
+        <ToggleGroupItem value="all">All</ToggleGroupItem>
       </ToggleGroup>
       {ctl.flags.length ? (
         <Stagger className="grid gap-4 lg:grid-cols-2">
@@ -424,7 +424,7 @@ function UserSheet({ userId, teams, onClose, onChanged }: { userId: number; team
               <h3 id="warn-h" className="text-sm font-semibold">Warn user</h3>
               <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); void m.doWarn(); }}>
                 <Input value={m.warnNote} onChange={(e) => m.setWarnNote(e.target.value)} placeholder="Reason for the warning" aria-label="Warning reason" className="max-sm:h-11" />
-                <Button type="submit" variant="outline" disabled={m.busy} className="shrink-0 text-amber-600 dark:text-amber-400 max-sm:h-11"><AlertTriangle /> Warn</Button>
+                <Button type="submit" variant="outline" disabled={m.busy} className="shrink-0 text-amber-600 dark:text-amber-400"><AlertTriangle /> Warn</Button>
               </form>
               {(m.data?.warnings || []).map((w: any) => (
                 <div key={w.id} className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs">
@@ -475,15 +475,15 @@ function UserSheet({ userId, teams, onClose, onChanged }: { userId: number; team
                     {(teams || []).filter((t: any) => t.id !== u.team_id).map((t: any) => <SelectItem key={t.id} value={String(t.id)}>{t.name}{t.number ? ` (${t.number})` : ''}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button variant="outline" disabled={m.moving || m.busy || !m.moveTeamId} onClick={() => void m.doMoveUser()} className="max-sm:h-11">{m.moving ? 'Moving…' : 'Move'}</Button>
+                <Button variant="outline" disabled={m.moving || m.busy || !m.moveTeamId} onClick={() => void m.doMoveUser()}>{m.moving ? 'Moving…' : 'Move'}</Button>
               </div>
               {m.moveError && <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">{m.moveError}</p>}
             </section>
 
             <section aria-labelledby="danger-h" className="space-y-2 rounded-xl border border-destructive/30 p-4">
               <h3 id="danger-h" className="text-sm font-semibold text-destructive">Danger zone</h3>
-              <Button variant="outline" disabled={m.busy} onClick={() => void m.doDeleteMembership()} className="w-full text-destructive max-sm:h-11"><UserX /> Remove from {u.team_name || 'team'}</Button>
-              <Button variant="outline" disabled={m.busy} onClick={() => void m.doDeleteAccount()} className="w-full text-destructive max-sm:h-11"><Trash2 /> Delete entire account ({siblings + 1} team{siblings + 1 > 1 ? 's' : ''})</Button>
+              <Button variant="outline" disabled={m.busy} onClick={() => void m.doDeleteMembership()} className="w-full text-destructive"><UserX /> Remove from {u.team_name || 'team'}</Button>
+              <Button variant="outline" disabled={m.busy} onClick={() => void m.doDeleteAccount()} className="w-full text-destructive"><Trash2 /> Delete entire account ({siblings + 1} team{siblings + 1 > 1 ? 's' : ''})</Button>
               <p className="text-xs text-muted-foreground">Deleting the account removes every membership under {u.email}. You can't delete your own owner account or a team's last admin.</p>
             </section>
           </div>

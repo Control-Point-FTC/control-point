@@ -82,13 +82,13 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
       <div className="flex items-center gap-1 px-2 pb-2">
         <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { void filesToAttachedImages(e.target.files || []).then(inEpoch(addImages)); e.target.value = ''; }} />
         <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={(e) => { void filesToAttachedPdfs(e.target.files || []).then(inEpoch((pdfs: AttachedPdf[]) => setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS)))); e.target.value = ''; }} />
-        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground max-sm:size-11" aria-label="Attach screenshots" title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} screenshots` : 'Attach screenshots'} disabled={busy || attached.length >= MAX_BRUNO_IMAGES} onClick={() => fileRef.current?.click()}><ImagePlus /></Button>
-        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground max-sm:size-11" aria-label="Attach a PDF" title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'} disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS} onClick={() => pdfRef.current?.click()}><FileText /></Button>
+        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach screenshots" title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} screenshots` : 'Attach screenshots'} disabled={busy || attached.length >= MAX_BRUNO_IMAGES} onClick={() => fileRef.current?.click()}><ImagePlus /></Button>
+        <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach a PDF" title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'} disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS} onClick={() => pdfRef.current?.click()}><FileText /></Button>
         <span className="ml-auto hidden px-2 text-xs text-muted-foreground sm:inline">{busy ? 'Bruno is replying…' : 'Shift+Enter for a new line'}</span>
         {busy ? (
-          <Button type="button" size="icon" variant="secondary" className="rounded-full max-sm:size-11 max-sm:ml-auto" onClick={onStop} aria-label="Stop generating" title="Stop generating"><Square className="fill-current" /></Button>
+          <Button type="button" size="icon" variant="secondary" className="rounded-full max-sm:ml-auto" onClick={onStop} aria-label="Stop generating" title="Stop generating"><Square className="fill-current" /></Button>
         ) : (
-          <Button type="submit" size="icon" className="rounded-full max-sm:size-11 max-sm:ml-auto" disabled={!canSend} aria-label="Send"><ArrowUp /></Button>
+          <Button type="submit" size="icon" className="rounded-full max-sm:ml-auto" disabled={!canSend} aria-label="Send"><ArrowUp /></Button>
         )}
       </div>
     </form>

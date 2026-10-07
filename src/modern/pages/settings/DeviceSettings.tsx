@@ -59,7 +59,7 @@ export function DeviceSettings() {
           <div className="flex flex-wrap items-center gap-3">
             <Perm label="Microphone" state={d.micPerm} />
             <Perm label="Camera" state={d.camPerm} />
-            <Button onClick={() => void d.askPermissions()} disabled={d.requesting} className="max-sm:h-11"><ShieldCheck /> {d.requesting ? 'Asking…' : 'Enable microphone & camera'}</Button>
+            <Button onClick={() => void d.askPermissions()} disabled={d.requesting}><ShieldCheck /> {d.requesting ? 'Asking…' : 'Enable microphone & camera'}</Button>
           </div>
         </SettingsRow>
         {d.requestError && <p role="alert" className="px-4 pb-3 text-sm text-destructive">{d.requestError}</p>}
@@ -71,7 +71,7 @@ export function DeviceSettings() {
         </SettingsRow>
         <SettingsRow label="Test" description={d.testingMic ? 'Speak; the meter shows your live input. Nothing is played back.' : d.self.micLevel > 0 ? 'Live level while you’re in a call.' : 'Check your level before a call.'} stack>
           <div className="flex items-center gap-3">
-            <Button variant={d.testingMic ? 'destructive' : 'outline'} onClick={() => (d.testingMic ? d.stopMicTest() : void d.startMicTest())} className="shrink-0 max-sm:h-11">
+            <Button variant={d.testingMic ? 'destructive' : 'outline'} onClick={() => (d.testingMic ? d.stopMicTest() : void d.startMicTest())} className="shrink-0">
               {d.testingMic ? <><Square /> Stop test</> : <><Mic /> Test microphone</>}
             </Button>
             <Meter level={d.testingMic ? d.testLevel : d.self.micLevel} />
@@ -100,7 +100,7 @@ export function DeviceSettings() {
           <div className="flex items-center gap-3">
             <Volume2 className="size-4 shrink-0 text-muted-foreground" />
             <Slider aria-label="Output volume" min={0} max={100} step={1} value={[spkVol]} onValueChange={([n]) => d.setDevicePrefs({ speakerVolume: n / 100 })} />
-            <Button variant="outline" onClick={d.playTestSound} className="shrink-0 max-sm:h-11"><Play /> Test sound</Button>
+            <Button variant="outline" onClick={d.playTestSound} className="shrink-0"><Play /> Test sound</Button>
           </div>
         </SettingsRow>
       </SettingsGroup>
@@ -120,7 +120,7 @@ export function DeviceSettings() {
           </Select>
         </SettingsRow>
         <SettingsRow label="Preview" description="The camera is only on while the preview is open." stack>
-          <Button variant={d.previewingCam ? 'destructive' : 'outline'} onClick={() => (d.previewingCam ? d.stopCamPreview() : void d.startCamPreview())} className="w-fit max-sm:h-11">
+          <Button variant={d.previewingCam ? 'destructive' : 'outline'} onClick={() => (d.previewingCam ? d.stopCamPreview() : void d.startCamPreview())} className="w-fit">
             {d.previewingCam ? <><Square /> Stop preview</> : <><Camera /> Preview camera</>}
           </Button>
           <AnimatePresence>

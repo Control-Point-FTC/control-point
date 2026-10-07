@@ -22,7 +22,7 @@ export function CadSnapshotsTab({ currentUser, isAdmin }: { currentUser?: any; i
   return (
     <>
       <div className="mb-5 flex justify-end">
-        <Button onClick={() => ctl.setShowForm(true)} className="max-sm:h-11"><Upload /> Upload snapshot</Button>
+        <Button onClick={() => ctl.setShowForm(true)}><Upload /> Upload snapshot</Button>
       </div>
       {!ctl.loaded ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-60" />)}</div> : ctl.grouped.length ? ctl.grouped.map(({ section, items }) => (
         <Section key={section} title={section} description={`${items.length} snapshot${items.length === 1 ? '' : 's'}`}>
@@ -104,8 +104,8 @@ function UploadSheet({ open, onOpenChange, onDone }: { open: boolean; onOpenChan
           </fieldset>
         </form>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={f.busy} className="max-sm:h-11">Cancel</Button>
-          <Button type="submit" form="snap-form" disabled={f.busy} className="max-sm:h-11"><Upload /> {f.busy ? 'Uploading…' : 'Upload'}</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={f.busy}>Cancel</Button>
+          <Button type="submit" form="snap-form" disabled={f.busy}><Upload /> {f.busy ? 'Uploading…' : 'Upload'}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>

@@ -171,7 +171,7 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               <Label>Type</Label>
               <ToggleGroup type="single" value={f.event_type} onValueChange={(v) => { if (v) set({ event_type: v }); }} aria-label="Event type" className="flex-wrap justify-start">
                 {EVENT_TYPES.map((t) => (
-                  <ToggleGroupItem key={t.value} value={t.value} className="px-3">
+                  <ToggleGroupItem key={t.value} value={t.value}>
                     <span className={cn('size-2 rounded-full', typeMeta(t.value).dot)} /> {t.label}
                   </ToggleGroupItem>
                 ))}

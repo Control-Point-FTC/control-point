@@ -105,7 +105,7 @@ export function BrunoPage(props: any) {
 
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-14 items-center gap-2 border-b border-border px-3 sm:px-4">
-          <Button variant="ghost" size="icon" className="lg:hidden max-sm:size-11" aria-label="Chat history" onClick={() => setHistoryOpen(true)}><History /></Button>
+          <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Chat history" onClick={() => setHistoryOpen(true)}><History /></Button>
           {renaming && chat ? (
             <form className="flex min-w-0 flex-1 gap-2" onSubmit={(e) => { e.preventDefault(); setRenaming(false); void c.renameChat(title); }}>
               <Input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Chat title" className="h-9" onKeyDown={(e) => { if (e.key === 'Escape') setRenaming(false); }} />
@@ -124,7 +124,7 @@ export function BrunoPage(props: any) {
           )}
           {chat && (c.isOwner || canDelete) && !renaming && (
             <DropdownMenu>
-              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Chat options" className="max-sm:size-11"><MoreHorizontal /></Button></DropdownMenuTrigger>
+              <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="Chat options"><MoreHorizontal /></Button></DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 {c.isOwner && <DropdownMenuItem onSelect={() => { setTitle(chat.title || ''); setRenaming(true); }}><Pencil /> Rename</DropdownMenuItem>}
                 {c.isOwner && <DropdownMenuItem className="sm:hidden" onSelect={() => void c.togglePublic()}>{chat.is_public ? <><Lock /> Make private</> : <><Globe /> Share with the team</>}</DropdownMenuItem>}

@@ -103,7 +103,7 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
         {sc.lastError && (
           <button type="button" onClick={sc.clearError} className="text-xs text-destructive underline-offset-4 hover:underline" title="Dismiss">{sc.lastError}</button>
         )}
-        <Button variant="outline" className="ml-auto max-sm:h-11" disabled={!sc.entries.length} onClick={() => downloadCsv(datedName(`scouting-${season}`), sc.entries, [
+        <Button variant="outline" className="ml-auto" disabled={!sc.entries.length} onClick={() => downloadCsv(datedName(`scouting-${season}`), sc.entries, [
           { header: 'Team', value: (e) => e.scoutedTeam },
           { header: 'Event', value: (e) => e.eventCode },
           { header: 'Match', value: (e) => e.matchLabel },
@@ -112,7 +112,7 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
           { header: 'Notes', value: (e) => e.notes },
           { header: 'Updated', value: (e) => new Date(e.updatedAt).toISOString() },
         ])}><Download /> Export CSV</Button>
-        <Button className="max-sm:h-11" onClick={() => startNew()}><Plus /> Scout a match</Button>
+        <Button onClick={() => startNew()}><Plus /> Scout a match</Button>
       </div>
       <p className="text-xs text-muted-foreground">{template.name} sheet. Works without FTC data or Wi-Fi — entries save on this device and sync when you’re online.</p>
 
@@ -354,7 +354,7 @@ function FieldInput({ field, value, onChange }: { field: ScoutField; value: Scou
           value={value === undefined ? '' : String(value)}
           onValueChange={(v) => onChange(v ? (field.type === 'rating' ? Number(v) : v) : undefined)}
         >
-          {opts.map((o) => <ToggleGroupItem key={o} value={o} className="min-w-10 px-3 max-sm:h-10">{o}</ToggleGroupItem>)}
+          {opts.map((o) => <ToggleGroupItem key={o} value={o} className="min-w-10">{o}</ToggleGroupItem>)}
         </ToggleGroup>
       </div>
     );
