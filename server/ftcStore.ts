@@ -21,17 +21,26 @@ type DbFns = {
 export class DurableFtcCache extends Map<string, CacheEntry> {
   private db: DbFns | null = null;
   private lastWriteErrorLog = 0;
+  /** Which keys are worth keeping across restarts (default: all). */
+  private shouldPersist: (key: string) => boolean = () => true;
   private loading = new Map<string, Promise<CacheEntry | undefined>>();
 
-  attach(db: DbFns) {
+  attach(db: DbFns, opts: { persist?: (key: string) => boolean } = {}) {
     this.db = db;
+    if (opts.persist) this.shouldPersist = opts.persist;
     return this;
+  }
+
+  /** Drop saved entries older than maxAgeMs (keeps the table bounded). */
+  async prune(maxAgeMs: number): Promise<void> {
+    if (!this.db) return;
+    try { await this.db.dbRun("DELETE FROM ftc_cache WHERE at < ?", Date.now() - maxAgeMs); } catch { /* best effort */ }
   }
 
   /** Memory first; otherwise the persisted last-good copy (loaded into memory). */
   async load(key: string): Promise<CacheEntry | undefined> {
     const mem = super.get(key);
-    if (mem || !this.db) return mem;
+    if (mem || !this.db || !this.shouldPersist(key)) return mem;
     const pending = this.loading.get(key);
     if (pending) return pending;
     const p = (async () => {
@@ -54,7 +63,7 @@ export class DurableFtcCache extends Map<string, CacheEntry> {
   /** Store in memory and write through to the database (best effort). */
   override set(key: string, entry: CacheEntry): this {
     super.set(key, entry);
-    if (this.db) {
+    if (this.db && this.shouldPersist(key)) {
       let json: string;
       try { json = JSON.stringify(entry.data); } catch { return this; }
       // Very large payloads (a full event with every match) are still fine

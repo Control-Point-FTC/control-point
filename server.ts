@@ -4076,7 +4076,11 @@ async function startServer() {
   const FTC_SCOUT_URL = "https://api.ftcscout.org/graphql";
   // Memory cache with database write-through: the last good copy of each
   // payload survives restarts and is served while the feeds are down.
-  const ftcCache = new DurableFtcCache().attach({ dbGet, dbRun });
+  // Search results are per keystroke and short-lived: memory only.
+  const ftcCache = new DurableFtcCache().attach({ dbGet, dbRun }, { persist: (key) => !key.startsWith("scoutsearch:") });
+  // Saved copies older than 30 days are of no use as a fallback.
+  setInterval(() => { void ftcCache.prune(30 * 24 * 3600 * 1000); }, 24 * 3600 * 1000).unref();
+  void ftcCache.prune(30 * 24 * 3600 * 1000);
   const FTC_CACHE_TTL = 10 * 60 * 1000;
   // Within this age an expired entry is served at once while a refresh runs
   // in the background (venue Wi-Fi shouldn't wait on two upstream APIs).

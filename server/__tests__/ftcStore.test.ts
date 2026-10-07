@@ -61,3 +61,19 @@ describe("source health", () => {
     expect(sourceHealth()["first-events"]).toMatchObject({ status: "ok", consecutiveFailures: 0 });
   });
 });
+
+describe("DurableFtcCache persistence policy", () => {
+  it("keeps chosen keys in memory only, and prunes old saved rows", async () => {
+    const db = fakeDb();
+    const c = new DurableFtcCache().attach(db, { persist: (k) => !k.startsWith("scoutsearch:") });
+    c.set("scoutsearch:2025:robo", { at: 1, data: [] });
+    c.set("ftc:1:2025", { at: 2, data: {} });
+    await flush();
+    expect(db.rows.has("scoutsearch:2025:robo")).toBe(false);
+    expect(db.rows.has("ftc:1:2025")).toBe(true);
+    let pruned = -1;
+    const pdb = { ...db, dbRun: async (sql: string, cutoff: number) => { if (sql.startsWith("DELETE")) pruned = cutoff; } };
+    await new DurableFtcCache().attach(pdb as any).prune(1000);
+    expect(pruned).toBeGreaterThan(Date.now() - 2000);
+  });
+});
