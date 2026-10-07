@@ -8,7 +8,7 @@ import { useEffect, useRef, type ComponentType } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, Bot, Building2, KeyRound, Palette, ShieldCheck, ShieldHalf, UserRound, Users } from 'lucide-react';
+import { Bell, BellRing, Bot, Building2, KeyRound, Palette, ShieldCheck, ShieldHalf, UserRound, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Page, PageHeader } from '../../ui/page';
 import { ProfileSection } from './ProfileSection';
@@ -19,8 +19,9 @@ import { AccountSection } from './AccountSection';
 import { WorkspaceSection } from './WorkspaceSection';
 import { AdminSection } from './AdminSection';
 import { MembersSection, RolesSection } from './PeopleSections';
+import { NotificationsSection } from './NotificationsSection';
 
-export type SettingsSectionId = 'profile' | 'appearance' | 'calls' | 'bruno' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
+export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'calls' | 'bruno' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
 
 interface SectionDef { id: SettingsSectionId; label: string; hint: string; icon: ComponentType<{ className?: string }>; group: 'You' | 'Workspace' }
 
@@ -36,6 +37,7 @@ export function SettingsPage(props: any) {
   const sections: SectionDef[] = [
     { id: 'profile', label: k('profile'), hint: k('profileHint'), icon: UserRound, group: 'You' },
     { id: 'appearance', label: k('appearance'), hint: k('appearanceHint'), icon: Palette, group: 'You' },
+    { id: 'notifications', label: k('notifications'), hint: k('notificationsHint'), icon: BellRing, group: 'You' },
     { id: 'calls', label: k('calls'), hint: k('callsHint'), icon: Bell, group: 'You' },
     { id: 'bruno', label: k('bruno'), hint: k('brunoHint'), icon: Bot, group: 'You' },
     { id: 'account', label: k('account'), hint: k('accountHint'), icon: KeyRound, group: 'You' },
@@ -125,6 +127,7 @@ export function SettingsPage(props: any) {
             <motion.div key={active} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18 }}>
               {active === 'profile' && <ProfileSection {...props} />}
               {active === 'appearance' && <AppearanceSection {...props} />}
+              {active === 'notifications' && <NotificationsSection />}
               {active === 'calls' && <CallsSection />}
               {active === 'bruno' && <BrunoSection {...props} />}
               {active === 'account' && <AccountSection {...props} />}

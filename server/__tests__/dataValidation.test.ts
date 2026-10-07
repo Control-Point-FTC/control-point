@@ -79,6 +79,9 @@ describe("budget entries (M-1 / H-6 / L-1)", () => {
   });
 
   it("stores a valid amount rounded to cents and notifies with a single $", async () => {
+    // Another board member who takes team updates instantly hears about it
+    // (the person who logged it never gets their own update).
+    await t.db.execute({ sql: "UPDATE members SET is_board = 1, notify_prefs = '{\"team_updates\":\"instant\"}' WHERE id = ?", args: [memberId] });
     const r = await t.post("/api/budget", { ...entry, type: "income", amount: "1500.004", category: "Sponsor" }, admin);
     expect(r.status).toBe(200);
     // Through the API too — see the note below about reading the DB file.
@@ -91,7 +94,7 @@ describe("budget entries (M-1 / H-6 / L-1)", () => {
     let note: any;
     for (let i = 0; i < 30 && !note; i++) {
       await new Promise((r) => setTimeout(r, 200));
-      const list = await t.api(`/api/notifications/${adminId}`, { session: admin });
+      const list = await t.api(`/api/notifications/${memberId}`, { session: member });
       note = Array.isArray(list.body) ? list.body.find((n: any) => String(n.content).includes("Sponsor")) : undefined;
     }
     expect(note.content).toBe("New budget income: $1,500 for Sponsor");

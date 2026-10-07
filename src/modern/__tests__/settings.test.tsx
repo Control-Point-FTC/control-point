@@ -305,3 +305,145 @@ describe('Modern Settings — Discord-style workspace settings', () => {
     expect(screen.getByTestId('where').textContent).toBe('/tasks');
   });
 });
+
+describe('Modern Settings — notifications', () => {
+  it('loads your choices and saves a change with one PATCH', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') return json({ team_updates: 'instant', everyone_pings: true });
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    expect(await screen.findByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('radio', { name: 'Instant' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/notification-prefs', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ team_updates: 'instant' }) })));
+    expect(screen.getByText(/always reach you/)).toBeInTheDocument();
+  });
+
+  it('rolls back and says so when the save fails', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') return json({ error: 'Nope' }, false);
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('switch', { name: '@everyone and @here' }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Nope', 'error'));
+    expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Modern Settings — notifications review regressions', () => {
+  it('a failure goes back to what the server confirmed, not to another unsaved change', async () => {
+    let calls = 0;
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') { calls++; return json({ error: 'Offline' }, false); }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('switch', { name: '@everyone and @here' }));
+    await waitFor(() => expect(calls).toBe(2));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Modern Settings — notifications save order', () => {
+  it('saves one at a time, so a slow first answer never undoes a later change', async () => {
+    const order: string[] = [];
+    let releaseFirst: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') {
+        const body = JSON.parse(init.body);
+        order.push(Object.keys(body)[0]);
+        if (body.team_updates) return new Promise((res) => { releaseFirst = () => res({ ok: true, json: async () => ({ team_updates: 'off', everyone_pings: true }) }); });
+        return json({ team_updates: 'off', everyone_pings: false });
+      }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('switch', { name: '@everyone and @here' }));
+    // The second save waits for the first.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(order).toEqual(['team_updates']);
+    await act(async () => { releaseFirst(); });
+    await waitFor(() => expect(order).toEqual(['team_updates', 'everyone_pings']));
+    await waitFor(() => expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'false'));
+    expect(screen.getByRole('radio', { name: 'Off' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
+
+describe('Modern Settings — notifications across reopen', () => {
+  it('a save queued before closing runs before one made after reopening', async () => {
+    const order: string[] = [];
+    let releaseFirst: () => void = () => {};
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') {
+        const body = JSON.parse(init.body);
+        order.push(JSON.stringify(body));
+        if (body.team_updates === 'off') return new Promise((res) => { releaseFirst = () => res({ ok: true, json: async () => ({ team_updates: 'off', everyone_pings: true }) }); });
+        return json({ team_updates: 'off', everyone_pings: !!body.everyone_pings });
+      }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    const first = setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    fireEvent.click(screen.getByRole('switch', { name: '@everyone and @here' })); // queued behind the slow one
+    await waitFor(() => expect(order.length).toBe(1)); // the slow save is in flight
+    first.unmount();
+    setup({ section: 'notifications' });
+    await act(async () => { releaseFirst(); });
+    fireEvent.click(await screen.findByRole('switch', { name: '@everyone and @here' }));
+    await waitFor(() => expect(order.length).toBe(3));
+    expect(order).toEqual(['{"team_updates":"off"}', '{"everyone_pings":false}', expect.stringContaining('everyone_pings')]);
+  });
+});
+
+describe('Modern Settings — notifications recover from a stalled request', () => {
+  it('a stalled read is abandoned after the timeout, so reopening recovers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let first = true;
+      api.apiFetch.mockImplementation((url: string, init?: any) => {
+        if (url === '/api/notification-prefs' && !init?.method) {
+          if (first) {
+            first = false;
+            return new Promise((_res, rej) => init?.signal?.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+          }
+          return json({ team_updates: 'instant', everyone_pings: true });
+        }
+        return json({});
+      });
+      const a = setup({ section: 'notifications' });
+      a.unmount();
+      setup({ section: 'notifications' });
+      await act(async () => { vi.advanceTimersByTime(15_000); });
+      await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+      expect(await screen.findByRole('radio', { name: 'Instant' })).toHaveAttribute('aria-checked', 'true');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('Modern Settings — notifications body failures', () => {
+  it('a save whose body never arrives keeps the confirmed choices and says so', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/notification-prefs' && init?.method === 'PATCH') {
+        return Promise.resolve({ ok: true, json: () => Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' })) });
+      }
+      if (url === '/api/notification-prefs') return json({ team_updates: 'digest', everyone_pings: true });
+      return json({});
+    });
+    setup({ section: 'notifications' });
+    fireEvent.click(await screen.findByRole('radio', { name: 'Off' }));
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Saving took too long — try again.', 'error'));
+    expect(screen.getByRole('radio', { name: 'Digest' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: '@everyone and @here' })).toHaveAttribute('aria-checked', 'true');
+  });
+});
