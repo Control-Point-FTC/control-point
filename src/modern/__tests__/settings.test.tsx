@@ -468,3 +468,36 @@ describe('Modern Settings — access code history', () => {
     expect(await screen.findByText(/revealed the code/)).toBeInTheDocument();
   });
 });
+
+describe('Modern Settings — background grid', () => {
+  it('everyone can shape the grid; it applies at once and resets', async () => {
+    setup({ section: 'appearance', admin: false });
+    fireEvent.click(screen.getByRole('radio', { name: 'Dots' }));
+    expect(document.documentElement.classList.contains('cp-grid-dots')).toBe(true);
+    fireEvent.click(screen.getByRole('radio', { name: 'Whole page' }));
+    expect(document.documentElement.classList.contains('cp-grid-nofade')).toBe(true);
+    fireEvent.click(screen.getByRole('switch', { name: 'Cursor glow' }));
+    expect(document.documentElement.classList.contains('cp-grid-glow')).toBe(true);
+    expect(JSON.parse(localStorage.getItem('cp-grid-prefs') || '{}')).toMatchObject({ style: 'dots', fade: 'none', glow: true });
+    fireEvent.click(screen.getByRole('button', { name: /Reset grid/ }));
+    expect(document.documentElement.classList.contains('cp-grid-lines')).toBe(true);
+    expect(document.documentElement.classList.contains('cp-grid-glow')).toBe(false);
+  });
+
+  it('only admins get the team colour control; nobody gets a personal colour picker', () => {
+    setup({ section: 'appearance', admin: false });
+    expect(screen.queryByRole('button', { name: /Team colour/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/set by your workspace admins/)).toBeInTheDocument();
+    expect(document.querySelector('input[type="color"]')).toBeNull();
+    cleanup();
+    setup({ section: 'appearance', admin: true });
+    expect(screen.getByRole('button', { name: /Team colour/ })).toBeInTheDocument();
+  });
+
+  it('turning the grid off disables its other controls', () => {
+    setup({ section: 'appearance' });
+    fireEvent.click(screen.getByRole('switch', { name: 'Show the grid' }));
+    expect(document.documentElement.classList.contains('cp-grid-off')).toBe(true);
+    expect(screen.getByRole('switch', { name: 'Cursor glow' })).toBeDisabled();
+  });
+});
