@@ -5,15 +5,16 @@ import { useForgotPassword } from './useAuthForms';
 
 // Forgot password: email -> 6-digit OTP via Resend -> new password.
 // Rendered as an overlay on top of the login form.
-export default function ForgotPasswordScreen({ initialEmail, onBack, onDone }: {
+export default function ForgotPasswordScreen({ initialEmail, initialStep = 'email', onBack, onDone }: {
   initialEmail: string;
+  initialStep?: 'email' | 'code';
   onBack: () => void;
   onDone: () => void;
 }) {
   const {
     step, email, setEmail, code, setCode, password, setPassword, confirm, setConfirm,
     error, busy, cooldown, resending, sendCode, resend, continueFromCode, resetPassword,
-  } = useForgotPassword({ initialEmail, onDone });
+  } = useForgotPassword({ initialEmail, onDone, initialStep });
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);

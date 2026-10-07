@@ -127,13 +127,15 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
   };
 
   const handleResetPassword = async (email: string) => {
-    if (!(await confirmDialog({ title: 'Reset password', message: `Reset password for ${email}? They will need to set it up again on next login.`, confirmLabel: 'Reset', danger: true }))) return;
-    await apiFetch('/api/auth/reset', {
+    if (!(await confirmDialog({ title: 'Send password reset', message: `Email ${email} a code to choose a new password? Their current password keeps working until they change it.`, confirmLabel: 'Send code' }))) return;
+    const res = await apiFetch('/api/auth/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     });
-    notify('Password reset successfully.', 'success');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { notify(data.error || "Couldn't send the reset email", 'error'); return; }
+    notify(`Reset code sent to ${email}.`, 'success');
   };
 
   // ---- Team (workspace) editor (drafted) ----

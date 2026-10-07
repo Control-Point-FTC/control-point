@@ -1104,6 +1104,9 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
+  // Password-less accounts (OAuth / roster) set a first password through the
+  // emailed code: the forgot-password flow opens straight at the code step.
+  const [forgotStartAtCode, setForgotStartAtCode] = useState(false);
   // Landing / auth look: this device's last interface mode (phase 9b).
   const [signedOutMode, setSignedOutMode] = useSignedOutMode(isLoggedIn);
   const [signupTeam, setSignupTeam] = useState<{ id: number; name: string; access_code: string } | null>(null);
@@ -2100,13 +2103,13 @@ export default function App() {
         setVerifyState({ email: data.email, mode: 'login' });
         return;
       }
-      if (data.needsSetup) {
-        setNeedsSetup(true);
-        setCurrentUser(data.user);
-        if (data.sessionId) {
-          if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', data.sessionId);
-          setSessionId(data.sessionId);
-        }
+      if (data.needsPasswordSetup) {
+        // No session yet: the account proves its email with the code we just sent.
+        setLoginPassword('');
+        if (data.email) setLoginEmail(data.email);
+        setForgotStartAtCode(true);
+        setShowForgotPassword(true);
+        notify('This account has no password yet — we emailed you a code to set one', 'info');
       } else if (data.user) {
         persistSession(data.sessionId, data.user);
         setNeedsSetup(false);
@@ -2720,9 +2723,12 @@ export default function App() {
           needsSetup={needsSetup} error={loginError} busy={loggingIn}
           onSubmit={needsSetup ? handleSetup : handleLogin}
           oauthError={oauthError} providers={providers}
-          showForgot={showForgotPassword} setShowForgot={setShowForgotPassword}
+          showForgot={showForgotPassword}
+          setShowForgot={(v: boolean) => { setShowForgotPassword(v); if (!v) setForgotStartAtCode(false); }}
+          forgotStartAtCode={forgotStartAtCode}
           onPasswordReset={() => {
             setShowForgotPassword(false);
+            setForgotStartAtCode(false);
             setLoginPassword('');
             notify('Password updated — sign in with your new password', 'success');
           }}
@@ -2787,9 +2793,11 @@ export default function App() {
             {showForgotPassword && !needsSetup && (
               <ForgotPasswordScreen
                 initialEmail={loginEmail}
-                onBack={() => setShowForgotPassword(false)}
+                initialStep={forgotStartAtCode ? 'code' : 'email'}
+                onBack={() => { setShowForgotPassword(false); setForgotStartAtCode(false); }}
                 onDone={() => {
                   setShowForgotPassword(false);
+                  setForgotStartAtCode(false);
                   setLoginPassword('');
                   notify('Password updated — sign in with your new password', 'success');
                 }}

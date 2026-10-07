@@ -254,15 +254,16 @@ export function useVerifyEmail({ email, onVerified }: { email: string; onVerifie
 }
 
 /** Forgot password: email → 6-digit code → new password. */
-export function useForgotPassword({ initialEmail, onDone }: { initialEmail: string; onDone: () => void }) {
-  const [step, setStep] = useState<'email' | 'code' | 'password'>('email');
+export function useForgotPassword({ initialEmail, onDone, initialStep = 'email' }: { initialEmail: string; onDone: () => void; initialStep?: 'email' | 'code' }) {
+  const [step, setStep] = useState<'email' | 'code' | 'password'>(initialStep);
   const [email, setEmail] = useState(initialEmail);
   const [code, setCodeRaw] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cooldown, setCooldown] = useCooldown(0);
+  // Starting at the code step means a code was just sent (password setup).
+  const [cooldown, setCooldown] = useCooldown(initialStep === 'code' ? 60 : 0);
   const [resending, setResending] = useState(false);
   const setCode = (v: string) => setCodeRaw(sixDigits(v));
 

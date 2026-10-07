@@ -85,6 +85,7 @@ export function SignInPage(p: {
   onSubmit: (e: React.FormEvent) => void;
   oauthError: string | null; providers: Providers;
   showForgot: boolean; setShowForgot: (v: boolean) => void; onPasswordReset: () => void;
+  forgotStartAtCode?: boolean;
   onBack: () => void; onCreateAccount: () => void; onClassic: () => void;
 }) {
   const id = useId();
@@ -128,7 +129,7 @@ export function SignInPage(p: {
         <button type="button" onClick={p.onCreateAccount} className="font-medium text-foreground underline-offset-4 hover:underline">Create an account</button>
       </p>
       {p.showForgot && !p.needsSetup && (
-        <ForgotPasswordDialog initialEmail={p.email} onClose={() => p.setShowForgot(false)} onDone={p.onPasswordReset} />
+        <ForgotPasswordDialog initialEmail={p.email} setup={p.forgotStartAtCode} onClose={() => p.setShowForgot(false)} onDone={p.onPasswordReset} />
       )}
     </AuthLayout>
   );
@@ -137,8 +138,9 @@ export function SignInPage(p: {
 // ---------------------------------------------------------------------------
 // Forgot password (dialog over sign-in)
 
-function ForgotPasswordDialog({ initialEmail, onClose, onDone }: { initialEmail: string; onClose: () => void; onDone: () => void }) {
-  const f = useForgotPassword({ initialEmail, onDone });
+function ForgotPasswordDialog({ initialEmail, setup = false, onClose, onDone }: { initialEmail: string; setup?: boolean; onClose: () => void; onDone: () => void }) {
+  // `setup`: a password-less account signing in — the code is already sent.
+  const f = useForgotPassword({ initialEmail, onDone, initialStep: setup ? 'code' : 'email' });
   const id = useId();
   const steps = ['email', 'code', 'password'] as const;
   const at = steps.indexOf(f.step);
@@ -146,7 +148,7 @@ function ForgotPasswordDialog({ initialEmail, onClose, onDone }: { initialEmail:
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{f.step === 'email' ? 'Reset your password' : f.step === 'code' ? 'Check your inbox' : 'Choose a new password'}</DialogTitle>
+          <DialogTitle>{f.step === 'email' ? 'Reset your password' : f.step === 'code' ? 'Check your inbox' : setup ? 'Choose your password' : 'Choose a new password'}</DialogTitle>
           <DialogDescription>
             {f.step === 'email' && "Enter your account email and we'll send you a 6-digit code."}
             {f.step === 'code' && <>We sent a 6-digit code to <span className="font-medium text-foreground">{f.email}</span>.</>}
