@@ -103,13 +103,15 @@ describe("team updates", () => {
   });
 
   it("a due digest arrives as one summary and empties the queue", async () => {
-    // Age the queued items past the digest window, then let the flush run.
-    await t.db.execute({ sql: "UPDATE notification_digest SET created_at = ? WHERE member_id = ?", args: [new Date(Date.now() - 5 * 3600_000).toISOString(), ids.digest] });
+    // Count first, then queue the extra item and age the whole queue past the
+    // digest window in one statement: the flush runs every 500 ms, and if it
+    // fired between separate statements it would send a partial digest early.
+    const before = await notes('digest');
     await t.db.execute({
       sql: "INSERT INTO notification_digest (member_id, team_id, kind, content, meta, created_at) VALUES (?, ?, 'event', 'x', '{\"count\":2}', ?)",
       args: [ids.digest, team, new Date().toISOString()],
     });
-    const before = await notes('digest');
+    await t.db.execute({ sql: "UPDATE notification_digest SET created_at = ? WHERE member_id = ?", args: [new Date(Date.now() - 5 * 3600_000).toISOString(), ids.digest] });
     await until(async () => (await notes('digest')) === before + 1);
     expect(await notes('digest')).toBe(before + 1);
     expect(await queued(ids.digest)).toBe(0);
