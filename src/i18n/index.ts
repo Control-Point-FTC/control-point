@@ -40,7 +40,7 @@ const resources = {
         profile: "Profile",
         profileHint: "Photo, name, status, accent",
         appearance: "Appearance",
-        appearanceHint: "Interface, theme, language",
+        appearanceHint: "Light or dark theme",
         calls: "Calls & sounds",
         callsHint: "Devices, camera, chimes",
         bruno: "Bruno AI",
