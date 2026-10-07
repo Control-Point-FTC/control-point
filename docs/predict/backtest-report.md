@@ -44,6 +44,7 @@ Each real alliance was simulated from the end of quals with its actual pairing f
 - **Alliance selection:** captains pick by a softmax over strength and rank (τ=18, rank weight 3, fitted on 2024–25). The real first pick was in the model's top 3 for **70%** of 2,072 picks. Declines aren't recorded anywhere, so they aren't modelled.
 - **Quals ranks (before the event):** mean error 5.13 places; the 10–90% range contains the real rank 86% of the time.
 - **Awards (2025–26 test):** P(award worth ≥12 pts) Brier 0.1696 vs 0.2119 for a team-agnostic rate; Inspire 1st 0.0319 vs 0.036; any Inspire 0.0676 vs 0.0849. Inputs: past Inspire / judged awards (decay 0.4 per season), awards earlier this season, robot strength. One judged award per team per event.
+- **Win-probability calibration:** Platt scaling (2-param sigmoid on logit(p), fitted by MLE on 2024–25) applied to P(red wins). Shipped values a=0.937, b=0.020. 2025–26 test: live Brier 0.1791→0.1789, ECE 0.0172→0.0105; pre-event accuracy 68.65%→68.78%. Monotonic, so ranking is preserved.
 
 ## 5. Rules (read off official data)
 

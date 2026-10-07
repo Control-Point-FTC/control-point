@@ -6,6 +6,7 @@
 //            + Σ robot rating uncertainty (we know new/early teams less well)
 // P(red wins) = Φ((μr − μb) / √(σr² + σb²)).
 import type { RatingBook } from "./rating.js";
+import { calibrateProb, type CalibrationParams } from "./calibration.js";
 
 export interface NoiseParams {
   /** Score noise: σ = a + b·mean (fitted by likelihood on the tuning season). */
@@ -39,7 +40,7 @@ export function phi(x: number): number {
   return x >= 0 ? 0.5 * (1 + y) : 0.5 * (1 - y);
 }
 
-export function predictMatch(book: RatingBook, red: number[], blue: number[], noise: NoiseParams = DEFAULT_NOISE): MatchPrediction {
+export function predictMatch(book: RatingBook, red: number[], blue: number[], noise: NoiseParams = DEFAULT_NOISE, cal?: CalibrationParams): MatchPrediction {
   const r = book.allianceExpectation(red);
   const b = book.allianceExpectation(blue);
   const side = (own: typeof r, opp: typeof r): AlliancePrediction => {
@@ -48,6 +49,7 @@ export function predictMatch(book: RatingBook, red: number[], blue: number[], no
     return { mean, np: own.np, sd: Math.sqrt(game * game + own.uncertainty) };
   };
   const rp = side(r, b), bp = side(b, r);
-  const pRedWin = phi((rp.mean - bp.mean) / Math.sqrt(rp.sd ** 2 + bp.sd ** 2));
+  const raw = phi((rp.mean - bp.mean) / Math.sqrt(rp.sd ** 2 + bp.sd ** 2));
+  const pRedWin = cal ? calibrateProb(raw, cal) : raw;
   return { red: rp, blue: bp, pRedWin };
 }

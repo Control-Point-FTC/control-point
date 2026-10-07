@@ -1,6 +1,6 @@
 {
  "version": 1,
- "fittedOn": "2024–25 (settings), tested on 2025–26",
+ "fittedOn": "2024\u201325 (settings), tested on 2025\u201326",
  "rating": {
   "k0": 0.65,
   "n0": 10,
@@ -60,12 +60,12 @@
   ]
  },
  "accuracy": {
-  "testSeason": "2025–26",
+  "testSeason": "2025\u201326",
   "matches": {
    "count": 37395,
-   "liveAccuracy": 0.7269,
-   "liveBrier": 0.1791,
-   "preEventAccuracy": 0.6865,
+   "liveAccuracy": 0.7274,
+   "liveBrier": 0.1789,
+   "preEventAccuracy": 0.6878,
    "oprAccuracy": 0.6565,
    "oprBrier": 0.208,
    "scoreRange80Coverage": 0.82
@@ -161,5 +161,9 @@
    }
   },
   "pickTop3": 0.696911196911197
+ },
+ "calibration": {
+  "a": 0.936632910767947,
+  "b": 0.019772447704615496
  }
 }

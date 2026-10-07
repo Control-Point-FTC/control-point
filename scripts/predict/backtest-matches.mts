@@ -10,12 +10,15 @@ import { writeFileSync } from "node:fs";
 import { loadSeason } from "./load.mts";
 import { RatingBook, npOf, type RatingParams } from "../../server/predict/rating.ts";
 import { phi, type NoiseParams, DEFAULT_NOISE } from "../../server/predict/matchModel.ts";
+import { calibrateProb, type CalibrationParams } from "../../server/predict/calibration.ts";
 import { accuracy, brier, calibration, ece, logLoss, mean, type ProbOutcome } from "../../server/predict/metrics.ts";
 import type { EventRecord, MatchRecord, TeamRating } from "../../server/predict/types.ts";
 
 const arg = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i === -1 ? undefined : process.argv[i + 1]; };
 const params: Partial<RatingParams> = JSON.parse(arg("params") ?? "{}");
 const noise: NoiseParams = { ...DEFAULT_NOISE, ...JSON.parse(arg("noise") ?? "{}") };
+const calArg = arg("calibration");
+const calibrationParams: CalibrationParams | undefined = calArg ? JSON.parse(calArg) : undefined;
 const seasons = (arg("seasons") ?? "2022,2023,2024,2025").split(",").map(Number);
 const report = new Set((arg("report") ?? "2024,2025").split(",").map(Number));
 const quiet = process.argv.includes("--quiet");
@@ -62,7 +65,7 @@ function eventOpr(ev: EventRecord): Map<number, number> {
   return new Map(teams.map((t, i) => [t, x[i]]));
 }
 
-export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseParams; seasons: number[]; report: Set<number>; events?: Map<number, EventRecord[]> }): Row[] {
+export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseParams; seasons: number[]; report: Set<number>; events?: Map<number, EventRecord[]>; calibration?: CalibrationParams }): Row[] {
   const book = new RatingBook(opts.params);
   const rows: Row[] = [];
   for (const season of opts.seasons) {
@@ -105,7 +108,9 @@ export function runBacktest(opts: { params: Partial<RatingParams>; noise: NoiseP
           const muR = r.np + b.pen, muB = b.np + r.pen;
           const sR = Math.hypot(opts.noise.a + opts.noise.b * Math.max(0, muR), Math.sqrt(r.unc));
           const sB = Math.hypot(opts.noise.a + opts.noise.b * Math.max(0, muB), Math.sqrt(b.unc));
-          return { p: phi((muR - muB) / Math.hypot(sR, sB)), muR, muB, sR, sB, uncR: r.unc, uncB: b.unc };
+          const raw = phi((muR - muB) / Math.hypot(sR, sB));
+          const p = opts.calibration ? calibrateProb(raw, opts.calibration) : raw;
+          return { p, muR, muB, sR, sB, uncR: r.unc, uncB: b.unc };
         };
         const live = prob();
         const pre = prob(preSnap.get(m.eventCode));
@@ -167,7 +172,7 @@ export function summarize(rows: Row[], label: string, scales: { avg: number; opr
 
 if (import.meta.url === `file://${process.argv[1].replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1:")}` || process.argv[1].endsWith("backtest-matches.mts")) {
   const t0 = Date.now();
-  const rows = runBacktest({ params, noise, seasons, report });
+  const rows = runBacktest({ params, noise, seasons, report, calibration: calibrationParams });
   // Baseline scales are fitted on the first reported season (tuning), applied to all.
   const tuneSeason = Math.min(...report);
   const tune = rows.filter((r) => r.season === tuneSeason);
