@@ -107,8 +107,13 @@ export function useIncrementalGroups(step = WINDOW_THRESHOLD, resetKey?: unknown
   const [limits, setLimits] = useState<Record<string, number>>({});
   useEffect(() => { setLimits({}); }, [resetKey]);
   return {
-    slice<T>(key: string, items: T[]): T[] {
-      return printing ? items : items.slice(0, limits[key] ?? step);
+    /** The first chunk, plus any later item `keep` asks for (e.g. a card
+     *  just moved into this group, so it never vanishes off the end). */
+    slice<T>(key: string, items: T[], keep?: (item: T) => boolean): T[] {
+      if (printing) return items;
+      const n = limits[key] ?? step;
+      const head = items.slice(0, n);
+      return keep ? head.concat(items.slice(n).filter(keep)) : head;
     },
     hidden(key: string, count: number): number {
       return printing ? 0 : Math.max(0, count - (limits[key] ?? step));

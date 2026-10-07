@@ -31,7 +31,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
   // Long inventories: the table renders only rows near the screen; the card
   // grid shows 60 and adds more as you scroll. A new search starts over.
   const vr = useVirtualRows(layout === 'table' ? ctl.filteredParts.length : 0, 49);
-  const inc = useIncrementalGroups(60, `${ctl.filteredParts.length}|${layout}`);
+  const inc = useIncrementalGroups(60, `${ctl.searchTerm}|${ctl.filterCategory}|${layout}`);
   const units = inventory.reduce((a: number, p: any) => a + (Number(p.quantity) || 0), 0);
   const uncategorized = inventory.some((p: any) => !p.category);
   return (

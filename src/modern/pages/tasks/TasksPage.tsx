@@ -140,7 +140,7 @@ export function TasksPage(props: any) {
       </PageHeader>
 
       {view === 'board' && (
-        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} />
+        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} />
       )}
       {view === 'list' && (
         visible.length === 0
@@ -177,13 +177,15 @@ function DueChip({ task }: { task: any }) {
   );
 }
 
-function Board({ tasks, ctl, assigneesOf, onOpen }: {
-  tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void;
+function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
+  tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
-  // Long columns show 40 cards, then more as you scroll (audit: scale).
-  const inc = useIncrementalGroups(40);
+  // Long columns show 40 cards, then more as you scroll (audit: scale); a new
+  // search or filter starts over. Cards dropped into a column stay in view.
+  const inc = useIncrementalGroups(40, filterKey);
+  const [moved, setMoved] = useState<Set<number>>(() => new Set());
   return (
     <LayoutGroup>
       <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
@@ -201,7 +203,10 @@ function Board({ tasks, ctl, assigneesOf, onOpen }: {
                 const id = dragId;
                 setDragId(null); setOverCol(null);
                 const task = tasks.find((t) => t.id === id);
-                if (task && task.status !== col.id) void ctl.updateStatus(task.id, col.id);
+                if (task && task.status !== col.id) {
+                  setMoved((s) => new Set(s).add(task.id));
+                  void ctl.updateStatus(task.id, col.id);
+                }
               }}
               className={cn(
                 'flex w-[82vw] shrink-0 snap-start flex-col rounded-xl bg-muted/40 p-2 transition-colors sm:w-80 md:w-auto',
@@ -218,7 +223,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen }: {
               </header>
               <ul className="flex min-h-24 flex-col gap-2">
                 <AnimatePresence initial={false}>
-                  {inc.slice(col.id, items).map((t) => {
+                  {inc.slice(col.id, items, (t) => moved.has(t.id)).map((t) => {
                     const people = assigneesOf(t);
                     return (
                       <motion.li
