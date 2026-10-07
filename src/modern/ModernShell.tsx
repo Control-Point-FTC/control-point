@@ -4,6 +4,9 @@
 // inside this shell.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ClockWeather } from './chrome/ClockWeather';
+import { useLocation } from 'react-router-dom';
+import { TipsBar } from './chrome/TipsBar';
+import { BugButton } from './chrome/BugButton';
 import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -46,6 +49,8 @@ export interface ModernShellProps {
   onOpenBruno: () => void;
   botName: string;
   onOpenFeedback: () => void;
+  /** The floating bug button: feedback, preset to "Bug report". */
+  onReportBug?: () => void;
   onSetupGuide: () => void;
   onOpenWhatsNew: () => void;
   onStatusPick: (status: string) => void;
@@ -75,6 +80,7 @@ export function ModernAvatar({ user, className }: { user: any; className?: strin
 
 export function ModernShell(props: ModernShellProps) {
   const { isMobile, immersive, content } = props;
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState<boolean>(() => readJSON(COLLAPSE_KEY, false));
   const [cmdOpen, setCmdOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -147,6 +153,7 @@ export function ModernShell(props: ModernShellProps) {
             onOpenBruno={props.onOpenBruno}
             workspaceId={props.activeTeam?.id}
           />
+          <TipsBar path={location.pathname} />
           <main
             id="main"
             className={cn(
@@ -188,6 +195,7 @@ export function ModernShell(props: ModernShellProps) {
         )}
 
         <Toaster />
+        <BugButton onClick={props.onReportBug ?? props.onOpenFeedback} />
         <CommandMenu
           open={cmdOpen}
           onOpenChange={setCmdOpen}

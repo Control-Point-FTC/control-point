@@ -125,7 +125,7 @@ export function InstallBanner() {
   return (
     <AnimatePresence>
       {i.visible && (
-        <motion.div {...rise} className="fixed inset-x-3 bottom-20 z-[60] md:inset-x-auto md:bottom-6 md:right-6 md:w-96" role="region" aria-label="Install the app">
+        <motion.div {...rise} className="cp-above-fab fixed inset-x-3 z-[60] md:inset-x-auto md:right-6 md:w-96" role="region" aria-label="Install the app">
           <div className="rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl">
             {!i.showIOSHelp ? (
               <div className="flex items-start gap-3">
@@ -175,7 +175,7 @@ export function MentionToastCard({ toast, channelName, canJump, onJump, onDismis
           exit={{ opacity: 0, x: 60 }}
           transition={{ type: 'spring', stiffness: 320, damping: 30 }}
           role="status"
-          className="fixed bottom-5 right-5 z-[90] w-80 max-w-[calc(100vw-2.5rem)] rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl"
+          className="cp-above-fab fixed right-5 z-[90] w-80 max-w-[calc(100vw-2.5rem)] rounded-2xl border border-border bg-popover p-4 text-popover-foreground shadow-2xl"
         >
           <div className="flex items-start gap-3">
             <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent/15"><AtSign className="size-4 text-accent" /></span>

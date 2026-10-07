@@ -637,3 +637,29 @@ html.light .theme-dark .card-surface {
   .bruno-mouth-talk { animation: bruno-talk 0.5s ease-in-out infinite; }
   .bruno-antenna-dot { animation: bruno-antenna 1.6s ease-in-out infinite; }
 }
+
+/* ---------- Bottom-right corner (bug button, toasts, banners) ---------- */
+/* Space taken at the bottom of the screen: the phone tab bar (below md) and
+   an active call's dock (set by CallDock while it is shown). The bug button
+   sits above both; toasts and banners stack above the bug button. */
+:root {
+  --cp-bottom-nav: calc(64px + env(safe-area-inset-bottom));
+  --cp-call-dock: 0px;
+  --cp-fab-size: 48px;
+}
+@media (min-width: 768px) {
+  :root { --cp-bottom-nav: 0px; }
+}
+.cp-fab {
+  right: 1rem;
+  bottom: calc(var(--cp-bottom-nav) + var(--cp-call-dock) + 0.75rem);
+}
+@media (min-width: 768px) {
+  .cp-fab { right: 1.5rem; bottom: calc(var(--cp-call-dock) + 1.5rem); }
+}
+.cp-above-fab {
+  bottom: calc(var(--cp-bottom-nav) + var(--cp-call-dock) + var(--cp-fab-size) + 1.5rem) !important;
+}
+@media (min-width: 768px) {
+  .cp-above-fab { bottom: calc(var(--cp-call-dock) + var(--cp-fab-size) + 2.25rem) !important; }
+}

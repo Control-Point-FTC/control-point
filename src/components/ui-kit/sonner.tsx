@@ -8,6 +8,9 @@ export function Toaster(props: ToasterProps) {
     <SonnerToaster
       theme={theme === 'light' ? 'light' : 'dark'}
       position="bottom-right"
+      // Above the bug button (and the phone tab bar / call dock under it).
+      offset={{ bottom: 'calc(var(--cp-call-dock, 0px) + var(--cp-fab-size, 0px) + 2.25rem)', right: '1.5rem' }}
+      mobileOffset={{ bottom: 'calc(var(--cp-bottom-nav, 0px) + var(--cp-call-dock, 0px) + var(--cp-fab-size, 0px) + 1.5rem)' }}
       closeButton
       toastOptions={{
         classNames: {
