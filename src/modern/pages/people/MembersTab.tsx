@@ -20,6 +20,7 @@ import { type useMembersController } from '../../../components/people/useMembers
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { EmptyState } from '../../ui/page';
 import { RoleChip } from './RolesTab';
+import { LoadMore, useIncrementalGroups } from '../../ui/windowing';
 
 type Ctl = ReturnType<typeof useMembersController>;
 
@@ -63,6 +64,9 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
       .filter((m) => filter === 'all' || (filter === 'online' ? m.presence && m.presence !== 'offline' : !!m.is_board))
       .sort((a, b) => (rank[a.presence] ?? 3) - (rank[b.presence] ?? 3) || String(a.name).localeCompare(String(b.name)));
   }, [members, query, filter]);
+
+  // Big rosters show 60 people, then more as you scroll; a new search starts over.
+  const inc = useIncrementalGroups(60, `${query}|${filter}`);
 
   const viewing = viewId == null ? null : members.find((m) => m.id === viewId) || null;
 
@@ -111,7 +115,7 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           <AnimatePresence initial={false}>
-            {visible.map((m) => (
+            {inc.slice('members', visible).map((m) => (
               <motion.li key={m.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-1 pr-2">
                 <button type="button" onClick={() => setViewId(m.id)} className="flex min-h-14 min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none">
                   <PresenceAvatar member={m} />
@@ -137,6 +141,7 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
               </motion.li>
             ))}
           </AnimatePresence>
+          <LoadMore as="li" hidden={inc.hidden('members', visible.length)} onMore={() => inc.more('members')} />
         </ul>
       )}
 
