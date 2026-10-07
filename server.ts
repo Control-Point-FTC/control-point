@@ -4455,7 +4455,8 @@ async function startServer() {
   });
 
   // --- FTC integration (ftcscout.org, community mirror of official FIRST data) ---
-  const FTC_SCOUT_URL = "https://api.ftcscout.org/graphql";
+  // Overridable for integration tests (a local stand-in for FTC Scout).
+  const FTC_SCOUT_URL = process.env.FTC_SCOUT_URL || "https://api.ftcscout.org/graphql";
   // Memory cache with database write-through: the last good copy of each
   // payload survives restarts and is served while the feeds are down.
   // Search results are per keystroke and short-lived: memory only.
