@@ -21,7 +21,7 @@ import { EmptyState, Section } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
 import { EventHistory } from './EventHistory';
-import { MatchDetailSheet, MatchLine, SeasonToggle, SourceLine, TeamMenu } from './statsUi';
+import { MatchDetailSheet, MatchLine, OfficialSourceLinks, SeasonToggle, SourceLine, TeamMenu, officialTeamLinks } from './statsUi';
 
 type OprKey = 'tot' | 'auto' | 'dc' | 'eg';
 
@@ -66,7 +66,7 @@ export function TeamProfile({ number, season, onSeasonChange, actions = {}, auto
         <SeasonToggle seasons={seasons} value={season} onChange={onSeasonChange} />
         <EmptyState
           title="Couldn't load team data"
-          description={<>{error}<br />FIRST Events and FTC Scout were both unreachable and there's no cached copy yet.</>}
+          description={<>{error}<br />FIRST Events and FTC Scout were both unreachable and there's no saved copy yet.{number ? <><br /><OfficialSourceLinks className="mt-2" prefix="Meanwhile, check it on" links={officialTeamLinks(number, season)} /></> : null}</>}
           action={<Button variant="outline" onClick={reload}><RefreshCw /> Retry</Button>}
         />
       </div>
@@ -79,7 +79,7 @@ export function TeamProfile({ number, season, onSeasonChange, actions = {}, auto
         <EmptyState
           icon={CalendarDays}
           title={`No ${seasonShort(season)}${SEASON_NAMES[season] ? ` · ${SEASON_NAMES[season]}` : ''} data yet`}
-          description="Season not started or no data is available yet. Pick another season to see past results."
+          description={<>Season not started or no data is available yet. Pick another season to see past results.{number ? <><br /><OfficialSourceLinks className="mt-2" links={officialTeamLinks(number, season)} /></> : null}</>}
         />
       </div>
     );
@@ -158,6 +158,7 @@ function Hero({ p, season, seasons, onSeasonChange, actions, extra }: { p: FtcTe
             {loc && <span className="flex items-center gap-1.5"><MapPin className="size-4" />{loc}</span>}
             {p.rookieYear && <span>Rookie year {p.rookieYear}</span>}
             <span className="flex items-center gap-1.5"><Clock className="size-4" />Updated {relTime(p.fetchedAt)}</span>
+            <OfficialSourceLinks links={officialTeamLinks(p.number, season)} />
           </div>
           {p.sponsors.length > 0 && (
             <Collapsible className="mt-3">

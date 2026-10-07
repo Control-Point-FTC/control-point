@@ -15,7 +15,7 @@ import {
 } from '../../../utils/ftcAnalysis';
 import type { FtcEventFull, FtcMatchFull, FtcTeamEventSummary } from '../../../types/ftcScout';
 import { EmptyState } from '../../ui/page';
-import { MatchLine, RankMedal, SourceLine } from './statsUi';
+import { MatchLine, OfficialSourceLinks, RankMedal, SourceLine, officialEventLinks } from './statsUi';
 
 type OnMatch = (m: FtcMatchFull, ev: FtcEventFull) => void;
 
@@ -126,6 +126,7 @@ function EventDetail({ ev, team, season, actions, onMatch }: { ev: FtcEventFull;
     <>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         <SourceLine f={ev} />
+        <OfficialSourceLinks links={officialEventLinks(ev.code, ev.season)} />
         {ev.venue && <span className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="size-3.5" />{ev.venue}</span>}
       </div>
 

@@ -144,6 +144,20 @@ describe("FIRST Events API client", () => {
     expect(await getFirstEventsTeam(2025, 999999)).toBeNull();
   });
 
+  it("treats FIRST's 400 'Team number N was not found' as no record (H-3 root cause), not an outage", async () => {
+    // Real FIRST response for a team not registered in the season.
+    const notFound = () => ({ ok: false, status: 400, headers: { get: () => null }, text: async () => '"Malformed Parameter Format In Request : Team number 11115 was not found"' });
+    mockFetch().mockResolvedValueOnce(notFound() as any);
+    expect(await getFirstEventsTeam(2026, 11115)).toBeNull();
+    mockFetch().mockResolvedValueOnce(notFound() as any);
+    expect(await getFirstEventsTeamEvents(2026, 11115)).toEqual([]);
+  });
+
+  it("other 400s are still errors (not silently 'no record')", async () => {
+    mockFetch().mockResolvedValueOnce({ ok: false, status: 400, headers: { get: () => null }, text: async () => '"Invalid season"' } as any);
+    await expect(getFirstEventsTeam(1999, 1)).rejects.toBeInstanceOf(FirstEventsError);
+  });
+
   it("throws non-retryable on 401", async () => {
     mockFetch().mockResolvedValueOnce(jsonResponse({}, 401) as any);
     await expect(getFirstEventsTeam(2025, 1)).rejects.toBeInstanceOf(FirstEventsError);

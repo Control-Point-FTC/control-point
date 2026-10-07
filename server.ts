@@ -46,6 +46,7 @@ import {
 } from "./server/onboarding.js";
 import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
 import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
+import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import {
   isAIConfigured,
   getAISetting,
@@ -4072,8 +4073,15 @@ async function startServer() {
 
   // --- FTC integration (ftcscout.org, community mirror of official FIRST data) ---
   const FTC_SCOUT_URL = "https://api.ftcscout.org/graphql";
-  const ftcCache = new Map<string, { at: number; data: any }>();
+  // Memory cache with database write-through: the last good copy of each
+  // payload survives restarts and is served while the feeds are down.
+  const ftcCache = new DurableFtcCache().attach({ dbGet, dbRun });
   const FTC_CACHE_TTL = 10 * 60 * 1000;
+  // Within this age an expired entry is served at once while a refresh runs
+  // in the background (venue Wi-Fi shouldn't wait on two upstream APIs).
+  const FTC_SWR_MAX = 30 * 60 * 1000;
+  /** Cached entry from memory, else the persisted last-good copy. */
+  const ftcCached = async (key: string) => ftcCache.get(key) ?? (await ftcCache.load(key));
 
   async function ftcQuery(query: string, variables: any): Promise<any> {
     const ctrl = new AbortController();
@@ -4087,8 +4095,17 @@ async function startServer() {
       });
       // Keep the status: callers treat 400/404 (query rejected, e.g. an
       // unsupported season) as "no data" and everything else as an outage.
-      if (!res.ok) throw Object.assign(new Error(`FTC Scout responded with HTTP ${res.status}`), { status: res.status });
-      return await res.json();
+      if (!res.ok) {
+        // 400/404 = "no such data" (not an outage); anything else counts against health.
+        if (res.status !== 400 && res.status !== 404) recordSourceFailure("ftc-scout", `HTTP ${res.status}`);
+        throw Object.assign(new Error(`FTC Scout responded with HTTP ${res.status}`), { status: res.status });
+      }
+      const json = await res.json();
+      recordSourceOk("ftc-scout");
+      return json;
+    } catch (e: any) {
+      if (e?.status === undefined) recordSourceFailure("ftc-scout", e?.name === "AbortError" ? "timeout" : "network error");
+      throw e;
     } finally {
       clearTimeout(t);
     }
@@ -4213,6 +4230,13 @@ async function startServer() {
     };
   }
 
+  // Which FTC feed is up — so error states can say what is actually wrong.
+  app.get("/api/ftc/health", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    res.json({ configured: { firstEvents: isFirstEventsConfigured(), ftcScout: true }, sources: sourceHealth() });
+  });
+
   app.get("/api/ftc/team", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
@@ -4225,14 +4249,22 @@ async function startServer() {
     if (!number) return res.status(404).json({ error: "No FTC team connected — set your team number in Settings" });
 
     const cacheKey = `ftc:${number}:${season}`;
-    const cached = ftcCache.get(cacheKey);
+    const cached = await ftcCached(cacheKey);
     if (cached && ftcCacheFresh(cached)) return res.json(ftcCachedBody(cached));
+    const refresh = () => sharedFetch(cacheKey, async () => {
+      const payload = await getTeamData(number, season);
+      if (payload) ftcCache.set(cacheKey, { at: Date.now(), data: payload });
+      return payload;
+    });
+    if (cached && Date.now() - cached.at < FTC_SWR_MAX) {
+      refresh().catch(() => { /* keep serving the cached copy */ });
+      return res.json(ftcCachedBody(cached));
+    }
 
     try {
-      const payload = await getTeamData(number, season);
+      const payload = await refresh();
       // Both sources answered "no record" — a genuine miss, not an outage.
       if (!payload) return res.status(404).json({ error: "No record of that team number this season" });
-      ftcCache.set(cacheKey, { at: Date.now(), data: payload });
       res.json({ ...payload.data, source: payload.source, fetchedAt: payload.fetchedAt });
     } catch (e: any) {
       // Both sources down: serve the last good copy if we have one.
@@ -4387,28 +4419,33 @@ async function startServer() {
     let firstFailed = false;
     let scoutFailed = false;
 
+    // Both sources in parallel (they used to run one after the other, so a
+    // slow FIRST response delayed the FTC Scout fallback by up to ~20 s).
+    const firstP = (async () => {
+      if (!isFirstEventsConfigured()) return { team: null as any, events: [] as any[] };
+      const [team, events] = await Promise.all([getFirstEventsTeam(season, number), getFirstEventsTeamEvents(season, number)]);
+      return { team, events: team ? events : [] };
+    })();
+    const [firstRes, scoutRes] = await Promise.allSettled([firstP, getFtcTeamPayload(number, season)]);
+
     let firstTeam: any = null;
     let firstEvents: any[] = [];
-    if (isFirstEventsConfigured()) {
-      try {
-        firstTeam = await getFirstEventsTeam(season, number);
-        if (firstTeam) firstEvents = await getFirstEventsTeamEvents(season, number);
-      } catch {
-        firstFailed = true;
-        console.error(`[ftc] FIRST Events team lookup failed for ${number}/${season}, falling back to FTC Scout`);
-      }
+    if (firstRes.status === "fulfilled") {
+      firstTeam = firstRes.value.team;
+      firstEvents = firstRes.value.events;
+    } else {
+      firstFailed = true;
+      console.error(`[ftc] FIRST Events team lookup failed for ${number}/${season}: ${(firstRes.reason as any)?.message || firstRes.reason}`);
     }
 
     let scout: any = null;
-    try {
-      scout = await getFtcTeamPayload(number, season);
-    } catch (e: any) {
+    if (scoutRes.status === "fulfilled") {
+      scout = scoutRes.value;
+    } else if (!isFtcScoutClientError(scoutRes.reason)) {
       // 400/404 = FTC Scout has no data for this request (e.g. unsupported
       // season); rate limits, auth errors, 5xx, network = unreachable.
-      if (!isFtcScoutClientError(e)) {
-        scoutFailed = true;
-        console.error(`[ftc] FTC Scout team lookup failed for ${number}/${season}`);
-      }
+      scoutFailed = true;
+      console.error(`[ftc] FTC Scout team lookup failed for ${number}/${season}: ${(scoutRes.reason as any)?.message || scoutRes.reason}`);
     }
 
     if (!firstTeam && !scout) {
@@ -4632,7 +4669,7 @@ async function startServer() {
     if (!number) return res.status(404).json({ error: "No FTC team connected — set your team number in Settings" });
 
     const cacheKey = `ftcevent:${number}:${season}:${code}`;
-    const cached = ftcCache.get(cacheKey);
+    const cached = await ftcCached(cacheKey);
     if (cached && ftcCacheFresh(cached)) return res.json(ftcCachedBody(cached));
 
     try {
@@ -4725,12 +4762,19 @@ async function startServer() {
 
   async function cachedEventFull(season: number, code: string): Promise<FtcEventFull | null> {
     const key = `scoutevent:${season}:${code.toUpperCase()}`;
-    const cached = ftcCache.get(key);
+    const cached = await ftcCached(key);
     if (cached && ftcCacheFresh(cached)) return scoutCachedBody(cached.data as FtcEventFull) as FtcEventFull;
-    try {
-      const ev = await sharedFetch(key, () => getEventFull(season, code));
+    const refresh = () => sharedFetch(key, async () => {
+      const ev = await getEventFull(season, code);
       if (ev) ftcCache.set(key, { at: Date.now(), data: ev });
       return ev;
+    });
+    if (cached && Date.now() - cached.at < FTC_SWR_MAX) {
+      refresh().catch(() => { /* keep serving the cached copy */ });
+      return scoutCachedBody(cached.data as FtcEventFull) as FtcEventFull;
+    }
+    try {
+      return await refresh();
     } catch (e) {
       if (cached) return scoutCachedBody(cached.data as FtcEventFull, true) as FtcEventFull;
       throw e;
@@ -4811,12 +4855,19 @@ async function startServer() {
 
   async function cachedTeamProfile(number: number, season: number): Promise<FtcTeamProfile | null> {
     const key = `scoutteam:${number}:${season}`;
-    const cached = ftcCache.get(key);
+    const cached = await ftcCached(key);
     if (cached && ftcCacheFresh(cached)) return scoutCachedBody(cached.data as FtcTeamProfile) as FtcTeamProfile;
-    try {
-      const p = await sharedFetch(key, () => getTeamProfile(number, season));
+    const refresh = () => sharedFetch(key, async () => {
+      const p = await getTeamProfile(number, season);
       if (p) ftcCache.set(key, { at: Date.now(), data: p });
       return p;
+    });
+    if (cached && Date.now() - cached.at < FTC_SWR_MAX) {
+      refresh().catch(() => { /* keep serving the cached copy */ });
+      return scoutCachedBody(cached.data as FtcTeamProfile) as FtcTeamProfile;
+    }
+    try {
+      return await refresh();
     } catch (e) {
       if (cached) return scoutCachedBody(cached.data as FtcTeamProfile, true) as FtcTeamProfile;
       throw e;
@@ -4874,7 +4925,7 @@ async function startServer() {
     const season = parseSeason(req.query.season) ?? currentFtcSeason();
     if (q.length < 2 && !/^\d+$/.test(q)) return res.json({ results: [] });
     const key = `scoutsearch:${season}:${q.toLowerCase()}`;
-    const cached = ftcCache.get(key);
+    const cached = await ftcCached(key);
     if (cached && ftcCacheFresh(cached)) return res.json({ results: cached.data, cached: true });
     const results: FtcTeamSearchHit[] = [];
     let anyOk = false;

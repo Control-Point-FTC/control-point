@@ -218,3 +218,32 @@ export function MatchDetailSheet({ sel, team, onClose, actions }: { sel: { m: Ft
     </Sheet>
   );
 }
+
+/** Deep links to the official pages the data came from, so anyone can check
+ *  the numbers (and still get them when our feeds are down). Not used on
+ *  Predict: forecasts are computed here, so an outside page can't verify them. */
+export function officialTeamLinks(team: number, season: number) {
+  return [
+    { label: 'FIRST Events', href: `https://ftc-events.firstinspires.org/${season}/team/${team}` },
+    { label: 'FTC Scout', href: `https://ftcscout.org/teams/${team}?season=${season}` },
+  ];
+}
+export function officialEventLinks(code: string, season: number) {
+  const c = encodeURIComponent(code);
+  return [
+    { label: 'FIRST Events', href: `https://ftc-events.firstinspires.org/${season}/${c}` },
+    { label: 'FTC Scout', href: `https://ftcscout.org/events/${season}/${c}` },
+  ];
+}
+export function OfficialSourceLinks({ links, className, prefix = 'View on' }: { links: { label: string; href: string }[]; className?: string; prefix?: string }) {
+  return (
+    <span className={cn('inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground', className)}>
+      <span>{prefix}</span>
+      {links.map((l, i) => (
+        <a key={l.href} href={l.href} target="_blank" rel="noopener noreferrer" className="underline-offset-4 hover:text-foreground hover:underline">
+          {l.label}{i < links.length - 1 ? ' ·' : ''}<span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      ))}
+    </span>
+  );
+}

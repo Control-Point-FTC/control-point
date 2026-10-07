@@ -1,3 +1,4 @@
+import { recordSourceOk, recordSourceFailure } from "./ftcStore.js";
 /**
  * FIRST Events API client (https://ftc-api.firstinspires.org; docs at
  * https://ftc-events.firstinspires.org/api-docs).
@@ -297,7 +298,22 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** One FIRST Events request with health tracking ("no record" isn't a failure). */
 async function firstEventsFetch(path: string): Promise<unknown> {
+  try {
+    const data = await firstEventsFetchRaw(path);
+    recordSourceOk("first-events");
+    return data;
+  } catch (e) {
+    if (e instanceof FirstEventsError && e.status === 404) recordSourceOk("first-events");
+    else if (!(e instanceof FirstEventsError && e.message === "FIRST Events API not configured")) {
+      recordSourceFailure("first-events", e instanceof Error ? e.message : String(e));
+    }
+    throw e;
+  }
+}
+
+async function firstEventsFetchRaw(path: string): Promise<unknown> {
   if (!isFirstEventsConfigured()) {
     throw new FirstEventsError("FIRST Events API not configured", 0, false);
   }
@@ -331,6 +347,15 @@ async function firstEventsFetch(path: string): Promise<unknown> {
         throw new FirstEventsError("FIRST Events auth rejected (check credentials)", res.status, false);
       }
       if (res.status === 404) throw new FirstEventsError("not found", 404, false);
+      // FIRST answers an unknown team (e.g. not registered this season) with
+      // 400 "…Team number N was not found" rather than 404. That is "no
+      // record", not an outage — it used to surface as "Could not reach FTC
+      // data sources" for any team without a current-season registration.
+      if (res.status === 400) {
+        const body = await res.text().catch(() => "");
+        if (/was not found|not found/i.test(body)) throw new FirstEventsError("not found", 404, false);
+        throw new FirstEventsError(`bad request: ${body.slice(0, 120)}`, 400, false);
+      }
       if (res.status === 429 || res.status >= 500) {
         throw new FirstEventsError(`upstream ${res.status}`, res.status, true);
       }
