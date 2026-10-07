@@ -51,6 +51,10 @@ describe("pickEncoding / cacheControlFor", () => {
     expect(pickEncoding("gzip", "/x.js", has)?.name).toBe("gzip");
     expect(pickEncoding("br;q=0, gzip", "/x.js", has)?.name).toBe("gzip");
     expect(pickEncoding("identity", "/x.js", has)).toBeNull();
+    // Unequal non-zero preferences are honoured; ties go to Brotli.
+    expect(pickEncoding("br;q=0.1, gzip;q=1", "/x.js", has)?.name).toBe("gzip");
+    expect(pickEncoding("gzip;q=0.5, br;q=0.5", "/x.js", has)?.name).toBe("br");
+    expect(pickEncoding("*;q=0.3, gzip;q=0", "/x.js", has)?.name).toBe("br");
     expect(pickEncoding("br", "/x.js", () => false)).toBeNull();
   });
   it("caches hashed assets for a year and always revalidates the shell", () => {

@@ -21,15 +21,29 @@ export function cacheControlFor(urlPath: string): string {
   return "public, max-age=3600";
 }
 
-/** Pick a pre-compressed variant for `file` the client accepts, if one exists. */
-export function pickEncoding(acceptEncoding: string, file: string, exists: (p: string) => boolean = fs.existsSync): { name: string; ext: string } | null {
-  const accepted = acceptEncoding.toLowerCase();
-  for (const enc of ENCODINGS) {
-    // "br;q=0" means refused.
-    const m = new RegExp(`(?:^|,)\\s*${enc.name}\\s*(?:;\\s*q=([0-9.]+))?`).exec(accepted);
-    if (!m || (m[1] !== undefined && Number(m[1]) === 0)) continue;
-    if (exists(file + enc.ext)) return enc;
+/** The client's quality value for an encoding (0 = refused / not listed). */
+function qualityOf(acceptEncoding: string, name: string): number {
+  let best = 0;
+  for (const part of acceptEncoding.toLowerCase().split(",")) {
+    const [token, ...params] = part.trim().split(";");
+    if (token.trim() !== name && token.trim() !== "*") continue;
+    const qp = params.map((x) => x.trim()).find((x) => x.startsWith("q="));
+    const q = qp ? Number(qp.slice(2)) : 1;
+    // An exact token outranks a "*" wildcard entry.
+    if (token.trim() === name) return Number.isFinite(q) ? q : 0;
+    best = Number.isFinite(q) ? q : 0;
   }
+  return best;
+}
+
+/** Pick the pre-compressed variant for `file` the client prefers (by q
+ *  value; Brotli wins ties because it is smaller), if one exists. */
+export function pickEncoding(acceptEncoding: string, file: string, exists: (p: string) => boolean = fs.existsSync): { name: string; ext: string } | null {
+  const ranked = ENCODINGS
+    .map((enc, i) => ({ enc, q: qualityOf(acceptEncoding, enc.name), i }))
+    .filter((x) => x.q > 0)
+    .sort((a, b) => b.q - a.q || a.i - b.i);
+  for (const { enc } of ranked) if (exists(file + enc.ext)) return enc;
   return null;
 }
 
@@ -64,7 +78,15 @@ export function serveDist(app: express.Express, distDir: string) {
     res.setHeader("Vary", "Accept-Encoding");
     res.setHeader("Cache-Control", cacheControlFor(req.path));
     res.type(path.extname(file));
-    res.sendFile(file + enc.ext, (err) => { if (err) next(); });
+    res.sendFile(file + enc.ext, (err) => {
+      if (!err) return;
+      // The compressed copy vanished (e.g. mid-deploy): undo the encoding
+      // headers so the fallback below sends plain bytes labelled as such.
+      if (res.headersSent) return next(err);
+      res.removeHeader("Content-Encoding");
+      res.removeHeader("Content-Type");
+      next();
+    });
   });
 
   app.use(express.static(root, {

@@ -40,42 +40,39 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) return;
 
   if (req.mode === 'navigate') {
+    const network = fetch(req);
     event.respondWith(
-      fetch(req)
-        .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(SHELL, copy));
-          }
-          return res;
-        })
-        .catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
+      network.catch(() => caches.match(SHELL).then((cached) => cached || Response.error()))
+    );
+    // Keep the worker alive until the offline copy of the shell is saved.
+    event.waitUntil(
+      network.then((res) => (res.ok ? caches.open(CACHE).then((cache) => cache.put(SHELL, res.clone())) : undefined)).catch(() => {})
     );
     return;
   }
 
   if (url.pathname.startsWith('/assets/')) {
     event.respondWith(
-      caches.match(req).then((cached) => cached || fetch(req).then((res) => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
-        }
-        return res;
-      }))
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then((res) => {
+          if (res.ok) event.waitUntil(caches.open(CACHE).then((cache) => cache.put(req, res.clone())));
+          return res;
+        });
+      })
     );
     return;
   }
 
   if (isStaticAsset(url)) {
+    // Stale-while-revalidate; the refresh is kept alive with waitUntil.
+    const refresh = fetch(req).then((res) => {
+      if (res.ok) return caches.open(CACHE).then((cache) => cache.put(req, res.clone())).then(() => res);
+      return res;
+    });
+    event.waitUntil(refresh.catch(() => {}));
     event.respondWith(
-      caches.open(CACHE).then((cache) => cache.match(req).then((cached) => {
-        const fresh = fetch(req).then((res) => {
-          if (res.ok) cache.put(req, res.clone());
-          return res;
-        }).catch(() => cached || Response.error());
-        return cached || fresh;
-      }))
+      caches.match(req).then((cached) => cached || refresh.catch(() => Response.error()))
     );
   }
 });

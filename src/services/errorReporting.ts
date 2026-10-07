@@ -28,7 +28,11 @@ export function reloadForNewBuild(): boolean {
     const last = Number(sessionStorage.getItem(RELOAD_KEY) || 0);
     if (Date.now() - last < 60_000) return false;
     sessionStorage.setItem(RELOAD_KEY, String(Date.now()));
-  } catch { /* storage unavailable — still try once */ }
+  } catch {
+    // Without storage the once-a-minute limit can't hold — a chunk that keeps
+    // failing (offline, say) would reload forever. Show the fallback instead.
+    return false;
+  }
   window.location.reload();
   return true;
 }
