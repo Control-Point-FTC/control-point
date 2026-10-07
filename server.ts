@@ -1599,6 +1599,21 @@ async function createSession(memberId: number): Promise<string> {
   return token;
 }
 
+/**
+ * The signed-in user moved to another of their memberships (team switch, new
+ * or joined team, left/deleted the current one): point this device's
+ * existing session at the new membership. The token — and so the cookie —
+ * stays the same, so no in-flight response can roll the switch back.
+ */
+async function rebindSession(req: any, memberId: number): Promise<string> {
+  const token = getSessionId(req);
+  if (token && token.startsWith(TOKEN_PREFIX)) {
+    const info = (await dbRun("UPDATE sessions SET member_id = ?, last_activity = ? WHERE id = ?", memberId, new Date().toISOString(), sessionKey(token))) as any;
+    if (Number(info?.changes) > 0) return token;
+  }
+  return createSession(memberId);
+}
+
 /** createSession, but only while `memberId` still belongs to `email` and the
  *  account still has `passwordHash` — checked in the INSERT itself. */
 async function createSessionIfCredential(memberId: number, email: string, passwordHash: string): Promise<string | null> {
@@ -1642,11 +1657,16 @@ async function validateSession(token: string): Promise<{ valid: boolean; memberI
   }
 }
 
+// The cookie outlives any session (browsers cap it at 400 days); the
+// server-side sliding expiry is what actually ends a session. So the cookie
+// never needs re-issuing on activity — and a slow, older response can never
+// overwrite a newer cookie with a stale value.
+const SESSION_COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60;
 /** Set-Cookie value for a session token (or a clearing value for null). */
 function sessionCookie(token: string | null, secure: boolean): string {
   const attrs = `Path=/; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
   return token
-    ? `${SESSION_COOKIE}=${encodeURIComponent(token)}; ${attrs}; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
+    ? `${SESSION_COOKIE}=${encodeURIComponent(token)}; ${attrs}; Max-Age=${SESSION_COOKIE_MAX_AGE_S}`
     : `${SESSION_COOKIE}=; ${attrs}; Max-Age=0`;
 }
 function requestIsHttps(req: any): boolean {
@@ -2140,12 +2160,9 @@ async function startServer() {
     try {
       const cookieToken = readCookie(req, SESSION_COOKIE);
       if (cookieToken) {
-        // Validate once per request (getAuth reuses it). When the sliding
-        // expiry moved, re-issue the cookie too, so an active user's browser
-        // cookie never runs out before the stored session does.
+        // Validate once per request (getAuth reuses it).
         const v = await validateSession(cookieToken);
         req.cpSessionCheck = { token: cookieToken, ...v };
-        if (v.valid && v.touched) issue(cookieToken);
       } else if (legacyHeader && !legacyHeader.startsWith(TOKEN_PREFIX)) {
         // An old tab may fire several requests at once with the same token
         // before the new cookie arrives: they all get the same replacement,
@@ -2932,7 +2949,6 @@ async function startServer() {
   app.get("/api/auth/me", async (req, res) => {
     const auth = await getAuth(req);
     if (!auth) return res.status(401).json({ error: "Invalid session" });
-    const sessionId = getSessionId(req);
     // Teamless account (deleted/left their last team): no workspace, but the
     // session stays valid so they can create or join a team, or delete the account.
     if (auth.teamless) {
@@ -2944,7 +2960,7 @@ async function startServer() {
           team_id: null, account_type: "student", roles: [], permissions: [],
           teams: [], teamless: true,
         },
-        sessionId, isOwner,
+        isOwner,
       });
     }
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId)) as any;
@@ -2966,7 +2982,7 @@ async function startServer() {
       const pm = await presenceMap([user.id]);
       (user as any).presence = pm[user.id] || "offline";
     }
-    res.json({ user: sanitizeMember(user), sessionId, isOwner });
+    res.json({ user: sanitizeMember(user), isOwner });
   });
 
   app.get("/api/auth/google", async (req, res) => {
@@ -3622,6 +3638,15 @@ async function startServer() {
     try {
       const sid = currentSessionId(req);
       if (sid) await dbRun("DELETE FROM sessions WHERE id = ?", sid);
+      // A pre-cookie token rotated into this session may still be in its
+      // grace period — it must die with the session.
+      const token = getSessionId(req);
+      for (const [legacy, v] of rotatedLegacy) {
+        if (v.token === token) {
+          rotatedLegacy.delete(legacy);
+          await dbRun("DELETE FROM sessions WHERE id = ?", legacy);
+        }
+      }
       res.json({ ok: true });
     } catch (e) {
       res.json({ ok: true }); // logout should never fail client-side
@@ -3769,7 +3794,7 @@ async function startServer() {
     )) as any;
     await ensureRolesSeeded(teamId);
     await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
-    const sessionId = await createSession(mInfo.lastInsertRowid);
+    const sessionId = await rebindSession(req, mInfo.lastInsertRowid);
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", mInfo.lastInsertRowid));
     await inheritInterfaceMode(user);
     (user as any).teams = me?.email ? await userTeams(me.email) : [];
@@ -3808,7 +3833,7 @@ async function startServer() {
     )) as any;
     if (!row) return res.status(403).json({ error: "You're not a member of that team" });
     await inheritInterfaceMode(row);
-    const sessionId = await createSession(row.id);
+    const sessionId = await rebindSession(req, row.id);
     const team = (await dbGet("SELECT * FROM teams WHERE id = ?", teamId)) as any;
     res.json({ user: sanitizeMember(row), sessionId, team });
   });
@@ -3849,7 +3874,7 @@ async function startServer() {
       await assignSystemRole(team.id, row.id, "Member");
     }
     await inheritInterfaceMode(row);
-    const sessionId = await createSession(row.id);
+    const sessionId = await rebindSession(req, row.id);
     const user = sanitizeMember({ ...(row as any), teams: await userTeams(email) });
     const wasNew = !existing || (existing.is_active ?? 1) !== 1;
     if (wasNew) {
@@ -3891,7 +3916,7 @@ async function startServer() {
         "SELECT * FROM members WHERE email = ? AND team_id != ? AND COALESCE(is_active, 1) = 1 ORDER BY id DESC LIMIT 1", email, teamId
       )) as any;
       if (other) {
-        const sessionId = await createSession(other.id);
+        const sessionId = await rebindSession(req, other.id);
         switched = { sessionId, user: sanitizeMember({ ...(other as any), teams: await userTeams(email) }), team: (await dbGet("SELECT * FROM teams WHERE id = ?", other.team_id)) as any };
       } else {
         teamless = true;
@@ -4020,7 +4045,7 @@ async function startServer() {
           "SELECT * FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, other.team_id
         )) as any;
         if (otherRow) {
-          const sessionId = await createSession(otherRow.id);
+          const sessionId = await rebindSession(req, otherRow.id);
           switched = {
             sessionId,
             user: otherRow,

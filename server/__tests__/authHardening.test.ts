@@ -372,14 +372,46 @@ describe("moving existing sign-ins to the cookie", () => {
     expect((await api("/api/auth/me", { session: token })).status).toBe(200);
   });
 
-  it("an active session re-issues its cookie when the sliding expiry moves", async () => {
+  it("activity slides the stored expiry; the long-lived cookie is never re-sent by ordinary requests", async () => {
     const r = await post("/api/auth/login", { email: "admin-a@test.local", password: PW });
+    expect(r.setCookie).toMatch(/Max-Age=34560000/); // 400 days — the server-side expiry governs
     const token = decodeURIComponent(/cp_session=([^;]+)/.exec(r.setCookie)![1]);
-    // Pretend the last touch was long ago.
-    await db.execute({ sql: "UPDATE sessions SET last_activity = ? WHERE id = ?", args: [new Date(Date.now() - 10 * 60 * 1000).toISOString(), sessionDbId(token)] });
+    const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await db.execute({ sql: "UPDATE sessions SET last_activity = ?, expires_at = ? WHERE id = ?", args: [old, new Date(Date.now() + 60_000).toISOString(), sessionDbId(token)] });
     const res = await fetch(`${base}/api/auth/me`, { headers: { cookie: `cp_session=${token}` } });
     expect(res.status).toBe(200);
-    expect(res.headers.get("set-cookie") || "").toContain(`cp_session=${token}`);
+    // No Set-Cookie: a slow response can never roll a newer cookie back.
+    expect(res.headers.get("set-cookie") || "").not.toContain("cp_session=");
+    const row = (await db.execute({ sql: "SELECT expires_at FROM sessions WHERE id = ?", args: [sessionDbId(token)] })).rows[0] as any;
+    expect(Date.parse(row.expires_at) - Date.now()).toBeGreaterThan(29 * 24 * 3600 * 1000);
+  });
+
+  it("switching workspace keeps the same session token (rebinds it)", async () => {
+    // member-a belongs to teams A and B (an admin edit above moved a team-B
+    // row to this email); give that row the account's password.
+    await db.execute({ sql: "UPDATE members SET password = (SELECT password FROM members WHERE id = ?) WHERE email = 'member-a@test.local'", args: [ids.memberA] });
+    const r = await post("/api/auth/login", { email: "member-a@test.local", password: PW });
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(r.setCookie)![1]);
+    const me = await api("/api/auth/me", { session: token });
+    const other = me.body.user.team_id === ids.teamA ? ids.teamB : ids.teamA;
+    const sw = await api("/api/teams/switch", { method: "POST", body: JSON.stringify({ team_id: other }), session: token });
+    expect(sw.status).toBe(200);
+    expect(sw.body.sessionId).toBeUndefined();
+    expect(sw.setCookie === "" || sw.setCookie.includes(`cp_session=${token}`)).toBe(true);
+    expect((await api("/api/auth/me", { session: token })).body.user.team_id).toBe(other);
+  });
+
+  it("signing out also revokes a migrated pre-cookie token in its grace period", async () => {
+    const now = new Date().toISOString();
+    const far = new Date(Date.now() + 86400000).toISOString();
+    const legacy = "session_1700000000001_logout";
+    await db.execute({ sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", args: [legacy, ids.memberA, now, far, now] });
+    const first = await fetch(`${base}/api/auth/me`, { headers: { "x-session-id": legacy } });
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(first.headers.get("set-cookie") || "")![1]);
+    const out = await api("/api/auth/logout", { method: "POST", session: token });
+    expect(out.status).toBe(200);
+    const left = (await db.execute({ sql: "SELECT COUNT(*) AS n FROM sessions WHERE id IN (?, ?)", args: [legacy, sessionDbId(token)] })).rows[0] as any;
+    expect(Number(left.n)).toBe(0);
   });
 });
 
