@@ -58,7 +58,7 @@ export function CallsPolicy() {
         {(v.dirty || v.saving) && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} className="sticky bottom-0 flex items-center justify-end gap-3 rounded-b-xl border-t border-border bg-card/95 px-4 py-3 backdrop-blur">
             {v.dirty && !v.saving && <span className="text-sm text-muted-foreground">Unsaved changes</span>}
-            <Button onClick={() => void v.save()} disabled={v.saving || !v.dirty} className="max-sm:h-11">
+            <Button onClick={() => void v.save()} disabled={v.saving || !v.dirty}>
               {v.saving ? <><Loader2 className="animate-spin" /> Saving…</> : <><PhoneCall /> Save calls policy</>}
             </Button>
           </motion.div>

@@ -20,9 +20,9 @@ export function CallsSection() {
       <SettingsGroup title="Joining calls">
         <SettingsRow label="Camera when you join" description="Your camera never turns on by itself unless you choose Always on.">
           <ToggleGroup type="single" value={camera} onValueChange={(v) => { if (v) { setCamera(v as CameraDefault); setCameraDefault(v as CameraDefault); } }} aria-label="Camera default">
-            <ToggleGroupItem value="ask" className="px-3 max-sm:h-10">Ask</ToggleGroupItem>
-            <ToggleGroupItem value="on" className="px-3 max-sm:h-10">Always on</ToggleGroupItem>
-            <ToggleGroupItem value="off" className="px-3 max-sm:h-10">Always off</ToggleGroupItem>
+            <ToggleGroupItem value="ask">Ask</ToggleGroupItem>
+            <ToggleGroupItem value="on">Always on</ToggleGroupItem>
+            <ToggleGroupItem value="off">Always off</ToggleGroupItem>
           </ToggleGroup>
         </SettingsRow>
       </SettingsGroup>

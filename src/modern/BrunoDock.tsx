@@ -32,7 +32,7 @@ function IconAction({ label, onClick, disabled, children }: { label: string; onC
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="text-muted-foreground max-sm:size-11" aria-label={label} onClick={onClick} disabled={disabled}>{children}</Button>
+        <Button variant="ghost" size="icon" className="text-muted-foreground" aria-label={label} onClick={onClick} disabled={disabled}>{children}</Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>

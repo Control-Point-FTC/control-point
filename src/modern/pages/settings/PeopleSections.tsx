@@ -39,7 +39,7 @@ export function MembersSection(props: any) {
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">{members.length} {members.length === 1 ? 'member' : 'members'} · {online} online</p>
-        {canInvite && <Button onClick={() => setInviteOpen(true)} className="max-sm:h-11"><UserPlus /> Invite people</Button>}
+        {canInvite && <Button onClick={() => setInviteOpen(true)}><UserPlus /> Invite people</Button>}
       </div>
       {canInvite && <JoinRequestsCard onDecided={onRefresh} />}
       <MembersTab
@@ -62,7 +62,7 @@ export function RolesSection(props: any) {
     <div>
       {canManage && (
         <div className="mb-4 flex justify-end">
-          <Button onClick={() => roles.openRole('new')} className="max-sm:h-11"><Plus /> New role</Button>
+          <Button onClick={() => roles.openRole('new')}><Plus /> New role</Button>
         </div>
       )}
       <RolesTab ctl={roles} members={members} canManage={canManage} />

@@ -36,7 +36,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         description="Every part, tool and material the team owns — search it, add it, keep the counts right."
         actions={(
           <>
-            <Button variant="outline" className="max-sm:h-11" disabled={!inventory.length} onClick={() => downloadCsv(datedName('inventory'), inventory, [
+            <Button variant="outline" disabled={!inventory.length} onClick={() => downloadCsv(datedName('inventory'), inventory, [
               { header: 'Name', value: (p: any) => p.name },
               { header: 'SKU', value: (p: any) => p.sku },
               { header: 'Part number', value: (p: any) => p.part_number },
@@ -46,10 +46,10 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
               { header: 'Location', value: (p: any) => p.location },
             ])}><Download /> Export CSV</Button>
             {ctl.canManage && (<>
-            <Button variant="outline" onClick={() => ctl.invoiceFileRef.current?.click()} disabled={!!ctl.invoiceParsing} className="max-sm:h-11">
+            <Button variant="outline" onClick={() => ctl.invoiceFileRef.current?.click()} disabled={!!ctl.invoiceParsing}>
               {ctl.invoiceParsing ? <Loader2 className="animate-spin" /> : <FileUp />} {ctl.invoiceParsing || 'Import invoice'}
             </Button>
-            <Button onClick={ctl.openAdd} className="max-sm:h-11"><Plus /> Add part</Button>
+            <Button onClick={ctl.openAdd}><Plus /> Add part</Button>
             <input ref={ctl.invoiceFileRef} type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple className="hidden" onChange={ctl.handleInvoiceFile} aria-label="Invoice files" />
             </>)}
           </>
@@ -68,7 +68,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
           <Input value={ctl.searchTerm} onChange={(e) => ctl.setSearchTerm(e.target.value)} placeholder="Search by name, SKU or part number" aria-label="Search parts" className="pl-9 max-sm:h-11" />
         </div>
         {ctl.canManage && uncategorized && (
-          <Button variant="outline" onClick={ctl.handleAutoCategorize} disabled={ctl.autoCategorizing} className="max-sm:h-11">
+          <Button variant="outline" onClick={ctl.handleAutoCategorize} disabled={ctl.autoCategorizing}>
             <Tags /> {ctl.autoCategorizing ? 'Categorizing…' : 'Auto-categorize'}
           </Button>
         )}
@@ -78,9 +78,9 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         </ToggleGroup>
       </div>
       {ctl.categories.length > 0 && (
-        <ToggleGroup type="single" aria-label="Category" value={ctl.filterCategory || 'all'} onValueChange={(v) => ctl.setFilterCategory(!v || v === 'all' ? '' : v)} className="mb-5 flex w-full justify-start gap-1.5 overflow-x-auto bg-transparent p-0 pb-1">
+        <ToggleGroup variant="chips" type="single" aria-label="Category" value={ctl.filterCategory || 'all'} onValueChange={(v) => ctl.setFilterCategory(!v || v === 'all' ? '' : v)} className="mb-5 w-full overflow-x-auto pb-1 flex-nowrap">
           {['all', ...ctl.categories].map((c) => (
-            <ToggleGroupItem key={c} value={c} className="h-8 shrink-0 rounded-full border border-border px-3 data-[state=on]:border-accent/50 data-[state=on]:bg-accent/10 data-[state=on]:shadow-none max-sm:h-11">
+            <ToggleGroupItem key={c} value={c}>
               {c === 'all' ? 'All' : c}
             </ToggleGroupItem>
           ))}
@@ -188,7 +188,7 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                   <Label htmlFor="part-rev" className="flex items-center gap-1.5"><Link2 className="size-4" /> Import from REV Robotics</Label>
                   <div className="mt-2 flex gap-2">
                     <Input id="part-rev" value={ctl.revLink} onChange={(e) => ctl.setRevLink(e.target.value)} placeholder="Paste a REV product link" className="min-w-0 flex-1 max-sm:h-11" />
-                    <Button type="button" variant="outline" onClick={ctl.handleImportRev} disabled={ctl.isLoadingRev || !ctl.revLink.trim()} className="max-sm:h-11">
+                    <Button type="button" variant="outline" onClick={ctl.handleImportRev} disabled={ctl.isLoadingRev || !ctl.revLink.trim()}>
                       {ctl.isLoadingRev ? <Loader2 className="animate-spin" /> : null}{ctl.isLoadingRev ? 'Loading…' : 'Import'}
                     </Button>
                   </div>
@@ -226,8 +226,8 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               </fieldset>
             </form>
             <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-              <Button variant="outline" onClick={close} className="max-sm:h-11">Cancel</Button>
-              <Button type="submit" form="part-form" disabled={ctl.busy} className="max-sm:h-11">{ctl.busy ? 'Saving…' : editing ? 'Save changes' : 'Add part'}</Button>
+              <Button variant="outline" onClick={close}>Cancel</Button>
+              <Button type="submit" form="part-form" disabled={ctl.busy}>{ctl.busy ? 'Saving…' : editing ? 'Save changes' : 'Add part'}</Button>
             </SheetFooter>
           </>
         )}

@@ -98,10 +98,10 @@ export function AccountSection({ currentUser, teams = [] }: any) {
 
       <SettingsGroup title="Your data">
         <SettingsRow label="Download my data" description="A JSON file of your profile and everything you’ve created.">
-          <Button variant="outline" onClick={() => void exportData()} disabled={exporting} className="max-sm:h-11">{exporting ? <Loader2 className="animate-spin" /> : <Download />} Download</Button>
+          <Button variant="outline" onClick={() => void exportData()} disabled={exporting}>{exporting ? <Loader2 className="animate-spin" /> : <Download />} Download</Button>
         </SettingsRow>
         <SettingsRow label="Cookies & storage" description="Choose which optional cookies and storage this site may use.">
-          <Button variant="outline" onClick={() => window.dispatchEvent(new Event('cp:cookie-settings'))} className="max-sm:h-11"><Cookie /> Cookie settings</Button>
+          <Button variant="outline" onClick={() => window.dispatchEvent(new Event('cp:cookie-settings'))}><Cookie /> Cookie settings</Button>
         </SettingsRow>
       </SettingsGroup>
 
@@ -115,7 +115,7 @@ export function AccountSection({ currentUser, teams = [] }: any) {
                 : 'Permanently deletes your account and personal data. This can’t be undone.'}
             </p>
           </div>
-          <Button variant="destructive" disabled={teams.length > 0} onClick={() => { setConfirmEmail(''); setDeleteOpen(true); }} className="shrink-0 max-sm:h-11">Delete my account</Button>
+          <Button variant="destructive" disabled={teams.length > 0} onClick={() => { setConfirmEmail(''); setDeleteOpen(true); }} className="shrink-0">Delete my account</Button>
         </div>
       </section>
 

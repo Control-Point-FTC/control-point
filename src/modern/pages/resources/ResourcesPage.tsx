@@ -57,9 +57,9 @@ export function ResourcesPage() {
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles, notes and links" aria-label="Search resources" className="pl-9 max-sm:h-11" />
           </div>
         </div>
-        <ToggleGroup type="single" aria-label="Category" value={ctl.filter} onValueChange={(v) => { if (v) ctl.setFilter(v); }} className="mb-5 flex w-full justify-start gap-1.5 overflow-x-auto bg-transparent p-0 pb-1">
+        <ToggleGroup variant="chips" type="single" aria-label="Category" value={ctl.filter} onValueChange={(v) => { if (v) ctl.setFilter(v); }} className="mb-5 w-full overflow-x-auto pb-1 flex-nowrap">
           {RESOURCE_FILTERS.map((f) => (
-            <ToggleGroupItem key={f} value={f} className="h-8 shrink-0 rounded-full border border-border px-3 data-[state=on]:border-accent/50 data-[state=on]:bg-accent/10 data-[state=on]:shadow-none max-sm:h-11">
+            <ToggleGroupItem key={f} value={f}>
               {f}{ctl.counts[f] > 0 && <span className="text-muted-foreground"> {ctl.counts[f]}</span>}
             </ToggleGroupItem>
           ))}
@@ -131,7 +131,7 @@ function Composer({ ctl }: { ctl: Ctl }) {
       />
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <p className="min-w-0 flex-1 text-xs text-muted-foreground">Tip: dump a whole thread here — each URL is filed under the right category.</p>
-        <Button onClick={() => void ctl.handleParse()} disabled={!ctl.pasteText.trim() || ctl.parsing || ctl.saving} className="max-sm:h-11 max-sm:w-full">
+        <Button onClick={() => void ctl.handleParse()} disabled={!ctl.pasteText.trim() || ctl.parsing || ctl.saving} className="max-sm:w-full">
           {ctl.parsing ? <Loader2 className="animate-spin" /> : <Sparkles />} {ctl.parsing ? 'Bruno is reading…' : 'Extract links with Bruno'}
         </Button>
       </div>
@@ -162,8 +162,8 @@ function Composer({ ctl }: { ctl: Ctl }) {
           </fieldset>
           {ctl.saveError && <p role="alert" className="mt-3 text-sm text-destructive">{ctl.saveError}</p>}
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={ctl.discardPreview} disabled={ctl.saving} className="max-sm:h-11">Discard</Button>
-            <Button onClick={() => void ctl.handleSaveAll()} disabled={ctl.saving || preview.length === 0} className="max-sm:h-11">
+            <Button variant="outline" onClick={ctl.discardPreview} disabled={ctl.saving}>Discard</Button>
+            <Button onClick={() => void ctl.handleSaveAll()} disabled={ctl.saving || preview.length === 0}>
               {ctl.saving ? <Loader2 className="animate-spin" /> : <Save />} {ctl.saving ? 'Saving…' : `Save all ${preview.length}`}
             </Button>
           </div>

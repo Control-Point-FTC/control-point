@@ -38,14 +38,14 @@ export function CadReviewsTab({ currentUser, isAdmin }: { currentUser?: any; isA
   return (
     <>
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <ToggleGroup type="single" aria-label="Status" value={ctl.filter} onValueChange={(v) => { if (v) ctl.setFilter(v); }} className="flex max-w-full justify-start gap-1.5 overflow-x-auto bg-transparent p-0">
+        <ToggleGroup variant="chips" type="single" aria-label="Status" value={ctl.filter} onValueChange={(v) => { if (v) ctl.setFilter(v); }} className="max-w-full overflow-x-auto flex-nowrap">
           {REVIEW_FILTERS.map((s) => (
-            <ToggleGroupItem key={s} value={s} className="h-8 shrink-0 rounded-full border border-border px-3 data-[state=on]:border-accent/50 data-[state=on]:bg-accent/10 data-[state=on]:shadow-none max-sm:h-11">
+            <ToggleGroupItem key={s} value={s}>
               {s === 'all' ? 'All' : REVIEW_STATUS_LABELS[s]}{counts[s] ? <span className="text-muted-foreground"> {counts[s]}</span> : null}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Button onClick={() => ctl.setShowForm(true)} className="ml-auto max-sm:h-11"><Plus /> Submit design</Button>
+        <Button onClick={() => ctl.setShowForm(true)} className="ml-auto"><Plus /> Submit design</Button>
       </div>
 
       {!ctl.loaded ? <div className="grid gap-4 md:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-56" />)}</div> : ctl.visible.length ? (
@@ -143,7 +143,7 @@ function ReviewDetail({ review, ctl, isAdmin, onDeleted }: { review: any; ctl: R
       </div>
       <form className="flex gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]" onSubmit={(e) => { e.preventDefault(); void c.send(); }}>
         <Input value={c.text} onChange={(e) => c.setText(e.target.value)} disabled={c.sending} placeholder="Add a comment…" aria-label="Add a comment" className="max-sm:h-11" />
-        <Button type="submit" size="icon" disabled={!c.text.trim() || c.sending} aria-label="Send comment" className="shrink-0 max-sm:size-11"><Send /></Button>
+        <Button type="submit" size="icon" disabled={!c.text.trim() || c.sending} aria-label="Send comment" className="shrink-0"><Send /></Button>
       </form>
     </>
   );
@@ -186,8 +186,8 @@ function SubmitSheet({ ctl }: { ctl: Reviews }) {
           </fieldset>
         </form>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <Button variant="outline" onClick={() => ctl.setShowForm(false)} disabled={f.busy} className="max-sm:h-11">Cancel</Button>
-          <Button type="submit" form="review-form" disabled={f.busy} className="max-sm:h-11"><Check /> {f.busy ? 'Submitting…' : 'Submit'}</Button>
+          <Button variant="outline" onClick={() => ctl.setShowForm(false)} disabled={f.busy}>Cancel</Button>
+          <Button type="submit" form="review-form" disabled={f.busy}><Check /> {f.busy ? 'Submitting…' : 'Submit'}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>

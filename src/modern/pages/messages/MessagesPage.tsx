@@ -138,14 +138,14 @@ export function MessagesPage(props: any) {
           onDrop={ctl.handleDrop}
         >
           <header className="flex min-h-14 items-center gap-2 border-b border-border px-3 sm:px-4">
-            <Button variant="ghost" size="icon" className="md:hidden max-sm:size-11" aria-label="Channels" onClick={() => setChannelsOpen(true)}><Menu /></Button>
+            <Button variant="ghost" size="icon" className="md:hidden" aria-label="Channels" onClick={() => setChannelsOpen(true)}><Menu /></Button>
             <Hash className="size-4 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-1.5 truncate text-sm font-semibold">{ch?.name || 'general'}{ch?.post_restricted ? <Lock className="size-3.5 text-muted-foreground" aria-label="Admin-only posting" /> : null}</p>
               {ch?.topic && <p className="truncate text-xs text-muted-foreground">{ch.topic}</p>}
             </div>
             <Button variant={showPeople ? 'secondary' : 'ghost'} size="icon" aria-label="Show people" aria-pressed={showPeople} className="hidden xl:inline-flex" onClick={() => setShowPeople((v) => !v)}><Users /></Button>
-            <Button variant="ghost" size="icon" aria-label="People" className="xl:hidden max-sm:size-11" onClick={() => setPeopleOpen(true)}><Users /></Button>
+            <Button variant="ghost" size="icon" aria-label="People" className="xl:hidden" onClick={() => setPeopleOpen(true)}><Users /></Button>
           </header>
 
           <div ref={ctl.scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1 pb-4 sm:px-3">
@@ -209,7 +209,7 @@ export function MessagesPage(props: any) {
                 )}
                 <div className="flex items-end gap-1 p-2">
                   <input ref={ctl.fileInputRef} type="file" className="hidden" onChange={ctl.handleFileUpload} aria-label="Attach a file" />
-                  <Button variant="ghost" size="icon" aria-label="Attach a file" className="shrink-0 text-muted-foreground max-sm:size-11" onClick={() => ctl.fileInputRef.current?.click()} disabled={ctl.uploading}><Paperclip /></Button>
+                  <Button variant="ghost" size="icon" aria-label="Attach a file" className="shrink-0 text-muted-foreground" onClick={() => ctl.fileInputRef.current?.click()} disabled={ctl.uploading}><Paperclip /></Button>
                   <textarea
                     ref={ctl.composerRef}
                     rows={1}
@@ -221,7 +221,7 @@ export function MessagesPage(props: any) {
                     aria-label={`Message #${ch?.name || 'general'}`}
                     className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
                   />
-                  <Button size="icon" className="shrink-0 rounded-full max-sm:size-11" aria-label="Send message" onClick={() => void ctl.handleSend()} disabled={ctl.uploading || (!ctl.content.trim() && !ctl.pendingFile)}><ArrowUp /></Button>
+                  <Button size="icon" className="shrink-0 rounded-full" aria-label="Send message" onClick={() => void ctl.handleSend()} disabled={ctl.uploading || (!ctl.content.trim() && !ctl.pendingFile)}><ArrowUp /></Button>
                 </div>
               </div>
             )}

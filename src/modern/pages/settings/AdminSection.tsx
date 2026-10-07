@@ -94,7 +94,7 @@ export function AdminSection({ settings = {}, isAdmin, isOwner, hasPerm, refresh
         <SettingsGroup title="AI configuration" description="App owner only. Max tokens per feature and the chat provider.">
           <SettingsRow label="Chat provider">
             <ToggleGroup type="single" value={aiValues.chat_provider} onValueChange={(v) => { if (v) setAi({ ...aiValues, chat_provider: v }); }} aria-label="Chat provider">
-              {['hybrid', 'fireworks', 'gemini'].map((p) => <ToggleGroupItem key={p} value={p} className="px-3 capitalize max-sm:h-10">{p}</ToggleGroupItem>)}
+              {['hybrid', 'fireworks', 'gemini'].map((p) => <ToggleGroupItem key={p} value={p} className="capitalize">{p}</ToggleGroupItem>)}
             </ToggleGroup>
           </SettingsRow>
           <div className="grid gap-4 p-4 sm:grid-cols-2">

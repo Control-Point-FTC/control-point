@@ -39,7 +39,7 @@ export function AnalyzeWorkspace({ season, onSeasonChange, myTeam, initialTeam =
             <TabsTrigger value="team" className="max-sm:h-11"><Users /> Team detail</TabsTrigger>
             <TabsTrigger value="shortlist" className="max-sm:h-11"><Bookmark /> Shortlist{ctl.shortlist.length ? ` (${ctl.shortlist.length})` : ''}</TabsTrigger>
           </TabsList>
-          <Button variant="outline" onClick={() => openBruno({ greeting: ANALYZE_GREETING })} className="ml-auto max-sm:h-11"><Bot /> Ask Bruno</Button>
+          <Button variant="outline" onClick={() => openBruno({ greeting: ANALYZE_GREETING })} className="ml-auto"><Bot /> Ask Bruno</Button>
         </div>
         {ctl.shortlistErr && ctl.view !== 'shortlist' && <p role="alert" className="mb-3 text-sm text-destructive">Scouting shortlist: {ctl.shortlistErr}</p>}
         <TabsContent value="field"><EventFieldView season={season} code={ctl.eventCode} myTeam={myTeam} ctl={ctl} /></TabsContent>
@@ -134,9 +134,9 @@ function FinderBar({ ctl, season, onSeasonChange }: { ctl: Ctl; season: number; 
       <div className="mt-4 grid gap-3 border-t border-border pt-4">
         <SeasonToggle seasons={ALL_SEASONS} value={season} onChange={onSeasonChange} />
         {ctl.eventOptions.length ? (
-          <ToggleGroup type="single" aria-label="Event" value={ctl.eventCode ?? ''} onValueChange={(v) => { if (v) ctl.chooseEvent(v); }} className="-mx-1 flex w-[calc(100%+0.5rem)] justify-start gap-2 overflow-x-auto bg-transparent px-1 pb-1">
+          <ToggleGroup variant="cards" type="single" aria-label="Event" value={ctl.eventCode ?? ''} onValueChange={(v) => { if (v) ctl.chooseEvent(v); }} className="-mx-1 w-[calc(100%+0.5rem)] overflow-x-auto px-1 pb-1">
             {ctl.eventOptions.map((o) => (
-              <ToggleGroupItem key={o.code} value={o.code} className="h-auto min-h-12 shrink-0 flex-col items-start gap-0.5 rounded-xl border border-border bg-background px-3 py-2 text-left data-[state=on]:border-accent/60 data-[state=on]:bg-accent/10 data-[state=on]:shadow-none">
+              <ToggleGroupItem key={o.code} value={o.code}>
                 <span className="max-w-[14rem] truncate text-sm font-medium text-foreground">{o.name}</span>
                 <span className="text-xs text-muted-foreground">{o.date ?? 'Date TBA'}</span>
               </ToggleGroupItem>
@@ -208,18 +208,18 @@ function EventFieldView({ season, code, myTeam, ctl }: { season: number; code: s
           <Input value={f.filter} onChange={(e) => f.setFilter(e.target.value)} placeholder="Filter by number or name" aria-label="Filter teams" className="pl-9 max-sm:h-11" />
         </div>
         <ToggleGroup type="single" aria-label="Round filter" value={f.round} onValueChange={(v) => { if (v) f.setRound(v as typeof f.round); }}>
-          <ToggleGroupItem value="all" className="max-sm:h-11">All rounds</ToggleGroupItem>
-          <ToggleGroupItem value="qual" className="max-sm:h-11">Quals</ToggleGroupItem>
-          <ToggleGroupItem value="playoff" className="max-sm:h-11">Playoffs</ToggleGroupItem>
+          <ToggleGroupItem value="all">All rounds</ToggleGroupItem>
+          <ToggleGroupItem value="qual">Quals</ToggleGroupItem>
+          <ToggleGroupItem value="playoff">Playoffs</ToggleGroupItem>
         </ToggleGroup>
         <ToggleGroup type="single" aria-label="Alliance color filter" value={f.color} onValueChange={(v) => { if (v) f.setColor(v as typeof f.color); }}>
-          <ToggleGroupItem value="all" className="max-sm:h-11">Any</ToggleGroupItem>
-          <ToggleGroupItem value="red" className="max-sm:h-11"><span className="size-2 rounded-full bg-red-500" /> Red</ToggleGroupItem>
-          <ToggleGroupItem value="blue" className="max-sm:h-11"><span className="size-2 rounded-full bg-blue-500" /> Blue</ToggleGroupItem>
+          <ToggleGroupItem value="all">Any</ToggleGroupItem>
+          <ToggleGroupItem value="red"><span className="size-2 rounded-full bg-red-500" /> Red</ToggleGroupItem>
+          <ToggleGroupItem value="blue"><span className="size-2 rounded-full bg-blue-500" /> Blue</ToggleGroupItem>
         </ToggleGroup>
         {narrow && (
           <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button variant="outline" className="max-sm:h-11">Sort: {SORTS.find((s) => s.key === f.sort.key)?.label ?? 'Rank'}</Button></DropdownMenuTrigger>
+            <DropdownMenuTrigger asChild><Button variant="outline">Sort: {SORTS.find((s) => s.key === f.sort.key)?.label ?? 'Rank'}</Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Sort by</DropdownMenuLabel>
               <DropdownMenuRadioGroup value={f.sort.key} onValueChange={(k) => { const s = SORTS.find((x) => x.key === k); if (s) f.setSort({ key: s.key, dir: s.dir }); }}>
@@ -292,9 +292,9 @@ function EventFieldView({ season, code, myTeam, ctl }: { season: number; code: s
 
       {f.pages > 1 && (
         <nav className="flex items-center justify-center gap-3 text-sm" aria-label="Pagination">
-          <Button variant="ghost" size="icon" disabled={f.page === 0} onClick={() => f.setPage((p) => p - 1)} aria-label="Previous page" className="max-sm:size-11"><ChevronLeft /></Button>
+          <Button variant="ghost" size="icon" disabled={f.page === 0} onClick={() => f.setPage((p) => p - 1)} aria-label="Previous page"><ChevronLeft /></Button>
           <span className="text-muted-foreground">Page {f.page + 1} of {f.pages} · {f.rows.length} teams</span>
-          <Button variant="ghost" size="icon" disabled={f.page >= f.pages - 1} onClick={() => f.setPage((p) => p + 1)} aria-label="Next page" className="max-sm:size-11"><ChevronRight /></Button>
+          <Button variant="ghost" size="icon" disabled={f.page >= f.pages - 1} onClick={() => f.setPage((p) => p + 1)} aria-label="Next page"><ChevronRight /></Button>
         </nav>
       )}
       <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">

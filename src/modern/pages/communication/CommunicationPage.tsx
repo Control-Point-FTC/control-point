@@ -80,10 +80,10 @@ export function CommunicationPage(props: any) {
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people, subjects, text" aria-label="Search conversations" className="pl-9 max-sm:h-11" />
           </div>
           <ToggleGroup type="single" value={filter} onValueChange={(v) => { if (v) setFilter(v as Filter); }} aria-label="Filter" className="flex-wrap">
-            <ToggleGroupItem value="all" className="px-3 max-sm:h-10">All</ToggleGroupItem>
-            <ToggleGroupItem value="awaiting" className="px-3 max-sm:h-10">Awaiting reply</ToggleGroupItem>
-            <ToggleGroupItem value="email" className="px-3 max-sm:h-10">Email</ToggleGroupItem>
-            <ToggleGroupItem value="announcement" className="px-3 max-sm:h-10">Announcements</ToggleGroupItem>
+            <ToggleGroupItem value="all">All</ToggleGroupItem>
+            <ToggleGroupItem value="awaiting">Awaiting reply</ToggleGroupItem>
+            <ToggleGroupItem value="email">Email</ToggleGroupItem>
+            <ToggleGroupItem value="announcement">Announcements</ToggleGroupItem>
           </ToggleGroup>
         </div>
       </PageHeader>
@@ -224,8 +224,8 @@ function NewLogSheet({ ctl }: { ctl: Ctl }) {
         <form className="flex min-h-0 flex-1 flex-col" onSubmit={(e) => { e.preventDefault(); void ctl.handleAdd(); }}>
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
             <ToggleGroup type="single" value={f.type} onValueChange={(v) => { if (v) set({ type: v }); }} aria-label="Message type" className="justify-start">
-              <ToggleGroupItem value="email" className="px-3 max-sm:h-10"><Mail /> Email</ToggleGroupItem>
-              <ToggleGroupItem value="announcement" className="px-3 max-sm:h-10"><Megaphone /> Announcement</ToggleGroupItem>
+              <ToggleGroupItem value="email"><Mail /> Email</ToggleGroupItem>
+              <ToggleGroupItem value="announcement"><Megaphone /> Announcement</ToggleGroupItem>
             </ToggleGroup>
             <div className="grid gap-2"><Label htmlFor="comm-to">To</Label><Input id="comm-to" value={f.recipient} onChange={(e) => set({ recipient: e.target.value })} placeholder="Sponsor, parents, venue…" /></div>
             <div className="grid gap-2"><Label htmlFor="comm-subject">Subject</Label><Input id="comm-subject" value={f.subject} onChange={(e) => set({ subject: e.target.value })} /></div>
@@ -256,8 +256,8 @@ function ReplyDialog({ ctl }: { ctl: Ctl }) {
         </DialogHeader>
         <form id="comm-reply" className="space-y-4" onSubmit={(e) => { e.preventDefault(); void ctl.handleReply(); }}>
           <ToggleGroup type="single" value={f.direction} onValueChange={(v) => { if (v) set({ direction: v }); }} aria-label="Direction" className="justify-start">
-            <ToggleGroupItem value="inbound" className="px-3 max-sm:h-10"><ArrowDownLeft /> They replied</ToggleGroupItem>
-            <ToggleGroupItem value="outbound" className="px-3 max-sm:h-10"><ArrowUpRight /> We followed up</ToggleGroupItem>
+            <ToggleGroupItem value="inbound"><ArrowDownLeft /> They replied</ToggleGroupItem>
+            <ToggleGroupItem value="outbound"><ArrowUpRight /> We followed up</ToggleGroupItem>
           </ToggleGroup>
           <div className="grid gap-2"><Label htmlFor="reply-body">Message</Label><Textarea id="reply-body" value={f.body} onChange={(e) => set({ body: e.target.value })} placeholder={inbound ? 'Paste their response…' : 'Write your follow-up…'} className="min-h-32" /></div>
           <div className="grid gap-2"><Label htmlFor="reply-date">When</Label><Input id="reply-date" type="datetime-local" value={toInput(f.date)} onChange={(e) => set({ date: fromInput(e.target.value) })} /></div>
@@ -282,8 +282,8 @@ function EditDialog({ ctl }: { ctl: Ctl }) {
         <DialogHeader><DialogTitle>Edit entry</DialogTitle><DialogDescription>Changes show for everyone.</DialogDescription></DialogHeader>
         <form id="comm-edit" className="space-y-4" onSubmit={(ev) => { ev.preventDefault(); void ctl.handleEdit(); }}>
           <ToggleGroup type="single" value={f.direction} onValueChange={(v) => { if (v) set({ direction: v }); }} aria-label="Direction" className="justify-start">
-            <ToggleGroupItem value="outbound" className="px-3 max-sm:h-10"><ArrowUpRight /> Sent by us</ToggleGroupItem>
-            <ToggleGroupItem value="inbound" className="px-3 max-sm:h-10"><ArrowDownLeft /> Received</ToggleGroupItem>
+            <ToggleGroupItem value="outbound"><ArrowUpRight /> Sent by us</ToggleGroupItem>
+            <ToggleGroupItem value="inbound"><ArrowDownLeft /> Received</ToggleGroupItem>
           </ToggleGroup>
           {isRoot && (
             <>

@@ -45,8 +45,8 @@ export function OutreachPage({ outreach, setOutreach, socialProfiles, setSocialP
         description="Every demo, workshop and fundraiser the team runs — and the channels that tell the story."
         actions={
           <>
-            <Button variant="outline" onClick={() => ctl.setBulkOpen(true)} className="max-sm:h-11"><Wand2 /> Bruno AI</Button>
-            <Button onClick={ctl.openAdd} className="max-sm:h-11"><Plus /> Log event</Button>
+            <Button variant="outline" onClick={() => ctl.setBulkOpen(true)}><Wand2 /> Bruno AI</Button>
+            <Button onClick={ctl.openAdd}><Plus /> Log event</Button>
           </>
         }
       />
@@ -269,9 +269,9 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
         <form id="outreach-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void ctl.handleSubmit(); }}>
           <fieldset disabled={ctl.saving} className="m-0 min-w-0 space-y-5 border-0 p-0">
           {!ctl.editingId && (
-            <ToggleGroup type="single" aria-label="Quick type" value={OUTREACH_PRESETS.includes(f.title) ? f.title : ''} onValueChange={(v) => { if (v) ctl.setForm((cur) => ({ ...cur, title: v })); }} className="flex flex-wrap justify-start gap-1.5 bg-transparent p-0">
+            <ToggleGroup variant="chips" type="single" aria-label="Quick type" value={OUTREACH_PRESETS.includes(f.title) ? f.title : ''} onValueChange={(v) => { if (v) ctl.setForm((cur) => ({ ...cur, title: v })); }}>
               {OUTREACH_PRESETS.map((p) => (
-                <ToggleGroupItem key={p} value={p} className="h-8 rounded-full border border-border px-3 data-[state=on]:border-accent/50 data-[state=on]:bg-accent/10 data-[state=on]:shadow-none max-sm:h-11">{p}</ToggleGroupItem>
+                <ToggleGroupItem key={p} value={p}>{p}</ToggleGroupItem>
               ))}
             </ToggleGroup>
           )}
@@ -302,8 +302,8 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
           </fieldset>
         </form>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <Button variant="outline" onClick={ctl.closeForm} className="max-sm:h-11">Cancel</Button>
-          <Button type="submit" form="outreach-form" disabled={ctl.saving} className="max-sm:h-11">{ctl.saving ? 'Saving…' : ctl.editingId ? 'Save changes' : 'Log event'}</Button>
+          <Button variant="outline" onClick={ctl.closeForm}>Cancel</Button>
+          <Button type="submit" form="outreach-form" disabled={ctl.saving}>{ctl.saving ? 'Saving…' : ctl.editingId ? 'Save changes' : 'Log event'}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
@@ -332,8 +332,8 @@ function BulkSheet({ ctl }: { ctl: Ctl }) {
             />
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={ctl.handleBulkParse} disabled={!ctl.bulkText.trim() || ctl.bulkSaving} className="max-sm:h-11">Quick parse</Button>
-            <Button variant="outline" onClick={() => void ctl.handleBulkAiParse()} disabled={ctl.bulkBusy || ctl.bulkSaving || !ctl.bulkText.trim()} className="max-sm:h-11">
+            <Button variant="outline" onClick={ctl.handleBulkParse} disabled={!ctl.bulkText.trim() || ctl.bulkSaving}>Quick parse</Button>
+            <Button variant="outline" onClick={() => void ctl.handleBulkAiParse()} disabled={ctl.bulkBusy || ctl.bulkSaving || !ctl.bulkText.trim()}>
               {ctl.bulkBusy ? <Loader2 className="animate-spin" /> : <Sparkles />} {ctl.bulkBusy ? 'Bruno is reading…' : 'Bruno'}
             </Button>
           </div>
@@ -353,8 +353,8 @@ function BulkSheet({ ctl }: { ctl: Ctl }) {
           )}
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <Button variant="outline" onClick={() => ctl.setBulkOpen(false)} className="max-sm:h-11">Close</Button>
-          <Button onClick={() => void ctl.handleBulkLogAll()} disabled={ctl.bulkSaving || !ctl.bulkRows.length} className="max-sm:h-11">
+          <Button variant="outline" onClick={() => ctl.setBulkOpen(false)}>Close</Button>
+          <Button onClick={() => void ctl.handleBulkLogAll()} disabled={ctl.bulkSaving || !ctl.bulkRows.length}>
             {ctl.bulkSaving ? 'Logging…' : `Log all ${ctl.bulkRows.length} event${ctl.bulkRows.length === 1 ? '' : 's'}`}
           </Button>
         </SheetFooter>

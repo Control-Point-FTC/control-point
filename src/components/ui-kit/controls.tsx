@@ -172,17 +172,58 @@ export function Slider({ className, ...props }: React.ComponentProps<typeof Slid
 }
 
 // --- ToggleGroup (segmented control) ------------------------------------------
+// One control, three looks, so pages stop hand-rolling them:
+//   segment (default) — a muted track with the picked option raised
+//   chips             — separate rounded pills (filters, presets)
+//   cards             — taller two-line options (event pickers)
+// Items take their look from the group. Phone sizes are built in (44px
+// tall track / pills), so call sites don't add touch overrides.
+type ToggleLook = 'segment' | 'chips' | 'cards';
+const ToggleLookContext = React.createContext<ToggleLook>('segment');
+
+const toggleGroup = cva('items-center', {
+  variants: {
+    variant: {
+      segment: 'inline-flex gap-0.5 rounded-lg bg-muted p-0.5',
+      chips: 'flex flex-wrap justify-start gap-1.5',
+      cards: 'flex justify-start gap-2 overflow-x-auto',
+    },
+  },
+  defaultVariants: { variant: 'segment' },
+});
+
 const toggleItem = cva(
-  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors outline-none ' +
-    'hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 ' +
-    'data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm [&_svg]:size-4 [&_svg]:shrink-0',
-  { variants: { size: { default: 'h-7', sm: 'h-6 px-2 text-xs', lg: 'h-9' } }, defaultVariants: { size: 'default' } },
+  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap text-sm font-medium text-muted-foreground transition-colors outline-none ' +
+    'hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0',
+  {
+    variants: {
+      variant: {
+        segment: 'rounded-md px-3 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm',
+        chips: 'h-8 shrink-0 rounded-full border border-border px-3 max-sm:h-11 data-[state=on]:border-accent/50 data-[state=on]:bg-accent/10 data-[state=on]:text-foreground',
+        cards: 'h-auto min-h-12 shrink-0 flex-col items-start gap-0.5 rounded-xl border border-border bg-background px-3 py-2 text-left data-[state=on]:border-accent/60 data-[state=on]:bg-accent/10 data-[state=on]:text-foreground',
+      },
+      size: { default: '', sm: '', lg: '' },
+    },
+    compoundVariants: [
+      { variant: 'segment', size: 'default', className: 'h-7 max-sm:h-10' },
+      { variant: 'segment', size: 'sm', className: 'h-6 px-2 text-xs max-sm:h-9' },
+      { variant: 'segment', size: 'lg', className: 'h-9 max-sm:h-10' },
+    ],
+    defaultVariants: { variant: 'segment', size: 'default' },
+  },
 );
-export function ToggleGroup({ className, ...props }: React.ComponentProps<typeof ToggleGroupP.Root>) {
-  return <ToggleGroupP.Root data-slot="toggle-group" className={cn('inline-flex items-center gap-0.5 rounded-lg bg-muted p-0.5', className)} {...props} />;
+
+export function ToggleGroup({ className, variant, ...props }: React.ComponentProps<typeof ToggleGroupP.Root> & VariantProps<typeof toggleGroup>) {
+  const look = variant ?? 'segment';
+  return (
+    <ToggleLookContext.Provider value={look}>
+      <ToggleGroupP.Root data-slot="toggle-group" data-variant={look} className={cn(toggleGroup({ variant: look }), className)} {...props} />
+    </ToggleLookContext.Provider>
+  );
 }
-export function ToggleGroupItem({ className, size, ...props }: React.ComponentProps<typeof ToggleGroupP.Item> & VariantProps<typeof toggleItem>) {
-  return <ToggleGroupP.Item data-slot="toggle-group-item" className={cn(toggleItem({ size }), className)} {...props} />;
+export function ToggleGroupItem({ className, size, ...props }: React.ComponentProps<typeof ToggleGroupP.Item> & { size?: 'default' | 'sm' | 'lg' | null }) {
+  const variant = React.useContext(ToggleLookContext);
+  return <ToggleGroupP.Item data-slot="toggle-group-item" className={cn(toggleItem({ variant, size }), className)} {...props} />;
 }
 
 // --- ScrollArea ---------------------------------------------------------------

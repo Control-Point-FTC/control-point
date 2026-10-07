@@ -212,7 +212,7 @@ function TrendChart({ trend, season }: { trend: TrendPoint[]; season: number }) 
       {!trend.length ? <EmptyState icon={TrendingUp} title="No trend data yet" description={`Trends appear after events in ${seasonShort(season)} have results.`} /> : (
         <div className="rounded-xl border border-border bg-card p-4 sm:p-5">
           <ToggleGroup type="single" aria-label="Trend metric" value={key} onValueChange={(v) => { if (v) setKey(v as TrendKey); }} className="mb-4 flex w-full justify-start overflow-x-auto">
-            {TRENDS.map((x) => <ToggleGroupItem key={x.key} value={x.key} className="shrink-0 max-sm:h-11">{x.label}</ToggleGroupItem>)}
+            {TRENDS.map((x) => <ToggleGroupItem key={x.key} value={x.key} className="shrink-0">{x.label}</ToggleGroupItem>)}
           </ToggleGroup>
           <div className="mb-2 flex flex-wrap items-baseline gap-3">
             <span className="font-display text-3xl font-semibold tabular-nums text-foreground">{fmt(last)}{last != null && t.suffix}</span>

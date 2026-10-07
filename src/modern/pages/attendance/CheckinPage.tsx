@@ -38,13 +38,13 @@ export function CheckinPage({ currentUser, onRefresh }: { currentUser?: any; onR
           <>
             <h1 className="font-display text-2xl font-semibold">Can't check in</h1>
             <p className="mt-2 text-sm text-muted-foreground">{error}</p>
-            <Button variant="outline" onClick={() => navigate('/dashboard')} className="mt-6 w-full max-sm:h-11">Back to dashboard</Button>
+            <Button variant="outline" onClick={() => navigate('/dashboard')} className="mt-6 w-full">Back to dashboard</Button>
           </>
         ) : state === 'done' ? (
           <>
             <h1 className="font-display text-2xl font-semibold">You're checked in</h1>
             <p className="mt-2 text-sm text-muted-foreground">{info?.teamName} · {format(new Date(), 'EEEE, MMMM d')}</p>
-            <Button onClick={() => navigate('/dashboard')} className="mt-6 w-full max-sm:h-11">Back to dashboard</Button>
+            <Button onClick={() => navigate('/dashboard')} className="mt-6 w-full">Back to dashboard</Button>
           </>
         ) : state === 'loading' ? (
           <p className="text-sm text-muted-foreground">Loading session…</p>
@@ -52,7 +52,7 @@ export function CheckinPage({ currentUser, onRefresh }: { currentUser?: any; onR
           <>
             <h1 className="font-display text-2xl font-semibold">Wrong team</h1>
             <p className="mt-2 text-sm text-muted-foreground">You're signed in as {currentUser?.name}, who isn't on {info.teamName}.</p>
-            <Button variant="outline" onClick={() => navigate('/dashboard')} className="mt-6 w-full max-sm:h-11">Back to dashboard</Button>
+            <Button variant="outline" onClick={() => navigate('/dashboard')} className="mt-6 w-full">Back to dashboard</Button>
           </>
         ) : (
           <>

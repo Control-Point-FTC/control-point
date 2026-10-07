@@ -114,7 +114,7 @@ export function ChannelSidebar({ ctl, channels, categories, activeChannelId, onS
         ) : <p className="flex-1 truncate px-2 font-semibold">{activeTeamName || 'My team'}</p>}
         {isAdmin && (
           <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="New channel or category" className="max-sm:size-11"><Plus /></Button></DropdownMenuTrigger>
+            <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="New channel or category"><Plus /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => { ctl.setCreatingIn('uncat'); ctl.setCreatingChannel(true); }}><Hash /> New channel</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setNewCatOpen(true)}><FolderPlus /> New category</DropdownMenuItem>

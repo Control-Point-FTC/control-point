@@ -41,7 +41,7 @@ export function BudgetPage({ budget, setBudget, teams, refresh, hasScope, curren
         description="Team money at a glance — every dollar in and out. Everyone can view; members whose role has the budget permission can log and edit entries."
         actions={
           <>
-            <Button variant="outline" className="max-sm:h-11" disabled={!budget?.length} onClick={() => downloadCsv(datedName('budget'), budget ?? [], [
+            <Button variant="outline" disabled={!budget?.length} onClick={() => downloadCsv(datedName('budget'), budget ?? [], [
               { header: 'Date', value: (b: any) => String(b.date || '').slice(0, 10) },
               { header: 'Type', value: (b: any) => (b.type === 'income' ? 'Income' : 'Expense') },
               { header: 'Category', value: (b: any) => b.category },
@@ -176,9 +176,9 @@ function Ledger({ ctl, budget }: { ctl: Ctl; budget: any[] }) {
     <Section title="Transactions" description="A line-by-line record of money in and out.">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <ToggleGroup type="single" aria-label="Show" value={kind} onValueChange={(v) => { if (v) setKind(v as typeof kind); }}>
-          <ToggleGroupItem value="all" className="max-sm:h-11">All</ToggleGroupItem>
-          <ToggleGroupItem value="income" className="max-sm:h-11">Income</ToggleGroupItem>
-          <ToggleGroupItem value="expense" className="max-sm:h-11">Expenses</ToggleGroupItem>
+          <ToggleGroupItem value="all">All</ToggleGroupItem>
+          <ToggleGroupItem value="income">Income</ToggleGroupItem>
+          <ToggleGroupItem value="expense">Expenses</ToggleGroupItem>
         </ToggleGroup>
         <div className="relative min-w-[12rem] flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -280,8 +280,8 @@ function EntrySheet({ ctl, teams, budget }: { ctl: Ctl; teams: any[]; budget: an
           </fieldset>
         </form>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <Button variant="outline" onClick={ctl.closeEntryModal} className="max-sm:h-11">Cancel</Button>
-          <Button type="submit" form="budget-form" disabled={ctl.busy} className="max-sm:h-11">{ctl.busy ? 'Saving…' : ctl.editingId ? 'Save changes' : 'Log entry'}</Button>
+          <Button variant="outline" onClick={ctl.closeEntryModal}>Cancel</Button>
+          <Button type="submit" form="budget-form" disabled={ctl.busy}>{ctl.busy ? 'Saving…' : ctl.editingId ? 'Save changes' : 'Log entry'}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>

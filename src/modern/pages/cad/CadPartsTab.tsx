@@ -53,8 +53,8 @@ export function CadPartsTab() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => ctl.setShowInvoice(true)} className="max-sm:h-11"><Sparkles /> Import invoice</Button>
-          <Button onClick={() => ctl.setEditing('new')} className="max-sm:h-11"><Plus /> Add part</Button>
+          <Button variant="outline" onClick={() => ctl.setShowInvoice(true)}><Sparkles /> Import invoice</Button>
+          <Button onClick={() => ctl.setEditing('new')}><Plus /> Add part</Button>
         </div>
       </Reveal>
 
@@ -156,8 +156,8 @@ function PartSheet({ initial, onClose, onDone }: { initial: any | null; onClose:
           </fieldset>
         </form>
         <SheetFooter className="flex-row justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <Button variant="outline" onClick={close} disabled={f.busy} className="max-sm:h-11">Cancel</Button>
-          <Button type="submit" form="bom-form" disabled={f.busy} className="max-sm:h-11"><Check /> {f.busy ? 'Saving…' : initial ? 'Save' : 'Add part'}</Button>
+          <Button variant="outline" onClick={close} disabled={f.busy}>Cancel</Button>
+          <Button type="submit" form="bom-form" disabled={f.busy}><Check /> {f.busy ? 'Saving…' : initial ? 'Save' : 'Add part'}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
