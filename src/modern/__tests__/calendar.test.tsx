@@ -76,6 +76,26 @@ describe('Modern Calendar', () => {
     await waitFor(() => expect(props.refresh.events).toHaveBeenCalled());
   });
 
+  it('an end time before the start is flagged inline, blocks saving, and correcting it unblocks (H-1)', async () => {
+    setup();
+    fireEvent.click(screen.getByRole('button', { name: /New event/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Practice' } });
+    fireEvent.change(screen.getByLabelText(/Starts/), { target: { value: '15:59' } });
+    fireEvent.change(screen.getByLabelText(/Ends/), { target: { value: '04:59' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('End time must be after the start time');
+    expect(screen.getByLabelText(/Ends/)).toHaveAttribute('aria-invalid', 'true');
+    const create = screen.getByRole('button', { name: 'Create event' });
+    expect(create).toBeDisabled();
+    fireEvent.click(create);
+    expect(api.apiFetch).not.toHaveBeenCalledWith('/api/events', expect.anything());
+    // Fixing the time clears the error immediately — no dead end.
+    fireEvent.change(screen.getByLabelText(/Ends/), { target: { value: '16:59' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(create).toBeEnabled();
+    fireEvent.click(create);
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })));
+  });
+
   it('edits with PATCH and deletes after confirm from the details sheet', async () => {
     setup();
     fireEvent.click(screen.getAllByRole('button', { name: /Build night/ })[0]);

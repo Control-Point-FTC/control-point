@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify } from '../dialog';
 import { useDraft } from '../../modern/drafts';
+import { FUTURE_OK_CODES, attendanceMarkError, localIsoDate } from '../../utils/validation';
 
 export const ATTENDANCE_STATUSES = ['-', 'P', 'L', 'E', 'U', 'S'] as const;
 export const STATUS_LABELS: Record<string, string> = {
@@ -135,6 +136,10 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
   /** Set one cell (optimistic) — same POST /api/attendance/batch as before. */
   const setStatus = async (memberId: number, date: string, nextStatus: string) => {
     if (!isAdmin) return;
+    if (nextStatus !== '-') {
+      const bad = attendanceMarkError(date, nextStatus, localIsoDate());
+      if (bad) { notify(bad, 'error'); return; }
+    }
     const k = `${memberId}|${date}`;
     const seq = (cellSeq.current.get(k) ?? 0) + 1;
     cellSeq.current.set(k, seq);
@@ -178,11 +183,12 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
     }
   };
 
-  /** Legacy click: cycle - → P → L → E → U → S → -. */
+  /** Legacy click: cycle - → P → L → E → U → S → -  (future days: - → E → S → -). */
   const toggleStatus = (memberId: number, date: string) => {
     const current = getStatus(memberId, date);
-    const i = ATTENDANCE_STATUSES.indexOf(current as any);
-    return setStatus(memberId, date, ATTENDANCE_STATUSES[(i + 1) % ATTENDANCE_STATUSES.length]);
+    const cycle: readonly string[] = date > localIsoDate() ? ['-', ...FUTURE_OK_CODES] : ATTENDANCE_STATUSES;
+    const i = cycle.indexOf(current);
+    return setStatus(memberId, date, cycle[(i + 1) % cycle.length]);
   };
 
   const hideDate = async (dateStr: string) => {
