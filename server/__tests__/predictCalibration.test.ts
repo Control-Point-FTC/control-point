@@ -83,6 +83,32 @@ describe("fitPlatt", () => {
     const data = [...mkData(100, 9), { p: NaN, y: 1 }, { p: Infinity, y: 0 }];
     expect(() => fitPlatt(data)).not.toThrow();
   });
+
+  it("handles extreme probabilities without producing a harmful fit", () => {
+    // All predictions at the rails: the fit must not ship something worse
+    // than identity, and application must stay in (0, 1).
+    const data = Array.from({ length: 200 }, (_, i) => ({ p: i % 2 ? 1 - 1e-9 : 1e-9, y: i % 3 ? 1 : 0 }));
+    const fit = fitPlatt(data);
+    expect(Number.isFinite(fit.a) && Number.isFinite(fit.b)).toBe(true);
+    expect(fit.a).toBeGreaterThan(0);
+    // Whatever comes back, applying it is safe.
+    for (const p of [0, 1, 1e-12, 1 - 1e-12]) {
+      const q = calibrateProb(p, fit);
+      expect(q).toBeGreaterThan(0);
+      expect(q).toBeLessThan(1);
+    }
+  });
+
+  it("falls back to identity when the fit cannot beat it", () => {
+    // Pure noise: no signal for the sigmoid to find. The acceptance check
+    // must refuse to ship a spurious fit.
+    let s = 123;
+    const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const data = Array.from({ length: 500 }, () => ({ p: 0.05 + rnd() * 0.9, y: rnd() < 0.5 ? 1 : 0 }));
+    const fit = fitPlatt(data);
+    // Either identity (rejected) or a fit that truly improves NLL — never worse.
+    expect(plattNLL(data, fit)).toBeLessThanOrEqual(plattNLL(data, IDENTITY_CALIBRATION) + 1e-12);
+  });
 });
 
 describe("predictMatch with calibration", () => {

@@ -54,6 +54,7 @@ export function fitPlatt(pairs: { p: number; y: number }[]): CalibrationParams {
 
   let a = 1, b = 0;
   const ridge = 1e-4;
+  let converged = false;
   for (let iter = 0; iter < 50; iter++) {
     let g0 = 0, g1 = 0, h00 = 0, h01 = 0, h11 = 0;
     for (const { x, y } of data) {
@@ -69,12 +70,20 @@ export function fitPlatt(pairs: { p: number; y: number }[]): CalibrationParams {
     const da = (h11 * g0 - h01 * g1) / det;
     const db = (h00 * g1 - h01 * g0) / det;
     a -= da; b -= db;
-    if (Math.abs(da) < 1e-9 && Math.abs(db) < 1e-9) break;
+    if (Math.abs(da) < 1e-9 && Math.abs(db) < 1e-9) { converged = true; break; }
   }
   if (!Number.isFinite(a) || !Number.isFinite(b)) return { ...IDENTITY_CALIBRATION };
   // Sanity: the slope must stay positive (monotonic); otherwise fall back.
   if (a <= 0) return { ...IDENTITY_CALIBRATION };
-  return { a, b };
+  // Acceptance: the fit must actually beat the identity map on the fitting
+  // data. A stalled or diverged Newton-Raphson must never ship silently.
+  if (!converged) return { ...IDENTITY_CALIBRATION };
+  const fitted = { a, b };
+  const backToP = data.map(({ x, y }) => ({ p: 1 / (1 + Math.exp(-x)), y }));
+  if (!(plattNLL(backToP, fitted) < plattNLL(backToP, IDENTITY_CALIBRATION))) {
+    return { ...IDENTITY_CALIBRATION };
+  }
+  return fitted;
 }
 
 /** Negative log-likelihood of (a, b) on pairs — for diagnostics / tests. */

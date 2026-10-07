@@ -12,6 +12,10 @@ import { fitPlatt, plattNLL, type CalibrationParams } from "../../server/predict
 const arg = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i === -1 ? undefined : process.argv[i + 1]; };
 const tuneSeason = Number(arg("tune") ?? 2024);
 const testSeason = Number(arg("test") ?? 2025);
+if (!Number.isInteger(tuneSeason) || !Number.isInteger(testSeason) || !(tuneSeason < testSeason)) {
+  console.error(`refusing: need --tune < --test (got tune=${arg("tune") ?? 2024}, test=${arg("test") ?? 2025}); overlapping or reversed seasons would leak test matches into the fit`);
+  process.exit(1);
+}
 
 const M = JSON.parse(readFileSync("server/predict/model.json", "utf8"));
 const params = M.rating;
