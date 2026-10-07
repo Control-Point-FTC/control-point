@@ -3,6 +3,7 @@
 // same App state; screens without a Modern page yet render their Legacy page
 // inside this shell.
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ClockWeather } from './chrome/ClockWeather';
 import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -144,6 +145,7 @@ export function ModernShell(props: ModernShellProps) {
             isMobile={isMobile}
             onOpenSearch={() => setCmdOpen(true)}
             onOpenBruno={props.onOpenBruno}
+            workspaceId={props.activeTeam?.id}
           />
           <main
             id="main"
@@ -487,8 +489,9 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
 // Top bar + mobile tab bar
 // ---------------------------------------------------------------------------
 
-function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno }: {
+function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, workspaceId }: {
   title: string; teamName: string; isMobile: boolean; onOpenSearch: () => void; onOpenBruno: () => void;
+  workspaceId?: number | null;
 }) {
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4 pt-[env(safe-area-inset-top)] sm:px-6 lg:px-8 md:pt-0">
@@ -498,6 +501,8 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno }: {
         <h1 className="truncate font-semibold text-text-base">{title}</h1>
       </nav>
       <div className="ml-auto flex items-center gap-1">
+        {/* Keyed by workspace: a switch drops the old town's reading and loads the new one. */}
+        <ClockWeather key={workspaceId ?? 'none'} />
         <button
           type="button"
           onClick={onOpenSearch}
