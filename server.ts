@@ -152,6 +152,7 @@ import {
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
 import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
+import { cite, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
@@ -10668,12 +10669,15 @@ Rules:
           const p = payload?.data;
           if (!payload || !p) return `**Team ${num}**: no data found for ${season} season`;
           sources.add(srcName(payload.source));
+          // Inline citation: the page these numbers came from.
+          const site = siteOf(payload.source, (payload as any).origin);
+          const link = cite(site, teamUrl(site, season, Number(p.number) || num));
           const opr = p.opr || {};
           const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
           const evts = (p.events || []).slice(0, 3).map((e: any) =>
             `${e.name}${e.rank ? ` (#${e.rank})` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}`
           ).join('; ');
-          return `**Team ${p.number} — ${p.name}** _(${srcName(payload.source)})_: OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`;
+          return `**Team ${p.number} — ${p.name}** (${link}): OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`;
         } catch { return `**Team ${num}**: lookup failed (data sources unreachable)`; }
       });
       if (summaries.length) {
@@ -10718,7 +10722,9 @@ Rules:
           const basis = ranked
             ? `ranked by event standings (${field.length} teams)`
             : `ranked by OPR — considered ${candidates.length} of ${field.length} teams`;
-          out += `\n\n---\n**Event scouting: ${ev.name}** (${srcName(evPayload.source)}, ${season} season, ${basis}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
+          const evSite = siteOf(evPayload.source, (evPayload as any).origin);
+          const evLink = cite(evSite, eventUrl(evSite, season, ev.code || scoutEvent.code));
+          out += `\n\n---\n**Event scouting: ${ev.name}** (${evLink}, ${season} season, ${basis}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
         }
       } catch { /* event scouting is best-effort */ }
     }

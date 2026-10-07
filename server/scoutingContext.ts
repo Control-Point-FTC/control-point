@@ -16,6 +16,7 @@ import {
   recordOf,
   winRate,
 } from "../src/utils/ftcAnalysis.js";
+import { cite, eventUrl, siteOf, teamUrl } from "./sourceLinks.js";
 
 export interface ScoutingPackInput {
   season: number;
@@ -53,7 +54,7 @@ export function buildScoutingContextPack(input: ScoutingPackInput): string {
   const lines: string[] = [];
   lines.push(`SCOUTING MODE (Team Stats → Analyze). The user is scouting for the ${season}-${String(season + 1).slice(2)} FTC season.`);
   lines.push(
-    "Rules: explain your reasoning and cite the specific stats you use; separate facts (numbers below) from your interpretation; never present predictions or picks as guaranteed; say when data is missing, stale, cached or from a fallback source; measure teams against the EVENT AVERAGE and the user's own needs — do not produce side-by-side team-versus-team comparison tables. If the data below can't support a recommendation, say what's missing instead of guessing."
+    "Rules: explain your reasoning and cite the specific stats you use; when a number comes from this brief, cite its source inline with the markdown link given for it (e.g. after the stat: [FIRST Events](https://…)), and never invent a link; separate facts (numbers below) from your interpretation; never present predictions or picks as guaranteed; say when data is missing, stale, cached or from a fallback source; measure teams against the EVENT AVERAGE and the user's own needs — do not produce side-by-side team-versus-team comparison tables. If the data below can't support a recommendation, say what's missing instead of guessing."
   );
   lines.push(`User's team: ${myTeam ?? "not connected"}.`);
 
@@ -61,7 +62,8 @@ export function buildScoutingContextPack(input: ScoutingPackInput): string {
     lines.push("Selected event: none (or no data available for it yet). Ask the user to pick an event for event-level advice.");
   } else {
     const avg = eventAverages(event.field);
-    lines.push(`Selected event: ${event.name} (${event.code}), ${event.start ?? "date n/a"}${event.city ? `, ${event.city}${event.state ? `, ${event.state}` : ""}` : ""}. Data: ${srcLabel(event)}.`);
+    const evSite = siteOf(event.source, event.origin);
+    lines.push(`Selected event: ${event.name} (${event.code}), ${event.start ?? "date n/a"}${event.city ? `, ${event.city}${event.state ? `, ${event.state}` : ""}` : ""}. Data: ${srcLabel(event)}. Source link: ${cite(evSite, eventUrl(evSite, season, event.code))}.`);
     lines.push(
       `Event averages across ${avg.teams} teams: OPR total ${avg.opr.totalNp ?? "n/a"}, auto ${avg.opr.auto ?? "n/a"}, TeleOp ${avg.opr.teleop ?? "n/a"}, endgame ${avg.opr.endgame ?? "n/a"}; avg alliance score ${avg.avgScore ?? "n/a"}; avg penalty pts given ${avg.avgPenaltiesCommitted ?? "n/a"}; avg RP ${avg.rp ?? "n/a"}.`
     );
@@ -99,7 +101,8 @@ export function buildScoutingContextPack(input: ScoutingPackInput): string {
   }
 
   if (selected) {
-    lines.push(`SELECTED TEAM ${selected.number} ${selected.name} (${selected.city ?? ""}${selected.state ? `, ${selected.state}` : ""}); data: ${srcLabel(selected)}.`);
+    const tSite = siteOf(selected.source, selected.origin);
+    lines.push(`SELECTED TEAM ${selected.number} ${selected.name} (${selected.city ?? ""}${selected.state ? `, ${selected.state}` : ""}); data: ${srcLabel(selected)}. Source link: ${cite(tSite, teamUrl(tSite, season, selected.number))}.`);
     const o = selected.opr;
     lines.push(`Season OPR: total ${o.tot?.value ?? "n/a"} (rank ${o.tot?.rank ?? "n/a"}${selected.totalTeams ? ` of ${selected.totalTeams}` : ""}), auto ${o.auto?.value ?? "n/a"}, TeleOp ${o.dc?.value ?? "n/a"}, endgame ${o.eg?.value ?? "n/a"} (OPR via ${selected.oprSource === "ftc-scout" ? "FTC Scout" : "n/a"}).`);
     const evs = selected.events.filter((e) => e.stats).slice(-6);
