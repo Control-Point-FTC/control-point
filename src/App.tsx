@@ -255,6 +255,8 @@ function VoiceSocketBridge({ voiceRef }: { voiceRef: { current: VoiceSocketApi |
       leave: voice.leave,
     };
   }, [voice, voiceRef]);
+  // Unmounted (signed out / teamless): don't leave a stale API behind.
+  useEffect(() => () => { voiceRef.current = null; }, [voiceRef]);
   return null;
 }
 
@@ -1847,8 +1849,12 @@ export default function App() {
     }
     clearInvite();
     setInviteTeamName(null);
-    // Like a manual join or switch: end any call before the session moves.
-    Promise.resolve(voiceApiRef.current?.leave()).catch(() => { /* best effort */ })
+    // Like a manual join or switch: end any call before the session moves
+    // (teamless accounts have none; never let cleanup hold up the join).
+    const leaveCall = teams.length && voiceApiRef.current
+      ? Promise.race([voiceApiRef.current.leave(), new Promise((r) => setTimeout(r, 3000))])
+      : Promise.resolve();
+    Promise.resolve(leaveCall).catch(() => { /* best effort */ })
       .then(() => joinWithCodeOrLink(token))
       .then(applyJoin)
       .catch((e) => notify(e.message || 'Could not use that invite link', 'error'))

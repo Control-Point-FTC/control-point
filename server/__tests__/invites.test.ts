@@ -215,3 +215,18 @@ describe("invite links", () => {
     expect(keepAt).toBeLessThan(firstDead);
   });
 });
+
+describe("teamless accounts", () => {
+  it("voice endpoints answer instead of hanging", async () => {
+    // A member whose only membership was removed keeps a valid, teamless session.
+    const team2 = await seedTeam(t.db, "Gone");
+    const id = await seedMember(t.db, team2, "Ghost", "ghost@test.local");
+    const ghost = await t.session(id);
+    await t.db.execute({ sql: "UPDATE members SET is_active = 0 WHERE id = ?", args: [id] });
+    const ctrl = AbortSignal.timeout(5000);
+    const r = await t.api("/api/voice/channels", { session: ghost, signal: ctrl });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual([]);
+  });
+});
+
