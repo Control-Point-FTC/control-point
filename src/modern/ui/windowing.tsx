@@ -115,8 +115,14 @@ export function useIncrementalGroups(step = WINDOW_THRESHOLD, resetKey?: unknown
       const head = items.slice(0, n);
       return keep ? head.concat(items.slice(n).filter(keep)) : head;
     },
-    hidden(key: string, count: number): number {
-      return printing ? 0 : Math.max(0, count - (limits[key] ?? step));
+    /** How many items are actually left out: a count, or the list plus the
+     *  same `keep` used for slice (kept items beyond the range are shown). */
+    hidden<T>(key: string, items: number | T[], keep?: (item: T) => boolean): number {
+      if (printing) return 0;
+      const n = limits[key] ?? step;
+      if (typeof items === 'number') return Math.max(0, items - n);
+      const rest = items.slice(n);
+      return keep ? rest.filter((x) => !keep(x)).length : rest.length;
     },
     more(key: string) {
       setLimits((l) => ({ ...l, [key]: (l[key] ?? step) + step }));

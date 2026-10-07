@@ -186,6 +186,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
   // search or filter starts over. Cards dropped into a column stay in view.
   const inc = useIncrementalGroups(40, filterKey);
   const [moved, setMoved] = useState<Set<number>>(() => new Set());
+  const keepMoved = (t: any) => moved.has(t.id);
   return (
     <LayoutGroup>
       <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
@@ -223,7 +224,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
               </header>
               <ul className="flex min-h-24 flex-col gap-2">
                 <AnimatePresence initial={false}>
-                  {inc.slice(col.id, items, (t) => moved.has(t.id)).map((t) => {
+                  {inc.slice(col.id, items, keepMoved).map((t) => {
                     const people = assigneesOf(t);
                     return (
                       <motion.li
@@ -260,7 +261,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
                     );
                   })}
                 </AnimatePresence>
-                <LoadMore as="li" hidden={inc.hidden(col.id, items.length)} onMore={() => inc.more(col.id)} />
+                <LoadMore as="li" hidden={inc.hidden(col.id, items, keepMoved)} onMore={() => inc.more(col.id)} />
                 {items.length === 0 && (
                   <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
                     {col.id === 'done' ? 'Finished tasks land here' : 'Nothing here'}

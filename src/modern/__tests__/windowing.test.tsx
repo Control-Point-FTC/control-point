@@ -46,7 +46,7 @@ function Groups({ list }: { list: string[] }) {
       <button type="button" onClick={() => setFilter((f) => f + 'x')}>New search</button>
       <ul aria-label="column">
         {inc.slice('col', list, (x) => x === 'Item 99').map((x) => <li key={x}>{x}</li>)}
-        <LoadMore as="li" hidden={inc.hidden('col', list.length)} onMore={() => inc.more('col')} />
+        <LoadMore as="li" hidden={inc.hidden('col', list, (x) => x === 'Item 99')} onMore={() => inc.more('col')} />
       </ul>
     </>
   );
@@ -120,7 +120,8 @@ describe('incremental groups', () => {
     expect(rendered()).toHaveLength(41); // 40, plus the pinned Item 99
     scrollEndIntoView();
     expect(rendered()).toHaveLength(81);
-    fireEvent.click(screen.getByRole('button', { name: 'Show more (120 left)' }));
+    // 120 left out (Item 99 is already shown, so it isn't counted).
+    fireEvent.click(screen.getByRole('button', { name: 'Show more (119 left)' }));
     expect(rendered()).toHaveLength(120); // Item 99 is now inside the range
   });
 
