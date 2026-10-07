@@ -82,12 +82,15 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
   const fileUrl = msg.file_path ? assetUrl(msg.file_path) : null;
   const url = msg.content ? extractFirstUrl(msg.content) : null;
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState('');
   const startEdit = () => { setDraft(msg.content || ''); setEditing(true); };
+  // One save at a time: the editor locks until it answers.
   const save = async () => {
-    if (!onEdit) return;
+    if (!onEdit || saving) return;
     if (draft.trim() === (msg.content || '').trim()) { setEditing(false); return; }
-    if (await onEdit(msg.id, draft)) setEditing(false);
+    setSaving(true);
+    try { if (await onEdit(msg.id, draft)) setEditing(false); } finally { setSaving(false); }
   };
   return (
     <div
@@ -126,6 +129,7 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
           <div className="mt-1 grid gap-1.5" onClick={(e) => e.stopPropagation()}>
             <Textarea
               autoFocus value={draft} rows={Math.min(8, Math.max(2, draft.split('\n').length))} aria-label="Edit message"
+              maxLength={4000} readOnly={saving} aria-busy={saving}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }

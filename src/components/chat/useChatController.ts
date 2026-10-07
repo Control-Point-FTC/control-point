@@ -6,6 +6,9 @@
 // The composer text and the pending attachment are drafted.
 import { useEffect, useRef, useState } from 'react';
 import type React from 'react';
+
+/** Same cap the server applies to a sent or edited message. */
+const MAX_EDIT_CHARS = 4000;
 import { apiFetch } from '../../services/api';
 import { notify } from '../dialog';
 import { useDraft } from '../../modern/drafts';
@@ -336,16 +339,24 @@ export function useChatController({ messages, setMessages, msgCache, msgExhauste
 
   // Edit your own message: shown at once, marked edited; rolled back if the
   // server refuses. Everyone else gets it through message_updated.
+  const editSeq = useRef(new Map<number, number>());
   const handleEditMessage = async (msgId: number, text: string): Promise<boolean> => {
-    const next = text.trim();
+    const next = text.trim().slice(0, MAX_EDIT_CHARS);
     if (!next) { notify('A message can’t be empty — delete it instead.', 'error'); return false; }
     const before = (messages || []).find((m: any) => m.id === msgId);
-    const cur = activeChannelId;
-    const apply = (content: string, edited_at: string | null) => setMessages((prev: any[]) => {
-      const list = prev.map((m: any) => (m.id === msgId ? { ...m, content, edited_at } : m));
-      if (cur != null) msgCache.current.set(cur, list);
-      return list;
-    });
+    // Only the newest save for a message may roll back or overwrite it.
+    const seq = (editSeq.current.get(msgId) ?? 0) + 1;
+    editSeq.current.set(msgId, seq);
+    const latest = () => editSeq.current.get(msgId) === seq;
+    // Patch the message wherever it is: the shown list (by id, so another
+    // channel's list is untouched) and its own channel's cache.
+    const chan = before?.channel_id ?? activeChannelId;
+    const apply = (content: string, edited_at: string | null) => {
+      const patchList = (list: any[]) => list.map((m: any) => (m.id === msgId ? { ...m, content, edited_at } : m));
+      setMessages((prev: any[]) => patchList(prev));
+      const cached = chan != null ? msgCache.current.get(chan) : undefined;
+      if (cached) msgCache.current.set(chan, patchList(cached));
+    };
     apply(next, new Date().toISOString());
     try {
       const res = await apiFetch(`/api/messages/${msgId}`, {
@@ -355,10 +366,11 @@ export function useChatController({ messages, setMessages, msgCache, msgExhauste
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Could not edit that message.');
-      if (data.edited_at) apply(next, data.edited_at);
+      // Show exactly what the server saved.
+      if (latest() && data.edited_at) apply(typeof data.content === 'string' ? data.content : next, data.edited_at);
       return true;
     } catch (e: any) {
-      if (before) apply(before.content, before.edited_at ?? null);
+      if (latest() && before) apply(before.content, before.edited_at ?? null);
       notify(e.message || 'Could not edit that message.', 'error');
       return false;
     }

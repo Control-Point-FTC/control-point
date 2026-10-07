@@ -7304,7 +7304,7 @@ async function startServer() {
     if (messageActionAllowed({ action: "edit-own", isAuthor: existing.sender_id === auth.memberId, moderator: false })) {
       await dbRun("UPDATE messages SET content = ?, updated_at = ?, edited_at = ? WHERE id = ?", text, now, now, messageId);
       broadcastToTeam(auth.teamId, { type: "message_updated", id: Number(messageId), channel_id: existing.channel_id ?? null, content: text, edited_at: now });
-      return res.json({ success: true, edited_at: now });
+      return res.json({ success: true, content: text, edited_at: now });
     }
     // Someone else's message: a silent moderation edit (Settings → Admin).
     if (!messageActionAllowed({ action: "edit", isAuthor: false, moderator: await canModerateMessages(auth.memberId, auth.teamId) })) {
