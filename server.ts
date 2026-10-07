@@ -7282,10 +7282,12 @@ async function startServer() {
   }
   /** Delete a stored_files row and its R2 copy (best effort for R2). */
   async function deleteStoredRow(id: number): Promise<void> {
-    const row = (await dbGet("SELECT r2_key FROM stored_files WHERE id = ?", id)) as any;
     await dbRun("DELETE FROM stored_files WHERE id = ?", id);
-    if (row?.r2_key && r2) {
-      try { await r2.del(row.r2_key); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+    // The key is derived from the id, so the object goes too even if a
+    // background copy hadn't recorded r2_key yet (the copier also removes
+    // an upload whose row disappeared meanwhile).
+    if (r2) {
+      try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
     }
   }
   /** The bytes of a stored file: R2 first, the database copy as fallback. */
@@ -7298,11 +7300,13 @@ async function startServer() {
         console.error("R2 read failed; trying the database copy:", (e as any)?.message || e);
       }
     }
-    if (blobLen > 0) {
-      const row = (await dbGet(`SELECT data FROM ${table} WHERE id = ?`, id)) as any;
-      if (row?.data) return Buffer.from(row.data as ArrayBuffer);
-    }
-    return null;
+    // Bytes that live only in R2 (database column cleared) and couldn't be
+    // read are missing. Anything else is the database copy, which may
+    // legitimately be an empty file.
+    if (r2Key && blobLen === 0) return null;
+    const row = (await dbGet(`SELECT data FROM ${table} WHERE id = ?`, id)) as any;
+    if (row?.data == null) return null;
+    return Buffer.from(row.data as ArrayBuffer);
   }
 
   // Copy existing files into R2 in the background (the owner asked for every
@@ -7311,14 +7315,20 @@ async function startServer() {
   // R2_PRUNE_DB=1, and only after R2's copy is verified again.
   let r2Syncing = false;
   const r2Progress = { copied: 0, pruned: 0, failed: 0, lastRun: "" as string };
+  // Each pass walks forward by id and wraps around, so rows that keep
+  // failing can never stop the rest from being copied or pruned.
+  const r2Cursor: Record<string, number> = {};
   async function syncFilesToR2(): Promise<void> {
     if (!r2 || r2Syncing || process.env.R2_SYNC === "off") return;
     r2Syncing = true;
     try {
       for (const table of ["stored_files", "message_images"] as const) {
+        const copyKey = `copy:${table}`;
         const rows = (await dbAll(
-          `SELECT id, mime_type, length(data) AS n FROM ${table} WHERE r2_key IS NULL AND length(data) > 0 ORDER BY id LIMIT 25`,
+          `SELECT id, mime_type, length(data) AS n FROM ${table} WHERE r2_key IS NULL AND length(data) > 0 AND id > ? ORDER BY id LIMIT 25`,
+          r2Cursor[copyKey] ?? 0,
         )) as any[];
+        r2Cursor[copyKey] = rows.length ? rows[rows.length - 1].id : 0;
         for (const r of rows) {
           try {
             const data = (await dbGet(`SELECT data FROM ${table} WHERE id = ?`, r.id)) as any;
@@ -7327,24 +7337,37 @@ async function startServer() {
             const key = fileKey(table, r.id);
             await r2.put(key, buf, r.mime_type);
             if ((await r2.size(key)) !== buf.length) throw new Error("size mismatch after upload");
-            await dbRun(`UPDATE ${table} SET r2_key = ? WHERE id = ? AND r2_key IS NULL`, key, r.id);
-            r2Progress.copied++;
+            const upd = (await dbRun(`UPDATE ${table} SET r2_key = ? WHERE id = ? AND r2_key IS NULL`, key, r.id)) as any;
+            if (Number(upd?.changes)) r2Progress.copied++;
+            else if (!(await dbGet(`SELECT id FROM ${table} WHERE id = ?`, r.id))) {
+              // Deleted while we copied it: don't leave its bytes behind.
+              await r2.del(key).catch(() => undefined);
+            }
           } catch (e) {
             r2Progress.failed++;
             console.error(`R2 copy of ${table} #${r.id} failed:`, (e as any)?.message || e);
           }
         }
         if (process.env.R2_PRUNE_DB === "1") {
+          const pruneKey = `prune:${table}`;
           const done = (await dbAll(
-            `SELECT id, r2_key, length(data) AS n FROM ${table} WHERE r2_key IS NOT NULL AND length(data) > 0 ORDER BY id LIMIT 25`,
+            `SELECT id, r2_key, length(data) AS n FROM ${table} WHERE r2_key IS NOT NULL AND length(data) > 0 AND id > ? ORDER BY id LIMIT 25`,
+            r2Cursor[pruneKey] ?? 0,
           )) as any[];
+          r2Cursor[pruneKey] = done.length ? done[done.length - 1].id : 0;
           for (const r of done) {
             try {
-              if ((await r2.size(r.r2_key)) === Number(r.n)) {
+              const have = await r2.size(r.r2_key);
+              if (have === Number(r.n)) {
                 await dbRun(`UPDATE ${table} SET data = ? WHERE id = ?`, Buffer.alloc(0), r.id);
                 r2Progress.pruned++;
+              } else {
+                // Kept in the database: R2's copy is missing or the wrong size.
+                r2Progress.failed++;
+                console.error(`R2 prune skipped ${table} #${r.id}: expected ${r.n} bytes, R2 has ${have ?? "nothing"}`);
               }
             } catch (e) {
+              r2Progress.failed++;
               console.error(`R2 verify of ${table} #${r.id} failed:`, (e as any)?.message || e);
             }
           }

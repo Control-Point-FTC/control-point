@@ -183,3 +183,66 @@ describe("owner R2 status", () => {
     } finally { await t.stop(); await stub.stop(); }
   });
 });
+
+describe("R2 review regressions", () => {
+  const stub = s3Stub();
+  let t: TestServer;
+  let team = 0;
+  let sess = "";
+  let member = 0;
+  beforeAll(async () => {
+    t = await boot(stub, { R2_PRUNE_DB: "1" });
+    team = await seedTeam(t.db, "Regress");
+    member = await seedMember(t.db, team, "Bo", "bo@r2.test", "admin");
+    sess = await t.session(member);
+  }, 120_000);
+  afterAll(async () => { await t?.stop(); await stub.stop(); });
+
+  it("an empty file in the database is served as empty, not missing", async () => {
+    const ins = await t.db.execute({
+      sql: "INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, size, data) VALUES (?, ?, 'feedback', 'empty.txt', 'text/plain', 0, ?)",
+      args: [team, member, Buffer.alloc(0)],
+    });
+    const res = await fetch(`${t.base}/api/files/${Number(ins.lastInsertRowid)}`, { headers: withSession(new Headers(), sess) });
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(0);
+  });
+
+  it("rows with a bad R2 copy can't stop the rest from being pruned, and are counted", async () => {
+    // 26 rows that claim an R2 copy that isn't there...
+    for (let i = 0; i < 26; i++) {
+      await t.db.execute({
+        sql: "INSERT INTO stored_files (team_id, kind, filename, mime_type, size, data, r2_key) VALUES (?, 'feedback', 'b', 'text/plain', 3, ?, ?)",
+        args: [team, Buffer.from("bad"), `files/missing-${i}`],
+      });
+    }
+    // ...then a good one after them.
+    const good = await t.db.execute({
+      sql: "INSERT INTO stored_files (team_id, kind, filename, mime_type, size, data) VALUES (?, 'feedback', 'g', 'text/plain', 4, ?)",
+      args: [team, Buffer.from("good")],
+    });
+    const id = Number(good.lastInsertRowid);
+    expect(await until(async () => {
+      const r = (await t.db.execute({ sql: "SELECT r2_key, length(data) AS n FROM stored_files WHERE id = ?", args: [id] })).rows[0] as any;
+      return !!r?.r2_key && Number(r.n) === 0;
+    }, 30_000)).toBe(true);
+    // The bad rows keep their database copies.
+    const kept = (await t.db.execute("SELECT COUNT(*) AS n FROM stored_files WHERE r2_key LIKE 'files/missing-%' AND length(data) = 3")).rows[0] as any;
+    expect(Number(kept.n)).toBe(26);
+  });
+
+  it("deleting a file removes its R2 object even if the row hadn't recorded the key yet", async () => {
+    const ins = await t.db.execute({
+      sql: "INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, size, data) VALUES (NULL, ?, 'avatar', 'a.png', 'image/png', 3, ?)",
+      args: [member, Buffer.from("old")],
+    });
+    const oldId = Number(ins.lastInsertRowid);
+    stub.objects.set(`/cp-files/files/${oldId}`, Buffer.from("old"));
+    await t.db.execute({ sql: "UPDATE stored_files SET r2_key = NULL WHERE id = ?", args: [oldId] });
+    await t.db.execute({ sql: "UPDATE members SET avatar_url = ? WHERE id = ?", args: [`/api/files/${oldId}`, member] });
+    const { body, contentType } = avatarBody("new-avatar");
+    const res = await fetch(`${t.base}/api/profile/avatar`, { method: "POST", body, headers: withSession(new Headers({ "Content-Type": contentType }), sess) });
+    expect(res.status).toBe(200);
+    expect(await until(async () => !stub.objects.has(`/cp-files/files/${oldId}`))).toBe(true);
+  });
+});
