@@ -23,6 +23,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createClient } from "@libsql/client";
+import { sessionDbId, withSession } from "./helpers/session";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -54,14 +55,14 @@ let dbPath = "";
 const uploadedBefore = new Set<string>();
 
 const SESS = {
-  admin: "test-sess-admin",
-  assignee: "test-sess-assignee",
-  outsider: "test-sess-outsider",
+  admin: "cps_test-admin",
+  assignee: "cps_test-assignee",
+  outsider: "cps_test-outsider",
 };
 
 async function api(path: string, session: string, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
-  headers.set("x-session-id", session);
+  withSession(headers, session);
   const res = await fetch(`${base}${path}`, { ...opts, headers });
   let body: any = null;
   try { body = await res.json(); } catch { /* non-JSON */ }
@@ -102,7 +103,7 @@ beforeAll(async () => {
   for (const [sess, mid] of [[SESS.admin, adminId], [SESS.assignee, assigneeId], [SESS.outsider, outsiderId]] as const) {
     await db.execute({
       sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)",
-      args: [sess, mid, now, far, now],
+      args: [sessionDbId(sess), mid, now, far, now],
     });
   }
   // Task fixtures (ids captured for the tests below).
@@ -228,7 +229,7 @@ describe("task completion proof", () => {
     const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
     const bodyBuf = Buffer.concat([head, png, tail]);
     const headers = new Headers();
-    headers.set("x-session-id", SESS.assignee);
+    withSession(headers, SESS.assignee);
     headers.set("Content-Type", `multipart/form-data; boundary=${boundary}`);
     const res = await fetch(`${base}/api/tasks/${ids().imageOnly}/complete`, {
       method: "POST",

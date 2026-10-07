@@ -236,7 +236,7 @@ import { useDraft, clearDrafts } from './modern/drafts';
 
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { getAttendanceInsights, streamAttendanceInsights, getActivitySummary, streamActivitySummary, streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from './services/aiService';
-import { apiFetch, apiUrl, assetUrl, apiBase, oauthUrl } from './services/api';
+import { apiFetch, apiUrl, assetUrl, oauthUrl } from './services/api';
 import { CadView } from './components/CadView';
 import ResourcesView from './components/ResourcesView';
 import { ResourcesPage } from './modern/pages/resources/ResourcesPage';
@@ -294,8 +294,40 @@ function hexToRgbTriplet(hex: string): string {
 // The team grid colour is cached per session so the next load paints it
 // before the team list arrives — and never leaks to another account.
 const GRID_RGB_CACHE_KEY = 'controlpoint-grid-rgb';
+// The session token itself lives only in an HttpOnly cookie the page can't
+// read. The page keeps a random per-sign-in tag instead (not a credential):
+// it says "signed in on this device" and keys per-session caches.
+const SESSION_TAG_KEY = 'cp-session-tag';
+/** Pre-cookie builds stored the real token here; read once to migrate, then removed. */
+const LEGACY_SESSION_KEY = 'sessionId';
 function readStoredSessionId(): string | null {
-  try { return localStorage.getItem('sessionId'); } catch { return null; }
+  try { return localStorage.getItem(SESSION_TAG_KEY); } catch { return null; }
+}
+function newSessionTag(): string {
+  try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+}
+function forgetStoredSession() {
+  try { localStorage.removeItem(SESSION_TAG_KEY); localStorage.removeItem(LEGACY_SESSION_KEY); } catch { /* storage unavailable */ }
+}
+/**
+ * The boot-time session check, shared by every caller on this page load.
+ * A pre-cookie token is single-use (the server rotates it into the cookie
+ * and retires it), so a second concurrent check — e.g. React re-running the
+ * mount effect — must reuse this one rather than send the token again.
+ */
+let restoreSessionPromise: Promise<any> | null = null;
+function restoreSessionOnce(): Promise<any> {
+  if (!restoreSessionPromise) {
+    let legacy: string | null = null;
+    try { legacy = localStorage.getItem(LEGACY_SESSION_KEY); } catch { /* storage unavailable */ }
+    restoreSessionPromise = apiFetch('/api/auth/me', legacy ? { headers: { 'X-Session-ID': legacy } } : {})
+      .then((r) => r.json().catch(() => ({})))
+      .then((data) => {
+        if (legacy) { try { localStorage.removeItem(LEGACY_SESSION_KEY); } catch { /* ignore */ } }
+        return data;
+      });
+  }
+  return restoreSessionPromise;
 }
 // Short non-reversible tag of the session id, so the cache doesn't hold a
 // second copy of the token — it only needs to tell sessions apart.
@@ -1282,12 +1314,7 @@ export default function App() {
   const [colorVersion, setColorVersion] = useState(0);
 
   // Session State
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (typeof localStorage !== 'undefined') {
-      return localStorage.getItem('sessionId');
-    }
-    return null;
-  });
+  const [sessionId, setSessionId] = useState<string | null>(() => readStoredSessionId());
   const [streamSessions, setStreamSessions] = useState<Map<string, { streamId?: string; position: number }>>(new Map());
 
   // --- Components ---
@@ -1343,7 +1370,7 @@ export default function App() {
     invalid_state: 'Sign-in expired — please try again.',
   };
 
-  // Handle OAuth callbacks (?oauth_session= / ?oauth_error= / ?oauth_signup=, plus legacy google_* params)
+  // Handle OAuth callbacks (?oauth=ok / ?oauth_error= / ?oauth_signup=, plus legacy google_* params)
   useEffect(() => {
     apiFetch('/api/auth/config')
       .then(r => r.json())
@@ -1356,7 +1383,8 @@ export default function App() {
       })
       .catch(() => {});
     const params = new URLSearchParams(window.location.search);
-    const gs = params.get('oauth_session') || params.get('google_session');
+    // OAuth finished: the server already set the session cookie.
+    const oauthDone = params.get('oauth') === 'ok';
     const ge = params.get('oauth_error') || params.get('google_error');
     const gsu = params.get('oauth_signup') || params.get('google_signup');
     const gi = params.get('intent');
@@ -1370,45 +1398,28 @@ export default function App() {
       setOauthSignup({ token: gsu, intent: gi, provider });
       window.history.replaceState({}, '', window.location.pathname);
     }
-    if (gs) {
-      localStorage.setItem('sessionId', gs);
-      setSessionId(gs);
-      fetch(apiUrl(`/api/auth/me?sessionId=${encodeURIComponent(gs)}`))
-        .then(r => r.json())
-        .then(data => {
-          if (data.user) {
-            setCurrentUser(data.user);
-            setIsLoggedIn(true);
-          } else {
-            setOauthError('Sign-in failed. Please try again.');
-          }
-        })
-        .catch(() => setOauthError('Sign-in failed. Please try again.'))
-        .finally(() => {
-          window.history.replaceState({}, '', window.location.pathname);
-          setAuthReady(true);
-        });
-    } else {
-      // Restore a saved password-login session, if any
-      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
-      if (saved) {
-        fetch(apiUrl(`/api/auth/me?sessionId=${encodeURIComponent(saved)}`))
-          .then(r => r.json())
-          .then(data => {
-            if (data.user) {
-              setSessionId(saved);
-              setCurrentUser(data.user);
-              setIsLoggedIn(true);
-            } else {
-              localStorage.removeItem('sessionId');
-            }
-          })
-          .catch(() => {})
-          .finally(() => setAuthReady(true));
-      } else {
+    // Restore the session from the cookie. A device signed in before the
+    // cookie switch still holds its old token in localStorage: it is sent
+    // once (a header, never a URL) so the server rotates it into the cookie,
+    // then forgotten.
+    restoreSessionOnce()
+      .then(data => {
+        if (data.user) {
+          const tag = readStoredSessionId() || newSessionTag();
+          try { localStorage.setItem(SESSION_TAG_KEY, tag); } catch { /* ignore */ }
+          setSessionId(tag);
+          setCurrentUser(data.user);
+          setIsLoggedIn(true);
+        } else {
+          forgetStoredSession();
+          if (oauthDone) setOauthError('Sign-in failed. Please try again.');
+        }
+      })
+      .catch(() => { if (oauthDone) setOauthError('Sign-in failed. Please try again.'); })
+      .finally(() => {
+        if (oauthDone) window.history.replaceState({}, '', window.location.pathname);
         setAuthReady(true);
-      }
-    }
+      });
   }, []);
 
   // If any API call gets a 401 (expired/revoked session), the api layer
@@ -1421,7 +1432,7 @@ export default function App() {
       setSessionId(null);
       setTeams([]);
       setTeamsLoaded(false);
-      setSocket(null);
+      disconnectSocket();
     };
     window.addEventListener('cp:unauthorized', onUnauthorized);
     return () => window.removeEventListener('cp:unauthorized', onUnauthorized);
@@ -1469,10 +1480,11 @@ export default function App() {
   }, [currentUser, teams, teamsLoaded, isLoggedIn]);
 
   useEffect(() => {
-    if (isLoggedIn) {
-      fetchData();
-      connectSocket();
-    }
+    if (!isLoggedIn) return;
+    fetchData();
+    socketWanted.current = true;
+    connectSocket();
+    return () => disconnectSocket();
   }, [isLoggedIn]);
 
   // Presence reconciliation: computed presence decays server-side
@@ -1506,20 +1518,52 @@ export default function App() {
   }, [isLoggedIn]);
 
 
+  // One live socket while signed in. It authenticates with the session
+  // cookie sent on the upgrade, so it is reopened whenever the session
+  // changes (team switch), closed for good on sign-out, and reconnects with
+  // backoff + jitter after drops.
+  const socketRef = useRef<WebSocket | null>(null);
+  const socketWanted = useRef(false);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempt = useRef(0);
+
+  function disconnectSocket() {
+    socketWanted.current = false;
+    if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+    const ws = socketRef.current;
+    socketRef.current = null;
+    socketWasConnected.current = false;
+    voiceApiRef.current?.detachSocket();
+    if (ws) { try { ws.close(); } catch { /* already closed */ } }
+    setSocket(null);
+  }
+
+  /** Reopen the socket now (the session cookie changed, e.g. team switch). */
+  function reopenSocket() {
+    if (!socketWanted.current) return;
+    const ws = socketRef.current;
+    socketRef.current = null;
+    voiceApiRef.current?.detachSocket();
+    if (ws) { try { ws.close(); } catch { /* already closed */ } }
+    reconnectAttempt.current = 0;
+    connectSocket();
+  }
+
   const connectSocket = () => {
-    const api = apiBase();
-    const wsUrl = api
-      ? api.replace(/^http/, 'ws') // mirror build: socket lives on the API origin
-      : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    if (!socketWanted.current) return;
+    if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
     const ws = new WebSocket(wsUrl);
-    
+    socketRef.current = ws;
+
     ws.onopen = () => {
-      console.log("WebSocket connected");
-      const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
-      if (sid) ws.send(JSON.stringify({ type: 'hello', sessionId: sid }));
-      // Reconnect: re-read the roster — computed presence may have decayed
-      // (online -> idle -> offline) while the socket was down.
-      if (socketWasConnected.current) refreshMembers();
+      if (socketRef.current !== ws) return;
+      reconnectAttempt.current = 0;
+      // The server identifies the socket from the session cookie.
+      ws.send(JSON.stringify({ type: 'hello' }));
+      // Reconnect: anything sent while the socket was down (messages, tasks,
+      // notifications, presence) was missed — resync everything.
+      if (socketWasConnected.current) fetchData();
       socketWasConnected.current = true;
       // Voice signaling rides this socket — attach the engine's send path.
       // (Re-attached on every reconnect; attachSocket re-announces state.)
@@ -1646,10 +1690,16 @@ export default function App() {
     };
 
     ws.onclose = () => {
-      console.log("WebSocket disconnected, retrying in 3s...");
+      if (socketRef.current !== ws) return; // replaced or closed on purpose
+      socketRef.current = null;
       // Detach the voice engine's send path — it re-attaches on the new socket.
       voiceApiRef.current?.detachSocket();
-      setTimeout(connectSocket, 3000);
+      if (!socketWanted.current) return;
+      // Exponential backoff with jitter (1s → 30s), so a server restart
+      // doesn't get every client reconnecting in the same instant.
+      const n = reconnectAttempt.current++;
+      const delay = Math.min(30000, 1000 * 2 ** n) * (0.5 + Math.random() / 2);
+      reconnectTimer.current = setTimeout(connectSocket, delay);
     };
 
     ws.onerror = (err) => {
@@ -1910,12 +1960,18 @@ export default function App() {
     }
   };
 
-  const persistSession = (sid: string, user: any) => {
+  /** A sign-in or session change happened; the server already set the
+   *  HttpOnly cookie (the token never reaches page code). */
+  const persistSession = (_sid: unknown, user: any) => {
     clearDrafts(); // every sign-in (or account switch) starts with no drafts
-    if (typeof localStorage !== 'undefined') localStorage.setItem('sessionId', sid);
-    setSessionId(sid);
+    const tag = newSessionTag();
+    try { localStorage.setItem(SESSION_TAG_KEY, tag); } catch { /* storage unavailable */ }
+    setSessionId(tag);
     setCurrentUser(user);
     setIsLoggedIn(true);
+    // An open socket is still authenticated as the previous session (e.g.
+    // the old team) — reopen it under the new cookie.
+    reopenSocket();
   };
 
   // Re-read the signed-in user (used after teamless transitions).
@@ -2172,8 +2228,8 @@ export default function App() {
     setTeamsLoaded(false);
     // Team-specific client caches (FTC data, forecasts, Bruno screen context).
     clearTeamCaches();
-    if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
-    setSocket(null);
+    forgetStoredSession();
+    disconnectSocket();
   };
 
   const markNotificationsRead = async () => {
@@ -2884,7 +2940,7 @@ export default function App() {
         const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Could not delete your account.');
-        if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+        forgetStoredSession();
         window.location.reload();
       },
       onSignOut: handleLogout,
@@ -8742,11 +8798,7 @@ function ProfileView({ currentUser, onRefresh, refresh, setLoading, hasScope, se
     try {
       const fd = new FormData();
       fd.append('avatar', file);
-      const sid = typeof localStorage !== 'undefined' ? localStorage.getItem('sessionId') : null;
-      const res = await fetch(apiUrl(`/api/profile/avatar${sid ? `?sessionId=${encodeURIComponent(sid)}` : ''}`), {
-        method: 'POST',
-        body: fd
-      });
+      const res = await apiFetch('/api/profile/avatar', { method: 'POST', body: fd });
       if (res.ok) {
         await await refresh.members();
       } else {
@@ -9051,7 +9103,7 @@ function SettingsView({ settings, members, teams, onRefresh, refresh, currentUse
       const res = await apiFetch('/api/auth/account', { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        if (typeof localStorage !== 'undefined') localStorage.removeItem('sessionId');
+        forgetStoredSession();
         window.location.reload();
       } else {
         notify(data.error || 'Could not delete your account.', 'error');

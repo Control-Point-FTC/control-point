@@ -25,6 +25,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createClient } from "@libsql/client";
+import { sessionDbId, withSession } from "./helpers/session";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -55,14 +56,14 @@ let tmpDir = "";
 let dbPath = "";
 let port = 0;
 
-const SESS = { admin: "test-sess-fs-admin", outsider: "test-sess-fs-outsider" };
+const SESS = { admin: "cps_test-fs-admin", outsider: "cps_test-fs-outsider" };
 let teamA = 0;
 let teamB = 0;
 let taskId = 0;
 
 async function api(path: string, session: string | null, opts: RequestInit = {}) {
   const headers = new Headers(opts.headers);
-  if (session) headers.set("x-session-id", session);
+  if (session) withSession(headers, session);
   const res = await fetch(`${base}${path}`, { ...opts, headers });
   const raw = Buffer.from(await res.arrayBuffer());
   let body: any = null;
@@ -152,7 +153,7 @@ beforeAll(async () => {
   for (const [sess, mid] of [[SESS.admin, adminId], [SESS.outsider, outsiderId]] as const) {
     await db.execute({
       sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)",
-      args: [sess, mid, now, far, now],
+      args: [sessionDbId(sess), mid, now, far, now],
     });
   }
   const t = await db.execute({
@@ -208,23 +209,15 @@ describe("durable file store", () => {
     expect((await api(imgs[0], SESS.outsider)).status).toBe(403);
   });
 
-  it("<img>-style requests authenticate with the /api/files/ cookie only", async () => {
+  it("<img>-style requests authenticate with the session cookie alone (no header, no URL token)", async () => {
     const url = (globalThis as any).__avatarUrl as string;
-    // Any API call carrying the header sets the scoped cookie…
-    const me = await api("/api/auth/me", SESS.admin);
-    const setCookie = me.headers.get("set-cookie") || "";
-    expect(setCookie).toContain("cp_files_sid=");
-    expect(setCookie).toContain("Path=/api/files/");
-    expect(setCookie).toContain("HttpOnly");
-    const cookie = setCookie.split(";")[0];
-    // …which alone loads a stored file (what an <img> tag sends)…
-    const viaCookie = await api(url, null, { headers: { cookie } });
+    // An <img> tag sends only cookies — the HttpOnly session cookie suffices.
+    const viaCookie = await api(url, null, { headers: { cookie: `cp_session=${SESS.admin}` } });
     expect(viaCookie.status).toBe(200);
     expect(viaCookie.buf.equals(pngBytes())).toBe(true);
-    // …but authenticates nothing outside /api/files/.
-    const meViaCookie = await api("/api/auth/me", null, { headers: { cookie } });
-    expect(meViaCookie.status).toBe(401);
-    (globalThis as any).__filesCookie = cookie;
+    // A token in the query string authenticates nothing.
+    const viaQuery = await api(`${url}?sessionId=${SESS.admin}`, null);
+    expect([401, 403]).toContain(viaQuery.status);
   });
 
   it("stored files revalidate (no stale cache) and 304 on a matching ETag", async () => {
