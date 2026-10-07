@@ -1086,6 +1086,9 @@ export default function App() {
           if (msg.member && msg.member.id) {
             setMembers((prev: any[]) => prev.map((m: any) => (m.id === msg.member.id ? { ...m, ...msg.member } : m)));
           }
+        } else if (msg.type === 'scouting_changed') {
+          // Scouting syncs itself; this just nudges open views to refresh.
+          window.dispatchEvent(new CustomEvent('scouting-changed'));
         } else if (msg.type === 'member_removed') {
           setMembers((prev: any[]) => prev.filter((m: any) => m.id !== msg.id));
         } else if (msg.type === 'join_requests_changed') {
@@ -2141,7 +2144,7 @@ export default function App() {
         <Route path="/dashboard" element={<HomePage {...viewProps} notifications={notifications} unreadMentions={unreadMentions} />} />
         {/* Inbox is a Modern page; Legacy keeps its bell dropdown. */}
         <Route path="/inbox" element={<InboxPage notifications={notifications} actions={notificationActions} onOpenChannel={(id) => setActiveChannelId(id)} />} />
-        <Route path="/stats" element={<TeamStatsPage />} />
+        <Route path="/stats" element={<TeamStatsPage teamId={currentUser?.team_id} memberId={currentUser?.id} canManage={hasPerm('manage_members')} />} />
         <Route path="/predict" element={<PredictPage />} />
         <Route path="/teams" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
         <Route path="/roles" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />

@@ -6,11 +6,12 @@ import { useSearchParams } from 'react-router-dom';
 import { fetchScoutTeam } from '../../services/ftcScoutApi';
 import { currentFtcSeason } from '../FtcStats';
 
-export type TeamStatsMode = 'compete' | 'analyze';
+export type TeamStatsMode = 'compete' | 'analyze' | 'scout';
 
 export function useTeamStats() {
   const [params, setParams] = useSearchParams();
-  const mode: TeamStatsMode = params.get('mode') === 'analyze' ? 'analyze' : 'compete';
+  const m = params.get('mode');
+  const mode: TeamStatsMode = m === 'analyze' || m === 'scout' ? m : 'compete';
   const [season, setSeason] = useState(currentFtcSeason);
   const [myTeam, setMyTeam] = useState<number | null>(null);
   const [focusTeam, setFocusTeam] = useState<{ number: number; name: string } | null>(null);
@@ -28,7 +29,7 @@ export function useTeamStats() {
     }).catch(() => { stepBack.current = false; /* not connected / no data: Analyze still works by search */ });
     return () => { alive = false; };
   }, [season]);
-  const setMode = (m: TeamStatsMode) => setParams((p) => { const n = new URLSearchParams(p); if (m === 'analyze') n.set('mode', 'analyze'); else n.delete('mode'); return n; });
+  const setMode = (m: TeamStatsMode) => setParams((p) => { const n = new URLSearchParams(p); if (m === 'compete') n.delete('mode'); else n.set('mode', m); return n; });
   /** From Compete: open a team in Analyze. */
   const viewTeam = (n: number, name?: string) => { setFocusTeam({ number: n, name: name ?? `Team ${n}` }); setMode('analyze'); };
   return { mode, setMode, season, setSeason, myTeam, focusTeam, viewTeam };
