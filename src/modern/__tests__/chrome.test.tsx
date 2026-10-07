@@ -13,6 +13,7 @@ describe('Tips bar (persistent, every page)', () => {
     expect(tipsFor('/stats')[0]).toMatch(/Scout works offline/);
     expect(tipsFor('/stats?mode=scout')[0]).toMatch(/Scout works offline/);
     expect(tipsFor('/somewhere-new')[0]).toMatch(/Ctrl K/);
+    expect(tipsFor('/cad-snapshots')[0]).toMatch(/STEP file under Snapshots/);
   });
 
   it('cycles with Next tip and has no close button', () => {

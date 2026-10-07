@@ -22,14 +22,15 @@ const BY_PAGE: [prefix: string, tips: string[]][] = [
   ['/predict', ['Predictions update as matches finish — percentages are calibrated, not guesses.']],
   ['/budget', ['Amounts over $10,000 ask for a second look before saving.']],
   ['/inventory', ['Keep parts and quantities here so anyone can see what the team has.']],
-  ['/cad', ['Drop a STEP file to view the model right in the browser.']],
+  ['/cad', ['Upload a STEP file under Snapshots to view the model right in the browser.']],
   ['/code', ['Connect a GitHub repo to browse your robot code here.']],
   ['/bruno', ['Bruno only knows what’s in your workspace — it says so when it doesn’t know.']],
   ['/settings', ['Light or dark: Settings → Appearance.']],
 ];
 
 export function tipsFor(path: string): string[] {
-  const page = BY_PAGE.find(([p]) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?'))?.[1] || [];
+  // "/cad" also covers its tabs ("/cad-snapshots", "/cad-docs", …).
+  const page = BY_PAGE.find(([p]) => path === p || path.startsWith(p + '/') || path.startsWith(p + '?') || path.startsWith(p + '-'))?.[1] || [];
   return [...page, ...GENERAL];
 }
 
