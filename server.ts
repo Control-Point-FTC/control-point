@@ -1582,6 +1582,22 @@ async function createSession(memberId: number): Promise<string> {
   return sessionId;
 }
 
+/** createSession, but only while `memberId` still belongs to `email` and the
+ *  account still has `passwordHash` — checked in the INSERT itself. */
+async function createSessionIfCredential(memberId: number, email: string, passwordHash: string): Promise<string | null> {
+  const sessionId = generateSessionId();
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const info = (await dbRun(
+    `INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity)
+     SELECT ?, ?, ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND LOWER(email) = LOWER(?) AND COALESCE(is_active, 1) = 1)
+       AND EXISTS (SELECT 1 FROM members WHERE LOWER(email) = LOWER(?) AND password = ?)`,
+    sessionId, memberId, now, expiresAt, now, memberId, email, email, passwordHash
+  )) as any;
+  return Number(info?.changes) > 0 ? sessionId : null;
+}
+
 async function validateSession(sessionId: string): Promise<{ valid: boolean; memberId?: number }> {
   try {
     const session = (await dbGet("SELECT * FROM sessions WHERE id = ?", sessionId)) as any;
@@ -2236,6 +2252,17 @@ async function startServer() {
     nowIso: () => new Date().toISOString(),
   };
 
+  /** A membership just lost its identity (removed, or moved to another
+   *  email): drop it from any live call (its client tears down media; the
+   *  others' participant lists update), then close its sockets. Sessions are
+   *  revoked by the caller in the same write that changes the row. */
+  const endMemberPresence = async (teamId: number | null | undefined, memberId: number) => {
+    if (teamId == null) return;
+    cancelVoiceDisconnectCleanup(teamId, memberId);
+    try { await removeParticipantEverywhere(voiceDeps, teamId, memberId, "removed"); } catch (e) { console.error("voice cleanup failed:", e); }
+    disconnectMember(teamId, memberId);
+  };
+
   const createNotification = async (userId: number, content: string, type: string, meta?: Record<string, any>) => {
     try {
       const timestamp = new Date().toISOString();
@@ -2434,8 +2461,9 @@ async function startServer() {
     // The password is account-wide: accept it if it verifies against any of
     // this account's membership rows.
     let verified = false;
+    let matchedHash = "";
     for (const r of rows) {
-      if (r.password && (await bcrypt.compare(password, r.password))) { verified = true; break; }
+      if (r.password && (await bcrypt.compare(password, r.password))) { verified = true; matchedHash = r.password; break; }
     }
     const picked = (await pickMemberRow(rows)) as any;
     if (!verified) {
@@ -2459,7 +2487,11 @@ async function startServer() {
       try { await issueVerificationCode(email); } catch (e) { console.error("verify code issue failed:", e); }
       return res.json({ needsVerification: true, email });
     }
-    const sessionId = await createSession(picked.id);
+    // Atomic: the session is only created if, at insert time, the row still
+    // has this email and the account still holds the password just checked
+    // (an admin edit or password change may have landed mid-login).
+    const sessionId = await createSessionIfCredential(picked.id, email, matchedHash);
+    if (!sessionId) return res.status(401).json({ error: BAD_LOGIN });
     await inheritInterfaceMode(picked);
     res.json({ user: sanitizeMember(picked), sessionId });
   });
@@ -5226,10 +5258,13 @@ async function startServer() {
       return res.status(404).json({ error: "Member not found" });
     }
     const { name, role, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
-    const email = req.body?.email == null ? target.email : String(req.body.email).trim().toLowerCase();
-    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
+    const requested = req.body?.email == null ? String(target.email || "") : String(req.body.email).trim().toLowerCase();
+    if (!requested || !requested.includes("@")) return res.status(400).json({ error: "A valid email is required" });
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
-    const emailChanged = email !== String(target.email || "").toLowerCase();
+    const emailChanged = requested.toLowerCase() !== String(target.email || "").toLowerCase();
+    // Unchanged address: keep the stored value byte-for-byte (a case-only
+    // duplicate left by migration 011 must not be rewritten into a clash).
+    const email = emailChanged ? requested : target.email;
 
     // Email must stay unique within the team
     if (emailChanged) {
@@ -5255,23 +5290,24 @@ async function startServer() {
     if (accent_color !== undefined) updates.accent_color = cleanHex(accent_color);
     if (primary_color !== undefined) updates.primary_color = cleanHex(primary_color);
     if (text_color !== undefined) updates.text_color = cleanHex(text_color);
+    if (emailChanged) {
+      // The row now belongs to a different email (account). Its old password,
+      // linked sign-ins and sessions belong to the previous address and must
+      // not carry over — otherwise an admin could point a row whose password
+      // they know at someone else's email and sign in as them. Cleared in the
+      // same write as the email (and login re-checks credentials atomically
+      // when it creates a session). The new owner sets a password via code.
+      Object.assign(updates, { password: null, is_setup: 0, google_id: null, discord_id: null, github_id: null });
+    }
 
     const columns = Object.keys(updates);
     const setClause = columns.map(col => `${col} = ?`).join(', ');
 
-    (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), memberId));
-    if (emailChanged) {
-      // The row now belongs to a different email (account). Its old password
-      // and sessions belong to the previous address and must not carry over —
-      // otherwise an admin could point a row whose password they know at
-      // someone else's email and sign in as them. The new owner sets a
-      // password through the emailed code.
-      await dbBatch([
-        { sql: "UPDATE members SET password = NULL, is_setup = 0, google_id = NULL, discord_id = NULL, github_id = NULL WHERE id = ?", args: [memberId] },
-        { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
-      ]);
-      disconnectMember(auth.teamId, memberId);
-    }
+    await dbBatch([
+      { sql: `UPDATE members SET ${setClause} WHERE id = ?`, args: [...Object.values(updates), memberId] },
+      ...(emailChanged ? [{ sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] }] : []),
+    ]);
+    if (emailChanged) await endMemberPresence(auth.teamId, memberId);
 
     // Keep the system Admin role aligned with an explicit admin/student change,
     // then reconcile account_type with any custom roles the member holds.
@@ -5471,11 +5507,7 @@ async function startServer() {
       { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [memberId] },
       { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
     ]);
-    // Drop them from any live call (tells their client to tear down media and
-    // updates everyone else's participant list) before closing their sockets.
-    cancelVoiceDisconnectCleanup(auth.teamId!, memberId);
-    try { await removeParticipantEverywhere(voiceDeps, auth.teamId!, memberId, "removed"); } catch (e) { console.error("voice cleanup on removal failed:", e); }
-    disconnectMember(auth.teamId, memberId);
+    await endMemberPresence(auth.teamId, memberId);
     broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
     res.json({ success: true });
   });

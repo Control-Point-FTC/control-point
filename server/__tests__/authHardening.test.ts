@@ -213,6 +213,16 @@ describe("admin email edits", () => {
     expect((await post("/api/auth/login", { email: "member-a@test.local", password: PW })).status).toBe(200);
   });
 
+  it("editing a member whose email is a kept case-only duplicate doesn't rewrite it into a clash", async () => {
+    const a = Number((await db.execute({ sql: "INSERT INTO members (team_id, name, role, email, account_type) VALUES (?, 'Dup Upper', 'Member', 'Dup@Test.local', 'student')", args: [ids.teamA] })).lastInsertRowid);
+    await db.execute({ sql: "INSERT INTO members (team_id, name, role, email, account_type) VALUES (?, 'Dup Lower', 'Member', 'dup@test.local', 'student')", args: [ids.teamA] });
+    const r = await api(`/api/members/${a}`, { method: "PATCH", body: JSON.stringify({ name: "Dup Renamed", role: "Member", account_type: "student", email: "Dup@Test.local" }), session: SESS.adminA });
+    expect(r.status).toBe(200);
+    const row = (await db.execute({ sql: "SELECT name, email FROM members WHERE id = ?", args: [a] })).rows[0] as any;
+    expect(row.name).toBe("Dup Renamed");
+    expect(row.email).toBe("Dup@Test.local");
+  });
+
   it("stores emails lowercase when an admin adds a member", async () => {
     const r = await post("/api/members", { name: "New Kid", role: "Member", email: "  New.Kid@TEST.local " }, SESS.adminA);
     expect(r.status).toBe(200);
