@@ -11,6 +11,9 @@
 //   npx tsx scripts/predict/backtest-events.mts --season 2024 [--runs 2000] [--limit 0] [--fit-pick] [--fit-bonus] [--pick-file f] [--out f]
 //
 // --pick-file: pick model to write (with --fit-pick) or read (default .cache/predict/pick-2024.json).
+// --declines: with --fit-pick, also fit captainAccept (rejected; see the
+// back-test report §9). Needs an explicit --pick-file, so the experiment can
+// never replace the shipped pick fit that export-model.mts reads.
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadSeason } from "./load.mts";
@@ -34,6 +37,17 @@ const tuned = JSON.parse(readFileSync(".cache/predict/tuned-2024.json", "utf8"))
 const { a, b, preExtra, noiseFit: _nf, ...ratingParams } = tuned;
 const noise = { a, b, preExtra };
 const partnerCheck = process.argv.includes("--partners");
+// Checked up front: the rating replay below takes minutes.
+const pickFileArg = arg("pick-file");
+const pickFile = pickFileArg ?? ".cache/predict/pick-2024.json";
+if (process.argv.includes("--declines") && !pickFileArg) {
+  console.error("refusing: --declines needs an explicit --pick-file (it must not overwrite the shipped pick fit)");
+  process.exit(1);
+}
+if (pickFileArg && !process.argv.includes("--fit-pick") && !existsSync(pickFileArg)) {
+  console.error(`refusing: --pick-file ${pickFileArg} does not exist`);
+  process.exit(1);
+}
 
 // ---------------------------------------------------------------------------
 // Replay the rating timeline, snapshotting each event at start and after quals.
@@ -148,7 +162,6 @@ function pickLogLik(pm: PickModel, list: { ranked: number[]; alliances: number[]
 }
 
 let pick: PickModel = DEFAULT_PICK;
-const pickFile = arg("pick-file") ?? ".cache/predict/pick-2024.json";
 const work = events.filter((e) => snapPre.has(e.code) && snapQuals.has(e.code)).map((e) => ({ e, off: official(e.code, e) })).filter((x) => x.off);
 if (process.argv.includes("--fit-pick")) {
   const list = work.filter((x) => x.off!.alliances.length && x.e.ranks.size >= 6).map(({ e, off }) => ({
@@ -157,7 +170,7 @@ if (process.argv.includes("--fit-pick")) {
     strength: new Map([...snapQuals.get(e.code)!.entries()].map(([t, r]) => [t, npOf(r)])),
   }));
   let best = { pm: DEFAULT_PICK, ll: -Infinity };
-  const accepts = process.argv.includes("--no-declines") ? [1] : [1, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.1, 0.05];
+  const accepts = process.argv.includes("--declines") ? [1, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.1, 0.05] : [1];
   for (const tau of [3, 5, 8, 12, 18, 25, 35, 50]) for (const rankWeight of [0, 1, 2, 3, 4, 6]) for (const captainAccept of accepts) {
     const pm: PickModel = captainAccept === 1 ? { tau, rankWeight } : { tau, rankWeight, captainAccept };
     const ll = pickLogLik(pm, list);
