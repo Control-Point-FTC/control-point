@@ -9,6 +9,7 @@ import {
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { EVENT_TYPES, type useCalendarController } from '../../../components/calendar/useCalendarController';
+import { eventTimeError } from '../../../utils/validation';
 
 type Ctl = ReturnType<typeof useCalendarController>;
 
@@ -107,6 +108,8 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
   const side = useSheetSide();
   const f = ctl.form;
   const set = (patch: Partial<typeof f>) => ctl.setForm({ ...f, ...patch });
+  // Re-validated on every change, so fixing a time immediately unblocks Save.
+  const timeError = eventTimeError(f.start_time, f.end_time);
   const editing = !!ctl.editingId;
   return (
     <Sheet open={ctl.showModal} onOpenChange={(o) => { if (!o) ctl.closeEditor(); }}>
@@ -185,8 +188,14 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               </div>
               <div className="grid gap-2 sm:col-span-1">
                 <Label htmlFor="event-end">Ends</Label>
-                <Input id="event-end" type="time" value={f.end_time} onChange={(e) => set({ end_time: e.target.value })} />
+                <Input
+                  id="event-end" type="time" value={f.end_time} onChange={(e) => set({ end_time: e.target.value })}
+                  aria-invalid={timeError ? true : undefined} aria-describedby={timeError ? 'event-time-error' : undefined}
+                />
               </div>
+              {timeError && (
+                <p id="event-time-error" role="alert" className="text-sm text-destructive sm:col-span-3 sm:order-last">{timeError}</p>
+              )}
               <div className="grid gap-2 sm:col-span-1">
                 <Label htmlFor="event-team">Team</Label>
                 <Select value={f.team_id || 'all'} onValueChange={(v) => set({ team_id: v === 'all' ? '' : v })}>
@@ -215,7 +224,7 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
             )}
             <div className="ml-auto flex gap-2">
               <Button type="button" variant="outline" onClick={ctl.closeEditor}>Cancel</Button>
-              <Button type="submit" disabled={!f.title.trim() || !f.date}>{editing ? 'Save changes' : 'Create event'}</Button>
+              <Button type="submit" disabled={!f.title.trim() || !f.date || !!timeError}>{editing ? 'Save changes' : 'Create event'}</Button>
             </div>
           </div>
         </form>

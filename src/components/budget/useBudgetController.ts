@@ -13,6 +13,7 @@ import { confirmDialog, notify } from '../dialog';
 import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { defaultTeamId } from '../tasks/useTasksController';
+import { MONEY_CONFIRM_AT, formatMoney, parseMoney } from '../../utils/validation';
 
 export interface BudgetForm { team_id: string; type: string; amount: string; category: string; description: string; date: string }
 const today = () => format(new Date(), 'yyyy-MM-dd');
@@ -71,8 +72,15 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
 
   const handleAdd = async () => {
     if (getDraft('budget:saving', false)) return;
-    const amount = Number(getDraft<BudgetForm>(FORM_KEY, newItem).amount);
-    if (!Number.isFinite(amount) || amount <= 0) { notify('Enter an amount greater than zero.', 'error'); return; }
+    const money = parseMoney(getDraft<BudgetForm>(FORM_KEY, newItem).amount);
+    if (money.ok === false) { notify(money.error, 'error'); return; }
+    // Large entries are usually a typo (an extra zero) — ask before saving.
+    if (money.value >= MONEY_CONFIRM_AT && !(await confirmDialog({
+      title: 'Large amount',
+      message: `Log ${formatMoney(money.value)}? Double-check the amount — this is much larger than a typical entry.`,
+      confirmLabel: `Yes, log ${formatMoney(money.value)}`,
+    }))) return;
+    if (getDraft('budget:saving', false)) return;
     setBusy(true);
     // Release only our own lock: after a sign-out / workspace switch a new
     // save may hold it.
@@ -82,7 +90,7 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
     // Only close the form this save came from (not one opened or edited since).
     const closeIfUnchanged = () => { if (getDraft(FORM_KEY, submitted) === submitted) closeEntryModal(); };
     try {
-      const payload = { ...submitted, amount: parseFloat(submitted.amount) };
+      const payload = { ...submitted, amount: money.value };
       const res = await apiFetch(id ? `/api/budget/${id}` : '/api/budget', {
         method: id ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -92,7 +100,9 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
         closeIfUnchanged();
         refresh.budget();
       } else {
-        notify(id ? 'Could not save entry — try again.' : 'Could not log entry — try again.', 'error');
+        // Show the server's reason when it refused the entry (validation).
+        const data = res ? await res.json().catch(() => ({})) : {};
+        notify(res?.status === 400 && data?.error ? data.error : id ? 'Could not save entry — try again.' : 'Could not log entry — try again.', 'error');
       }
     } finally {
       unlock();

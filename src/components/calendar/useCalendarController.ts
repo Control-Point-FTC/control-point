@@ -8,6 +8,7 @@ import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
 import { streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from '../../services/aiService';
 import { useDraft, getDraft, newSessionId } from '../../modern/drafts';
+import { eventTimeError } from '../../utils/validation';
 
 export interface EventForm {
   title: string; description: string; date: string; start_time: string; end_time: string;
@@ -174,6 +175,8 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
 
   const handleSave = async () => {
     if (!form.title.trim() || !form.date) return;
+    const timeError = eventTimeError(form.start_time, form.end_time);
+    if (timeError) { notify(timeError, 'error'); return; }
     const payload = { ...form, team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id };
     const id = editingId;
     // The editor closes immediately (optimistic), so its draft is cleared now.
@@ -183,22 +186,22 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
       setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, ...payload } : e)));
       try {
         const res = await apiFetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || '');
         refresh.events();
-      } catch {
+      } catch (err: any) {
         setEvents(prev);
-        notify('Could not save event — try again.', 'error');
+        notify((!(err instanceof TypeError) && err?.message) || 'Could not save event — try again.', 'error');
       }
     } else {
       const tempId = `temp-${Date.now()}`;
       setEvents((es: any[]) => [...es, { ...payload, id: tempId }]);
       try {
         const res = await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error();
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || '');
         refresh.events();
-      } catch {
+      } catch (err: any) {
         setEvents((es: any[]) => es.filter((e: any) => e.id !== tempId));
-        notify('Could not save event — try again.', 'error');
+        notify((!(err instanceof TypeError) && err?.message) || 'Could not save event — try again.', 'error');
       }
     }
   };

@@ -135,6 +135,7 @@ import {
   type ScoutEventParsed,
 } from "./server/ftcScout.js";
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
+import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
@@ -5766,8 +5767,17 @@ async function startServer() {
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const { date, records } = req.body;
-      if (!date || !Array.isArray(records)) {
+      if (!isIsoDate(date) || !Array.isArray(records) || records.length > 500) {
         return res.status(400).json({ error: "Invalid request body" });
+      }
+      // Status codes and future-day rule (only Excused / School event ahead
+      // of time). "Today" is taken in the furthest-ahead timezone so a team
+      // anywhere on Earth can mark its own today.
+      const latestToday = latestTodayOnEarth();
+      for (const rec of records) {
+        if (rec?.status === null || rec?.status === '-') continue;
+        const bad = attendanceMarkError(date, String(rec?.status), latestToday);
+        if (bad) return res.status(400).json({ error: bad });
       }
 
       // Every touched member must belong to the caller's workspace
@@ -5781,8 +5791,14 @@ async function startServer() {
       // Anyone may log their OWN attendance (self check-in / self report);
       // touching anyone else's records needs the attendance permission.
       const selfOnly = memberIds.length > 0 && memberIds.every((mid) => mid === auth.memberId);
-      if (!selfOnly && !(await hasPerm(auth, "manage_attendance"))) {
+      const canManage = await hasPerm(auth, "manage_attendance");
+      if (!selfOnly && !canManage) {
         return res.status(403).json({ error: "You don't have permission for that" });
+      }
+      // Self-reports are for today only (the dashboard check-in strip). Any
+      // other day goes through someone who manages attendance.
+      if (selfOnly && !canManage && (date < earliestTodayOnEarth() || date > latestToday)) {
+        return res.status(403).json({ error: "You can only report your own attendance for today" });
       }
 
       console.log(`[Attendance] Updating ${records.length} records for ${date}`);
@@ -7888,16 +7904,17 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
-      const { title, description, date, start_time, end_time, location, event_type, created_by } = req.body;
-      if (!title || !date) {
-        return res.status(400).json({ error: "Title and date are required" });
-      }
-      const id = await insertTeamEvent(auth.teamId, Number(created_by) || auth.memberId, {
-        title, date, time: start_time, notes: description,
+      const { title, description, date, start_time, end_time, location, event_type } = req.body;
+      const invalid = eventError({ title, date, start_time, end_time });
+      if (invalid) return res.status(400).json({ error: invalid });
+      // The creator is the signed-in member (a client-supplied created_by is ignored).
+      const id = await insertTeamEvent(auth.teamId, auth.memberId, {
+        title: String(title).trim(), date, time: start_time, notes: description,
       });
       // Preserve the extra fields the admin form collects
       (await dbRun("UPDATE events SET end_time = ?, location = ?, event_type = ? WHERE id = ?",
         end_time || '', location || '', event_type || 'meeting', id));
+      broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ id });
     } catch (error) {
       console.error("Error creating event:", error);
@@ -7912,6 +7929,14 @@ Rules:
       const { title, description, date, start_time, end_time, location, event_type } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
+      // Validate the event as it will be stored (patch merged over the row).
+      const invalid = eventError({
+        title: title ?? existing.title,
+        date: date ?? existing.date,
+        start_time: start_time ?? existing.start_time,
+        end_time: end_time ?? existing.end_time,
+      });
+      if (invalid) return res.status(400).json({ error: invalid });
       (await dbRun(
         "UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ? WHERE id = ?"
       , title ?? existing.title,
@@ -7924,6 +7949,7 @@ Rules:
         req.params.id));
       const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id)) as any;
       if (updatedEvent) void updateSyncedEvent(updatedEvent);
+      broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating event:", error);
@@ -7939,6 +7965,7 @@ Rules:
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
       await deleteSyncedEvent(Number(req.params.id));
       (await dbRun("DELETE FROM events WHERE id = ?", req.params.id));
+      broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting event:", error);
@@ -7962,14 +7989,17 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_budget");
       if (!auth) return;
-      const { type, amount, category, description, date } = req.body;
+      const entry = budgetEntryFrom(req.body, null);
+      if ("error" in entry) return res.status(400).json({ error: entry.error });
+      const { type, amount, category, description, date } = entry;
       const info = (await dbRun("INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)", auth.teamId, type, amount, category, description, date));
 
       // Notify board members of budget changes
-      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1 AND team_id = ?", auth.teamId));
+      const boardMembers = (await dbAll("SELECT id FROM members WHERE is_board = 1 AND team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId));
       boardMembers.forEach((m: any) => {
-        createNotification(m.id, `New budget ${type}: $$${amount} for ${category}`, 'system', { budget_id: Number(info.lastInsertRowid) });
+        createNotification(m.id, `New budget ${type}: ${formatMoney(amount)}${category ? ` for ${category}` : ""}`, 'system', { budget_id: Number(info.lastInsertRowid) });
       });
+      broadcastToTeam(auth.teamId, { type: "budget_changed" });
 
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
@@ -7984,15 +8014,14 @@ Rules:
       if (!auth) return;
       const existing: any = (await dbGet("SELECT * FROM budget WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      const { type, amount, category, description, date } = req.body;
+      const entry = budgetEntryFrom(req.body, existing);
+      if ("error" in entry) return res.status(400).json({ error: entry.error });
+      const { type, amount, category, description, date } = entry;
       (await dbRun(
         "UPDATE budget SET type = ?, amount = ?, category = ?, description = ?, date = ? WHERE id = ?",
-        type ?? existing.type,
-        amount ?? existing.amount,
-        category ?? existing.category,
-        description ?? existing.description,
-        date ?? existing.date,
+        type, amount, category, description, date,
         req.params.id));
+      broadcastToTeam(auth.teamId, { type: "budget_changed" });
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating budget item:", error);
@@ -8007,6 +8036,7 @@ Rules:
       const existing: any = (await dbGet("SELECT team_id FROM budget WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       (await dbRun("DELETE FROM budget WHERE id = ?", req.params.id));
+      broadcastToTeam(auth.teamId, { type: "budget_changed" });
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting budget item:", error);
@@ -9645,21 +9675,18 @@ Rules:
       const p = JSON.parse(m[1]);
       if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
         const today = new Date().toISOString().slice(0, 10);
+        // Same rules as the budget form and API (budgetEntryFrom); Bruno only
+        // gets defaults for type (expense) and date (today), and long text is
+        // trimmed rather than refused.
         const valid = p.map((b: any) => {
-          const amount = parseFloat(b?.amount);
-          if (isNaN(amount) || amount <= 0) return null;
-          const type = b?.type === "income" ? "income" : "expense";
-          let date = today;
-          if (typeof b?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && !isNaN(new Date(b.date + "T00:00:00").getTime())) {
-            date = b.date;
-          }
-          return {
-            type,
-            amount: Math.round(amount * 100) / 100,
+          const entry = budgetEntryFrom({
+            type: b?.type === "income" ? "income" : "expense",
+            amount: b?.amount,
+            date: isIsoDate(b?.date) ? b.date : today,
             category: typeof b?.category === "string" ? b.category.trim().slice(0, 80) : "",
             description: typeof b?.description === "string" ? b.description.trim().slice(0, 500) : "",
-            date,
-          };
+          }, null);
+          return "error" in entry ? null : entry;
         }).filter(Boolean);
         if (valid.length) entries = valid;
       }
@@ -10131,6 +10158,9 @@ Rules:
       if (!Object.keys(applied).length) {
         return res.status(400).json({ error: "Nothing valid to add — please try again" });
       }
+      // Bruno's writes are live-synced like the direct API's.
+      if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
+      if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, applied });
     } catch (error) {
       console.error("AI apply-actions error:", error);

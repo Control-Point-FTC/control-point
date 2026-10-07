@@ -1671,6 +1671,11 @@ export default function App() {
         } else if (msg.type === 'attendance_changed') {
           // Another user marked attendance — refresh it live.
           refresh.attendance();
+        } else if (msg.type === 'budget_changed') {
+          // Someone logged/edited/deleted a transaction — money must never be stale.
+          refresh.budget();
+        } else if (msg.type === 'events_changed') {
+          refresh.events();
         } else if (msg.type === 'member_roles_changed') {
           // Someone's roles changed — refresh the roster everywhere and
           // re-read my own permissions so the new role applies live.
