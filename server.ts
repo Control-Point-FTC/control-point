@@ -46,6 +46,8 @@ import {
 } from "./server/onboarding.js";
 import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
 import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
+import { workspaceFactsBlock, resolveTimeZone } from "./server/workspaceFacts.js";
+import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import {
   isAIConfigured,
@@ -3932,7 +3934,7 @@ async function startServer() {
     if (parseInt(req.params.id, 10) !== auth.teamId) {
       return res.status(403).json({ error: "Not your workspace" });
     }
-    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode } = req.body;
+    const { name, number, accent_color, primary_color, text_color, ftc_team_number, default_interface_mode, timezone } = req.body;
     // Partial update: only touch columns the caller actually sent, so saving the
     // FTC team number alone can't wipe the workspace name or colors.
     const sets: string[] = [];
@@ -3956,6 +3958,15 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid interface mode" });
       }
       sets.push("default_interface_mode = ?"); vals.push(default_interface_mode);
+    }
+    if (timezone !== undefined) {
+      // IANA zone (e.g. "America/Chicago"); null/"" clears it (browser zone is used).
+      let tz: string | null = null;
+      if (timezone !== null && timezone !== "") {
+        tz = String(timezone).slice(0, 64);
+        if (resolveTimeZone(tz) !== tz) return res.status(400).json({ error: "Unknown timezone" });
+      }
+      sets.push("timezone = ?"); vals.push(tz);
     }
     if (sets.length === 0) return res.status(400).json({ error: "Nothing to update" });
     vals.push(req.params.id);
@@ -9852,6 +9863,89 @@ Rules:
     return { text: src.replace(SWITCH_BLOCK_RE, "").trim(), switchTo };
   }
 
+  /**
+   * Bruno's scouting lookups: when a reply ends with a ```scout-team /
+   * ```scout-event request, fetch the stats and return a summary to append
+   * (or "" when there was no request). Shared by the streamed and the plain
+   * reply paths — streamed replies used to promise a lookup and never run it.
+   */
+  async function scoutingAppendix(rawText: string, teamId: number | null, signal?: AbortSignal): Promise<string> {
+    const scout = extractScoutBlock(String(rawText || ""));
+    const scoutEvent = extractScoutEventBlock(String(rawText || ""));
+    let out = "";
+    // A stopped reply stops its lookups too (no fetches for an answer nobody sees).
+    const stopped = () => !!signal?.aborted;
+    if (stopped()) return "";
+    // If Bruno requested team scouting, fetch the stats and append a summary.
+    // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
+    const srcName = (src: string) => (src === "first-events" ? "FIRST Events" : "FTC Scout");
+    if (scout.numbers?.length) {
+      const season = currentFtcSeason();
+      const sources = new Set<string>();
+      const summaries = await mapLimit(scout.numbers, 4, async (num: number) => {
+        if (stopped()) return "";
+        try {
+          const payload = await getTeamData(num, season);
+          const p = payload?.data;
+          if (!payload || !p) return `**Team ${num}**: no data found for ${season} season`;
+          sources.add(srcName(payload.source));
+          const opr = p.opr || {};
+          const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
+          const evts = (p.events || []).slice(0, 3).map((e: any) =>
+            `${e.name}${e.rank ? ` (#${e.rank})` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}`
+          ).join('; ');
+          return `**Team ${p.number} — ${p.name}** _(${srcName(payload.source)})_: OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`;
+        } catch { return `**Team ${num}**: lookup failed (data sources unreachable)`; }
+      });
+      if (summaries.length) {
+        const label = sources.size ? [...sources].join(' + ') : 'no live source';
+        out += `\n\n---\n**Scouting data** (${label}, ${season} season):\n\n${summaries.join('\n\n')}`;
+      }
+    }
+    // If Bruno requested event-wide scouting, fetch the field at the event.
+    // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
+    if (scoutEvent.code) {
+      const season = currentFtcSeason();
+      try {
+        const teamRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
+        const myNum = parseInt(teamRow?.ftc_team_number, 10) || 0;
+        const evPayload = await getEventData(myNum, season, scoutEvent.code).catch(() => null);
+        const ev = evPayload?.data;
+        if (evPayload && ev?.teams?.length) {
+          const rankMap = new Map<number, number>();
+          for (const r of ev.rankings || []) {
+            if (r.teamNumber && r.rank) rankMap.set(r.teamNumber, r.rank);
+          }
+          const field: number[] = ev.teams.map((t: any) => t.teamNumber).filter((n: number) => n && n !== myNum);
+          // With event rankings: order the whole field by rank first, then
+          // look up only the top of it. Without: OPR is the only signal, so
+          // look up (a capped slice of) the field and rank by OPR.
+          const ranked = rankMap.size > 0;
+          const candidates = ranked
+            ? [...field].sort((a, b) => (rankMap.get(a) ?? 9999) - (rankMap.get(b) ?? 9999)).slice(0, 15)
+            : field.slice(0, 40);
+          const rows = (await mapLimit(candidates, 6, async (n: number) => {
+            if (stopped()) return null;
+            try {
+              const d = (await getTeamData(n, season))?.data;
+              if (!d) return null;
+              const er = rankMap.get(n);
+              const oprV = d.opr?.tot?.value;
+              const label = er ? `event #${er}${oprV != null ? `, OPR ${oprV}` : ''}` : oprV != null ? `OPR ${oprV}` : "no data";
+              return { text: `${d.number} ${d.name} — ${label}`, sort: er ?? (oprV != null ? 1000 - oprV : 9999) };
+            } catch { return null; }
+          })).filter(Boolean) as { text: string; sort: number }[];
+          rows.sort((a, b) => a.sort - b.sort);
+          const basis = ranked
+            ? `ranked by event standings (${field.length} teams)`
+            : `ranked by OPR — considered ${candidates.length} of ${field.length} teams`;
+          out += `\n\n---\n**Event scouting: ${ev.name}** (${srcName(evPayload.source)}, ${season} season, ${basis}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
+        }
+      } catch { /* event scouting is best-effort */ }
+    }
+    return out;
+  }
+
   app.post("/api/ai/build-helper", async (req, res) => {
     // Hoisted so the catch block can attribute failed attempts to the caller.
     let auth: Awaited<ReturnType<typeof requireAuth>> = null;
@@ -9907,22 +10001,12 @@ Rules:
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
       const snapshotCtx = await buildTeamSnapshotContext(auth.teamId);
-      const todayLine = `Today's date: ${new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" })} (America/New_York).`;
-      // Compact upcoming-events context so Bruno can answer "what's coming up"
-      // and propose deletions by matching titles to event ids (```delete-event).
-      // Capped at 60 rows so title matching works across a full season of
-      // events while keeping the token cost negligible (~10 tokens/row).
-      let upcomingCtx = "";
-      try {
-        const upcoming = (await dbAll(
-          "SELECT id, title, date, start_time FROM events WHERE team_id = ? AND date >= date('now', '-1 day') ORDER BY date ASC, start_time ASC LIMIT 60",
-          auth.teamId
-        )) as any[];
-        if (upcoming.length) {
-          const lines = upcoming.map((e) => `#${e.id} ${e.title} — ${e.date}${e.start_time ? " " + e.start_time : ""}`);
-          upcomingCtx = `UPCOMING TEAM EVENTS (next ${upcoming.length}):\n${lines.join("\n")}`;
-        }
-      } catch (err) { console.error("[bruno] upcoming-events context query failed:", err); /* context is best-effort — never block the reply */ }
+      // Counts, dates, weekdays, next/recurring events and open tasks are
+      // computed server-side in the team's timezone (see server/workspaceFacts.ts)
+      // — Bruno states them, it doesn't derive them. Event ids stay listed so
+      // ```delete-event proposals can reference them.
+      const tz = await teamTimeZone(auth.teamId, req.body?.tz);
+      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz);
       // User identity: Bruno should address the user by name, not the team name.
       let userLine = "";
       try {
@@ -9931,7 +10015,7 @@ Rules:
           userLine = `You are chatting with ${member.name}. Address them by their first name in greetings (e.g. "Hey ${member.name.split(' ')[0]}!"), not by the team name.`;
         }
       } catch (err) { console.error("[bruno] user name lookup failed:", err); /* best-effort */ }
-      const fullContext = [userLine, teamContext, snapshotCtx, upcomingCtx, todayLine].filter(Boolean).join("\n\n");
+      const fullContext = [userLine, teamContext, factsCtx, snapshotCtx].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
       // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
       // unless the client explicitly asked for Bruno (the coding-handoff switch).
@@ -10028,7 +10112,12 @@ Rules:
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
-          const finalText = stripActionBlocks(fullText);
+          // Scouting lookups the reply asked for run now and stream after it.
+          const appendix = await scoutingAppendix(fullText, auth.teamId, streamAbort.signal).catch(() => "");
+          // Stopped during the lookups: the user has the reply they saw; nothing more is written or saved.
+          if (streamAbort.signal.aborted) { res.end(); return; }
+          if (appendix) res.write(appendix);
+          const finalText = stripActionBlocks(fullText) + appendix;
           if (chat && String(finalText || "").trim()) {
             (await dbRun("INSERT INTO bruno_messages (chat_id, role, text) VALUES (?, 'model', ?)", chat.id, String(finalText).slice(0, 20000)));
           }
@@ -10059,74 +10148,9 @@ Rules:
         signal: nonStreamAbort.signal,
       });
       const result = aiReply.text;
-      const scout = extractScoutBlock(String(result || ""));
-      const scoutEvent = extractScoutEventBlock(String(result || ""));
       let finalResult = stripActionBlocks(String(result || ""));
-      // If Bruno requested team scouting, fetch the stats and append a summary.
-      // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
-      const srcName = (src: string) => (src === "first-events" ? "FIRST Events" : "FTC Scout");
-      if (scout.numbers?.length) {
-        const season = currentFtcSeason();
-        const sources = new Set<string>();
-        const summaries = await mapLimit(scout.numbers, 4, async (num: number) => {
-          try {
-            const payload = await getTeamData(num, season);
-            const p = payload?.data;
-            if (!payload || !p) return `**Team ${num}**: no data found for ${season} season`;
-            sources.add(srcName(payload.source));
-            const opr = p.opr || {};
-            const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
-            const evts = (p.events || []).slice(0, 3).map((e: any) =>
-              `${e.name}${e.rank ? ` (#${e.rank})` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}`
-            ).join('; ');
-            return `**Team ${p.number} — ${p.name}** _(${srcName(payload.source)})_: OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`;
-          } catch { return `**Team ${num}**: lookup failed (data sources unreachable)`; }
-        });
-        if (summaries.length) {
-          const label = sources.size ? [...sources].join(' + ') : 'no live source';
-          finalResult += `\n\n---\n**Scouting data** (${label}, ${season} season):\n\n${summaries.join('\n\n')}`;
-        }
-      }
-      // If Bruno requested event-wide scouting, fetch the field at the event.
-      // Uses the data-source layer (FIRST Events primary, FTC Scout fallback).
-      if (scoutEvent.code) {
-        const season = currentFtcSeason();
-        try {
-          const teamRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", auth.teamId)) as any;
-          const myNum = parseInt(teamRow?.ftc_team_number, 10) || 0;
-          const evPayload = await getEventData(myNum, season, scoutEvent.code).catch(() => null);
-          const ev = evPayload?.data;
-          if (evPayload && ev?.teams?.length) {
-            const rankMap = new Map<number, number>();
-            for (const r of ev.rankings || []) {
-              if (r.teamNumber && r.rank) rankMap.set(r.teamNumber, r.rank);
-            }
-            const field: number[] = ev.teams.map((t: any) => t.teamNumber).filter((n: number) => n && n !== myNum);
-            // With event rankings: order the whole field by rank first, then
-            // look up only the top of it. Without: OPR is the only signal, so
-            // look up (a capped slice of) the field and rank by OPR.
-            const ranked = rankMap.size > 0;
-            const candidates = ranked
-              ? [...field].sort((a, b) => (rankMap.get(a) ?? 9999) - (rankMap.get(b) ?? 9999)).slice(0, 15)
-              : field.slice(0, 40);
-            const rows = (await mapLimit(candidates, 6, async (n: number) => {
-              try {
-                const d = (await getTeamData(n, season))?.data;
-                if (!d) return null;
-                const er = rankMap.get(n);
-                const oprV = d.opr?.tot?.value;
-                const label = er ? `event #${er}${oprV != null ? `, OPR ${oprV}` : ''}` : oprV != null ? `OPR ${oprV}` : "no data";
-                return { text: `${d.number} ${d.name} — ${label}`, sort: er ?? (oprV != null ? 1000 - oprV : 9999) };
-              } catch { return null; }
-            })).filter(Boolean) as { text: string; sort: number }[];
-            rows.sort((a, b) => a.sort - b.sort);
-            const basis = ranked
-              ? `ranked by event standings (${field.length} teams)`
-              : `ranked by OPR — considered ${candidates.length} of ${field.length} teams`;
-            finalResult += `\n\n---\n**Event scouting: ${ev.name}** (${srcName(evPayload.source)}, ${season} season, ${basis}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
-          }
-        } catch { /* event scouting is best-effort */ }
-      }
+      finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
+      if (nonStreamAbort.signal.aborted) return;
       const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
       logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
       if (chat) {
@@ -10394,9 +10418,11 @@ Rules:
         "SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done' AND due_date IS NOT NULL AND due_date < date('now')",
         teamId
       )) as any;
+      // (messages has no created_at column — this count used to fail and read
+      // as 0, which the briefing turned into "your channels have gone quiet".)
       const recentMessages = (await dbGet(
-        "SELECT COUNT(*) AS c FROM messages WHERE team_id = ? AND created_at >= datetime('now', '-7 days')",
-        teamId
+        "SELECT COUNT(*) AS c FROM messages WHERE team_id = ? AND timestamp >= ? AND deleted_at IS NULL",
+        teamId, new Date(Date.now() - 7 * 86400000).toISOString()
       ).catch(() => ({ c: 0 }))) as any;
       const budgetRows = (await dbAll("SELECT amount, type FROM budget WHERE team_id = ?", teamId).catch(() => [])) as any[];
       const budgetNet = budgetRows.reduce(
@@ -10407,9 +10433,15 @@ Rules:
         "SELECT name, quantity FROM inventory WHERE team_id = ? AND quantity <= 2 ORDER BY quantity LIMIT 10",
         teamId
       ).catch(() => [])) as any[];
-      const memberCount = ((await dbGet("SELECT COUNT(*) AS c FROM members WHERE team_id = ?", teamId)) as any)?.c || 0;
+      // Active members only (removed members' rows are kept for history).
+      const memberCount = ((await dbGet("SELECT COUNT(*) AS c FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId)) as any)?.c || 0;
+      const openTaskTotal = ((await dbGet("SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done'", teamId)) as any)?.c || 0;
+      const tz = await teamTimeZone(teamId, req.body?.tz);
+      const facts = await workspaceFactsBlock({ dbGet, dbAll }, teamId, tz);
       const today = new Date().toISOString().slice(0, 10);
       const prompt = buildCoachPrompt({
+        facts,
+        openTaskTotal,
         openTasks: openTasks.map((t) => ({ title: t.title, status: t.status, due: t.due_date && t.due_date < today ? `${t.due_date} (overdue)` : t.due_date })),
         overdueTasks: overdue?.c || 0,
         recentMessages: recentMessages?.c || 0,
@@ -10995,25 +11027,24 @@ Rules:
   // Compact snapshot of everything the team has done in Control Point, so
   // Bruno actually knows the workspace: tasks, outreach, linked accounts.
   // Best-effort and capped — context is informative, never blocks the reply.
+  /** The team's timezone: its saved setting, else the caller's browser zone, else New York. */
+  async function teamTimeZone(teamId: number | null, clientTz?: unknown): Promise<string> {
+    let saved: string | null = null;
+    if (teamId) {
+      try { saved = ((await dbGet("SELECT timezone FROM teams WHERE id = ?", teamId)) as any)?.timezone || null; } catch { /* column missing pre-migration */ }
+    }
+    return resolveTimeZone(saved, clientTz);
+  }
+
   async function buildTeamSnapshotContext(teamId: number | null): Promise<string> {
     if (!teamId) return "";
     try {
+      // Team counts, open tasks and the calendar are in WORKSPACE FACTS.
+      // Everything below is member-written, so it is quoted (data, not instructions).
+      const q = quoteUntrusted;
       const parts: string[] = [];
       const team = (await dbGet("SELECT name, number FROM teams WHERE id = ?", teamId)) as any;
-      const memCount = (await dbGet("SELECT COUNT(*) AS n FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId)) as any;
-      if (team) parts.push(`TEAM: ${team.name}${team.number ? ` (#${team.number})` : ""} — ${memCount?.n || 0} members`);
-
-      const open = (await dbAll(
-        `SELECT t.id, t.title, t.status, t.due_date, m.name AS assignee
-         FROM tasks t LEFT JOIN members m ON m.id = t.assigned_to
-         WHERE t.team_id = ? AND t.status != 'done'
-         ORDER BY CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END, t.due_date ASC LIMIT 15`,
-        teamId
-      )) as any[];
-      if (open.length) {
-        const lines = open.map((t) => `#${t.id} ${t.title} — ${t.status}${t.assignee ? `, assignee: ${t.assignee}` : ", unassigned"}${t.due_date ? `, due ${t.due_date}` : ""}`);
-        parts.push(`OPEN TASKS (${open.length}):\n${lines.join("\n")}`);
-      }
+      if (team) parts.push(`TEAM: ${q(team.name, 80)}${team.number ? ` (#${q(String(team.number), 20)})` : ""}`);
       const done = (await dbAll(
         `SELECT t.id, t.title, t.completed_at, m.name AS completer
          FROM tasks t LEFT JOIN members m ON m.id = t.completed_by
@@ -11022,7 +11053,7 @@ Rules:
         teamId
       )) as any[];
       if (done.length) {
-        const lines = done.map((t) => `#${t.id} ${t.title}${t.completer ? ` — done by ${t.completer}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
+        const lines = done.map((t) => `#${t.id} ${q(t.title, 120)}${t.completer ? ` — done by ${q(t.completer, 40)}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
         parts.push(`RECENTLY COMPLETED TASKS:\n${lines.join("\n")}`);
       }
 
@@ -11031,7 +11062,7 @@ Rules:
         teamId
       )) as any[];
       if (outreach.length) {
-        const lines = outreach.map((o) => `${o.title} — ${o.date}${o.hours ? `, ${o.hours}h` : ""}${o.location ? ` @ ${o.location}` : ""}`);
+        const lines = outreach.map((o) => `${q(o.title, 120)} — ${o.date}${o.hours ? `, ${o.hours}h` : ""}${o.location ? ` @ ${q(o.location, 80)}` : ""}`);
         parts.push(`RECENT OUTREACH:\n${lines.join("\n")}`);
       }
 
@@ -11042,10 +11073,10 @@ Rules:
       )) as any[];
       for (const s of socials) {
         const label = s.display_name || s.handle || s.platform;
-        links.push(`${s.platform}: ${label}${s.url ? ` (${s.url})` : ""}`);
+        links.push(`${s.platform}: ${q(label, 60)}${s.url ? ` (${q(s.url, 200)})` : ""}`);
       }
       const repo = (await dbGet("SELECT owner, repo, branch FROM code_repos WHERE team_id = ?", teamId)) as any;
-      if (repo) links.push(`GitHub: ${repo.owner}/${repo.repo} (branch ${repo.branch})`);
+      if (repo) links.push(`GitHub: ${q(`${repo.owner}/${repo.repo}`, 120)} (branch ${q(repo.branch, 60)})`);
       const docsCount = (await dbGet("SELECT COUNT(*) AS n FROM cad_docs WHERE team_id = ?", teamId)) as any;
       if (docsCount?.n) links.push(`Onshape: ${docsCount.n} doc(s) linked`);
       if (links.length) parts.push(`LINKED ACCOUNTS:\n${links.join("\n")}`);
@@ -11053,6 +11084,10 @@ Rules:
       // FTC competition data so Bruno can answer "who should we pick for
       // alliances?" and similar strategy questions. Best-effort; never blocks.
       // Uses the data-source layer: FIRST Events primary, FTC Scout fallback.
+      // The optional sections above are capped as a group; FTC stats are
+      // appended after the cap so a long outreach list can never cut them off.
+      let snap = parts.join("\n\n");
+      if (snap.length > 2500) snap = snap.slice(0, 2500) + "\n…(more omitted)";
       try {
         const ftcRow = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
         const ftcNum = parseInt(ftcRow?.ftc_team_number, 10);
@@ -11067,13 +11102,11 @@ Rules:
               `${e.name} (${e.date || '?'})${e.code ? ` [code: ${e.code}]` : ''}${e.rank ? ` — quals #${e.rank}` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}${e.awards?.length ? ` [${e.awards.join(', ')}]` : ''}`
             );
             const srcLabel = payload.source === 'first-events' ? 'FIRST Events' : payload.source === 'ftc-scout' ? 'FTC Scout' : 'cache';
-            parts.push(`FTC STATS (team #${d.number}, ${season} season, via ${srcLabel}, fetched ${payload.fetchedAt.slice(0, 10)}):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}${d.oprSource ? ` (OPR via ${d.oprSource === 'ftc-scout' ? 'FTC Scout' : d.oprSource})` : ''}\nRecent events:\n${evts.join('\n') || '(none)'}`);
+            snap += `\n\nFTC STATS (team #${d.number}, ${season} season, via ${srcLabel}, fetched ${payload.fetchedAt.slice(0, 10)}):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}${d.oprSource ? ` (OPR via ${d.oprSource === 'ftc-scout' ? 'FTC Scout' : d.oprSource})` : ''}\nRecent events:\n${evts.join('\n') || '(none)'}`;
           }
         }
       } catch { /* FTC context is best-effort */ }
-
-      const snap = parts.join("\n\n");
-      return snap.length > 3500 ? snap.slice(0, 3500) + "\n…(truncated)" : snap;
+      return snap;
     } catch (err) {
       console.error("[bruno] team snapshot context query failed:", err);
       return "";

@@ -9,11 +9,18 @@ import type { ScoutingContextRequest } from '../types/ftcScout';
 const CACHE_KEY = 'ftcNewsCache';
 const TS_KEY = 'ftcNewsTimestamp';
 
+/** The viewer's IANA timezone, so the server can state dates and weekdays in
+ *  the team's local time when the workspace hasn't set one. */
+function viewerTimeZone(): string | undefined {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { return undefined; }
+}
+const withTz = (body: any) => (body && typeof body === 'object' && !Array.isArray(body) ? { tz: viewerTimeZone(), ...body } : body);
+
 async function postJSON(endpoint: string, body: any = {}) {
   const res = await apiFetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(withTz(body))
   });
 
   if (!res.ok) {
@@ -33,7 +40,7 @@ async function postStream(
   const res = await apiFetch(`${endpoint}?stream=true`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(withTz(body)),
     signal,
   });
 
@@ -201,7 +208,9 @@ export interface BuildHelperMessage {
 
 /** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
 export function stripEventBlocks(text: string): string {
-  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "").trim();
+  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "")
+    // Scouting lookup requests: the server runs them and appends the results.
+    .replace(/```scout-team[\s\S]*?(```|$)/g, "").replace(/```scout-event[\s\S]*?(```|$)/g, "").trim();
 }
 
 /**
