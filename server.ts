@@ -152,6 +152,7 @@ import {
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
 import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
+import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
 import type { FtcEventFull, FtcTeamEventStats, FtcTeamEventSummary, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from "./src/types/ftcScout.js";
@@ -10668,12 +10669,15 @@ Rules:
           const p = payload?.data;
           if (!payload || !p) return `**Team ${num}**: no data found for ${season} season`;
           sources.add(srcName(payload.source));
+          // Inline citations: records from the payload's site, OPR from FTC Scout.
+          const site = siteOf(payload.source, (payload as any).origin);
           const opr = p.opr || {};
+          const link = citeTeam(site, season, Number(p.number) || num, opr.tot?.value != null);
           const fmt = (s: any) => s?.value != null ? `${s.value}${s.rank ? ` (#${s.rank})` : ''}` : 'n/a';
           const evts = (p.events || []).slice(0, 3).map((e: any) =>
             `${e.name}${e.rank ? ` (#${e.rank})` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}`
           ).join('; ');
-          return `**Team ${p.number} — ${p.name}** _(${srcName(payload.source)})_: OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`;
+          return `**Team ${p.number} — ${p.name}** (${link}): OPR ${fmt(opr.tot)} (auto ${fmt(opr.auto)}, teleop ${fmt(opr.dc)}, endgame ${fmt(opr.eg)})${evts ? `\nRecent: ${evts}` : ''}`;
         } catch { return `**Team ${num}**: lookup failed (data sources unreachable)`; }
       });
       if (summaries.length) {
@@ -10710,7 +10714,9 @@ Rules:
               if (!d) return null;
               const er = rankMap.get(n);
               const oprV = d.opr?.tot?.value;
-              const label = er ? `event #${er}${oprV != null ? `, OPR ${oprV}` : ''}` : oprV != null ? `OPR ${oprV}` : "no data";
+              // Each row's OPR is this team's FTC Scout season figure: cite it.
+              const oprCite = oprV != null ? ` (${cite('ftc-scout', teamUrl('ftc-scout', season, n))})` : '';
+              const label = er ? `event #${er}${oprV != null ? `, OPR ${oprV}${oprCite}` : ''}` : oprV != null ? `OPR ${oprV}${oprCite}` : "no data";
               return { text: `${d.number} ${d.name} — ${label}`, sort: er ?? (oprV != null ? 1000 - oprV : 9999) };
             } catch { return null; }
           })).filter(Boolean) as { text: string; sort: number }[];
@@ -10718,7 +10724,10 @@ Rules:
           const basis = ranked
             ? `ranked by event standings (${field.length} teams)`
             : `ranked by OPR — considered ${candidates.length} of ${field.length} teams`;
-          out += `\n\n---\n**Event scouting: ${ev.name}** (${srcName(evPayload.source)}, ${season} season, ${basis}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
+          const evSite = siteOf(evPayload.source, (evPayload as any).origin);
+          // Standings come from the event's site; each row cites its own OPR.
+          const evLink = cite(evSite, eventUrl(evSite, season, ev.code || scoutEvent.code));
+          out += `\n\n---\n**Event scouting: ${ev.name}** (${evLink}, ${season} season, ${basis}):\n\nTop teams:\n${rows.slice(0, 15).map((r, i) => `${i + 1}. ${r.text}`).join('\n')}\n\n_These are data-driven suggestions, not guarantees — watch matches and scout in person before locking picks._`;
         }
       } catch { /* event scouting is best-effort */ }
     }
@@ -11885,7 +11894,9 @@ Rules:
               `${e.name} (${e.date || '?'})${e.code ? ` [code: ${e.code}]` : ''}${e.rank ? ` — quals #${e.rank}` : ''}${e.wins != null ? ` ${e.wins}-${e.losses}-${e.ties}` : ''}${e.awards?.length ? ` [${e.awards.join(', ')}]` : ''}`
             );
             const srcLabel = payload.source === 'first-events' ? 'FIRST Events' : payload.source === 'ftc-scout' ? 'FTC Scout' : 'cache';
-            snap += `\n\nFTC STATS (team #${d.number}, ${season} season, via ${srcLabel}, fetched ${payload.fetchedAt.slice(0, 10)}):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}${d.oprSource ? ` (OPR via ${d.oprSource === 'ftc-scout' ? 'FTC Scout' : d.oprSource})` : ''}\nRecent events:\n${evts.join('\n') || '(none)'}`;
+            const ftcSite = siteOf(payload.source, (payload as any).origin);
+            const ftcLinks = citeTeam(ftcSite, season, Number(d.number) || ftcNum, opr.tot?.value != null);
+            snap += `\n\nFTC STATS (team #${d.number}, ${season} season, via ${srcLabel}, fetched ${payload.fetchedAt.slice(0, 10)}):\nOPR total ${fmt(opr.tot)} | auto ${fmt(opr.auto)} | teleop ${fmt(opr.dc)} | endgame ${fmt(opr.eg)}${d.oprSource ? ` (OPR via ${d.oprSource === 'ftc-scout' ? 'FTC Scout' : d.oprSource})` : ''}\nRecent events:\n${evts.join('\n') || '(none)'}\nSource links (cite inline as markdown when you use these numbers; never invent a link): ${ftcLinks}`;
           }
         }
       } catch { /* FTC context is best-effort */ }
