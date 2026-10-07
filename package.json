@@ -48,6 +48,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/multer": "^2.0.0",
     "@vitejs/plugin-react": "^5.0.4",
+    "aws4fetch": "^1.0.20",
     "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",

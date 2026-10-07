@@ -152,6 +152,7 @@ import {
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
 import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
+import { fileKey, r2FromEnv } from "./server/r2.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
 import { DIGEST_WINDOW_MS, PingLimiter, digestText, parsePrefs, prefsPatch, type UpdateKind } from "./server/notifyPrefs.js";
 import { formatScreenContext, parseScreenRequest, type ScreenLookups } from "./server/screenContext.js";
@@ -7251,6 +7252,11 @@ async function startServer() {
   // ---- Durable file store (survives Render restarts/redeploys) ----
   // Every user upload is persisted as a BLOB in stored_files and served from
   // /api/files/:id. Nothing user-uploaded may live only on ephemeral disk.
+  // With R2 configured, the bytes go to the (private) bucket and the row
+  // keeps an empty data column plus r2_key; if R2 is unreachable the bytes
+  // are kept in the database exactly as before, so an upload never fails
+  // because of R2.
+  const r2 = r2FromEnv(process.env as Record<string, string | undefined>);
   async function storeFile(opts: {
     teamId?: number | null; memberId?: number | null; kind: string;
     filename?: string | null; mimeType?: string | null; buffer: Buffer;
@@ -7259,9 +7265,141 @@ async function startServer() {
       `INSERT INTO stored_files (team_id, member_id, kind, filename, mime_type, size, data)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       opts.teamId ?? null, opts.memberId ?? null, opts.kind,
-      opts.filename ?? null, opts.mimeType ?? null, opts.buffer.length, opts.buffer
+      opts.filename ?? null, opts.mimeType ?? null, opts.buffer.length, r2 ? Buffer.alloc(0) : opts.buffer
     );
-    return Number(info.lastInsertRowid);
+    const id = Number(info.lastInsertRowid);
+    if (r2) {
+      const key = fileKey("stored_files", id);
+      try {
+        await r2.put(key, opts.buffer, opts.mimeType);
+        await dbRun("UPDATE stored_files SET r2_key = ? WHERE id = ?", key, id);
+      } catch (e) {
+        console.error("R2 upload failed; keeping the file in the database:", (e as any)?.message || e);
+        await dbRun("UPDATE stored_files SET data = ? WHERE id = ?", opts.buffer, id);
+      }
+    }
+    return id;
+  }
+  /** Delete a stored_files row and its R2 copy (best effort for R2). */
+  async function deleteStoredRow(id: number): Promise<void> {
+    await dbRun("DELETE FROM stored_files WHERE id = ?", id);
+    // The key is derived from the id, so the object goes too even if a
+    // background copy hadn't recorded r2_key yet (the copier also removes
+    // an upload whose row disappeared meanwhile).
+    if (r2) {
+      try { await r2.del(fileKey("stored_files", id)); } catch (e) { console.error("R2 delete failed:", (e as any)?.message || e); }
+    }
+  }
+  /** The bytes of a stored file: R2 first, the database copy as fallback. */
+  async function readStoredBytes(table: "stored_files" | "message_images", id: number, r2Key: string | null, blobLen: number): Promise<Buffer | null> {
+    if (r2Key && r2) {
+      try {
+        const b = await r2.get(r2Key);
+        if (b) return b;
+      } catch (e) {
+        console.error("R2 read failed; trying the database copy:", (e as any)?.message || e);
+      }
+    }
+    // Bytes that live only in R2 (database column cleared) and couldn't be
+    // read are missing. Anything else is the database copy, which may
+    // legitimately be an empty file.
+    if (r2Key && blobLen === 0) return null;
+    const row = (await dbGet(`SELECT data FROM ${table} WHERE id = ?`, id)) as any;
+    if (row?.data == null) return null;
+    return Buffer.from(row.data as ArrayBuffer);
+  }
+
+  // Copy existing files into R2 in the background (the owner asked for every
+  // existing image and file to move). Each copy is verified by size before
+  // the row points at R2. The database copy is cleared only when
+  // R2_PRUNE_DB=1, and only after R2's copy is verified again.
+  let r2Syncing = false;
+  const r2Progress = { copied: 0, pruned: 0, failed: 0, lastRun: "" as string };
+  // Each pass walks forward by id and wraps around, so rows that keep
+  // failing can never stop the rest from being copied or pruned.
+  const r2Cursor: Record<string, number> = {};
+  async function syncFilesToR2(): Promise<void> {
+    if (!r2 || r2Syncing || process.env.R2_SYNC === "off") return;
+    r2Syncing = true;
+    try {
+      for (const table of ["stored_files", "message_images"] as const) {
+        const copyKey = `copy:${table}`;
+        const rows = (await dbAll(
+          `SELECT id, mime_type, length(data) AS n FROM ${table} WHERE r2_key IS NULL AND length(data) > 0 AND id > ? ORDER BY id LIMIT 25`,
+          r2Cursor[copyKey] ?? 0,
+        )) as any[];
+        r2Cursor[copyKey] = rows.length ? rows[rows.length - 1].id : 0;
+        for (const r of rows) {
+          try {
+            const data = (await dbGet(`SELECT data FROM ${table} WHERE id = ?`, r.id)) as any;
+            if (!data?.data) continue;
+            const buf = Buffer.from(data.data as ArrayBuffer);
+            const key = fileKey(table, r.id);
+            await r2.put(key, buf, r.mime_type);
+            if ((await r2.size(key)) !== buf.length) throw new Error("size mismatch after upload");
+            const upd = (await dbRun(`UPDATE ${table} SET r2_key = ? WHERE id = ? AND r2_key IS NULL`, key, r.id)) as any;
+            if (Number(upd?.changes)) r2Progress.copied++;
+            else if (!(await dbGet(`SELECT id FROM ${table} WHERE id = ?`, r.id))) {
+              // Deleted while we copied it: don't leave its bytes behind.
+              await r2.del(key).catch(() => undefined);
+            }
+          } catch (e) {
+            r2Progress.failed++;
+            console.error(`R2 copy of ${table} #${r.id} failed:`, (e as any)?.message || e);
+          }
+        }
+        if (process.env.R2_PRUNE_DB === "1") {
+          const pruneKey = `prune:${table}`;
+          const done = (await dbAll(
+            `SELECT id, r2_key, length(data) AS n FROM ${table} WHERE r2_key IS NOT NULL AND length(data) > 0 AND id > ? ORDER BY id LIMIT 25`,
+            r2Cursor[pruneKey] ?? 0,
+          )) as any[];
+          r2Cursor[pruneKey] = done.length ? done[done.length - 1].id : 0;
+          for (const r of done) {
+            try {
+              const have = await r2.size(r.r2_key);
+              if (have === Number(r.n)) {
+                await dbRun(`UPDATE ${table} SET data = ? WHERE id = ?`, Buffer.alloc(0), r.id);
+                r2Progress.pruned++;
+              } else {
+                // Kept in the database: R2's copy is missing or the wrong size.
+                r2Progress.failed++;
+                console.error(`R2 prune skipped ${table} #${r.id}: expected ${r.n} bytes, R2 has ${have ?? "nothing"}`);
+              }
+            } catch (e) {
+              r2Progress.failed++;
+              console.error(`R2 verify of ${table} #${r.id} failed:`, (e as any)?.message || e);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("R2 sync failed:", (e as any)?.message || e);
+    } finally {
+      r2Progress.lastRun = new Date().toISOString();
+      r2Syncing = false;
+    }
+  }
+  // Owner: how far the move to R2 has got.
+  app.get("/api/owner/r2-status", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const count = async (sql: string) => Number(((await dbGet(sql)) as any)?.n) || 0;
+    const tables: Record<string, any> = {};
+    for (const t of ["stored_files", "message_images"]) {
+      tables[t] = {
+        total: await count(`SELECT COUNT(*) AS n FROM ${t}`),
+        inR2: await count(`SELECT COUNT(*) AS n FROM ${t} WHERE r2_key IS NOT NULL`),
+        waiting: await count(`SELECT COUNT(*) AS n FROM ${t} WHERE r2_key IS NULL AND length(data) > 0`),
+        dbCopiesLeft: await count(`SELECT COUNT(*) AS n FROM ${t} WHERE r2_key IS NOT NULL AND length(data) > 0`),
+      };
+    }
+    res.json({ configured: !!r2, pruning: process.env.R2_PRUNE_DB === "1", tables, progress: r2Progress });
+  });
+  if (r2) {
+    const every = Number(process.env.R2_SYNC_MS) || 60_000;
+    setTimeout(() => void syncFilesToR2(), Math.min(every, 10_000)).unref();
+    setInterval(() => void syncFilesToR2(), every).unref();
   }
   const fileUrl = (id: number): string => `/api/files/${id}`;
   /** Delete a member's own previous avatar file — only when the stored file
@@ -7277,7 +7415,7 @@ async function startServer() {
       const ph = memberIds.map(() => "?").join(",");
       const others = (await dbGet(`SELECT COUNT(*) AS n FROM members WHERE avatar_url = ? AND id NOT IN (${ph})`, url, ...memberIds)) as any;
       if ((others?.n || 0) > 0) return;
-      await dbRun("DELETE FROM stored_files WHERE id = ?", id);
+      await deleteStoredRow(id);
     } catch { /* best effort */ }
   }
   /** Delete the stored_files row behind a /api/files/:id URL (best effort).
@@ -7286,7 +7424,7 @@ async function startServer() {
     try {
       const m = /^\/api\/files\/(\d+)$/.exec(String(url || ""));
       if (m) {
-        await dbRun(`DELETE FROM stored_files WHERE id = ?`, Number(m[1]));
+        await deleteStoredRow(Number(m[1]));
         return;
       }
       const d = /^\/uploads\/(.+)$/.exec(String(url || ""));
@@ -7308,7 +7446,7 @@ async function startServer() {
       // Metadata only: the BLOB is read after the auth + ETag checks, so a
       // 304 revalidation never pulls the file out of the database.
       const f = (await dbGet(
-        `SELECT id, team_id, kind, filename, mime_type FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
+        `SELECT id, team_id, kind, filename, mime_type, r2_key, length(data) AS blob_len FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
       )) as any;
       if (!f) return res.status(404).end();
       let email = String((auth as any).email || "");
@@ -7336,9 +7474,8 @@ async function startServer() {
       res.setHeader("ETag", etag);
       res.setHeader("Cache-Control", "private, no-cache");
       if (req.headers["if-none-match"] === etag) return res.status(304).end();
-      const row = (await dbGet(`SELECT data FROM stored_files WHERE id = ?`, f.id)) as any;
-      if (!row?.data) return res.status(404).end();
-      const buf = Buffer.from(row.data as ArrayBuffer);
+      const buf = await readStoredBytes("stored_files", f.id, f.r2_key, Number(f.blob_len) || 0);
+      if (!buf) return res.status(404).end();
       res.setHeader("Content-Type", inlineSafe ? mime : "application/octet-stream");
       res.setHeader("Content-Length", buf.length);
       const safe = String(f.filename || "file").replace(/["\r\n]/g, "").slice(0, 120) || "file";
@@ -7359,15 +7496,17 @@ async function startServer() {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(404).end();
     const row = (await dbGet(
-      `SELECT mi.mime_type AS mime_type, mi.data AS data FROM message_images mi
+      `SELECT mi.id AS id, mi.mime_type AS mime_type, mi.r2_key AS r2_key, length(mi.data) AS blob_len FROM message_images mi
        JOIN messages m ON m.id = mi.message_id
        WHERE mi.id = ? AND m.team_id = ?`,
       id, auth.teamId
     )) as any;
-    if (!row || !row.data) return res.status(404).end();
+    if (!row) return res.status(404).end();
+    const buf = await readStoredBytes("message_images", row.id, row.r2_key, Number(row.blob_len) || 0);
+    if (!buf) return res.status(404).end();
     res.setHeader("Content-Type", row.mime_type || "image/jpeg");
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.send(row.data);
+    res.send(buf);
   });
 
   app.post("/api/messages/upload", upload.single('file'), async (req, res) => {
