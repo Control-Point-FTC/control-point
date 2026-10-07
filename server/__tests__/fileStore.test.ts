@@ -14,7 +14,10 @@
  *
  * No production DB is touched.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+
+// Talks to a freshly booted dev server; the first requests can be slow.
+vi.setConfig({ testTimeout: 30_000 });
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

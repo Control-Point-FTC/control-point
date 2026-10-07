@@ -12,7 +12,10 @@
  *
  * No production DB is touched; the temp dir (DB + uploads) is removed after.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+
+// Talks to a freshly booted dev server; the first requests can be slow.
+vi.setConfig({ testTimeout: 30_000 });
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, readdirSync, unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -71,7 +74,9 @@ beforeAll(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
 
+  // Windows needs a shell to resolve npx.cmd.
   proc = spawn("npx", ["tsx", "server.ts"], {
+    shell: process.platform === "win32",
     cwd: REPO,
     env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) },
     stdio: "ignore",
