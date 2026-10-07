@@ -61,7 +61,7 @@ const coverage = obs.filter((o) => Math.abs(o.act - o.mu) <= 1.2816 * Math.sqrt(
 console.log(`a=${best.a} b=${best.b} (log-lik ${best.ll.toFixed(4)}), 80% range covers ${(coverage * 100).toFixed(1)}% on ${tuneSeason}`);
 
 if (platt && (platt.noise?.a !== best.a || platt.noise?.b !== best.b)) {
-  throw new Error(`.cache/predict/platt-${tuneSeason}.json was fitted with a=${platt.noise?.a}, b=${platt.noise?.b}, not the a=${best.a}, b=${best.b} fitted now: rerun fit-platt --from-tuned`);
+  throw new Error(`.cache/predict/platt-${tuneSeason}.json was fitted with a=${platt.noise?.a}, b=${platt.noise?.b}, not the a=${best.a}, b=${best.b} fitted now: run fit-noise, then fit-platt --from-tuned, then fit-noise --calibrated`);
 }
 
 // 2. preExtra by log loss of pre-event win probabilities.
