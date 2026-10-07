@@ -141,14 +141,14 @@ export const TOUR_STEPS: TourStep[] = [
     title: 'Dashboard',
     body: 'Your home base. See today\u2019s check-in status, the season snapshot, and an AI summary of what\u2019s happening across your team.',
     target: 'nav-dashboard',
-    mobileTargets: ['mtab-dashboard'],
+    mobileTargets: ['mtab-dashboard', 'mtab-more'],
   },
   {
     id: 'chat',
     title: 'Messaging',
     body: 'Team chat for quick coordination — with file attachments and @mentions so nothing gets lost.',
     target: 'nav-chat',
-    mobileTargets: ['mtab-chat'],
+    mobileTargets: ['mtab-chat', 'mtab-more'],
   },
   {
     id: 'teams',
@@ -163,7 +163,7 @@ export const TOUR_STEPS: TourStep[] = [
     title: 'Attendance',
     body: 'Run QR code check-in sessions at meetings — project the code, members scan it with their phone camera, and attendance logs itself.',
     target: 'nav-attendance',
-    mobileTargets: ['mtab-attendance'],
+    mobileTargets: ['mtab-attendance', 'mtab-more'],
   },
   {
     id: 'calendar',
@@ -177,7 +177,7 @@ export const TOUR_STEPS: TourStep[] = [
     title: 'Tasks',
     body: 'Plan the build season as tasks: assign owners, set due dates, and track everything from CAD to competition prep.',
     target: 'nav-tasks',
-    mobileTargets: ['mtab-tasks'],
+    mobileTargets: ['mtab-tasks', 'mtab-more'],
   },
   {
     id: 'outreach',
