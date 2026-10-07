@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createClient, type Client } from "@libsql/client";
+import { sessionDbId, withSession } from "./session";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -79,7 +80,7 @@ export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> 
 
   const api: TestServer["api"] = async (path, opts = {}) => {
     const headers = new Headers(opts.headers);
-    if (opts.session) headers.set("x-session-id", opts.session);
+    withSession(headers, opts.session);
     if (opts.body && !headers.has("content-type")) headers.set("content-type", "application/json");
     const go = () => fetch(`${base}${path}`, { ...opts, headers });
     const res = await go().catch(() => new Promise((r) => setTimeout(r, 300)).then(go));
@@ -93,10 +94,10 @@ export async function startTestServer(prefix = "cp-test-"): Promise<TestServer> 
     post: (path, body, session) => api(path, { method: "POST", body: JSON.stringify(body), session }),
     patch: (path, body, session) => api(path, { method: "PATCH", body: JSON.stringify(body), session }),
     session: async (memberId) => {
-      const id = `test-sess-${memberId}-${++n}`;
+      const id = `cps_test-${memberId}-${++n}`;
       const now = new Date().toISOString();
       const far = new Date(Date.now() + 86400000).toISOString();
-      await db.execute({ sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", args: [id, memberId, now, far, now] });
+      await db.execute({ sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", args: [sessionDbId(id), memberId, now, far, now] });
       return id;
     },
     stop: async () => {

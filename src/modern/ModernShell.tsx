@@ -21,6 +21,7 @@ import {
 import { buildModernNav, isActive, type ModernNavItem, type NavItemLike } from './nav';
 import { CommandMenu, type CommandAction } from './CommandMenu';
 import { useInterfaceMode } from './interfaceMode';
+import { RouteErrorBoundary } from '../components/ErrorBoundary';
 
 export interface ModernShellProps {
   visibleTabs: NavItemLike[];
@@ -162,7 +163,8 @@ export function ModernShell(props: ModernShellProps) {
               // Immersive pages (chat, Bruno) manage their own scrolling.
               className={cn('flex min-w-0 grow flex-col', immersive && 'min-h-0')}
             >
-              {content}
+              {/* A crash in one page stays in that page (reported); navigating clears it. */}
+              <RouteErrorBoundary>{content}</RouteErrorBoundary>
             </motion.div>
           </main>
         </div>

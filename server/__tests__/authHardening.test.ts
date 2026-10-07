@@ -30,6 +30,7 @@ import { createServer } from "node:net";
 import { createClient, type Client } from "@libsql/client";
 import bcrypt from "bcryptjs";
 import WebSocket from "ws";
+import { sessionDbId, withSession } from "./helpers/session";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -62,15 +63,15 @@ let db: Client;
 const PW = "correct-horse-1";
 const ids: Record<string, number> = {};
 const SESS = {
-  adminA: "test-sess-admin-a",
-  memberA: "test-sess-member-a",
-  adminB: "test-sess-admin-b",
-  removable: "test-sess-removable",
+  adminA: "cps_test-admin-a",
+  memberA: "cps_test-member-a",
+  adminB: "cps_test-admin-b",
+  removable: "cps_test-removable",
 };
 
 async function api(path: string, opts: RequestInit & { session?: string } = {}) {
   const headers = new Headers(opts.headers);
-  if (opts.session) headers.set("x-session-id", opts.session);
+  withSession(headers, opts.session);
   if (opts.body && !headers.has("content-type")) headers.set("content-type", "application/json");
   // One retry on a dropped keep-alive socket (the dev server closes idle
   // connections while a slow first request is still being compiled).
@@ -78,7 +79,7 @@ async function api(path: string, opts: RequestInit & { session?: string } = {}) 
     .catch(() => new Promise((r) => setTimeout(r, 300)).then(() => fetch(`${base}${path}`, { ...opts, headers })));
   let body: any = null;
   try { body = await res.json(); } catch { /* non-JSON */ }
-  return { status: res.status, body };
+  return { status: res.status, body, setCookie: res.headers.get("set-cookie") || "" };
 }
 const post = (path: string, body: any, session?: string) => api(path, { method: "POST", body: JSON.stringify(body), session });
 
@@ -122,7 +123,7 @@ beforeAll(async () => {
   for (const [sess, mid] of [[SESS.adminA, ids.adminA], [SESS.memberA, ids.memberA], [SESS.adminB, ids.adminB], [SESS.removable, ids.removable]] as const) {
     await db.execute({
       sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)",
-      args: [sess, mid, now, far, now],
+      args: [sessionDbId(sess), mid, now, far, now],
     });
   }
 }, 90_000);
@@ -154,10 +155,32 @@ describe("login and first-password setup", () => {
     expect(unknown.body.error).toBe(wrong.body.error);
   });
 
-  it("logs in case-insensitively and issues an unguessable session id", async () => {
+  it("logs in case-insensitively; the unguessable token goes only into an HttpOnly cookie", async () => {
     const r = await post("/api/auth/login", { email: "  Member-A@TEST.local ", password: PW });
     expect(r.status).toBe(200);
-    expect(r.body.sessionId).toMatch(/^session_[A-Za-z0-9_-]{43}$/);
+    expect(r.body.sessionId).toBeUndefined();
+    expect(r.setCookie).toMatch(/cp_session=cps_[A-Za-z0-9_-]{43};/);
+    expect(r.setCookie).toContain("HttpOnly");
+    expect(r.setCookie).toContain("SameSite=Lax");
+    // Stored hashed: the raw token is not a sessions.id.
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(r.setCookie)![1]);
+    const raw = (await db.execute({ sql: "SELECT COUNT(*) AS n FROM sessions WHERE id = ?", args: [token] })).rows[0] as any;
+    expect(Number(raw.n)).toBe(0);
+    expect((await api("/api/auth/me", { session: token })).status).toBe(200);
+  });
+
+  it("state-changing requests without the client header are refused (CSRF)", async () => {
+    const res = await fetch(`${base}/api/profile`, {
+      method: "PATCH",
+      headers: { cookie: `cp_session=${SESS.memberA}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "CSRF" }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("a session token in the query string authenticates nothing", async () => {
+    const res = await fetch(`${base}/api/auth/me?sessionId=${SESS.memberA}`);
+    expect(res.status).toBe(401);
   });
 
   it("refuses /api/auth/setup outright (it used to claim password-less accounts)", async () => {
@@ -195,7 +218,7 @@ describe("admin password reset", () => {
     expect(rows.length).toBe(2);
     for (const row of rows) expect(row.password).toBeTruthy();
     // The victim's password still works and nothing else does.
-    expect((await post("/api/auth/login", { email: "victim@test.local", password: PW })).body.sessionId).toBeTruthy();
+    expect((await post("/api/auth/login", { email: "victim@test.local", password: PW })).setCookie).toContain("cp_session=cps_");
     expect((await post("/api/auth/login", { email: "victim@test.local", password: "attacker-pass" })).status).toBe(401);
   });
 });
@@ -322,6 +345,81 @@ describe("hidden attendance dates", () => {
     expect(b.body).not.toContain("2026-12-25");
     const a = await api("/api/hidden-dates", { session: SESS.adminA });
     expect(a.body).toContain("2026-12-25");
+  });
+});
+
+describe("moving existing sign-ins to the cookie", () => {
+  it("a pre-cookie token sent once in X-Session-ID is rotated into a fresh cookie session and retired", async () => {
+    const now = new Date().toISOString();
+    const far = new Date(Date.now() + 86400000).toISOString();
+    const legacy = "session_1700000000000_oldformat";
+    await db.execute({ sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", args: [legacy, ids.victimA, now, far, now] });
+    const first = await fetch(`${base}/api/auth/me`, { headers: { "x-session-id": legacy } });
+    expect(first.status).toBe(200);
+    const set = first.headers.get("set-cookie") || "";
+    expect(set).toMatch(/cp_session=cps_/);
+    expect(set).toContain("HttpOnly");
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(set)![1]);
+    // The old token now expires within a short grace period…
+    const old = (await db.execute({ sql: "SELECT expires_at FROM sessions WHERE id = ?", args: [legacy] })).rows[0] as any;
+    expect(Date.parse(old.expires_at) - Date.now()).toBeLessThanOrEqual(2 * 60 * 1000);
+    // …during which a request already in flight from the old tab gets the
+    // same replacement (no second session, no sign-out).
+    const second = await fetch(`${base}/api/auth/me`, { headers: { "x-session-id": legacy } });
+    expect(second.status).toBe(200);
+    expect(decodeURIComponent(/cp_session=([^;]+)/.exec(second.headers.get("set-cookie") || "")![1])).toBe(token);
+    // The new cookie works on its own.
+    expect((await api("/api/auth/me", { session: token })).status).toBe(200);
+  });
+
+  it("activity slides the stored expiry; the long-lived cookie is never re-sent by ordinary requests", async () => {
+    const r = await post("/api/auth/login", { email: "admin-a@test.local", password: PW });
+    expect(r.setCookie).toMatch(/Max-Age=34560000/); // 400 days — the server-side expiry governs
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(r.setCookie)![1]);
+    const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await db.execute({ sql: "UPDATE sessions SET last_activity = ?, expires_at = ? WHERE id = ?", args: [old, new Date(Date.now() + 60_000).toISOString(), sessionDbId(token)] });
+    const res = await fetch(`${base}/api/auth/me`, { headers: { cookie: `cp_session=${token}` } });
+    expect(res.status).toBe(200);
+    // No Set-Cookie: a slow response can never roll a newer cookie back.
+    expect(res.headers.get("set-cookie") || "").not.toContain("cp_session=");
+    const row = (await db.execute({ sql: "SELECT expires_at FROM sessions WHERE id = ?", args: [sessionDbId(token)] })).rows[0] as any;
+    expect(Date.parse(row.expires_at) - Date.now()).toBeGreaterThan(29 * 24 * 3600 * 1000);
+  });
+
+  it("switching workspace keeps the same session token (rebinds it)", async () => {
+    // member-a belongs to teams A and B (an admin edit above moved a team-B
+    // row to this email); give that row the account's password.
+    await db.execute({ sql: "UPDATE members SET password = (SELECT password FROM members WHERE id = ?) WHERE email = 'member-a@test.local'", args: [ids.memberA] });
+    const r = await post("/api/auth/login", { email: "member-a@test.local", password: PW });
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(r.setCookie)![1]);
+    const me = await api("/api/auth/me", { session: token });
+    const other = me.body.user.team_id === ids.teamA ? ids.teamB : ids.teamA;
+    const sw = await api("/api/teams/switch", { method: "POST", body: JSON.stringify({ team_id: other }), session: token });
+    expect(sw.status).toBe(200);
+    expect(sw.body.sessionId).toBeUndefined();
+    expect(sw.setCookie === "" || sw.setCookie.includes(`cp_session=${token}`)).toBe(true);
+    expect((await api("/api/auth/me", { session: token })).body.user.team_id).toBe(other);
+  });
+
+  it("signing out also revokes a migrated pre-cookie token in its grace period", async () => {
+    const now = new Date().toISOString();
+    const far = new Date(Date.now() + 86400000).toISOString();
+    const legacy = "session_1700000000001_logout";
+    await db.execute({ sql: "INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", args: [legacy, ids.memberA, now, far, now] });
+    const first = await fetch(`${base}/api/auth/me`, { headers: { "x-session-id": legacy } });
+    const token = decodeURIComponent(/cp_session=([^;]+)/.exec(first.headers.get("set-cookie") || "")![1]);
+    const out = await api("/api/auth/logout", { method: "POST", session: token });
+    expect(out.status).toBe(200);
+    const left = (await db.execute({ sql: "SELECT COUNT(*) AS n FROM sessions WHERE id IN (?, ?)", args: [legacy, sessionDbId(token)] })).rows[0] as any;
+    expect(Number(left.n)).toBe(0);
+  });
+});
+
+describe("WebSocket origin", () => {
+  it("refuses a socket opened by another site", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { origin: "https://evil.example", cookie: `cp_session=${SESS.memberA}` } });
+    const code = await new Promise<number>((resolve) => { ws.on("close", (c) => resolve(c)); ws.on("error", () => resolve(-1)); });
+    expect(code).toBe(4003);
   });
 });
 
