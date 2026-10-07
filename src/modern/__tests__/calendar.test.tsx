@@ -13,6 +13,7 @@ import { InterfaceModeProvider } from '../interfaceMode';
 import { CalendarPage } from '../pages/calendar/CalendarPage';
 import { clearDrafts } from '../drafts';
 import { toDateKey } from '../../components/calendar/useCalendarController';
+import { ContextMenuProvider } from '../../components/contextmenu/ContextMenuProvider';
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
 afterEach(cleanup);
@@ -43,7 +44,7 @@ function setup({ manage = true, events = baseEvents } = {}) {
   };
   const utils = render(
     <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
-      <MemoryRouter initialEntries={['/calendar']}><CalendarPage {...props} /></MemoryRouter>
+      <MemoryRouter initialEntries={['/calendar']}><ContextMenuProvider><CalendarPage {...props} /></ContextMenuProvider></MemoryRouter>
     </InterfaceModeProvider>,
   );
   return { ...utils, props };
@@ -239,4 +240,107 @@ describe('L-2 review regressions', () => {
     expect(screen.getByRole('switch', { name: 'All day' })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByLabelText(/Starts/)).not.toBeDisabled();
   }, 20000);
+});
+
+describe('Calendar direct manipulation', () => {
+  const cell = (k: string) => document.querySelector(`[data-cm-type="calendar-day"][data-cm-id="${k}"]`) as HTMLElement;
+  const chip = (id: number) => document.querySelector(`[data-cm-type="calendar-event"][data-cm-id="${id}"]`) as HTMLElement;
+
+  it('double-clicking a day opens a new event on that date', async () => {
+    setup();
+    fireEvent.doubleClick(cell(today));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('New event')).toBeInTheDocument();
+    expect((within(sheet).getByLabelText(/Date/) as HTMLInputElement).value).toBe(today);
+  });
+
+  it('a real double-click (click, click, dblclick) edits instead of opening details', async () => {
+    setup();
+    fireEvent.click(chip(1), { detail: 1 });
+    fireEvent.click(chip(1), { detail: 2 });
+    fireEvent.doubleClick(chip(1), { detail: 2 });
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('Edit event')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 350)); // the single-click timer never fires
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  });
+
+  it('a single click still opens the details sheet', async () => {
+    setup();
+    fireEvent.click(chip(1), { detail: 1 });
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).queryByText('Edit event')).not.toBeInTheDocument();
+    expect(within(sheet).getByText('Shop')).toBeInTheDocument();
+  });
+
+  it('double-clicking an event opens it for editing', async () => {
+    setup();
+    fireEvent.doubleClick(chip(1));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByText('Edit event')).toBeInTheDocument();
+    expect((within(sheet).getByLabelText('Title') as HTMLInputElement).value).toBe('Build night');
+  });
+
+  it('dragging an event onto another day moves only its date', async () => {
+    const { props } = setup();
+    const store = new Map<string, string>();
+    const dataTransfer = { setData: (t: string, v: string) => store.set(t, v), getData: (t: string) => store.get(t) ?? '', effectAllowed: '', dropEffect: '' };
+    fireEvent.dragStart(chip(1), { dataTransfer });
+    fireEvent.dragOver(cell(today), { dataTransfer });
+    fireEvent.drop(cell(today), { dataTransfer });
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events/1', expect.objectContaining({ method: 'PATCH' })));
+    const call = api.apiFetch.mock.calls.find((c: any) => c[0] === '/api/events/1');
+    expect(JSON.parse(call![1].body)).toEqual({ date: today });
+    expect(props.setEvents).toHaveBeenCalled();
+  });
+
+  it('right-click on a day offers a new event there', async () => {
+    setup();
+    fireEvent.contextMenu(cell(today));
+    const dayMenu = screen.getByRole('menu');
+    fireEvent.click(within(dayMenu).getByRole('menuitem', { name: /New event on/ }));
+    const sheet = await screen.findByRole('dialog');
+    expect((within(sheet).getByLabelText(/Date/) as HTMLInputElement).value).toBe(today);
+  });
+
+  it('right-click on an event offers open, edit and delete', () => {
+    setup();
+    fireEvent.contextMenu(chip(1));
+    const labels = within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent);
+    expect(labels).toEqual(['Open', 'Edit', 'Delete']);
+  });
+
+  it('members can open but not add, edit or move', () => {
+    setup({ manage: false });
+    expect(chip(1)).not.toHaveAttribute('draggable', 'true');
+    fireEvent.doubleClick(cell(today));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.contextMenu(chip(1));
+    expect(within(screen.getByRole('menu')).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Open']);
+  });
+});
+
+describe('Calendar: one sheet at a time', () => {
+  it('choosing Edit from the menu right after a click cancels the pending details open', async () => {
+    setup();
+    const chip = document.querySelector('[data-cm-type="calendar-event"][data-cm-id="1"]') as HTMLElement;
+    fireEvent.click(chip, { detail: 1 });
+    fireEvent.contextMenu(chip);
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Edit' }));
+    await new Promise((r) => setTimeout(r, 350));
+    const open = screen.getAllByRole('dialog');
+    expect(open).toHaveLength(1);
+    expect(within(open[0]).getByText('Edit event')).toBeInTheDocument();
+  });
+});
+
+describe('Calendar: pending opens follow the view', () => {
+  it('switching view right after a click cancels the pending details open', async () => {
+    setup();
+    const chip = document.querySelector('[data-cm-type="calendar-event"][data-cm-id="1"]') as HTMLElement;
+    fireEvent.click(chip, { detail: 1 });
+    fireEvent.click(screen.getByRole('radio', { name: /Agenda/ }));
+    await new Promise((r) => setTimeout(r, 350));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
 });

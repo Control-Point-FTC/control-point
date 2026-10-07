@@ -3,9 +3,10 @@
 // Legacy). Views: Month (days are buttons, "+N more" popover), Week, Agenda
 // (default on phones). Everyone can open an event's details; only calendar
 // managers can create, edit or delete. Dates use the browser locale.
-import { useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, List, MapPin, Plus, Rows3 } from 'lucide-react';
+import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, List, MapPin, Pencil, Plus, Rows3, Trash2 } from 'lucide-react';
+import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Popover, PopoverContent, PopoverTrigger, ToggleGroup, ToggleGroupItem,
@@ -28,6 +29,49 @@ export function CalendarPage(props: any) {
   const [types, setTypes] = useState<string[]>([]); // empty = all types
   const [selected, setSelected] = useState<string>(ctl.todayKey);
   const [viewId, setViewId] = useState<number | string | null>(null);
+  const [dragging, setDragging] = useState<number | string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const pendingOpen = useRef<number | null>(null);
+  const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
+  useEffect(() => cancelPendingOpen, []);
+  // A different view, filter or month: whatever was about to open is gone.
+  useEffect(() => { cancelPendingOpen(); }, [view, types, ctl.cursor]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Every action that opens a sheet first cancels a pending single-click open.
+  const actions: CalendarActions = {
+    canManage: !!ctl.canManageCalendar,
+    newOn: (k) => { cancelPendingOpen(); setSelected(k); ctl.openNew(k); },
+    edit: (e) => { cancelPendingOpen(); setViewId(null); ctl.openEdit(e); },
+    pendingOpen, cancelPendingOpen,
+    move: (id, k) => void ctl.moveEvent(id, k),
+    dragging, setDragging, over, setOver,
+  };
+  const eventById = (id: string | undefined) => (events || []).find((e: any) => String(e.id) === id);
+  const dayLabel = (k: string) => keyToDate(k).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  // Right-click a day or an event.
+  useContextMenu('calendar-day', (el) => {
+    const k = el.dataset.cmId;
+    if (!k) return null;
+    return [
+      ...(ctl.canManageCalendar ? [{ label: `New event on ${dayLabel(k)}`, icon: Plus, action: () => actions.newOn(k) }] : []),
+      {
+        label: 'Show this day', icon: CalendarDays,
+        // The month view (and its day list) is where a selected day shows.
+        action: () => { setView('month'); setCursor(keyToDate(k)); setSelected(k); },
+      },
+    ];
+  });
+  useContextMenu('calendar-event', (el) => {
+    const e = eventById(el.dataset.cmId);
+    if (!e) return null;
+    return [
+      { label: 'Open', icon: Eye, action: () => { cancelPendingOpen(); setViewId(e.id); } },
+      ...(ctl.canManageCalendar && !String(e.id).startsWith('temp-') ? [
+        { label: 'Edit', icon: Pencil, action: () => actions.edit(e) },
+        { separator: true },
+        { label: 'Delete', icon: Trash2, danger: true, action: () => void ctl.deleteEvent(e.id, e.title) },
+      ] : []),
+    ];
+  });
   const [dir, setDir] = useState(0);
   const { cursor, setCursor, todayKey } = ctl;
 
@@ -54,6 +98,7 @@ export function CalendarPage(props: any) {
   const viewKey = `${view}-${view === 'week' ? toDateKey(startOfWeek(cursor)) : `${cursor.getFullYear()}-${cursor.getMonth()}`}`;
 
   return (
+    <CalendarActionsCtx.Provider value={actions}>
     <Page>
       <PageHeader
         eyebrow="Calendar"
@@ -140,7 +185,106 @@ export function CalendarPage(props: any) {
       <EventViewSheet event={viewEvent} onOpenChange={(o) => { if (!o) setViewId(null); }} ctl={ctl} teams={teams} />
       {ctl.canManageCalendar && <EventEditorSheet ctl={ctl} teams={teams} />}
     </Page>
+    </CalendarActionsCtx.Provider>
   );
+}
+
+// Direct manipulation (owner request): double-click a day to add an event
+// there, double-click an event to edit it, right-click either for a menu, and
+// drag an event onto another day to move it (only the date changes; times
+// stay). Adding, editing and moving need the calendar permission; everyone
+// can still open events.
+interface CalendarActions {
+  canManage: boolean;
+  newOn: (dateKey: string) => void;
+  edit: (e: any) => void;
+  move: (id: number | string, dateKey: string) => void;
+  dragging: number | string | null;
+  setDragging: (id: number | string | null) => void;
+  over: string | null;
+  setOver: (k: string | null) => void;
+  /** The one pending single-click open (page-wide), so any other action
+   *  that opens a sheet can cancel it. */
+  pendingOpen: { current: number | null };
+  cancelPendingOpen: () => void;
+}
+const NO_ACTIONS: CalendarActions = {
+  canManage: false, newOn: () => {}, edit: () => {}, move: () => {}, dragging: null, setDragging: () => {}, over: null, setOver: () => {},
+  pendingOpen: { current: null }, cancelPendingOpen: () => {},
+};
+const CalendarActionsCtx = createContext<CalendarActions>(NO_ACTIONS);
+const DRAG_TYPE = 'application/x-cp-event';
+
+/** Props that make a day (month cell, week column) a drop target and a
+ *  double-click/right-click surface. */
+function useDayProps(key: string) {
+  const a = useContext(CalendarActionsCtx);
+  return {
+    'data-cm-type': 'calendar-day',
+    'data-cm-id': key,
+    onDoubleClick: a.canManage ? () => a.newOn(key) : undefined,
+    onDragOver: a.canManage ? (ev: React.DragEvent) => {
+      if (a.dragging == null) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      if (a.over !== key) a.setOver(key);
+    } : undefined,
+    onDragLeave: a.canManage ? () => { if (a.over === key) a.setOver(null); } : undefined,
+    onDrop: a.canManage ? (ev: React.DragEvent) => {
+      ev.preventDefault();
+      const raw = ev.dataTransfer.getData(DRAG_TYPE) || (a.dragging != null ? String(a.dragging) : '');
+      a.setOver(null);
+      a.setDragging(null);
+      if (!raw) return;
+      const id = /^\d+$/.test(raw) ? Number(raw) : raw;
+      a.move(id, key);
+    } : undefined,
+  };
+}
+
+/** For people who can edit, a single click on an event waits a moment so a
+ *  double-click can become "edit" instead (the first click would otherwise
+ *  open the details sheet, whose overlay swallows the second click). */
+const DOUBLE_CLICK_MS = 250;
+function useClickOrEdit(e: any, open: (e: any) => void) {
+  const a = useContext(CalendarActionsCtx);
+  // The open this button scheduled; if the button goes away (filtered out,
+  // another month), its pending open goes with it.
+  const mine = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (mine.current != null && a.pendingOpen.current === mine.current) a.cancelPendingOpen();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!a.canManage) return { onClick: () => open(e), onDoubleClick: undefined };
+  return {
+    onClick: (ev: React.MouseEvent) => {
+      ev.stopPropagation();
+      if (ev.detail > 1) return; // part of a double-click
+      a.cancelPendingOpen();
+      a.pendingOpen.current = window.setTimeout(() => { a.pendingOpen.current = null; mine.current = null; open(e); }, DOUBLE_CLICK_MS);
+      mine.current = a.pendingOpen.current;
+    },
+    onDoubleClick: (ev: React.MouseEvent) => {
+      ev.stopPropagation();
+      a.edit(e); // edit() cancels the pending single-click open
+    },
+  };
+}
+
+/** Props that make an event draggable, double-click-to-edit and right-clickable. */
+function useEventProps(e: any) {
+  const a = useContext(CalendarActionsCtx);
+  return {
+    'data-cm-type': 'calendar-event',
+    'data-cm-id': String(e.id),
+    draggable: a.canManage && !String(e.id).startsWith('temp-'),
+    onDragStart: a.canManage ? (ev: React.DragEvent) => {
+      ev.stopPropagation();
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData(DRAG_TYPE, String(e.id));
+      a.setDragging(e.id);
+    } : undefined,
+    onDragEnd: () => { a.setDragging(null); a.setOver(null); },
+  };
 }
 
 function weekLabel(start: Date) {
@@ -157,11 +301,16 @@ function weekdayNames(format: 'short' | 'narrow') {
 
 function EventChip({ e, onOpen, finished }: { e: any; onOpen: (e: any) => void; finished: boolean }) {
   const meta = typeMeta(e.event_type);
+  const dnd = useEventProps(e);
+  const clicks = useClickOrEdit(e, onOpen);
+  const dragging = useContext(CalendarActionsCtx).dragging === e.id;
   return (
     <button
       type="button"
-      onClick={(ev) => { ev.stopPropagation(); onOpen(e); }}
+      {...dnd}
+      {...clicks}
       className={cn(
+        dnd.draggable && 'cursor-grab active:cursor-grabbing', dragging && 'opacity-40',
         'flex w-full items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         meta.chip, finished && 'opacity-55',
       )}
@@ -199,9 +348,9 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
           const shown = list.slice(0, 2);
           const more = list.length - shown.length;
           return (
-            <div
+            <MonthCell
               key={key}
-              role="gridcell"
+              dateKey={key}
               className={cn(
                 'group relative min-h-14 border-border p-1 sm:min-h-20 sm:p-1.5 xl:min-h-28',
                 i % 7 !== 6 && 'border-r', i < days.length - 7 && 'border-b',
@@ -246,10 +395,21 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
                   </Popover>
                 )}
               </div>
-            </div>
+            </MonthCell>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** A month-grid day: a drop target, double-click to add, right-click menu. */
+function MonthCell({ dateKey, className, children }: { dateKey: string; className?: string; children: React.ReactNode }) {
+  const props = useDayProps(dateKey);
+  const over = useContext(CalendarActionsCtx).over === dateKey;
+  return (
+    <div role="gridcell" {...props} className={cn(className, over && 'bg-accent/15 ring-2 ring-inset ring-accent/50')}>
+      {children}
     </div>
   );
 }
@@ -266,27 +426,15 @@ function WeekColumns({ start, todayKey, dayEvents, isFinished, onOpenEvent, canM
         const list = dayEvents(key);
         const isToday = key === todayKey;
         return (
-          <div key={key} className={cn('flex min-h-0 flex-col rounded-xl border border-border bg-card p-2 sm:min-h-72', isToday && 'border-accent/50')}>
+          <WeekDay key={key} dateKey={key} className={cn('flex min-h-0 flex-col rounded-xl border border-border bg-card p-2 sm:min-h-72', isToday && 'border-accent/50')}>
             <div className="mb-2 flex items-center justify-between gap-1 px-1">
               <span className="text-xs text-muted-foreground">{d.toLocaleDateString(undefined, { weekday: 'short' })}</span>
               <span className={cn('flex size-7 items-center justify-center rounded-full text-sm font-semibold tabular-nums', isToday && 'bg-accent text-accent-ink')}>{d.getDate()}</span>
             </div>
             <div className="flex-1 space-y-1.5">
-              {list.map((e: any) => {
-                const meta = typeMeta(e.event_type);
-                const done = isFinished(e);
-                return (
-                  <button
-                    key={e.id}
-                    type="button"
-                    onClick={() => onOpenEvent(e)}
-                    className={cn('w-full rounded-md border-l-2 bg-muted/50 px-2 py-1.5 text-left transition-colors hover:bg-muted', meta.bar, done && 'opacity-55')}
-                  >
-                    <span className="block text-[11px] text-muted-foreground">{e.start_time ? localTime(e.start_time) : 'All day'}</span>
-                    <span className={cn('line-clamp-2 block text-xs font-medium break-words', done && 'line-through')}>{e.title}</span>
-                  </button>
-                );
-              })}
+              {list.map((e: any) => (
+                <WeekEvent key={e.id} e={e} done={isFinished(e)} onOpen={onOpenEvent} />
+              ))}
               {list.length === 0 && <p className="px-1 text-xs text-muted-foreground/70 sm:hidden">Free</p>}
             </div>
             {canManage && (
@@ -294,10 +442,35 @@ function WeekColumns({ start, todayKey, dayEvents, isFinished, onOpenEvent, canM
                 <Plus /> Add
               </Button>
             )}
-          </div>
+          </WeekDay>
         );
       })}
     </div>
+  );
+}
+
+function WeekDay({ dateKey, className, children }: { dateKey: string; className?: string; children: React.ReactNode }) {
+  const props = useDayProps(dateKey);
+  const over = useContext(CalendarActionsCtx).over === dateKey;
+  return <div {...props} className={cn(className, over && 'bg-accent/10 ring-2 ring-accent/50')}>{children}</div>;
+}
+
+function WeekEvent({ e, done, onOpen }: { e: any; done: boolean; onOpen: (e: any) => void }) {
+  const meta = typeMeta(e.event_type);
+  const dnd = useEventProps(e);
+  const clicks = useClickOrEdit(e, onOpen);
+  const dragging = useContext(CalendarActionsCtx).dragging === e.id;
+  return (
+    <button
+      type="button"
+      {...dnd}
+      {...clicks}
+      className={cn('w-full rounded-md border-l-2 bg-muted/50 px-2 py-1.5 text-left transition-colors hover:bg-muted', meta.bar, done && 'opacity-55',
+        dnd.draggable && 'cursor-grab active:cursor-grabbing', dragging && 'opacity-40')}
+    >
+      <span className="block text-[11px] text-muted-foreground">{e.start_time ? localTime(e.start_time) : 'All day'}</span>
+      <span className={cn('line-clamp-2 block text-xs font-medium break-words', done && 'line-through')}>{e.title}</span>
+    </button>
   );
 }
 
@@ -345,12 +518,14 @@ function Agenda({ cursor, todayKey, dayEvents, isFinished, onOpenEvent, canManag
 }
 
 function AgendaRow({ e, onOpen, finished, showDate }: { e: any; onOpen: (e: any) => void; finished: boolean; showDate?: boolean }) {
+  const clicks = useClickOrEdit(e, onOpen);
+  const rowProps = { 'data-cm-type': 'calendar-event', 'data-cm-id': String(e.id), ...clicks };
   const meta = typeMeta(e.event_type);
   return (
     <motion.button
       type="button"
       layout
-      onClick={() => onOpen(e)}
+      {...rowProps}
       whileHover={{ x: 2 }}
       className={cn('flex min-h-11 w-full items-start gap-3 rounded-xl border border-border border-l-[3px] bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', meta.bar)}
     >
