@@ -5904,7 +5904,9 @@ async function startServer() {
     const { name, role, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
     const requested = req.body?.email == null ? String(target.email || "") : String(req.body.email).trim().toLowerCase();
     if (!requested || !requested.includes("@")) return res.status(400).json({ error: "A valid email is required" });
-    const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
+    // Legacy per-member scopes no longer grant anything (roles do); keep the
+    // stored value unless a caller still sends one.
+    const finalScopes = scopes === undefined ? (target.scopes ?? "[]") : typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
     const emailChanged = requested.toLowerCase() !== String(target.email || "").toLowerCase();
     // Unchanged address: keep the stored value byte-for-byte (a case-only
     // duplicate left by migration 011 must not be rewritten into a clash).
@@ -5916,11 +5918,10 @@ async function startServer() {
       if (clash) return res.status(400).json({ error: "That email is already on the roster" });
     }
 
-    // Guard: never leave the workspace without an admin
+    // Guard: never leave the workspace without an admin (role-aware count).
     const nextType = account_type === 'admin' || account_type === 'student' ? account_type : target.account_type;
     if (target.account_type === 'admin' && nextType !== 'admin') {
-      const admins = (await dbGet("SELECT COUNT(*) as n FROM members WHERE team_id = ? AND account_type = 'admin' AND COALESCE(is_active, 1) = 1", auth.teamId)) as any;
-      if (admins.n <= 1) return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
+      if ((await countAdmins(auth.teamId!)) <= 1) return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
     }
 
     // Only update color fields if they're explicitly provided (not undefined)
@@ -5960,7 +5961,18 @@ async function startServer() {
 
     const updatedMember = (await dbGet("SELECT * FROM members WHERE id = ?", memberId)) as any;
     broadcastToTeam(auth.teamId, { type: "member_updated", member: await memberWithPresence(updatedMember) });
-    res.json({ success: true });
+    broadcastToTeam(auth.teamId, { type: "member_roles_changed", member_id: memberId });
+    // Asked to demote, but a custom role still grants admin: say which (H-2 —
+    // never report success for a change that didn't happen).
+    let stillAdminVia: string | null = null;
+    if (nextType !== 'admin' && updatedMember?.account_type === 'admin') {
+      const r = (await dbAll(
+        "SELECT r.name, r.permissions FROM member_roles mr JOIN roles r ON r.id = mr.role_id WHERE mr.member_id = ? AND r.team_id = ?",
+        memberId, auth.teamId
+      )) as any[];
+      stillAdminVia = r.find((x) => { const p = parsePerms(x.permissions); return p.includes("*") || p.includes("manage_members"); })?.name || null;
+    }
+    res.json({ success: true, account_type: updatedMember?.account_type, ...(stillAdminVia ? { stillAdminVia } : {}) });
   });
 
   // Self-service profile: any signed-in member can update their own

@@ -1736,25 +1736,14 @@ export default function App() {
     communications: 'manage_communications',
   };
 
+  // What the server enforces is the member's roles (H-2): a title like
+  // "President", the Board flag or the old per-member scopes used to unlock
+  // admin screens here that the server then refused. Only permissions count.
   const hasScope = (scope: string) => {
     if (!currentUser) return false;
     if (isAdmin) return true;
-    if (currentUser.role === 'President') return true;
-    if (scope === 'admin' && currentUser.is_board) return true;
     const perm = SCOPE_TO_PERM[scope];
-    if (perm && hasPerm(perm)) return true;
-    try {
-      let scopes = currentUser.scopes;
-      // Handle double-stringification if it somehow happened in the DB
-      while (typeof scopes === 'string') {
-        const parsed = JSON.parse(scopes);
-        if (typeof parsed === 'string') scopes = parsed;
-        else { scopes = parsed; break; }
-      }
-      return Array.isArray(scopes) ? scopes.includes(scope) : false;
-    } catch {
-      return false;
-    }
+    return !!perm && hasPerm(perm);
   };
 
   // Students get a focused personal workspace; admins get everything
