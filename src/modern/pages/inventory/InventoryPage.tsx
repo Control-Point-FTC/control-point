@@ -5,8 +5,9 @@
 // dense table, and drafted add / edit sheets. Only members with the
 // inventory scope can change anything.
 import { useState } from 'react';
-import { Boxes, Download, Edit2, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
+import { Boxes, Edit2, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
 import { datedName, downloadCsv } from '../../../utils/csv';
+import { ExportMenu } from '../../ui/ExportMenu';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -36,7 +37,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         description="Every part, tool and material the team owns — search it, add it, keep the counts right."
         actions={(
           <>
-            <Button variant="outline" disabled={!inventory.length} onClick={() => downloadCsv(datedName('inventory'), inventory, [
+            <ExportMenu disabled={!inventory.length} onCsv={() => downloadCsv(datedName('inventory'), inventory, [
               { header: 'Name', value: (p: any) => p.name },
               { header: 'SKU', value: (p: any) => p.sku },
               { header: 'Part number', value: (p: any) => p.part_number },
@@ -44,7 +45,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
               { header: 'Quantity', value: (p: any) => Number(p.quantity) || 0 },
               { header: 'Unit cost', value: (p: any) => (p.cost == null ? '' : Number(p.cost)) },
               { header: 'Location', value: (p: any) => p.location },
-            ])}><Download /> Export CSV</Button>
+            ])} />
             {ctl.canManage && (<>
             <Button variant="outline" onClick={() => ctl.invoiceFileRef.current?.click()} disabled={!!ctl.invoiceParsing}>
               {ctl.invoiceParsing ? <Loader2 className="animate-spin" /> : <FileUp />} {ctl.invoiceParsing || 'Import invoice'}

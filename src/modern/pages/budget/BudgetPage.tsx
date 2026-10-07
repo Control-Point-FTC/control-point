@@ -6,8 +6,9 @@
 // only members with the budget scope can add or edit.
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { ArrowDownLeft, ArrowUpRight, Copy, Download, MoreHorizontal, Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Copy, MoreHorizontal, Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
 import { datedName, downloadCsv } from '../../../utils/csv';
+import { ExportMenu } from '../../ui/ExportMenu';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, ChartContainer, ChartTooltip, ChartTooltipContent, DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -41,13 +42,13 @@ export function BudgetPage({ budget, setBudget, teams, refresh, hasScope, curren
         description="Team money at a glance — every dollar in and out. Everyone can view; members whose role has the budget permission can log and edit entries."
         actions={
           <>
-            <Button variant="outline" disabled={!budget?.length} onClick={() => downloadCsv(datedName('budget'), budget ?? [], [
+            <ExportMenu disabled={!budget?.length} onCsv={() => downloadCsv(datedName('budget'), budget ?? [], [
               { header: 'Date', value: (b: any) => String(b.date || '').slice(0, 10) },
               { header: 'Type', value: (b: any) => (b.type === 'income' ? 'Income' : 'Expense') },
               { header: 'Category', value: (b: any) => b.category },
               { header: 'Description', value: (b: any) => b.description },
               { header: 'Amount', value: (b: any) => Number(b.amount) },
-            ])}><Download /> Export CSV</Button>
+            ])} />
             {ctl.isAdmin && <Button onClick={ctl.openNewEntry}><Plus /> Log transaction</Button>}
           </>
         }

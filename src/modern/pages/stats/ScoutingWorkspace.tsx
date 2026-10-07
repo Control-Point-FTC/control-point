@@ -2,8 +2,9 @@
 // data and works offline. Entries save on this device first and sync when
 // there's a connection; the per-team table rolls them up.
 import { useMemo, useState } from 'react';
-import { CloudOff, Download, Loader2, Minus, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
+import { CloudOff, Loader2, Minus, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
 import { datedName, downloadCsv } from '../../../utils/csv';
+import { ExportMenu } from '../../ui/ExportMenu';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Sheet, SheetContent,
@@ -103,7 +104,7 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
         {sc.lastError && (
           <button type="button" onClick={sc.clearError} className="text-xs text-destructive underline-offset-4 hover:underline" title="Dismiss">{sc.lastError}</button>
         )}
-        <Button variant="outline" className="ml-auto" disabled={!sc.entries.length} onClick={() => downloadCsv(datedName(`scouting-${season}`), sc.entries, [
+        <ExportMenu className="ml-auto" disabled={!sc.entries.length} onCsv={() => downloadCsv(datedName(`scouting-${season}`), sc.entries, [
           { header: 'Team', value: (e) => e.scoutedTeam },
           { header: 'Event', value: (e) => e.eventCode },
           { header: 'Match', value: (e) => e.matchLabel },
@@ -111,7 +112,7 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
           ...template.fields.map((f) => ({ header: fieldLabel(f), value: (e: ScoutEntry) => e.data[f.id] })),
           { header: 'Notes', value: (e) => e.notes },
           { header: 'Updated', value: (e) => new Date(e.updatedAt).toISOString() },
-        ])}><Download /> Export CSV</Button>
+        ])} />
         <Button onClick={() => startNew()}><Plus /> Scout a match</Button>
       </div>
       <p className="text-xs text-muted-foreground">{template.name} sheet. Works without FTC data or Wi-Fi — entries save on this device and sync when you’re online.</p>

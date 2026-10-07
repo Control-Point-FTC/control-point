@@ -112,3 +112,22 @@ html[data-ui="modern"] .m-canvas {
     transition-duration: 1ms !important;
   }
 }
+
+/* ---------- Print (Export → Print or save as PDF) ----------
+   Only the page prints: the app chrome, floating buttons, toasts and the
+   Bruno panel are hidden, the shell stops clipping so long lists flow onto
+   more pages, and it prints on white (the theme switches to light while
+   printing; see installPrintTheme). */
+@media print {
+  html[data-ui="modern"], html[data-ui="modern"] body { background: #fff !important; height: auto !important; overflow: visible !important; }
+  html[data-ui="modern"] [data-print-hide],
+  html[data-ui="modern"] .cp-fab,
+  html[data-ui="modern"] [data-sonner-toaster] { display: none !important; }
+  html[data-ui="modern"] .modern-shell { display: block !important; height: auto !important; overflow: visible !important; background: #fff !important; }
+  html[data-ui="modern"] .modern-shell > div { display: block !important; }
+  html[data-ui="modern"] #main { overflow: visible !important; padding: 0 !important; background: none !important; }
+  html[data-ui="modern"] .m-canvas { background: none !important; }
+  html[data-ui="modern"] *, html[data-ui="modern"] *::before, html[data-ui="modern"] *::after { animation: none !important; transition: none !important; }
+  html[data-ui="modern"] li, html[data-ui="modern"] tr { break-inside: avoid; }
+  @page { margin: 14mm; }
+}
