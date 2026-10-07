@@ -61,7 +61,11 @@ self.addEventListener('fetch', (event) => {
       caches.match(req).then((cached) => {
         if (cached) return cached;
         return fetch(req).then((res) => {
-          if (res.ok) event.waitUntil(caches.open(CACHE).then((cache) => cache.put(req, res.clone())));
+          if (res.ok) {
+            // Clone now, before the page starts reading the body.
+            const copy = res.clone();
+            event.waitUntil(caches.open(CACHE).then((cache) => cache.put(req, copy)));
+          }
           return res;
         });
       })
@@ -70,10 +74,12 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (isStaticAsset(url)) {
-    // Stale-while-revalidate; the refresh is kept alive with waitUntil.
+    // Stale-while-revalidate; the refresh is kept alive with waitUntil. The
+    // copy is taken before the response is handed to the page.
     const refresh = fetch(req).then((res) => {
-      if (res.ok) return caches.open(CACHE).then((cache) => cache.put(req, res.clone())).then(() => res);
-      return res;
+      if (!res.ok) return res;
+      const copy = res.clone();
+      return caches.open(CACHE).then((cache) => cache.put(req, copy)).then(() => res);
     });
     event.waitUntil(refresh.catch(() => {}));
     event.respondWith(

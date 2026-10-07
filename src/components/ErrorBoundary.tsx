@@ -2,6 +2,7 @@
 // (and is reported) instead of blanking the whole app — the "black /code
 // page" class of failure. A stale chunk after a deploy reloads the page once.
 import React from 'react';
+import { useLocation } from 'react-router-dom';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { isChunkLoadError, reloadForNewBuild, reportClientError } from '../services/errorReporting';
 
@@ -74,4 +75,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
       </div>
     );
   }
+}
+
+/** Page-level boundary that clears whenever the route (path or query —
+ *  e.g. another Settings section) changes. */
+export function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return <ErrorBoundary resetKey={`${location.pathname}${location.search}`}>{children}</ErrorBoundary>;
 }

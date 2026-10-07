@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 
 const reporting = vi.hoisted(() => ({ reportClientError: vi.fn(), reloadForNewBuild: vi.fn(() => true) }));
 vi.mock('../../services/errorReporting', async (orig) => ({ ...(await orig<object>()), ...reporting }));
 
-import { ErrorBoundary } from '../ErrorBoundary';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
+import { ErrorBoundary, RouteErrorBoundary } from '../ErrorBoundary';
 import { isChunkLoadError } from '../../services/errorReporting';
 
 let shouldThrow: Error | null = null;
@@ -51,6 +52,24 @@ describe('ErrorBoundary', () => {
     expect(reporting.reloadForNewBuild).toHaveBeenCalled();
     expect(reporting.reportClientError).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('Control Point was updated');
+  });
+});
+
+describe('RouteErrorBoundary', () => {
+  it('a crashed Settings section clears when another section is opened (query change only)', () => {
+    let go: (to: string) => void = () => {};
+    function Nav() { go = useNavigate(); return null; }
+    shouldThrow = new Error('workspace section crashed');
+    render(
+      <MemoryRouter initialEntries={['/settings?section=workspace']}>
+        <Nav />
+        <RouteErrorBoundary><Boom /></RouteErrorBoundary>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    shouldThrow = null;
+    act(() => go('/settings?section=profile'));
+    expect(screen.getByText('page content')).toBeInTheDocument();
   });
 });
 
