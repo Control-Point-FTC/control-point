@@ -3,9 +3,9 @@
 // mention pills + links, image / file, link preview, reactions and a hover
 // (or tap) action bar.
 import { memo, useEffect, useState } from 'react';
-import { Copy, CornerUpLeft, Download, FileText, Forward, ImageOff, SmilePlus, Trash2, X } from 'lucide-react';
+import { Copy, CornerUpLeft, Download, FileText, Forward, ImageOff, Pencil, SmilePlus, Trash2, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
-import { Button, Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui-kit';
+import { Button, Textarea, Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui-kit';
 import { apiFetch, assetUrl } from '../../../services/api';
 import { EmojiPicker, ReactionBar } from './Reactions';
 import { extractFirstUrl, formatFileSize, isImageFile, renderMessageText } from '../../../components/chat/chatFormat';
@@ -68,17 +68,27 @@ function Action({ label, onClick, children, danger }: { label: string; onClick: 
   );
 }
 
-export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine, canDelete, flash, active, pickerOpen, currentUserId, memberNames, onRef, onActivate, onReply, onForward, onCopy, onDelete, onOpenPicker, onClosePicker, onPick, onReactionsChange, onJumpTo }: {
+export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine, canDelete, flash, active, pickerOpen, currentUserId, memberNames, onRef, onActivate, onReply, onForward, onCopy, onDelete, onEdit, onOpenPicker, onClosePicker, onPick, onReactionsChange, onJumpTo }: {
   msg: any; sender: any; grouped: boolean; mine: boolean; canDelete: boolean; flash: boolean; active: boolean; pickerOpen: boolean;
   currentUserId?: number; memberNames: Record<number, string>;
   onRef: (id: number, el: HTMLDivElement | null) => void; onActivate: (id: number) => void;
   onReply: (m: any) => void; onForward: (m: any) => void; onCopy: (m: any) => void; onDelete: (id: number) => void;
+  /** Edit your own message; resolves true when saved. */
+  onEdit?: (id: number, text: string) => Promise<boolean>;
   onOpenPicker: (id: number) => void; onClosePicker: () => void; onPick: (id: number, emoji: string) => void;
   onReactionsChange: (id: number, r: any[]) => void; onJumpTo: (id: number) => void;
 }) {
   const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
   const fileUrl = msg.file_path ? assetUrl(msg.file_path) : null;
   const url = msg.content ? extractFirstUrl(msg.content) : null;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const startEdit = () => { setDraft(msg.content || ''); setEditing(true); };
+  const save = async () => {
+    if (!onEdit) return;
+    if (draft.trim() === (msg.content || '').trim()) { setEditing(false); return; }
+    if (await onEdit(msg.id, draft)) setEditing(false);
+  };
   return (
     <div
       ref={(el) => onRef(msg.id, el)}
@@ -112,9 +122,25 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
           </button>
         )}
         {msg.is_forwarded ? <p className="mb-0.5 flex items-center gap-1 text-xs text-muted-foreground"><Forward className="size-3" /> Forwarded{msg.forwarded_from ? ` · ${msg.forwarded_from}` : ''}</p> : null}
-        {msg.content && (
+        {editing ? (
+          <div className="mt-1 grid gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <Textarea
+              autoFocus value={draft} rows={Math.min(8, Math.max(2, draft.split('\n').length))} aria-label="Edit message"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+                else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void save(); }
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Enter to <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => void save()}>save</button>
+              {' '}· Esc to <button type="button" className="font-medium text-foreground underline-offset-4 hover:underline" onClick={() => setEditing(false)}>cancel</button>
+            </p>
+          </div>
+        ) : msg.content && (
           <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
             {renderMessageText(msg.content, { mention: 'rounded bg-accent/15 px-1 font-medium text-accent', link: 'break-all text-info underline-offset-2 hover:underline' })}
+            {msg.edited_at && <span className="ml-1 text-[11px] text-muted-foreground" title={new Date(msg.edited_at).toLocaleString()}>(edited)</span>}
           </p>
         )}
         {msg.file_path && (
@@ -153,6 +179,7 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
           <Action label="Reply" onClick={() => onReply(msg)}><CornerUpLeft /></Action>
           <Action label="Forward" onClick={() => onForward(msg)}><Forward /></Action>
           {msg.content && <Action label="Copy text" onClick={() => onCopy(msg)}><Copy /></Action>}
+          {mine && msg.content && onEdit && !editing && <Action label="Edit message" onClick={startEdit}><Pencil /></Action>}
           {(mine || canDelete) && <Action label="Delete message" onClick={() => onDelete(msg.id)} danger><Trash2 /></Action>}
         </div>
       )}

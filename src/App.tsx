@@ -1033,6 +1033,14 @@ export default function App() {
         } else if (msg.type === 'category_deleted') {
           setChatCategories(prev => prev.filter((c: any) => c.id !== msg.categoryId));
           setChannels(prev => prev.map((c: any) => (c.category_id === msg.categoryId ? { ...c, category_id: null } : c)));
+        } else if (msg.type === 'message_updated') {
+          // An author edited their message: show the new text, marked edited.
+          const cur = activeChannelIdRef.current;
+          setMessages((prev: any[]) => {
+            const next = prev.map((m: any) => (m.id === msg.id ? { ...m, content: msg.content, edited_at: msg.edited_at } : m));
+            if (cur != null) msgCache.current.set(cur, next);
+            return next;
+          });
         } else if (msg.type === 'message_deleted') {
           const cur = activeChannelIdRef.current;
           const applyDel = (prev: any[]) => {

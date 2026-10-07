@@ -334,6 +334,36 @@ export function useChatController({ messages, setMessages, msgCache, msgExhauste
     }
   };
 
+  // Edit your own message: shown at once, marked edited; rolled back if the
+  // server refuses. Everyone else gets it through message_updated.
+  const handleEditMessage = async (msgId: number, text: string): Promise<boolean> => {
+    const next = text.trim();
+    if (!next) { notify('A message can’t be empty — delete it instead.', 'error'); return false; }
+    const before = (messages || []).find((m: any) => m.id === msgId);
+    const cur = activeChannelId;
+    const apply = (content: string, edited_at: string | null) => setMessages((prev: any[]) => {
+      const list = prev.map((m: any) => (m.id === msgId ? { ...m, content, edited_at } : m));
+      if (cur != null) msgCache.current.set(cur, list);
+      return list;
+    });
+    apply(next, new Date().toISOString());
+    try {
+      const res = await apiFetch(`/api/messages/${msgId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not edit that message.');
+      if (data.edited_at) apply(next, data.edited_at);
+      return true;
+    } catch (e: any) {
+      if (before) apply(before.content, before.edited_at ?? null);
+      notify(e.message || 'Could not edit that message.', 'error');
+      return false;
+    }
+  };
+
   // Update a message's reactions in state (optimistic or from server/socket).
   // Recently-used reaction emojis for the hover toolbar quick-react buttons.
   const [recentReactions, setRecentReactions] = useState<string[]>(() => {
@@ -489,6 +519,6 @@ export function useChatController({ messages, setMessages, msgCache, msgExhauste
 
   return {
     togglePostRestricted,
-    content, setContent, mentionSearch, setMentionSearch, showMentions, setShowMentions, uploading, setUploading, pendingFile, setPendingFile, pendingPreview, setPendingPreview, dragging, setDragging, showChannelsMobile, setShowChannelsMobile, showMembersMobile, setShowMembersMobile, showMemberList, setShowMemberList, creatingChannel, setCreatingChannel, creatingIn, setCreatingIn, newChannelName, setNewChannelName, newChannelTopic, setNewChannelTopic, creatingCategory, setCreatingCategory, newCategoryName, setNewCategoryName, renamingCat, setRenamingCat, renameCatName, setRenameCatName, renamingChannel, setRenamingChannel, renameChannelName, setRenameChannelName, moveMenuFor, setMoveMenuFor, dragChannelId, setDragChannelId, dragOverTarget, setDragOverTarget, reactPickerFor, setReactPickerFor, voice, handleDropOnCategory, collapsedCats, setCollapsedCats, toggleCat, showTeamMenu, setShowTeamMenu, replyTo, setReplyTo, forwardMsg, setForwardMsg, flashId, setFlashId, activeMsgId, setActiveMsgId, isTouchDevice, scrollRef, fileInputRef, composerRef, msgRefs, loadingOlder, setLoadingOlder, loadOlderMessages, activeChannel, canPostInChannel, visibleMessages, scrollToMessage, startReply, copyMessageText, convertMentions, handleSend, handleForward, clearPending, queueFile, handlePaste, handleDrop, handleFileUpload, handleDeleteMessage, recentReactions, setRecentReactions, recordRecentReaction, handleReactionsChange, handlePickReaction, handleCreateChannelSubmit, handleCreateCategorySubmit, handleRenameCategorySubmit, handleRenameChannelSubmit, handleKeyDown, onContentChange, filteredMentions,
+    content, setContent, mentionSearch, setMentionSearch, showMentions, setShowMentions, uploading, setUploading, pendingFile, setPendingFile, pendingPreview, setPendingPreview, dragging, setDragging, showChannelsMobile, setShowChannelsMobile, showMembersMobile, setShowMembersMobile, showMemberList, setShowMemberList, creatingChannel, setCreatingChannel, creatingIn, setCreatingIn, newChannelName, setNewChannelName, newChannelTopic, setNewChannelTopic, creatingCategory, setCreatingCategory, newCategoryName, setNewCategoryName, renamingCat, setRenamingCat, renameCatName, setRenameCatName, renamingChannel, setRenamingChannel, renameChannelName, setRenameChannelName, moveMenuFor, setMoveMenuFor, dragChannelId, setDragChannelId, dragOverTarget, setDragOverTarget, reactPickerFor, setReactPickerFor, voice, handleDropOnCategory, collapsedCats, setCollapsedCats, toggleCat, showTeamMenu, setShowTeamMenu, replyTo, setReplyTo, forwardMsg, setForwardMsg, flashId, setFlashId, activeMsgId, setActiveMsgId, isTouchDevice, scrollRef, fileInputRef, composerRef, msgRefs, loadingOlder, setLoadingOlder, loadOlderMessages, activeChannel, canPostInChannel, visibleMessages, scrollToMessage, startReply, copyMessageText, convertMentions, handleSend, handleForward, clearPending, queueFile, handlePaste, handleDrop, handleFileUpload, handleDeleteMessage, handleEditMessage, recentReactions, setRecentReactions, recordRecentReaction, handleReactionsChange, handlePickReaction, handleCreateChannelSubmit, handleCreateCategorySubmit, handleRenameCategorySubmit, handleRenameChannelSubmit, handleKeyDown, onContentChange, filteredMentions,
   };
 }

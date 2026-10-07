@@ -19,9 +19,15 @@ describe("message permissions", () => {
     expect(messageActionAllowed({ action: "silent-delete", isAuthor: false, moderator: member })).toBe(false);
   });
 
-  it("members can't edit messages, even their own", () => {
+  it("members can't silently edit messages, even their own", () => {
     expect(messageActionAllowed({ action: "edit", isAuthor: true, moderator: member })).toBe(false);
     expect(messageActionAllowed({ action: "edit", isAuthor: false, moderator: member })).toBe(false);
+  });
+
+  it("authors (and only authors) may visibly edit their own messages", () => {
+    expect(messageActionAllowed({ action: "edit-own", isAuthor: true, moderator: member })).toBe(true);
+    expect(messageActionAllowed({ action: "edit-own", isAuthor: false, moderator: member })).toBe(false);
+    expect(messageActionAllowed({ action: "edit-own", isAuthor: false, moderator: legacyAdmin })).toBe(false);
   });
 
   it("moderators (manage_members role or legacy admin) may do everything", () => {
