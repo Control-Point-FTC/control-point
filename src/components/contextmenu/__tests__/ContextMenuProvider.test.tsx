@@ -318,6 +318,16 @@ describe('context menus everywhere (rows without a registered handler)', async (
     expect(del).toHaveBeenCalledTimes(1);
   });
 
+  it('right-clicking an icon inside a row reaches the row menu too', async () => {
+    const { container } = render(
+      <ContextMenuProvider>
+        <ul><li><Pencil data-testid="icon" /><DropdownMenu><DropdownMenuTrigger asChild><button type="button" data-cm-menu aria-label="Actions for Motor">⋯</button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem>Edit Motor</DropdownMenuItem></DropdownMenuContent></DropdownMenu></li></ul>
+      </ContextMenuProvider>,
+    );
+    expect(fireEvent.contextMenu(container.querySelector('li > svg')!)).toBe(false);
+    expect(await screen.findByRole('menuitem', { name: 'Edit Motor' })).toBeInTheDocument();
+  });
+
   it('Shift+F10 on a focused row opens its menu too', async () => {
     render(
       <ContextMenuProvider>

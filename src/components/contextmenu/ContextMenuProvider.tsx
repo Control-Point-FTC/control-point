@@ -56,8 +56,10 @@ export function useContextMenu(type: string, handler: CtxMenuHandler) {
 
 /** Cases where the browser's own menu must win. */
 function nativeMenuPreferred(target: EventTarget | null): boolean {
-  if (!target || !(target instanceof HTMLElement)) return true;
-  const el = target as HTMLElement;
+  // Element, not just HTMLElement: right-clicking an icon (SVG) in a row
+  // should still reach the row's menu.
+  if (!target || !(target instanceof Element)) return true;
+  const el = target;
   // Form fields and editable content: cut/copy/paste, spellcheck, etc.
   if (el.closest('input, textarea, select, [contenteditable="true"]')) return true;
   // Selected text: the user wants Copy.

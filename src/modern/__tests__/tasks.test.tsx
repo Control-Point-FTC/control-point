@@ -4,6 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
+const dialog = vi.hoisted(() => ({ notify: vi.fn() }));
+vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()), ...dialog }));
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { TasksPage } from '../pages/tasks/TasksPage';
@@ -68,6 +70,19 @@ describe('Modern Tasks', () => {
     setup({ manage: false });
     fireEvent.contextMenu(screen.getByRole('button', { name: /Mount the climber hooks/ }));
     expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('Copy title says so when the browser has no clipboard API', () => {
+    const had = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    try {
+      setup();
+      fireEvent.contextMenu(screen.getByRole('button', { name: /Mount the climber hooks/ }));
+      fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Copy title' }));
+      expect(dialog.notify).toHaveBeenCalledWith(expect.stringContaining('Could not copy'), 'error');
+    } finally {
+      if (had) Object.defineProperty(navigator, 'clipboard', had); else delete (navigator as any).clipboard;
+    }
   });
 
   it('moving to Done asks for proof instead of PATCHing', async () => {

@@ -50,7 +50,11 @@ export function TasksPage(props: any) {
       { separator: true },
       {
         label: 'Copy title', icon: Copy,
-        action: () => { void navigator.clipboard?.writeText(task.title || '').then(() => notify('Copied', 'success'), () => notify('Could not copy', 'error')); },
+        action: () => {
+          // No clipboard API (e.g. plain-HTTP origins): say so instead of failing silently.
+          if (!navigator.clipboard?.writeText) { notify('Could not copy — your browser blocked the clipboard here.', 'error'); return; }
+          void navigator.clipboard.writeText(task.title || '').then(() => notify('Copied', 'success'), () => notify('Could not copy', 'error'));
+        },
       },
       ...(ctl.canManageTasks ? [{ label: 'Delete', icon: Trash2, danger: true, action: () => void ctl.handleDeleteTask(task.id) }] : []),
     ];
