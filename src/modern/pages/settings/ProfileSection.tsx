@@ -16,12 +16,6 @@ interface ProfileDraft { name: string; role: string; accent: string }
 const validHex = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v.trim());
 const PRESENCE_DOT: Record<string, string> = { online: 'bg-success', idle: 'bg-warning', dnd: 'bg-destructive', invisible: 'bg-muted-foreground/50' };
 
-function parseScopes(raw: unknown): string[] {
-  let s = raw;
-  for (let i = 0; i < 2 && typeof s === 'string'; i++) { try { s = JSON.parse(s); } catch { return []; } }
-  return Array.isArray(s) ? s : [];
-}
-
 export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusPick, setColorVersion, refresh }: any) {
   const user = currentUser || {};
   const draftKey = `settings:profile:${user.id ?? 0}`;
@@ -134,7 +128,6 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
     }
   };
 
-  const scopes = parseScopes(user.scopes);
   const status = user.presence_status || 'online';
 
   return (
@@ -212,9 +205,14 @@ export function ProfileSection({ currentUser, teams = [], onUserSaved, onStatusP
 
       <SettingsGroup title="Account facts">
         <SettingsRow label="Email" description="Used to sign in. Contact an admin to change it."><span className="text-sm">{user.email || '—'}</span></SettingsRow>
-        <SettingsRow label="Account type"><Badge variant={user.is_board ? 'soft' : 'outline'}>{user.is_board ? 'Board member' : 'Team member'}</Badge></SettingsRow>
-        <SettingsRow label="Admin scopes">
-          <span className="flex flex-wrap justify-end gap-1">{scopes.length ? scopes.map((s) => <Badge key={s} variant="outline">{s}</Badge>) : <span className="text-sm text-muted-foreground">None</span>}</span>
+        <SettingsRow label="Access" description="What you can do comes from your roles.">
+          <span className="flex flex-wrap justify-end gap-1">
+            <Badge variant={user.account_type === 'admin' ? 'soft' : 'outline'}>{user.account_type === 'admin' ? 'Admin' : 'Member'}</Badge>
+            {user.is_board ? <Badge variant="outline">Board</Badge> : null}
+          </span>
+        </SettingsRow>
+        <SettingsRow label="Roles">
+          <span className="flex flex-wrap justify-end gap-1">{(user.roles || []).length ? user.roles.map((r: any) => <Badge key={r.id} variant="outline">{r.name}</Badge>) : <span className="text-sm text-muted-foreground">None</span>}</span>
         </SettingsRow>
         <SettingsRow label="Colours" description="Clears custom colours and goes back to Volt & Carbon.">
           <Button variant="outline" size="sm" onClick={() => void resetTheme()}>Reset theme</Button>

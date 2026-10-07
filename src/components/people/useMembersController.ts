@@ -8,20 +8,11 @@ import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { getDraft, newSessionId, useDraft } from '../../modern/drafts';
 
-export const MEMBER_SCOPES = ['attendance', 'budget', 'tasks', 'inventory', 'code', 'admin'] as const;
-
-export interface MemberForm { team_id: string | number; name: string; role: string; email: string; is_board: boolean; scopes: string[] }
+// Permissions come from roles; `is_admin` maps to the system Admin role.
+export interface MemberForm { team_id: string | number; name: string; role: string; email: string; is_board: boolean; is_admin: boolean }
 export interface TeamForm { name: string; number: string; accent_color: string; primary_color: string; text_color: string }
-export const EMPTY_MEMBER: MemberForm = { team_id: '', name: '', role: '', email: '', is_board: false, scopes: [] };
+export const EMPTY_MEMBER: MemberForm = { team_id: '', name: '', role: '', email: '', is_board: false, is_admin: false };
 export const EMPTY_TEAM: TeamForm = { name: '', number: '', accent_color: '', primary_color: '', text_color: '' };
-
-export function parseScopes(scopes: unknown): string[] {
-  let s = scopes;
-  if (typeof s === 'string') {
-    try { s = JSON.parse(s); } catch { s = []; }
-  }
-  return Array.isArray(s) ? (s as string[]) : [];
-}
 
 export function useMembersController({ members, refresh, onRefresh, currentUser, hasScope }: {
   members: any[];
@@ -59,7 +50,7 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
       role: m.role,
       email: m.email,
       is_board: m.is_board === 1 || m.is_board === true,
-      scopes: parseScopes(m.scopes),
+      is_admin: m.account_type === 'admin',
     });
     setShowAddMember(true);
   };
@@ -69,9 +60,6 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     setEditingMemberId(null);
     setNewMember(EMPTY_MEMBER);
   };
-  const toggleMemberScope = (s: string) => setNewMember((f) => ({
-    ...f, scopes: f.scopes.includes(s) ? f.scopes.filter((x) => x !== s) : [...f.scopes, s],
-  }));
 
   const handleAddMember = async () => {
     const gen = getDraft<number>('members:editor-gen', 0);
@@ -81,16 +69,19 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     const form = newMember;
     setMemberSavingGen(gen);
     try {
+      const { is_admin, ...rest } = form;
       const res = await apiFetch(url, {
         method: id ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, scopes: parseScopes(form.scopes) }),
+        body: JSON.stringify({ ...rest, account_type: is_admin ? 'admin' : 'student' }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        notify(err.error || 'Could not save member', 'error');
+        notify(data.error || 'Could not save member', 'error');
         return;
       }
+      // Never a silent no-op: another role can still make them an admin.
+      if (data.stillAdminVia) notify(`Saved — still an admin through the “${data.stillAdminVia}” role. Remove it in Manage roles.`, 'info');
       if (getDraft<number>('members:editor-gen', 0) === gen) closeMemberEditor();
       refresh.members();
     } catch {
@@ -192,7 +183,7 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
 
   return {
     isAdmin, activeTeamId,
-    showAddMember, editingMember, newMember, setNewMember, savingMember, openNewMember, openEditMember, closeMemberEditor, toggleMemberScope, handleAddMember,
+    showAddMember, editingMember, newMember, setNewMember, savingMember, openNewMember, openEditMember, closeMemberEditor, handleAddMember,
     memberToRemove, setMemberToRemove, askRemoveMember, removeError, removingMember, handleDeleteMember, handleResetPassword,
     showAddTeam, editingTeam, newTeam, setNewTeam, savingTeam, openEditTeam, closeTeamEditor, handleAddTeam,
   };

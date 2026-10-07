@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
-  Badge, Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+  Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, Label,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Sheet, SheetContent, SheetDescription,
   SheetHeader, SheetTitle, Switch, ToggleGroup, ToggleGroupItem,
@@ -16,7 +16,7 @@ import {
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { PRESENCE_META } from '../../../components/presence';
 import { notify } from '../../../components/dialog';
-import { MEMBER_SCOPES, parseScopes, type useMembersController } from '../../../components/people/useMembersController';
+import { type useMembersController } from '../../../components/people/useMembersController';
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { EmptyState } from '../../ui/page';
 import { RoleChip } from './RolesTab';
@@ -171,8 +171,7 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
                   <dt className="text-muted-foreground">Email</dt><dd className="truncate">{viewing.email || '—'}</dd>
                   <dt className="text-muted-foreground">Team</dt><dd>{viewing.team_name || teams.find((t) => t.id === viewing.team_id)?.name || '—'}</dd>
                   <dt className="text-muted-foreground">Board</dt><dd>{viewing.is_board ? 'Yes' : 'No'}</dd>
-                  <dt className="text-muted-foreground">Scopes</dt>
-                  <dd className="flex flex-wrap gap-1">{parseScopes(viewing.scopes).length ? parseScopes(viewing.scopes).map((s) => <Badge key={s} variant="outline">{s}</Badge>) : <span className="text-muted-foreground">None</span>}</dd>
+                  <dt className="text-muted-foreground">Admin</dt><dd>{viewing.account_type === 'admin' ? 'Yes' : 'No'}</dd>
                 </dl>
               </div>
               {ctl.isAdmin && (
@@ -233,26 +232,18 @@ function MemberEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
             </div>
             <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
               <span>
+                <span className="block text-sm font-medium">Admin</span>
+                <span className="block text-xs text-muted-foreground">Full access to the workspace. Finer permissions come from roles.</span>
+              </span>
+              <Switch checked={f.is_admin} onCheckedChange={(v) => set({ is_admin: v })} aria-label="Admin" />
+            </label>
+            <label className="flex items-center justify-between gap-4 rounded-xl border border-border p-3">
+              <span>
                 <span className="block text-sm font-medium">Board member</span>
-                <span className="block text-xs text-muted-foreground">Board members can be given admin scopes.</span>
+                <span className="block text-xs text-muted-foreground">Shows a Board badge. Doesn’t change what they can do.</span>
               </span>
               <Switch checked={f.is_board} onCheckedChange={(v) => set({ is_board: v })} aria-label="Board member" />
             </label>
-            <AnimatePresence initial={false}>
-              {f.is_board && (
-                <motion.fieldset initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                  <legend className="mb-2 text-sm font-medium">Scopes</legend>
-                  <div className="grid grid-cols-2 gap-2">
-                    {MEMBER_SCOPES.map((s) => (
-                      <label key={s} className="flex min-h-11 items-center gap-2.5 rounded-lg border border-border px-3 text-sm capitalize">
-                        <Checkbox checked={f.scopes.includes(s)} onCheckedChange={() => ctl.toggleMemberScope(s)} aria-label={`${s} scope`} />
-                        {s}
-                      </label>
-                    ))}
-                  </div>
-                </motion.fieldset>
-              )}
-            </AnimatePresence>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <Button type="button" variant="outline" onClick={ctl.closeMemberEditor}>Cancel</Button>
