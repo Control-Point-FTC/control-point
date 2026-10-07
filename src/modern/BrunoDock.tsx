@@ -203,10 +203,10 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                     tools={lengthPicker}
                   />
                 </div>
-                <p className="mt-2 flex min-h-4 items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                  <Lightbulb className="size-3 shrink-0" aria-hidden="true" />
+                <p className="mt-2 flex min-h-4 items-start gap-1.5 px-1 text-[11px] leading-snug text-muted-foreground">
+                  <Lightbulb className="mt-px size-3 shrink-0" aria-hidden="true" />
                   {/* Keyed so each new tip fades in. */}
-                  <motion.span key={c.busy ? 'busy' : tip} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }} className="truncate">
+                  <motion.span key={c.busy ? 'busy' : tip} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
                     {c.busy ? `${c.name} is replying…` : BRUNO_TIPS[tip]}
                   </motion.span>
                 </p>

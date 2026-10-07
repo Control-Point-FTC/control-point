@@ -669,5 +669,7 @@ html.light .theme-dark .card-surface {
    edge; the bug button and corner cards move left of it. */
 @media (min-width: 768px) {
   .cp-fab, .cp-slot-banner, .cp-slot-mention { margin-right: var(--cp-side-dock, 0px); }
+  /* ...and never wider than the room left beside the panel. */
+  .cp-slot-banner, .cp-slot-mention { max-width: calc(100vw - var(--cp-side-dock, 0px) - 3rem); }
 }
 .cp-slot-mention { bottom: calc(var(--cp-above-fab) + var(--cp-slot-banner, 0px)) !important; }

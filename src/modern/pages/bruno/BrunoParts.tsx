@@ -87,12 +87,14 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach screenshots" title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} screenshots` : 'Attach screenshots'} disabled={busy || attached.length >= MAX_BRUNO_IMAGES} onClick={() => fileRef.current?.click()}><ImagePlus /></Button>
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach a PDF" title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'} disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS} onClick={() => pdfRef.current?.click()}><FileText /></Button>
         {tools}
-        {/* The side panel shows its own tip line, so compact keeps the bar clear. */}
-        <span className={cn('ml-auto hidden px-2 text-xs text-muted-foreground', !compact && 'sm:inline')}>{busy ? 'Bruno is replying…' : 'Shift+Enter for a new line'}</span>
+        {/* A spacer keeps Send at the right edge whether or not the hint shows;
+            the side panel shows its own tip line, so compact hides the hint. */}
+        <span className="flex-1" aria-hidden="true" />
+        <span className={cn('hidden px-2 text-xs text-muted-foreground', !compact && 'sm:inline')}>{busy ? 'Bruno is replying…' : 'Shift+Enter for a new line'}</span>
         {busy ? (
-          <Button type="button" size="icon" variant="secondary" className="rounded-full max-sm:ml-auto" onClick={onStop} aria-label="Stop generating" title="Stop generating"><Square className="fill-current" /></Button>
+          <Button type="button" size="icon" variant="secondary" className="rounded-full" onClick={onStop} aria-label="Stop generating" title="Stop generating"><Square className="fill-current" /></Button>
         ) : (
-          <Button type="submit" size="icon" className="rounded-full max-sm:ml-auto" disabled={!canSend} aria-label="Send"><ArrowUp /></Button>
+          <Button type="submit" size="icon" className="rounded-full" disabled={!canSend} aria-label="Send"><ArrowUp /></Button>
         )}
       </div>
     </form>
