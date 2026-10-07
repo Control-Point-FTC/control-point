@@ -44,6 +44,8 @@ import {
   legacyOnboardingState,
   type OnboardingState,
 } from "./server/onboarding.js";
+import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
+import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import {
   isAIConfigured,
   getAISetting,
@@ -99,6 +101,7 @@ import {
   voiceMaintenance,
   scheduleVoiceDisconnectCleanup,
   cancelVoiceDisconnectCleanup,
+  removeParticipantEverywhere,
 } from "./server/voice.js";
 import {
   isFirstEventsConfigured,
@@ -1566,7 +1569,8 @@ for (const t of codelessTeams) {
 
 // Session Management
 function generateSessionId(): string {
-  return 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 11);
+  // 256 bits from the CSPRNG. (The old Math.random ids were predictable.)
+  return 'session_' + crypto.randomBytes(32).toString('base64url');
 }
 
 
@@ -1577,6 +1581,22 @@ async function createSession(memberId: number): Promise<string> {
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
   (await dbRun("INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", sessionId, memberId, now, expiresAt, now));
   return sessionId;
+}
+
+/** createSession, but only while `memberId` still belongs to `email` and the
+ *  account still has `passwordHash` — checked in the INSERT itself. */
+async function createSessionIfCredential(memberId: number, email: string, passwordHash: string): Promise<string | null> {
+  const sessionId = generateSessionId();
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const info = (await dbRun(
+    `INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity)
+     SELECT ?, ?, ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM members WHERE id = ? AND LOWER(email) = LOWER(?) AND COALESCE(is_active, 1) = 1)
+       AND EXISTS (SELECT 1 FROM members WHERE LOWER(email) = LOWER(?) AND password = ?)`,
+    sessionId, memberId, now, expiresAt, now, memberId, email, email, passwordHash
+  )) as any;
+  return Number(info?.changes) > 0 ? sessionId : null;
 }
 
 async function validateSession(sessionId: string): Promise<{ valid: boolean; memberId?: number }> {
@@ -1703,10 +1723,12 @@ async function getAuth(req: any): Promise<{ memberId: number; teamId: number | n
 // An account is an email; a membership is one members row per (email, team).
 // Sessions point at a membership row, so the active team is the row's team.
 async function allMemberRows(email: string): Promise<any[]> {
-  return (await dbAll("SELECT * FROM members WHERE email = ? ORDER BY id DESC", email)) as any[];
+  // Case-insensitive: an account is one email however it was typed. An exact
+  // match let a different-case copy of an email open a second "account".
+  return (await dbAll("SELECT * FROM members WHERE LOWER(email) = LOWER(?) ORDER BY id DESC", String(email || "").trim())) as any[];
 }
 async function activeMemberRows(email: string): Promise<any[]> {
-  return (await dbAll("SELECT * FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1 ORDER BY id DESC", email)) as any[];
+  return (await dbAll("SELECT * FROM members WHERE LOWER(email) = LOWER(?) AND COALESCE(is_active, 1) = 1 ORDER BY id DESC", String(email || "").trim())) as any[];
 }
 // Which membership to sign in as when an account has several: the one with
 // the most recently used session wins, falling back to the newest row.
@@ -2004,11 +2026,42 @@ setInterval(async () => {
 async function startServer() {
   // Versioned migrations run after the inline baseline DDL above.
   await runMigrations();
+  // Migration 011 lowercases emails but never merges case-only duplicates
+  // inside one workspace — surface any left for manual review.
+  try {
+    const mixed = (await dbAll("SELECT id, team_id, email FROM members WHERE email != LOWER(TRIM(email))")) as any[];
+    if (mixed.length) console.warn(`[email-case] ${mixed.length} member row(s) still have mixed-case emails (case-only duplicates in one workspace) — review by hand: ids ${mixed.map((m) => m.id).join(", ")}`);
+  } catch (e) { console.error("email-case check failed:", e); }
   const app = express();
+  // nginx on the same host proxies every request: trust its X-Forwarded-For
+  // so req.ip is the real client (rate limits key on it).
+  app.set("trust proxy", "loopback");
+  app.disable("x-powered-by");
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
   app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
+
+  // ---- Auth rate limits (registered before the routes they guard) ----
+  const authLimiter = new RateLimiter();
+  setInterval(() => authLimiter.sweep(), 10 * 60 * 1000).unref();
+  const MIN = 60 * 1000;
+  const byIp = (max: number, windowMs: number) => ({ rule: { max, windowMs }, key: (req: any) => clientIp(req) });
+  const byEmail = (max: number, windowMs: number) => ({ rule: { max, windowMs }, key: (req: any) => normEmail(req.body?.email) || null });
+  const byIpEmail = (max: number, windowMs: number) => ({ rule: { max, windowMs }, key: (req: any) => { const e = normEmail(req.body?.email); return e ? `${clientIp(req)}|${e}` : null; } });
+  app.post("/api/auth/login", limit(authLimiter, "login", [byIp(30, 15 * MIN), byIpEmail(8, 15 * MIN), byEmail(20, 60 * MIN)]));
+  app.post("/api/auth/signup", limit(authLimiter, "signup", [byIp(10, 60 * MIN), byEmail(5, 60 * MIN)]));
+  app.post("/api/auth/verify-email", limit(authLimiter, "verify", [byIp(30, 15 * MIN), byEmail(10, 15 * MIN)]));
+  app.post("/api/auth/resend-code", limit(authLimiter, "resend", [byIp(20, 15 * MIN), byEmail(6, 60 * MIN)]));
+  app.post("/api/auth/forgot-password", limit(authLimiter, "forgot", [byIp(20, 15 * MIN), byEmail(6, 60 * MIN)]));
+  app.post("/api/auth/reset-password", limit(authLimiter, "resetpw", [byIp(30, 15 * MIN), byEmail(10, 15 * MIN)]));
+  app.post("/api/auth/change-password", limit(authLimiter, "changepw", [byIp(20, 15 * MIN)]));
+  app.post("/api/auth/oauth/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
+  app.post("/api/auth/google/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
+  app.post("/api/teams/join", limit(authLimiter, "join", [byIp(20, 15 * MIN)]));
+  for (const p of ["/api/auth/google", "/api/auth/discord", "/api/auth/github"]) {
+    app.get(p, limit(authLimiter, "oauthstart", [byIp(40, 15 * MIN)]));
+  }
 
   // Keep the /api/files/ cookie in step with the session, so <img> tags for
   // stored files authenticate (see FILES_COOKIE): from the X-Session-ID
@@ -2166,6 +2219,18 @@ async function startServer() {
     });
   };
 
+  // Close every live socket of one membership (removed member): the socket
+  // was authorised once at `hello`, so it must not outlive the membership.
+  const disconnectMember = (teamId: number | null | undefined, memberId: number) => {
+    clients.forEach(client => {
+      if ((client as any).teamId === teamId && (client as any).memberId === memberId) {
+        (client as any).teamId = null;
+        (client as any).memberId = null;
+        try { client.close(4001, "membership ended"); } catch {}
+      }
+    });
+  };
+
   const memberSocketCount = (teamId: number | null | undefined, memberId: number): number => {
     if (teamId == null) return 0;
     let n = 0;
@@ -2188,6 +2253,17 @@ async function startServer() {
     nowIso: () => new Date().toISOString(),
   };
 
+  /** A membership just lost its identity (removed, or moved to another
+   *  email): drop it from any live call (its client tears down media; the
+   *  others' participant lists update), then close its sockets. Sessions are
+   *  revoked by the caller in the same write that changes the row. */
+  const endMemberPresence = async (teamId: number | null | undefined, memberId: number) => {
+    if (teamId == null) return;
+    cancelVoiceDisconnectCleanup(teamId, memberId);
+    try { await removeParticipantEverywhere(voiceDeps, teamId, memberId, "removed"); } catch (e) { console.error("voice cleanup failed:", e); }
+    disconnectMember(teamId, memberId);
+  };
+
   const createNotification = async (userId: number, content: string, type: string, meta?: Record<string, any>) => {
     try {
       const timestamp = new Date().toISOString();
@@ -2195,7 +2271,9 @@ async function startServer() {
       const info = await dbRun("INSERT INTO notifications (user_id, content, type, timestamp, meta) VALUES (?, ?, ?, ?, ?)", userId, content, type, timestamp, metaJson);
       const target = (await dbGet("SELECT team_id FROM members WHERE id = ?", userId)) as any;
 
-      broadcastToTeam(target?.team_id, {
+      // Deliver to the recipient's own sockets only: a team-wide broadcast
+      // put every member's notification text in every teammate's browser.
+      sendToMember(target?.team_id, userId, {
         type: 'notification',
         notification: {
           id: info.lastInsertRowid,
@@ -2234,7 +2312,9 @@ async function startServer() {
         if (message.type === "hello" && message.sessionId) {
           const { valid, memberId } = await validateSession(message.sessionId);
           if (valid && memberId) {
-            const member = (await dbGet("SELECT id, team_id FROM members WHERE id = ?", memberId)) as any;
+            // Removed members' sessions are revoked, but check anyway: only an
+            // active membership may join the team's live feed.
+            const member = (await dbGet("SELECT id, team_id FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", memberId)) as any;
             if (member) {
               (ws as any).teamId = member.team_id;
               (ws as any).memberId = member.id;
@@ -2260,10 +2340,15 @@ async function startServer() {
         }
         if (message.type === "chat") {
           const teamId = (ws as any).teamId;
-          if (teamId == null) return; // ignore unidentified clients
-          // Verify the claimed sender belongs to this workspace
-          const sender = (await dbGet("SELECT id, team_id FROM members WHERE id = ?", message.sender_id)) as any;
+          const socketMemberId = (ws as any).memberId;
+          if (teamId == null || socketMemberId == null) return; // ignore unidentified clients
+          // The sender is whoever authenticated this socket — never the
+          // client's claimed sender_id/sender_name (that allowed posting as
+          // anyone, including admins in admin-only channels).
+          const sender = (await dbGet("SELECT id, team_id, name FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", socketMemberId)) as any;
           if (!sender || sender.team_id !== teamId) return;
+          message.sender_id = sender.id;
+          message.sender_name = sender.name;
           // Channel must belong to this team; default to #general
           const general = await ensureGeneralChannel(teamId);
           let channelId = parseInt(message.channel_id, 10);
@@ -2365,75 +2450,81 @@ async function startServer() {
 
   // --- Auth Routes ---
   app.post("/api/auth/login", async (req, res) => {
-    const { email, password } = req.body;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+    // One message for every credential failure, so the endpoint can't be
+    // used to learn which emails have accounts.
+    const BAD_LOGIN = "Invalid email or password";
+    if (!email || !password) return res.status(401).json({ error: BAD_LOGIN });
     const rows = await activeMemberRows(email);
-    if (!rows.length) {
-      // Distinguish "no such account" from "removed everywhere"
-      const anyRow = (await dbGet("SELECT id FROM members WHERE email = ?", email)) as any;
-      if (anyRow) return res.status(403).json({ error: "This account has been removed from the team" });
-      return res.status(401).json({ error: "User not found" });
-    }
+    if (!rows.length) return res.status(401).json({ error: BAD_LOGIN });
 
     // The password is account-wide: accept it if it verifies against any of
     // this account's membership rows.
     let verified = false;
+    let matchedHash = "";
     for (const r of rows) {
-      if (r.password && bcrypt.compareSync(password, r.password)) { verified = true; break; }
+      if (r.password && (await bcrypt.compare(password, r.password))) { verified = true; matchedHash = r.password; break; }
     }
     const picked = (await pickMemberRow(rows)) as any;
     if (!verified) {
-      if (rows.some((r) => !r.password)) {
-        const sessionId = await createSession(picked.id);
-        return res.json({ needsSetup: true, user: sanitizeMember(picked), sessionId });
+      // An account that never had a password (OAuth-only, or added to a
+      // roster) proves ownership of its email with a code — never with
+      // whatever was typed in the password box.
+      if (rows.every((r) => !r.password)) {
+        try {
+          // A cooldown means a code went out under a minute ago — still valid.
+          await issueVerificationCode(email, "reset");
+        } catch (e) {
+          console.error("setup code issue failed:", e);
+          return res.status(502).json({ error: "We couldn't send your setup email — try again in a minute" });
+        }
+        return res.json({ needsPasswordSetup: true, email });
       }
-      return res.status(401).json({ error: "Invalid password" });
+      return res.status(401).json({ error: BAD_LOGIN });
     }
     // Email ownership check: unverified addresses get a code, not a session.
     if (!(await isEmailVerified(email))) {
       try { await issueVerificationCode(email); } catch (e) { console.error("verify code issue failed:", e); }
       return res.json({ needsVerification: true, email });
     }
-    const sessionId = await createSession(picked.id);
+    // Atomic: the session is only created if, at insert time, the row still
+    // has this email and the account still holds the password just checked
+    // (an admin edit or password change may have landed mid-login).
+    const sessionId = await createSessionIfCredential(picked.id, email, matchedHash);
+    if (!sessionId) return res.status(401).json({ error: BAD_LOGIN });
     await inheritInterfaceMode(picked);
     res.json({ user: sanitizeMember(picked), sessionId });
   });
 
-  app.post("/api/auth/setup", async (req, res) => {
-    const { email, password } = req.body;
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
-    // Setup is only for accounts that never had a password (e.g. added to the roster by an admin)
-    const existing = (await dbGet("SELECT id FROM members WHERE email = ? AND password IS NULL ORDER BY id DESC", email)) as any;
-    if (!existing) return res.status(400).json({ error: "This account already has a password — sign in instead" });
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    // The password is account-wide: set it on every membership row for this email.
-    (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ?", hashedPassword, email));
-    const user = (await dbGet("SELECT * FROM members WHERE id = ?", existing.id));
-    if (!(await isEmailVerified(email))) {
-      try { await issueVerificationCode(email); } catch (e) { console.error("verify code issue failed:", e); }
-      return res.json({ needsVerification: true, email });
-    }
-    const sessionId = await createSession(existing.id);
-    await inheritInterfaceMode(user);
-    res.json({ user: sanitizeMember(user), sessionId });
+  // Retired: setting a first password without proving the email let anyone
+  // claim a password-less account. First passwords now go through the
+  // emailed-code flow (/api/auth/forgot-password → /api/auth/reset-password).
+  app.post("/api/auth/setup", async (_req, res) => {
+    res.status(410).json({ error: "Use the emailed code to set your password", needsPasswordSetup: true });
   });
 
-  // Admin-only: force a roster member in your workspace to set a new password on next login
+  // Admin-only: email a roster member in your workspace a password-reset code.
+  // A password is account-wide (it may guard other workspaces too), so an
+  // admin never clears or sets it — only the email's owner can, via the code.
   app.post("/api/auth/reset", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
-    const { email } = req.body;
-    const target = (await dbGet("SELECT id, team_id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, auth.teamId)) as any;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const target = (await dbGet("SELECT id, team_id FROM members WHERE LOWER(email) = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, auth.teamId)) as any;
     if (!target) {
       return res.status(404).json({ error: "Member not found in your workspace" });
     }
     if (target.id === auth.memberId) {
       return res.status(400).json({ error: "You can't reset your own password this way" });
     }
-    // The password is account-wide: clear it on every membership row for this email.
-    (await dbRun("UPDATE members SET password = NULL, is_setup = 0 WHERE email = ?", email));
-    res.json({ success: true });
+    try {
+      await issueVerificationCode(email, "reset");
+    } catch (e) {
+      console.error("admin reset code issue failed:", e);
+      return res.status(502).json({ error: "Couldn't send the reset email — try again" });
+    }
+    res.json({ success: true, emailed: true });
   });
 
   // ---- Public signup ----
@@ -2443,7 +2534,7 @@ async function startServer() {
     try {
       const { accountType, name, email, password, teamName, teamNumber, accessCode } = req.body || {};
       const cleanName = (name || '').trim();
-      const cleanEmail = (email || '').trim();
+      const cleanEmail = (email || '').trim().toLowerCase();
       if (!cleanName || !cleanEmail || !password || password.length < 6) {
         return res.status(400).json({ error: "Name, email, and a 6+ character password are required" });
       }
@@ -2456,12 +2547,13 @@ async function startServer() {
         const matched = pwRows.find((r) => bcrypt.compareSync(password, r.password));
         if (!matched) return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
         hashedPassword = matched.password;
+      } else if (priorRows.length) {
+        // The email already has password-less memberships (OAuth or roster).
+        // A signup can't claim them by picking a password: the owner sets one
+        // through the emailed code first ("Forgot password?").
+        return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
       } else {
         hashedPassword = bcrypt.hashSync(password, 10);
-        if (priorRows.length) {
-          // Adopt the new password account-wide for password-less rows.
-          (await dbRun("UPDATE members SET password = ?, is_setup = 1 WHERE email = ? AND password IS NULL", hashedPassword, cleanEmail));
-        }
       }
 
       if (accountType === 'admin') {
@@ -2883,8 +2975,10 @@ async function startServer() {
     }
   }
 
-  async function finishOAuthLogin(provider: string, providerSub: string, email: string, name: string, avatarUrl: string | null, intent: string, res: any, returnTo?: string) {
+  async function finishOAuthLogin(provider: string, providerSub: string, rawEmail: string, name: string, avatarUrl: string | null, intent: string, res: any, returnTo?: string) {
     const idColumn = OAUTH_PROVIDERS[provider].idColumn;
+    // Emails are stored lowercase: one account per address, whatever its casing.
+    const email = String(rawEmail || "").trim().toLowerCase();
     let rows: any[] = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
     // Redirect target: the mirror origin when this login started there, else the API host.
     const base = returnTo || '';
@@ -3157,6 +3251,11 @@ async function startServer() {
       if (!profileRes.ok) throw new Error("Failed to fetch Google profile");
       const profile = (await profileRes.json()) as any;
       if (!profile.email) throw new Error("No email in Google profile");
+      // Only a Google-verified address may sign in or link to an existing
+      // account by email (Discord and GitHub are checked the same way).
+      if (profile.email_verified !== true && profile.email_verified !== "true") {
+        return res.redirect(`${pending.returnTo || ''}/?oauth_error=email_unverified`);
+      }
 
       await finishOAuthLogin('google', String(profile.sub), profile.email, profile.name || '', profile.picture || null, intent, res, pending.returnTo);
     } catch (error) {
@@ -3451,8 +3550,8 @@ async function startServer() {
     const newHash = bcrypt.hashSync(String(newPassword), 10);
     // The password is account-wide: update every membership row for this email,
     // and kill every other session on all of them.
-    (await dbRun("UPDATE members SET password = ? WHERE email = ?", newHash, member.email));
-    const siblingIds = ((await dbAll("SELECT id FROM members WHERE email = ?", member.email)) as any[]).map((r) => r.id);
+    (await dbRun("UPDATE members SET password = ? WHERE LOWER(email) = LOWER(?)", newHash, member.email));
+    const siblingIds = ((await dbAll("SELECT id FROM members WHERE LOWER(email) = LOWER(?)", member.email)) as any[]).map((r) => r.id);
     const sid = currentSessionId(req);
     if (siblingIds.length) {
       const placeholders = siblingIds.map(() => "?").join(",");
@@ -3498,7 +3597,7 @@ async function startServer() {
     const ids = rows.map((r) => r.id);
     // Remove avatar files (best effort, async — never block the event loop)
     await Promise.all(rows.map(async (r) => {
-      await deleteStoredFileByUrl(r.avatar_url);
+      await deleteOwnedAvatarFile(r.avatar_url, ids);
     }));
     if (ids.length) {
       const ph = ids.map(() => "?").join(",");
@@ -5119,7 +5218,9 @@ async function startServer() {
   app.post("/api/members", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
-    const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const { name, role, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) return res.status(400).json({ error: "A valid email is required" });
     // An admin may add a member to any of their own teams (defaults to the active one)
     const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
     let targetTeamId = auth.teamId!;
@@ -5157,12 +5258,18 @@ async function startServer() {
     if (!target || target.team_id !== auth.teamId) {
       return res.status(404).json({ error: "Member not found" });
     }
-    const { name, role, email, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const { name, role, is_board, scopes, account_type, accent_color, primary_color, text_color } = req.body;
+    const requested = req.body?.email == null ? String(target.email || "") : String(req.body.email).trim().toLowerCase();
+    if (!requested || !requested.includes("@")) return res.status(400).json({ error: "A valid email is required" });
     const finalScopes = typeof scopes === 'string' ? scopes : JSON.stringify(scopes || []);
+    const emailChanged = requested.toLowerCase() !== String(target.email || "").toLowerCase();
+    // Unchanged address: keep the stored value byte-for-byte (a case-only
+    // duplicate left by migration 011 must not be rewritten into a clash).
+    const email = emailChanged ? requested : target.email;
 
     // Email must stay unique within the team
-    if (email && email !== target.email) {
-      const clash = (await dbGet("SELECT id FROM members WHERE email = ? AND team_id = ? AND id != ?", email, auth.teamId, memberId)) as any;
+    if (emailChanged) {
+      const clash = (await dbGet("SELECT id FROM members WHERE LOWER(email) = ? AND team_id = ? AND id != ?", email, auth.teamId, memberId)) as any;
       if (clash) return res.status(400).json({ error: "That email is already on the roster" });
     }
 
@@ -5184,11 +5291,24 @@ async function startServer() {
     if (accent_color !== undefined) updates.accent_color = cleanHex(accent_color);
     if (primary_color !== undefined) updates.primary_color = cleanHex(primary_color);
     if (text_color !== undefined) updates.text_color = cleanHex(text_color);
+    if (emailChanged) {
+      // The row now belongs to a different email (account). Its old password,
+      // linked sign-ins and sessions belong to the previous address and must
+      // not carry over — otherwise an admin could point a row whose password
+      // they know at someone else's email and sign in as them. Cleared in the
+      // same write as the email (and login re-checks credentials atomically
+      // when it creates a session). The new owner sets a password via code.
+      Object.assign(updates, { password: null, is_setup: 0, google_id: null, discord_id: null, github_id: null });
+    }
 
     const columns = Object.keys(updates);
     const setClause = columns.map(col => `${col} = ?`).join(', ');
 
-    (await dbRun(`UPDATE members SET ${setClause} WHERE id = ?`, ...Object.values(updates), memberId));
+    await dbBatch([
+      { sql: `UPDATE members SET ${setClause} WHERE id = ?`, args: [...Object.values(updates), memberId] },
+      ...(emailChanged ? [{ sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] }] : []),
+    ]);
+    if (emailChanged) await endMemberPresence(auth.teamId, memberId);
 
     // Keep the system Admin role aligned with an explicit admin/student change,
     // then reconcile account_type with any custom roles the member holds.
@@ -5228,7 +5348,23 @@ async function startServer() {
     if (accent_color !== undefined) updates.accent_color = cleanHex(accent_color);
     if (primary_color !== undefined) updates.primary_color = cleanHex(primary_color);
     if (text_color !== undefined) updates.text_color = cleanHex(text_color);
-    if (avatar_url !== undefined) updates.avatar_url = avatar_url || null;
+    if (avatar_url !== undefined) {
+      // Only clearing, an https image URL, or one of this account's own
+      // uploaded avatars — a pointer at someone else's stored file was the
+      // first step of deleting it via the avatar upload route.
+      const v = typeof avatar_url === "string" ? avatar_url.trim() : "";
+      if (!v) updates.avatar_url = null;
+      else if (/^https:\/\/[^\s"'<>]+$/i.test(v) && v.length <= 1000) updates.avatar_url = v;
+      else {
+        const fm = /^\/api\/files\/(\d+)$/.exec(v);
+        const own = fm ? (await dbGet(
+          "SELECT f.id FROM stored_files f JOIN members m ON m.id = f.member_id WHERE f.id = ? AND f.kind = 'avatar' AND LOWER(m.email) = (SELECT LOWER(email) FROM members WHERE id = ?)",
+          Number(fm[1]), auth.memberId
+        )) as any : null;
+        if (!own) return res.status(400).json({ error: "Invalid avatar" });
+        updates.avatar_url = v;
+      }
+    }
     const cols = Object.keys(updates);
     (await dbRun(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, ...Object.values(updates), auth.memberId));
     if (interface_mode !== undefined) {
@@ -5342,7 +5478,7 @@ async function startServer() {
     // Remove the previous avatar's stored file so uploads don't pile up
     try {
       const prev = (await dbGet("SELECT avatar_url FROM members WHERE id = ?", auth.memberId)) as any;
-      await deleteStoredFileByUrl(prev?.avatar_url);
+      await deleteOwnedAvatarFile(prev?.avatar_url, [auth.memberId]);
     } catch { /* best effort */ }
     (await dbRun("UPDATE members SET avatar_url = ? WHERE id = ?", avatarUrl, auth.memberId));
     const user = (await dbGet("SELECT * FROM members WHERE id = ?", auth.memberId));
@@ -5364,8 +5500,15 @@ async function startServer() {
       if ((await countAdmins(auth.teamId)) <= 1) return res.status(400).json({ error: "You need at least one admin" });
     }
     // Soft remove: the member loses access immediately, but their messages,
-    // tasks, attendance, and other history stay intact.
-    (await dbRun("UPDATE members SET is_active = 0 WHERE id = ?", memberId));
+    // tasks, attendance, and other history stay intact. Privileges do not
+    // survive removal — rejoining later starts over as a plain Member — and
+    // every session and live socket for the membership ends now.
+    await dbBatch([
+      { sql: "UPDATE members SET is_active = 0, account_type = 'student', is_board = 0, scopes = '[]', role = 'Member' WHERE id = ?", args: [memberId] },
+      { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [memberId] },
+      { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
+    ]);
+    await endMemberPresence(auth.teamId, memberId);
     broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
     res.json({ success: true });
   });
@@ -5923,7 +6066,7 @@ async function startServer() {
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const dates = (await dbAll("SELECT date FROM hidden_dates"));
+      const dates = (await dbAll("SELECT date FROM team_hidden_dates WHERE team_id = ?", auth.teamId));
       res.json(dates.map((d: any) => d.date));
     } catch (error) {
       console.error("Error fetching hidden dates:", error);
@@ -5934,15 +6077,16 @@ async function startServer() {
   app.post("/api/hidden-dates", async (req, res) => {
     const auth = await requirePerm(req, res, "manage_attendance");
     if (!auth) return;
-    const { date } = req.body;
-    (await dbRun("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)", date));
+    const date = String(req.body?.date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "Invalid date" });
+    (await dbRun("INSERT OR IGNORE INTO team_hidden_dates (team_id, date) VALUES (?, ?)", auth.teamId, date));
     res.json({ success: true });
   });
 
   app.delete("/api/hidden-dates/:date", async (req, res) => {
     const auth = await requirePerm(req, res, "manage_attendance");
     if (!auth) return;
-    (await dbRun("DELETE FROM hidden_dates WHERE date = ?", req.params.date));
+    (await dbRun("DELETE FROM team_hidden_dates WHERE team_id = ? AND date = ?", auth.teamId, req.params.date));
     res.json({ success: true });
   });
 
@@ -5955,7 +6099,7 @@ async function startServer() {
     let count = 0;
     for (const d of dates) {
       if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-        await dbRun("INSERT OR IGNORE INTO hidden_dates (date) VALUES (?)", d);
+        await dbRun("INSERT OR IGNORE INTO team_hidden_dates (team_id, date) VALUES (?, ?)", auth.teamId, d);
         count++;
       }
     }
@@ -5970,7 +6114,7 @@ async function startServer() {
     let count = 0;
     for (const d of dates) {
       if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-        await dbRun("DELETE FROM hidden_dates WHERE date = ?", d);
+        await dbRun("DELETE FROM team_hidden_dates WHERE team_id = ? AND date = ?", auth.teamId, d);
         count++;
       }
     }
@@ -6210,6 +6354,22 @@ async function startServer() {
     return Number(info.lastInsertRowid);
   }
   const fileUrl = (id: number): string => `/api/files/${id}`;
+  /** Delete a member's own previous avatar file — only when the stored file
+   *  is an avatar uploaded by one of `memberIds` and no other member row
+   *  still points at it. A URL alone is never proof of ownership. */
+  async function deleteOwnedAvatarFile(url: string | null | undefined, memberIds: number[]): Promise<void> {
+    try {
+      const m = /^\/api\/files\/(\d+)$/.exec(String(url || ""));
+      if (!m || !memberIds.length) return;
+      const id = Number(m[1]);
+      const row = (await dbGet("SELECT member_id, kind FROM stored_files WHERE id = ?", id)) as any;
+      if (!row || row.kind !== "avatar" || !memberIds.includes(Number(row.member_id))) return;
+      const ph = memberIds.map(() => "?").join(",");
+      const others = (await dbGet(`SELECT COUNT(*) AS n FROM members WHERE avatar_url = ? AND id NOT IN (${ph})`, url, ...memberIds)) as any;
+      if ((others?.n || 0) > 0) return;
+      await dbRun("DELETE FROM stored_files WHERE id = ?", id);
+    } catch { /* best effort */ }
+  }
   /** Delete the stored_files row behind a /api/files/:id URL (best effort).
    *  Also removes legacy /uploads/ disk files when they still exist. */
   async function deleteStoredFileByUrl(url: string | null | undefined): Promise<void> {
@@ -6307,11 +6467,14 @@ async function startServer() {
       return res.status(400).json({ error: "No file uploaded" });
     }
     
-    const { sender_id, sender_name, content } = req.body;
-    const sender = (await dbGet("SELECT team_id FROM members WHERE id = ?", sender_id)) as any;
+    // The sender is the signed-in member, never a client-claimed id/name.
+    const { content } = req.body;
+    const sender = (await dbGet("SELECT id, team_id, name FROM members WHERE id = ?", auth.memberId)) as any;
     if (!sender || sender.team_id !== auth.teamId) {
       return res.status(403).json({ error: "Not your workspace" });
     }
+    const sender_id = sender.id;
+    const sender_name = sender.name;
     const timestamp = new Date().toISOString();
     const fileName = req.file.originalname;
     const fileSize = req.file.size;
@@ -6681,7 +6844,9 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const userId = parseInt(req.params.userId, 10);
-    if (userId !== auth.memberId && auth.accountType !== 'admin') {
+    // Notifications are private to their recipient — admins included (an
+    // admin check here let any workspace's admin read anyone's inbox).
+    if (userId !== auth.memberId) {
       return res.status(403).json({ error: "Not yours" });
     }
     const notes = (await dbAll("SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT 50", userId));
@@ -6736,28 +6901,23 @@ Rules:
     } catch {
       return res.status(400).json({ error: "Invalid URL" });
     }
-    // SSRF guard: block private/internal addresses
-    const host = parsed.hostname.toLowerCase();
-    if (host === 'localhost' || host.endsWith('.local') || host === '127.0.0.1' || host === '::1' ||
-        /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) {
+    // SSRF guard: the resolved address (every redirect hop too) must be public.
+    try { checkPublicUrl(parsed.toString()); } catch {
       return res.status(400).json({ error: "Private URLs not allowed" });
     }
     try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 8000);
-      const resp = await fetch(parsed.toString(), {
-        signal: ctrl.signal,
+      const { response: resp } = await safeGet(parsed.toString(), {
         headers: { 'User-Agent': 'ControlPoint-LinkPreview/1.0', 'Accept': 'text/html' },
-        redirect: 'follow',
+        timeoutMs: 8000,
+        maxBytes: 1024 * 1024,
+        responseType: 'arraybuffer',
       });
-      clearTimeout(timer);
-      const ctype = resp.headers.get('content-type') || '';
-      if (!resp.ok || !ctype.includes('text/html')) {
+      const ctype = String(resp.headers?.['content-type'] || '');
+      if (resp.status < 200 || resp.status >= 300 || !ctype.includes('text/html')) {
         return res.json({ url: parsed.toString(), site: parsed.hostname });
       }
-      const buf = await resp.arrayBuffer();
-      if (buf.byteLength > 1024 * 1024) return res.json({ url: parsed.toString(), site: parsed.hostname });
-      const html = new TextDecoder().decode(buf.slice(0, 200 * 1024)); // only need the head
+      const buf = Buffer.from(resp.data as ArrayBuffer);
+      const html = new TextDecoder().decode(buf.subarray(0, 200 * 1024)); // only need the head
       const meta = (prop: string): string | null => {
         const m = html.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, 'i'))
                || html.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${prop}["']`, 'i'));
@@ -8341,16 +8501,29 @@ Rules:
       if (!_srAuth) return;
     }
     try {
-      const { url } = req.body;
-      if (!url || !url.includes("revrobotics.com")) {
+      // Exact host match on every hop (a substring check let
+      // http://169.254.169.254/?revrobotics.com through), plus the shared
+      // private-address guard on the resolved IP.
+      const isRevHost = (u: URL) => {
+        const h = u.hostname.toLowerCase();
+        if (u.protocol !== "https:" || (h !== "revrobotics.com" && !h.endsWith(".revrobotics.com"))) {
+          throw new UnsafeUrlError("Invalid REV Robotics URL");
+        }
+      };
+      const url = String(req.body?.url || "").trim();
+      try { isRevHost(checkPublicUrl(url)); } catch {
         return res.status(400).json({ error: "Invalid REV Robotics URL" });
       }
 
-      const response = await axios.get(url, {
+      const { response } = await safeGet(url, {
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        },
+        timeoutMs: 15000,
+        maxBytes: 5 * 1024 * 1024,
+        allowUrl: isRevHost,
       });
+      if (response.status >= 400) throw new Error(`status code ${response.status}`);
 
       const $ = cheerio.load(String(response.data ?? ''));
       
@@ -9821,7 +9994,20 @@ Rules:
       if (!Array.isArray(actions) || !actions.length || actions.length > 4) {
         return res.status(400).json({ error: "No actions to apply" });
       }
-      const isAdmin = await hasPerm(auth, "manage_members");
+      // Bruno's proposals are applied with exactly the permission the direct
+      // API needs for the same write — checked for every action BEFORE any
+      // is written, so a refused action never leaves a partial apply behind.
+      const PERM_FOR_KIND: Record<string, { perm: string; error: string }> = {
+        "event": { perm: "manage_calendar", error: "Only members with calendar access can add events" },
+        "delete-event": { perm: "manage_calendar", error: "Only members with calendar access can delete events" },
+        "communication": { perm: "manage_communications", error: "Only members with communication access can log messages" },
+        "task": { perm: "manage_tasks", error: "Only members with task access can add tasks" },
+        "budget": { perm: "manage_budget", error: "Only members with budget access can add budget entries" },
+      };
+      for (const a of actions) {
+        const need = PERM_FOR_KIND[a?.kind];
+        if (need && !(await hasPerm(auth, need.perm))) return res.status(403).json({ error: need.error });
+      }
       const applied: Record<string, number> = {};
       const createdAt = new Date().toISOString();
       for (const a of actions) {
@@ -9836,11 +10022,6 @@ Rules:
           }
           applied.event = (applied.event || 0) + events.length;
         } else if (kind === "delete-event") {
-          // Destructive: deleting calendar events requires the same permission
-          // as DELETE /api/events/:id.
-          if (!(await hasPerm(auth, "manage_calendar"))) {
-            return res.status(403).json({ error: "Only members with calendar access can delete events" });
-          }
           const ids = items
             .map((it: any) => (typeof it?.id === "number" ? it.id : parseInt(it?.id)))
             .filter((n: any) => Number.isInteger(n) && n > 0)
@@ -9864,11 +10045,6 @@ Rules:
           }
           applied.outreach = (applied.outreach || 0) + entries.length;
         } else if (kind === "communication") {
-          // Logging to the communication log requires the same permission
-          // as POST /api/communications.
-          if (!(await hasPerm(auth, "manage_communications"))) {
-            return res.status(403).json({ error: "Only members with communication access can log messages" });
-          }
           const { entries } = extractCommunicationsBlock("```communications\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
           // Validate every parent BEFORE writing anything: if one reply
@@ -9895,7 +10071,6 @@ Rules:
           }
           applied.communication = (applied.communication || 0) + entries.length;
         } else if (kind === "task") {
-          if (!isAdmin) return res.status(403).json({ error: "Only admins can add tasks" });
           const { tasks } = extractTasksBlock("```tasks\n" + JSON.stringify(items) + "\n```");
           if (!tasks?.length) continue;
           for (const t of tasks) {
@@ -9906,7 +10081,6 @@ Rules:
           }
           applied.task = (applied.task || 0) + tasks.length;
         } else if (kind === "budget") {
-          if (!isAdmin) return res.status(403).json({ error: "Only admins can add budget entries" });
           const { entries } = extractBudgetBlock("```budget\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
           for (const b of entries) {

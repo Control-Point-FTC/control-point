@@ -435,6 +435,11 @@ export async function removeParticipantEverywhere(
   )) as any[];
   for (const row of open) {
     await deps.dbRun("UPDATE call_participants SET left_at = ? WHERE session_id = ? AND member_id = ? AND left_at IS NULL", deps.nowIso(), row.session_id, memberId);
+    if (reason === "disconnect" || reason === "removed") {
+      // Tell the member's own client to tear down this call's media. The
+      // client only acts on a kick that names its current session.
+      deps.sendToMember(teamId, memberId, { type: "voice:kicked", reason, session_id: row.session_id });
+    }
     const remaining = await sessionParticipantCount(deps, row.session_id);
     if (remaining === 0) {
       await deps.dbRun("UPDATE call_sessions SET ended_at = ? WHERE id = ?", deps.nowIso(), row.session_id);
@@ -445,10 +450,6 @@ export async function removeParticipantEverywhere(
       const session = (await deps.dbGet("SELECT * FROM call_sessions WHERE id = ?", row.session_id)) as any;
       if (session) await broadcastPresence(deps, session);
     }
-  }
-  if (reason === "disconnect" || reason === "removed") {
-    // Let the removed/disconnected member's own client know it should tear down.
-    deps.sendToMember(teamId, memberId, { type: "voice:kicked", reason });
   }
   return ended;
 }

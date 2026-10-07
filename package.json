@@ -4,7 +4,7 @@
   "version": "1.2.0",
   "description": "Control Point - team management platform for robotics clubs.",
   "author": "mapezz",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "keywords": [
     "ftc",
     "robotics",
