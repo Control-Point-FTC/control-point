@@ -163,6 +163,7 @@ export function ModernShell(props: ModernShellProps) {
             isMobile={isMobile}
             onOpenSearch={() => setCmdOpen(true)}
             onOpenBruno={props.onOpenBruno}
+            onOpenSettings={props.onOpenSettings}
             workspaceId={props.activeTeam?.id}
           />
           <TipsBar path={location.pathname} />
@@ -370,7 +371,7 @@ function SidebarContent(props: ModernShellProps & {
       </nav>
 
       <div className="border-t border-line p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <UserMenu {...props} />
+        <UserFooter {...props} />
       </div>
     </div>
   );
@@ -519,6 +520,36 @@ function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwi
   );
 }
 
+/** The sidebar's bottom row: your profile (status, theme, help in its menu),
+ *  then Settings and Log out as direct one-click buttons (audit UX-12). The
+ *  collapsed rail stacks them. */
+function UserFooter(props: ModernShellProps & { collapsed: boolean }) {
+  const { collapsed, onOpenSettings, onLogout } = props;
+  const action = (label: string, onClick: () => void, icon: ReactNode, extra?: Record<string, string>) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={label}
+          {...extra}
+          className="flex size-10 shrink-0 items-center justify-center rounded-lg text-text-muted outline-none transition-colors hover:bg-text-base/[0.06] hover:text-text-base focus-visible:ring-2 focus-visible:ring-accent/60 [&_svg]:size-4"
+        >
+          {icon}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side={collapsed ? 'right' : 'top'}>{label}</TooltipContent>
+    </Tooltip>
+  );
+  return (
+    <div className={cn('flex items-center gap-1', collapsed && 'flex-col')}>
+      <div className={cn('min-w-0', !collapsed && 'flex-1')}><UserMenu {...props} /></div>
+      {action('Settings', onOpenSettings, <Settings />, { 'data-onboard': 'nav-settings-gear' })}
+      {action('Log out', onLogout, <LogOut />)}
+    </div>
+  );
+}
+
 function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, onSetupGuide, onOpenWhatsNew, onStatusPick }: ModernShellProps & { collapsed: boolean }) {
   const { theme, toggle } = useTheme();
   const presence = user?.presence || 'offline';
@@ -527,7 +558,6 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          data-onboard="nav-settings-gear"
           aria-label="Account menu"
           className={cn(
             'flex w-full items-center gap-2.5 rounded-lg text-left outline-none transition-colors hover:bg-text-base/[0.06] focus-visible:ring-2 focus-visible:ring-accent/60',
@@ -577,8 +607,8 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
 // Top bar + mobile tab bar
 // ---------------------------------------------------------------------------
 
-function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, workspaceId }: {
-  title: string; teamName: string; isMobile: boolean; onOpenSearch: () => void; onOpenBruno: () => void;
+function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, onOpenSettings, workspaceId }: {
+  title: string; teamName: string; isMobile: boolean; onOpenSearch: () => void; onOpenBruno: () => void; onOpenSettings?: () => void;
   workspaceId?: number | null;
 }) {
   return (
@@ -609,6 +639,17 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, workspac
         >
           <Bot className="size-4" />
         </button>
+        {/* Phones have no sidebar footer on screen: Settings is one tap here. */}
+        {isMobile && onOpenSettings && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label="Settings"
+            className="flex size-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-text-base/[0.06] hover:text-text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          >
+            <Settings className="size-4" />
+          </button>
+        )}
       </div>
     </header>
   );
