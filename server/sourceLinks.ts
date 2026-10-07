@@ -34,3 +34,20 @@ export function eventUrl(site: 'first-events' | 'ftc-scout', season: number, cod
 export function cite(site: 'first-events' | 'ftc-scout', url: string): string {
   return `[${siteName(site)}](${url})`;
 }
+
+// FIRST Events publishes teams, records and standings but no OPR; OPR (and
+// the score breakdowns built on it) always come from FTC Scout. So a team or
+// event whose details came from FIRST Events cites both sites, each for the
+// part it supplied.
+
+/** Citation for a team's numbers: records from `site`, OPR from FTC Scout. */
+export function citeTeam(site: 'first-events' | 'ftc-scout', season: number, team: number, hasOpr: boolean): string {
+  if (site === 'ftc-scout' || !hasOpr) return cite(site, teamUrl(site, season, team));
+  return `records: ${cite('first-events', teamUrl('first-events', season, team))}; OPR: ${cite('ftc-scout', teamUrl('ftc-scout', season, team))}`;
+}
+
+/** Citation for an event: standings from `site`, OPR/score stats from FTC Scout. */
+export function citeEvent(site: 'first-events' | 'ftc-scout', season: number, code: string, hasStats: boolean): string {
+  if (site === 'ftc-scout' || !hasStats) return cite(site, eventUrl(site, season, code));
+  return `standings: ${cite('first-events', eventUrl('first-events', season, code))}; OPR and scores: ${cite('ftc-scout', eventUrl('ftc-scout', season, code))}`;
+}

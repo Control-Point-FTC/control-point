@@ -97,12 +97,13 @@ describe("buildScoutingContextPack", () => {
 describe("Bruno citations in the scouting brief", () => {
   it("gives the event's source link and asks Bruno to cite inline, never inventing links", () => {
     const pack = buildScoutingContextPack({ season: 2025, myTeam: 4215, event: event(), selected: null, shortlist });
-    expect(pack).toContain("Source link: [FIRST Events](https://ftc-events.firstinspires.org/2025/USNJCMPPKWY)");
+    // Standings from FIRST Events, OPR/score stats from FTC Scout: both cited.
+    expect(pack).toContain("Source links: standings: [FIRST Events](https://ftc-events.firstinspires.org/2025/USNJCMPPKWY); OPR and scores: [FTC Scout](https://ftcscout.org/events/2025/USNJCMPPKWY)");
     expect(pack).toMatch(/cite its source inline with the markdown link given for it/);
     expect(pack).toMatch(/never invent a link/);
   });
   it("a cached copy cites the site it came from", () => {
     const pack = buildScoutingContextPack({ season: 2025, myTeam: 4215, event: event({ source: "cache", origin: "ftc-scout" }), selected: null, shortlist });
-    expect(pack).toContain("Source link: [FTC Scout](https://ftcscout.org/events/2025/USNJCMPPKWY)");
+    expect(pack).toContain("Source links: [FTC Scout](https://ftcscout.org/events/2025/USNJCMPPKWY)");
   });
 });

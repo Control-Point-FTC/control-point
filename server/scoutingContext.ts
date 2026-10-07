@@ -16,7 +16,7 @@ import {
   recordOf,
   winRate,
 } from "../src/utils/ftcAnalysis.js";
-import { cite, eventUrl, siteOf, teamUrl } from "./sourceLinks.js";
+import { citeEvent, citeTeam, siteOf } from "./sourceLinks.js";
 
 export interface ScoutingPackInput {
   season: number;
@@ -63,7 +63,7 @@ export function buildScoutingContextPack(input: ScoutingPackInput): string {
   } else {
     const avg = eventAverages(event.field);
     const evSite = siteOf(event.source, event.origin);
-    lines.push(`Selected event: ${event.name} (${event.code}), ${event.start ?? "date n/a"}${event.city ? `, ${event.city}${event.state ? `, ${event.state}` : ""}` : ""}. Data: ${srcLabel(event)}. Source link: ${cite(evSite, eventUrl(evSite, season, event.code))}.`);
+    lines.push(`Selected event: ${event.name} (${event.code}), ${event.start ?? "date n/a"}${event.city ? `, ${event.city}${event.state ? `, ${event.state}` : ""}` : ""}. Data: ${srcLabel(event)}. Source links: ${citeEvent(evSite, season, event.code, event.field.some((t) => t.opr?.totalNp != null))}.`);
     lines.push(
       `Event averages across ${avg.teams} teams: OPR total ${avg.opr.totalNp ?? "n/a"}, auto ${avg.opr.auto ?? "n/a"}, TeleOp ${avg.opr.teleop ?? "n/a"}, endgame ${avg.opr.endgame ?? "n/a"}; avg alliance score ${avg.avgScore ?? "n/a"}; avg penalty pts given ${avg.avgPenaltiesCommitted ?? "n/a"}; avg RP ${avg.rp ?? "n/a"}.`
     );
@@ -102,7 +102,7 @@ export function buildScoutingContextPack(input: ScoutingPackInput): string {
 
   if (selected) {
     const tSite = siteOf(selected.source, selected.origin);
-    lines.push(`SELECTED TEAM ${selected.number} ${selected.name} (${selected.city ?? ""}${selected.state ? `, ${selected.state}` : ""}); data: ${srcLabel(selected)}. Source link: ${cite(tSite, teamUrl(tSite, season, selected.number))}.`);
+    lines.push(`SELECTED TEAM ${selected.number} ${selected.name} (${selected.city ?? ""}${selected.state ? `, ${selected.state}` : ""}); data: ${srcLabel(selected)}. Source links: ${citeTeam(tSite, season, selected.number, selected.oprSource === "ftc-scout")}.`);
     const o = selected.opr;
     lines.push(`Season OPR: total ${o.tot?.value ?? "n/a"} (rank ${o.tot?.rank ?? "n/a"}${selected.totalTeams ? ` of ${selected.totalTeams}` : ""}), auto ${o.auto?.value ?? "n/a"}, TeleOp ${o.dc?.value ?? "n/a"}, endgame ${o.eg?.value ?? "n/a"} (OPR via ${selected.oprSource === "ftc-scout" ? "FTC Scout" : "n/a"}).`);
     const evs = selected.events.filter((e) => e.stats).slice(-6);
