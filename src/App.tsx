@@ -2921,7 +2921,7 @@ export function TasksView({ tasks, setTasks, teams, members, onRefresh, refresh,
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-[11px] text-text-muted">Same Bruno AI, right here in the form.</p>
                         <Button variant="secondary" className="!text-xs !py-1.5" onClick={handleAiTaskParse} disabled={aiTaskBusy || !aiTaskText.trim()}>
-                          {aiTaskBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
+                          {aiTaskBusy ? 'Bruno is reading…' : 'Bruno'}
                         </Button>
                       </div>
                       {aiTaskNote && <p className="text-xs text-text-base/80">{aiTaskNote}</p>}

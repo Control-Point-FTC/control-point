@@ -334,7 +334,7 @@ function BulkSheet({ ctl }: { ctl: Ctl }) {
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={ctl.handleBulkParse} disabled={!ctl.bulkText.trim() || ctl.bulkSaving} className="max-sm:h-11">Quick parse</Button>
             <Button variant="outline" onClick={() => void ctl.handleBulkAiParse()} disabled={ctl.bulkBusy || ctl.bulkSaving || !ctl.bulkText.trim()} className="max-sm:h-11">
-              {ctl.bulkBusy ? <Loader2 className="animate-spin" /> : <Sparkles />} {ctl.bulkBusy ? 'Bruno is reading…' : 'Parse with Bruno'}
+              {ctl.bulkBusy ? <Loader2 className="animate-spin" /> : <Sparkles />} {ctl.bulkBusy ? 'Bruno is reading…' : 'Bruno'}
             </Button>
           </div>
           {ctl.bulkNote && <p className="text-sm text-muted-foreground" role="status">{ctl.bulkNote}</p>}

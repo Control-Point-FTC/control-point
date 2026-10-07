@@ -127,13 +127,13 @@ describe('Modern Outreach', () => {
     expect(dialog.notify).toHaveBeenCalledWith('Logged 1 of 1 outreach events.', 'success');
   });
 
-  it('Bruno AI: "Parse with Bruno" turns proposals into rows', async () => {
+  it('Bruno AI: the "Bruno" button turns proposals into rows', async () => {
     ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => { onChunk('```outreach\n[]\n```'); });
     ai.extractActionProposals.mockReturnValue([{ kind: 'outreach', items: [{ title: 'Mall demo', date: '2026-10-02', hours: 3, attendees: 60 }] }]);
     setup();
     fireEvent.click(screen.getByRole('button', { name: /Bruno AI/ }));
     fireEvent.change(await screen.findByLabelText('Events'), { target: { value: 'we did a demo at the mall last friday, 60 people' } });
-    fireEvent.click(screen.getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Bruno$/ }));
     expect(await screen.findByText('Mall demo')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('Bruno found 1 event');
   });
@@ -222,7 +222,7 @@ describe('Modern Outreach', () => {
     setup();
     fireEvent.click(screen.getByRole('button', { name: /Bruno AI/ }));
     fireEvent.change(await screen.findByLabelText('Events'), { target: { value: 'Fresh row | 2026-09-12 | 2' } });
-    fireEvent.click(screen.getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Bruno$/ }));
     // A quick parse supersedes the running Bruno parse.
     fireEvent.click(screen.getByRole('button', { name: 'Quick parse' }));
     expect(screen.getByText('Fresh row')).toBeInTheDocument();
@@ -234,7 +234,7 @@ describe('Modern Outreach', () => {
     api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/outreach' && init?.method === 'POST' ? new Promise((r) => { finish = r; }) : json({})));
     fireEvent.click(screen.getByRole('button', { name: 'Log all 1 event' }));
     expect(screen.getByRole('button', { name: 'Quick parse' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Parse with Bruno/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Bruno$/ })).toBeDisabled();
     await act(async () => { finish({ ok: true, json: async () => ({}) }); });
   });
 

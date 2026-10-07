@@ -194,7 +194,7 @@ describe('Modern CAD', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Import invoice/ }));
     const dlg = await screen.findByRole('dialog');
     fireEvent.change(within(dlg).getByLabelText(/Choose invoice files/), { target: { files: [new File(['x'], 'order.pdf')] } });
-    fireEvent.click(within(dlg).getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Bruno$/ }));
     expect(await within(dlg).findByLabelText('Name for row 1')).toHaveValue('Bolt pack');
     fireEvent.click(within(dlg).getByRole('checkbox', { name: 'Import Wheel' }));
     fireEvent.click(within(dlg).getByRole('button', { name: /Import selected \(1\)/ }));
@@ -232,14 +232,14 @@ describe('Modern CAD', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Import invoice/ }));
     let dlg = await screen.findByRole('dialog');
     fireEvent.change(within(dlg).getByLabelText(/Choose invoice files/), { target: { files: [new File(['x'], 'order.pdf')] } });
-    fireEvent.click(within(dlg).getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Bruno$/ }));
     fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await act(async () => { reply({ ok: true, json: async () => ({ items: [{ name: 'Stale row', quantity: 1, unitPrice: 1 }] }) }); });
     fireEvent.click(screen.getByRole('button', { name: /Import invoice/ }));
     dlg = await screen.findByRole('dialog');
     expect(within(dlg).queryByDisplayValue('Stale row')).not.toBeInTheDocument();
-    expect(within(dlg).getByRole('button', { name: /Parse with Bruno/ })).toBeInTheDocument();
+    expect(within(dlg).getByRole('button', { name: /^Bruno$/ })).toBeInTheDocument();
   });
 
   it('cancelling a multi-file read sends no further files', async () => {
@@ -252,7 +252,7 @@ describe('Modern CAD', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Import invoice/ }));
     const dlg = await screen.findByRole('dialog');
     fireEvent.change(within(dlg).getByLabelText(/Choose invoice files/), { target: { files: [new File(['x'], 'a.pdf'), new File(['y'], 'b.pdf'), new File(['z'], 'c.pdf')] } });
-    fireEvent.click(within(dlg).getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Bruno$/ }));
     fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }));
     await act(async () => { reply({ ok: true, json: async () => ({ items: [{ name: 'Row', quantity: 1, unitPrice: 1 }] }) }); });
     await new Promise((r) => setTimeout(r, 20));

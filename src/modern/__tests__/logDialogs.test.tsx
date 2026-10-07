@@ -31,7 +31,7 @@ describe('Modern Bruno quick add', () => {
     const onLogged = vi.fn();
     render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={onLogged} />);
     fireEvent.change(screen.getByLabelText('Email to parse'), { target: { value: 'From: sponsors@polymaker.com …' } });
-    fireEvent.click(screen.getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Bruno$/ }));
     expect(await screen.findByLabelText('Recipient')).toHaveValue('sponsors@polymaker.com');
     expect(screen.getByRole('radio', { name: /They did/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('combobox', { name: 'Thread' })).toHaveTextContent('Filament sponsorship');
@@ -75,7 +75,7 @@ describe('Modern saved-email import', () => {
     ai.streamBuildHelper.mockImplementation(async (_m: any, onChunk: (c: string) => void) => {
       onChunk('```communications\n[{"recipient":"mentor@team.org","subject":"Practice moved to Thursday","body":"Practice is on Thursday.","date":"2026-10-02","type":"announcement","direction":"outbound"}]\n```');
     });
-    fireEvent.click(screen.getByRole('button', { name: /Refine with Bruno/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Bruno$/ }));
     await waitFor(() => expect(screen.getByLabelText('Subject')).toHaveValue('Practice moved to Thursday'));
     fireEvent.click(screen.getByRole('button', { name: 'Log it' }));
     await waitFor(() => expect(onLogged).toHaveBeenCalled());
@@ -99,7 +99,7 @@ describe('10c review fixes', () => {
     }));
     const first = render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);
     fireEvent.change(screen.getByLabelText('Email to parse'), { target: { value: 'old email' } });
-    fireEvent.click(screen.getByRole('button', { name: /Parse with Bruno/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Bruno$/ }));
     fireEvent.keyDown(screen.getByLabelText('Email to parse'), { key: 'Escape' }); // close: discards the session
     first.unmount();
     render(<QuickAddDialog threads={threads} onClose={vi.fn()} onLogged={vi.fn()} />);

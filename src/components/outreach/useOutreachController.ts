@@ -2,7 +2,7 @@
 // page. Extracted from OutreachView: same /api/outreach and
 // /api/outreach/social endpoints and bodies, optimistic delete / unlink /
 // pin / reorder with rollback, the TikTok OAuth result banner, totals, and
-// the Bruno AI bulk log (quick local parse or "Parse with Bruno"). Logging
+// the Bruno AI bulk log (quick local parse or the "Bruno" button). Logging
 // events is open to every member (as on the server); social profiles need
 // the outreach permission. The event form, the bulk-log box and their
 // in-flight locks are drafted (they survive a mode switch, so a returning
@@ -205,7 +205,7 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     let agg = '';
     try {
       await streamBuildHelper([
-        { role: 'user', text: `You are helping bulk-log outreach events (demos, workshops, volunteering, fundraisers, presentations). The user pasted the text below into the "Bruno AI" box and clicked "Parse with Bruno" — that click is their confirmation that they want the entries proposed. Extract EVERY outreach event mentioned and propose them with the \`\`\`outreach block exactly as your outreach log skill specifies. Resolve relative dates against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
+        { role: 'user', text: `You are helping bulk-log outreach events (demos, workshops, volunteering, fundraisers, presentations). The user pasted the text below into the "Bruno AI" box and clicked "Bruno" — that click is their confirmation that they want the entries proposed. Extract EVERY outreach event mentioned and propose them with the \`\`\`outreach block exactly as your outreach log skill specifies. Resolve relative dates against today's date from your context — do not ask clarifying questions for dates you can resolve. Only ask a short clarifying question (no block) if a date is truly impossible to determine.\n\nText to parse:\n"""${text}"""` },
       ], (chunk) => { agg += chunk; }, undefined, { persona: 'bruno' });
       const proposals = extractActionProposals(agg);
       const items = proposals.find((p) => p.kind === 'outreach')?.items || [];
