@@ -34,6 +34,8 @@ import { Page, PageHeader, Section, EmptyState } from '../ui/page';
 import { AttendanceArea } from '../ui/AttendanceArea';
 import { Stagger, StaggerItem, Reveal } from '../ui/motion';
 import { useTheme } from '../../hooks/useTheme';
+import { Countdown, useNow } from '../ui/Countdown';
+import { dueMoment } from '../../utils/countdown';
 
 const ACTIVITY_ROUTE: Record<ActivityItem['kind'], string> = {
   task: '/tasks', event: '/calendar', attendance: '/attendance', member: '/teams', budget: '/budget',
@@ -378,7 +380,7 @@ function MyWork({ mine, onNavigate }: { mine: ReturnType<typeof useMyWork>; onNa
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm text-foreground">{tk.title}</p>
-                {tk.due_date && <p className={cn('text-xs', String(tk.due_date).slice(0, 10) < mine.today ? 'text-destructive' : 'text-muted-foreground')}>Due {format(new Date(String(tk.due_date).slice(0, 10) + 'T12:00:00'), 'MMM d')}</p>}
+                {tk.due_date && <DueLine date={tk.due_date} time={tk.due_time} />}
               </div>
               <Badge variant={tk.status === 'in-progress' ? 'soft' : 'secondary'}>{tk.status === 'in-progress' ? 'In progress' : 'To do'}</Badge>
             </StaggerItem>
@@ -393,10 +395,40 @@ function MyWork({ mine, onNavigate }: { mine: ReturnType<typeof useMyWork>; onNa
 // Right rail: this week, season, briefing
 // ---------------------------------------------------------------------------
 
+/** "Due Oct 9, 3:30 PM · in 1d 04:12:09" — ticks every second (owner spec). */
+function DueLine({ date, time }: { date: string; time?: string | null }) {
+  const at = dueMoment(date, time);
+  if (!at) return null;
+  const label = format(at, time ? 'MMM d, h:mm a' : 'MMM d');
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+      <span>Due {label}</span><span aria-hidden="true">·</span><Countdown to={at} />
+    </p>
+  );
+}
+
+/** The next event that hasn't started yet, with a live countdown. */
+function NextEvent({ events }: { events: any[] }) {
+  const now = useNow();
+  const next = events
+    .map((e) => ({ e, at: dueMoment(e.date, e.start_time || e.time || '00:00') }))
+    .filter((x): x is { e: any; at: Date } => !!x.at && x.at.getTime() > now)
+    .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
+  if (!next) return null;
+  return (
+    <p className="mb-3 flex flex-wrap items-baseline gap-x-1.5 rounded-lg bg-muted/50 px-3 py-2 text-sm">
+      <span className="text-muted-foreground">Next:</span>
+      <span className="min-w-0 truncate font-medium">{next.e.title}</span>
+      <Countdown to={next.at} className="text-accent" />
+    </p>
+  );
+}
+
 function ThisWeek({ events, dayLabel, onNavigate }: { events: any[]; dayLabel: (d: string) => string; onNavigate: (p: string) => void }) {
   return (
     <Section title="This week" delay={0.06}
       action={<Button variant="ghost" size="sm" onClick={() => onNavigate('/calendar')} aria-label="Open calendar"><CalendarDays /></Button>}>
+      <NextEvent events={events} />
       {events.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing scheduled.</p>
       ) : (
