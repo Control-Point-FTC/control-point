@@ -60,7 +60,7 @@ import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
-import { buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
+import { buildArticleCsp, buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
   getAISetting,
@@ -12578,6 +12578,31 @@ Rules:
   // a missing endpoint apart from a page load.
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
+  });
+
+  // "How Control Point Predict Works": an unlisted, standalone article.
+  // One fixed file, no route params. Registered before the SPA fallback.
+  // It has its own CSP (inline script pinned by hash, Google Fonts), sent
+  // in the same mode as the app's (enforced when CSP_ENFORCE=1).
+  const predictArticle = path.join(__dirname, "server", "predict", "how-it-works.html");
+  let predictArticleCsp: string | undefined;
+  try {
+    predictArticleCsp = buildArticleCsp({
+      scriptHashes: inlineScriptHashes(fs.readFileSync(predictArticle, "utf8")),
+      reportUri: "/api/csp-report",
+    });
+  } catch (e) {
+    console.error("[predict article] could not read the page:", e);
+  }
+  app.get("/predict/how-it-works", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache");
+    if (predictArticleCsp) {
+      res.setHeader(process.env.CSP_ENFORCE === "1" ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only", predictArticleCsp);
+    }
+    res.type("html");
+    res.sendFile(predictArticle, (err) => {
+      if (err && !res.headersSent) res.status(404).type("text").send("Not found");
+    });
   });
 
   // Vite middleware for development
