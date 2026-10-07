@@ -4,7 +4,7 @@
 // President; personal calendar link: everyone).
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, Check, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unlink } from 'lucide-react';
+import { CalendarDays, Check, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unlink, UserPlus } from 'lucide-react';
 import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
@@ -83,7 +83,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
     try {
       const res = await apiFetch('/api/teams/regenerate-code', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.access_code) { onTeamSaved?.({ id: team?.id, access_code: data.access_code }); notify('New invite code created. The old one no longer works.', 'success'); }
+      if (res.ok && data.access_code) { onTeamSaved?.({ id: team?.id, access_code: data.access_code }); notify('New access code created. The old one no longer works.', 'success'); }
       else notify(data.error || 'Could not create a new code.', 'error');
     } catch {
       notify('Could not create a new code.', 'error');
@@ -131,15 +131,19 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
         </SettingsGroup>
       </form>
 
-      {isAdmin && (
+      {(isAdmin || hasPerm?.('invite_members')) && (
         <SettingsGroup title="Invites & access">
-          <SettingsRow label="Invite code" description="New members join with this code.">
+          <SettingsRow label="Invite links" description="Make a link people can join with. Links can expire, cap their uses and need approval.">
+            <Button variant="outline" onClick={() => navigate('/teams?invite=1')} className="max-sm:h-11"><UserPlus /> Invite people</Button>
+          </SettingsRow>
+          {isAdmin && (<>
+          <SettingsRow label="Access code" description="Only admins see this. People can also join by typing it.">
             <span className="flex items-center gap-2">
               <code className="rounded-md bg-muted px-2.5 py-1.5 font-mono text-sm tracking-widest">{team.access_code}</code>
-              <Button variant="outline" size="icon" onClick={() => void copyCode()} aria-label="Copy invite code" className="max-sm:size-11">{copied ? <Check /> : <Copy />}</Button>
+              <Button variant="outline" size="icon" onClick={() => void copyCode()} aria-label="Copy access code" className="max-sm:size-11">{copied ? <Check /> : <Copy />}</Button>
             </span>
           </SettingsRow>
-          <SettingsRow label="New invite code" description={confirmRegen ? 'The current code will stop working immediately.' : 'Use this if the code leaked.'}>
+          <SettingsRow label="New access code" description={confirmRegen ? 'The current code will stop working immediately.' : 'Use this if the code leaked.'}>
             <span className="flex gap-2">
               {confirmRegen && <Button variant="ghost" onClick={() => setConfirmRegen(false)}>Cancel</Button>}
               <Button variant={confirmRegen ? 'destructive' : 'outline'} onClick={() => void regenerate()} disabled={regenerating} className="max-sm:h-11">
@@ -150,6 +154,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
           <SettingsRow label="Roles & permissions" description="Group permissions and hand them to members.">
             <Button variant="outline" onClick={() => navigate('/roles')} className="max-sm:h-11"><ShieldCheck /> Open roles</Button>
           </SettingsRow>
+          </>)}
         </SettingsGroup>
       )}
 

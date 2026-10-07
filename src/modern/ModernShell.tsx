@@ -7,7 +7,7 @@ import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
   Search, Inbox, Bot, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
-  Sparkles, MessageSquareHeart, Compass, Check, Copy, Menu, Home, MessageSquare, CheckSquare, Layers, Plus, ArrowLeftRight,
+  Sparkles, MessageSquareHeart, Compass, Check, Menu, Home, MessageSquare, CheckSquare, Layers, Plus, UserPlus,
 } from 'lucide-react';
 import { cn } from '../components/cn';
 import { assetUrl } from '../services/api';
@@ -376,13 +376,9 @@ function IconAction({ label, onClick, collapsed, children }: { label: string; on
   );
 }
 
-function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwitchTeam, isAdmin, onOpenSettings, onNavigate }: ModernShellProps & { collapsed: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const code = activeTeam?.access_code as string | undefined;
-  const copy = async () => {
-    if (!code) return;
-    try { await navigator.clipboard.writeText(code); setCopied(true); window.setTimeout(() => setCopied(false), 1500); } catch { /* clipboard unavailable */ }
-  };
+function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwitchTeam, onOpenSettings, onNavigate }: ModernShellProps & { collapsed: boolean }) {
+  // Admins and anyone with "Invite people" (the server sets can_invite).
+  const canInvite = !!activeTeam?.can_invite;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -412,16 +408,14 @@ function WorkspaceSwitcher({ collapsed, teams, activeTeam, activeTeamName, onSwi
             {tm.id === activeTeam?.id && <Check className="text-accent" />}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuItem onSelect={() => onNavigate('/teams')}>
+        <DropdownMenuItem onSelect={() => onNavigate('/teams?tab=workspaces')}>
           <Plus /> Create or join a workspace
         </DropdownMenuItem>
-        {isAdmin && code && (
+        {canInvite && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={(e) => { e.preventDefault(); void copy(); }}>
-              {copied ? <Check className="text-emerald-500" /> : <Copy />}
-              <span className="flex-1">Copy invite code</span>
-              <span className="font-mono text-xs text-text-muted">{code}</span>
+            <DropdownMenuItem onSelect={() => onNavigate('/teams?invite=1')}>
+              <UserPlus /> Invite people
             </DropdownMenuItem>
           </>
         )}

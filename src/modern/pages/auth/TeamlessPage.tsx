@@ -11,8 +11,8 @@ import { useTeamless } from '../../../components/auth/useTeamless';
 import { AuthHeading, AuthLayout } from './AuthLayout';
 
 const OPTIONS = [
-  { id: 'create' as const, icon: Plus, title: 'Create a workspace', body: "Start your team's space. You'll get an access code to share." },
-  { id: 'join' as const, icon: KeyRound, title: 'Join with a code', body: 'Use the access code from your team admin.' },
+  { id: 'create' as const, icon: Plus, title: 'Create a workspace', body: "Start your team's space and invite your members." },
+  { id: 'join' as const, icon: KeyRound, title: 'Join your team', body: 'Paste the invite link your team sent, or type an access code.' },
 ];
 
 export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, onSignOut }: {
@@ -67,8 +67,8 @@ export function TeamlessPage({ user, onCreateTeam, onJoinTeam, onDeleteAccount, 
                         </div>
                       ) : (
                         <div className="grid gap-2">
-                          <Label htmlFor="teamless-code">Access code</Label>
-                          <Input id="teamless-code" value={t.code} onChange={(e) => t.setCode(e.target.value)} placeholder="CP-XXXX-XXXX" autoFocus className="h-11 font-mono uppercase tracking-wider" />
+                          <Label htmlFor="teamless-code">Invite link or access code</Label>
+                          <Input id="teamless-code" value={t.code} onChange={(e) => t.setCode(e.target.value)} placeholder="https://…/join/…  or  CP-XXXX-XXXXXX" autoFocus spellCheck={false} className="h-11 font-mono" />
                         </div>
                       )}
                       <Button type="submit" disabled={t.busy || !(o.id === 'create' ? t.teamName.trim() : t.code.trim())} className="h-11">

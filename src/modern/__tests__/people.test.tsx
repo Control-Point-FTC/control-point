@@ -44,10 +44,10 @@ const me = { id: 7, name: 'Ada', team_id: 1, email: 'ada@x.test', interface_mode
 const grace = { id: 8, name: 'Grace', team_id: 1, email: 'grace@x.test', role: 'Builder', is_board: 0, scopes: '[]', presence: 'offline', roles: [] };
 const teams = [{ id: 1, name: 'Robo', number: 123, access_code: 'JOIN42', member_count: 2 }, { id: 2, name: 'Other', number: 9, access_code: 'ZZZ', member_count: 3 }];
 
-function setup({ admin = true, roles = true, url = '/teams' } = {}) {
+function setup({ admin = true, roles = true, url = '/teams', perms = [] as string[] } = {}) {
   const props = {
     members: [me, grace], teams, currentUser: me, refresh: { members: vi.fn() }, onRefresh: vi.fn(),
-    hasScope: (s: string) => (s === 'admin' ? admin : false), hasPerm: (p: string) => (p === 'manage_roles' ? roles : false),
+    hasScope: (s: string) => (s === 'admin' ? admin : false), hasPerm: (p: string) => (p === 'manage_roles' ? roles : perms.includes(p)),
     onAddTeam: vi.fn(async () => ({ team: { name: 'New', access_code: 'ABC' } })), onSwitchTeam: vi.fn(), onDeleteTeam: vi.fn(), onLeaveTeam: vi.fn(),
     activeTeamName: 'Robo',
   };
@@ -73,7 +73,7 @@ describe('Modern People — members', () => {
   it('lists members; members (non-admins) get no add/edit/remove', async () => {
     setup({ admin: false, roles: false });
     expect(screen.getByText('Grace')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add member/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Invite people/ })).not.toBeInTheDocument();
     const menu = await openMenu('Grace');
     expect(within(menu).getByRole('menuitem', { name: /Voice call/ })).toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: /Edit member/ })).not.toBeInTheDocument();
@@ -86,16 +86,36 @@ describe('Modern People — members', () => {
     expect(voice.startCall).toHaveBeenCalledWith([8], 'video');
   });
 
-  it('adds a member with the same POST body as Legacy', async () => {
-    const { props } = setup();
-    fireEvent.click(screen.getByRole('button', { name: /Add member/ }));
-    fireEvent.change(await screen.findByLabelText('Full name'), { target: { value: 'Linus' } });
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'linus@x.test' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
-    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/members', expect.objectContaining({ method: 'POST' })));
-    const body = JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/members')![1].body);
-    expect(body).toEqual({ team_id: '', name: 'Linus', role: '', email: 'linus@x.test', is_board: false, scopes: [] });
-    await waitFor(() => expect(props.refresh.members).toHaveBeenCalled());
+  it('invites people with a link instead of adding them by hand', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/invites' && init?.method === 'POST'
+      ? json({ token: 'cpi_x', url: 'https://cp.test/join/cpi_abcdefghijklmnopqrstuvwx', invite: { id: 3 } })
+      : url === '/api/invites' ? json([{ id: 2, hint: 'wxyz', uses: 1, max_uses: 5, expires_at: null, requires_approval: true, state: 'active', created_by_name: 'Ada' }])
+      : routeApi(url)));
+    setup();
+    expect(screen.queryByRole('button', { name: /Add member/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Invite people/ }));
+    const dlg = await screen.findByRole('dialog');
+    expect(await within(dlg).findByText(/1\/5 used/)).toBeInTheDocument();
+    fireEvent.click(within(dlg).getByRole('switch', { name: 'Approve each person' }));
+    fireEvent.click(within(dlg).getByRole('button', { name: /Create invite link/ }));
+    expect(await within(dlg).findByText(`${window.location.origin}/join/cpi_x`)).toBeInTheDocument();
+    const body = JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/invites' && c[1]?.method === 'POST')![1].body);
+    expect(body).toEqual({ expires_in_hours: 168, max_uses: null, requires_approval: true });
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Turn off link ending wxyz' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/invites/2', expect.objectContaining({ method: 'DELETE' })));
+  });
+
+  it('people with the Invite people permission (not admins) can invite; pending requests can be approved', async () => {
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/join-requests'
+      ? json([{ id: 4, email: 'new@x.test', name: 'Newt', source: 'invite', created_at: '' }])
+      : url === '/api/join-requests/4/approve' ? json({ ok: true })
+      : routeApi(url)));
+    const { props } = setup({ admin: false, roles: false, perms: ['invite_members'] });
+    expect(screen.getByRole('button', { name: /Invite people/ })).toBeInTheDocument();
+    const card = await screen.findByRole('region', { name: 'Join requests' });
+    fireEvent.click(within(card).getByRole('button', { name: /Approve/ }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/join-requests/4/approve', expect.objectContaining({ method: 'POST' })));
+    await waitFor(() => expect(props.onRefresh).toHaveBeenCalled());
   });
 
   it('edits a member (PATCH) and the half-edited form survives a remount', async () => {
@@ -213,22 +233,23 @@ describe('Modern People — review regressions', () => {
 
   it('a save that finishes after drafts were cleared never closes a newer editor', async () => {
     let finish: () => void = () => {};
-    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/members' && init?.method === 'POST'
+    api.apiFetch.mockImplementation((url: string, init?: any) => (url === '/api/members/8' && init?.method === 'PATCH'
       ? new Promise((res) => { finish = () => res({ ok: true, json: async () => ({}) }); })
       : routeApi(url)));
     setup();
-    fireEvent.click(screen.getByRole('button', { name: /Add member/ }));
-    fireEvent.change(await screen.findByLabelText('Full name'), { target: { value: 'First' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add member' }));
-    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/members', expect.objectContaining({ method: 'POST' })));
+    fireEvent.click(within(await openMenu('Grace')).getByRole('menuitem', { name: /Edit member/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'First' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/members/8', expect.objectContaining({ method: 'PATCH' })));
     // Workspace switch / sign-out clears drafts while the save is in flight…
     act(() => clearDrafts());
     // …and a new editor session starts.
-    fireEvent.click(screen.getByRole('button', { name: /Add member/ }));
-    fireEvent.change(await screen.findByLabelText('Full name'), { target: { value: 'Second' } });
+    await waitFor(() => expect(screen.queryByLabelText('Title')).not.toBeInTheDocument());
+    fireEvent.click(within(await openMenu('Grace')).getByRole('menuitem', { name: /Edit member/ }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Second' } });
     await act(async () => { finish(); });
-    expect((screen.getByLabelText('Full name') as HTMLInputElement).value).toBe('Second');
-    expect(screen.getByRole('button', { name: 'Add member' })).not.toBeDisabled();
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Second');
+    expect(screen.getByRole('button', { name: 'Save changes' })).not.toBeDisabled();
   });
 });
 

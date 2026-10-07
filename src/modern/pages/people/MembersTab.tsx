@@ -39,8 +39,10 @@ export function PresenceAvatar({ member, className }: { member: any; className?:
 
 type Filter = 'all' | 'online' | 'board';
 
-export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, onManageRoles, onCall }: {
+export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, onManageRoles, onCall, canInvite, onInvite }: {
   ctl: Ctl;
+  canInvite?: boolean;
+  onInvite?: () => void;
   members: any[];
   teams: any[];
   currentUser: any;
@@ -101,7 +103,11 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
       </div>
 
       {visible.length === 0 ? (
-        <EmptyState icon={Users} title={members.length ? 'No one matches' : 'No members yet'} description={members.length ? 'Try a different search or filter.' : 'Add your team, or share the workspace code so they can join.'} />
+        <EmptyState
+          icon={Users} title={members.length ? 'No one matches' : 'No members yet'}
+          description={members.length ? 'Try a different search or filter.' : canInvite ? 'Send your team an invite link so they can join.' : 'Ask an admin for an invite link to bring people in.'}
+          action={!members.length && canInvite && onInvite ? <Button onClick={onInvite}>Invite people</Button> : undefined}
+        />
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           <AnimatePresence initial={false}>
