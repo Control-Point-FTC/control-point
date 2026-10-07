@@ -90,8 +90,9 @@ export function HomePage(props: HomePageProps) {
         actions={
           <>
             <CheckInControl self={self} />
-            <Button variant="outline" onClick={() => openBruno()} className="hidden sm:inline-flex">
-              <Sparkles /> Ask Bruno <kbd className="ml-1 rounded border border-border px-1 text-[11px] font-medium text-muted-foreground">⌘J</kbd>
+            {/* The Dashboard's one primary action (audit UX-7). */}
+            <Button onClick={() => openBruno()} className="hidden sm:inline-flex">
+              <Sparkles /> Ask Bruno <kbd className="ml-1 rounded border border-current/30 px-1 text-[11px] font-medium opacity-70">⌘J</kbd>
             </Button>
           </>
         }

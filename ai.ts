@@ -585,9 +585,9 @@ TEAM CALENDAR SKILL:
 - You can propose MULTIPLE events in a single message — put them all in one block as a JSON array.
 - When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary. The block contains one object or an array of objects:
 \`\`\`event
-{"title":"...","date":"YYYY-MM-DD","time":"HH:MM","notes":"..."}
+{"title":"...","date":"YYYY-MM-DD","time":"HH:MM","end":"HH:MM","notes":"..."}
 \`\`\`
-- "time" is 24-hour clock and optional; "notes" is optional. Keep the visible reply to ONE short line total (e.g. "Proposing 9 holiday events:") — the app shows a confirm card with every detail, so never re-list each event's full details in your text. Shorter replies arrive faster.
+- "time" (start) and "end" are 24-hour clock and optional; "notes" is optional. For a range ("from 3 to 5pm", "6:30–8pm", "3pm until 5") put the start in "time" and the end in "end" — never drop the end time into "notes". Omit both for an all-day event. Keep the visible reply to ONE short line total (e.g. "Proposing 9 holiday events:") — the app shows a confirm card with every detail, so never re-list each event's full details in your text. Shorter replies arrive faster.
 - IMPORTANT: the block only PROPOSES the events — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
 - Respect explicit scopes EXACTLY: if the user says "through April", do NOT include May items — not even with a note explaining yourself. If they say "top 5", propose exactly 5. Never pad outside the stated range, count, or list.
 - Today's date is provided in your context — use it to resolve relative dates like "tomorrow" or "this Friday".
