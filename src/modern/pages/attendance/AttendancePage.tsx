@@ -180,7 +180,7 @@ function HistoryTab({ ctl, members, attendance }: { ctl: Ctl; members: any[]; at
                 {members.map((m: any) => (
                   <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
                     <span className="flex min-w-0 items-center gap-2.5"><MemberAvatar member={m} className="size-7 border-0" /><span className="truncate text-sm">{m.name}</span></span>
-                    <StatusPicker value={ctl.getStatus(m.id, day)} size="sm" onPick={(s) => void ctl.setStatus(m.id, day, s)} />
+                    <StatusPicker value={ctl.getStatus(m.id, day)} size="sm" date={day} onPick={(s) => void ctl.setStatus(m.id, day, s)} />
                   </li>
                 ))}
               </ul>

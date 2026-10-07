@@ -63,7 +63,8 @@ describe('Modern Budget', () => {
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10.005' } });
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
     await waitFor(() => expect(calls('/api/budget', 'POST')).toHaveLength(1));
-    expect(body('/api/budget', 'POST')).toMatchObject({ amount: 10.005 });
+    // Rounded to cents before sending (the server stores cents too).
+    expect(body('/api/budget', 'POST')).toMatchObject({ amount: 10.01 });
   });
 
   it('rejects zero or negative amounts', async () => {
@@ -71,8 +72,28 @@ describe('Modern Budget', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '-50' } });
     fireEvent.submit(document.getElementById('budget-form')!);
-    expect(dialog.notify).toHaveBeenCalledWith('Enter an amount greater than zero.', 'error');
+    expect(dialog.notify).toHaveBeenCalledWith('Amount must be more than $0', 'error');
     expect(calls('/api/budget', 'POST')).toHaveLength(0);
+  });
+
+  it('caps absurd amounts and asks before logging a large one (M-1)', async () => {
+    budgetSetup();
+    fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
+    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '999999999999.99' } });
+    fireEvent.submit(document.getElementById('budget-form')!);
+    expect(dialog.notify).toHaveBeenCalledWith("Amount can't be more than $1,000,000", 'error');
+    expect(calls('/api/budget', 'POST')).toHaveLength(0);
+
+    dialog.confirmDialog.mockResolvedValueOnce(false);
+    fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '25000' } });
+    fireEvent.submit(document.getElementById('budget-form')!);
+    await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: 'Large amount' })));
+    expect(calls('/api/budget', 'POST')).toHaveLength(0);
+
+    dialog.confirmDialog.mockResolvedValueOnce(true);
+    fireEvent.submit(document.getElementById('budget-form')!);
+    await waitFor(() => expect(calls('/api/budget', 'POST')).toHaveLength(1));
+    expect(body('/api/budget', 'POST')).toMatchObject({ amount: 25000 });
   });
 
   it('filters by type and search', () => {

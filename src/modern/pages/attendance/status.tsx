@@ -2,6 +2,7 @@
 // grid popover, Today's roll call and the History sheet.
 import { cn } from '../../../components/cn';
 import { STATUS_LABELS } from '../../../components/attendance/useAttendanceController';
+import { FUTURE_OK_CODES, localIsoDate } from '../../../utils/validation';
 
 export const STATUS_STYLE: Record<string, { cell: string; dot: string; soft: string }> = {
   P: { cell: 'bg-success text-background', dot: 'bg-success', soft: 'bg-success/12 text-success' },
@@ -35,13 +36,17 @@ export function StatusPill({ status, className }: { status?: string; className?:
 }
 
 /** A row of status buttons; `value` is the current status ('-' = none). */
-export function StatusPicker({ value, onPick, size = 'md', autoFocus }: {
+export function StatusPicker({ value, onPick, size = 'md', autoFocus, date }: {
   value: string; onPick: (s: string) => void; size?: 'sm' | 'md'; autoFocus?: boolean;
+  /** The day being marked: future days only offer Excused / School event. */
+  date?: string;
 }) {
+  const future = !!date && date > localIsoDate();
   return (
     <div role="radiogroup" aria-label="Attendance status" className="flex flex-wrap gap-1">
       {PICK_STATUSES.map((s, i) => {
         const on = value === s;
+        const blocked = future && !(FUTURE_OK_CODES as readonly string[]).includes(s) && !on;
         return (
           <button
             key={s}
@@ -49,13 +54,15 @@ export function StatusPicker({ value, onPick, size = 'md', autoFocus }: {
             role="radio"
             aria-checked={on}
             aria-label={statusLabel(s)}
-            title={`${statusLabel(s)} (${s})`}
+            title={blocked ? `${statusLabel(s)} — not available for a future day` : `${statusLabel(s)} (${s})`}
+            disabled={blocked}
             autoFocus={autoFocus && (on || (value === '-' && i === 0))}
             onClick={() => onPick(on ? '-' : s)}
             className={cn(
               'flex items-center justify-center rounded-md font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-95',
               size === 'sm' ? 'h-8 min-w-8 px-2 text-xs max-sm:h-11 max-sm:min-w-11' : 'h-9 min-w-9 px-2.5 text-sm max-sm:h-11 max-sm:min-w-11',
               on ? statusStyle(s).cell : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground',
+              blocked && 'pointer-events-none opacity-35',
             )}
           >
             {s}

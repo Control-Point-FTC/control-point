@@ -18,6 +18,7 @@ import { useBudgetController } from '../../../components/budget/useBudgetControl
 import { Page, PageHeader, Section, EmptyState } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { MONEY_MAX, formatMoneyCompact } from '../../../utils/validation';
 
 type Ctl = ReturnType<typeof useBudgetController>;
 const money = (n: number) => `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -92,7 +93,7 @@ function CashFlow({ budget }: { budget: any[] }) {
         <BarChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
           <CartesianGrid vertical={false} strokeDasharray="3 3" />
           <XAxis dataKey="month" tickLine={false} axisLine={false} tickMargin={8} />
-          <YAxis tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => `$${v >= 1000 ? `${Math.round(v / 100) / 10}k` : v}`} />
+          <YAxis tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => formatMoneyCompact(v)} />
           <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
           <Bar dataKey="income" fill="var(--color-income)" radius={[4, 4, 0, 0]} animationDuration={700} />
           <Bar dataKey="expense" fill="var(--color-expense)" radius={[4, 4, 0, 0]} animationDuration={700} />
@@ -236,7 +237,7 @@ function EntrySheet({ ctl, teams, budget }: { ctl: Ctl; teams: any[]; budget: an
             <Label htmlFor="budget-amount">Amount</Label>
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-              <Input id="budget-amount" type="number" inputMode="decimal" step="any" min="0.01" required value={f.amount} onChange={(e) => set({ amount: e.target.value })} className="pl-7 font-display text-lg tabular-nums" placeholder="0.00" />
+              <Input id="budget-amount" type="number" inputMode="decimal" step="any" min="0.01" max={MONEY_MAX} required value={f.amount} onChange={(e) => set({ amount: e.target.value })} className="pl-7 font-display text-lg tabular-nums" placeholder="0.00" />
             </div>
           </div>
           <div className="grid gap-2">
