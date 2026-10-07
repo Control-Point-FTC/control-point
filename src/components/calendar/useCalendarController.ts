@@ -227,6 +227,24 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
     return false;
   };
 
+  /** Move an event to another day by drag-and-drop: only its date changes
+   *  (times stay). Optimistic; on failure that event goes back. */
+  const moveEvent = async (id: number | string, dateKey: string) => {
+    const ev = (events || []).find((e: any) => e.id === id);
+    if (!ev || ev.date === dateKey || String(id).startsWith('temp-')) return;
+    const from = ev.date;
+    const setDate = (d: string) => setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, date: d } : e)));
+    setDate(dateKey);
+    try {
+      const res = await apiFetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: dateKey }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || '');
+      refresh.events();
+    } catch (err: any) {
+      setDate(from);
+      notify((!(err instanceof TypeError) && err?.message) || 'Could not move the event — try again.', 'error');
+    }
+  };
+
   const handleDelete = async () => {
     if (!editingId) return;
     await deleteEvent(editingId, undefined, closeEditor);
@@ -254,7 +272,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
 
   return {
     canManageCalendar, cursor, setCursor, todayKey, byDate, upcoming, upcomingWhere, isEventFinished,
-    showModal, setShowModal, editingId, form, setForm, openNew, openEdit, closeEditor, handleSave, handleDelete, deleteEvent,
+    showModal, setShowModal, editingId, form, setForm, openNew, openEdit, closeEditor, handleSave, handleDelete, deleteEvent, moveEvent,
     aiOpen, setAiOpen, aiText, setAiText, aiBusy, aiNote, aiProposals, setAiProposals, aiCreating, resetAi, handleAiParse, handleAiCreateAll,
   };
 }
