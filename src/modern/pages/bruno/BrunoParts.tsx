@@ -26,7 +26,7 @@ export function BrunoAvatar({ className }: { className?: string }) {
   );
 }
 
-export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached, setAttached, attachedPdfs, setAttachedPdfs, placeholder, autoFocus, compact }: {
+export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached, setAttached, attachedPdfs, setAttachedPdfs, placeholder, autoFocus, compact, tools }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
@@ -39,6 +39,8 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
   placeholder?: string;
   autoFocus?: boolean;
   compact?: boolean;
+  /** Extra controls beside the attach buttons (the side panel's answer length). */
+  tools?: React.ReactNode;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -84,7 +86,9 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
         <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple className="hidden" onChange={(e) => { void filesToAttachedPdfs(e.target.files || []).then(inEpoch((pdfs: AttachedPdf[]) => setAttachedPdfs((p) => [...p, ...pdfs].slice(0, MAX_BRUNO_PDFS)))); e.target.value = ''; }} />
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach screenshots" title={attached.length >= MAX_BRUNO_IMAGES ? `Maximum ${MAX_BRUNO_IMAGES} screenshots` : 'Attach screenshots'} disabled={busy || attached.length >= MAX_BRUNO_IMAGES} onClick={() => fileRef.current?.click()}><ImagePlus /></Button>
         <Button type="button" variant="ghost" size="icon" className="text-muted-foreground" aria-label="Attach a PDF" title={attachedPdfs.length >= MAX_BRUNO_PDFS ? `Maximum ${MAX_BRUNO_PDFS} PDFs` : 'Attach a PDF'} disabled={busy || attachedPdfs.length >= MAX_BRUNO_PDFS} onClick={() => pdfRef.current?.click()}><FileText /></Button>
-        <span className="ml-auto hidden px-2 text-xs text-muted-foreground sm:inline">{busy ? 'Bruno is replying…' : 'Shift+Enter for a new line'}</span>
+        {tools}
+        {/* The side panel shows its own tip line, so compact keeps the bar clear. */}
+        <span className={cn('ml-auto hidden px-2 text-xs text-muted-foreground', !compact && 'sm:inline')}>{busy ? 'Bruno is replying…' : 'Shift+Enter for a new line'}</span>
         {busy ? (
           <Button type="button" size="icon" variant="secondary" className="rounded-full max-sm:ml-auto" onClick={onStop} aria-label="Stop generating" title="Stop generating"><Square className="fill-current" /></Button>
         ) : (

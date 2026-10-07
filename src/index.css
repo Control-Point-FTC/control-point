@@ -665,4 +665,9 @@ html.light .theme-dark .card-surface {
   :root { --cp-above-fab: calc(var(--cp-call-dock) + var(--cp-fab-size) + 2.25rem); }
 }
 .cp-slot-banner { bottom: var(--cp-above-fab) !important; }
+/* The docked Bruno panel (md+, set by BrunoDock while open) takes the right
+   edge; the bug button and corner cards move left of it. */
+@media (min-width: 768px) {
+  .cp-fab, .cp-slot-banner, .cp-slot-mention { margin-right: var(--cp-side-dock, 0px); }
+}
 .cp-slot-mention { bottom: calc(var(--cp-above-fab) + var(--cp-slot-banner, 0px)) !important; }
