@@ -17,7 +17,7 @@ const BY_PAGE: [prefix: string, tips: string[]][] = [
   ['/attendance', ['Show the QR code at practice: members scan it to check in.']],
   ['/chat', ['Type @ to mention someone, or @everyone to ping the whole team.']],
   ['/teams', ['Invite people with a link — it can expire, cap its uses or need approval.']],
-  ['/roles', ['Roles bundle permissions; give someone “Invite people” without making them an admin.']],
+  ['/settings', ['Settings → Roles bundles permissions; give someone “Invite people” without making them an admin.']],
   ['/stats', ['Scout works offline: entries save on this device and sync when you’re back online.', 'Analyze an event field to build your pick list.']],
   ['/predict', ['Predictions update as matches finish — percentages are calibrated, not guesses.']],
   ['/budget', ['Amounts over $10,000 ask for a second look before saving.']],

@@ -11,6 +11,7 @@ vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()),
 
 import { InterfaceModeProvider } from '../interfaceMode';
 import { PeoplePage } from '../pages/people/PeoplePage';
+import { MembersSection, RolesSection } from '../pages/settings/PeopleSections';
 import { clearDrafts } from '../drafts';
 
 const json = (body: any, ok = true) => Promise.resolve({ ok, json: async () => body });
@@ -56,7 +57,7 @@ function setup({ admin = true, roles = true, url = '/teams', perms = [] as strin
       <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route path="/teams" element={<PeoplePage {...props} />} />
-          <Route path="/roles" element={<PeoplePage {...props} />} />
+          <Route path="/roles" element={<RolesSection {...props} />} />
         </Routes>
       </MemoryRouter>
     </InterfaceModeProvider>,
@@ -172,7 +173,7 @@ describe('Modern People — members', () => {
   });
 });
 
-describe('Modern People — roles', () => {
+describe('Settings → Roles', () => {
   it('creates a role (POST body as Legacy) and a half-written role survives a remount', async () => {
     const first = setup({ url: '/roles' });
     expect(await screen.findByText('Build Lead')).toBeInTheDocument();
@@ -236,7 +237,7 @@ describe('Modern People — review regressions', () => {
     };
     const tree = (user: any) => (
       <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
-        <MemoryRouter initialEntries={['/roles']}><Routes><Route path="/roles" element={<PeoplePage {...props} currentUser={user} />} /></Routes></MemoryRouter>
+        <MemoryRouter initialEntries={['/roles']}><Routes><Route path="/roles" element={<RolesSection {...props} currentUser={user} />} /></Routes></MemoryRouter>
       </InterfaceModeProvider>
     );
     const { rerender } = render(tree(me));

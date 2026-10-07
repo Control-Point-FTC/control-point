@@ -277,11 +277,8 @@ const navItems = [
   { id: 'stats', path: 'stats', labelKey: 'nav.teamStats', icon: Trophy, group: 'Compete' },
   { id: 'predict', path: 'predict', labelKey: 'nav.predict', icon: Sparkles, group: 'Compete', badge: 'beta' },
   {
-    id: 'teams', path: 'teams', labelKey: 'nav.teamsMembers', icon: Users, group: 'Team',
-    children: [
-      { id: 'teams', path: 'teams', labelKey: 'nav.members', icon: Users },
-      { id: 'roles', path: 'roles', labelKey: 'nav.roles', icon: ShieldCheck, perm: 'manage_roles' },
-    ],
+    // Roles moved to Settings → Roles; the sidebar keeps the directory.
+    id: 'teams', path: 'teams', labelKey: 'nav.members', icon: Users, group: 'Team',
   },
   { id: 'attendance', path: 'attendance', labelKey: 'nav.attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
   { id: 'calendar', path: 'calendar', labelKey: 'nav.calendar', icon: Calendar, group: 'Team' },
@@ -438,7 +435,7 @@ export default function App() {
 
   // Auto-expand the Teams submenu when we're on one of its pages.
   useEffect(() => {
-    if (activeTab === 'teams' || activeTab === 'roles') setTeamsNavOpen(true);
+    if (activeTab === 'teams') setTeamsNavOpen(true);
     if (activeTab === 'cad' || activeTab === 'cad-docs' || activeTab === 'cad-reviews' || activeTab === 'cad-snapshots' || activeTab === 'cad-parts') setCadNavOpen(true);
   }, [activeTab]);
 
@@ -1821,8 +1818,7 @@ export default function App() {
   // Keep students (and scope-restricted users) on tabs they can actually see
   // (Bruno is intentionally not a nav tab — reachable via the header button)
   // Note: profile/settings/roles are reachable pages even when they aren't
-  // top-level sidebar items (settings + profile live in the settings popup;
-  // roles is nested under Teams & Members).
+  // sidebar items (/roles redirects to Settings → Roles, which gates itself).
   const allVisibleTabIds = useMemo(() => {
     const ids = new Set<string>();
     for (const t of visibleTabs) {
@@ -1831,6 +1827,7 @@ export default function App() {
     }
     ids.add('profile');
     ids.add('settings');
+    ids.add('roles');
     ids.add('inbox'); // Modern page; Legacy redirects it to the dashboard
     return ids;
   }, [visibleTabs]);
@@ -2155,7 +2152,8 @@ export default function App() {
         <Route path="/stats" element={<TeamStatsPage teamId={currentUser?.team_id} memberId={currentUser?.id} memberName={currentUser?.name} canManage={hasPerm('manage_members')} />} />
         <Route path="/predict" element={<PredictPage />} />
         <Route path="/teams" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
-        <Route path="/roles" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
+        {/* Roles live in Settings → Roles now; old links land there. */}
+        <Route path="/roles" element={<Navigate to="/settings?section=roles" replace />} />
         <Route path="/attendance" element={<AttendancePage {...viewProps} />} />
         <Route path="/tasks" element={<TasksPage {...viewProps} />} />
         <Route path="/calendar" element={<CalendarPage {...viewProps} />} />

@@ -13,7 +13,7 @@ import { SettingsGroup, SettingsRow } from './SettingsPage';
 
 interface TeamDraft { name: string; ftc: string }
 
-export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, settings, refresh, onTeamSaved }: any) {
+export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, settings, refresh, onTeamSaved, onOpenSection }: any) {
   const navigate = useNavigate();
   const team = teams.find((t: any) => t.id === currentUser?.team_id);
   const savedFtc = team?.ftc_team_number ? String(team.ftc_team_number) : /^\d+$/.test(String(team?.number ?? '').trim()) ? String(team.number).trim() : '';
@@ -134,7 +134,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       {(isAdmin || hasPerm?.('invite_members')) && (
         <SettingsGroup title="Invites & access">
           <SettingsRow label="Invite links" description="Make a link people can join with. Links can expire, cap their uses and need approval.">
-            <Button variant="outline" onClick={() => navigate('/teams?invite=1')} className="max-sm:h-11"><UserPlus /> Invite people</Button>
+            <Button variant="outline" onClick={() => navigate('/settings?section=members&invite=1', { replace: true })} className="max-sm:h-11"><UserPlus /> Invite people</Button>
           </SettingsRow>
           {isAdmin && (<>
           <SettingsRow label="Access code" description="Only admins see this. People can also join by typing it.">
@@ -152,7 +152,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
             </span>
           </SettingsRow>
           <SettingsRow label="Roles & permissions" description="Group permissions and hand them to members.">
-            <Button variant="outline" onClick={() => navigate('/roles')} className="max-sm:h-11"><ShieldCheck /> Open roles</Button>
+            <Button variant="outline" onClick={() => (onOpenSection ? onOpenSection('roles') : navigate('/settings?section=roles', { replace: true }))} className="max-sm:h-11"><ShieldCheck /> Open roles</Button>
           </SettingsRow>
           </>)}
         </SettingsGroup>
