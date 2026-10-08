@@ -302,8 +302,8 @@ async function callAnthropicChat(opts: {
     const u = extractAnthropicUsage(data);
     if (u && opts.onUsage) opts.onUsage(u);
     const text = extractAnthropicText(data);
-    // Read stop_reason before content: a decline has no text.
-    if (data?.stop_reason === "refusal" && !text.trim()) return ANTHROPIC_REFUSAL_MSG;
+    // Read stop_reason before content: a decline may have no text, or stop part-way.
+    if (data?.stop_reason === "refusal") return text.trim() ? `${text}\n\n(${ANTHROPIC_REFUSAL_MSG})` : ANTHROPIC_REFUSAL_MSG;
     return text;
   }
 
@@ -313,6 +313,7 @@ async function callAnthropicChat(opts: {
   let full = "";
   let lastUsage: AiUsage | null = null;
   let refused = false;
+  let streamError: { type?: string; message?: string } | null = null;
   const maxAccumChars = Math.max(8000, opts.maxTokens * 8);
   for (;;) {
     if (opts.signal?.aborted) break;
@@ -347,11 +348,20 @@ async function callAnthropicChat(opts: {
           lastUsage = extractAnthropicUsage({ usage: parsed.usage });
         }
         if (parsed?.type === "message_delta" && parsed?.delta?.stop_reason === "refusal") refused = true;
+        // An error mid-stream (overloaded, rate limited, ...) arrives as an SSE
+        // event on a 200 response: fail like a non-200 so the caller's error
+        // and failover paths run instead of returning a partial reply.
+        if (parsed?.type === "error") streamError = parsed.error || { type: "error", message: "stream error" };
       } catch { /* skip malformed chunk */ }
+      if (streamError) break;
     }
-    if (full.length >= maxAccumChars) break;
+    if (full.length >= maxAccumChars || streamError) break;
   }
   try { await reader.cancel(); } catch { /* noop */ }
+  if (streamError) {
+    const status = streamError.type === "overloaded_error" ? 529 : streamError.type === "rate_limit_error" ? 429 : 500;
+    throw new Error(`Anthropic API error ${status}: ${streamError.type}: ${String(streamError.message || "").slice(0, 500)}`);
+  }
   if (lastUsage && opts.onUsage) opts.onUsage(lastUsage);
   if (refused) {
     // A decline mid-reply: say so rather than ending on half a sentence.
