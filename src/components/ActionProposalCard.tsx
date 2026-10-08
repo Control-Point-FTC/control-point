@@ -1,23 +1,17 @@
 import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
 import type { ActionProposal } from '../services/aiService';
-import { normalizeBrunoTask } from '../utils/brunoTasks';
 import { recurrenceLabel } from '../utils/quickAdd';
+import { resolveEventItem, resolveTaskItem, useProposalContext } from '../services/proposalContext';
 
-const localToday = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-
-/** A task as it will be saved: title, then due date and time, priority, people, repeat. */
+/** A task exactly as it will be saved: title, due date and time, priority, people, repeat. */
 function taskSummary(it: any): string {
-  // The roster lives on the server; names are shown as Bruno wrote them.
-  const t = normalizeBrunoTask(it, localToday(), []);
-  const people = [...(Array.isArray(it.assignees) ? it.assignees : []), ...(typeof it.assignee === 'string' ? [it.assignee] : [])].filter(Boolean);
+  const t = resolveTaskItem(it);
   const parts = [
-    t.due_date ? `due ${t.due_date}${t.due_time ? ` at ${t.due_time}` : ''}` : '',
+    t.due_date ? `due ${t.due_date}${t.due_time ? ` at ${t.due_time}` : ''}` : t.due_time ? `due today at ${t.due_time}` : '',
     t.priority ? `${t.priority} priority` : '',
-    people.length ? `→ ${people.join(', ')}` : '',
-    t.recurrence ? recurrenceLabel(t.recurrence).toLowerCase() : '',
+    t.assignees.length ? `→ ${t.assignees.join(', ')}` : '',
+    t.repeat ? recurrenceLabel(t.repeat).toLowerCase() : '',
+    t.unmatched.length ? `not assigned (no single team member named ${t.unmatched.join(', ')})` : '',
   ].filter(Boolean);
   return `${t.title.slice(0, 60)}${parts.length ? ` — ${parts.join(' · ')}` : ''}`;
 }
@@ -31,7 +25,8 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   communication: { label: 'Communication log', icon: Mail },
 };
 
-export function itemSummary(kind: ActionProposal['kind'], it: any): string {
+export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
+  const it = kind === 'event' ? resolveEventItem(raw) : raw;
   const title = String(it.title || it.description || it.category || 'Untitled').slice(0, 60);
   if (kind === 'event') {
     // Show an end only if the server will keep it (valid HH:MM after the start).
@@ -63,6 +58,7 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   onConfirm: () => void;
   onDismiss: () => void;
 }) {
+  useProposalContext(); // re-render once the team's roster and today load
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const isDestructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   if (status === 'done') {

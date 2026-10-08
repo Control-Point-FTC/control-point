@@ -49,60 +49,115 @@ export function repeatToRule(v: unknown): Recurrence | null {
   return null;
 }
 
-/** A roster name for "arnav", "Arnav Patel", "ARNAV", or null. */
+/** A roster name for "arnav", "Arnav Patel", "ARNAV", or null. A first name
+ *  counts only when exactly one member has it ("Alex" with an Alex Smith and
+ *  an Alex Jones is ambiguous, so nobody is picked). */
 export function rosterMatch(name: unknown, roster: string[]): string | null {
   const n = String(name || '').trim().replace(/^@/, '').toLowerCase();
   if (!n) return null;
-  return roster.find((r) => r.toLowerCase() === n)
-    || roster.find((r) => r.toLowerCase().split(/\s+/)[0] === n)
-    || null;
+  const full = roster.find((r) => r.toLowerCase() === n);
+  if (full) return full;
+  const firsts = roster.filter((r) => r.toLowerCase().split(/\s+/)[0] === n);
+  return firsts.length === 1 ? firsts[0] : null;
 }
 
-/** True when the reader recognised something structured in the text. */
-const found = (q: ReturnType<typeof parseQuickAdd>) =>
-  !!(q.due_time || q.priority || q.recurrence || q.assignees.length || (q.due_date && !q.date_is_default));
+/** A piece of text that is clearly a field instruction, not ordinary context:
+ *  "high priority", "assign to Arnav", "due Friday at 4pm", "every week",
+ *  "repeats monthly". A bare "weekly report" or "Saturday's meet" is not. */
+const INSTRUCTION_RE = /\b(?:priority|urgent|asap|assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:|due\b|deadline|every\s+(?:day|week|month|other|\d+|mon|tue|wed|thu|fri|sat|sun)|repeat(?:s|ing)?\b|recurring)/i;
 
-export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string[]): BrunoTask {
+/** Split title text on commas/semicolons and description text into sentences. */
+const pieces = (text: string, sentences: boolean) =>
+  text.split(sentences ? /(?<=[.!?;])\s+|\n+/ : /\s*[,;]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+
+export interface NormalizeOptions {
+  /** Read fields out of instruction phrases in the title/description (the
+   *  browser does this before showing the confirm card; the server only
+   *  saves what was confirmed). */
+  fromText?: boolean;
+}
+
+export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string[], opts: NormalizeOptions = { fromText: true }): BrunoTask & { unmatched: string[] } {
   const rawTitle = String(t.title || '').trim();
   const rawDesc = String(t.description || '').trim();
-  const qt = parseQuickAdd(rawTitle, today, roster);
-  const qd = rawDesc ? parseQuickAdd(rawDesc, today, roster) : null;
-
-  // Text with the recognised phrases taken out (only when something was taken).
-  const title = (found(qt) && qt.title.length >= 3 ? qt.title : rawTitle).slice(0, 120);
-  let description = (qd && found(qd) ? qd.title : rawDesc).trim();
-  // A description that only restated the fields ("Due Thursday at 4:30pm.") is dropped.
-  if (/^[\s.,;:!-]*$/.test(description)) description = '';
+  const recovered: ReturnType<typeof parseQuickAdd>[] = [];
+  let title = rawTitle;
+  let description = rawDesc;
+  if (opts.fromText) {
+    // Only instruction pieces are parsed and removed; the rest stays word for word.
+    const strip = (text: string, sentences: boolean) => {
+      const keep: string[] = [];
+      for (const piece of pieces(text, sentences)) {
+        if (!INSTRUCTION_RE.test(piece)) { keep.push(piece); continue; }
+        const q = parseQuickAdd(piece, today, roster);
+        recovered.push(q);
+        if (q.title.trim().length >= 3) keep.push(q.title.trim());
+      }
+      return keep.join(sentences ? ' ' : ', ').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+    };
+    const t2 = strip(rawTitle, false);
+    title = t2.length >= 3 ? t2 : rawTitle;
+    description = strip(rawDesc, true);
+    if (/^[\s.,;:!-]*$/.test(description)) description = '';
+  }
+  const fromText = <K extends 'due_time' | 'priority' | 'recurrence'>(k: K) => recovered.map((q) => q[k]).find(Boolean) ?? null;
+  const textDate = recovered.map((q) => (q.date_is_default ? null : q.due_date)).find(Boolean) ?? null;
 
   const modelDate = typeof t.due_date === 'string' && ISO.test(t.due_date) ? t.due_date : null;
-  const textDate = (q: ReturnType<typeof parseQuickAdd> | null) => (q && !q.date_is_default ? q.due_date : null);
-  const due_time = (typeof t.due_time === 'string' && HHMM.test(t.due_time) ? t.due_time : null) || qt.due_time || qd?.due_time || null;
+  const due_time = (typeof t.due_time === 'string' && HHMM.test(t.due_time) ? t.due_time : null) || fromText('due_time');
   // A bare time means today (the team's today).
-  const due_date = modelDate || textDate(qt) || textDate(qd) || (due_time ? today : null);
-
+  const due_date = modelDate || textDate || (due_time ? today : null);
   const p = String(t.priority || '').toLowerCase().trim() as Priority;
-  const priority = (PRIORITIES.includes(p) ? p : null) || qt.priority || qd?.priority || null;
-  const recurrence = repeatToRule(t.repeat) || qt.recurrence || qd?.recurrence || null;
+  const priority = (PRIORITIES.includes(p) ? p : null) || fromText('priority');
+  const recurrence = repeatToRule(t.repeat) || fromText('recurrence');
 
-  const named = [...(Array.isArray(t.assignees) ? t.assignees : []), ...(t.assignee ? [t.assignee] : [])];
+  const named = [...(Array.isArray(t.assignees) ? t.assignees : []), ...(t.assignee ? [t.assignee] : [])].map((x) => String(x || '').trim()).filter(Boolean);
   const assignees: string[] = [];
-  for (const n of [...named.map((x) => rosterMatch(x, roster)), ...qt.assignees, ...(qd?.assignees || [])]) {
-    if (n && !assignees.includes(n)) assignees.push(n);
+  const unmatched: string[] = [];
+  for (const n of named) {
+    const m = rosterMatch(n, roster);
+    if (m) { if (!assignees.includes(m)) assignees.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
   }
-  return { title: title || rawTitle.slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20) };
+  for (const q of recovered) for (const n of q.assignees) if (!assignees.includes(n)) assignees.push(n);
+  return { title: (title || rawTitle).slice(0, 120), description: description.slice(0, 500), due_date, due_time, priority, recurrence, assignees: assignees.slice(0, 20), unmatched };
 }
 
+const TIME_RANGE_RE = /\s*\b(?:from\s+|at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to|until)\s*(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)/i;
+const TIME_ONE_RE = /\s*\b(?:at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)|\s*\bat\s+(\d{1,2}):([0-5]\d)\b|\s*\bat\s+noon\b/i;
+const hhmm = (h: string, m: string | undefined, ap: string | undefined): string | null => {
+  let hour = Number(h);
+  const min = Number(m || 0);
+  const a = (ap || '').toLowerCase().replace(/\./g, '');
+  if (a === 'pm' && hour < 12) hour += 12;
+  if (a === 'am' && hour === 12) hour = 0;
+  if (hour > 23 || min > 59) return null;
+  return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+};
+
 /** A Bruno event with no time whose title or notes still say one ("at 6pm",
- *  "3-5pm"): the time moves into its fields and out of the text. */
-export function recoverEventTime<E extends { title: string; notes?: string; time?: string; end?: string }>(e: E, today: string): E {
+ *  "3-5pm"): the time moves into its fields and ONLY that phrase leaves the
+ *  text (other words such as "Monthly" stay). */
+export function recoverEventTime<E extends { title: string; notes?: string; time?: string; end?: string }>(e: E): E {
   if (e.time) return e;
   for (const key of ['title', 'notes'] as const) {
     const text = String(e[key] || '');
     if (!text) continue;
-    const q = parseQuickAdd(text, today, []);
-    if (!q.due_time) continue;
-    const cleaned = q.title.trim();
-    return { ...e, time: q.due_time, end: q.end_time && q.end_time > q.due_time ? q.end_time : (e.end || ''), [key]: key === 'title' && cleaned.length < 3 ? e.title : cleaned };
+    const r = text.match(TIME_RANGE_RE);
+    if (r) {
+      const endAp = r[6];
+      const start = hhmm(r[1], r[2], r[3] || endAp);
+      const end = hhmm(r[4], r[5], endAp);
+      if (start && end && end > start) return { ...e, time: start, end, [key]: tidy(text.replace(r[0], ' '), e[key]) };
+    }
+    const one = text.match(TIME_ONE_RE);
+    if (one) {
+      const time = /noon/i.test(one[0]) ? '12:00' : one[1] ? hhmm(one[1], one[2], one[3]) : hhmm(one[4], one[5], undefined);
+      if (time) return { ...e, time, [key]: tidy(text.replace(one[0], ' '), e[key]) };
+    }
   }
   return e;
 }
+const tidy = (s: string, original: unknown) => {
+  const out = s.replace(/\s+([,.;!?])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+  return out.length >= 3 ? out : String(original || '');
+};

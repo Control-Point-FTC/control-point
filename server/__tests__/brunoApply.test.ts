@@ -26,16 +26,16 @@ afterAll(async () => { await t?.stop(); });
 const rows = async (sql: string, ...args: any[]) => (await t.db.execute({ sql, args })).rows as any[];
 
 describe("Bruno apply: task fields", () => {
-  it("the reported bug: fields dumped in the description land in their own fields", async () => {
+  it("the reported bug: the fields the card resolved are saved in their own fields", async () => {
+    // What the confirm card sends after resolving "High priority task ... (Assigned to Arnav). Due at 4:30pm."
     const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [{
-      title: "Test autonomous paths",
-      description: "High priority task to test autonomous paths (Assigned to Arnav). Due at 4:30pm.",
-      due_date: "2099-10-15",
+      title: "Test autonomous paths", description: "Task to test autonomous paths.",
+      due_date: "2099-10-15", due_time: "16:30", priority: "high", assignees: ["Arnav Patel"],
     }] }] }, admin);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const [task] = await rows("SELECT * FROM tasks WHERE title = 'Test autonomous paths'");
     expect(task).toMatchObject({ due_date: "2099-10-15", due_time: "16:30", priority: "high", assigned_to: arnav });
-    expect(task.description).not.toMatch(/priority|assigned|4:30/i);
+    expect(task.description).toBe("Task to test autonomous paths.");
     const who = (await rows("SELECT member_id FROM task_assignees WHERE task_id = ?", task.id)).map((x) => Number(x.member_id));
     expect(who).toEqual([arnav]);
     expect(await rows("SELECT id FROM notifications WHERE user_id = ? AND content = 'New task assigned: Test autonomous paths'", arnav)).toHaveLength(1);
@@ -66,6 +66,17 @@ describe("Bruno apply: many kinds at once", () => {
     ] }, admin);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.applied).toMatchObject({ task: 3, event: 1, outreach: 1, communication: 1, budget: 1 });
+  });
+
+  it("saves exactly what was confirmed: no fields read out of text on the server", async () => {
+    await t.post("/api/ai/apply-actions", { actions: [
+      { kind: "task", items: [{ title: "Read the manual", description: "Use the weekly report. High priority." }] },
+      { kind: "event", items: [{ title: "Build session", date: "2099-03-01", notes: "From 3-5pm" }] },
+    ] }, admin);
+    const [task] = await rows("SELECT * FROM tasks WHERE title = 'Read the manual'");
+    expect(task).toMatchObject({ priority: null, recurrence: null, description: "Use the weekly report. High priority." });
+    const [ev] = await rows("SELECT * FROM events WHERE title = 'Build session' AND date = '2099-03-01'");
+    expect(ev.start_time).toBe("");
     expect(await rows("SELECT id FROM tasks WHERE title IN ('Order wheels', 'Fix the lift', 'Update the notebook')")).toHaveLength(3);
   });
 });

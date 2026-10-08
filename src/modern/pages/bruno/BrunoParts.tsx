@@ -10,6 +10,7 @@ import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
 import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
 import { KIND_META, itemSummary, type ProposalStatus } from '../../../components/ActionProposalCard';
+import { useProposalContext } from '../../../services/proposalContext';
 import {
   AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste,
   MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf,
@@ -104,6 +105,7 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
 export function ProposalCard({ proposals, status, error, onConfirm, onDismiss }: {
   proposals: ActionProposal[]; status: ProposalStatus; error?: string; onConfirm: () => void; onDismiss: () => void;
 }) {
+  useProposalContext(); // re-render once the team's roster and today load
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const destructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   if (status === 'done') {

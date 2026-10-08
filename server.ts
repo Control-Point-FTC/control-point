@@ -59,7 +59,7 @@ import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence } from "./src/utils/quickAdd.js";
-import { normalizeBrunoTask, recoverEventTime } from "./src/utils/brunoTasks.js";
+import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
@@ -11419,6 +11419,20 @@ Rules:
   // parsed items. Server re-validates everything before inserting.
   // Permissions mirror the direct APIs: events/outreach any team member (same
   // as the old Bruno auto-insert behavior), tasks/budget admins only.
+  // What the Bruno confirm card needs to show a proposal exactly as it will be
+  // saved: the team's today and its roster names.
+  app.get("/api/ai/proposal-context", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const roster = (await dbAll("SELECT name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+      res.json({ today: todayIn(await teamTimeZone(auth.teamId, req.query.tz)), roster: roster.map((m: any) => String(m.name)) });
+    } catch (error) {
+      console.error("proposal-context error:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/ai/apply-actions", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -11450,10 +11464,10 @@ Rules:
         if (kind === "event") {
           const { events } = extractEventBlock("```event\n" + JSON.stringify(items) + "\n```");
           if (!events?.length) continue;
-          const eventToday = todayIn(await teamTimeZone(auth.teamId, req.body?.tz));
+          // Saved as confirmed: the confirm card already moved any time left
+          // in the title or notes into the time fields (recoverEventTime).
           for (const e of events) {
-            // A time the model left in the title or notes still lands in the time fields.
-            (await insertTeamEvent(auth.teamId, auth.memberId, recoverEventTime(e, eventToday)));
+            (await insertTeamEvent(auth.teamId, auth.memberId, e));
           }
           applied.event = (applied.event || 0) + events.length;
           const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
@@ -11512,14 +11526,14 @@ Rules:
         } else if (kind === "task") {
           const { tasks } = extractTasksBlock("```tasks\n" + JSON.stringify(items) + "\n```");
           if (!tasks?.length) continue;
-          // Assignee, priority, repeat, date AND time land in their own fields
-          // (whatever the model left in the title or description is read out
-          // of it), against the team's roster and the team's today.
+          // Saved exactly as confirmed: the card already read any fields left
+          // in the text (normalizeBrunoTask with fromText); here names resolve
+          // against the roster and a bare time takes the team's today.
           const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
           const todayISO = todayIn(await teamTimeZone(auth.teamId, req.body?.tz));
           const names = roster.map((m: any) => String(m.name));
           for (const raw of tasks) {
-            const t = normalizeBrunoTask(raw, todayISO, names);
+            const t = normalizeBrunoTask(raw, todayISO, names, { fromText: false });
             const ids = t.assignees.map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
             const info = await dbRun(
               "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?)",
@@ -11529,6 +11543,8 @@ Rules:
             if (ids.length) {
               await setTaskAssignees(taskId, ids, auth.teamId);
               for (const mid of ids) if (mid !== auth.memberId) void createNotification(mid, `New task assigned: ${t.title}`, "task", { task_id: taskId });
+              // The same assignment email as POST /api/tasks.
+              void notifyTaskAssignees(taskId, t.title, t.description, t.due_date || "", auth.teamId, auth.memberId, ids);
             }
           }
           applied.task = (applied.task || 0) + tasks.length;
