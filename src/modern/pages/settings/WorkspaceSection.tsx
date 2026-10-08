@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { Building2, CalendarDays, Check, ExternalLink, Loader2, LogOut, RefreshCw, ShieldCheck, Trash2, Unlink, UserPlus } from 'lucide-react';
 import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
+import { ownFtcTeamChanged } from '../../../services/ftcScoutApi';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { getDraft, useDraft } from '../../drafts';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
@@ -66,6 +67,8 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { notify(data.error || 'Could not save team settings.', 'error'); return; }
       onTeamSaved?.({ id: team.id, ...body });
+      // Offline pages and Predict follow the new number, not the old one.
+      if (body.ftc_team_number !== undefined) ownFtcTeamChanged(body.ftc_team_number);
       refresh?.settings?.();
       if (getDraft(draftKey, null) === submitted) { setDraft(null); setVerified(null); }
       notify('Team settings saved.', 'success');

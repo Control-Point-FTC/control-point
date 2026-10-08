@@ -16,7 +16,8 @@ const pack = (withPredict = true): OfflinePack => ({
   events: [{ code: 'USNJQ1', name: 'NJ Qualifier', type: 'Qualifier', start: '2026-01-10', end: '2026-01-10', region: 'USNJ', state: 'NJ', country: null, teams: [[4215, null, null, null, null, null, null]], awards: [], matches: [] }],
   ...(withPredict ? { predict: {} as any } : {}),
 });
-const reply = (status: number, body: any) => Promise.resolve({ ok: status < 300, status, json: async () => body });
+const reply = (status: number, body: any, headers: Record<string, string> = {}) => Promise.resolve({ ok: status < 300, status, headers: new Headers(headers), json: async () => body });
+const savedCopy = (body: any) => reply(200, body, { 'X-CP-Saved-Copy': '1' });
 
 beforeEach(() => {
   clearPredictCache();
@@ -63,5 +64,31 @@ describe('Predict offline', () => {
   it('a gateway error (FTC data down) also falls back', async () => {
     api.apiFetch.mockImplementation(() => reply(502, { error: 'Bad gateway' }));
     expect((await fetchForecast(2025, 'USNJQ1')).offline).toBeTruthy();
+  });
+
+  it('offline with a saved server forecast: a newer download wins, else the saved one is labelled', async () => {
+    // Saved before the download (06:00): the download is newer.
+    api.apiFetch.mockImplementation(() => savedCopy({ season: 2025, event: 'USNJQ1', teams: [], eventName: 'Saved', generatedAt: '2026-10-07T00:00:00.000Z' }));
+    const fromPack = await fetchForecast(2025, 'USNJQ1', { myTeam: 4215 });
+    expect(fromPack.offline).toEqual({ asOf: '2026-10-08T06:00:00.000Z', region: 'New Jersey' });
+    expect(sim.forecast).toHaveBeenCalledTimes(1);
+    // Saved after the download: the saved forecast, marked as offline.
+    clearPredictCache();
+    api.apiFetch.mockImplementation(() => savedCopy({ season: 2025, event: 'USNJQ1', teams: [], eventName: 'Saved', generatedAt: '2026-10-08T12:00:00.000Z' }));
+    const saved = await fetchForecast(2025, 'USNJQ1');
+    expect(saved).toMatchObject({ eventName: 'Saved', offline: { asOf: '2026-10-08T12:00:00.000Z', region: null } });
+    expect(sim.forecast).toHaveBeenCalledTimes(1);
+    // No download at all: the saved copy, labelled.
+    clearPredictCache();
+    offline.getOfflinePack.mockResolvedValue(null);
+    expect((await fetchForecast(2025, 'USNJQ1')).offline?.region).toBeNull();
+  });
+
+  it('offline with saved alliance options: worked out from the download when there is one', async () => {
+    api.apiFetch.mockImplementation(() => savedCopy({ role: 'picked', myTeam: 4215, baseline: {}, options: [] }));
+    expect((await fetchPartners(2025, 'USNJQ1', { myTeam: 4215 })).role).toBe('captain');
+    clearPredictCache();
+    offline.getOfflinePack.mockResolvedValue(null);
+    expect((await fetchPartners(2025, 'USNJQ1', { myTeam: 4215 })).role).toBe('picked');
   });
 });

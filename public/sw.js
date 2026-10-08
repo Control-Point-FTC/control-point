@@ -80,6 +80,13 @@ function isStaticAsset(url) {
   return /\.(png|jpe?g|svg|ico|webp|woff2?|webmanifest|wasm)$/.test(url.pathname);
 }
 
+function markSaved(res) {
+  if (!res) return res;
+  const headers = new Headers(res.headers);
+  headers.set('X-CP-Saved-Copy', '1');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 /** Network first with a timeout; the last good copy when the network fails. */
 function networkFirstApi(event, req) {
   const gen = apiGen;
@@ -96,7 +103,9 @@ function networkFirstApi(event, req) {
       .then(() => (saved && gen === apiGen ? caches.open(API_CACHE).then((c) => c.put(req, saved)) : undefined))
       .catch(() => {})
   );
-  const fallback = () => clearing.then(() => caches.open(API_CACHE)).then((c) => c.match(req));
+  // The saved copy is marked, so the app can tell it from a live answer
+  // (Predict prefers a newer downloaded region pack over an old saved forecast).
+  const fallback = () => clearing.then(() => caches.open(API_CACHE)).then((c) => c.match(req)).then(markSaved);
   const timedOut = new Promise((resolve) => setTimeout(resolve, API_TIMEOUT_MS)).then(fallback);
   return Promise.race([
     network.catch(() => fallback().then((cached) => cached || Response.error())),

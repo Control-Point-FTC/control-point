@@ -149,7 +149,7 @@ function StageStrip({ ctl }: { ctl: Ctl }) {
         <span>{fc.runs.toLocaleString()} simulations</span>
         {fc.offline ? (
           <span className="inline-flex items-center gap-1 font-medium text-foreground" title={new Date(fc.offline.asOf).toLocaleString()}>
-            <CloudOff className="size-3.5" aria-hidden /> Offline forecast from your {fc.offline.region} download ({relTime(fc.offline.asOf)})
+            <CloudOff className="size-3.5" aria-hidden /> {fc.offline.region ? `Offline forecast from your ${fc.offline.region} download` : 'Offline: forecast saved'} ({relTime(fc.offline.asOf)})
           </span>
         ) : (
           <>

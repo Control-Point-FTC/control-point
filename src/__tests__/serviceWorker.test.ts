@@ -88,7 +88,11 @@ describe('service worker (offline Compete)', () => {
     const sw = boot(network);
     const first = await (await sw.get('/api/ftc/scout/team?season=2025'))!.json();
     online = false;
-    const offline = await (await sw.get('/api/ftc/scout/team?season=2025'))!.json();
+    const offlineRes = (await sw.get('/api/ftc/scout/team?season=2025'))!;
+    // Marked, so the app can tell a saved copy from a live answer.
+    expect(offlineRes.headers.get('X-CP-Saved-Copy')).toBe('1');
+    expect(offlineRes.headers.get('content-type')).toBe('application/json');
+    const offline = await offlineRes.json();
     expect(offline).toEqual(first);
     online = true;
     const fresh = await (await sw.get('/api/ftc/scout/team?season=2025'))!.json();

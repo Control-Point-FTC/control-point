@@ -111,6 +111,16 @@ function rememberOwnTeam(n: number): void { try { localStorage.setItem(OWN_TEAM_
 function forgetOwnTeam(): void { ownTeamGen++; try { localStorage.removeItem(OWN_TEAM_KEY); } catch { /* storage unavailable */ } }
 function ownTeam(): number | null { try { return parseInt(localStorage.getItem(OWN_TEAM_KEY) || '', 10) || null; } catch { return null; } }
 
+/**
+ * The workspace's FTC number was changed or removed in Settings: forget the
+ * old team (and its cached pages) so offline pages don't keep showing it.
+ */
+export function ownFtcTeamChanged(n: number | null): void {
+  forgetOwnTeam();
+  if (n) rememberOwnTeam(n);
+  teamCache.invalidate('me:');
+}
+
 /** A team's season profile. `number` omitted = the workspace's own team. */
 export function fetchScoutTeam(season: number, number?: number | null, opts?: { force?: boolean }): Promise<FtcTeamProfile> {
   const key = `${number ?? 'me'}:${season}`;

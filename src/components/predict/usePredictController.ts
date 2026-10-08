@@ -145,7 +145,8 @@ export function usePredictController() {
   // An offline forecast made before our team was known: redo it for our team
   // (offline answers aren't cached, so this works it out again).
   useEffect(() => {
-    if (fc?.offline && myTeam && fc.myTeam !== myTeam) load();
+    // (Only a device forecast: a saved server copy can't be redone offline.)
+    if (fc?.offline?.region && myTeam && fc.myTeam !== myTeam) load();
   }, [fc, myTeam, load]);
 
   // Bruno sees the forecast on screen.
