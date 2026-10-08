@@ -21,20 +21,26 @@ export function resourceKey(raw: unknown): string {
   }
   const params = [...u.searchParams.entries()].filter(([k]) => !TRACKING.test(k)).sort(([a], [b]) => a.localeCompare(b));
   const query = params.length ? `?${new URLSearchParams(params).toString()}` : '';
-  const path = u.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '') || '';
-  const port = u.port && u.port !== '80' && u.port !== '443' ? `:${u.port}` : '';
+  // Only a trailing slash is dropped (an inner "//" can name another page).
+  const path = u.pathname.replace(/\/+$/, '');
+  // URL already empties the scheme's default port; any other port is another server.
+  const port = u.port ? `:${u.port}` : '';
   return `${host}${port}${path}${query}`;
 }
 
-/** Split links into new ones and duplicates (of `existing`, or of an earlier
- *  link in the same list). Order is kept. */
-export function splitDuplicates<T extends { url: string }>(items: T[], existing: string[]): { fresh: T[]; duplicates: T[] } {
-  const seen = new Set(existing.map(resourceKey));
+export type DuplicateReason = 'saved' | 'repeat';
+
+/** Split links into new ones and duplicates: 'saved' (the same page is in
+ *  `existing`) or 'repeat' (an earlier link in the list). Order is kept. */
+export function splitDuplicates<T extends { url: string }>(items: T[], existing: string[]): { fresh: T[]; duplicates: (T & { duplicate: DuplicateReason })[] } {
+  const saved = new Set(existing.map(resourceKey));
+  const seen = new Set<string>();
   const fresh: T[] = [];
-  const duplicates: T[] = [];
+  const duplicates: (T & { duplicate: DuplicateReason })[] = [];
   for (const it of items) {
     const k = resourceKey(it.url);
-    if (seen.has(k)) duplicates.push(it);
+    if (saved.has(k)) duplicates.push({ ...it, duplicate: 'saved' });
+    else if (seen.has(k)) duplicates.push({ ...it, duplicate: 'repeat' });
     else { seen.add(k); fresh.push(it); }
   }
   return { fresh, duplicates };

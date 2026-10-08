@@ -85,6 +85,27 @@ describe('Modern Resources', () => {
     expect(screen.getByRole('button', { name: 'Save all 1' })).toBeInTheDocument();
   });
 
+  it('a link repeated in the paste is not called saved; one deleted meanwhile counts as new', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') return { items: [
+        { url: 'https://gm0.org', title: 'Game Manual 0', description: '', category: 'Community' },
+        { url: 'https://www.gm0.org/', title: 'gm0 again', description: '', category: 'Community', duplicate: 'repeat' },
+        // The server still had it when it read the library; this page's list doesn't any more.
+        { url: 'https://old.example/', title: 'Old link', description: '', category: 'Other', duplicate: 'saved' },
+      ], count: 3 };
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(2\)/)).toBeInTheDocument();
+    expect(screen.getByText('Left out 1 repeated in this paste: gm0 again.')).toBeInTheDocument();
+    expect(screen.queryByText(/already in your library/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Title for https://old.example/')).toHaveValue('Old link');
+  });
+
   it('says so when every link is already saved', async () => {
     api.apiJson.mockImplementation(async (url: string, init?: any) => {
       if (url === '/api/resources' && !init?.method) return list;

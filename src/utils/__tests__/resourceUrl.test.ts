@@ -9,6 +9,10 @@ describe('resource duplicate keys', () => {
     // Parameters that change the page stay, in any order.
     expect(resourceKey('https://x.com/a?b=2&a=1')).toBe(resourceKey('https://x.com/a?a=1&b=2'));
     expect(resourceKey('https://x.com/a?id=1')).not.toBe(resourceKey('https://x.com/a?id=2'));
+    // Default ports are the same server; any other port, or an inner "//", is not.
+    expect(resourceKey('https://x.com:443/a')).toBe(resourceKey('https://x.com/a'));
+    expect(resourceKey('http://robot.example:443/status')).not.toBe(resourceKey('http://robot.example/status'));
+    expect(resourceKey('https://x.com/a//b')).not.toBe(resourceKey('https://x.com/a/b'));
   });
 
   it('every YouTube link form names the same video', () => {
@@ -20,6 +24,6 @@ describe('resource duplicate keys', () => {
     const items = [{ url: 'https://gm0.org' }, { url: 'https://a.com/x' }, { url: 'https://www.a.com/x/' }, { url: 'https://b.com' }];
     const { fresh, duplicates } = splitDuplicates(items, ['https://www.gm0.org/']);
     expect(fresh.map((i) => i.url)).toEqual(['https://a.com/x', 'https://b.com']);
-    expect(duplicates.map((i) => i.url)).toEqual(['https://gm0.org', 'https://www.a.com/x/']);
+    expect(duplicates.map((i) => [i.url, i.duplicate])).toEqual([['https://gm0.org', 'saved'], ['https://www.a.com/x/', 'repeat']]);
   });
 });

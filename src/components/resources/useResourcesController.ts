@@ -78,6 +78,10 @@ const SAVE_ERROR_KEY = 'res:save-error';
 
 export function useResourcesController() {
   const [resources, setResources] = useState<ResourceItem[]>([]);
+  // The library as it is when a reply lands (not when the request started).
+  const resourcesRef = useRef(resources);
+  resourcesRef.current = resources;
+  const libraryLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState('All');
@@ -102,7 +106,7 @@ export function useResourcesController() {
     setLoadError(null);
     try {
       const list = await apiJson<ResourceItem[]>('/api/resources');
-      if (seq === loadSeq.current) setResources(Array.isArray(list) ? list : []);
+      if (seq === loadSeq.current) { setResources(Array.isArray(list) ? list : []); libraryLoaded.current = true; }
     } catch (e: any) {
       if (seq === loadSeq.current) setLoadError(e?.message || 'Could not load resources');
     } finally {
@@ -160,13 +164,22 @@ export function useResourcesController() {
           description: it.description || '',
           category: RESOURCE_CATEGORIES.includes(it.category as any) ? it.category : 'Other',
         }));
-        // The server marks links the library already has; the loaded list
-        // catches any it couldn't (same page = same key: www, https, a
-        // trailing slash, tracking parameters, YouTube link forms).
-        const flagged = rows.filter((_, i) => list[i].duplicate);
-        const { fresh, duplicates } = splitDuplicates(rows.filter((_, i) => !list[i].duplicate), resources.map((r) => r.url));
-        const dups = [...flagged, ...duplicates];
-        if (!fresh.length) fail(`${dups.length === 1 ? 'That link is' : `All ${dups.length} links are`} already in your library.`);
+        // Same page = same key (www, https, a trailing slash, tracking
+        // parameters, YouTube link forms). Checked against the library as it
+        // is now (kept live by resources_changed), so a link a teammate just
+        // deleted counts as new. Only if the library never loaded do the
+        // server's marks decide what's already saved.
+        const existing = libraryLoaded.current
+          ? resourcesRef.current.map((r) => r.url)
+          : list.filter((it) => it.duplicate === 'saved').map((it) => it.url || '');
+        const { fresh, duplicates } = splitDuplicates(rows, existing);
+        const dups: ParsedItem[] = duplicates;
+        if (!fresh.length) {
+          const allSaved = dups.every((d) => d.duplicate === 'saved');
+          fail(allSaved
+            ? `${dups.length === 1 ? 'That link is' : `All ${dups.length} links are`} already in your library.`
+            : 'Every link is already in your library or repeated in this paste.');
+        }
         show(fresh.length ? fresh : null, dups);
       }
     } catch (e: any) {
@@ -208,6 +221,7 @@ export function useResourcesController() {
     const unlock = inEpoch(() => setSaving(false));
     const clear = inEpoch(() => { setPreview(null); setSkipped([]); setPasteText(''); });
     const fail = inEpoch((msg: string) => setSaveError(msg));
+    const tell = inEpoch((msg: string) => notify(msg, 'info'));
     setSaveError(null);
     try {
       const res = await apiJson<{ count?: number; skipped?: { url: string }[] }>('/api/resources', {
@@ -222,9 +236,10 @@ export function useResourcesController() {
         }),
       });
       clear();
-      // Someone saved the same link meanwhile: the server skipped it; say so.
+      // Someone saved the same link meanwhile: the server skipped it; say so
+      // (only to the workspace and session that started this save).
       const late = Array.isArray(res?.skipped) ? res.skipped.length : 0;
-      if (late) notify(`Saved ${res.count ?? 0}. ${late} ${late === 1 ? 'was' : 'were'} already in your library.`, 'info');
+      if (late) tell(`Saved ${res.count ?? 0}. ${late} ${late === 1 ? 'was' : 'were'} already in your library.`);
       // Refetch on every mounted Resources page (this one may have been left).
       window.dispatchEvent(new Event('resources-changed'));
     } catch (e: any) {
