@@ -3,6 +3,7 @@
 // the same rules. Text fields are kept in the shared draft store, so going back
 // a step or switching the look keeps what was typed. Passwords are never
 // drafted. Drafts are cleared on sign-in (persistSession).
+import { passwordProblem } from '../../utils/password';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch, apiUrl } from '../../services/api';
 import { useDraft } from '../../modern/drafts';
@@ -114,6 +115,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   const [teamNumber, setTeamNumber] = useDraft(k('team-number'), '');
   const [accessCode, setAccessCode] = useDraft(k('access-code'), '');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -138,6 +140,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
     if (busy) return;
     setError(null);
     setTakenNumber(null);
+    if (password !== confirm) { setError("Passwords don't match."); return; }
     setBusy(true);
     try {
       const viaInvite = mode === 'student' && !!inviteToken;
@@ -156,7 +159,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   };
 
   return {
-    name, setName, email, setEmail, password, setPassword, showPw, setShowPw,
+    name, setName, email, setEmail, password, setPassword, confirm, setConfirm, showPw, setShowPw,
     teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
     error, busy, submit, takenNumber, askToJoin,
   };
@@ -372,7 +375,8 @@ export function useForgotPassword({ initialEmail, onDone, initialStep = 'email' 
       setStep('code');
       return;
     }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    const weak = passwordProblem(password);
+    if (weak) { setError(weak); return; }
     if (password !== confirm) { setError("Passwords don't match."); return; }
     setError(null);
     setBusy(true);

@@ -4,6 +4,7 @@
 // login and setup still run in App, signup / OAuth / verify / reset run in the
 // hooks. Text fields are drafted (not passwords), so going back a step or
 // switching looks keeps them.
+import { PasswordChecklist } from '../../ui/PasswordChecklist';
 import { useId, useState, type ReactNode } from 'react';
 import { motion } from 'motion/react';
 import {
@@ -183,7 +184,8 @@ function ForgotPasswordDialog({ initialEmail, setup = false, onClose, onDone }: 
           <form onSubmit={f.resetPassword} className="grid gap-4">
             <CodeInput label="Reset code" value={f.code} onChange={f.setCode} />
             <Field label="New password" htmlFor={`${id}-new`}>
-              <PasswordInput id={`${id}-new`} value={f.password} onChange={f.setPassword} placeholder="6+ characters" autoComplete="new-password" />
+              <PasswordInput id={`${id}-new`} value={f.password} onChange={f.setPassword} placeholder="••••••••" autoComplete="new-password" />
+              <PasswordChecklist value={f.password} />
             </Field>
             <Field label="Confirm password" htmlFor={`${id}-confirm`}>
               <Input id={`${id}-confirm`} type="password" required value={f.confirm} onChange={(e) => f.setConfirm(e.target.value)} placeholder="••••••••" autoComplete="new-password" className="h-11" />
@@ -431,8 +433,14 @@ export function SignupPage({ mode, onBack, onSignup, onDone, onSignIn, invite }:
           <Field label="Email" htmlFor={`${id}-email`}>
             <Input id={`${id}-email`} type="email" required autoComplete="email" value={f.email} onChange={(e) => f.setEmail(e.target.value)} placeholder="you@team.org" className="h-11" />
           </Field>
-          <Field label="Password" htmlFor={`${id}-pw`} hint="At least 6 characters.">
-            <PasswordInput id={`${id}-pw`} value={f.password} onChange={f.setPassword} placeholder="••••••••" autoComplete="new-password" minLength={6} />
+          <Field label="Password" htmlFor={`${id}-pw`}>
+            <PasswordInput id={`${id}-pw`} value={f.password} onChange={f.setPassword} placeholder="••••••••" autoComplete="new-password" />
+            <PasswordChecklist value={f.password} />
+          </Field>
+          <Field label="Confirm password" htmlFor={`${id}-pw2`}>
+            <Input id={`${id}-pw2`} type="password" required value={f.confirm} onChange={(e) => f.setConfirm(e.target.value)} placeholder="••••••••" autoComplete="new-password" className="h-11"
+              aria-invalid={!!f.confirm && f.confirm !== f.password} />
+            {!!f.confirm && f.confirm !== f.password && <p className="text-xs text-destructive">Passwords don't match.</p>}
           </Field>
           {admin
             ? <TeamNumberField teamNumber={f.teamNumber} setTeamNumber={f.setTeamNumber} teamName={f.teamName} setTeamName={f.setTeamName} />

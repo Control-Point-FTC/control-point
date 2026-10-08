@@ -75,6 +75,16 @@ describe('Modern Home', () => {
     expect(JSON.parse(init.body)).toMatchObject({ date: today, records: [{ member_id: 7, status: 'P' }] });
   });
 
+  it("Enter on a focused check-in option doesn't send it (V3-L11)", () => {
+    renderInModern(<HomePage {...homeProps()} />);
+    const here = screen.getAllByRole('radio', { name: /i'm here/i })[0];
+    here.focus();
+    // false = the browser's default (activating the button) was prevented.
+    expect(fireEvent.keyDown(here, { key: 'Enter' })).toBe(false);
+    expect(fireEvent.keyDown(here, { key: ' ' })).toBe(true);
+    expect(api.apiFetch).not.toHaveBeenCalled();
+  });
+
   it('an unsent absence reason survives a remount (mode switch)', async () => {
     const { unmount } = renderInModern(<HomePage {...homeProps()} />);
     fireEvent.click(screen.getAllByRole('radio', { name: /out/i })[0]);

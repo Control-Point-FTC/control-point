@@ -102,13 +102,19 @@ describe('Modern sign in', () => {
     expect(within(dlg).getByText('Resend code in 60s')).toBeInTheDocument();
     fireEvent.click(within(dlg).getByRole('button', { name: 'Continue' }));
     fireEvent.change(await within(dlg).findByLabelText('New password'), { target: { value: 'newpass' } });
+    // The rules show live, and a password that breaks them is refused here.
+    expect(within(dlg).getByText('A number or symbol').closest('li')).toHaveClass('text-muted-foreground');
+    fireEvent.change(within(dlg).getByLabelText('Confirm password'), { target: { value: 'newpass' } });
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Update password' }));
+    expect(await within(dlg).findByRole('alert')).toHaveTextContent('Password needs: at least 8 characters, a number or symbol.');
+    fireEvent.change(within(dlg).getByLabelText('New password'), { target: { value: 'newpass-1' } });
     fireEvent.change(within(dlg).getByLabelText('Confirm password'), { target: { value: 'nope' } });
     fireEvent.click(within(dlg).getByRole('button', { name: 'Update password' }));
     expect(await within(dlg).findByRole('alert')).toHaveTextContent("Passwords don't match.");
-    fireEvent.change(within(dlg).getByLabelText('Confirm password'), { target: { value: 'newpass' } });
+    fireEvent.change(within(dlg).getByLabelText('Confirm password'), { target: { value: 'newpass-1' } });
     fireEvent.click(within(dlg).getByRole('button', { name: 'Update password' }));
     await waitFor(() => expect(p.onPasswordReset).toHaveBeenCalled());
-    expect(body('/api/auth/reset-password')).toEqual({ email: 'ada@x.test', code: '123456', newPassword: 'newpass' });
+    expect(body('/api/auth/reset-password')).toEqual({ email: 'ada@x.test', code: '123456', newPassword: 'newpass-1' });
   });
 });
 
@@ -130,6 +136,13 @@ describe('Modern signup', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('FTC team number'), { target: { value: '4215' } });
     expect(await screen.findByText('Hypnotic Robotics', {}, { timeout: 2000 })).toBeInTheDocument();
+    // A confirm that doesn't match stops the signup.
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret2' } });
+    expect(screen.getByText("Passwords don't match.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent("Passwords don't match.");
+    expect(onSignup).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
     await waitFor(() => expect(onDone).toHaveBeenCalledWith({ team: { id: 1 } }));
     expect(onSignup).toHaveBeenCalledWith({ accountType: 'admin', name: 'Ada', email: 'ada@x.test', password: 'secret1', teamName: 'Hypnotic Robotics', teamNumber: '4215', accessCode: '' });
@@ -155,6 +168,7 @@ describe('Modern signup', () => {
     fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Bo' } });
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'bo@x.test' } });
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
     fireEvent.change(screen.getByLabelText('Team access code'), { target: { value: 'CP-AAAA-BBBB' } });
     fireEvent.click(screen.getByRole('button', { name: 'Join team' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid access code');

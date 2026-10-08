@@ -218,6 +218,9 @@ function CheckInControl({ self }: { self: ReturnType<typeof useSelfReport> }) {
         type="single"
         value={value}
         aria-label="Check in for today"
+        // Radio semantics: Space or a click checks in, arrows move between
+        // options; Enter on a focused option must not send it (V3-L11).
+        onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
         onValueChange={(v) => {
           if (!v) return;
           if (v === 'O') setOutOpen(true);

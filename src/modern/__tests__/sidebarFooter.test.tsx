@@ -58,3 +58,18 @@ describe('Settings on phones', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('your own status chip', () => {
+  it('shows the status you picked, not a stale "Offline" from page load', () => {
+    shell({ user: { id: 1, name: 'Ada', presence: 'offline' } });
+    expect(screen.getByRole('button', { name: 'Account menu' })).toHaveTextContent('Online');
+    cleanup();
+    shell({ user: { id: 1, name: 'Ada', presence: 'online', presence_status: 'dnd' } });
+    expect(screen.getByRole('button', { name: 'Account menu' })).toHaveTextContent('Do Not Disturb');
+    cleanup();
+    shell({ user: { id: 1, name: 'Ada', presence_status: 'invisible' } });
+    const chip = screen.getByRole('button', { name: 'Account menu' });
+    expect(chip).toHaveTextContent('Invisible');
+    expect(chip.querySelector('[title="Offline"]')).not.toBeNull();
+  });
+});
