@@ -9416,7 +9416,7 @@ Rules:
         const accessToken = await getGoogleAccessToken(c.member_id);
         if (!accessToken) continue;
         await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(c.google_event_id)}`, {
-          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` },
+          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
         }).catch(() => {});
       } catch (e) {
         console.error("Calendar sync delete failed:", (e as any)?.message);
@@ -9434,6 +9434,9 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
+      // Google cleanup runs after the lock is released (a slow Google must
+      // not hold up the team's other calendar edits).
+      let cleanup: { member_id: number; google_event_id: string }[] = [];
       await withCalendarLock(auth.teamId, async () => {
       const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
@@ -9519,7 +9522,7 @@ Rules:
       }
       await dbBatchResults(stmts);
       // Linked calendars follow once the database has committed.
-      await removeGoogleCopies(removedCopies);
+      cleanup = removedCopies;
       for (const { r } of merged) {
         const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", r.id)) as any;
         if (updatedEvent) void updateSyncedEvent(updatedEvent);
@@ -9535,6 +9538,7 @@ Rules:
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, updated: merged.length });
       });
+      if (cleanup.length) void removeGoogleCopies(cleanup);
     } catch (error) {
       console.error("Error updating event:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -9547,6 +9551,7 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
+      let cleanup: { member_id: number; google_event_id: string }[] = [];
       await withCalendarLock(auth.teamId, async () => {
       const existing: any = (await dbGet("SELECT id, team_id, series_id, date FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
@@ -9563,10 +9568,11 @@ Rules:
         { sql: `DELETE FROM event_calendar_sync WHERE event_id IN (${inIds})`, args: ids },
         { sql: `DELETE FROM events WHERE team_id = ? AND id IN (${inIds})`, args: [auth.teamId, ...ids] },
       ]);
-      await removeGoogleCopies(copies);
+      cleanup = copies;
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, deleted: ids.length });
       });
+      if (cleanup.length) void removeGoogleCopies(cleanup);
     } catch (error) {
       console.error("Error deleting event:", error);
       res.status(500).json({ error: "Internal server error" });
