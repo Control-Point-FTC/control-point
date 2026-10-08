@@ -41,11 +41,12 @@ beforeEach(() => {
 const me = { id: 7, name: 'Ada', role: 'Builder', email: 'ada@x.test', team_id: 1, interface_mode: 'modern', hasPassword: true, presence_status: 'online', scopes: '["tasks"]', is_board: 1 };
 const team = { id: 1, name: 'Robo', number: '123', ftc_team_number: 123, access_code: 'JOIN-42' };
 
-function setup({ section = 'profile', admin = true, owner = false, teams = [team] as any[], user = me as any } = {}) {
+function setup({ section = 'profile', admin = true, owner = false, teams = [team] as any[], user = me as any, extra = {} as Record<string, unknown> } = {}) {
   const props = {
     currentUser: user, teams, isAdmin: admin, isOwner: owner, hasPerm: (p: string) => admin && p !== 'manage_voice',
     settings: { excuse_criteria: 'old rules' }, refresh: { members: vi.fn(), settings: vi.fn() },
     onUserSaved: vi.fn(), onTeamSaved: vi.fn(), onStatusPick: vi.fn(), setColorVersion: vi.fn(),
+    ...extra,
   };
   const utils = render(
     <InterfaceModeProvider user={user} team={{}} onUserSaved={() => {}}>
@@ -585,5 +586,80 @@ describe('Modern Settings — Bruno memory and morning summary', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByText('Drives the robot')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText('Oldest fact')).not.toBeInTheDocument());
+  });
+});
+
+describe('Modern Settings — completeness pass', () => {
+  it('admins set the workspace time zone; members only see it', async () => {
+    const { props } = setup({ section: 'workspace', teams: [{ ...team, timezone: null }] });
+    const pick = screen.getByRole('combobox', { name: 'Workspace time zone' });
+    expect(pick).toHaveTextContent('Not set (Eastern)');
+    fireEvent.click(pick);
+    fireEvent.click(await screen.findByRole('option', { name: /Central \(Chicago\)/ }));
+    await waitFor(() => expect(props.onTeamSaved).toHaveBeenCalledWith({ id: 1, timezone: 'America/Chicago' }));
+    expect(bodyOf('/api/teams/1', 'PATCH')).toEqual({ timezone: 'America/Chicago' });
+    cleanup();
+    setup({ section: 'workspace', admin: false, teams: [{ ...team, timezone: 'America/Denver' }] });
+    expect(screen.getByRole('combobox', { name: 'Workspace time zone' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Workspace time zone' })).toHaveTextContent('Mountain (Denver)');
+  });
+
+  it('the calendar link can be shown and turned off; Get link then makes a new one', async () => {
+    let token: string | null = 'old';
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      const link = () => (token ? { url: `https://cp.test/api/calendar/feed/${token}.ics` } : {});
+      if (url === '/api/calendar/feed' && !init?.method) return json(link());
+      if (url === '/api/calendar/feed' && init?.method === 'POST') { token ??= 'new'; return json(link()); }
+      if (url === '/api/calendar/feed' && init?.method === 'DELETE') { token = null; return json({ ok: true }); }
+      if (url === '/api/calendar/link') return json({ linked: false });
+      return json({});
+    });
+    setup({ section: 'workspace' });
+    expect(await screen.findByText('Your calendar link is on')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Show link/ }));
+    await waitFor(() => expect(screen.getByLabelText('Your calendar link')).toHaveValue('https://cp.test/api/calendar/feed/old.ics'));
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByLabelText('Your calendar link')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Turn off/ }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/calendar/feed', { method: 'DELETE' }));
+    expect(await screen.findByText('Subscribe in your calendar app')).toBeInTheDocument();
+    // The dead link isn't shown again: a new one is made.
+    fireEvent.click(screen.getByRole('button', { name: /Get link/ }));
+    await waitFor(() => expect(screen.getByLabelText('Your calendar link')).toHaveValue('https://cp.test/api/calendar/feed/new.ics'));
+  });
+
+  it('account: sign out of other devices, sign out here, and reopen the setup guide', async () => {
+    api.apiFetch.mockImplementation((url: string) => json(url === '/api/auth/sign-out-others' ? { ok: true, removed: 2 } : {}));
+    const onLogout = vi.fn();
+    const onSetupGuide = vi.fn();
+    setup({ section: 'account', extra: { onLogout, onSetupGuide } });
+    fireEvent.click(screen.getByRole('button', { name: /Sign out others/ }));
+    await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/auth/sign-out-others', { method: 'POST' }));
+    expect(dialog.notify).toHaveBeenCalledWith('Signed out of 2 other sessions.', 'success');
+    fireEvent.click(screen.getByRole('button', { name: /^Sign out$/ }));
+    expect(onLogout).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /Open setup guide/ }));
+    expect(onSetupGuide).toHaveBeenCalled();
+  });
+
+  it('appearance: a System theme, and resetting the sidebar layout', async () => {
+    setup({ section: 'appearance' });
+    fireEvent.click(screen.getByRole('radio', { name: /System/ }));
+    expect(localStorage.getItem('cp-theme')).toBe('system');
+    localStorage.setItem('cp-sidebar-order', '["tasks"]');
+    localStorage.setItem('cp-collapsed-nav-groups', '{"a":true}');
+    localStorage.setItem('cp-modern-sections-closed', '["plan"]');
+    const reload = vi.fn();
+    const had = window.location;
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...had, reload } });
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /Reset sidebar/ }));
+      await waitFor(() => expect(reload).toHaveBeenCalled());
+      expect(localStorage.getItem('cp-sidebar-order')).toBeNull();
+      expect(localStorage.getItem('cp-collapsed-nav-groups')).toBeNull();
+      expect(localStorage.getItem('cp-modern-sections-closed')).toBeNull();
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: had });
+    }
   });
 });

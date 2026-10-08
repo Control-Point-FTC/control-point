@@ -3,6 +3,7 @@
  * forms), and unverified email signups stay off the roster (V3-M3).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import WebSocket from "ws";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -65,6 +66,63 @@ describe("public team-number lookup (V3-L2)", () => {
     let last = 0;
     for (let i = 0; i < 61; i++) last = (await t.api("/api/ftc/lookup-public?number=x")).status;
     expect(last).toBe(429);
+  });
+});
+
+describe("sign out of other devices", () => {
+  it("ends every other session of the account, in every workspace, and keeps this one", async () => {
+    const other = await seedTeam(t.db, "Second");
+    const id1 = await seedMember(t.db, team, "Sam", "sam@v35.test");
+    const id2 = await seedMember(t.db, other, "Sam", "sam@v35.test");
+    const here = await t.session(id1);
+    const laptop = await t.session(id1);
+    const phone = await t.session(id2);
+    const bystander = await t.session(await seedMember(t.db, team, "Bea", "bea@v35.test"));
+    const r = await t.post("/api/auth/sign-out-others", {}, here);
+    expect(r.status).toBe(200);
+    expect(r.body.removed).toBe(2);
+    const me = (s: string) => t.api("/api/auth/me", { session: s }).then((x) => x.status);
+    expect(await me(here)).toBe(200);
+    expect(await me(laptop)).toBe(401);
+    expect(await me(phone)).toBe(401);
+    expect(await me(bystander)).toBe(200);
+    expect((await t.post("/api/auth/sign-out-others", {})).status).toBe(401);
+  });
+
+  it("closes the other devices' live connections, so they can't keep chatting", async () => {
+    const id = await seedMember(t.db, team, "Kim", "kim@v35.test");
+    const here = await t.session(id);
+    const other = await t.session(id);
+    const socket = async (session: string) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${t.port}`);
+      const closed = new Promise<number>((res) => ws.once("close", (code) => res(code)));
+      await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
+      ws.send(JSON.stringify({ type: "hello", sessionId: session }));
+      return { ws, closed };
+    };
+    const mine = await socket(here);
+    const theirs = await socket(other);
+    await new Promise((r) => setTimeout(r, 400));
+    expect((await t.post("/api/auth/sign-out-others", {}, here)).status).toBe(200);
+    expect(await theirs.closed).toBe(4001);
+    // A message sent on the closed socket can't land; this device stays connected.
+    expect(mine.ws.readyState).toBe(WebSocket.OPEN);
+    mine.ws.send(JSON.stringify({ type: "chat", content: "still here" }));
+    await new Promise((r) => setTimeout(r, 400));
+    const rows = (await t.db.execute({ sql: "SELECT content FROM messages WHERE sender_id = ?", args: [id] })).rows.map((r: any) => r.content);
+    expect(rows).toEqual(["still here"]);
+    mine.ws.close();
+  });
+});
+
+describe("workspace time zone", () => {
+  it("admins can set and clear it; a made-up zone is refused", async () => {
+    const set = (timezone: unknown) => t.patch(`/api/teams/${team}`, { timezone }, admin);
+    expect((await set("America/Chicago")).status).toBe(200);
+    expect((await t.db.execute({ sql: "SELECT timezone FROM teams WHERE id = ?", args: [team] })).rows[0].timezone).toBe("America/Chicago");
+    expect((await set("Mars/Olympus")).status).toBe(400);
+    expect((await set(null)).status).toBe(200);
+    expect((await t.db.execute({ sql: "SELECT timezone FROM teams WHERE id = ?", args: [team] })).rows[0].timezone).toBeNull();
   });
 });
 

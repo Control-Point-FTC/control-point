@@ -5,7 +5,7 @@ import { passwordProblem } from '../../../utils/password';
 import { PasswordChecklist } from '../../ui/PasswordChecklist';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Cookie, Download, KeyRound, Loader2, TriangleAlert } from 'lucide-react';
+import { Compass, Cookie, Download, KeyRound, Loader2, LogOut, MonitorSmartphone, TriangleAlert } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
@@ -47,7 +47,7 @@ function PasswordForm() {
   );
 }
 
-export function AccountSection({ currentUser, teams = [] }: any) {
+export function AccountSection({ currentUser, teams = [], onLogout, onSetupGuide }: any) {
   const user = currentUser || {};
   const navigate = useNavigate();
   const [exporting, setExporting] = useState(false);
@@ -76,6 +76,22 @@ export function AccountSection({ currentUser, teams = [] }: any) {
     }
   };
 
+  const [signingOut, setSigningOut] = useState(false);
+  const signOutOthers = async () => {
+    if (!(await confirmDialog({ title: 'Sign out of other devices?', message: 'Every other device signed in to your account will need to sign in again.', confirmLabel: 'Sign out others' }))) return;
+    setSigningOut(true);
+    try {
+      const res = await apiFetch('/api/auth/sign-out-others', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { notify(data.error || 'Could not sign out other devices.', 'error'); return; }
+      notify(data.removed ? `Signed out of ${data.removed} other ${data.removed === 1 ? 'session' : 'sessions'}.` : 'No other devices were signed in.', 'success');
+    } catch {
+      notify('Could not sign out other devices.', 'error');
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
   const emailMatches = confirmEmail.trim().toLowerCase() === String(user.email || '').toLowerCase() && !!user.email;
   const deleteAccount = async () => {
     if (!emailMatches) { notify('Type your email address exactly to confirm.', 'info'); return; }
@@ -100,6 +116,25 @@ export function AccountSection({ currentUser, teams = [] }: any) {
       <SettingsGroup title="Password">
         {user.hasPassword ? <PasswordForm /> : <p className="p-4 text-sm text-muted-foreground">You sign in with Google, so there’s no Control Point password to change.</p>}
       </SettingsGroup>
+
+      <SettingsGroup title="Sign-in">
+        <SettingsRow label="Sign out of other devices" description="Ends every other session of your account (phones, laptops, shared computers). This device stays signed in.">
+          <Button variant="outline" className="max-sm:h-11" disabled={signingOut} onClick={() => void signOutOthers()}><MonitorSmartphone /> Sign out others</Button>
+        </SettingsRow>
+        {onLogout && (
+          <SettingsRow label="Sign out" description="Sign out on this device.">
+            <Button variant="outline" className="max-sm:h-11" onClick={() => onLogout()}><LogOut /> Sign out</Button>
+          </SettingsRow>
+        )}
+      </SettingsGroup>
+
+      {onSetupGuide && (
+        <SettingsGroup title="Help">
+          <SettingsRow label="Setup guide" description="Walk through the getting-started steps again.">
+            <Button variant="outline" className="max-sm:h-11" onClick={() => onSetupGuide()}><Compass /> Open setup guide</Button>
+          </SettingsRow>
+        </SettingsGroup>
+      )}
 
       <SettingsGroup title="Your data">
         <SettingsRow label="Download my data" description="A JSON file of your profile and everything you’ve created.">
