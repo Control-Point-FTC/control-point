@@ -76,6 +76,8 @@ Copy the essentials into a `.env` file:
 # AI (Bruno) — Gemini for chat, grounded research, and vision; Anthropic as fallback
 # GEMINI_API_KEY=""
 # ANTHROPIC_API_KEY=""
+# ANTHROPIC_MODEL="claude-sonnet-5-5"   # optional; this is the default
+# ANTHROPIC_EFFORT="low"                # optional: low | medium | high | xhigh | max
 ```
 
 Google sign-in only works for emails already on the team roster — an admin adds members first, then they link their Google account.
