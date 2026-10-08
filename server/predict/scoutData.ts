@@ -24,7 +24,7 @@ export function scoutEventQuery(season: number): string {
       code divisionCode name type start end remote hybrid timezone regionCode updatedAt
       location { state country }
       awards { type placement teamNumber }
-      teams { teamNumber stats { __typename ... on TeamEventStats${season} { rank rp wins losses ties qualMatchesPlayed } } }
+      teams { teamNumber team { name location { city state } } stats { __typename ... on TeamEventStats${season} { rank rp wins losses ties qualMatchesPlayed } } }
       matches {
         matchNum series tournamentLevel hasBeenPlayed actualStartTime scheduledStartTime
         teams { teamNumber alliance station surrogate dq onField }
