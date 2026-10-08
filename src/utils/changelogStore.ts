@@ -16,21 +16,25 @@ export const latestVersion = () => entries[0]?.version || '';
 /** Fetch the releases once (again after `force`); keeps the current list on failure. */
 export function loadChangelog(force = false): Promise<ChangelogEntry[]> {
   if (loading && !force) return loading;
-  loading = (async () => {
+  const run = (async () => {
     try {
       const res = await apiFetch('/api/changelog', { timeoutMs: 10_000 } as any);
       const body = res.ok ? await res.json() : null;
-      if (Array.isArray(body) && body.length) {
-        entries = body
-          .filter((e: any) => e && typeof e.version === 'string')
-          .map((e: any) => ({ version: e.version, date: e.date, title: e.title, added: e.added || [], improved: e.improved || [], fixed: e.fixed || [] }))
-          .sort((a: ChangelogEntry, b: ChangelogEntry) => compareVersions(a.version, b.version));
-        emit();
-      }
-    } catch { /* offline or not deployed yet: keep what we have */ }
+      // An empty list is a real answer (the owner deleted every release).
+      if (!Array.isArray(body)) throw new Error('changelog unavailable');
+      entries = body
+        .filter((e: any) => e && typeof e.version === 'string')
+        .map((e: any) => ({ version: e.version, date: e.date, title: e.title, added: e.added || [], improved: e.improved || [], fixed: e.fixed || [] }))
+        .sort((a: ChangelogEntry, b: ChangelogEntry) => compareVersions(a.version, b.version));
+      emit();
+    } catch {
+      // Offline or not deployed yet: keep what we have, and let the next visit try again.
+      if (loading === run) loading = null;
+    }
     return entries;
   })();
-  return loading;
+  loading = run;
+  return run;
 }
 
 /** Owner edits replace the list right away. */

@@ -8181,13 +8181,15 @@ Rules:
   const listChangelog = async () =>
     ((await dbAll("SELECT * FROM changelog_entries")) as any[]).map(rowToEntry).sort((a, b) => compareVersions(a.version, b.version));
   try {
-    const n = (await dbGet("SELECT COUNT(*) AS n FROM changelog_entries")) as any;
-    if (!Number(n?.n)) {
+    // Seeded once (a settings flag, not "the table is empty"): releases the
+    // owner deletes stay deleted.
+    const seeded = (await dbGet("SELECT value FROM settings WHERE key = 'changelog_seeded'")) as any;
+    if (!seeded) {
       const now = new Date().toISOString();
       await dbBatch(CHANGELOG.map((e) => ({
         sql: "INSERT OR IGNORE INTO changelog_entries (version, date, title, added, improved, fixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         args: [e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), now],
-      })));
+      })).concat([{ sql: "INSERT OR REPLACE INTO settings (key, value) VALUES ('changelog_seeded', '1')", args: [] }]));
     }
   } catch (e) { console.error("changelog seed failed:", e); }
   const discordChangelogWebhook = () => {
@@ -9388,6 +9390,40 @@ Rules:
     }
   });
 
+  // Calendar writes for one team run one at a time, so an edit reads a
+  // series and rewrites it with no other edit of that team in between (two
+  // overlapping repeat-rule changes can't both leave a run behind).
+  const calendarLocks = new Map<number, Promise<unknown>>();
+  function withCalendarLock<T>(teamId: number, fn: () => Promise<T>): Promise<T> {
+    const prev = calendarLocks.get(teamId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tail = run.catch(() => {});
+    calendarLocks.set(teamId, tail);
+    void tail.then(() => { if (calendarLocks.get(teamId) === tail) calendarLocks.delete(teamId); });
+    return run;
+  }
+  /** Members' Google copies of these events. Read BEFORE the events are
+   *  deleted: a foreign-key cascade takes the mappings with them. */
+  async function googleCopiesOf(ids: number[]): Promise<{ member_id: number; google_event_id: string }[]> {
+    if (!ids.length) return [];
+    return (await dbAll(
+      `SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id IN (${ids.map(() => "?").join(",")})`, ...ids,
+    )) as any[];
+  }
+  async function removeGoogleCopies(copies: { member_id: number; google_event_id: string }[]) {
+    for (const c of copies) {
+      try {
+        const accessToken = await getGoogleAccessToken(c.member_id);
+        if (!accessToken) continue;
+        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(c.google_event_id)}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` },
+        }).catch(() => {});
+      } catch (e) {
+        console.error("Calendar sync delete failed:", (e as any)?.message);
+      }
+    }
+  }
+
   // scope "following" (repeating events only) applies the edit to this
   // occurrence and every later one in its series; a date change shifts them
   // all by the same number of days. A changed repeat rule (with "following",
@@ -9398,6 +9434,7 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
+      await withCalendarLock(auth.teamId, async () => {
       const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
@@ -9424,10 +9461,15 @@ Rules:
         ? (await dbAll("SELECT * FROM events WHERE series_id = ? AND team_id = ? AND date >= ? ORDER BY date", existing.series_id, auth.teamId, existing.date)) as any[]
         : [existing];
       const stmts: { sql: string; args?: any[] }[] = [];
-      // A new rule replaces the later occurrences.
+      // A new rule replaces the later occurrences: deleted by condition (not
+      // by the ids read above), with their sync rows, in the same transaction.
       const removed = ruleChange && following ? rows.filter((r) => r.id !== existing.id).map((r) => Number(r.id)) : [];
-      if (removed.length) {
-        stmts.push({ sql: `DELETE FROM events WHERE team_id = ? AND id IN (${removed.map(() => "?").join(",")})`, args: [auth.teamId, ...removed] });
+      const removedCopies = await googleCopiesOf(removed);
+      if (ruleChange && following) {
+        const later = "SELECT id FROM events WHERE series_id = ? AND team_id = ? AND date >= ? AND id != ?";
+        const laterArgs = [existing.series_id, auth.teamId, existing.date, existing.id];
+        stmts.push({ sql: `DELETE FROM event_calendar_sync WHERE event_id IN (${later})`, args: laterArgs });
+        stmts.push({ sql: `DELETE FROM events WHERE id IN (${later})`, args: laterArgs });
         rows = [existing];
       }
       const reminder = reminder_minutes !== undefined ? cleanReminder(reminder_minutes) : undefined;
@@ -9477,7 +9519,7 @@ Rules:
       }
       await dbBatchResults(stmts);
       // Linked calendars follow once the database has committed.
-      for (const id of removed) await deleteSyncedEvent(id);
+      await removeGoogleCopies(removedCopies);
       for (const { r } of merged) {
         const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", r.id)) as any;
         if (updatedEvent) void updateSyncedEvent(updatedEvent);
@@ -9492,6 +9534,7 @@ Rules:
       }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, updated: merged.length });
+      });
     } catch (error) {
       console.error("Error updating event:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -9504,6 +9547,7 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
+      await withCalendarLock(auth.teamId, async () => {
       const existing: any = (await dbGet("SELECT id, team_id, series_id, date FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
       const scope = String(req.query.scope || "");
@@ -9513,10 +9557,16 @@ Rules:
           ...(scope === "following" ? [existing.series_id, auth.teamId, existing.date] : [existing.series_id, auth.teamId]),
         )) as any[]).map((r) => Number(r.id))
         : [Number(existing.id)];
-      await dbBatchResults([{ sql: `DELETE FROM events WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`, args: [auth.teamId, ...ids] }]);
-      for (const id of ids) await deleteSyncedEvent(id);
+      const copies = await googleCopiesOf(ids);
+      const inIds = ids.map(() => "?").join(",");
+      await dbBatchResults([
+        { sql: `DELETE FROM event_calendar_sync WHERE event_id IN (${inIds})`, args: ids },
+        { sql: `DELETE FROM events WHERE team_id = ? AND id IN (${inIds})`, args: [auth.teamId, ...ids] },
+      ]);
+      await removeGoogleCopies(copies);
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, deleted: ids.length });
+      });
     } catch (error) {
       console.error("Error deleting event:", error);
       res.status(500).json({ error: "Internal server error" });

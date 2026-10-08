@@ -137,7 +137,7 @@ export function SettingsPage(props: any) {
               >
                 <Sparkles className="relative size-4 shrink-0" />
                 <span className="relative whitespace-nowrap font-medium">{k('whatsNew')}</span>
-                <span className="relative ml-auto text-xs tabular-nums text-muted-foreground max-lg:ml-0">v{releases[0]?.version}</span>
+                {releases[0] && <span className="relative ml-auto text-xs tabular-nums text-muted-foreground max-lg:ml-0">v{releases[0].version}</span>}
                 {unseen && <span className="relative size-2 shrink-0 rounded-full bg-accent" aria-label={k('whatsNewUnseen')} />}
               </button>
             </li>

@@ -118,6 +118,29 @@ describe("repeating events", () => {
   });
 });
 
+describe("Google copies", () => {
+  it("deleting events removes their calendar-sync rows in the same write", async () => {
+    const r = await t.post("/api/events", { title: "Synced", date: "2099-10-01", repeat: { freq: "daily", interval: 1, count: 3 } }, admin);
+    const all = await series(r.body.id);
+    for (const e of all) await t.db.execute({ sql: "INSERT INTO event_calendar_sync (event_id, member_id, google_event_id) VALUES (?, ?, ?)", args: [e.id, adminId, `g-${e.id}`] });
+    expect((await del(`/api/events/${all[1].id}?scope=following`, admin)).body.deleted).toBe(2);
+    const left = (await rows("SELECT event_id FROM event_calendar_sync WHERE google_event_id LIKE 'g-%'")).map((x) => Number(x.event_id));
+    expect(left).toEqual([Number(all[0].id)]);
+  });
+
+  it("overlapping repeat-rule edits leave exactly one run", async () => {
+    const r = await t.post("/api/events", { title: "Race", date: "2099-11-01", repeat: { freq: "weekly", interval: 1, count: 4 } }, admin);
+    const head = r.body.id;
+    const [a, b] = await Promise.all([
+      t.patch(`/api/events/${head}`, { repeat: { freq: "daily", interval: 1, count: 3 }, scope: "following" }, admin),
+      t.patch(`/api/events/${head}`, { repeat: { freq: "monthly", interval: 1, count: 2 }, scope: "following" }, admin),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const dates = (await series(head)).map((e) => e.date);
+    expect([["2099-11-01", "2099-11-02", "2099-11-03"], ["2099-11-01", "2099-12-01"]]).toContainEqual(dates);
+  });
+});
+
 describe("reminders", () => {
   it("sends one notification per member when the lead time arrives, once", async () => {
     // Starts 20 minutes from now in the team's timezone, 30-minute reminder: due now.

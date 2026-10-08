@@ -10,7 +10,7 @@ import {
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { apiFetch } from '../../../services/api';
 import { notify, confirmDialog } from '../../../components/dialog';
-import { changelogEntryFrom, type ChangelogEntry } from '../../../utils/changelog';
+import { changelogEntryFrom, compareVersions, type ChangelogEntry } from '../../../utils/changelog';
 import { setChangelog } from '../../../utils/changelogStore';
 import { EmptyState } from '../../ui/page';
 
@@ -35,7 +35,12 @@ export function ChangelogTab() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const publish = (list: Row[]) => { setRows(list); setChangelog(list); };
+  // Newest version first, here and in What's new.
+  const publish = (list: Row[]) => {
+    const sorted = [...list].sort((a, b) => compareVersions(a.version, b.version));
+    setRows(sorted);
+    setChangelog(sorted);
+  };
   const load = async () => {
     try {
       const res = await apiFetch('/api/owner/changelog');

@@ -59,4 +59,12 @@ describe("changelog", () => {
     expect((await del(`/api/owner/changelog/${id}`, owner)).status).toBe(200);
     expect((await t.api("/api/changelog")).body[0].version).toBe(CHANGELOG[0].version);
   });
+
+  it("deleting every release sticks (seeding is a one-time flag, not an empty table)", async () => {
+    const list = (await t.api("/api/owner/changelog", { session: owner })).body.entries;
+    for (const e of list) expect((await del(`/api/owner/changelog/${e.id}`, owner)).status).toBe(200);
+    expect((await t.api("/api/changelog")).body).toEqual([]);
+    const flag = (await t.db.execute("SELECT value FROM settings WHERE key = 'changelog_seeded'")).rows[0] as any;
+    expect(flag?.value).toBe("1");
+  });
 });
