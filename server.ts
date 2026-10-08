@@ -8706,7 +8706,6 @@ Rules:
     // Claim the slot first: two completions racing can't both create one.
     const claim = (await dbRun("UPDATE tasks SET next_task_id = -1 WHERE id = ? AND next_task_id IS NULL", task.id)) as any;
     if (!Number(claim?.changes ?? claim?.rowsAffected ?? 0)) return null;
-    let nextId = 0;
     let due = "";
     let assignees: number[] = [];
     try {
@@ -8714,31 +8713,34 @@ Rules:
       const today = todayIn(tz);
       const from = /^\d{4}-\d{2}-\d{2}$/.test(String(task.due_date || "")) ? String(task.due_date) : today;
       due = catchUpOccurrence(from, rule, today);
-      assignees = await getTaskAssigneeIds(Number(task.id));
-      const info = (await dbRun(
-        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)",
-        teamId, task.title, task.description, assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence
-      )) as any;
-      nextId = Number(info.lastInsertRowid);
-      await setTaskAssignees(nextId, assignees, teamId);
-      await dbRun("UPDATE tasks SET next_task_id = ? WHERE id = ?", nextId, task.id);
-    } catch (e) {
-      // Undo the half-made copy and release the claim, so the next completion
-      // can try again instead of the series silently stopping. If the copy
-      // can't be removed, link it instead: releasing the claim then would let
-      // a second completion make a duplicate.
-      let removed = !nextId;
-      if (nextId) {
-        try {
-          await dbRun("DELETE FROM task_assignees WHERE task_id = ?", nextId);
-          await dbRun("DELETE FROM tasks WHERE id = ?", nextId);
-          removed = true;
-        } catch { /* keep it and link it below */ }
+      // Current team members only (someone may have left since).
+      const current = await getTaskAssigneeIds(Number(task.id));
+      for (const mid of current) {
+        const m = (await dbGet("SELECT team_id FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", mid)) as any;
+        if (m && m.team_id === teamId) assignees.push(mid);
       }
-      if (removed) await dbRun("UPDATE tasks SET next_task_id = NULL WHERE id = ? AND next_task_id = -1", task.id).catch(() => {});
-      else await dbRun("UPDATE tasks SET next_task_id = ? WHERE id = ? AND next_task_id = -1", nextId, task.id).catch(() => {});
+      // The copy, its link and its assignees are one transaction: either the
+      // whole next task exists, or nothing does. We hold the claim (-1), so
+      // the link step always applies to us.
+      await dbBatch([
+        {
+          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)",
+          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence],
+        },
+        { sql: "UPDATE tasks SET next_task_id = last_insert_rowid() WHERE id = ? AND next_task_id = -1", args: [task.id] },
+        ...assignees.map((mid) => ({
+          sql: "INSERT OR IGNORE INTO task_assignees (task_id, member_id) SELECT next_task_id, ? FROM tasks WHERE id = ?",
+          args: [mid, task.id],
+        })),
+      ]);
+    } catch (e) {
+      // Nothing was written: release the claim so the next completion can
+      // try again instead of the series silently stopping.
+      await dbRun("UPDATE tasks SET next_task_id = NULL WHERE id = ? AND next_task_id = -1", task.id).catch((err) => console.error("could not release repeat claim:", err));
       throw e;
     }
+    const nextId = Number(((await dbGet("SELECT next_task_id FROM tasks WHERE id = ?", task.id)) as any)?.next_task_id) || 0;
+    if (nextId <= 0) return null;
     for (const mid of assignees) {
       if (mid !== actorId) createNotification(mid, `Next up (repeats): ${task.title}, due ${due}`, "task", { task_id: nextId });
     }
@@ -8852,7 +8854,7 @@ Rules:
               .map((p: any) => {
                 const an = String(p.assignee_name || "").toLowerCase().trim();
                 // The verbatim excerpt this task came from, when it really is in the text.
-                const src = typeof p.source === "string" ? p.source.trim().slice(0, 500) : "";
+                const src = typeof p.source === "string" ? p.source.trim() : "";
                 return {
                   ...(src.length >= 3 && text.includes(src) ? { _source: src } : {}),
                   title: String(p.title).slice(0, 80),
@@ -8890,7 +8892,9 @@ Rules:
       const single = items.length === 1 ? text.replace(/\s+/g, " ") : null;
       items = items.map((raw: any) => {
         const { _source, ...it } = raw;
-        const source: string | null = _source ?? single;
+        // One task reads the whole text (nothing after a 500th character is lost);
+        // several read their own excerpt.
+        const source: string | null = single ?? _source ?? null;
         if (!source) return it;
         const q = parseQuickAdd(source, todayISO, names);
         const who = q.assignees[0] ? roster.find((m: any) => m.name === q.assignees[0]) : null;

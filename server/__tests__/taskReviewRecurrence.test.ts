@@ -48,7 +48,9 @@ describe("priority + repeat", () => {
     expect(first.review_status).toBe("pending");
     expect(first.next_task_id).toBeGreaterThan(0);
     const next = await task(first.next_task_id);
-    expect(next).toMatchObject({ title: "Weekly build log", status: "todo", due_date: "2099-01-10", due_time: "18:00" });
+    expect(next).toMatchObject({ title: "Weekly build log", status: "todo", due_date: "2099-01-10", due_time: "18:00", assigned_to: memberId });
+    const who = (await t.db.execute({ sql: "SELECT member_id FROM task_assignees WHERE task_id = ?", args: [first.next_task_id] })).rows.map((r: any) => Number(r.member_id));
+    expect(who).toEqual([memberId]);
     // Completing again (re-proof) doesn't make a second copy.
     await t.post(`/api/tasks/${id}/complete`, { notes: "More proof" }, member);
     const n = (await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM tasks WHERE title = 'Weekly build log'", args: [] })).rows[0] as any;
