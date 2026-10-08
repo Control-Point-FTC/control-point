@@ -13,6 +13,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiJson } from '../../services/api';
 import { getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 import { bulkDelete } from '../../modern/ui/selection';
+import { notify } from '../dialog';
+import { splitDuplicates } from '../../utils/resourceUrl';
 
 export interface ResourceItem {
   id: number;
@@ -30,6 +32,8 @@ export interface ParsedItem {
   title: string;
   description: string;
   category: string;
+  /** Set by the server: 'saved' (already in the library) or 'repeat' (twice in the paste). */
+  duplicate?: 'saved' | 'repeat';
 }
 
 export const RESOURCE_CATEGORIES = [
@@ -85,6 +89,8 @@ export function useResourcesController() {
   const [parsing, setParsing] = useDraft<boolean>('res:parsing', false);
   const [parseError, setParseError] = useDraft<string | null>('res:parse-error', null);
   const [saveError, setSaveError] = useDraft<string | null>(SAVE_ERROR_KEY, null);
+  // Links the import left out because the library already has them.
+  const [skipped, setSkipped] = useDraft<ParsedItem[]>('res:skipped', []);
 
   const [deletingIds, setDeletingIds] = useState<Set<number>>(new Set());
 
@@ -135,7 +141,7 @@ export function useResourcesController() {
     const done = inEpoch(() => { if (latest()) setParsing(false); });
     setParseError(null);
     setSaveError(null);
-    const show = inEpoch((list: ParsedItem[] | null) => { if (latest()) setPreview(list); });
+    const show = inEpoch((list: ParsedItem[] | null, dups: ParsedItem[] = []) => { if (latest()) { setPreview(list); setSkipped(dups); } });
     // Errors go to whichever page is mounted, under the same guards.
     const fail = inEpoch((msg: string) => { if (latest()) setParseError(msg); });
     try {
@@ -148,12 +154,20 @@ export function useResourcesController() {
         fail('No links found in that text — try pasting messages that include URLs.');
         show(null);
       } else {
-        show(list.map((it) => ({
+        const rows = list.map((it) => ({
           url: it.url || '',
           title: it.title || domainOf(it.url || ''),
           description: it.description || '',
           category: RESOURCE_CATEGORIES.includes(it.category as any) ? it.category : 'Other',
-        })));
+        }));
+        // The server marks links the library already has; the loaded list
+        // catches any it couldn't (same page = same key: www, https, a
+        // trailing slash, tracking parameters, YouTube link forms).
+        const flagged = rows.filter((_, i) => list[i].duplicate);
+        const { fresh, duplicates } = splitDuplicates(rows.filter((_, i) => !list[i].duplicate), resources.map((r) => r.url));
+        const dups = [...flagged, ...duplicates];
+        if (!fresh.length) fail(`${dups.length === 1 ? 'That link is' : `All ${dups.length} links are`} already in your library.`);
+        show(fresh.length ? fresh : null, dups);
       }
     } catch (e: any) {
       // 422 = no links found; surface the server's message
@@ -176,6 +190,7 @@ export function useResourcesController() {
   const discardPreview = () => {
     if (getDraft(SAVING_KEY, false)) return;
     setPreview(null);
+    setSkipped([]);
     setSaveError(null);
   };
 
@@ -191,11 +206,11 @@ export function useResourcesController() {
     // Release only our own lock: after a sign-out / workspace switch a new
     // save may hold it. The same guard keeps the old box from being cleared.
     const unlock = inEpoch(() => setSaving(false));
-    const clear = inEpoch(() => { setPreview(null); setPasteText(''); });
+    const clear = inEpoch(() => { setPreview(null); setSkipped([]); setPasteText(''); });
     const fail = inEpoch((msg: string) => setSaveError(msg));
     setSaveError(null);
     try {
-      await apiJson('/api/resources', {
+      const res = await apiJson<{ count?: number; skipped?: { url: string }[] }>('/api/resources', {
         method: 'POST',
         body: JSON.stringify({
           items: rows.map((r) => ({
@@ -207,6 +222,9 @@ export function useResourcesController() {
         }),
       });
       clear();
+      // Someone saved the same link meanwhile: the server skipped it; say so.
+      const late = Array.isArray(res?.skipped) ? res.skipped.length : 0;
+      if (late) notify(`Saved ${res.count ?? 0}. ${late} ${late === 1 ? 'was' : 'were'} already in your library.`, 'info');
       // Refetch on every mounted Resources page (this one may have been left).
       window.dispatchEvent(new Event('resources-changed'));
     } catch (e: any) {
@@ -258,7 +276,7 @@ export function useResourcesController() {
   return {
     bulkDeleteResources,
     resources, loading, loadError, fetchResources, filter, setFilter, items, counts,
-    pasteText, setPasteText, parsing, parseError, preview, saving, saveError,
+    pasteText, setPasteText, parsing, parseError, preview, skipped, saving, saveError,
     handleParse, updatePreviewRow, removePreviewRow, discardPreview, handleSaveAll, deletingIds, handleDelete,
   };
 }

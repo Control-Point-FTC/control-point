@@ -59,6 +59,7 @@ import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { buildIcs } from "./server/ics.js";
+import { resourceKey } from "./src/utils/resourceUrl.js";
 import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } from "./src/utils/changelog.js";
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
@@ -7870,6 +7871,17 @@ async function startServer() {
 
   // Paste a blob of text (chat logs, notes) — Bruno AI extracts every link,
   // writes a title + description, and categorizes each one.
+  const resourceLocks = new Map<number, Promise<unknown>>();
+  /** Run `fn` after any save already running for this team. */
+  function withResourceLock<T>(teamId: number, fn: () => Promise<T>): Promise<T> {
+    const prev = resourceLocks.get(teamId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tail = run.catch(() => {});
+    resourceLocks.set(teamId, tail);
+    void tail.then(() => { if (resourceLocks.get(teamId) === tail) resourceLocks.delete(teamId); });
+    return run;
+  }
+
   app.post("/api/resources/parse", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -7907,7 +7919,19 @@ Rules:
           console.error("resources AI parse error:", e?.message);
         }
       }
-      res.json({ items, count: items.length });
+      // Mark what's already in the library (or repeated in the paste) so the
+      // preview can leave it out; the save checks again.
+      const existing = ((await dbAll("SELECT url FROM resources WHERE team_id = ?", auth.teamId)) as any[]).map((r) => String(r.url));
+      const savedKeys = new Set(existing.map(resourceKey));
+      const seen = new Set<string>();
+      items = items.map((it) => {
+        const k = resourceKey(it.url);
+        const duplicate = savedKeys.has(k) ? "saved" : seen.has(k) ? "repeat" : undefined;
+        seen.add(k);
+        return duplicate ? { ...it, duplicate } : it;
+      });
+      const fresh = items.filter((it) => !it.duplicate).length;
+      res.json({ items, count: items.length, fresh, duplicates: items.length - fresh });
     } catch (e: any) {
       console.error("resources parse error:", e?.message);
       res.status(500).json({ error: "Could not read those links" });
@@ -7918,23 +7942,33 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const items = Array.isArray(req.body?.items) ? req.body.items : [req.body];
-    const saved: any[] = [];
-    for (const it of items.slice(0, 50)) {
-      const url = String(it?.url || "").trim().slice(0, 2000);
-      if (!/^https?:\/\//i.test(url)) continue;
-      const title = String(it?.title || "").trim().slice(0, 200) || url;
-      const description = String(it?.description || "").trim().slice(0, 1000);
-      const category = (RESOURCE_CATEGORIES as readonly string[]).includes(it?.category) ? it.category : "Other";
-      const dup: any = await dbGet("SELECT id FROM resources WHERE team_id = ? AND url = ?", auth.teamId, url);
-      if (dup) continue;
-      const info = await dbRun(
-        "INSERT INTO resources (team_id, url, title, description, category, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-        auth.teamId, url, title, description, category, auth.memberId
-      );
-      saved.push({ id: info.lastInsertRowid, url, title, description, category });
-    }
-    if (saved.length) broadcastToTeam(auth.teamId, { type: "resources_changed" });
-    res.json({ ok: true, saved, count: saved.length });
+    // One save per team at a time: two imports of the same links at once
+    // must not both pass the duplicate check.
+    const result = await withResourceLock(auth.teamId, async () => {
+      const saved: any[] = [];
+      const skipped: { url: string; title: string }[] = [];
+      // Same page = same key (www, https, trailing slash, tracking params,
+      // YouTube link forms), against the library and earlier links in this save.
+      const keys = new Set(((await dbAll("SELECT url FROM resources WHERE team_id = ?", auth.teamId)) as any[]).map((r) => resourceKey(r.url)));
+      for (const it of items.slice(0, 50)) {
+        const url = String(it?.url || "").trim().slice(0, 2000);
+        if (!/^https?:\/\//i.test(url)) continue;
+        const title = String(it?.title || "").trim().slice(0, 200) || url;
+        const description = String(it?.description || "").trim().slice(0, 1000);
+        const category = (RESOURCE_CATEGORIES as readonly string[]).includes(it?.category) ? it.category : "Other";
+        const key = resourceKey(url);
+        if (keys.has(key)) { skipped.push({ url, title }); continue; }
+        keys.add(key);
+        const info = await dbRun(
+          "INSERT INTO resources (team_id, url, title, description, category, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+          auth.teamId, url, title, description, category, auth.memberId
+        );
+        saved.push({ id: info.lastInsertRowid, url, title, description, category });
+      }
+      return { saved, skipped };
+    });
+    if (result.saved.length) broadcastToTeam(auth.teamId, { type: "resources_changed" });
+    res.json({ ok: true, saved: result.saved, count: result.saved.length, skipped: result.skipped });
   });
 
   app.delete("/api/resources/:id", async (req, res) => {

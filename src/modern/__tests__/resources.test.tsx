@@ -64,6 +64,41 @@ describe('Modern Resources', () => {
     expect(screen.getByLabelText('Text with links')).toHaveValue('');
   });
 
+  it('leaves out links the library already has and lists them', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') return { items: [
+        { url: 'https://gm0.org', title: 'Game Manual 0', description: '', category: 'Community' },
+        // Flagged by the server.
+        { url: 'https://ftc-docs.firstinspires.org/', title: 'FTC Docs again', description: '', category: 'Other', duplicate: 'saved' },
+        // Same page as a saved link (no www, no slash, a tracking parameter): caught here.
+        { url: 'http://revrobotics.com/rev-41-1300?utm_source=discord', title: 'Core Hex', description: '', category: 'Other' },
+      ], count: 3 };
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Left out 2 already in your library: FTC Docs again, Core Hex/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save all 1' })).toBeInTheDocument();
+  });
+
+  it('says so when every link is already saved', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') return { items: [{ url: 'https://youtu.be/x', title: 'Reveal', description: '', category: 'Videos' }], count: 1 };
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That link is already in your library.');
+    expect(screen.queryByText(/Preview — edit before saving/)).not.toBeInTheDocument();
+  });
+
   it('shows the parse error from the server', async () => {
     api.apiJson.mockImplementation(async (url: string, init?: any) => {
       if (url === '/api/resources/parse') throw Object.assign(new Error('x'), { body: { error: 'No links found in that text.' } });

@@ -187,6 +187,11 @@ function Composer({ ctl }: { ctl: Ctl }) {
               ))}
             </ul>
           </fieldset>
+          {ctl.skipped.length > 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Left out {ctl.skipped.length} already in your library: {ctl.skipped.slice(0, 3).map((r) => r.title || r.url).join(', ')}{ctl.skipped.length > 3 ? ` and ${ctl.skipped.length - 3} more` : ''}.
+            </p>
+          )}
           {ctl.saveError && <p role="alert" className="mt-3 text-sm text-destructive">{ctl.saveError}</p>}
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={ctl.discardPreview} disabled={ctl.saving}>Discard</Button>
