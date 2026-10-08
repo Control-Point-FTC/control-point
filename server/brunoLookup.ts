@@ -170,13 +170,19 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     const w = wordsWhere(q.query, ["t.title", "COALESCE(t.description, '')"]);
     const args: any[] = [teamId, ...w.args];
     let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at,
-      (SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id) AS people
+      COALESCE((SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id),
+        (SELECT mm.name FROM members mm WHERE mm.id = t.assigned_to)) AS people
       FROM tasks t WHERE t.team_id = ?${w.sql}`;
     if (q.status === "open") sql += " AND t.status != 'done'";
     else if (["todo", "in-progress", "done"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
     if (q.person) {
-      sql += ` AND EXISTS (SELECT 1 FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id AND (LOWER(mm.name) = ? OR LOWER(mm.name) LIKE ? ESCAPE '\\'))`;
-      args.push(q.person.toLowerCase(), `${likeEsc(q.person.toLowerCase())} %`);
+      // Same rule as getTaskAssigneeIds: task_assignees rows, else the legacy
+      // assigned_to (set when someone completes an unassigned task).
+      const nameMatch = "(LOWER(mm.name) = ? OR LOWER(mm.name) LIKE ? ESCAPE '\\')";
+      sql += ` AND (EXISTS (SELECT 1 FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id AND ${nameMatch})
+        OR (NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id) AND EXISTS (SELECT 1 FROM members mm WHERE mm.id = t.assigned_to AND ${nameMatch})))`;
+      const p = q.person.toLowerCase();
+      args.push(p, `${likeEsc(p)} %`, p, `${likeEsc(p)} %`);
     }
     // Finished tasks are dated by when they were finished (team-local day);
     // everything else by its due date, or the day it was made.
@@ -214,7 +220,8 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     let sql = `SELECT id, recipient, subject, body, date, direction, parent_id FROM communications WHERE team_id = ?${w.sql}`;
     if (q.person) { sql += " AND LOWER(recipient) LIKE ? ESCAPE '\\'"; args.push(`%${likeEsc(q.person.toLowerCase())}%`); }
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
-    if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
+    // Entries can carry a time ("2026-10-06 14:30"): bound by the next day, exclusive.
+    if (q.to) { sql += " AND date < ?"; args.push(nextDay(q.to)); }
     sql += " ORDER BY date DESC, id DESC LIMIT 31";
     const c = capped(await db(sql, ...args), 30);
     more = c.more;
@@ -226,7 +233,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     const args: any[] = [teamId, ...w.args];
     let sql = `SELECT title, description, date, hours, location FROM outreach WHERE team_id = ?${w.sql}`;
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
-    if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
+    if (q.to) { sql += " AND date < ?"; args.push(nextDay(q.to)); }
     sql += " ORDER BY date DESC LIMIT 41";
     const c = capped(await db(sql, ...args), 40);
     more = c.more;
@@ -238,7 +245,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     const args: any[] = [teamId, ...w.args];
     let where = `FROM budget WHERE team_id = ?${w.sql}`;
     if (q.from) { where += " AND date >= ?"; args.push(q.from); }
-    if (q.to) { where += " AND date <= ?"; args.push(q.to); }
+    if (q.to) { where += " AND date < ?"; args.push(nextDay(q.to)); }
     const c = capped(await db(`SELECT type, amount, category, description, date ${where} ORDER BY date DESC LIMIT 61`, ...args), 60);
     more = c.more;
     for (const r of c.rows) {

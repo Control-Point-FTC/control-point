@@ -74,10 +74,35 @@ const isInstruction = (piece: string) =>
   STARTS_WITH_INSTRUCTION.test(piece) || (HAS_INSTRUCTION.test(piece) && piece.split(/\s+/).length <= 6);
 const ASSIGN_PHRASE = /(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:)/i;
 
+/** Split at sentence ends (or, for titles, commas/semicolons/" - "), never
+ *  inside parentheses: "(Assigned to Arnav; bring the battery)" stays whole. */
+function splitOutsideParens(text: string, sentences: boolean): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0) {
+      if (sentences) {
+        if (ch === '\n') { out.push(cur); cur = ''; continue; }
+        if (/[.!?;]/.test(ch) && /\s/.test(text[i + 1] || '')) { out.push(cur + ch); cur = ''; continue; }
+      } else {
+        if (ch === ',' || ch === ';') { out.push(cur); cur = ''; continue; }
+        if (ch === '-' && text[i - 1] === ' ' && text[i + 1] === ' ') { out.push(cur); cur = ''; continue; }
+      }
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 /** Split title text on commas/semicolons and description text into sentences;
  *  names after "assign to Ada" stay with it ("assign to Ada, Grace and Lin"). */
 function pieces(text: string, sentences: boolean, roster: string[]): string[] {
-  const raw = text.split(sentences ? /(?<=[.!?;])\s+|\n+/ : /\s*[,;]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  const raw = splitOutsideParens(text, sentences).map((p) => p.trim()).filter(Boolean);
   const out: string[] = [];
   for (const p of raw) {
     const prev = out[out.length - 1];
@@ -110,8 +135,13 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
         // sentence around it: "Test autonomous paths (Assigned to Arnav)."
         const piece = whole.replace(/\(([^()]*)\)/g, (m, inner: string) => {
           if (!STARTS_WITH_INSTRUCTION.test(inner.trim())) return m;
-          recovered.push(parseQuickAdd(inner.trim(), today, roster));
-          return '';
+          const q = parseQuickAdd(inner.trim(), today, roster);
+          // "(Assigned to Zed)" with no Zed on the team stays visible rather than vanishing.
+          if (ASSIGN_PHRASE.test(inner) && !q.assignees.length) return m;
+          recovered.push(q);
+          // Whatever wasn't an instruction stays: "(Assigned to Arnav; bring the spare battery)".
+          const rest = q.title.replace(/^[\s;,.:–-]+|[\s;,.:–-]+$/g, '');
+          return rest.length >= 3 ? `(${rest})` : '';
         }).replace(/\s+([.,;!?])/g, '$1').trim();
         if (!piece) continue;
         if (!isInstruction(piece)) { keep.push(piece); continue; }
@@ -173,9 +203,13 @@ export function recoverEventTime<E extends { title: string; notes?: string; time
     const r = text.match(TIME_RANGE_RE);
     if (r) {
       const endAp = r[6];
-      const start = hhmm(r[1], r[2], r[3] || endAp);
+      let start = hhmm(r[1], r[2], r[3] || endAp);
       const end = hhmm(r[4], r[5], endAp);
+      // "9 to 5pm" crosses noon: the start is morning, not 21:00.
+      if (!r[3] && start && end && start >= end) start = hhmm(r[1], r[2], 'am');
       if (start && end && end > start) return { ...e, time: start, end, [key]: tidy(text.replace(r[0], ' '), e[key]) };
+      // A range we can't read is left alone: its end time is not the start.
+      continue;
     }
     const r24 = text.match(TIME_RANGE_24_RE);
     if (r24) {

@@ -16,21 +16,31 @@ export interface ProposalContext { today: string; roster: string[]; loadedAt?: n
 const MAX_AGE_MS = 60_000;
 let ctx: ProposalContext | null = null;
 let loading: Promise<void> | null = null;
+/** Bumped on every reset (workspace switch): a request started before it
+ *  must not install the old workspace's roster and date afterwards. */
+let generation = 0;
 const listeners = new Set<() => void>();
 
+const install = (c: ProposalContext | null) => { ctx = c ? { ...c, loadedAt: c.loadedAt ?? Date.now() } : null; listeners.forEach((l) => l()); };
 export const getProposalContext = () => ctx;
-/** Test hook. */
-export function setProposalContext(c: ProposalContext | null) { ctx = c ? { ...c, loadedAt: c.loadedAt ?? Date.now() } : null; listeners.forEach((l) => l()); }
+/** Reset (workspace switch) or set directly (tests). Drops any request in flight. */
+export function setProposalContext(c: ProposalContext | null) {
+  generation++;
+  loading = null;
+  install(c);
+}
 
 export function loadProposalContext(): Promise<void> {
   if (loading) return loading;
   if (ctx && Date.now() - (ctx.loadedAt || 0) < MAX_AGE_MS) return Promise.resolve();
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
+  const gen = generation;
   const run: Promise<void> = (async () => {
     try {
       const res = await apiFetch(`/api/ai/proposal-context${tz ? `?tz=${encodeURIComponent(tz)}` : ''}`);
       const body = res.ok ? await res.json() : null;
-      if (body && typeof body.today === 'string' && Array.isArray(body.roster)) setProposalContext({ today: body.today, roster: body.roster.map(String) });
+      if (gen !== generation) return;
+      if (body && typeof body.today === 'string' && Array.isArray(body.roster)) install({ today: body.today, roster: body.roster.map(String) });
     } catch { /* offline: cards show the explicit fields, which is also what saves */ }
     if (loading === run) loading = null;
   })();

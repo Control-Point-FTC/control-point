@@ -101,4 +101,19 @@ describe('Greptile round 2 on #119', () => {
     const t = normalizeBrunoTask({ title: 'Autonomous', description: 'Task to test autonomous paths on the practice field (Assigned to Arnav).' }, today, roster);
     expect(t).toMatchObject({ assignees: ['Arnav Patel'], description: 'Task to test autonomous paths on the practice field.' });
   });
+
+  it('parenthetical notes survive; an unknown assignee stays visible', () => {
+    const t = normalizeBrunoTask({ title: 'Autonomous', description: 'Test autonomous paths on the field (Assigned to Arnav; bring the spare battery).' }, today, roster);
+    expect(t.assignees).toEqual(['Arnav Patel']);
+    expect(t.description).toMatch(/\(bring the spare battery\)/i);
+    const u = normalizeBrunoTask({ title: 'Autonomous', description: 'Test autonomous paths on the field (Assigned to Zed).' }, today, roster);
+    expect(u).toMatchObject({ assignees: [], description: 'Test autonomous paths on the field (Assigned to Zed).' });
+  });
+
+  it('ranges that cross noon start in the morning; an unreadable range is left alone', () => {
+    expect(recoverEventTime({ title: 'Build day', notes: 'From 9 to 5pm', date: '2026-10-10' })).toMatchObject({ time: '09:00', end: '17:00' });
+    expect(recoverEventTime({ title: 'Build day', notes: 'From 11 to 1pm', date: '2026-10-10' })).toMatchObject({ time: '11:00', end: '13:00' });
+    const odd: any = { title: 'Lock-in', notes: 'From 10pm to 2am', date: '2026-10-10' };
+    expect(recoverEventTime(odd).time).toBeFalsy();
+  });
 });
