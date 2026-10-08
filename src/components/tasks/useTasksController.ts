@@ -9,6 +9,7 @@ import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
+import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
 
 export interface TaskForm {
   team_id: any;
@@ -19,7 +20,38 @@ export interface TaskForm {
   /** Optional HH:MM; empty = end of the due date. */
   due_time: string;
   status: string;
+  /** '' | low | medium | high | urgent */
+  priority?: string;
+  /** '' | daily | weekly | biweekly | monthly */
+  repeat?: string;
 }
+
+/** Form repeat choice <-> stored rule. */
+export const REPEAT_OPTIONS = [
+  { value: '', label: "Doesn't repeat" },
+  { value: 'daily', label: 'Every day' },
+  { value: 'weekly', label: 'Every week' },
+  { value: 'biweekly', label: 'Every 2 weeks' },
+  { value: 'monthly', label: 'Every month' },
+];
+export function repeatToRule(v: string | undefined): Recurrence | null {
+  return v === 'daily' ? { freq: 'daily', interval: 1 } : v === 'weekly' ? { freq: 'weekly', interval: 1 }
+    : v === 'biweekly' ? { freq: 'weekly', interval: 2 } : v === 'monthly' ? { freq: 'monthly', interval: 1 } : null;
+}
+export function ruleToRepeat(v: unknown): string {
+  const r = readRecurrence(v);
+  if (!r) return '';
+  if (r.freq === 'daily') return 'daily';
+  if (r.freq === 'monthly') return 'monthly';
+  return r.interval === 2 ? 'biweekly' : 'weekly';
+}
+export const PRIORITY_META: Record<string, { label: string; tone: string }> = {
+  urgent: { label: 'Urgent', tone: 'border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-300' },
+  high: { label: 'High', tone: 'border-orange-500/40 bg-orange-500/15 text-orange-600 dark:text-orange-300' },
+  medium: { label: 'Medium', tone: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300' },
+  low: { label: 'Low', tone: 'border-border text-muted-foreground' },
+};
+const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } };
 
 export function defaultTeamId(teams: any[], currentUser: any): any {
   const tid = currentUser?.team_id;
@@ -37,7 +69,7 @@ export const TASK_COLUMNS = [
   { id: 'done', label: 'Done' },
 ] as const;
 
-const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo' };
+const EMPTY_FORM: TaskForm = { team_id: '', title: '', description: '', assignee_ids: [], due_date: '', due_time: '', status: 'todo', priority: '', repeat: '' };
 const EMPTY_LIST: any[] = [];
 
 /** Completed-per-day for the last 7 days. */
@@ -156,6 +188,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       due_date: task.due_date || '',
       due_time: task.due_time || '',
       status: task.status || 'todo',
+      priority: task.priority || '',
+      repeat: ruleToRepeat(task.recurrence),
     });
     setIsBoardTask(!!task.is_board);
     setShowAddTask(true);
@@ -186,6 +220,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
             due_date: newTask.due_date || null,
             due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
             is_board: isBoardTask ? 1 : 0,
+            priority: newTask.priority || null,
+            recurrence: repeatToRule(newTask.repeat),
           }),
         });
         if (res.ok) {
@@ -199,7 +235,11 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       const res = await apiFetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newTask, is_board: isBoardTask ? 1 : 0 }),
+        body: JSON.stringify({
+          ...newTask, repeat: undefined, is_board: isBoardTask ? 1 : 0,
+          due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
+          priority: newTask.priority || null, recurrence: repeatToRule(newTask.repeat),
+        }),
       });
       if (res.ok) {
         if (stillCurrent()) closeTaskModal();
@@ -222,7 +262,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       const res = await apiFetch('/api/tasks/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, tz: browserTz() }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Could not read tasks');
@@ -291,9 +331,23 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       title: t.title || prev.title,
       description: t.description || prev.description,
       due_date: t.due_date || prev.due_date,
+      // Time, priority and repeat land in their fields (V3.5 quick-add fix).
+      due_time: t.due_time || (t.due_date ? '' : prev.due_time),
+      priority: t.priority || prev.priority || '',
+      repeat: t.recurrence ? ruleToRepeat(t.recurrence) : prev.repeat || '',
       status: ['todo', 'in-progress', 'done'].includes(t.status) ? t.status : prev.status,
-      assignee_ids: t.assigned_to ? [t.assigned_to] : prev.assignee_ids,
+      assignee_ids: Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : t.assigned_to ? [t.assigned_to] : prev.assignee_ids,
     }));
+  };
+
+  /** Review a finished task: approve it, or send it back with a note. */
+  const reviewTask = async (id: number, action: 'approve' | 'send_back', note = '') => {
+    const res = await apiFetch(`/api/tasks/${id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, note }) }).catch(() => null);
+    const d = res ? await res.json().catch(() => ({})) : {};
+    if (!res?.ok) { notify(d.error || 'Could not save the review — try again.', 'error'); return false; }
+    if (d.task) setTasks((ts: any[]) => ts.map((t: any) => (t.id === id ? { ...t, ...d.task, assignee_ids: d.task.assignee_ids ?? t.assignee_ids } : t)));
+    notify(action === 'approve' ? 'Approved.' : 'Sent back to the assignees.', 'success');
+    return true;
   };
 
   const handleAiTaskParse = async () => {
@@ -306,7 +360,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       const res = await apiFetch('/api/tasks/parse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, tz: browserTz() }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || 'Could not read tasks');
@@ -420,6 +474,15 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       return { ...t, assignee_ids: next, assigned_to: next[0] ?? null };
     }));
   };
+  /** Approve many finished tasks at once (Completed view). */
+  const bulkApprove = async (ids: number[]) => {
+    const ok = await runBulk(ids, async (id) => {
+      const res = await apiFetch(`/api/tasks/${id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'approve' }) }).catch(() => null);
+      return !!res?.ok;
+    }, { verb: 'Approved', noun: 'task' });
+    const done = new Set(ok.map(Number));
+    setTasks((ts: any[]) => ts.map((t: any) => (done.has(t.id) ? { ...t, review_status: 'approved' } : t)));
+  };
   const bulkDeleteTasks = async (ids: number[]) => {
     const ok = await bulkDelete(ids, async (id) => {
       const res = await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => null);
@@ -454,7 +517,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     aiTaskOpen, setAiTaskOpen, aiTaskText, setAiTaskText, aiTaskBusy, aiTaskNote, setAiTaskNote, aiTaskProposals, setAiTaskProposals,
     resetAiTask, applyAiTaskToForm, handleAiTaskParse,
     // mutations
-    updateStatus, handleDeleteTask, bulkSetStatus, bulkAssign, bulkDeleteTasks,
+    updateStatus, handleDeleteTask, bulkSetStatus, bulkAssign, bulkDeleteTasks, bulkApprove, reviewTask,
     // analytics
     completionTrends, memberCapacity, avgCompletionTime,
   };

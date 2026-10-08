@@ -9,7 +9,7 @@ import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
-  UserPlus,
+  UserPlus, CheckCheck, CheckCircle2, Repeat,
 } from 'lucide-react';
 import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
@@ -25,16 +25,26 @@ import { useTasksController, taskAssigneeIds, TASK_COLUMNS, completionTrendsOf, 
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { AnimatedValue } from '../../AnimatedValue';
 import { AvatarStack } from './AssigneePicker';
-import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue } from './TaskSheets';
+import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, ReviewBadge } from './TaskSheets';
+import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
+import { dueMoment } from '../../../utils/countdown';
+import { Countdown } from '../../ui/Countdown';
 import { BulkImportDialog } from './TaskDialogs';
 
-type View = 'board' | 'list' | 'insights';
+type View = 'board' | 'list' | 'completed' | 'insights';
+type ReviewFilter = 'all' | 'pending' | 'approved';
 
 const NO_TASKS: any[] = [];
 const LIST_RANK: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2 };
 /** The list view's order: in progress, then to do, then done; soonest due first. */
 function listOrder(tasks: any[]) {
   return [...tasks].sort((a, b) => (LIST_RANK[a.status] - LIST_RANK[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
+}
+/** Completed tasks, newest first. */
+function completedOrder(tasks: any[], filter: ReviewFilter) {
+  return tasks
+    .filter((t) => t.status === 'done' && (filter === 'all' || (filter === 'pending' ? t.review_status !== 'approved' : t.review_status === 'approved')))
+    .sort((a, b) => String(b.completed_at || '').localeCompare(String(a.completed_at || '')));
 }
 /** The board's reading order: column by column, cards top to bottom. */
 function boardOrder(tasks: any[]) {
@@ -113,7 +123,10 @@ export function TasksPage(props: any) {
   const overdue = open.filter(isOverdue);
   // Multi-select works on what's shown (search + filters), for task managers.
   // Rows in the order they're on screen, so shift-click ranges match what you see.
-  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(visible) : view === 'board' ? boardOrder(visible) : NO_TASKS), [view, visible]);
+  const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('pending');
+  const completed = useMemo(() => completedOrder(visible, reviewFilter), [visible, reviewFilter]);
+  const awaitingReview = visible.filter((t: any) => t.status === 'done' && t.review_status === 'pending').length;
+  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(visible) : view === 'board' ? boardOrder(visible) : view === 'completed' ? completed : NO_TASKS), [view, visible, completed]);
   const sel = useSelection(ctl.canManageTasks ? shownInOrder : NO_TASKS, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
@@ -169,6 +182,12 @@ export function TasksPage(props: any) {
           <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as View)} aria-label="View" className="ml-auto">
             <ToggleGroupItem value="board" aria-label="Board"><KanbanSquare /> <span className="hidden sm:inline">Board</span></ToggleGroupItem>
             <ToggleGroupItem value="list" aria-label="List"><List /> <span className="hidden sm:inline">List</span></ToggleGroupItem>
+            {ctl.canManageTasks && (
+              <ToggleGroupItem value="completed" aria-label={`Completed${awaitingReview ? `, ${awaitingReview} awaiting review` : ''}`}>
+                <CheckCheck /> <span className="hidden sm:inline">Completed</span>
+                {awaitingReview > 0 && <Badge variant="soft" className="ml-0.5 px-1.5">{awaitingReview}</Badge>}
+              </ToggleGroupItem>
+            )}
             <ToggleGroupItem value="insights" aria-label="Insights"><LineChartIcon /> <span className="hidden sm:inline">Insights</span></ToggleGroupItem>
           </ToggleGroup>
         </div>
@@ -181,6 +200,9 @@ export function TasksPage(props: any) {
         visible.length === 0
           ? <EmptyState icon={ListChecks} title="No tasks match" description="Try clearing the search or filters." />
           : <ListView tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} sel={ctl.canManageTasks ? sel : null} />
+      )}
+      {view === 'completed' && ctl.canManageTasks && (
+        <CompletedView tasks={completed} filter={reviewFilter} onFilter={setReviewFilter} members={members} onOpen={setViewTaskId} sel={sel} />
       )}
       {view === 'insights' && (
         <Insights
@@ -225,6 +247,7 @@ export function TasksPage(props: any) {
               </DropdownMenu>
             ),
           },
+          { label: 'Approve', icon: <CheckCircle2 />, show: view === 'completed', run: (ids) => ctl.bulkApprove(ids.map(Number)) },
           { label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteTasks(ids.map(Number)) },
         ]}
       />
@@ -239,15 +262,112 @@ export function TasksPage(props: any) {
 // Board
 // ---------------------------------------------------------------------------
 
+const WEEK_MS = 7 * 86400000;
+/** Due date, with a live countdown (ticks every second) for open tasks due within a week or overdue. */
 function DueChip({ task }: { task: any }) {
   if (!task.due_date) return null;
   const overdue = isOverdue(task);
+  const at = dueMoment(task.due_date, task.due_time);
+  const live = at && task.status !== 'done' && at.getTime() - Date.now() < WEEK_MS;
   return (
-    <span className={cn('inline-flex items-center gap-1 text-xs', overdue ? 'text-destructive' : 'text-muted-foreground')}>
+    <span className={cn('inline-flex flex-wrap items-center gap-1 text-xs', overdue ? 'text-destructive' : 'text-muted-foreground')}>
       <CalendarDays className="size-3" />
-      {format(new Date(String(task.due_date).slice(0, 10) + 'T12:00:00'), 'MMM d')}
+      {format(new Date(String(task.due_date).slice(0, 10) + 'T12:00:00'), 'MMM d')}{task.due_time && at ? `, ${format(at, 'h:mm a')}` : ''}
+      {live && <Countdown to={at!} className="text-[11px]" />}
     </span>
   );
+}
+
+/** Small markers on a card: priority, repeat, review. */
+function TaskMarks({ task }: { task: any }) {
+  const rule = readRecurrence(task.recurrence);
+  return (
+    <>
+      <PriorityBadge value={task.priority} />
+      {rule && <span className="inline-flex items-center text-muted-foreground" title={recurrenceLabel(rule)}><Repeat className="size-3.5" /><span className="sr-only">{recurrenceLabel(rule)}</span></span>}
+      <ReviewBadge task={task} />
+    </>
+  );
+}
+
+/** Done tasks, newest first, for managers to review (V3.5). */
+function CompletedView({ tasks, filter, onFilter, members, onOpen, sel }: {
+  tasks: any[]; filter: ReviewFilter; onFilter: (f: ReviewFilter) => void; members: any[]; onOpen: (id: number) => void; sel: Selection;
+}) {
+  const nameOf = (id: any) => members.find((m: any) => m.id === id)?.name;
+  return (
+    <>
+      <ToggleGroup variant="chips" type="single" aria-label="Review status" value={filter} onValueChange={(v) => { if (v) onFilter(v as ReviewFilter); }} className="mb-4">
+        <ToggleGroupItem value="pending">Awaiting review</ToggleGroupItem>
+        <ToggleGroupItem value="approved">Approved</ToggleGroupItem>
+        <ToggleGroupItem value="all">All completed</ToggleGroupItem>
+      </ToggleGroup>
+      {!tasks.length ? (
+        <EmptyState icon={CheckCheck} title={filter === 'pending' ? 'Nothing waiting for review' : 'No completed tasks yet'} description={filter === 'pending' ? 'Finished tasks land here until a manager approves them.' : 'Tasks show up here once they are marked done.'} />
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-10"><SelectAllCheckbox sel={sel} label="Select all completed tasks shown" /></TableHead>
+                <TableHead>Task</TableHead>
+                <TableHead className="hidden w-40 sm:table-cell">Completed by</TableHead>
+                <TableHead className="hidden w-36 sm:table-cell">Completed</TableHead>
+                <TableHead className="w-44">Review</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tasks.map((t) => (
+                <TableRow key={t.id} data-cm-type="task-card" data-cm-id={t.id} data-state={sel.has(t.id) ? 'selected' : undefined} className="cursor-pointer" onClick={() => onOpen(t.id)}>
+                  <TableCell className="w-10"><RowCheckbox sel={sel} id={t.id} label={`Select ${t.title}`} /></TableCell>
+                  <TableCell>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(t.id); }} className="text-left font-medium outline-none focus-visible:underline">{t.title}</button>
+                    {t.completion_notes && <span className="mt-0.5 block line-clamp-1 text-xs text-muted-foreground">{t.completion_notes}</span>}
+                  </TableCell>
+                  <TableCell className="hidden text-muted-foreground sm:table-cell">{nameOf(t.completed_by) || '—'}</TableCell>
+                  <TableCell className="hidden text-muted-foreground sm:table-cell">{t.completed_at ? format(new Date(t.completed_at), 'MMM d, h:mm a') : '—'}</TableCell>
+                  <TableCell><ReviewBadge task={t} />{!t.review_status && <span className="text-xs text-muted-foreground">Not reviewed</span>}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Board keyboard: arrows move between cards, Shift+Left/Right moves the card. */
+function onCardKey(e: React.KeyboardEvent<HTMLButtonElement>, task: any, ctl: ReturnType<typeof useTasksController>, sel: Selection | null) {
+  const card = e.currentTarget;
+  const col = Number(card.dataset.col);
+  const row = Number(card.dataset.row);
+  const focusAt = (c: number, r: number) => {
+    const cards = Array.from(document.querySelectorAll<HTMLButtonElement>(`[data-task-card][data-col="${c}"]`));
+    if (!cards.length) return false;
+    cards[Math.max(0, Math.min(r, cards.length - 1))].focus();
+    return true;
+  };
+  if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    const next = TASK_COLUMNS[col + (e.key === 'ArrowLeft' ? -1 : 1)];
+    if (!next) return;
+    e.preventDefault();
+    void ctl.updateStatus(task.id, next.id);
+    // Follow the card to its new column once it has moved.
+    window.setTimeout(() => document.querySelector<HTMLButtonElement>(`[data-task-card][data-id="${task.id}"]`)?.focus(), 60);
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    focusAt(col, row + (e.key === 'ArrowDown' ? 1 : -1));
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const dir = e.key === 'ArrowLeft' ? -1 : 1;
+    for (let c = col + dir; c >= 0 && c < TASK_COLUMNS.length; c += dir) if (focusAt(c, row)) break;
+  } else if ((e.key === 'x' || e.key === 'X') && sel) {
+    e.preventDefault();
+    sel.toggle(task.id);
+  }
 }
 
 function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
@@ -263,6 +383,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
   const keepMoved = (t: any) => moved.has(t.id);
   return (
     <LayoutGroup>
+      <p className="mb-2 hidden text-xs text-muted-foreground md:block">Keyboard: arrow keys move between cards, Shift + Left/Right moves a card to the next column, X selects it.</p>
       <div className="-mx-4 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0">
         {TASK_COLUMNS.map((col) => {
           const items = tasks.filter((t) => t.status === col.id);
@@ -298,7 +419,7 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
               </header>
               <ul className="flex min-h-24 flex-col gap-2">
                 <AnimatePresence initial={false}>
-                  {inc.slice(col.id, items, keepMoved).map((t) => {
+                  {inc.slice(col.id, items, keepMoved).map((t, rowIdx) => {
                     const people = assigneesOf(t);
                     return (
                       <motion.li
@@ -324,6 +445,9 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
                           type="button"
                           draggable
                           data-cm-type="task-card" data-cm-id={t.id}
+                          data-task-card data-id={t.id} data-col={TASK_COLUMNS.findIndex((c) => c.id === col.id)} data-row={rowIdx}
+                          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight X"
+                          onKeyDown={(e) => onCardKey(e, t, ctl, sel)}
                           onDragStart={(e) => { setDragId(t.id); e.dataTransfer.effectAllowed = 'move'; }}
                           onDragEnd={() => { setDragId(null); setOverCol(null); }}
                           onClick={() => onOpen(t.id)}
@@ -337,8 +461,9 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
                           )}
                         >
                           <p className={cn('line-clamp-2 text-sm font-medium', t.status === 'done' && 'text-muted-foreground line-through')}>{t.title}</p>
-                          <div className="mt-2.5 flex items-center gap-2">
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
                             {t.is_board ? <Badge variant="soft"><Crown /> Board</Badge> : null}
+                            <TaskMarks task={t} />
                             <DueChip task={t} />
                             <span className="ml-auto"><AvatarStack members={people} /></span>
                           </div>
@@ -395,6 +520,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
                   {t.title}
                 </button>
                 {t.is_board ? <Badge variant="soft" className="ml-2"><Crown /> Board</Badge> : null}
+                <span className="ml-2 inline-flex flex-wrap items-center gap-1.5 align-middle"><TaskMarks task={t} /></span>
                 <span className="mt-0.5 flex items-center gap-2 sm:hidden"><DueChip task={t} /></span>
               </TableCell>
               <TableCell className="hidden sm:table-cell"><AvatarStack members={assigneesOf(t)} max={4} /></TableCell>
