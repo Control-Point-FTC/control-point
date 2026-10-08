@@ -6,7 +6,7 @@
 // timeouts, token budgets, warnings, move workspace, delete membership or the
 // whole account) lives in useOwnerUser. Note and limit inputs are drafted per
 // flag / user so they survive a mode switch; loads are latest-wins.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { deleteDraft, getDraft, useDraft } from '../../modern/drafts';
@@ -35,9 +35,10 @@ export function useOwnerConsole() {
   const [flagFilter, setFlagFilter] = useState<'open' | 'all'>('open');
   const [loading, setLoading] = useState(true);
   const [userSearch, setUserSearch] = useState('');
+  /** 'all', or a workspace id as a string. */
   const [teamFilter, setTeamFilter] = useState('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const seq = useRef({ users: 0, ai: 0, flags: 0 });
+  const seq = useRef({ users: 0, ai: 0, flags: 0, overview: 0, feedback: 0 });
   const flagFilterRef = useRef(flagFilter);
   flagFilterRef.current = flagFilter;
 
@@ -46,17 +47,24 @@ export function useOwnerConsole() {
     if (!quiet) setLoading(true);
     // The initial load takes part in latest-wins too: a refresh started while
     // it runs (e.g. opening AI Control) must not be overwritten by it.
-    const ids = { users: ++seq.current.users, ai: ++seq.current.ai, flags: ++seq.current.flags };
+    const ids = {
+      users: ++seq.current.users, ai: ++seq.current.ai, flags: ++seq.current.flags,
+      overview: ++seq.current.overview, feedback: ++seq.current.feedback,
+    };
+    // Each request lands on its own: one that fails (or answers non-OK) keeps
+    // what's on screen, and only the newest load of each value is applied.
+    const latest = (k: keyof typeof ids) => ids[k] === seq.current[k];
+    const load = <T,>(url: string, k: keyof typeof ids, ok: (v: any) => boolean, apply: (v: T) => void) =>
+      json(url).then((v) => { if (v != null && ok(v) && latest(k)) apply(v); }).catch(() => { /* keep what we have */ });
     try {
-      const [o, f, u, a, fl] = await Promise.all([
-        json('/api/owner/overview'), json('/api/owner/feedback'), json('/api/owner/users'), json(aiOverviewUrl()), json(`/api/owner/ai-flags?status=${flagFilterRef.current}`),
+      await Promise.all([
+        load('/api/owner/overview', 'overview', (v) => typeof v === 'object', setOverview),
+        load('/api/owner/feedback', 'feedback', Array.isArray, setFeedback),
+        load('/api/owner/users', 'users', Array.isArray, setUsers),
+        load(aiOverviewUrl(), 'ai', (v) => typeof v === 'object', setAiOverview),
+        load(`/api/owner/ai-flags?status=${flagFilterRef.current}`, 'flags', Array.isArray, setFlags),
       ]);
-      setOverview(o);
-      setFeedback(Array.isArray(f) ? f : []);
-      if (ids.users === seq.current.users) setUsers(Array.isArray(u) ? u : []);
-      if (ids.ai === seq.current.ai) setAiOverview(a);
-      if (ids.flags === seq.current.flags) setFlags(Array.isArray(fl) ? fl : []);
-    } catch { /* keep what we have */ } finally {
+    } finally {
       setLoading(false);
     }
   }, []);
@@ -95,8 +103,9 @@ export function useOwnerConsole() {
         notify('Resolved. The reporter has been notified.', 'success');
       } else setFeedback((fs) => fs.map((f) => (f.id === id ? { ...f, status } : f)));
       // Tab badge and overview counts come from the overview: refresh them too.
+      const req = ++seq.current.overview;
       const o = await json('/api/owner/overview').catch(() => null);
-      if (o) setOverview(o);
+      if (o && req === seq.current.overview) setOverview(o);
     } else notify('Could not update feedback', 'error');
   };
 
@@ -131,9 +140,17 @@ export function useOwnerConsole() {
 
   const totals = overview?.totals || {};
   const openFlagCount = aiOverview?.flags?.open || 0;
-  const teams = Array.from(new Set(users.map((u) => u.team_name).filter(Boolean))).sort() as string[];
+  // Workspaces are told apart by id (names aren't unique); a shared name gets its id.
+  const teams = useMemo(() => {
+    const byId = new Map<number, string>();
+    for (const u of users) if (u.team_id != null && u.team_name) byId.set(Number(u.team_id), String(u.team_name));
+    const list = Array.from(byId, ([id, name]) => ({ id, name }));
+    const dupes = new Set(list.filter((t, i) => list.findIndex((o) => o.name === t.name) !== i).map((t) => t.name));
+    return list.map((t) => ({ id: t.id, name: dupes.has(t.name) ? `${t.name} (#${t.id})` : t.name }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
+  }, [users]);
   const filteredUsers = users.filter((u) => {
-    if (teamFilter !== 'all' && u.team_name !== teamFilter) return false;
+    if (teamFilter !== 'all' && String(u.team_id) !== teamFilter) return false;
     if (userSearch) {
       const q = userSearch.toLowerCase();
       return (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);

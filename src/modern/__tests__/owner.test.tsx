@@ -19,8 +19,8 @@ const calls = (url: string | RegExp, method?: string) => api.apiFetch.mock.calls
 const body = (url: string, method: string) => JSON.parse(calls(url, method).at(-1)![1].body);
 
 const USERS = [
-  { id: 11, name: 'Ada', email: 'ada@x.test', team_name: 'Robo', account_type: 'student', flags_open: 1, warnings: 0, tokens_7d: 12000 },
-  { id: 12, name: 'Bo', email: 'bo@x.test', team_name: 'Gears', account_type: 'mentor', ai_disabled: 1 },
+  { id: 11, name: 'Ada', email: 'ada@x.test', team_id: 1, team_name: 'Robo', account_type: 'student', flags_open: 1, warnings: 0, tokens_7d: 12000 },
+  { id: 12, name: 'Bo', email: 'bo@x.test', team_id: 2, team_name: 'Gears', account_type: 'mentor', ai_disabled: 1 },
 ];
 const DB: Record<string, any> = {
   '/api/owner/overview': { totals: { teams: 2, users: 2, feedback: 1, new_feedback: 1 }, teams: [{ id: 1, name: 'Robo', access_code: 'ABC', number: 4215, member_count: 9, message_count: 120, task_count: 30, feedback_count: 1 }, { id: 2, name: 'Gears', access_code: 'XYZ', member_count: 4, message_count: 10, task_count: 2, feedback_count: 0 }] },
@@ -490,7 +490,7 @@ describe('Owner console — redesign', () => {
   it('users: status filter and sort', async () => {
     const users = [
       ...USERS,
-      { id: 13, name: 'Cy', email: 'cy@x.test', team_name: 'Robo', warnings: 2, msgs_7d: 3, tokens_7d: 90000, last_ai_use: '2026-10-07 12:00:00' },
+      { id: 13, name: 'Cy', email: 'cy@x.test', team_id: 1, team_name: 'Robo', warnings: 2, msgs_7d: 3, tokens_7d: 90000, last_ai_use: '2026-10-07 12:00:00' },
     ];
     withOverview(OV, { '/api/owner/users': users });
     setup();
@@ -563,5 +563,89 @@ describe('Owner console — redesign', () => {
     expect(body('/api/owner/teams/2', 'DELETE')).toEqual({ confirm: 'Gears' });
     await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Gears deleted.', 'success'));
     await waitFor(() => expect(calls('/api/owner/overview')).toHaveLength(1));
+  });
+
+  it('users: workspaces are told apart by id, even with the same name (or "all")', async () => {
+    const users = [
+      { id: 21, name: 'Ann', email: 'ann@x.test', team_id: 7, team_name: 'all' },
+      { id: 22, name: 'Ben', email: 'ben@x.test', team_id: 8, team_name: 'Twins' },
+      { id: 23, name: 'Cat', email: 'cat@x.test', team_id: 9, team_name: 'Twins' },
+    ];
+    const teams = [{ id: 7, name: 'all', member_count: 1 }, { id: 8, name: 'Twins', member_count: 1 }, { id: 9, name: 'Twins', member_count: 1 }];
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/owner/overview') return json({ ...DB['/api/owner/overview'], teams });
+      if (url === '/api/owner/users') return json(users);
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [] });
+      if (url.startsWith('/api/owner/ai-flags')) return json([]);
+      return json(DB[url] ?? null);
+    });
+    setup();
+    await screen.findByRole('cell', { name: 'all' });
+    // Equal member counts sort newest first: the second Twins (#9) is on top.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Users in Twins' })[0]);
+    expect(await screen.findByText(/cat@x.test/)).toBeInTheDocument();
+    expect(screen.queryByText(/ben@x.test/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Filter by team' }));
+    expect(screen.getByRole('option', { name: 'Twins (#8)' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'all' }));
+    expect(screen.getByText(/ann@x.test/)).toBeInTheDocument();
+    expect(screen.queryByText(/cat@x.test/)).not.toBeInTheDocument();
+  });
+
+  it('a refresh that fails keeps what is on screen', async () => {
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    api.apiFetch.mockImplementation(() => json({ error: 'down' }, false, 503));
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Refresh/ })).not.toBeDisabled());
+    expect(screen.getByRole('cell', { name: /Robo/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Flags/ })).toHaveTextContent('1');
+    tab(/Users/);
+    expect(await screen.findByText(/ada@x.test/)).toBeInTheDocument();
+  });
+
+  it('a slow first load cannot overwrite a newer refresh', async () => {
+    let releaseFirst: () => void = () => {};
+    let first = true;
+    const OV = DB['/api/owner/overview'];
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/owner/overview' && first) {
+        first = false;
+        return new Promise((res) => { releaseFirst = () => res({ ok: true, status: 200, json: async () => ({ ...OV, teams: [{ ...OV.teams[0], name: 'Old name' }] }) }); });
+      }
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [] });
+      if (url.startsWith('/api/owner/ai-flags')) return json([]);
+      return json(DB[url] ?? null);
+    });
+    setup();
+    fireEvent.click(await screen.findByRole('button', { name: /Refresh/ }));
+    expect(await screen.findByRole('cell', { name: /Robo/ })).toBeInTheDocument();
+    await act(async () => { releaseFirst(); });
+    expect(screen.queryByRole('cell', { name: /Old name/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: /Robo/ })).toBeInTheDocument();
+  });
+
+  it('errors: the open group follows its error across a refresh, and both stacks show', async () => {
+    const g = (message: string, n: number) => ({ message, route: '/tasks', kind: 'render', n, last_seen: '2026-10-08 09:00:00' });
+    let groups = [g('First', 5), g('Second', 3)];
+    const recent = [{ id: 1, message: 'Second', route: '/tasks', kind: 'render', created_at: '2026-10-08 09:00:00', stack: 'at js (a.ts:1)', component_stack: 'in Board' }];
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/owner/client-errors') return json({ groups, recent });
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [] });
+      if (url.startsWith('/api/owner/ai-flags')) return json([]);
+      return json(DB[url] ?? null);
+    });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Errors/);
+    fireEvent.click(await screen.findByRole('button', { name: /Second/ }));
+    expect(screen.getByText('JavaScript stack')).toBeInTheDocument();
+    expect(screen.getByText('React component stack')).toBeInTheDocument();
+    expect(screen.getByText('in Board')).toBeInTheDocument();
+    // Second overtakes First: the open one is still Second.
+    groups = [g('Second', 9), g('First', 5)];
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Second/ })).toHaveAttribute('aria-expanded', 'true'));
+    expect(screen.getByRole('button', { name: /First/ })).toHaveAttribute('aria-expanded', 'false');
   });
 });

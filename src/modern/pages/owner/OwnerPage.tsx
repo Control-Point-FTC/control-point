@@ -85,6 +85,15 @@ export function OwnerPage() {
 const utc = (v: string | null | undefined) => (v ? new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v.replace(' ', 'T') + 'Z') : null);
 const when = (v: string | null | undefined, fmt = 'MMM d, h:mm a') => { const d = utc(v); return d && !Number.isNaN(d.getTime()) ? format(d, fmt) : ''; };
 
+function StackBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="grid gap-1">
+      <p className="text-muted-foreground">{label}</p>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-card p-2 font-mono text-[11px]">{text}</pre>
+    </div>
+  );
+}
+
 /**
  * Browser crash reports from the last 7 days, grouped by message + page.
  * A group opens to its latest individual reports: when, workspace, release,
@@ -93,7 +102,8 @@ const when = (v: string | null | undefined, fmt = 'MMM d, h:mm a') => { const d 
 function ErrorsTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [data, setData] = useState<{ groups: any[]; recent: any[] } | null>(null);
   const [failed, setFailed] = useState(false);
-  const [open, setOpen] = useState<number | null>(null);
+  // The open group, by what it is (its row can move when the counts change).
+  const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     apiFetch('/api/owner/client-errors')
@@ -115,14 +125,15 @@ function ErrorsTab({ refreshKey = 0 }: { refreshKey?: number }) {
             <TableRow><TableHead>Error</TableHead><TableHead>Page</TableHead><TableHead className="text-right">Count</TableHead><TableHead>Last seen</TableHead></TableRow>
           </TableHeader>
           <TableBody>
-            {data.groups.map((g, i) => {
+            {data.groups.map((g) => {
               const reports = data.recent.filter((r) => r.message === g.message && (r.route || null) === (g.route || null) && r.kind === g.kind).slice(0, 5);
-              const isOpen = open === i;
+              const key = JSON.stringify([g.kind, g.route || null, g.message]);
+              const isOpen = open === key;
               return (
-                <Fragment key={i}>
+                <Fragment key={key}>
                   <TableRow>
                     <TableCell className="max-w-md">
-                      <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : i)} className="flex w-full items-start gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+                      <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : key)} className="flex w-full items-start gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
                         <ChevronRight className={cn('mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-90')} aria-hidden="true" />
                         <span className="min-w-0"><span className="line-clamp-2 font-mono text-xs">{g.message}</span><span className="text-xs text-muted-foreground">{g.kind}</span></span>
                       </button>
@@ -142,7 +153,8 @@ function ErrorsTab({ refreshKey = 0 }: { refreshKey?: number }) {
                                   {[when(r.created_at), r.team_name, r.release && `release ${r.release}`].filter(Boolean).join(' · ')}
                                 </p>
                                 {r.user_agent && <p className="break-all text-muted-foreground">{r.user_agent}</p>}
-                                {(r.stack || r.component_stack) && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-card p-2 font-mono text-[11px]">{r.stack || r.component_stack}</pre>}
+                                {r.stack && <StackBlock label="JavaScript stack" text={r.stack} />}
+                                {r.component_stack && <StackBlock label="React component stack" text={r.component_stack} />}
                               </li>
                             ))}
                           </ul>
@@ -276,7 +288,7 @@ function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
     const shown = q ? all.filter((w) => [w.name, w.number, w.access_code].some((v) => v != null && String(v).toLowerCase().includes(q))) : all;
     return [...shown].sort((a, b) => compare(a[sort.key], b[sort.key], sort.dir) || b.id - a.id);
   }, [all, query, sort]);
-  const showUsers = (w: any) => { ctl.setUserSearch(''); ctl.setTeamFilter(w.name); ctl.setTab('users'); };
+  const showUsers = (w: any) => { ctl.setUserSearch(''); ctl.setTeamFilter(String(w.id)); ctl.setTab('users'); };
   const [deleting, setDeleting] = useState<number | null>(null);
   const deleteWorkspace = async (w: any) => {
     const ok = await promptDialog({
@@ -291,7 +303,7 @@ function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
       const j = r ? await r.json().catch(() => ({})) : {};
       if (!r?.ok) { notify(j.error || 'Could not delete the workspace', 'error'); return; }
       notify(`${w.name} deleted.`, 'success');
-      if (ctl.teamFilter === w.name) ctl.setTeamFilter('all');
+      if (ctl.teamFilter === String(w.id)) ctl.setTeamFilter('all');
       await ctl.refresh();
     } finally {
       setDeleting(null);
@@ -420,7 +432,8 @@ function UsersTab({ ctl }: { ctl: Ctl }) {
   }, [ctl.filteredUsers, status, sortBy]);
   const filtered = status !== 'all' || ctl.teamFilter !== 'all' || !!ctl.userSearch;
   // A workspace opened from Overview may have nobody in it yet: keep it choosable.
-  const teamOptions = ctl.teamFilter === 'all' || ctl.teams.includes(ctl.teamFilter) ? ctl.teams : [...ctl.teams, ctl.teamFilter];
+  const teamOptions = ctl.teamFilter === 'all' || ctl.teams.some((t) => String(t.id) === ctl.teamFilter) ? ctl.teams
+    : [...ctl.teams, { id: Number(ctl.teamFilter), name: (ctl.overview?.teams || []).find((w: any) => String(w.id) === ctl.teamFilter)?.name || `Workspace #${ctl.teamFilter}` }];
   const clear = () => { setStatus('all'); ctl.setTeamFilter('all'); ctl.setUserSearch(''); };
   return (
     <Section title={`Users (${shown.length}${filtered ? ` of ${ctl.users.length}` : ''})`} description="Manage opens AI controls, warnings, moves and deletion.">
@@ -433,7 +446,7 @@ function UsersTab({ ctl }: { ctl: Ctl }) {
           <SelectTrigger className="w-48 max-sm:h-11 max-sm:w-full" aria-label="Filter by team"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All teams</SelectItem>
-            {teamOptions.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            {teamOptions.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={status} onValueChange={(v) => setStatus(v as UserStatus)}>
