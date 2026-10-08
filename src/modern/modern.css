@@ -141,6 +141,7 @@ html[data-ui="modern"].cp-pulse-center .m-canvas {
 html[data-ui="modern"].cp-pulse-edges .m-canvas {
   --cp-layer-pulse-edges:
     radial-gradient(50vw 22vh at 50% 0, var(--cp-pulse-glow), transparent 70%) no-repeat,
+    radial-gradient(50vw 22vh at 50% 90vh, var(--cp-pulse-glow), transparent 70%) no-repeat,
     radial-gradient(22vw 40vh at 0 45vh, var(--cp-pulse-glow), transparent 70%) no-repeat,
     radial-gradient(22vw 40vh at 100% 45vh, var(--cp-pulse-glow), transparent 70%) no-repeat;
 }
