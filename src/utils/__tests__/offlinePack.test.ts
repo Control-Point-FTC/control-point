@@ -65,7 +65,10 @@ const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
 const offline = vi.hoisted(() => ({ getOfflinePack: vi.fn() }));
 vi.mock('../../services/offlinePack', async (orig) => ({ ...(await orig<object>()), ...offline }));
-import { clearScoutCache, fetchScoutEvent, fetchScoutTeam, searchScoutTeams } from '../../services/ftcScoutApi';
+import { clearScoutCache, fetchScoutEvent, fetchScoutTeam, ownFtcTeamChanged, searchScoutTeams } from '../../services/ftcScoutApi';
+
+// Drops cached answers without a workspace switch (an offline reload).
+const clearScoutCacheKeepTeam = () => { const n = localStorage.getItem('cp-own-ftc-team'); clearScoutCache(); if (n) localStorage.setItem('cp-own-ftc-team', n); };
 
 describe('scouting API offline fallback', () => {
   beforeEach(() => {
@@ -94,6 +97,35 @@ describe('scouting API offline fallback', () => {
     expect((await fetchScoutTeam(2025, 4215)).name).toBe('Mech');
     api.apiFetch.mockImplementation(() => reply(404, { error: 'No record of that team number this season' }));
     await expect(fetchScoutTeam(2025, 1111)).rejects.toThrow('No record');
+  });
+
+  it("opens our own team's page offline once it was seen online", async () => {
+    api.apiFetch.mockImplementation(() => reply(200, { number: 4215, name: 'Mech live', events: [] }));
+    expect((await fetchScoutTeam(2025)).name).toBe('Mech live');
+    clearScoutCacheKeepTeam();
+    api.apiFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+    expect((await fetchScoutTeam(2025)).name).toBe('Mech');
+    // A workspace switch forgets it.
+    clearScoutCache();
+    await expect(fetchScoutTeam(2025)).rejects.toThrow('Failed to fetch');
+  });
+
+  it("an answer that lands after a workspace switch doesn't save the old team", async () => {
+    let answer!: (v: unknown) => void;
+    api.apiFetch.mockImplementation(() => new Promise((r) => { answer = r; }));
+    const pending = fetchScoutTeam(2025);
+    clearScoutCache(); // switched workspace while it was in flight
+    answer({ ok: true, status: 200, json: async () => ({ number: 4215, name: 'Old team', events: [] }) });
+    await pending;
+    expect(localStorage.getItem('cp-own-ftc-team')).toBeNull();
+  });
+
+  it('a changed FTC number in Settings replaces the remembered team', async () => {
+    ownFtcTeamChanged(1111);
+    api.apiFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+    expect((await fetchScoutTeam(2025)).name).toBe('Robo Rams');
+    ownFtcTeamChanged(null);
+    await expect(fetchScoutTeam(2025)).rejects.toThrow('Failed to fetch');
   });
 
   it('without a pack, fails as before', async () => {

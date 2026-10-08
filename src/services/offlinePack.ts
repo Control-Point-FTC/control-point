@@ -82,7 +82,21 @@ export async function downloadOfflinePack(region: string): Promise<SavedPack> {
   await withStore('readwrite', (s) => s.put(saved, KEY));
   announce(saved);
   tellOtherTabs();
+  void warmOfflineForecast();
   return saved;
+}
+
+/**
+ * Load the offline simulator while online, so the service worker keeps a copy
+ * (it saves every /assets/ file it serves). Devices that installed the app
+ * before the simulator existed never precached it. Only when a pack with
+ * ratings is on this device; failures are ignored (try again next time).
+ */
+export async function warmOfflineForecast(): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  const saved = await getOfflinePack();
+  if (!saved?.pack.predict) return;
+  try { await import('../utils/offlineForecast'); } catch { /* offline or a deploy in progress */ }
 }
 
 export async function removeOfflinePack(): Promise<void> {

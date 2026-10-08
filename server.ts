@@ -5977,6 +5977,7 @@ async function startServer() {
     if (!auth) return;
     const region = String(req.query.region || "").toUpperCase();
     if (!/^(ALL|[A-Z0-9]{2,8})$/.test(region)) return res.status(400).json({ error: "Choose a region" });
+    const readyBefore = predictEngine.readyAt;
     // The age is read before the files, so a sync finishing during the read
     // can only make the label older than the results, never newer.
     const syncedBefore = new Map(predictSeasons.map((x) => [x, predictStore.lastSync(x)]));
@@ -5985,16 +5986,23 @@ async function startServer() {
     if (region !== "ALL" && !got.events.some((e) => e.event.region === region)) return res.status(404).json({ error: "No events in that region this season" });
     const dataAsOf = syncedBefore.get(got.season) ?? null;
     // Keyed by the stored files' version (read with the events): any file a
-    // sync rewrote, even one that partly failed, makes a new pack. dataAsOf
+    // sync rewrote, even one that partly failed, makes a new pack. Ratings
+    // change with each rebuild, so they're part of the key too. dataAsOf
     // only labels its age.
-    const key = `${got.season}:${region}:${got.version}:${dataAsOf}`;
+    const key = `${got.season}:${region}:${got.version}:${readyBefore}:${dataAsOf}`;
     let built = offlinePacks.get(key);
     if (!built) {
-      const json = JSON.stringify(buildPack(got.events, got.season, region, dataAsOf));
+      const pack = buildPack(got.events, got.season, region, dataAsOf);
+      // Ratings for offline Predict, once the engine has them.
+      if (predictEngine.ready) pack.predict = predictEngine.offlineData(got.season, new Set(pack.teams.map((t) => t[0])), pack.events.map((e) => e.type), pack.events.map((e) => e.code)) ?? undefined;
+      const json = JSON.stringify(pack);
       built = { json, gz: await gzipAsync(json) };
-      offlinePacks.set(key, built);
-      // Keep a handful (the full pack is a few MB).
-      while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
+      // Not kept if the ratings were rebuilt while it was built.
+      if (predictEngine.readyAt === readyBefore) {
+        offlinePacks.set(key, built);
+        // Keep a handful (the full pack is a few MB).
+        while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
+      }
     }
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Vary", "Accept-Encoding");

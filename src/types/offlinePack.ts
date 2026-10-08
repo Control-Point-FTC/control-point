@@ -3,6 +3,10 @@
 // keeps so team search, team and event pages work with no connection.
 // Compact on purpose: a region is a few hundred KB, the full pack a few MB.
 
+import type { RatingBookData } from '../../server/predict/rating';
+import type { AdvancementRecord, PredictModel } from '../../server/predict/forecast';
+import type { AwardRecord } from '../../server/predict/awards';
+
 /** Bumped when the layout changes; older packs on a device are re-downloaded. */
 export const OFFLINE_PACK_FORMAT = 1;
 
@@ -49,6 +53,21 @@ export interface PackEvent {
 /** Team: number, name, city, state. */
 export type PackTeam = [number, string, string | null, string | null];
 
+/** What the device needs to forecast the pack's events offline. */
+export interface OfflinePredict {
+  model: PredictModel;
+  /** The season's ratings for the pack's teams. */
+  book: RatingBookData;
+  /** FIRST advancement for the season and the one before (rows only for the pack's teams). */
+  advancement: Record<number, AdvancementRecord[]>;
+  /** Typical award line-up per event type (spaces removed). */
+  awardSlots: Record<string, { type: string; placement: number }[]>;
+  /** Award history of the pack's teams. */
+  awards: [number, AwardRecord[]][];
+  /** Per event, the match keys (`level:series:number`) already folded into `book`. */
+  played: Record<string, string[]>;
+}
+
 export interface OfflinePack {
   format: number;
   /** Region code ("USNJ"), or "ALL" for every region. */
@@ -61,6 +80,8 @@ export interface OfflinePack {
   dataAsOf: string | null;
   teams: PackTeam[];
   events: PackEvent[];
+  /** Ratings and model for offline Predict (missing until the server has ratings). */
+  predict?: OfflinePredict;
 }
 
 /** What Settings shows before a download. */
