@@ -21,7 +21,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 // Each case talks to a freshly booted server; the first requests can be slow.
 vi.setConfig({ testTimeout: 30_000 });
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -31,6 +31,7 @@ import { createClient, type Client } from "@libsql/client";
 import bcrypt from "bcryptjs";
 import WebSocket from "ws";
 import { sessionDbId, withSession } from "./helpers/session";
+import { killServerProcess, spawnServerProcess } from "./helpers/testServer";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -88,12 +89,7 @@ beforeAll(async () => {
   const dbPath = join(tmpDir, "test.db");
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
-  proc = spawn("npx", ["tsx", "server.ts"], {
-    cwd: REPO,
-    env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off" },
-    stdio: "ignore",
-    shell: process.platform === "win32",
-  });
+  proc = spawnServerProcess({ ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off" });
   await waitForServer(base);
 
   db = createClient({ url: `file:${dbPath}` });
@@ -130,10 +126,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   try { db?.close(); } catch { /* ignore */ }
-  if (proc?.pid) {
-    if (process.platform === "win32") spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
-    else proc.kill("SIGTERM");
-  }
+  killServerProcess(proc);
   await new Promise((r) => setTimeout(r, 500));
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
 });
