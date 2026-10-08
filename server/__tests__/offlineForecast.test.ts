@@ -98,6 +98,34 @@ describe("offline forecast", () => {
   });
 });
 
+describe("a rebuild in progress", () => {
+  it("never shows a mix of new ratings and old award history", async () => {
+    let gen = 1;
+    const changing = {
+      ...store,
+      eventFiles: () => Object.keys(hist).map((code) => ({ code, path: code, mtimeMs: gen })),
+      // The second sync changes both results (ratings) and awards.
+      parseEventFile: (p: string) => (gen === 1 ? hist[p] : {
+        ...hist[p],
+        awards: [{ type: "Inspire", placement: 1, team: 105 }],
+        matches: hist[p].matches.map((m) => ({ ...m, red: { ...m.red, auto: m.red.auto + 40, np: m.red.np + 40, total: m.red.total + 40 } })),
+      }),
+    } as unknown as PredictStore;
+    const e = new PredictEngine(changing, [2025]);
+    await e.rebuild();
+    const before = JSON.stringify(e.offlineData(2025, new Set(TEAMS), ["Qualifier"], ["USXXQ1"]));
+    gen = 2;
+    const running = e.rebuild();
+    // Mid-rebuild: the season is re-read and rated before its first yield, but
+    // nothing is swapped in yet — still the old, complete snapshot.
+    expect(JSON.parse(JSON.stringify(e.offlineData(2025, new Set(TEAMS), ["Qualifier"], ["USXXQ1"])))).toEqual(JSON.parse(before));
+    await running;
+    const after = e.offlineData(2025, new Set(TEAMS), ["Qualifier"], ["USXXQ1"])!;
+    expect(after.awards.map(([t]) => t)).toContain(105);
+    expect(JSON.stringify(after.book)).not.toBe(JSON.stringify(JSON.parse(before).book));
+  });
+});
+
 describe("RatingBook data round trip", () => {
   it("survives JSON, including seasons a team skipped", () => {
     const b = new RatingBook();

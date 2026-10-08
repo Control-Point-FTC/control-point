@@ -64,6 +64,12 @@ export class PredictEngine extends Forecaster {
   async rebuild(): Promise<void> {
     const book = new RatingBook(M.rating);
     const records: AwardRecord[] = [];
+    // Built aside and swapped in together at the end: forecasts and offline
+    // packs taken while this runs see the previous complete snapshot, never
+    // new ratings with old award history or advancement.
+    const books = new Map<number, RatingBook>();
+    const events = new Map<number, EventRecord[]>();
+    const advancement = new Map<number, AdvancementRecord[]>();
     for (const s of [...this.seasons].sort((a, b) => a - b)) {
       if (!this.store.hasSeason(s)) continue;
       for (const meta of Object.values(this.store.index(s))) if (meta.region) { this.regionByCode.set(meta.code, meta.region); this.regions.add(meta.region); }
@@ -80,17 +86,21 @@ export class PredictEngine extends Forecaster {
       for (const code of [...cache.keys()]) if (!seen.has(code)) cache.delete(code);
       this.parsed.set(s, cache);
       const evs = [...cache.values()].map((x) => x.rec).filter((x): x is EventRecord => !!x).sort((a, b) => a.startTime - b.startTime || a.code.localeCompare(b.code));
-      this.events.set(s, evs);
-      this.advancement.set(s, this.store.loadAdvancement(s));
+      events.set(s, evs);
+      advancement.set(s, this.store.loadAdvancement(s));
       for (const e of evs) for (const a of e.awards) records.push({ season: s, team: a.team, time: e.startTime, type: a.type, placement: a.placement });
       book.startSeason(s);
       for (const m of evs.flatMap((e) => e.matches).sort((x, y) => x.time - y.time)) book.update(m);
-      this.books.set(s, book.clone());
+      books.set(s, book.clone());
       await yieldLoop();
     }
+    // One synchronous swap (no await in between).
+    this.books = books;
+    this.events = events;
+    this.advancement = advancement;
     this.awardHistory = indexAwards(records);
     // Ready only once there are real ratings (a fresh install has no data yet).
-    if (this.books.size && [...this.events.values()].some((evs) => evs.length)) this.readyAt = new Date().toISOString();
+    if (books.size && [...events.values()].some((evs) => evs.length)) this.readyAt = new Date().toISOString();
   }
 
   /** Ratings book for a season, with the clock set to now. */
