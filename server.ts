@@ -66,6 +66,7 @@ import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartM
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, runLookups } from "./server/brunoLookup.js";
+import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
@@ -2549,11 +2550,13 @@ async function startServer() {
     disconnectMember(teamId, memberId);
   };
 
-  const createNotification = async (userId: number, content: string, type: string, meta?: Record<string, any>) => {
+  const createNotification = async (userId: number, content: string, type: string, meta?: Record<string, any>, opts?: { throwOnError?: boolean }) => {
+    let inserted = false;
     try {
       const timestamp = new Date().toISOString();
       const metaJson = meta ? JSON.stringify(meta) : null;
       const info = await dbRun("INSERT INTO notifications (user_id, content, type, timestamp, meta) VALUES (?, ?, ?, ?, ?)", userId, content, type, timestamp, metaJson);
+      inserted = true;
       const target = (await dbGet("SELECT team_id FROM members WHERE id = ?", userId)) as any;
 
       // Deliver to the recipient's own sockets only: a team-wide broadcast
@@ -2572,6 +2575,8 @@ async function startServer() {
       });
     } catch (e) {
       console.error("createNotification failed:", e);
+      // Only a failed save is the caller's problem; a failed live push isn't.
+      if (opts?.throwOnError && !inserted) throw e;
     }
   };
 
@@ -4112,8 +4117,11 @@ async function startServer() {
         { sql: `DELETE FROM attendance WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM messages WHERE sender_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM tasks WHERE assigned_to IN (${ph})`, args: ids },
-        { sql: `DELETE FROM feedback WHERE author_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM feedback WHERE user_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM call_participants WHERE member_id IN (${ph})`, args: ids },
+        // Bruno's personal facts and morning-summary records go with the account.
+        { sql: `DELETE FROM bruno_memories WHERE scope = 'user' AND member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM bruno_nudges_sent WHERE member_id IN (${ph})`, args: ids },
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
       ]);
@@ -4608,6 +4616,7 @@ async function startServer() {
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
       { sql: "DELETE FROM bruno_chats WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM bruno_memories WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM code_files WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM code_commits WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM code_repos WHERE team_id = ?", args: [teamId] },
@@ -4657,6 +4666,7 @@ async function startServer() {
       // this was their last team); every other session on the team is dropped.
       { sql: `DELETE FROM sessions WHERE member_id ${inMembers} AND id != ?`, args: [...memberIds, currentSessionId] },
       { sql: `DELETE FROM stream_sessions WHERE member_id ${inMembers}`, args: memberIds },
+      { sql: `DELETE FROM bruno_nudges_sent WHERE member_id ${inMembers}`, args: memberIds },
       { sql: `DELETE FROM member_roles WHERE member_id ${inMembers}`, args: memberIds },
       { sql: "DELETE FROM roles WHERE team_id = ?", args: [teamId] },
       // Hard-delete every membership in the team except the caller's own row,
@@ -6230,7 +6240,7 @@ async function startServer() {
   app.patch("/api/profile", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level, interface_mode } = req.body || {};
+    const { name, role, accent_color, primary_color, text_color, avatar_url, presence_status, bruno_teach_mode, bruno_output_level, bruno_nudges, interface_mode } = req.body || {};
     if (interface_mode !== undefined && interface_mode !== null && !INTERFACE_MODES.includes(interface_mode)) {
       return res.status(400).json({ error: "Invalid interface mode" });
     }
@@ -6238,6 +6248,7 @@ async function startServer() {
     if (!cleanName) return res.status(400).json({ error: "Name can't be empty" });
     const updates: any = { name: cleanName, role: (role || '').trim() };
     if (bruno_teach_mode !== undefined) updates.bruno_teach_mode = bruno_teach_mode ? 1 : 0;
+    if (bruno_nudges !== undefined) updates.bruno_nudges = bruno_nudges ? 1 : 0;
     if (bruno_output_level !== undefined) {
       let lvl = String(bruno_output_level);
       if (lvl === 'max') lvl = 'high'; // 'max' was removed — map to 'high'
@@ -8542,6 +8553,9 @@ Rules:
       await dbRun("DELETE FROM bruno_chats WHERE id = ?", c.id);
     }
     await dbRun("DELETE FROM ai_usage WHERE member_id = ?", target.id);
+    // Bruno's personal facts about them (team facts stay with the team).
+    await dbRun("DELETE FROM bruno_memories WHERE scope = 'user' AND member_id = ?", target.id);
+    await dbRun("DELETE FROM bruno_nudges_sent WHERE member_id = ?", target.id);
     await dbRun("DELETE FROM members WHERE id = ?", target.id);
     return { ok: true };
   }
@@ -11702,7 +11716,21 @@ Rules:
           userLine = `You are chatting with ${member.name}. Address them by their first name in greetings (e.g. "Hey ${member.name.split(' ')[0]}!"), not by the team name.`;
         }
       } catch (err) { console.error("[bruno] user name lookup failed:", err); /* best-effort */ }
-      const fullContext = [userLine, teamContext, factsCtx, snapshotCtx].filter(Boolean).join("\n\n");
+      // Bruno memory (phase 4c): facts saved in earlier chats, this member's and the team's.
+      // Each scope has its own limit, so a busy team never crowds out this member's own facts.
+      const userMem = auth.teamId ? ((await dbAll(
+        "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'user' AND member_id = ? ORDER BY id DESC LIMIT 30", auth.teamId, auth.memberId,
+      )) as any[]) : [];
+      const teamMem = auth.teamId ? ((await dbAll(
+        "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'team' ORDER BY id DESC LIMIT 30", auth.teamId,
+      )) as any[]) : [];
+      const memberNameRow = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
+      const memoryCtx = memoryPromptBlock(
+        userMem.map((r) => String(r.content)),
+        teamMem.map((r) => String(r.content)),
+        String(memberNameRow?.name || ""),
+      );
+      const fullContext = [userLine, teamContext, factsCtx, snapshotCtx, memoryCtx].filter(Boolean).join("\n\n");
       // Secret persona: NavGPT ❤️ overrides the Bruno identity only when the active
       // team qualifies (4215 Hypnotic Robotics) AND its toggle is switched on —
       // unless the client explicitly asked for Bruno (the coding-handoff switch).
@@ -11784,6 +11812,25 @@ Rules:
       // for team data. Run it for this team and let Bruno answer from the rows
       // in a second pass; the block itself is never shown or saved.
       const lookupTz = await teamTimeZone(auth.teamId, req.body?.tz);
+      // ```remember facts from a finished reply: saved for this member (or the
+      // team, for members who manage it), with a short note back to the user.
+      // Saved only once the reply is final (after the Stop check): a stopped
+      // reply leaves no facts behind.
+      const saveMemories = async (facts: { scope: string; fact: string }[]): Promise<string> => {
+        if (!facts.length || !auth.teamId) return "";
+        try {
+          const canTeam = await hasPerm(auth, "manage_members");
+          const saved: string[] = [];
+          for (const f of facts) {
+            const scope = f.scope === "team" && canTeam ? "team" : "user";
+            if (await storeBrunoMemory(auth.teamId, auth.memberId, scope, f.fact)) saved.push(scope === "team" ? `${f.fact} (team)` : f.fact);
+          }
+          return saved.length ? `\n\n_Remembered: ${saved.join("; ")}. (Settings → Bruno to review.)_` : "";
+        } catch (e) {
+          console.error("Bruno memory save failed:", (e as any)?.message);
+          return "";
+        }
+      };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
@@ -11884,9 +11931,13 @@ Rules:
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
           // Scouting lookups the reply asked for run now and stream after it.
-          const appendix = await scoutingAppendix(fullText, auth.teamId, streamAbort.signal).catch(() => "");
+          const mem = extractRememberBlocks(fullText);
+          fullText = mem.text;
+          const scouting = await scoutingAppendix(fullText, auth.teamId, streamAbort.signal).catch(() => "");
           // Stopped during the lookups: the user has the reply they saw; nothing more is written or saved.
           if (streamAbort.signal.aborted) { res.end(); return; }
+          // The note streams with the scouting appendix below (written once).
+          const appendix = (await saveMemories(mem.facts)) + scouting;
           if (appendix) res.write(appendix);
           const finalText = stripActionBlocks(fullText) + appendix;
           if (chat && String(finalText || "").trim()) {
@@ -11927,9 +11978,11 @@ Rules:
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
       }
-      let finalResult = stripActionBlocks(String(result || ""));
-      finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
+      const memNS = extractRememberBlocks(String(result || ""));
+      result = memNS.text;
+      const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
+      const finalResult = stripActionBlocks(String(result || "")) + (await saveMemories(memNS.facts)) + scoutingNS;
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
@@ -11957,6 +12010,141 @@ Rules:
   // parsed items. Server re-validates everything before inserting.
   // Permissions mirror the direct APIs: events/outreach any team member (same
   // as the old Bruno auto-insert behavior), tasks/budget admins only.
+  // ---- Bruno memory (phase 4c) ----
+  app.get("/api/bruno/memories", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const rows = (await dbAll(
+        "SELECT id, scope, content, created_at FROM bruno_memories WHERE team_id = ? AND (scope = 'team' OR member_id = ?) ORDER BY id DESC",
+        auth.teamId, auth.memberId,
+      )) as any[];
+      res.json({ user: rows.filter((r) => r.scope === "user"), team: rows.filter((r) => r.scope === "team"), canEditTeam: await hasPerm(auth, "manage_members") });
+    } catch (error) {
+      console.error("Bruno memories read failed:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  /** Save one fact unless it's a duplicate, keeping the newest within the
+   *  scope's cap. Returns the new row id, or 0 for a duplicate. */
+  async function storeBrunoMemory(teamId: number, memberId: number, scope: "user" | "team", fact: string): Promise<number> {
+    // One save at a time per memory list, so two chats (or a double-clicked
+    // Add) can't both pass the duplicate check before either inserts.
+    const key = scope === "team" ? `t${teamId}` : `u${teamId}:${memberId}`;
+    const prev = memoryLocks.get(key) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => storeBrunoMemoryNow(teamId, memberId, scope, fact));
+    const tail = run.catch(() => {});
+    memoryLocks.set(key, tail);
+    void tail.then(() => { if (memoryLocks.get(key) === tail) memoryLocks.delete(key); });
+    return run;
+  }
+  const memoryLocks = new Map<string, Promise<unknown>>();
+  async function storeBrunoMemoryNow(teamId: number, memberId: number, scope: "user" | "team", fact: string): Promise<number> {
+    const existing = ((await dbAll(
+      scope === "team" ? "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'team'" : "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'user' AND member_id = ?",
+      ...(scope === "team" ? [teamId] : [teamId, memberId]),
+    )) as any[]).map((r) => String(r.content));
+    if (isDuplicateFact(fact, existing)) return 0;
+    const info = await dbRun(
+      "INSERT INTO bruno_memories (team_id, member_id, scope, content, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      teamId, scope === "user" ? memberId : null, scope, fact, memberId, new Date().toISOString(),
+    );
+    await dbRun(
+      scope === "team"
+        ? "DELETE FROM bruno_memories WHERE team_id = ? AND scope = 'team' AND id NOT IN (SELECT id FROM bruno_memories WHERE team_id = ? AND scope = 'team' ORDER BY id DESC LIMIT ?)"
+        : "DELETE FROM bruno_memories WHERE team_id = ? AND scope = 'user' AND member_id = ? AND id NOT IN (SELECT id FROM bruno_memories WHERE team_id = ? AND scope = 'user' AND member_id = ? ORDER BY id DESC LIMIT ?)",
+      ...(scope === "team" ? [teamId, teamId, MAX_TEAM_MEMORIES] : [teamId, memberId, teamId, memberId, MAX_USER_MEMORIES]),
+    );
+    return Number(info.lastInsertRowid);
+  }
+
+  app.post("/api/bruno/memories", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth || !auth.teamId) return auth && res.status(400).json({ error: "Join a workspace first" });
+      const content = String(req.body?.content || "").replace(/\s+/g, " ").trim().slice(0, MAX_FACT_CHARS);
+      if (!content) return res.status(400).json({ error: "Write something for Bruno to remember" });
+      const scope = req.body?.scope === "team" ? "team" : "user";
+      if (scope === "team" && !(await hasPerm(auth, "manage_members"))) return res.status(403).json({ error: "Only people who manage the team can add team memories" });
+      // Same checked, capped save as facts from chat.
+      const id = await storeBrunoMemory(auth.teamId, auth.memberId, scope, content);
+      if (!id) return res.status(409).json({ error: "Bruno already remembers that" });
+      res.json({ memory: { id, scope, content } });
+    } catch (error) {
+      console.error("Bruno memory add failed:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/bruno/memories/:id", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const row = (await dbGet("SELECT id, team_id, member_id, scope FROM bruno_memories WHERE id = ?", parseInt(req.params.id, 10))) as any;
+      const mine = row && row.team_id === auth.teamId && (row.scope === "user" ? row.member_id === auth.memberId : await hasPerm(auth, "manage_members"));
+      if (!mine) return res.status(404).json({ error: "Memory not found" });
+      await dbRun("DELETE FROM bruno_memories WHERE id = ?", row.id);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Bruno memory delete failed:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ---- Bruno morning nudge (phase 4c) ----
+  // Every 10 minutes: in each team where it's now 8 AM, members who have the
+  // nudge on and haven't had today's get one line about their tasks due today
+  // and overdue (managers also hear about unassigned ones). Nothing to say, no
+  // nudge (later sweeps that hour look again); the day is claimed with INSERT
+  // OR IGNORE right before sending, so it goes out once.
+  let nudging = false;
+  const sendMorningNudges = async (now = new Date()) => {
+    if (nudging) return;
+    nudging = true;
+    try {
+      const teams = (await dbAll("SELECT id, timezone FROM teams")) as any[];
+      for (const t of teams) {
+        const { hour, day } = localHourAndDay(resolveTimeZone(t.timezone), now);
+        if (hour !== Number(process.env.BRUNO_NUDGE_HOUR ?? 8)) continue;
+        const members = (await dbAll(
+          `SELECT m.id, m.email FROM members m WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND COALESCE(m.bruno_nudges, 1) = 1 AND ${VERIFIED_MEMBER_SQL}`, t.id,
+        )) as any[];
+        for (const m of members) {
+          try {
+            if (await dbGet("SELECT 1 FROM bruno_nudges_sent WHERE member_id = ? AND day = ?", m.id, day)) continue;
+            // Board tasks only count for members whose task page shows them.
+            const board = (await hasPermInTeam(String(m.email || ""), t.id, "manage_members")) ? "" : " AND COALESCE(t.is_board, 0) = 0";
+            const mine = `t.team_id = ? AND t.status != 'done'${board} AND (t.assigned_to = ? OR EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id AND ta.member_id = ?))`;
+            const due = (await dbGet(`SELECT SUM(CASE WHEN t.due_date = ? THEN 1 ELSE 0 END) AS today, SUM(CASE WHEN t.due_date < ? THEN 1 ELSE 0 END) AS overdue FROM tasks t WHERE ${mine}`, day, day, t.id, m.id, m.id)) as any;
+            const manager = await hasPermInTeam(String(m.email || ""), t.id, "manage_tasks");
+            const unassigned = manager
+              ? Number(((await dbGet(`SELECT COUNT(*) AS n FROM tasks t WHERE t.team_id = ? AND t.status != 'done'${board} AND t.assigned_to IS NULL AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)`, t.id)) as any)?.n || 0)
+              : null;
+            const text = nudgeText({ dueToday: Number(due?.today || 0), overdue: Number(due?.overdue || 0), unassigned });
+            if (!text) continue; // nothing yet; a later sweep this hour checks again
+            const claim = await dbRun("INSERT OR IGNORE INTO bruno_nudges_sent (member_id, day) VALUES (?, ?)", m.id, day);
+            if (!claim.changes) continue;
+            try {
+              await createNotification(m.id, text, "system", { nudge: true, day }, { throwOnError: true });
+            } catch (e) {
+              // Not delivered: release the day so a later sweep this hour retries.
+              await dbRun("DELETE FROM bruno_nudges_sent WHERE member_id = ? AND day = ?", m.id, day);
+              throw e;
+            }
+          } catch (e) {
+            console.error(`Morning nudge for member ${m.id} failed:`, (e as any)?.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Morning nudges failed:", (e as any)?.message);
+    } finally {
+      nudging = false;
+    }
+  };
+  setInterval(() => void sendMorningNudges(), Number(process.env.BRUNO_NUDGE_SWEEP_MS) || 10 * 60 * 1000).unref();
+
   // What the Bruno confirm card needs to show a proposal exactly as it will be
   // saved: the team's today and its roster names.
   app.get("/api/ai/proposal-context", async (req, res) => {
