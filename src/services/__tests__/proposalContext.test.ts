@@ -42,4 +42,22 @@ describe('context freshness', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
   });
+
+  it('a request from before a workspace switch never installs the old workspace', async () => {
+    const api = await import('../api');
+    let answer!: (v: any) => void;
+    const spy = vi.spyOn(api, 'apiFetch')
+      .mockImplementationOnce(() => new Promise((r) => { answer = r; }) as any)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ today: '2026-10-08', roster: ['New Team Member'] }) } as any);
+    const { loadProposalContext, getProposalContext } = await import('../proposalContext');
+    setProposalContext(null);
+    const old = loadProposalContext();
+    setProposalContext(null); // workspace switch
+    const fresh = loadProposalContext(); // a new card: its own request, not the old one
+    answer({ ok: true, json: async () => ({ today: '2026-10-07', roster: ['Old Team Member'] }) });
+    await Promise.all([old, fresh]);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(getProposalContext()).toMatchObject({ roster: ['New Team Member'] });
+    spy.mockRestore();
+  });
 });
