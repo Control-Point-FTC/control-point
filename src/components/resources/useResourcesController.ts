@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiJson } from '../../services/api';
 import { getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
+import { bulkDelete } from '../../modern/ui/selection';
 
 export interface ResourceItem {
   id: number;
@@ -243,7 +244,19 @@ export function useResourcesController() {
     }
   };
 
+  const bulkDeleteResources = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      try { await apiJson(`/api/resources/${id}`, { method: 'DELETE' }); return true; } catch { return false; }
+    }, { noun: 'resource' });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setResources((rs) => rs.filter((r) => !gone.has(r.id)));
+    window.dispatchEvent(new Event('resources-changed'));
+    return true;
+  };
+
   return {
+    bulkDeleteResources,
     resources, loading, loadError, fetchResources, filter, setFilter, items, counts,
     pasteText, setPasteText, parsing, parseError, preview, saving, saveError,
     handleParse, updatePreviewRow, removePreviewRow, discardPreview, handleSaveAll, deletingIds, handleDelete,

@@ -13,6 +13,10 @@ import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { CAD_SECTIONS, REVIEW_FILTERS, REVIEW_STATUS_LABELS, fmtDate, useCadReviews, useReviewComments, useReviewForm } from '../../../components/cad/useCad';
 import { EmptyState } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+
+const NO_ROWS: any[] = [];
+const rowId = (r: any) => r.id as number;
 
 type Reviews = ReturnType<typeof useCadReviews>;
 
@@ -28,6 +32,8 @@ const FLOW = ['concept', 'in_review', 'approved', 'built'];
 
 export function CadReviewsTab({ currentUser, isAdmin }: { currentUser?: any; isAdmin: boolean }) {
   const ctl = useCadReviews({ currentUser, isAdmin });
+  // Deleting reviews is for admins (same rule as the server).
+  const sel = useSelection(isAdmin ? ctl.visible : NO_ROWS, rowId);
   const [openId, setOpenId] = useState<number | null>(null);
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: ctl.reviews.length };
@@ -45,14 +51,21 @@ export function CadReviewsTab({ currentUser, isAdmin }: { currentUser?: any; isA
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <Button onClick={() => ctl.setShowForm(true)} className="ml-auto"><Plus /> Submit design</Button>
+        {isAdmin && ctl.visible.length > 0 && (
+          <label className="ml-auto flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+            <SelectAllCheckbox sel={sel} label="Select all shown reviews" />
+            <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+          </label>
+        )}
+        <Button onClick={() => ctl.setShowForm(true)} className={isAdmin && ctl.visible.length > 0 ? '' : 'ml-auto'}><Plus /> Submit design</Button>
       </div>
 
       {!ctl.loaded ? <div className="grid gap-4 md:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-56" />)}</div> : ctl.visible.length ? (
         <Stagger as="ul" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {ctl.visible.map((r) => (
-            <StaggerItem as="li" key={r.id}>
-              <button onClick={() => setOpenId(r.id)} className="group flex h-full w-full flex-col overflow-hidden rounded-xl border border-border bg-card text-left transition-colors hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+            <StaggerItem as="li" key={r.id} className="relative">
+              {isAdmin && <RowCheckbox sel={sel} id={r.id} label={`Select ${r.title}`} className="absolute left-3 top-3 z-10 rounded bg-background/80 p-1 backdrop-blur" />}
+              <button onClick={() => setOpenId(r.id)} className={cn('group flex h-full w-full flex-col overflow-hidden rounded-xl border border-border bg-card text-left transition-colors hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60', sel.has(r.id) && 'border-accent/60 ring-1 ring-accent/40')}>
                 {r.screenshot_url
                   ? <img src={r.screenshot_url} alt="" className="aspect-video w-full object-cover transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:group-hover:scale-100" />
                   : <span className="flex aspect-video w-full items-center justify-center bg-muted/50"><ClipboardCheck className="size-8 text-muted-foreground/60" /></span>}
@@ -71,6 +84,7 @@ export function CadReviewsTab({ currentUser, isAdmin }: { currentUser?: any; isA
         </Stagger>
       ) : <EmptyState icon={ClipboardCheck} title="No designs here yet" description="Submit the first design for review — nothing gets built off an unreviewed design." action={<Button onClick={() => ctl.setShowForm(true)}><Plus /> Submit design</Button>} />}
 
+      <BulkBar sel={sel} noun="review" actions={[{ label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkRemove(ids.map(Number)) }]} />
       <ReviewSheet review={open} ctl={ctl} isAdmin={isAdmin} onClose={() => setOpenId(null)} />
       <SubmitSheet ctl={ctl} />
     </>

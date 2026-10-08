@@ -15,6 +15,7 @@ import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { defaultTeamId } from '../tasks/useTasksController';
 import { restoreRow } from '../budget/useBudgetController';
+import { bulkDelete, runBulk } from '../../modern/ui/selection';
 
 export const INVENTORY_CATEGORIES = [
   'Structure', 'Motion', 'Wheels', 'Electronics', 'Sensors', 'Power',
@@ -332,7 +333,29 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   const editNewPart: typeof setNewPart = (v) => { if (!saving()) setNewPart(v); };
   const editPart: typeof setShowEdit = (v) => { if (v === null || !saving()) setShowEdit(v); };
 
+  // ---- Bulk actions on a selection (V3.5) ----
+  const bulkSetCategory = async (ids: number[], category: string) => {
+    const ok = await runBulk(ids, async (id) => {
+      const res = await apiFetch(`/api/inventory/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) }).catch(() => null);
+      return !!res?.ok;
+    }, { verb: 'Recategorized', noun: 'part' });
+    const done = new Set(ok.map(Number));
+    setInventory((ps: any[]) => ps.map((p: any) => (done.has(p.id) ? { ...p, category } : p)));
+  };
+  const bulkDeleteParts = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      const res = await apiFetch(`/api/inventory/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!res?.ok;
+    }, { noun: 'part' });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setInventory((ps: any[]) => ps.filter((p: any) => !gone.has(p.id)));
+    refresh.inventory();
+    return true;
+  };
+
   return {
+    bulkSetCategory, bulkDeleteParts,
     canManage, showAdd, setShowAdd, openAdd, showEdit, setShowEdit: editPart, newPart, setNewPart: editNewPart,
     searchTerm, setSearchTerm, filterCategory, setFilterCategory, revLink, setRevLink, isLoadingRev,
     invoiceParsing, invoiceConfirming, autoCategorizing, invoiceItems, showInvoicePreview, setShowInvoicePreview, invoiceFileRef,

@@ -15,6 +15,21 @@ import { CAD_SECTIONS, PART_SOURCE_LABELS, PART_STATUS_LABELS, useCadInvoiceImpo
 import { Section, EmptyState } from '../../ui/page';
 import { Reveal } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
+
+const rowId = (r: any) => r.id as number;
+
+/** Select every part in one subsystem table (or clear them). */
+function SectionCheckbox({ sel, ids, section }: { sel: Selection; ids: number[]; section: string }) {
+  const n = ids.filter((id) => sel.has(id)).length;
+  return (
+    <Checkbox
+      aria-label={`Select all ${section} parts`}
+      checked={n && n === ids.length ? true : n ? 'indeterminate' : false}
+      onCheckedChange={() => sel.set(n === ids.length ? sel.ids.filter((id) => !ids.includes(Number(id))) : [...new Set([...sel.ids, ...ids])])}
+    />
+  );
+}
 
 const STATUS_ORDER = ['to_order', 'ordered', 'received', 'printed', 'installed'];
 const STATUS_BAR: Record<string, string> = { to_order: 'bg-amber-500', ordered: 'bg-sky-500', received: 'bg-violet-500', printed: 'bg-cyan-500', installed: 'bg-emerald-500' };
@@ -32,6 +47,8 @@ export function CadPartsTab() {
     return c;
   }, [ctl.parts]);
   const editing = ctl.editing && ctl.editing !== 'new' ? ctl.editing : null;
+  const ordered = useMemo(() => ctl.grouped.flatMap((g: any) => g.items), [ctl.grouped]);
+  const sel = useSelection(ordered, rowId);
   return (
     <>
       <Reveal className="mb-8 grid gap-6 rounded-2xl border border-border bg-card p-6 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
@@ -52,7 +69,13 @@ export function CadPartsTab() {
             </>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {ctl.parts.length > 0 && (
+            <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+              <SelectAllCheckbox sel={sel} label="Select every part in the BOM" />
+              <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+            </label>
+          )}
           <Button variant="outline" onClick={() => ctl.setShowInvoice(true)}><Sparkles /> Import invoice</Button>
           <Button onClick={() => ctl.setEditing('new')}><Plus /> Add part</Button>
         </div>
@@ -65,11 +88,12 @@ export function CadPartsTab() {
             <div className="overflow-x-auto rounded-xl border border-border">
               <Table>
                 <TableHeader>
-                  <TableRow><TableHead>Part</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Source</TableHead><TableHead className="text-right">Unit</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Status</TableHead><TableHead>Assignee</TableHead><TableHead><span className="sr-only">Actions</span></TableHead></TableRow>
+                  <TableRow><TableHead className="w-10"><SectionCheckbox sel={sel} ids={items.map((p: any) => p.id)} section={section} /></TableHead><TableHead>Part</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Source</TableHead><TableHead className="text-right">Unit</TableHead><TableHead className="text-right">Total</TableHead><TableHead>Status</TableHead><TableHead>Assignee</TableHead><TableHead><span className="sr-only">Actions</span></TableHead></TableRow>
                 </TableHeader>
                 <TableBody>
                   {items.map((p: any) => (
-                    <TableRow key={p.id}>
+                    <TableRow key={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
+                      <TableCell className="w-10"><RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} /></TableCell>
                       <TableCell className="min-w-[10rem] font-medium">{p.name}</TableCell>
                       <TableCell className="text-right tabular-nums">{p.quantity}</TableCell>
                       <TableCell><Badge variant="secondary">{PART_SOURCE_LABELS[p.source] || p.source}</Badge></TableCell>
@@ -97,6 +121,42 @@ export function CadPartsTab() {
           </Section>
         );
       }) : <EmptyState icon={Package} title="BOM is empty" description="Add every part the robot needs — printed, purchased, or goBILDA." action={<Button onClick={() => ctl.setEditing('new')}><Plus /> Add part</Button>} />}
+
+      <BulkBar
+        sel={sel}
+        noun="part"
+        actions={[
+          {
+            label: 'Set status',
+            run: () => false,
+            render: (ids, busy, exec) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Check /> Set status</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {STATUS_ORDER.map((s) => (
+                    <DropdownMenuItem key={s} onSelect={() => { exec(() => ctl.bulkUpdate(ids.map(Number), { status: s })); }}>
+                      <span className={cn('size-2 rounded-full', STATUS_BAR[s])} /> {PART_STATUS_LABELS[s]}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ),
+          },
+          {
+            label: 'Move to',
+            run: () => false,
+            render: (ids, busy, exec) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Package /> Move to</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {CAD_SECTIONS.map((s) => <DropdownMenuItem key={s} onSelect={() => { exec(() => ctl.bulkUpdate(ids.map(Number), { section: s })); }}>{s}</DropdownMenuItem>)}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ),
+          },
+          { label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkRemove(ids.map(Number)) },
+        ]}
+      />
 
       {ctl.editing !== null && (
         <PartSheet key={editing?.id ?? 'new'} initial={editing} onClose={() => ctl.setEditing(null)} onDone={() => { ctl.setEditing(null); void ctl.load(); }} />

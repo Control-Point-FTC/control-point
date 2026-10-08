@@ -8,6 +8,7 @@ import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
+import { bulkDelete, runBulk } from '../../modern/ui/selection';
 
 export interface TaskForm {
   team_id: any;
@@ -392,6 +393,44 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     }
   };
 
+  // ---- Bulk actions on a selection (V3.5) ----
+  // One request per task through the same endpoints as a single edit, so the
+  // server's permission checks, notifications and live updates all apply.
+  const patchTask = async (id: number, body: any) => {
+    const res = await apiFetch(`/api/tasks/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+    return !!res?.ok;
+  };
+  /** Move tasks to To Do / In Progress. Done needs proof, one task at a time. */
+  const bulkSetStatus = async (ids: number[], status: 'todo' | 'in-progress') => {
+    const ok = await runBulk(ids, (id) => patchTask(Number(id), { status }), { verb: 'Moved', noun: 'task' });
+    const moved = new Set(ok.map(Number));
+    setTasks((ts: any[]) => ts.map((t: any) => (moved.has(t.id) ? { ...t, status, completed_at: null } : t)));
+  };
+  /** Add one person to each task (keeps who is already on it); null clears everyone. */
+  const bulkAssign = async (ids: number[], memberId: number | null) => {
+    const byId = new Map(tasks.map((t: any) => [t.id, t]));
+    const nextOf = (id: number) => (memberId == null ? [] : [...new Set([...taskAssigneeIds(byId.get(id) || {}), memberId])]);
+    const ok = await runBulk(ids, (id) => patchTask(Number(id), { assignee_ids: nextOf(Number(id)) }), {
+      verb: memberId == null ? 'Unassigned' : 'Assigned', noun: 'task',
+    });
+    const done = new Set(ok.map(Number));
+    setTasks((ts: any[]) => ts.map((t: any) => {
+      if (!done.has(t.id)) return t;
+      const next = nextOf(t.id);
+      return { ...t, assignee_ids: next, assigned_to: next[0] ?? null };
+    }));
+  };
+  const bulkDeleteTasks = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      const res = await apiFetch(`/api/tasks/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!res?.ok;
+    }, { noun: 'task' });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setTasks((ts: any[]) => ts.filter((t: any) => !gone.has(t.id)));
+    return true;
+  };
+
   // Analytics data (all visible-to-Legacy tasks; Modern recomputes for its filters)
   const completionTrends = useMemo(() => completionTrendsOf(tasks), [tasks]);
   const memberCapacity = useMemo(() => memberCapacityOf(tasks, members), [tasks, members]);
@@ -415,7 +454,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
     aiTaskOpen, setAiTaskOpen, aiTaskText, setAiTaskText, aiTaskBusy, aiTaskNote, setAiTaskNote, aiTaskProposals, setAiTaskProposals,
     resetAiTask, applyAiTaskToForm, handleAiTaskParse,
     // mutations
-    updateStatus, handleDeleteTask,
+    updateStatus, handleDeleteTask, bulkSetStatus, bulkAssign, bulkDeleteTasks,
     // analytics
     completionTrends, memberCapacity, avgCompletionTime,
   };

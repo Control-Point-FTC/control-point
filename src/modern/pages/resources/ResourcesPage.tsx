@@ -19,6 +19,11 @@ import { copyText } from '../../../components/copyText';
 import { RESOURCE_CATEGORIES, RESOURCE_FILTERS, domainOf, formatResourceDate, useResourcesController } from '../../../components/resources/useResourcesController';
 import { Page, PageHeader, Section, EmptyState } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
+
+const rowId = (r: any) => r.id as number;
+const copyLink = (url: string) => { void copyText(url).then((ok) => notify(ok ? 'Link copied.' : 'Could not copy the link.', ok ? 'success' : 'error')); };
 
 type Ctl = ReturnType<typeof useResourcesController>;
 
@@ -40,6 +45,18 @@ export function ResourcesPage() {
     const term = q.trim().toLowerCase();
     return term ? ctl.items.filter((r) => `${r.title} ${r.description} ${r.url}`.toLowerCase().includes(term)) : ctl.items;
   }, [ctl.items, q]);
+  const sel = useSelection(shown, rowId);
+  // Right-click a resource card, title link included: open, copy, delete.
+  useContextMenu('resource', (el) => {
+    const r = ctl.resources.find((x: any) => String(x.id) === el.dataset.cmId);
+    if (!r) return null;
+    return [
+      { label: 'Open link', icon: ExternalLink, action: () => { window.open(r.url, '_blank', 'noopener,noreferrer'); } },
+      { label: 'Copy link', icon: Copy, action: () => copyLink(r.url) },
+      { separator: true },
+      { label: 'Delete', icon: Trash2, danger: true, action: () => void ctl.handleDelete(r.id) },
+    ];
+  });
   return (
     <Page>
       <PageHeader
@@ -74,14 +91,22 @@ export function ResourcesPage() {
         ) : !shown.length ? (
           <EmptyState title="Nothing here" description="Try another category or search." />
         ) : (
+          <>
+          <div className="mb-3 flex items-center">
+            <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+              <SelectAllCheckbox sel={sel} label="Select all shown resources" />
+              <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+            </label>
+          </div>
           <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {shown.map((r) => {
               const { Icon, tone } = catOf(r.category || 'Other');
               const domain = domainOf(r.url);
               const deleting = ctl.deletingIds.has(r.id);
               return (
-                <StaggerItem as="li" key={r.id} className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', deleting && 'pointer-events-none opacity-50')}>
+                <StaggerItem as="li" key={r.id} data-cm-type="resource" data-cm-id={r.id} data-cm-links className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', deleting && 'pointer-events-none opacity-50', sel.has(r.id) && 'border-accent/60 ring-1 ring-accent/40')}>
                   <div className="flex items-start gap-3">
+                    <RowCheckbox sel={sel} id={r.id} label={`Select ${r.title || domain}`} className="mt-2.5" />
                     <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', tone)} aria-hidden><Icon className="size-4" /></span>
                     <div className="min-w-0 flex-1">
                       <a href={r.url} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium leading-snug underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">{r.title || domain}</a>
@@ -93,7 +118,7 @@ export function ResourcesPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem asChild><a href={r.url} target="_blank" rel="noreferrer"><ExternalLink /> Open link</a></DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => { void copyText(r.url).then((ok) => notify(ok ? 'Link copied.' : 'Could not copy the link.', ok ? 'success' : 'error')); }}><Copy /> Copy link</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => copyLink(r.url)}><Copy /> Copy link</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onSelect={() => void ctl.handleDelete(r.id)} className="text-destructive focus:text-destructive"><Trash2 /> Delete</DropdownMenuItem>
                       </DropdownMenuContent>
@@ -108,6 +133,8 @@ export function ResourcesPage() {
               );
             })}
           </Stagger>
+          <BulkBar sel={sel} noun="resource" actions={[{ label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteResources(ids.map(Number)) }]} />
+          </>
         )}
       </Section>
     </Page>

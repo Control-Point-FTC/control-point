@@ -13,22 +13,35 @@ import { CAD_SECTIONS, fmtSize, useCadSnapshots, useSnapshotForm } from '../../.
 import { Section, EmptyState } from '../../ui/page';
 import { Stagger, StaggerItem } from '../../ui/motion';
 import { FilePick } from './CadReviewsTab';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+
+const rowId = (r: any) => r.id as number;
 
 const CadModelViewer = React.lazy(() => import('../../../components/CadModelViewer'));
 
 export function CadSnapshotsTab({ currentUser, isAdmin }: { currentUser?: any; isAdmin: boolean }) {
   const ctl = useCadSnapshots({ currentUser, isAdmin });
   const [viewer, setViewer] = React.useState<any>(null);
+  // Only snapshots you may delete (yours, or any for admins) can be selected.
+  const deletable = React.useMemo(() => ctl.grouped.flatMap((g: any) => g.items).filter((s: any) => ctl.canDelete(s)), [ctl.grouped, ctl]);
+  const sel = useSelection(deletable, rowId);
   return (
     <>
-      <div className="mb-5 flex justify-end">
+      <div className="mb-5 flex items-center justify-end gap-2">
+        {deletable.length > 0 && (
+          <label className="mr-auto flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+            <SelectAllCheckbox sel={sel} label="Select all snapshots you can delete" />
+            <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+          </label>
+        )}
         <Button onClick={() => ctl.setShowForm(true)}><Upload /> Upload snapshot</Button>
       </div>
       {!ctl.loaded ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-60" />)}</div> : ctl.grouped.length ? ctl.grouped.map(({ section, items }) => (
         <Section key={section} title={section} description={`${items.length} snapshot${items.length === 1 ? '' : 's'}`}>
           <Stagger as="ul" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((s: any) => (
-              <StaggerItem as="li" key={s.id} className="group overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-accent/40">
+              <StaggerItem as="li" key={s.id} className={cn('group relative overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-accent/40', sel.has(s.id) && 'border-accent/60 ring-1 ring-accent/40')}>
+                {ctl.canDelete(s) && <RowCheckbox sel={sel} id={s.id} label={`Select ${s.title}`} className="absolute left-3 top-3 z-10 rounded bg-background/80 p-1 backdrop-blur" />}
                 <button onClick={() => setViewer(s)} aria-label={`View ${s.title} in 3D`} className="relative block aspect-video w-full overflow-hidden bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60">
                   {s.screenshot_url
                     ? <img src={s.screenshot_url} alt="" className="size-full object-cover transition-transform duration-300 group-hover:scale-[1.03] motion-reduce:group-hover:scale-100" />
@@ -58,6 +71,7 @@ export function CadSnapshotsTab({ currentUser, isAdmin }: { currentUser?: any; i
           </Stagger>
         </Section>
       )) : <EmptyState icon={Layers} title="No snapshots yet" description="Upload a STEP or STL export — the team can orbit around it right here." action={<Button onClick={() => ctl.setShowForm(true)}><Upload /> Upload snapshot</Button>} />}
+      <BulkBar sel={sel} noun="snapshot" actions={[{ label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkRemove(ids.map(Number)) }]} />
 
       <UploadSheet open={ctl.showForm} onOpenChange={ctl.setShowForm} onDone={() => { ctl.setShowForm(false); void ctl.load(); }} />
       {viewer && (

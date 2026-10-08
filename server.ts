@@ -9649,16 +9649,23 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_inventory");
       if (!auth) return;
-      const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       const id = req.params.id;
-      const existing: any = (await dbGet("SELECT team_id FROM inventory WHERE id = ?", id));
+      const existing: any = (await dbGet("SELECT * FROM inventory WHERE id = ?", id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      
-      (await dbRun(`
-        UPDATE inventory 
-        SET name = ?, part_number = ?, sku = ?, quantity = ?, assigned_to = ?, location = ?, category = ?, description = ?, cost = ?
-        WHERE id = ?
-      `, name, part_number, sku, quantity, assigned_to || null, location, category, description, cost, id));
+      // Partial update: only the columns sent are written, so a bulk "set
+      // category" can't blank a part's name, SKU or count, and can't undo a
+      // different field another request changed at the same moment.
+      const body = req.body || {};
+      if (body.name !== undefined && !String(body.name ?? '').trim()) return res.status(400).json({ error: "Add a name" });
+      const sets: string[] = [];
+      const vals: any[] = [];
+      for (const k of ["name", "part_number", "sku", "quantity", "assigned_to", "location", "category", "description", "cost"]) {
+        if (body[k] === undefined) continue;
+        sets.push(`${k} = ?`);
+        vals.push(k === "assigned_to" ? (body[k] || null) : body[k]);
+      }
+      if (!sets.length) return res.status(400).json({ error: "Nothing to update" });
+      (await dbRun(`UPDATE inventory SET ${sets.join(", ")} WHERE id = ?`, ...vals, id));
 
       res.json({ success: true });
     } catch (error: any) {
@@ -12578,14 +12585,20 @@ Rules:
       const teamId = cadTeam(auth, res); if (!teamId) return;
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const part = (await dbGet("SELECT id FROM cad_parts WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      const part = (await dbGet("SELECT * FROM cad_parts WHERE id = ? AND team_id = ?", id, teamId)) as any;
       if (!part) return res.status(404).json({ error: "Not found" });
-      const parsed = sanitizePartInput(req.body);
+      // Partial update: validate the merged line, but write only the columns
+      // that were sent (bulk status changes send just { status }), so two
+      // overlapping edits to different fields can't undo each other.
+      const body = req.body || {};
+      const parsed = sanitizePartInput({ ...part, ...body });
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
-      const v = parsed.value!;
+      const v = parsed.value! as Record<string, any>;
+      const cols = ["name", "section", "quantity", "source", "unit_cost", "status", "assignee", "notes"].filter((k) => body[k] !== undefined);
+      if (!cols.length) return res.status(400).json({ error: "Nothing to update" });
       await dbRun(
-        `UPDATE cad_parts SET name = ?, section = ?, quantity = ?, source = ?, unit_cost = ?, status = ?, assignee = ?, notes = ?, updated_at = ? WHERE id = ?`,
-        v.name, v.section, v.quantity, v.source, v.unit_cost, v.status, v.assignee, v.notes, new Date().toISOString(), id);
+        `UPDATE cad_parts SET ${cols.map((k) => `${k} = ?`).join(", ")}, updated_at = ? WHERE id = ?`,
+        ...cols.map((k) => v[k]), new Date().toISOString(), id);
       res.json({ success: true });
     } catch (e) { console.error("CAD part update error:", e); res.status(500).json({ error: "Internal server error" }); }
   });

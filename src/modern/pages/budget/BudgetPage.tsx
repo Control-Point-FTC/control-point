@@ -6,7 +6,11 @@
 // only members with the budget scope can add or edit.
 import { useMemo, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { ArrowDownLeft, ArrowUpRight, Copy, MoreHorizontal, Pencil, Plus, Search, Trash2, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Copy, MoreHorizontal, Pencil, Plus, Search, Tags, Trash2, Wallet } from 'lucide-react';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+
+const NONE: any[] = [];
+const rowId = (r: any) => r.id as number;
 import { datedName, downloadCsv } from '../../../utils/csv';
 import { ExportMenu } from '../../ui/ExportMenu';
 import { cn } from '../../../components/cn';
@@ -174,9 +178,18 @@ function Ledger({ ctl, budget }: { ctl: Ctl; budget: any[] }) {
     }
     return out;
   }, [budget, kind, q]);
+  const shown = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const sel = useSelection(ctl.isAdmin ? shown : NONE, rowId);
+  const cats = useMemo(() => [...new Set(budget.map((b) => String(b.category || '').trim()).filter(Boolean))].sort(), [budget]);
   return (
     <Section title="Transactions" description="A line-by-line record of money in and out.">
       <div className="mb-4 flex flex-wrap items-center gap-3">
+        {ctl.isAdmin && shown.length > 0 && (
+          <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+            <SelectAllCheckbox sel={sel} label="Select all shown transactions" />
+            <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+          </label>
+        )}
         <ToggleGroup type="single" aria-label="Show" value={kind} onValueChange={(v) => { if (v) setKind(v as typeof kind); }}>
           <ToggleGroupItem value="all">All</ToggleGroupItem>
           <ToggleGroupItem value="income">Income</ToggleGroupItem>
@@ -202,7 +215,8 @@ function Ledger({ ctl, budget }: { ctl: Ctl; budget: any[] }) {
                 {g.items.map((item) => {
                   const income = item.type === 'income';
                   return (
-                    <StaggerItem as="li" key={item.id} data-cm-type="budget-tx" data-cm-id={item.id} className="flex items-center gap-3 py-3">
+                    <StaggerItem as="li" key={item.id} data-cm-type="budget-tx" data-cm-id={item.id} className={cn('flex items-center gap-3 py-3', sel.has(item.id) && 'bg-accent/5')}>
+                      {ctl.isAdmin && <RowCheckbox sel={sel} id={item.id} label={`Select ${item.description || 'transaction'} on ${item.date}`} />}
                       <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-full', income ? 'bg-success/15 text-success' : 'bg-destructive/10 text-destructive')} aria-hidden>
                         {income ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}
                       </span>
@@ -225,6 +239,26 @@ function Ledger({ ctl, budget }: { ctl: Ctl; budget: any[] }) {
           ))}
         </div>
       )}
+      <BulkBar
+        sel={sel}
+        noun="transaction"
+        actions={[
+          {
+            label: 'Set category',
+            show: cats.length > 0,
+            run: () => false,
+            render: (ids, busy, exec) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Tags /> Set category</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
+                  {cats.map((c) => <DropdownMenuItem key={c} onSelect={() => { exec(() => ctl.bulkSetCategory(ids.map(Number), c)); }}>{c}</DropdownMenuItem>)}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ),
+          },
+          { label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteEntries(ids.map(Number)) },
+        ]}
+      />
     </Section>
   );
 }

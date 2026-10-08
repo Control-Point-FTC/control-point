@@ -15,6 +15,7 @@ import { format } from 'date-fns';
 import { apiFetch } from '../../services/api';
 import { notify, confirmDialog } from '../dialog';
 import { deleteDraft, draftEpoch, getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
+import { bulkDelete, runBulk } from '../../modern/ui/selection';
 
 export const CAD_SECTIONS = ['Intake', 'Outtake', 'Drivetrain', 'Chassis', 'End Game', 'Electronics', 'Other'];
 export const REVIEW_STATUS_LABELS: Record<string, string> = {
@@ -104,6 +105,19 @@ export function useCadDashboard() {
 // Onshape docs
 // ---------------------------------------------------------------------------
 
+/** Delete many rows of one CAD list (V3.5 bulk actions); false when cancelled. */
+async function bulkRemoveRows(endpoint: string, ids: number[], setRows: (fn: (p: any[]) => any[]) => void, noun: string, detail?: string): Promise<boolean> {
+  const ok = await bulkDelete(ids, async (id) => {
+    const r = await apiFetch(`${endpoint}/${id}`, { method: 'DELETE' }).catch(() => null);
+    return !!r?.ok;
+  }, { noun, detail });
+  if (ok === false) return false;
+  const gone = new Set(ok.map(Number));
+  setRows((p) => p.filter((x) => !gone.has(x.id)));
+  cadChanged(endpoint);
+  return true;
+}
+
 export function useCadDocs() {
   const { rows: docs, setRows: setDocs, loaded } = useList<any>('/api/cad/docs');
   const [name, rawSetName] = useDraft<string>('cad:doc-name', '');
@@ -130,7 +144,8 @@ export function useCadDocs() {
     if (r?.ok) { setDocs((p) => p.filter((d) => d.id !== id)); cadChanged('/api/cad/docs'); notify('Document unlinked.', 'success'); }
     else notify('Could not unlink.', 'error');
   };
-  return { docs, loaded, name, setName, url, setUrl, busy: lock.busy, add, remove };
+  const bulkRemove = (ids: number[]) => bulkRemoveRows('/api/cad/docs', ids, setDocs, 'document link', `Unlinks ${ids.length === 1 ? 'it' : `${ids.length} documents`} for the whole team.`);
+  return { docs, loaded, name, setName, url, setUrl, busy: lock.busy, add, remove, bulkRemove };
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +192,8 @@ export function useCadReviews({ currentUser, isAdmin }: { currentUser?: any; isA
     if (canAct(review, 'built')) out.push({ to: 'built', label: 'Mark Built' });
     return out;
   };
-  return { reviews, loaded, load, filter, setFilter, visible, setStatus, remove, canAct, actionsFor, showForm, setShowForm };
+  const bulkRemove = (ids: number[]) => bulkRemoveRows('/api/cad/reviews', ids, setReviews, 'review', `Removes ${ids.length === 1 ? 'the review' : `${ids.length} reviews`} and every comment on ${ids.length === 1 ? 'it' : 'them'}.`);
+  return { reviews, loaded, load, filter, setFilter, visible, setStatus, remove, canAct, actionsFor, showForm, setShowForm, bulkRemove };
 }
 
 export interface ReviewFormState { title: string; section: string; onshapeUrl: string; description: string; shot: File | null }
@@ -261,7 +277,8 @@ export function useCadSnapshots({ currentUser, isAdmin }: { currentUser?: any; i
       notify(`Delete failed: ${e?.message || 'network error'}`, 'error');
     }
   };
-  return { snaps, loaded, load, grouped, canDelete, remove, showForm, setShowForm };
+  const bulkRemove = (ids: number[]) => bulkRemoveRows('/api/cad/snapshots', ids, setSnaps, 'snapshot', `The 3D ${ids.length === 1 ? 'file is' : 'files are'} removed for everyone.`);
+  return { snaps, loaded, load, grouped, canDelete, remove, showForm, setShowForm, bulkRemove };
 }
 
 export interface SnapshotFormState { title: string; section: string; model: File | null; shot: File | null; notes: string }
@@ -313,7 +330,29 @@ export function useCadParts() {
     if (r?.ok) { setParts((p) => p.filter((x) => x.id !== id)); cadChanged('/api/cad/parts'); notify('Part deleted.', 'success'); }
     else notify('Could not delete.', 'error');
   };
-  return { parts, loaded, load, grouped, total, remove, editing, setEditing, showInvoice, setShowInvoice };
+  const patchPart = async (id: number, body: any) => {
+    const r = await apiFetch(`/api/cad/parts/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+    return !!r?.ok;
+  };
+  /** Set status or subsystem on many BOM lines (V3.5 bulk actions). */
+  const bulkUpdate = async (ids: number[], patch: { status?: string; section?: string }) => {
+    const ok = await runBulk(ids, (id) => patchPart(Number(id), patch), { verb: 'Updated', noun: 'part' });
+    const done = new Set(ok.map(Number));
+    setParts((p) => p.map((x) => (done.has(x.id) ? { ...x, ...patch } : x)));
+    cadChanged('/api/cad/parts');
+  };
+  const bulkRemove = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      const r = await apiFetch(`/api/cad/parts/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!r?.ok;
+    }, { noun: 'part', detail: `Removes ${ids.length === 1 ? 'it' : `${ids.length} parts`} from the BOM. This can't be undone.` });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setParts((p) => p.filter((x) => !gone.has(x.id)));
+    cadChanged('/api/cad/parts');
+    return true;
+  };
+  return { parts, loaded, load, grouped, total, remove, editing, setEditing, showInvoice, setShowInvoice, bulkUpdate, bulkRemove };
 }
 
 export interface PartFormState { name: string; section: string; quantity: string; source: string; unitCost: string; status: string; assignee: string; notes: string }
