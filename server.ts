@@ -75,6 +75,7 @@ import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
+import { registerNotebookRoutes } from "./server/notebook.js";
 import { buildArticleCsp, buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
@@ -1987,6 +1988,9 @@ const ROLE_PERMISSIONS = [
   { key: "manage_tasks", label: "Manage tasks" },
   { key: "manage_outreach", label: "Manage outreach" },
   { key: "manage_documentation", label: "Manage documentation" },
+  { key: "edit_notebook", label: "Edit notebook pages" },
+  { key: "organize_notebook", label: "Organize notebooks" },
+  { key: "delete_notebook", label: "Delete notebook items" },
   { key: "manage_communications", label: "Manage communications" },
   { key: "manage_voice", label: "Manage voice channels" },
   { key: "moderate_calls", label: "Moderate calls" },
@@ -2055,14 +2059,14 @@ async function ensureRolesSeeded(teamId: number | null | undefined) {
   if (!names.has("Member")) {
     const memberRole = (await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach"]), 1
+      teamId, "Member", "#71717A", JSON.stringify(["view_ai", "manage_calendar", "manage_communications", "manage_tasks", "manage_outreach", "edit_notebook", "organize_notebook"]), 1
     )) as any;
     memberRoleId = Number(memberRole.lastInsertRowid);
   }
   if (!names.has("Verified Member")) {
     await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,1)",
-      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget"]), 2
+      teamId, "Verified Member", "#22C55E", JSON.stringify(["view_ai", "manage_inventory", "manage_calendar", "manage_tasks", "manage_documentation", "manage_communications", "manage_outreach", "manage_attendance", "manage_code", "manage_budget", "edit_notebook", "organize_notebook"]), 2
     );
   }
 
@@ -4701,6 +4705,10 @@ async function startServer() {
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
       // Voice tables (FKs to teams have no CASCADE — must clean manually)
       { sql: "DELETE FROM call_sessions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM voice_channel_role_perms WHERE channel_id IN (SELECT id FROM voice_channels WHERE team_id = ?)", args: [teamId] },
@@ -7299,6 +7307,8 @@ async function startServer() {
 
   // ---- Voice & video calling ----
   registerVoiceRoutes(app, voiceDeps);
+
+  registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded });
 
   // ---- Manual scouting (works with no FTC data; synced from devices) ----
   registerScoutingRoutes(app, {
