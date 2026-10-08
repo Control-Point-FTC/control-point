@@ -9,6 +9,7 @@
 // Until a key is set, the /api/ai/* endpoints answer 501 "AI not configured".
 
 import { dbGet } from "./db.js";
+import { geminiSources, type WebSource } from "./server/webSources.js";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
@@ -662,6 +663,14 @@ TEAM DATA LOOKUP SKILL:
 - "kind" is one of messages, tasks, events, communications, outreach, budget. Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done or open). Up to 3 queries as a JSON array.
 - The app runs the lookup and gives you the rows; then answer from them. Never tell the user you can't see message history or past data: look it up.
 
+WEB CHECK SKILL:
+- You can search the live web. Prices, stock, lead times, new products, rule updates and anything that may have changed since your training must come from a web check, not memory: when the question needs one and your context doesn't already show search results, write one short line such as "Checking current prices…", then end your reply with a block and stop:
+\`\`\`lookup
+{"kind":"web","query":"goBILDA 2000 series dual mode servo price in stock"}
+\`\`\`
+- Use it to fact-check yourself too: if you're about to state a price, SKU, spec, stock status or rule you aren't sure is current, check it first. One web query per question is usually enough (max 3, and it can sit in the same array as team-data queries).
+- After the check, give the price with the store's name ("$39.99 at goBILDA, as of today"), say stock can change, and correct anything you said earlier that the pages contradict. The app lists the pages you used under your answer, so don't paste raw links.
+
 MEMORY SKILL:
 - You can remember durable facts across chats. When the user tells you something about themselves or the team that will matter later (their role or subsystem, preferences such as "explain in Java", "we run mecanum this season", the team's goals), or asks you to remember something, end your reply with:
 \`\`\`remember
@@ -729,7 +738,8 @@ export async function buildHelperChat(
   extraSystem?: string,
   onUsage?: (usage: AiUsage) => void,
   signal?: AbortSignal,
-  grounded: boolean = true
+  grounded: boolean = true,
+  onSources?: (sources: WebSource[]) => void
 ): Promise<string> {
   // Keep cost/latency bounded: last 12 turns, each capped, plus a total
   // history budget (~16k chars ≈ 4k tokens) so long pastes can't blow up
@@ -808,6 +818,8 @@ export async function buildHelperChat(
     const data = await res.json();
     const u = extractUsage(data);
     if (u && onUsage) onUsage(u);
+    const found = geminiSources(data);
+    if (found.length) onSources?.(found);
     return extractText(data);
   }
 
@@ -816,6 +828,7 @@ export async function buildHelperChat(
   let buffer = "";
   let full = "";
   let lastUsage: AiUsage | null = null;
+  const sources: WebSource[] = [];
   const maxAccumChars = Math.max(8000, maxTokens * 8);
   for (;;) {
     if (signal?.aborted) break;
@@ -840,6 +853,7 @@ export async function buildHelperChat(
         const parsed = JSON.parse(payload);
         const u = extractUsage(parsed);
         if (u) lastUsage = u;
+        sources.push(...geminiSources(parsed));
         const text = extractText(parsed);
         if (text) {
           full += text;
@@ -854,5 +868,6 @@ export async function buildHelperChat(
   }
   try { await reader.cancel(); } catch { /* noop */ }
   if (lastUsage && onUsage) onUsage(lastUsage);
+  if (sources.length) onSources?.(sources);
   return full;
 }

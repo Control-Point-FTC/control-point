@@ -63,7 +63,8 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
-import { createLookupHold, extractLookupBlocks, runLookups } from "./server/brunoLookup.js";
+import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
+import { sourcesFooter } from "./server/webSources.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
@@ -11827,12 +11828,14 @@ Rules:
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
-        const rows = await runLookups(dbAll as any, auth.teamId, lookupTz, queries);
+        const web = queries.some((q) => q.kind === "web");
+        const dataQueries = queries.filter((q) => q.kind !== "web");
+        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
           { role: "model", text: firstText },
-          { role: "user", text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. If a search failed or more rows matched than are listed, say that too. Don't ask for another lookup.` },
+          { role: "user", text: followUpPrompt(rows, queries) },
         ];
         let secondUsage: any = null;
         const second = await aiChat({
@@ -11843,12 +11846,14 @@ Rules:
           onChunk: opts.onChunk,
           onUsage: (u) => { secondUsage = u; },
           signal: opts.signal,
+          // A ```lookup {"kind":"web"} check runs this pass with live web search.
+          webSearch: web,
         });
         // The second call is its own AI request: log it on its own row (with
         // its own provider) so daily limits count both calls.
         const secondPromptChars = secondMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
         logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
-        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider };
+        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources };
       };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -11878,6 +11883,7 @@ Rules:
           const tail = hold.end();
           if (tail) res.write(tail);
           let fullText = aiReply.text;
+          const webSources = [...(aiReply.sources || [])];
           // The first call's own counts, logged before any lookup pass (which logs itself).
           const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
           logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
@@ -11893,6 +11899,7 @@ Rules:
             if (tail2) res.write(tail2);
             if (looked) {
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
+              webSources.push(...(looked.sources || []));
             } else {
               const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
               res.write(sorry);
@@ -11906,7 +11913,8 @@ Rules:
           const mem = await saveMemories(fullText);
           fullText = mem.text;
           // The note streams with the scouting appendix below (written once).
-          const appendix = mem.note + await scoutingAppendix(fullText, auth.teamId, streamAbort.signal).catch(() => "");
+          // Web pages the answer drew on, listed under it (phase 4d).
+          const appendix = sourcesFooter(webSources) + mem.note + await scoutingAppendix(fullText, auth.teamId, streamAbort.signal).catch(() => "");
           // Stopped during the lookups: the user has the reply they saw; nothing more is written or saved.
           if (streamAbort.signal.aborted) { res.end(); return; }
           if (appendix) res.write(appendix);
@@ -11945,13 +11953,15 @@ Rules:
       logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, firstPromptChars, String(result || "").length, "ok", aiReply.provider);
       // Same rule as the stream: any ```lookup block (even an unfinished or
       // unreadable one) is never shown or saved; if it can't run, say so.
+      const webSourcesNS = [...(aiReply.sources || [])];
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal }).catch(() => null);
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
+        if (looked) webSourcesNS.push(...(looked.sources || []));
       }
       const memNS = await saveMemories(String(result || ""));
       result = memNS.text;
-      let finalResult = stripActionBlocks(String(result || "")) + memNS.note;
+      let finalResult = stripActionBlocks(String(result || "")) + sourcesFooter(webSourcesNS) + memNS.note;
       finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
       if (chat) {
