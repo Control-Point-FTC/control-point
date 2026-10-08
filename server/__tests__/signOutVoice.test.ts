@@ -25,7 +25,13 @@ describe("sign out other devices: voice calls", () => {
     const closed = new Promise<number>((res) => ws.once("close", (code) => res(code)));
     await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
     ws.send(JSON.stringify({ type: "hello", sessionId: phone }));
-    await new Promise((r) => setTimeout(r, 400));
+    // Wait until the server has identified the socket: a chat message from it lands.
+    const posted = async () => Number(((await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM messages WHERE sender_id = ?", args: [id] })).rows[0] as any).n);
+    for (let i = 0; i < 100 && (await posted()) === 0; i++) {
+      ws.send(JSON.stringify({ type: "chat", content: "ready" }));
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(await posted()).toBeGreaterThan(0);
     expect((await t.post("/api/auth/sign-out-others", {}, here)).status).toBe(200);
     expect(await closed).toBe(4001);
     const leftAt = async () => (await t.db.execute({ sql: "SELECT left_at FROM call_participants WHERE session_id = ? AND member_id = ?", args: [call, id] })).rows[0] as any;
