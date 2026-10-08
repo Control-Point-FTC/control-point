@@ -52,6 +52,26 @@ export function buildCsp({ scriptHashes, reportUri }: { scriptHashes: string[]; 
   return directives.map(([k, v]) => `${k} ${v.join(" ")}`).join("; ");
 }
 
+/**
+ * Policy for the standalone Predict article (/predict/how-it-works): a
+ * static page with one inline script (pinned by hash), inline styles, and
+ * Google Fonts. It loads nothing else and talks to no API.
+ */
+export function buildArticleCsp({ scriptHashes, reportUri }: { scriptHashes: string[]; reportUri?: string }): string {
+  const directives: [string, string[]][] = [
+    ["default-src", ["'none'"]],
+    ["script-src", scriptHashes.length ? scriptHashes : ["'none'"]],
+    ["style-src", ["'unsafe-inline'", "https://fonts.googleapis.com"]],
+    ["font-src", ["https://fonts.gstatic.com"]],
+    ["img-src", ["'self'", "data:"]],
+    ["base-uri", ["'none'"]],
+    ["form-action", ["'none'"]],
+    ["frame-ancestors", ["'none'"]],
+  ];
+  if (reportUri) directives.push(["report-uri", [reportUri]]);
+  return directives.map(([k, v]) => `${k} ${v.join(" ")}`).join("; ");
+}
+
 /** A browser CSP violation report (legacy `csp-report` or Reporting API body). */
 export function summarizeCspReport(body: any): { message: string; route: string } | null {
   const r = body?.["csp-report"] || (Array.isArray(body) ? body[0]?.body : body?.body) || null;
