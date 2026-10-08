@@ -1,7 +1,7 @@
 // People → Members: searchable directory with presence, role chips and a
 // per-row action menu; a member sheet for details; the drafted member editor
 // sheet; and the remove confirmation.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   Copy, KeyRound, Mail, MoreHorizontal, Pencil, Phone, Search, ShieldCheck, UserMinus, Users, Video,
@@ -21,6 +21,11 @@ import { MemberAvatar } from '../tasks/AssigneePicker';
 import { EmptyState } from '../../ui/page';
 import { RoleChip } from './RolesTab';
 import { LoadMore, useIncrementalGroups } from '../../ui/windowing';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+import { apiFetch } from '../../../services/api';
+
+const NO_ROWS: any[] = [];
+const rowId = (r: any) => r.id as number;
 
 type Ctl = ReturnType<typeof useMembersController>;
 
@@ -65,6 +70,18 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
       .sort((a, b) => (rank[a.presence] ?? 3) - (rank[b.presence] ?? 3) || String(a.name).localeCompare(String(b.name)));
   }, [members, query, filter]);
 
+  // Bulk: admins remove people, role managers hand out roles. Never yourself.
+  const canBulk = ctl.isAdmin || canManageRoles;
+  const selectable = useMemo(() => (canBulk ? visible.filter((m) => m.id !== currentUser?.id) : NO_ROWS), [canBulk, visible, currentUser?.id]);
+  const sel = useSelection(selectable, rowId);
+  const [roles, setRoles] = useState<any[]>([]);
+  useEffect(() => {
+    if (!canManageRoles) return;
+    let live = true;
+    apiFetch('/api/roles').then((r) => (r.ok ? r.json() : [])).then((d) => { if (live && Array.isArray(d)) setRoles(d); }).catch(() => {});
+    return () => { live = false; };
+  }, [canManageRoles, sel.count > 0]);
+
   // Big rosters show 60 people, then more as you scroll; a new search starts over.
   const inc = useIncrementalGroups(60, `${query}|${filter}`);
 
@@ -99,6 +116,12 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search people or roles" aria-label="Search members" className="pl-9 max-sm:h-11" />
         </div>
+        {canBulk && selectable.length > 0 && (
+          <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+            <SelectAllCheckbox sel={sel} label="Select all shown members" />
+            <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+          </label>
+        )}
         <ToggleGroup type="single" value={filter} onValueChange={(v) => { if (v) setFilter(v as Filter); }} aria-label="Filter members">
           <ToggleGroupItem value="all">All</ToggleGroupItem>
           <ToggleGroupItem value="online">Online</ToggleGroupItem>
@@ -116,7 +139,8 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
         <ul className="divide-y divide-border rounded-xl border border-border bg-card">
           <AnimatePresence initial={false}>
             {inc.slice('members', visible).map((m) => (
-              <motion.li key={m.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex items-center gap-1 pr-2">
+              <motion.li key={m.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className={cn('flex items-center gap-1 pr-2', canBulk && 'pl-3', sel.has(m.id) && 'bg-accent/5')}>
+                {canBulk && (m.id !== currentUser?.id ? <RowCheckbox sel={sel} id={m.id} label={`Select ${m.name}`} /> : <span className="w-4 shrink-0" aria-hidden />)}
                 <button type="button" onClick={() => setViewId(m.id)} className="flex min-h-14 min-w-0 flex-1 items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none">
                   <PresenceAvatar member={m} />
                   <span className="min-w-0 flex-1">
@@ -143,6 +167,28 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
           </AnimatePresence>
           <LoadMore as="li" hidden={inc.hidden('members', visible.length)} onMore={() => inc.more('members')} />
         </ul>
+      )}
+      {canBulk && (
+        <BulkBar
+          sel={sel}
+          noun="member"
+          actions={[
+            {
+              label: 'Give role',
+              show: canManageRoles && roles.length > 0,
+              run: () => false,
+              render: (ids, busy, done) => (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><ShieldCheck /> Give role</Button></DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
+                    {roles.map((r: any) => <DropdownMenuItem key={r.id} onSelect={() => { void ctl.bulkGiveRole(ids.map(Number), r.id).then(done); }}><span className="size-2 rounded-full" style={{ backgroundColor: r.color }} /> {r.name}</DropdownMenuItem>)}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ),
+            },
+            { label: 'Remove from team', icon: <UserMinus />, danger: true, show: ctl.isAdmin, run: (ids) => ctl.bulkRemoveMembers(ids.map(Number)) },
+          ]}
+        />
       )}
 
       {/* Member details */}

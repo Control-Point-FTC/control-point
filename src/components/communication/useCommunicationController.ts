@@ -9,6 +9,7 @@ import { Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { communicationError } from '../../utils/validation';
+import { bulkDelete } from '../../modern/ui/selection';
 import { getDraft, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 
@@ -182,5 +183,18 @@ export function useCommunicationController({ communications, setCommunications, 
     }
   };
 
-  return { canManage, showAdd, setShowAdd, showImport, setShowImport, showQuickAdd, setShowQuickAdd, newComm, setNewComm, expandedId, setExpandedId, replyingTo, setReplyingTo, replyForm, setReplyForm, askResponded, setAskResponded, editingEntry, setEditingEntry, editForm, setEditForm, threads, handleAdd, handleReply, openReply, openEdit, handleEdit, handleDelete };
+  /** Delete whole threads (each root takes its replies with it). */
+  const bulkDeleteThreads = async (rootIds: number[]) => {
+    const ok = await bulkDelete(rootIds, async (id) => {
+      const res = await apiFetch(`/api/communications/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!res?.ok;
+    }, { noun: 'conversation', detail: `This permanently deletes ${rootIds.length === 1 ? 'the conversation' : `${rootIds.length} conversations`} and every reply in ${rootIds.length === 1 ? 'it' : 'them'}. This can't be undone.` });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setCommunications((cs: any[]) => cs.filter((c: any) => !gone.has(c.id) && !gone.has(c.parent_id)));
+    refresh.communications();
+    return true;
+  };
+
+  return { bulkDeleteThreads, canManage, showAdd, setShowAdd, showImport, setShowImport, showQuickAdd, setShowQuickAdd, newComm, setNewComm, expandedId, setExpandedId, replyingTo, setReplyingTo, replyForm, setReplyForm, askResponded, setAskResponded, editingEntry, setEditingEntry, editForm, setEditForm, threads, handleAdd, handleReply, openReply, openEdit, handleEdit, handleDelete };
 }

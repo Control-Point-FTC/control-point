@@ -266,7 +266,56 @@ export function useAttendanceController({ attendance, refresh, hasScope }: {
     }
   };
 
+  /**
+   * Mark many members at once for one day (V3.5 bulk actions): one batch
+   * request, shown instantly, rolled back together if the server refuses.
+   */
+  const bulkSetStatus = async (memberIds: number[], date: string, nextStatus: string) => {
+    if (!isAdmin || !memberIds.length) return;
+    if (nextStatus !== '-') {
+      const bad = attendanceMarkError(date, nextStatus, localIsoDate());
+      if (bad) { notify(bad, 'error'); return; }
+    }
+    const keys = memberIds.map((id) => `${id}|${date}`);
+    const seqs = keys.map((k) => { const s = (cellSeq.current.get(k) ?? 0) + 1; cellSeq.current.set(k, s); return s; });
+    setPendingChanges((m) => { const n = new Map(m); for (const k of keys) n.set(k, nextStatus); return n; });
+    setSavingStatus('saving');
+    const rollback = () => {
+      setPendingChanges((m) => {
+        const n = new Map(m);
+        keys.forEach((k, i) => {
+          if (cellSeq.current.get(k) !== seqs[i]) return;
+          if (confirmed.current.has(k)) n.set(k, confirmed.current.get(k)!); else n.delete(k);
+        });
+        return n;
+      });
+      Promise.resolve(refresh.attendance()).catch(() => {});
+    };
+    try {
+      const res = await apiFetch('/api/attendance/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, records: memberIds.map((id) => ({ member_id: id, status: nextStatus === '-' ? null : nextStatus })) }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      keys.forEach((k, i) => {
+        const ack = confirmedSeq.current.get(k) ?? 0;
+        if (seqs[i] >= ack) { confirmed.current.set(k, nextStatus); confirmedSeq.current.set(k, seqs[i]); }
+      });
+      setSavingStatus('saved');
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setSavingStatus('idle'), 2000);
+      notify(`Marked ${memberIds.length} ${memberIds.length === 1 ? 'member' : 'members'} ${STATUS_LABELS[nextStatus] ?? nextStatus}`, 'success');
+      Promise.resolve(refresh.attendance()).catch(() => {});
+    } catch {
+      rollback();
+      setSavingStatus('idle');
+      notify('Failed to save attendance', 'error');
+    }
+  };
+
   return {
+    bulkSetStatus,
     isAdmin, sessions, summary, hiddenDates, calendarStart, setCalendarStart, savingStatus,
     visibleDates, rangeLabel, hasMoreDates, getStatus, setStatus, toggleStatus,
     hideDate, unhideDate, isWeekdayHidden, hideByDayOfWeek, unhideByDayOfWeek, toggleWeekday, hideAll, unhideAll,

@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { getDraft, newSessionId, useDraft } from '../../modern/drafts';
+import { bulkDelete, runBulk } from '../../modern/ui/selection';
 
 // Permissions come from roles; `is_admin` maps to the system Admin role.
 export interface MemberForm { team_id: string | number; name: string; role: string; email: string; is_board: boolean; is_admin: boolean }
@@ -181,7 +182,29 @@ export function useMembersController({ members, refresh, onRefresh, currentUser,
     }
   };
 
+  // ---- Bulk actions on a selection (V3.5) ----
+  const bulkRemoveMembers = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      const res = await apiFetch(`/api/members/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!res?.ok;
+    }, {
+      noun: 'member',
+      detail: `${ids.length === 1 ? 'This person loses' : `These ${ids.length} people lose`} access to the workspace. Their accounts and other workspaces stay; you can invite them back.`,
+    });
+    if (ok === false) return false;
+    refresh.members();
+    return true;
+  };
+  const bulkGiveRole = async (ids: number[], roleId: number) => {
+    await runBulk(ids, async (id) => {
+      const res = await apiFetch(`/api/members/${id}/roles`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role_id: roleId }) }).catch(() => null);
+      return !!res?.ok;
+    }, { verb: 'Updated roles for', noun: 'member' });
+    refresh.members();
+  };
+
   return {
+    bulkRemoveMembers, bulkGiveRole,
     isAdmin, activeTeamId,
     showAddMember, editingMember, newMember, setNewMember, savingMember, openNewMember, openEditMember, closeMemberEditor, handleAddMember,
     memberToRemove, setMemberToRemove, askRemoveMember, removeError, removingMember, handleDeleteMember, handleResetPassword,

@@ -9649,16 +9649,19 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_inventory");
       if (!auth) return;
-      const { name, part_number, sku, quantity, assigned_to, location, category, description, cost } = req.body;
       const id = req.params.id;
-      const existing: any = (await dbGet("SELECT team_id FROM inventory WHERE id = ?", id));
+      const existing: any = (await dbGet("SELECT * FROM inventory WHERE id = ?", id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
-      
+      // Partial update: a field left out keeps its stored value, so a bulk
+      // "set category" can't blank a part's name, SKU or count.
+      const body = req.body || {};
+      const pick = (k: string) => (body[k] !== undefined ? body[k] : existing[k]);
+      if (body.name !== undefined && !String(body.name ?? '').trim()) return res.status(400).json({ error: "Add a name" });
       (await dbRun(`
         UPDATE inventory 
         SET name = ?, part_number = ?, sku = ?, quantity = ?, assigned_to = ?, location = ?, category = ?, description = ?, cost = ?
         WHERE id = ?
-      `, name, part_number, sku, quantity, assigned_to || null, location, category, description, cost, id));
+      `, pick("name"), pick("part_number"), pick("sku"), pick("quantity"), pick("assigned_to") || null, pick("location"), pick("category"), pick("description"), pick("cost"), id));
 
       res.json({ success: true });
     } catch (error: any) {
@@ -12578,9 +12581,11 @@ Rules:
       const teamId = cadTeam(auth, res); if (!teamId) return;
       const id = parseInt(req.params.id, 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const part = (await dbGet("SELECT id FROM cad_parts WHERE id = ? AND team_id = ?", id, teamId)) as any;
+      const part = (await dbGet("SELECT * FROM cad_parts WHERE id = ? AND team_id = ?", id, teamId)) as any;
       if (!part) return res.status(404).json({ error: "Not found" });
-      const parsed = sanitizePartInput(req.body);
+      // Partial update: fields left out keep their stored values (bulk status
+      // changes send only { status }).
+      const parsed = sanitizePartInput({ ...part, ...(req.body || {}) });
       if (!parsed.ok) return res.status(400).json({ error: parsed.error });
       const v = parsed.value!;
       await dbRun(

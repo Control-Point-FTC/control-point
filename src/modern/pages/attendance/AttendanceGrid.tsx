@@ -14,6 +14,7 @@ import { parseLocalDate, type useAttendanceController } from '../../../component
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { EmptyState } from '../../ui/page';
 import { StatusLegend, StatusPicker, statusFromKey, statusLabel, statusStyle } from './status';
+import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 
 type Ctl = ReturnType<typeof useAttendanceController>;
 
@@ -50,6 +51,17 @@ export function MeetingDaysMenu({ ctl }: { ctl: Ctl }) {
 export function AttendanceGrid({ ctl, members }: { ctl: Ctl; members: any[] }) {
   const tableRef = useRef<HTMLTableElement>(null);
   const [openCell, setOpenCell] = useState<string | null>(null);
+  // Right-click a cell to mark it (V3.5: right-click everywhere).
+  useContextMenu('attendance-cell', (el) => {
+    const [mid, date] = String(el.dataset.cmId || '').split('|');
+    const id = Number(mid);
+    if (!id || !date) return null;
+    const st = ctl.getStatus(id, date);
+    return [
+      ...(['P', 'L', 'E', 'U', 'S'] as const).map((s) => ({ label: `Mark ${statusLabel(s)}`, icon: st === s ? Check : undefined, action: () => void ctl.setStatus(id, date, s) })),
+      ...(st !== '-' ? [{ separator: true }, { label: 'Clear mark', action: () => void ctl.setStatus(id, date, '-') }] : []),
+    ];
+  });
   const [pos, setPos] = useState('0:0'); // roving tab stop
   const dates = ctl.visibleDates;
   const todayKey = format(new Date(), 'yyyy-MM-dd');
@@ -137,7 +149,7 @@ export function AttendanceGrid({ ctl, members }: { ctl: Ctl; members: any[] }) {
                     const status = ctl.getStatus(m.id, d);
                     const key = `${m.id}|${d}`;
                     return (
-                      <td key={d} className="border-b border-border px-1 py-1 text-center group-hover/row:bg-muted/40 group-last/row:border-b-0">
+                      <td key={d} data-cm-type="attendance-cell" data-cm-id={key} className="border-b border-border px-1 py-1 text-center group-hover/row:bg-muted/40 group-last/row:border-b-0">
                         <Popover open={openCell === key} onOpenChange={(o) => setOpenCell(o ? key : null)}>
                           <PopoverTrigger asChild>
                             <button

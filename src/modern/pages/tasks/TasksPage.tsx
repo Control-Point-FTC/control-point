@@ -9,7 +9,9 @@ import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
+  UserPlus,
 } from 'lucide-react';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { LoadMore, Spacer, useIncrementalGroups, useVirtualRows } from '../../ui/windowing';
 import { notify } from '../../../components/dialog';
@@ -27,6 +29,9 @@ import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue } from './TaskSh
 import { BulkImportDialog } from './TaskDialogs';
 
 type View = 'board' | 'list' | 'insights';
+
+const NO_TASKS: any[] = [];
+const taskId = (t: any) => t.id as number;
 
 export function TasksPage(props: any) {
   const { tasks, setTasks, teams, members, refresh, currentUser, hasScope, onRequestComplete } = props;
@@ -97,6 +102,8 @@ export function TasksPage(props: any) {
 
   const open = visible.filter((t: any) => t.status !== 'done');
   const overdue = open.filter(isOverdue);
+  // Multi-select works on what's shown (search + filters), for task managers.
+  const sel = useSelection(view === 'insights' || !ctl.canManageTasks ? NO_TASKS : visible, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
   const assigneesOf = (t: any) => taskAssigneeIds(t).map((id) => memberById.get(id)).filter(Boolean);
@@ -142,6 +149,12 @@ export function TasksPage(props: any) {
               </SelectContent>
             </Select>
           )}
+          {ctl.canManageTasks && view !== 'insights' && visible.length > 0 && (
+            <label className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground max-sm:min-h-11">
+              <SelectAllCheckbox sel={sel} label="Select all shown tasks" />
+              <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+            </label>
+          )}
           <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as View)} aria-label="View" className="ml-auto">
             <ToggleGroupItem value="board" aria-label="Board"><KanbanSquare /> <span className="hidden sm:inline">Board</span></ToggleGroupItem>
             <ToggleGroupItem value="list" aria-label="List"><List /> <span className="hidden sm:inline">List</span></ToggleGroupItem>
@@ -151,12 +164,12 @@ export function TasksPage(props: any) {
       </PageHeader>
 
       {view === 'board' && (
-        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} />
+        <Board tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} filterKey={`${query}|${who}|${ctl.filterTeam}`} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'list' && (
         visible.length === 0
           ? <EmptyState icon={ListChecks} title="No tasks match" description="Try clearing the search or filters." />
-          : <ListView tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} />
+          : <ListView tasks={visible} ctl={ctl} assigneesOf={assigneesOf} onOpen={setViewTaskId} sel={ctl.canManageTasks ? sel : null} />
       )}
       {view === 'insights' && (
         <Insights
@@ -166,6 +179,44 @@ export function TasksPage(props: any) {
         />
       )}
 
+      <BulkBar
+        sel={sel}
+        noun="task"
+        actions={[
+          {
+            label: 'Move to',
+            run: () => false,
+            render: (ids, busy, done) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><ArrowRight /> Move to</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {(['todo', 'in-progress'] as const).map((s) => (
+                    <DropdownMenuItem key={s} onSelect={() => { void ctl.bulkSetStatus(ids.map(Number), s).then(done); }}>
+                      <span className={cn('size-2 rounded-full', STATUS_META[s].dot)} /> {STATUS_META[s].label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ),
+          },
+          {
+            label: 'Assign',
+            run: () => false,
+            render: (ids, busy, done) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><UserPlus /> Assign</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
+                  {members.map((m: any) => (
+                    <DropdownMenuItem key={m.id} onSelect={() => { void ctl.bulkAssign(ids.map(Number), m.id).then(done); }}>{m.name}</DropdownMenuItem>
+                  ))}
+                  <DropdownMenuItem onSelect={() => { void ctl.bulkAssign(ids.map(Number), null).then(done); }}>Unassign everyone</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ),
+          },
+          { label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteTasks(ids.map(Number)) },
+        ]}
+      />
       <TaskViewSheet task={viewTask} onOpenChange={(o) => { if (!o) setViewTaskId(null); }} ctl={ctl} members={members} teams={teams} />
       <TaskEditorSheet ctl={ctl} members={members} teams={teams} />
       <BulkImportDialog ctl={ctl} />
@@ -188,8 +239,9 @@ function DueChip({ task }: { task: any }) {
   );
 }
 
-function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
+function Board({ tasks, ctl, assigneesOf, onOpen, filterKey, sel }: {
   tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void; filterKey?: string;
+  sel: Selection | null;
 }) {
   const [dragId, setDragId] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
@@ -246,7 +298,17 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
                         animate={{ opacity: ctl.pendingIds.has(t.id) ? 0.6 : 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.98 }}
                         transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                        className="group/card relative"
                       >
+                        {sel && (
+                          <RowCheckbox
+                            sel={sel} id={t.id} label={`Select ${t.title}`}
+                            className={cn(
+                              'absolute right-2.5 top-2.5 z-10 transition-opacity md:opacity-0 md:group-hover/card:opacity-100 md:focus-within:opacity-100',
+                              sel.count > 0 && 'md:opacity-100',
+                            )}
+                          />
+                        )}
                         <button
                           type="button"
                           draggable
@@ -259,6 +321,8 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
                             'group w-full rounded-lg border border-border bg-card p-3 text-left shadow-sm outline-none transition-[border-color,box-shadow,transform]',
                             'hover:border-foreground/20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-[0.99]',
                             dragId === t.id && 'opacity-50',
+                            sel && 'pr-9',
+                            sel?.has(t.id) && 'border-accent/60 ring-1 ring-accent/40',
                           )}
                         >
                           <p className={cn('line-clamp-2 text-sm font-medium', t.status === 'done' && 'text-muted-foreground line-through')}>{t.title}</p>
@@ -291,8 +355,9 @@ function Board({ tasks, ctl, assigneesOf, onOpen, filterKey }: {
 // List
 // ---------------------------------------------------------------------------
 
-function ListView({ tasks, ctl, assigneesOf, onOpen }: {
+function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
   tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void;
+  sel: Selection | null;
 }) {
   const order: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2 };
   const sorted = [...tasks].sort((a, b) => (order[a.status] - order[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
@@ -303,6 +368,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
+            {sel && <TableHead className="w-10"><SelectAllCheckbox sel={sel} label="Select all tasks in the list" /></TableHead>}
             <TableHead>Task</TableHead>
             <TableHead className="hidden w-40 sm:table-cell">Assignees</TableHead>
             <TableHead className="hidden w-28 sm:table-cell">Due</TableHead>
@@ -310,9 +376,10 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
           </TableRow>
         </TableHeader>
         <TableBody ref={vr.ref as any}>
-          <Spacer height={vr.paddingTop} colSpan={4} />
+          <Spacer height={vr.paddingTop} colSpan={sel ? 5 : 4} />
           {vr.rows(sorted).map(({ item: t, rowProps }) => (
-            <TableRow key={t.id} {...rowProps} data-cm-type="task-card" data-cm-id={t.id} className="cursor-pointer" onClick={() => onOpen(t.id)}>
+            <TableRow key={t.id} {...rowProps} data-cm-type="task-card" data-cm-id={t.id} data-state={sel?.has(t.id) ? 'selected' : undefined} className="cursor-pointer" onClick={() => onOpen(t.id)}>
+              {sel && <TableCell className="w-10"><RowCheckbox sel={sel} id={t.id} label={`Select ${t.title}`} /></TableCell>}
               <TableCell>
                 <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(t.id); }} className="text-left font-medium outline-none focus-visible:underline">
                   {t.title}
@@ -336,7 +403,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen }: {
               </TableCell>
             </TableRow>
           ))}
-          <Spacer height={vr.paddingBottom} colSpan={4} />
+          <Spacer height={vr.paddingBottom} colSpan={sel ? 5 : 4} />
         </TableBody>
       </Table>
     </div>

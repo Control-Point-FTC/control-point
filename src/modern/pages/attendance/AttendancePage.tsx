@@ -28,6 +28,12 @@ import { QrCard } from './QrCard';
 import { AttendanceGrid } from './AttendanceGrid';
 import { StudentAttendance } from './StudentAttendance';
 import { StatusPicker, statusLabel, statusStyle } from './status';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
+import { Check } from 'lucide-react';
+
+const memberId = (m: any) => m.id as number;
+const MARKS = ['P', 'L', 'E', 'U', 'S'] as const;
 
 type Ctl = ReturnType<typeof useAttendanceController>;
 
@@ -74,13 +80,35 @@ function TodayTab({ ctl, members, teamName, today, hereToday }: { ctl: Ctl; memb
     return c;
   }, [members, ctl, today]);
   const notMeetingDay = ctl.hiddenDates.includes(today);
+  const sel = useSelection(members, memberId);
+  // Right-click a roll-call row: mark that member (V3.5: right-click everywhere).
+  useContextMenu('attendance-member', (el) => {
+    const id = Number(el.dataset.cmId);
+    const m = members.find((x: any) => x.id === id);
+    if (!m) return null;
+    const st = ctl.getStatus(id, today);
+    return [
+      ...MARKS.map((s) => ({ label: `Mark ${statusLabel(s)}`, icon: st === s ? Check : undefined, action: () => void ctl.setStatus(id, today, s) })),
+      ...(st !== '-' ? [{ separator: true }, { label: 'Clear mark', action: () => void ctl.setStatus(id, today, '-') }] : []),
+    ];
+  });
   const pct = members.length ? Math.round((hereToday / members.length) * 100) : 0;
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
       <Section
         title="Roll call"
         description={notMeetingDay ? 'Today isn’t a meeting day, but you can still mark it.' : 'Tap a status; tap it again to clear.'}
-        action={<span className="text-sm tabular-nums text-muted-foreground">{counts['-']} unmarked</span>}
+        action={(
+          <span className="flex items-center gap-3">
+            {members.length > 0 && (
+              <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+                <SelectAllCheckbox sel={sel} label="Select everyone in roll call" />
+                <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+              </label>
+            )}
+            <span className="text-sm tabular-nums text-muted-foreground">{counts['-']} unmarked</span>
+          </span>
+        )}
       >
         {members.length === 0 ? (
           <EmptyState icon={ListChecks} title="No members yet" description="Invite your team to start taking attendance." />
@@ -89,8 +117,9 @@ function TodayTab({ ctl, members, teamName, today, hereToday }: { ctl: Ctl; memb
             {members.map((m: any) => {
               const st = ctl.getStatus(m.id, today);
               return (
-                <StaggerItem key={m.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <StaggerItem key={m.id} data-cm-type="attendance-member" data-cm-id={m.id} className={cn('flex flex-wrap items-center justify-between gap-3 px-4 py-2.5', sel.has(m.id) && 'bg-accent/5')}>
                   <span className="flex min-w-0 items-center gap-3">
+                    <RowCheckbox sel={sel} id={m.id} label={`Select ${m.name}`} />
                     <MemberAvatar member={m} className="size-8 border-0" />
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium">{m.name}</span>
@@ -103,6 +132,18 @@ function TodayTab({ ctl, members, teamName, today, hereToday }: { ctl: Ctl; memb
             })}
           </Stagger>
         )}
+        <BulkBar
+          sel={sel}
+          noun="member"
+          actions={[
+            ...MARKS.map((s) => ({
+              label: statusLabel(s),
+              icon: <span className={cn('size-2 rounded-full', statusStyle(s).dot)} aria-hidden />,
+              run: (ids: (string | number)[]) => ctl.bulkSetStatus(ids.map(Number), today, s),
+            })),
+            { label: 'Clear', run: (ids: (string | number)[]) => ctl.bulkSetStatus(ids.map(Number), today, '-') },
+          ]}
+        />
       </Section>
       <div className="space-y-6">
         <QrCard teamName={teamName} />

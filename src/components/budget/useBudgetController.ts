@@ -12,6 +12,7 @@ import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
+import { bulkDelete, runBulk } from '../../modern/ui/selection';
 import { defaultTeamId } from '../tasks/useTasksController';
 import { MONEY_CONFIRM_AT, REQUIRED, formatMoney, parseMoney, requiredTextError } from '../../utils/validation';
 
@@ -156,7 +157,28 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
   // Field edits are ignored while the form saves (frozen in both modes).
   const editForm: typeof setNewItem = (v) => { if (!getDraft('budget:saving', false)) setNewItem(v); };
 
+  // ---- Bulk actions on a selection (V3.5) ----
+  const bulkSetCategory = async (ids: number[], category: string) => {
+    const ok = await runBulk(ids, async (id) => {
+      const res = await apiFetch(`/api/budget/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) }).catch(() => null);
+      return !!res?.ok;
+    }, { verb: 'Recategorized', noun: 'transaction' });
+    const done = new Set(ok.map(Number));
+    setBudget((bs: any[]) => bs.map((b: any) => (done.has(b.id) ? { ...b, category } : b)));
+  };
+  const bulkDeleteEntries = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      const res = await apiFetch(`/api/budget/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!res?.ok;
+    }, { noun: 'transaction' });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setBudget((bs: any[]) => bs.filter((b: any) => !gone.has(b.id)));
+    return true;
+  };
+
   return {
+    bulkSetCategory, bulkDeleteEntries,
     isAdmin, showAdd, editingId, newItem, setNewItem: editForm, busy, deleting,
     openNewEntry, openEditEntry, openDuplicateEntry, closeEntryModal, handleAdd, handleDelete,
     totalIncome, totalExpense,

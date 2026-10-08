@@ -13,6 +13,9 @@ import { fmtDate, useCadDashboard, useCadDocs } from '../../../components/cad/us
 import { Page, PageHeader, Section, EmptyState, Stat } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+
+const docId = (r: any) => r.id as number;
 import { CadReviewsTab } from './CadReviewsTab';
 import { CadSnapshotsTab } from './CadSnapshotsTab';
 import { CadPartsTab } from './CadPartsTab';
@@ -119,6 +122,7 @@ function Overview({ onNavigate }: { onNavigate: (path: string) => void }) {
 
 function DocsTab() {
   const d = useCadDocs();
+  const sel = useSelection(d.docs, docId);
   return (
     <>
       <Reveal className="mb-8 rounded-2xl border border-border bg-card p-5">
@@ -136,11 +140,21 @@ function DocsTab() {
           </fieldset>
         </form>
       </Reveal>
-      <Section title={`Team documents (${d.docs.length})`} description="One shared home for every CAD document the team uses.">
+      <Section
+        title={`Team documents (${d.docs.length})`}
+        description="One shared home for every CAD document the team uses."
+        action={d.docs.length > 0 ? (
+          <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+            <SelectAllCheckbox sel={sel} label="Select all linked documents" />
+            <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+          </label>
+        ) : undefined}
+      >
         {!d.loaded ? <div className="grid gap-3 sm:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-20" />)}</div> : d.docs.length ? (
           <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {d.docs.map((doc) => (
-              <StaggerItem as="li" key={doc.id} className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40">
+              <StaggerItem as="li" key={doc.id} className={cn('flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(doc.id) && 'border-accent/60 ring-1 ring-accent/40')}>
+                <RowCheckbox sel={sel} id={doc.id} label={`Select ${doc.name}`} />
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent/15"><FileBox className="size-5 text-accent" /></span>
                 <div className="min-w-0 flex-1">
                   <a href={doc.url} target="_blank" rel="noreferrer" className="block truncate font-medium underline-offset-2 hover:underline">{doc.name}</a>
@@ -160,6 +174,7 @@ function DocsTab() {
             ))}
           </Stagger>
         ) : <EmptyState icon={FileBox} title="No Onshape docs linked yet" description="Paste a document link above — the whole team will see it here." />}
+        <BulkBar sel={sel} noun="document" actions={[{ label: 'Unlink', icon: <Trash2 />, danger: true, run: (ids) => d.bulkRemove(ids.map(Number)) }]} />
       </Section>
     </>
   );

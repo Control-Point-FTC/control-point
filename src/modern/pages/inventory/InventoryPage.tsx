@@ -21,8 +21,11 @@ import { INVENTORY_CATEGORIES, useInventoryController } from '../../../component
 import { Page, PageHeader, EmptyState, Stat } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
 
 type Ctl = ReturnType<typeof useInventoryController>;
+const NONE: any[] = [];
+const partId = (p: any) => p.id as number;
 const money = (n: number) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 export function InventoryPage({ inventory, setInventory, teams, refresh, currentUser, hasScope }: any) {
@@ -34,6 +37,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
   const inc = useIncrementalGroups(60, `${ctl.searchTerm}|${ctl.filterCategory}|${layout}`);
   const units = inventory.reduce((a: number, p: any) => a + (Number(p.quantity) || 0), 0);
   const uncategorized = inventory.some((p: any) => !p.category);
+  const sel = useSelection(ctl.canManage ? ctl.filteredParts : NONE, partId);
   return (
     <Page>
       <PageHeader
@@ -78,6 +82,12 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
             <Tags /> {ctl.autoCategorizing ? 'Categorizing…' : 'Auto-categorize'}
           </Button>
         )}
+        {ctl.canManage && ctl.filteredParts.length > 0 && (
+          <label className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-muted-foreground max-sm:min-h-11">
+            <SelectAllCheckbox sel={sel} label="Select all shown parts" />
+            <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+          </label>
+        )}
         <ToggleGroup type="single" aria-label="Layout" value={layout} onValueChange={(v) => { if (v) setLayout(v as typeof layout); }} className="max-sm:hidden">
           <ToggleGroupItem value="grid" aria-label="Cards"><LayoutGrid /></ToggleGroupItem>
           <ToggleGroupItem value="table" aria-label="Table"><Rows3 /></ToggleGroupItem>
@@ -100,12 +110,13 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         <div className="overflow-x-auto rounded-xl border border-border">
           <Table>
             <TableHeader>
-              <TableRow><TableHead>Name</TableHead><TableHead>SKU</TableHead><TableHead>Part #</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Category</TableHead><TableHead className="text-right">Value</TableHead>{ctl.canManage && <TableHead><span className="sr-only">Actions</span></TableHead>}</TableRow>
+              <TableRow>{ctl.canManage && <TableHead className="w-10"><SelectAllCheckbox sel={sel} label="Select all parts in the table" /></TableHead>}<TableHead>Name</TableHead><TableHead>SKU</TableHead><TableHead>Part #</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Category</TableHead><TableHead className="text-right">Value</TableHead>{ctl.canManage && <TableHead><span className="sr-only">Actions</span></TableHead>}</TableRow>
             </TableHeader>
             <TableBody ref={vr.ref as any}>
-              <Spacer height={vr.paddingTop} colSpan={7} />
+              <Spacer height={vr.paddingTop} colSpan={8} />
               {vr.rows(ctl.filteredParts).map(({ item: p, rowProps }: { item: any; rowProps: Record<string, unknown> }) => (
-                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id}>
+                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
+                  {ctl.canManage && <TableCell className="w-10"><RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} /></TableCell>}
                   <TableCell className="font-medium">{p.name}</TableCell>
                   <TableCell className="font-mono text-xs text-accent">{p.sku}</TableCell>
                   <TableCell className="text-muted-foreground">{p.part_number || '—'}</TableCell>
@@ -115,15 +126,16 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
                   {ctl.canManage && <TableCell className="text-right"><PartMenu ctl={ctl} part={p} /></TableCell>}
                 </TableRow>
               ))}
-              <Spacer height={vr.paddingBottom} colSpan={7} />
+              <Spacer height={vr.paddingBottom} colSpan={8} />
             </TableBody>
           </Table>
         </div>
       ) : (<>
         <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {inc.slice('grid', ctl.filteredParts).map((p: any) => (
-            <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} className="group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40">
+            <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(p.id) && 'border-accent/60 ring-1 ring-accent/40')}>
               <div className="flex items-start gap-3">
+                {ctl.canManage && <RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} className="mt-0.5" />}
                 <div className="min-w-0 flex-1">
                   <p className="font-medium leading-snug">{p.name}</p>
                   <p className="mt-0.5 font-mono text-xs text-accent">{p.sku}{p.part_number ? <span className="text-muted-foreground"> · {p.part_number}</span> : null}</p>
@@ -146,6 +158,27 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         <LoadMore hidden={inc.hidden('grid', ctl.filteredParts.length)} onMore={() => inc.more('grid')} />
       </>)}
 
+      <BulkBar
+        sel={sel}
+        noun="part"
+        actions={[
+          {
+            label: 'Set category',
+            run: () => false,
+            render: (ids, busy, done) => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Tags /> Set category</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
+                  {[...new Set([...INVENTORY_CATEGORIES, ...ctl.categories])].map((c) => (
+                    <DropdownMenuItem key={c} onSelect={() => { void ctl.bulkSetCategory(ids.map(Number), c).then(done); }}>{c}</DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ),
+          },
+          { label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteParts(ids.map(Number)) },
+        ]}
+      />
       <PartSheet ctl={ctl} teams={teams} />
       <InvoiceReview ctl={ctl} />
     </Page>

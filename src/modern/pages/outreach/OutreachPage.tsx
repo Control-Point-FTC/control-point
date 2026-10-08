@@ -20,6 +20,9 @@ import { assetUrl } from '../../../services/api';
 import { Page, PageHeader, Section, EmptyState, Stat } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+
+const rowId = (r: any) => r.id as number;
 
 type Ctl = ReturnType<typeof useOutreachController>;
 const compact = (n: any) => {
@@ -72,8 +75,18 @@ export function OutreachPage({ outreach, setOutreach, socialProfiles, setSocialP
 
 function Timeline({ ctl, outreach }: { ctl: Ctl; outreach: any[] }) {
   const events = useMemo(() => [...outreach].sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.id - a.id), [outreach]);
+  const sel = useSelection(events, rowId);
   return (
-    <Section title="Event log" description="Newest first. Right-click (or use the menu) to edit or delete.">
+    <Section
+      title="Event log"
+      description="Newest first. Right-click (or use the menu) to edit or delete."
+      action={events.length > 0 ? (
+        <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+          <SelectAllCheckbox sel={sel} label="Select all outreach events" />
+          <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+        </label>
+      ) : undefined}
+    >
       {!events.length ? (
         <EmptyState icon={Globe} title="No outreach events yet" description="Log your first one, paste a list into Bruno AI, or ask Bruno in chat." action={<Button onClick={ctl.openAdd}><Plus /> Log event</Button>} />
       ) : (
@@ -82,13 +95,14 @@ function Timeline({ ctl, outreach }: { ctl: Ctl; outreach: any[] }) {
             const d = new Date(`${String(e.date).slice(0, 10)}T00:00:00`);
             const ok = !Number.isNaN(d.getTime());
             return (
-              <StaggerItem as="li" key={e.id} data-cm-type="outreach" data-cm-id={e.id} className="relative flex gap-4">
+              <StaggerItem as="li" key={e.id} data-cm-type="outreach" data-cm-id={e.id} className="relative flex items-start gap-3 sm:gap-4">
+                <RowCheckbox sel={sel} id={e.id} label={`Select ${e.title}`} className="mt-4" />
                 <div className="z-[1] flex w-[3.2rem] shrink-0 flex-col items-center rounded-xl border border-border bg-card py-1.5 text-center">
                   <span className="text-[11px] uppercase text-muted-foreground">{ok ? d.toLocaleDateString(undefined, { month: 'short' }) : '—'}</span>
                   <span className="font-display text-lg font-semibold leading-none tabular-nums">{ok ? d.getDate() : ''}</span>
                   <span className="text-[10px] text-muted-foreground">{ok ? d.getFullYear() : ''}</span>
                 </div>
-                <article className="min-w-0 flex-1 rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40">
+                <article className={cn('min-w-0 flex-1 rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(e.id) && 'border-accent/60 ring-1 ring-accent/40')}>
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <h3 className="font-medium leading-snug">{e.title}</h3>
@@ -119,6 +133,7 @@ function Timeline({ ctl, outreach }: { ctl: Ctl; outreach: any[] }) {
           })}
         </Stagger>
       )}
+      <BulkBar sel={sel} noun="outreach event" actions={[{ label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteEvents(ids.map(Number)) }]} />
     </Section>
   );
 }

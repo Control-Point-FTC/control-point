@@ -18,6 +18,7 @@ import { confirmDialog, notify } from '../dialog';
 import { draftEpoch, getDraft, inEpoch, setDraft, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { parseOutreachRows } from './parseOutreachRows';
+import { bulkDelete } from '../../modern/ui/selection';
 
 export const OUTREACH_PRESETS = ['Demo', 'Workshop', 'Volunteering', 'Fundraiser', 'Presentation', 'Competition'];
 export interface OutreachForm { title: string; description: string; date: string; hours: string; location: string; attendees: string; funds_raised: string }
@@ -373,7 +374,20 @@ export function useOutreachController({ outreach, setOutreach, socialProfiles, s
     ];
   });
 
+  const bulkDeleteEvents = async (ids: number[]) => {
+    const ok = await bulkDelete(ids, async (id) => {
+      const res = await apiFetch(`/api/outreach/${id}`, { method: 'DELETE' }).catch(() => null);
+      return !!res?.ok;
+    }, { noun: 'outreach event' });
+    if (ok === false) return false;
+    const gone = new Set(ok.map(Number));
+    setOutreach((es: any[]) => (es || []).filter((e: any) => !gone.has(e.id)));
+    refresh.outreach();
+    return true;
+  };
+
   return {
+    bulkDeleteEvents,
     isAdminSocial, profiles, showLinkYT, setShowLinkYT, ytInput, setYtInput, linkingYT, syncingId,
     handleLinkYouTube, handleUnlinkProfile, handlePinProfile, handleMoveProfile, handleSyncNow,
     showForm, editingId, form, setForm: editForm, set, saving, openAdd, openEdit, closeForm, handleSubmit, handleDelete, totals,

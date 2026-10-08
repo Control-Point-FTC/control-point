@@ -65,8 +65,10 @@ function nativeMenuPreferred(target: EventTarget | null): boolean {
   // Selected text: the user wants Copy.
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) return true;
-  // Links: open in new tab, copy link address, etc.
-  if (el.closest('a[href]')) return true;
+  // Links: open in new tab, copy link address, etc. A row can opt its links
+  // into the app menu (data-cm-links) when that menu already offers Open and
+  // Copy link, e.g. a resource card whose title is the link.
+  if (el.closest('a[href]') && !el.closest('[data-cm-links]')) return true;
   return false;
 }
 

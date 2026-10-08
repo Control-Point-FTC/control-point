@@ -18,6 +18,11 @@ import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { ImportEmailDialog, QuickAddDialog } from './LogDialogs';
 import { useCommunicationController } from '../../../components/communication/useCommunicationController';
 import { Page, PageHeader, EmptyState } from '../../ui/page';
+import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection } from '../../ui/selection';
+import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
+
+const NONE: any[] = [];
+const rowId = (r: any) => r.id as number;
 
 type Ctl = ReturnType<typeof useCommunicationController>;
 type Filter = 'all' | 'awaiting' | 'email' | 'announcement';
@@ -52,6 +57,22 @@ export function CommunicationPage(props: any) {
   const active = visible.find((t: any) => t.root.id === (openId ?? ctl.expandedId)) || (!narrow ? visible[0] : null) || null;
   const awaiting = ctl.threads.filter((t: any) => t.all[t.all.length - 1].direction !== 'inbound').length;
   const open = (id: number) => { setOpenId(id); ctl.setExpandedId(id); };
+  const roots = useMemo(() => visible.map((t: any) => t.root), [visible]);
+  const sel = useSelection(ctl.canManage ? roots : NONE, rowId);
+  // Right-click a conversation in the list (V3.5: right-click everywhere).
+  useContextMenu('comm-thread', (el) => {
+    const id = Number(el.dataset.cmId);
+    const t = visible.find((x: any) => x.root.id === id);
+    if (!t) return null;
+    return [
+      { label: 'Open', icon: Mail, action: () => open(id) },
+      ...(ctl.canManage ? [
+        { label: 'Log their reply', icon: MessageSquareReply, action: () => { open(id); ctl.openReply(t, 'inbound'); } },
+        { separator: true },
+        { label: 'Delete conversation', icon: Trash2, danger: true, action: () => void ctl.handleDelete(id, true) },
+      ] : []),
+    ];
+  });
 
   const detail = active && <ThreadDetail thread={active} ctl={ctl} />;
 
@@ -93,18 +114,27 @@ export function CommunicationPage(props: any) {
       ) : (
         <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
           <ul className="space-y-2" aria-label="Conversations">
+            {ctl.canManage && (
+              <li className="flex items-center">
+                <label className="flex min-h-9 items-center gap-2 rounded-md px-1 text-sm text-muted-foreground max-sm:min-h-11">
+                  <SelectAllCheckbox sel={sel} label="Select all shown conversations" />
+                  <span>{sel.count ? `${sel.count} selected` : 'Select all'}</span>
+                </label>
+              </li>
+            )}
             {visible.map((t: any) => {
               const last = t.all[t.all.length - 1];
               const waiting = last.direction !== 'inbound';
               const on = active?.root.id === t.root.id;
               return (
-                <li key={t.root.id}>
+                <li key={t.root.id} data-cm-type="comm-thread" data-cm-id={t.root.id} className="relative">
+                  {ctl.canManage && <RowCheckbox sel={sel} id={t.root.id} label={`Select conversation with ${t.root.recipient || 'unknown recipient'}: ${t.root.subject || 'no subject'}`} className="absolute left-3 top-4 z-10" />}
                   <motion.button
                     type="button"
                     layout
                     onClick={() => open(t.root.id)}
                     aria-current={on ? 'true' : undefined}
-                    className={cn('w-full rounded-xl border bg-card p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', on && !narrow ? 'border-accent/60' : 'border-border')}
+                    className={cn('w-full rounded-xl border bg-card p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', on && !narrow ? 'border-accent/60' : 'border-border', ctl.canManage && 'pl-10', sel.has(t.root.id) && 'ring-1 ring-accent/40')}
                   >
                     <span className="flex items-center gap-2">
                       {t.root.type === 'announcement' ? <Megaphone className="size-4 shrink-0 text-muted-foreground" /> : <Mail className="size-4 shrink-0 text-muted-foreground" />}
@@ -122,6 +152,7 @@ export function CommunicationPage(props: any) {
               );
             })}
           </ul>
+          <BulkBar sel={sel} noun="conversation" actions={[{ label: 'Delete', icon: <Trash2 />, danger: true, run: (ids) => ctl.bulkDeleteThreads(ids.map(Number)) }]} />
           {!narrow && <div className="min-w-0">{detail}</div>}
         </div>
       )}
