@@ -16,13 +16,16 @@ import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { defaultTeamId } from '../tasks/useTasksController';
 import { restoreRow } from '../budget/useBudgetController';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
+import { partSupplier, supplierLabel, SUPPLIERS } from '../../utils/suppliers';
 
 export const INVENTORY_CATEGORIES = [
   'Structure', 'Motion', 'Wheels', 'Electronics', 'Sensors', 'Power',
   'Hardware', 'Tools', 'Raw Material', '3D Printing', 'Field', 'Other',
 ];
-export interface NewPart { team_id: string; name: string; part_number: string; sku: string; quantity: string; assigned_to: string; location: string; category: string; description: string; cost: string }
-export const blankPart = (team_id = ''): NewPart => ({ team_id, name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '' });
+export interface NewPart { team_id: string; name: string; part_number: string; sku: string; quantity: string; assigned_to: string; location: string; category: string; description: string; cost: string; url: string; supplier: string }
+export const blankPart = (team_id = ''): NewPart => ({ team_id, name: '', part_number: '', sku: '', quantity: '1', assigned_to: '', location: '', category: '', description: '', cost: '', url: '', supplier: '' });
+/** Supplier filter value for parts no supplier was found for. */
+export const NO_SUPPLIER = 'none';
 const NEW_KEY = 'inv:new';
 
 /** Why a part's numbers can't be saved (whole, non-negative stock; non-negative cost), or null. */
@@ -46,6 +49,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   const [showInvoicePreview, setShowInvoicePreview] = useDraft<boolean>('inv:invoice-open', false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
+  const [filterSupplier, setFilterSupplier] = useState('');
   const [revLink, setRevLink] = useState('');
   const [isLoadingRev, setIsLoadingRev] = useState(false);
   const [invoiceParsing, setInvoiceParsing] = useState<string | null>(null); // null = idle, string = status text
@@ -178,14 +182,22 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     }
     setIsLoadingRev(true);
     // Fill the form only if nobody signed out / switched workspace meanwhile.
-    const fill = inEpoch((data: any) => setNewPart((p) => ({
+    const fill = inEpoch((data: any) => setNewPart((cur) => {
+      // A different product than the one already in the form: start its
+      // product fields over rather than keep the old name or price.
+      const switching = !!(data.sku && cur.sku && String(data.sku).toUpperCase() !== String(cur.sku).toUpperCase());
+      const p = switching ? { ...cur, name: '', part_number: '', cost: '', category: '', url: '', supplier: '' } : cur;
+      return {
       ...p,
       name: data.name || p.name,
       sku: data.sku || p.sku,
       part_number: data.part_number || p.part_number,
       cost: data.cost ? data.cost.toString() : p.cost,
-      category: data.category || p.category,
-    })));
+      category: INVENTORY_CATEGORIES.includes(data.category) ? data.category : p.category,
+      url: data.url || p.url,
+      supplier: data.supplier || p.supplier,
+      };
+    }));
     try {
       const res = await apiFetch('/api/inventory/scrape-rev', {
         method: 'POST',
@@ -193,9 +205,12 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
         body: JSON.stringify({ url: revLink }),
       });
       if (res.ok) {
-        fill(await res.json());
+        const data = await res.json();
+        fill(data);
         setRevLink('');
-        notify('Product imported! Review and save when ready.', 'success');
+        // REV's page couldn't be read: the SKU and link came from the link itself.
+        if (data.partial) notify(data.note || 'Only the SKU and link were filled in. Add the name and price.', 'info');
+        else notify('Product imported! Review and save when ready.', 'success');
       } else {
         const err = await res.json().catch(() => ({}));
         notify('Error: ' + (err.error || 'Import failed'), 'error');
@@ -276,6 +291,8 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
             quantity: parseInt(it.quantity, 10) || 0,
             cost: parseFloat(it.unitPrice) || 0,
             category: it.category || 'Other',
+            // Who sells it, as the invoice reader found it (the server checks it).
+            supplier: it.supplier || undefined,
           })),
         }),
       });
@@ -319,11 +336,17 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   };
 
   const categories = [...new Set(inventory.map((p: any) => p.category).filter((c: any) => c))] as string[];
+  // Suppliers present in the data, in the catalog's order; NO_SUPPLIER last.
+  const supplierOf = (p: any) => partSupplier(p) || NO_SUPPLIER;
+  const present = new Set(inventory.map(supplierOf));
+  const suppliers = [...SUPPLIERS.map((x) => x.id).filter((id) => present.has(id)), ...(present.has(NO_SUPPLIER) ? [NO_SUPPLIER] : [])];
   const term = searchTerm.toLowerCase();
   const filteredParts = inventory.filter((p: any) => {
-    const matchSearch = (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term);
+    const matchSearch = (p.name || '').toLowerCase().includes(term) || (p.sku || '').toLowerCase().includes(term) || (p.part_number || '').toLowerCase().includes(term)
+      || supplierLabel(partSupplier(p)).toLowerCase().includes(term);
     const matchCategory = !filterCategory || p.category === filterCategory;
-    return matchSearch && matchCategory;
+    const matchSupplier = !filterSupplier || supplierOf(p) === filterSupplier;
+    return matchSearch && matchCategory && matchSupplier;
   });
   const totalValue = inventory.reduce((acc: number, p: any) => acc + (p.cost * p.quantity), 0);
 
@@ -357,7 +380,7 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
   return {
     bulkSetCategory, bulkDeleteParts,
     canManage, showAdd, setShowAdd, openAdd, showEdit, setShowEdit: editPart, newPart, setNewPart: editNewPart,
-    searchTerm, setSearchTerm, filterCategory, setFilterCategory, revLink, setRevLink, isLoadingRev,
+    searchTerm, setSearchTerm, filterCategory, setFilterCategory, filterSupplier, setFilterSupplier, suppliers, revLink, setRevLink, isLoadingRev,
     invoiceParsing, invoiceConfirming, autoCategorizing, invoiceItems, showInvoicePreview, setShowInvoicePreview, invoiceFileRef,
     busy, deleting, handleAdd, handleUpdate, handleDelete, handleImportRev, handleInvoiceFile, handleInvoiceFiles, updateInvoiceItem,
     handleInvoiceConfirm, handleAutoCategorize, categories, filteredParts, totalValue,

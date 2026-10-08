@@ -25,6 +25,8 @@ import multer from "multer";
 import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { parseRevProduct, revTarget, type RevProduct } from "./server/revImport.js";
+import { MAX_PURCHASE_URL, SUPPLIERS, cleanPurchaseUrl, detectSupplier, supplierById } from "./src/utils/suppliers.js";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch, dbBatchResults } from "./db.js";
 import { runMigrations } from "./migrations/runner.js";
 import {
@@ -10272,6 +10274,28 @@ Rules:
     }
   });
 
+  /** Purchase link and supplier from a request body: undefined = not sent,
+   *  null = cleared ("" link, "" or "auto" supplier). */
+  function purchaseFields(body: any): { url?: string | null; supplier?: string | null } | { error: string } {
+    const out: { url?: string | null; supplier?: string | null } = {};
+    if (body?.url !== undefined) {
+      const raw = String(body.url ?? "").trim();
+      if (!raw) out.url = null;
+      else {
+        const url = cleanPurchaseUrl(raw);
+        if (!url) return { error: raw.length > MAX_PURCHASE_URL ? "That purchase link is too long — use the product page's own address." : "The purchase link must be a web address (https://…)" };
+        out.url = url;
+      }
+    }
+    if (body?.supplier !== undefined) {
+      const raw = String(body.supplier ?? "").trim();
+      if (!raw || raw === "auto") out.supplier = null;
+      else if (supplierById(raw)) out.supplier = raw;
+      else return { error: "Unknown supplier" };
+    }
+    return out;
+  }
+
   app.post("/api/inventory", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_inventory");
@@ -10280,11 +10304,15 @@ Rules:
       if (!sku || !name) {
         return res.status(400).json({ error: "SKU and name are required" });
       }
+      const purchase = purchaseFields(req.body);
+      if ("error" in purchase) return res.status(400).json({ error: purchase.error });
+      // No supplier chosen: detect one from the link, SKU format or name.
+      const supplier = purchase.supplier ?? detectSupplier({ url: purchase.url, sku, part_number, name, description });
       const date_added = new Date().toISOString();
       const info = (await dbRun(`
-        INSERT INTO inventory (team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost, date_added) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, auth.teamId, name, part_number || null, sku, quantity || 0, assigned_to || null, location || '', category || '', description || '', cost || 0, date_added));
+        INSERT INTO inventory (team_id, name, part_number, sku, quantity, assigned_to, location, category, description, cost, date_added, url, supplier)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, auth.teamId, name, part_number || null, sku, quantity || 0, assigned_to || null, location || '', category || '', description || '', cost || 0, date_added, purchase.url ?? null, supplier ?? null));
 
       res.json({ id: info.lastInsertRowid });
     } catch (error: any) {
@@ -10316,6 +10344,10 @@ Rules:
         sets.push(`${k} = ?`);
         vals.push(k === "assigned_to" ? (body[k] || null) : body[k]);
       }
+      const purchase = purchaseFields(body);
+      if ("error" in purchase) return res.status(400).json({ error: purchase.error });
+      if (purchase.url !== undefined) { sets.push("url = ?"); vals.push(purchase.url); }
+      if (purchase.supplier !== undefined) { sets.push("supplier = ?"); vals.push(purchase.supplier); }
       if (!sets.length) return res.status(400).json({ error: "Nothing to update" });
       (await dbRun(`UPDATE inventory SET ${sets.join(", ")} WHERE id = ?`, ...vals, id));
 
@@ -10344,86 +10376,57 @@ Rules:
     }
   });
 
-  // Scrape REV Robotics product page
+  // Import a REV Robotics product from its link (or a bare SKU like REV-41-1600).
   app.post("/api/inventory/scrape-rev", async (req, res) => {
     {
       const _srAuth = await requirePerm(req, res, "manage_inventory");
       if (!_srAuth) return;
     }
-    try {
-      // Exact host match on every hop (a substring check let
-      // http://169.254.169.254/?revrobotics.com through), plus the shared
-      // private-address guard on the resolved IP.
-      const isRevHost = (u: URL) => {
-        const h = u.hostname.toLowerCase();
-        if (u.protocol !== "https:" || (h !== "revrobotics.com" && !h.endsWith(".revrobotics.com"))) {
-          throw new UnsafeUrlError("Invalid REV Robotics URL");
-        }
-      };
-      const url = String(req.body?.url || "").trim();
-      try { isRevHost(checkPublicUrl(url)); } catch {
-        return res.status(400).json({ error: "Invalid REV Robotics URL" });
+    // Exact host match on every hop (a substring check let
+    // http://169.254.169.254/?revrobotics.com through), plus the shared
+    // private-address guard on the resolved IP.
+    const isRevHost = (u: URL) => {
+      const h = u.hostname.toLowerCase();
+      if (u.protocol !== "https:" || (h !== "revrobotics.com" && !h.endsWith(".revrobotics.com"))) {
+        throw new UnsafeUrlError("Invalid REV Robotics URL");
       }
-
-      const { response } = await safeGet(url, {
+    };
+    const target = revTarget(req.body?.url);
+    if (!target) return res.status(400).json({ error: "Paste a REV Robotics product link (like revrobotics.com/rev-41-1600/) or a REV SKU." });
+    try { isRevHost(checkPublicUrl(target.url)); } catch {
+      return res.status(400).json({ error: "Invalid REV Robotics URL" });
+    }
+    let status = 0;
+    let product: RevProduct = {};
+    try {
+      const { response } = await safeGet(target.url, {
+        // A full browser header set: REV's storefront answers bare clients with an error page.
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
         },
         timeoutMs: 15000,
         maxBytes: 5 * 1024 * 1024,
         allowUrl: isRevHost,
       });
-      if (response.status >= 400) throw new Error(`status code ${response.status}`);
-
-      const $ = cheerio.load(String(response.data ?? ''));
-      
-      const data: any = {};
-
-      // Extract title
-      const titleElement = $("h1.productView-title");
-      if (titleElement.length > 0) {
-        data.name = titleElement.text().trim();
-      }
-
-      // Extract SKU
-      const skuElement = $("dd.productView-info-value--sku");
-      if (skuElement.length > 0) {
-        const sku = skuElement.text().trim();
-        if (sku) data.sku = sku;
-      }
-
-      // Extract Product Code/UPC
-      const upcElement = $("dd.productView-info-value--upc");
-      if (upcElement.length > 0) {
-        const upc = upcElement.text().trim();
-        if (upc) data.part_number = upc;
-      }
-
-      // Extract price
-      const priceElement = $("span.price.price--withoutTax.price--main");
-      if (priceElement.length > 0) {
-        const priceText = priceElement.text().trim();
-        const priceMatch = priceText.match(/[\d.]+/);
-        if (priceMatch) {
-          data.cost = parseFloat(priceMatch[0]);
-        }
-      }
-
-      // Extract category if available
-      const categoryElement = $("a[href*='/cat/']");
-      if (categoryElement.length > 0) {
-        data.category = categoryElement.first().text().trim();
-      }
-
-      if (!data.name && !data.sku) {
-        return res.status(400).json({ error: "Could not extract product information from the page. Make sure the URL is correct." });
-      }
-
-      res.json(data);
+      status = response.status;
+      if (status < 400) product = parseRevProduct(String(response.data ?? ""));
     } catch (error: any) {
-      console.error("Error scraping REV page:", error.message);
-      res.status(500).json({ error: "Failed to scrape page: " + error.message });
+      console.error("REV import fetch failed:", error?.message);
     }
+    const base = { url: target.url, supplier: "rev" };
+    if (product.name || product.sku) return res.json({ ...base, ...product, sku: product.sku || target.sku || undefined });
+    // REV says the page doesn't exist: a mistyped or retired part, not a hiccup.
+    if (status === 404) return res.status(404).json({ error: "REV says that page doesn't exist. Check the link: product pages look like revrobotics.com/rev-41-1600/." });
+    // The page couldn't be read, but the link names the part: fill what we know.
+    if (target.sku) {
+      return res.json({
+        ...base, sku: target.sku, partial: true,
+        note: "REV's page couldn't be read just now, so only the SKU and link were filled in. Add the name and price, then save.",
+      });
+    }
+    res.status(502).json({ error: status ? `REV's page couldn't be read (status ${status}). Try again, or enter the part by hand.` : "Couldn't reach REV Robotics. Try again, or enter the part by hand." });
   });
 
   // goBILDA order PDF → inventory import (parse in memory, then user-confirmed upsert)
@@ -10519,7 +10522,7 @@ Rules:
     "Structure", "Motion", "Wheels", "Electronics", "Sensors", "Power",
     "Hardware", "Tools", "Raw Material", "3D Printing", "Field", "Other",
   ];
-  const INVOICE_EXTRACT_SYSTEM = `You extract purchasable line items from supplier order invoices and receipts for a robotics team's parts inventory. Return ONLY a JSON array — no markdown fences, no commentary, no trailing text. Each element must be an object: {"sku": string, "name": string, "quantity": number, "unitPrice": number, "category": string}.
+  const INVOICE_EXTRACT_SYSTEM = `You extract purchasable line items from supplier order invoices and receipts for a robotics team's parts inventory. Return ONLY a JSON array — no markdown fences, no commentary, no trailing text. Each element must be an object: {"sku": string, "name": string, "quantity": number, "unitPrice": number, "category": string, "supplier": string}.
 Rules:
 - One element per distinct line item on the invoice.
 - "sku" is the supplier's part/SKU/model number as printed; use "" when none is shown.
@@ -10527,12 +10530,13 @@ Rules:
 - "quantity" is units ordered on that line (default 1 when unclear).
 - "unitPrice" is the per-unit price in dollars (default 0 when unclear).
 - "category" must be exactly one of: ${INVENTORY_CATEGORIES.join(", ")} — pick the closest fit for the item.
+- "supplier" is who makes or sells the item, as one of: ${SUPPLIERS.map((x) => x.id).join(", ")} (the store on the invoice, or the brand when a reseller sells it, e.g. an Axon servo bought from goBILDA is "axon"); "" when it's none of these.
 - Skip shipping, handling, tax, discounts, coupons, subtotals, totals, and gift cards.
 - Never invent items that are not on the invoice.`;
 
   function sanitizeInvoiceItems(raw: any) {
     if (!Array.isArray(raw)) return [];
-    const out: { sku: string; name: string; quantity: number; unitPrice: number; category: string }[] = [];
+    const out: { sku: string; name: string; quantity: number; unitPrice: number; category: string; supplier: string }[] = [];
     for (const it of raw.slice(0, 500)) {
       if (!it || typeof it !== "object") continue;
       const sku = String(it.sku || "").trim().slice(0, 60);
@@ -10543,7 +10547,8 @@ Rules:
         ? String(it.category).trim()
         : "Other";
       if (!name && !sku) continue;
-      out.push({ sku, name, quantity: quantity || 1, unitPrice, category });
+      const supplier = supplierById(it.supplier)?.id || detectSupplier({ sku, name }) || "";
+      out.push({ sku, name, quantity: quantity || 1, unitPrice, category, supplier });
     }
     return out;
   }
@@ -10605,7 +10610,9 @@ Rules:
           }
         }
         if (!items.length && isPdf && text) {
-          items = parseGobildaOrder(text); // regex fallback for PDFs when AI is off or misses
+          // Regex fallback for PDFs when AI is off or misses: it only reads
+          // goBILDA orders, so every line it finds is goBILDA's.
+          items = parseGobildaOrder(text).map((it) => ({ ...it, supplier: "gobilda" }));
         }
         if (!items.length) {
           return res.status(422).json({
@@ -10652,14 +10659,17 @@ Rules:
           skipped.push(name || "(unnamed)");
           continue;
         }
+        // Who sells it, so the part gets an order link (src/utils/suppliers.ts).
+        const supplier = supplierById(it.supplier)?.id || detectSupplier({ sku, name, url: it.url }) || null;
+        const url = cleanPurchaseUrl(it.url);
         try {
           const existing: any = await dbGet("SELECT id, quantity FROM inventory WHERE team_id = ? AND sku = ?", auth.teamId, sku);
           if (existing) {
-            await dbRun("UPDATE inventory SET quantity = quantity + ?, cost = ?, category = ? WHERE id = ?", quantity, cost, category, existing.id);
+            await dbRun("UPDATE inventory SET quantity = quantity + ?, cost = ?, category = ?, supplier = COALESCE(supplier, ?), url = COALESCE(url, ?) WHERE id = ?", quantity, cost, category, supplier, url, existing.id);
             merged++;
           } else {
             await dbRun(
-              "INSERT INTO inventory (team_id, name, part_number, sku, quantity, location, category, description, cost, date_added) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
+              "INSERT INTO inventory (team_id, name, part_number, sku, quantity, location, category, description, cost, date_added, supplier, url) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)",
               auth.teamId,
               name,
               sku,
@@ -10668,7 +10678,9 @@ Rules:
               category,
               sourceLabel,
               cost,
-              date_added
+              date_added,
+              supplier,
+              url
             );
             added++;
           }

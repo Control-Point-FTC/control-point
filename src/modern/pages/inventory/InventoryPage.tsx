@@ -1,14 +1,17 @@
 // Modern Inventory (phase 8a), rebuilt on the shadcn kit over the shared
 // useInventoryController (same endpoints and rules as Legacy: add with REV
 // link import, edit, optimistic delete, invoice parse → review → confirm,
-// auto-categorize). Stat strip, category chips + search, a card grid or a
-// dense table, and drafted add / edit sheets. Only members with the
+// auto-categorize). Stat strip, supplier chips + category + search, a card
+// grid or a dense table, and drafted add / edit sheets. Every part's name is
+// its order link (V3.5 phase 5: saved link, else the supplier's page for its
+// SKU), and printing swaps in a stock-check sheet. Only members with the
 // inventory scope can change anything.
 import { useState } from 'react';
-import { Boxes, Edit2, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
+import { Boxes, Edit2, ExternalLink, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
+import { partSupplier, purchaseLink, supplierLabel, SUPPLIERS } from '../../../utils/suppliers';
 import { datedName, downloadCsv } from '../../../utils/csv';
 import { ExportMenu } from '../../ui/ExportMenu';
-import { LoadMore, Spacer, useIncrementalGroups, useVirtualRows } from '../../ui/windowing';
+import { LoadMore, Spacer, useIncrementalGroups, usePrinting, useVirtualRows } from '../../ui/windowing';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -17,7 +20,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Textarea, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import { INVENTORY_CATEGORIES, useInventoryController } from '../../../components/inventory/useInventoryController';
+import { INVENTORY_CATEGORIES, NO_SUPPLIER, useInventoryController } from '../../../components/inventory/useInventoryController';
 import { Page, PageHeader, EmptyState, Stat } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
@@ -27,6 +30,21 @@ type Ctl = ReturnType<typeof useInventoryController>;
 const NONE: any[] = [];
 const partId = (p: any) => p.id as number;
 const money = (n: number) => `$${(n || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const supplierName = (id: string) => (id === NO_SUPPLIER ? 'Other' : supplierLabel(id));
+
+/** The part's name, linking to where it's ordered (new tab) when there's a link. */
+function PartName({ part, className }: { part: any; className?: string }) {
+  const href = purchaseLink(part);
+  if (!href) return <span className={className}>{part.name}</span>;
+  const s = supplierLabel(partSupplier(part));
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={cn('group/link inline-flex items-baseline gap-1 hover:text-accent hover:underline underline-offset-2', className)}
+      title={s ? `Order from ${s}` : 'Open purchase link'} aria-label={`${part.name}: order${s ? ` from ${s}` : ''} (opens in a new tab)`}>
+      <span>{part.name}</span>
+      <ExternalLink className="size-3 shrink-0 self-center text-muted-foreground opacity-60 group-hover/link:opacity-100" aria-hidden />
+    </a>
+  );
+}
 
 export function InventoryPage({ inventory, setInventory, teams, refresh, currentUser, hasScope }: any) {
   const ctl = useInventoryController({ inventory, setInventory, teams, refresh, currentUser, hasScope });
@@ -34,7 +52,8 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
   // Long inventories: the table renders only rows near the screen; the card
   // grid shows 60 and adds more as you scroll. A new search starts over.
   const vr = useVirtualRows(layout === 'table' ? ctl.filteredParts.length : 0, 49);
-  const inc = useIncrementalGroups(60, `${ctl.searchTerm}|${ctl.filterCategory}|${layout}`);
+  const inc = useIncrementalGroups(60, `${ctl.searchTerm}|${ctl.filterCategory}|${ctl.filterSupplier}|${layout}`);
+  const printing = usePrinting();
   const units = inventory.reduce((a: number, p: any) => a + (Number(p.quantity) || 0), 0);
   const uncategorized = inventory.some((p: any) => !p.category);
   const sel = useSelection(ctl.canManage ? ctl.filteredParts : NONE, partId);
@@ -51,6 +70,8 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
               { header: 'SKU', value: (p: any) => p.sku },
               { header: 'Part number', value: (p: any) => p.part_number },
               { header: 'Category', value: (p: any) => p.category },
+              { header: 'Supplier', value: (p: any) => supplierLabel(partSupplier(p)) },
+              { header: 'Purchase link', value: (p: any) => purchaseLink(p) || '' },
               { header: 'Quantity', value: (p: any) => Number(p.quantity) || 0 },
               { header: 'Unit cost', value: (p: any) => (p.cost == null ? '' : Number(p.cost)) },
               { header: 'Location', value: (p: any) => p.location },
@@ -72,11 +93,20 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         <Stat label="Inventory value" value={<AnimatedValue value={money(ctl.totalValue)} />} />
       </Reveal>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div data-print-hide className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={ctl.searchTerm} onChange={(e) => ctl.setSearchTerm(e.target.value)} placeholder="Search by name, SKU or part number" aria-label="Search parts" className="pl-9 max-sm:h-11" />
         </div>
+        {ctl.categories.length > 0 && (
+          <Select value={ctl.filterCategory || 'all'} onValueChange={(v) => ctl.setFilterCategory(v === 'all' ? '' : v)}>
+            <SelectTrigger className="w-44 max-sm:h-11" aria-label="Category"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              {ctl.categories.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {ctl.canManage && uncategorized && (
           <Button variant="outline" onClick={ctl.handleAutoCategorize} disabled={ctl.autoCategorizing}>
             <Tags /> {ctl.autoCategorizing ? 'Categorizing…' : 'Auto-categorize'}
@@ -93,15 +123,18 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
           <ToggleGroupItem value="table" aria-label="Table"><Rows3 /></ToggleGroupItem>
         </ToggleGroup>
       </div>
-      {ctl.categories.length > 0 && (
-        <ToggleGroup variant="chips" type="single" aria-label="Category" value={ctl.filterCategory || 'all'} onValueChange={(v) => ctl.setFilterCategory(!v || v === 'all' ? '' : v)} className="mb-5 w-full overflow-x-auto pb-1 flex-nowrap">
-          {['all', ...ctl.categories].map((c) => (
-            <ToggleGroupItem key={c} value={c}>
-              {c === 'all' ? 'All' : c}
+      {ctl.suppliers.length > 0 && (
+        <ToggleGroup data-print-hide variant="chips" type="single" aria-label="Supplier" value={ctl.filterSupplier || 'all'} onValueChange={(v) => ctl.setFilterSupplier(!v || v === 'all' ? '' : v)} className="mb-5 w-full overflow-x-auto pb-1 flex-nowrap">
+          {['all', ...ctl.suppliers].map((id) => (
+            <ToggleGroupItem key={id} value={id}>
+              {id === 'all' ? 'All suppliers' : supplierName(id)}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
       )}
+
+      {printing && <PrintSheet parts={ctl.filteredParts} filter={[ctl.filterSupplier && supplierName(ctl.filterSupplier), ctl.filterCategory, ctl.searchTerm && `“${ctl.searchTerm}”`].filter(Boolean).join(' · ')} />}
+      <div className="print:hidden">
 
       {!inventory.length ? (
         <EmptyState icon={Package} title="No parts yet" description={ctl.canManage ? 'Add a part, paste a REV link, or import an order invoice.' : 'Parts appear here once someone with inventory access adds them.'}
@@ -110,16 +143,16 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         <div className="overflow-x-auto rounded-xl border border-border">
           <Table>
             <TableHeader>
-              <TableRow>{ctl.canManage && <TableHead className="w-10"><SelectAllCheckbox sel={sel} label="Select all parts in the table" /></TableHead>}<TableHead>Name</TableHead><TableHead>SKU</TableHead><TableHead>Part #</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Category</TableHead><TableHead className="text-right">Value</TableHead>{ctl.canManage && <TableHead><span className="sr-only">Actions</span></TableHead>}</TableRow>
+              <TableRow>{ctl.canManage && <TableHead className="w-10"><SelectAllCheckbox sel={sel} label="Select all parts in the table" /></TableHead>}<TableHead>Name</TableHead><TableHead>SKU</TableHead><TableHead>Supplier</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Category</TableHead><TableHead className="text-right">Value</TableHead>{ctl.canManage && <TableHead><span className="sr-only">Actions</span></TableHead>}</TableRow>
             </TableHeader>
             <TableBody ref={vr.ref as any}>
               <Spacer height={vr.paddingTop} colSpan={8} />
               {vr.rows(ctl.filteredParts).map(({ item: p, rowProps }: { item: any; rowProps: Record<string, unknown> }) => (
                 <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
                   {ctl.canManage && <TableCell className="w-10"><RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} /></TableCell>}
-                  <TableCell className="font-medium">{p.name}</TableCell>
+                  <TableCell className="font-medium"><PartName part={p} /></TableCell>
                   <TableCell className="font-mono text-xs text-accent">{p.sku}</TableCell>
-                  <TableCell className="text-muted-foreground">{p.part_number || '—'}</TableCell>
+                  <TableCell className="text-muted-foreground">{supplierLabel(partSupplier(p)) || '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">{p.quantity}</TableCell>
                   <TableCell className="text-muted-foreground">{p.category || '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">{money(p.cost * p.quantity)}</TableCell>
@@ -137,8 +170,9 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
               <div className="flex items-start gap-3">
                 {ctl.canManage && <RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} className="mt-0.5" />}
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium leading-snug">{p.name}</p>
+                  <p className="font-medium leading-snug"><PartName part={p} /></p>
                   <p className="mt-0.5 font-mono text-xs text-accent">{p.sku}{p.part_number ? <span className="text-muted-foreground"> · {p.part_number}</span> : null}</p>
+                  {supplierLabel(partSupplier(p)) && <p className="mt-0.5 text-xs text-muted-foreground">{supplierLabel(partSupplier(p))}</p>}
                 </div>
                 {ctl.canManage && <PartMenu ctl={ctl} part={p} />}
               </div>
@@ -157,6 +191,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
         </Stagger>
         <LoadMore hidden={inc.hidden('grid', ctl.filteredParts.length)} onMore={() => inc.more('grid')} />
       </>)}
+      </div>
 
       <BulkBar
         sel={sel}
@@ -229,7 +264,7 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 <div className="rounded-xl border border-dashed border-border p-4">
                   <Label htmlFor="part-rev" className="flex items-center gap-1.5"><Link2 className="size-4" /> Import from REV Robotics</Label>
                   <div className="mt-2 flex gap-2">
-                    <Input id="part-rev" value={ctl.revLink} onChange={(e) => ctl.setRevLink(e.target.value)} placeholder="Paste a REV product link" className="min-w-0 flex-1 max-sm:h-11" />
+                    <Input id="part-rev" value={ctl.revLink} onChange={(e) => ctl.setRevLink(e.target.value)} placeholder="Paste a REV product link or SKU (REV-41-1600)" className="min-w-0 flex-1 max-sm:h-11" />
                     <Button type="button" variant="outline" onClick={ctl.handleImportRev} disabled={ctl.isLoadingRev || !ctl.revLink.trim()}>
                       {ctl.isLoadingRev ? <Loader2 className="animate-spin" /> : null}{ctl.isLoadingRev ? 'Loading…' : 'Import'}
                     </Button>
@@ -243,6 +278,19 @@ function PartSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 {field('qty', 'Quantity', 'quantity', { type: 'number', min: '0', step: '1', inputMode: 'numeric' })}
                 {field('cost', 'Cost per unit', 'cost', { type: 'number', step: 'any', min: '0', inputMode: 'decimal' })}
                 {field('location', 'Location', 'location', { placeholder: 'Bin, shelf, box…' })}
+                <div className="grid gap-2 sm:col-span-2">
+                  {field('url', 'Purchase link', 'url', { type: 'url', inputMode: 'url', placeholder: 'https://… (leave blank to use the supplier page)' })}
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="part-supplier">Supplier</Label>
+                  <Select value={f.supplier || 'auto'} onValueChange={(v) => set({ supplier: v === 'auto' ? '' : v })}>
+                    <SelectTrigger id="part-supplier"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Detect automatically{supplierLabel(partSupplier({ ...f, supplier: null })) ? ` (${supplierLabel(partSupplier({ ...f, supplier: null }))})` : ''}</SelectItem>
+                      {SUPPLIERS.map((x) => <SelectItem key={x.id} value={x.id}>{x.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="grid gap-2">
                   <Label htmlFor="part-category">Category</Label>
                   <Select value={f.category || 'Other'} onValueChange={(v) => set({ category: v })}>
@@ -322,5 +370,37 @@ function InvoiceReview({ ctl }: { ctl: Ctl }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Printed stock-check sheet: every shown part (no windowing), grouped by
+ *  location so it can be walked shelf by shelf, with an empty column to
+ *  write the counted quantity. Rendered only while printing. */
+function PrintSheet({ parts, filter }: { parts: any[]; filter: string }) {
+  const rows = [...parts].sort((a, b) => String(a.location || '\uffff').localeCompare(String(b.location || '\uffff')) || String(a.name).localeCompare(String(b.name)));
+  return (
+    <section className="hidden print:block" aria-label="Inventory print sheet">
+      <p className="mb-3 text-sm">Printed {new Date().toLocaleDateString(undefined, { dateStyle: 'medium' })} · {rows.length} part{rows.length === 1 ? '' : 's'}{filter ? ` · ${filter}` : ''}</p>
+      <table className="w-full border-collapse text-[11px]">
+        <thead>
+          <tr className="border-b-2 border-black text-left">
+            <th className="py-1 pr-2">Location</th><th className="py-1 pr-2">Part</th><th className="py-1 pr-2">SKU</th><th className="py-1 pr-2">Supplier</th>
+            <th className="py-1 pr-2 text-right">On hand</th><th className="w-16 py-1 text-right">Counted</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.id} className="border-b border-neutral-300 align-top">
+              <td className="py-1 pr-2">{p.location || '—'}</td>
+              <td className="py-1 pr-2">{p.name}{p.category ? <span className="text-neutral-500"> · {p.category}</span> : null}</td>
+              <td className="py-1 pr-2 font-mono">{p.sku}</td>
+              <td className="py-1 pr-2">{supplierLabel(partSupplier(p)) || '—'}</td>
+              <td className="py-1 pr-2 text-right tabular-nums">{p.quantity}</td>
+              <td className="py-1 text-right"><span className="inline-block w-12 border-b border-black">&nbsp;</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }

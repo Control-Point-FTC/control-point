@@ -183,6 +183,7 @@ export function BulkBar({ sel, noun, plural, actions, className }: {
     <AnimatePresence>
       {open && (
         <motion.div
+          data-print-hide
           role="toolbar"
           aria-label={label}
           initial={{ opacity: 0, y: 16 }}
