@@ -616,6 +616,9 @@ export class VoiceEngine {
         } catch {
           peer.cameraSender = peer.pc.addTrack(track, stream!);
         }
+        // A newer call replaced this stream (and stopped this one) while we
+        // waited: it attaches its own track to every peer, so stop here.
+        if (this.cameraStream !== stream) return;
       } else if (track && !peer.cameraSender) {
         // Camera added mid-call: renegotiation required so the remote side
         // learns about the new m-line.
@@ -628,7 +631,8 @@ export class VoiceEngine {
         }
         peer.cameraSender = null;
       }
-      if (track) await this.applyVideoParams(peer.cameraSender, 'camera');
+      // Not awaited: the loop must not pause between peers (see the stale check above).
+      if (track) void this.applyVideoParams(peer.cameraSender, 'camera');
     }
     if (old && old !== stream) for (const t of old.getTracks()) t.stop();
   }
@@ -645,6 +649,9 @@ export class VoiceEngine {
         } catch {
           peer.screenSender = peer.pc.addTrack(track, stream!);
         }
+        // A newer call replaced this stream (and stopped this one) while we
+        // waited: it attaches its own track to every peer, so stop here.
+        if (this.screenStream !== stream) return;
       } else if (track && !peer.screenSender) {
         peer.screenSender = peer.pc.addTrack(track, stream!);
       } else if (!track && peer.screenSender) {
@@ -655,7 +662,8 @@ export class VoiceEngine {
         }
         peer.screenSender = null;
       }
-      if (track) await this.applyVideoParams(peer.screenSender, 'screen');
+      // Not awaited: the loop must not pause between peers (see the stale check above).
+      if (track) void this.applyVideoParams(peer.screenSender, 'screen');
     }
     if (old && old !== stream) for (const t of old.getTracks()) t.stop();
   }
