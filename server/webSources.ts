@@ -45,6 +45,11 @@ export function anthropicSources(ev: any): { cited: WebSource[]; results: WebSou
   if (ev?.type === "content_block_delta" && ev?.delta?.type === "citations_delta") cite(ev.delta.citation);
   const block = ev?.type === "content_block_start" ? ev.content_block : ev;
   if (block?.type === "text" && Array.isArray(block.citations)) block.citations.forEach(cite);
+  // A page Claude read with web_fetch: it answered from it, so it counts like a citation.
+  if (block?.type === "web_fetch_tool_result" && block.content?.type === "web_fetch_result") {
+    const url = httpUrl(block.content.url);
+    if (url) cited.push({ url, title: String(block.content.content?.title || "").trim() });
+  }
   if (block?.type === "web_search_tool_result" && Array.isArray(block.content)) {
     for (const r of block.content) {
       const url = httpUrl(r?.url);
@@ -77,5 +82,5 @@ const label = (s: WebSource) => {
 export function sourcesFooter(list: WebSource[]): string {
   const s = dedupeSources(list);
   if (!s.length) return "";
-  return `\n\n_Sources: ${s.map((x) => `[${label(x)}](${x.url.replace(/\)/g, "%29")})`).join(" · ")}_`;
+  return `\n\n_Sources: ${s.map((x) => `[${label(x)}](${x.url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`).join(" · ")}_`;
 }

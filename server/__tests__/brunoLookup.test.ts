@@ -82,7 +82,7 @@ describe("runLookups", () => {
 
   it("tasks by status and assignee; events, communications, budget; never another team's", async () => {
     const done = await runLookups(dbAll, 1, "America/New_York", [{ kind: "tasks", status: "done" }]);
-    expect(done).toContain("#1 Order wheels — done, finished Oct 5, 11:00 AM, due 2026-10-05, high priority, assigned to Arnav Patel");
+    expect(done).toContain("#1 Order wheels — done, finished Oct 5, 2026, 11:00 AM, due 2026-10-05, high priority, assigned to Arnav Patel");
     expect(done).not.toContain("Other team task");
     expect(await runLookups(dbAll, 1, "UTC", [{ kind: "tasks", person: "Ada", query: "lift" }])).toContain("Fix lift — todo, due 2026-10-09 18:00");
     const mix = await runLookups(dbAll, 1, "UTC", [{ kind: "events", from: "2026-12-01" }, { kind: "communications", person: "rev" }, { kind: "budget" }]);
@@ -98,7 +98,7 @@ describe("runLookups", () => {
 
   it("finished tasks are dated by when they were finished, team-local", async () => {
     const out = await runLookups(dbAll, 1, "America/New_York", [{ kind: "tasks", status: "done", from: "2026-10-06", to: "2026-10-06" }]);
-    expect(out).toContain("Tune PID — done, finished Oct 6");
+    expect(out).toContain("Tune PID — done, finished Oct 6, 2026");
     expect(out).not.toContain("Order wheels");
   });
 

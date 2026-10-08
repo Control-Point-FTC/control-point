@@ -101,6 +101,29 @@ describe("Claude with web tools", () => {
   });
 });
 
+describe("fetched pages", () => {
+  const fetchBlock = { type: "web_fetch_tool_result", tool_use_id: "f1", content: { type: "web_fetch_result", url: "https://www.revrobotics.com/rev-41-1600/", content: { type: "document", title: "Smart Robot Servo", source: { type: "text", data: "…" } } } };
+
+  it("a fetch-only answer lists the page it read (streamed)", async () => {
+    fetchMock.mockResolvedValue(sse([
+      { type: "content_block_start", index: 0, content_block: { type: "server_tool_use", id: "f1", name: "web_fetch", input: { url: "https://www.revrobotics.com/rev-41-1600/" } } },
+      { type: "content_block_start", index: 1, content_block: fetchBlock },
+      { type: "content_block_start", index: 2, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "It's in stock." } },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } },
+    ]));
+    const r = await aiChat({ messages: [{ role: "user", text: "is the REV smart servo in stock? https://www.revrobotics.com/rev-41-1600/" }], maxTokens: 256, stream: true, onChunk: () => {} });
+    expect(r.sources).toEqual([{ url: "https://www.revrobotics.com/rev-41-1600/", title: "Smart Robot Servo" }]);
+    expect(sourcesFooter(r.sources)).toContain("[Smart Robot Servo](https://www.revrobotics.com/rev-41-1600/)");
+  });
+
+  it("a fetch-only answer lists the page it read (non-streamed)", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ content: [fetchBlock, { type: "text", text: "It's in stock." }], stop_reason: "end_turn" }), { status: 200 }));
+    const r = await aiChat({ messages: [{ role: "user", text: "is the REV smart servo in stock?" }], maxTokens: 256, stream: false });
+    expect(r.sources).toEqual([{ url: "https://www.revrobotics.com/rev-41-1600/", title: "Smart Robot Servo" }]);
+  });
+});
+
 describe("source helpers", () => {
   it("reads Gemini grounding chunks, ignoring non-web links", () => {
     expect(geminiSources({ candidates: [{ groundingMetadata: { groundingChunks: [
@@ -120,7 +143,10 @@ describe("source helpers", () => {
     const f = sourcesFooter([many[0], ...many]);
     expect(f.match(/\]\(/g)).toHaveLength(5);
     expect(f.startsWith("\n\n_Sources: [S1](https://s1.example/)")).toBe(true);
-    expect(sourcesFooter([{ url: "https://x.example/a_(b)", title: "Bad [title](evil)" }])).toBe("\n\n_Sources: [Bad titleevil](https://x.example/a_(b%29)_");
+    // Both parentheses are encoded, so the whole URL stays one markdown link.
+    const odd = sourcesFooter([{ url: "https://x.example/a_(b)", title: "Bad [title](evil)" }]);
+    expect(odd).toBe("\n\n_Sources: [Bad titleevil](https://x.example/a_%28b%29)_");
+    expect(odd.match(/\[([^\]]+)\]\(([^()\s]+)\)/)?.[2]).toBe("https://x.example/a_%28b%29");
     expect(sourcesFooter([{ url: "https://www.gobilda.com/x", title: "" }])).toContain("[gobilda.com]");
     expect(sourcesFooter([])).toBe("");
   });
