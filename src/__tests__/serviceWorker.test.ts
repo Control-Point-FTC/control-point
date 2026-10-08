@@ -76,7 +76,7 @@ describe('service worker (offline Compete)', () => {
   it('downloads the offline pages on install', async () => {
     const sw = boot(network);
     await sw.fire('install');
-    const cache = sw.caches.get('control-point-v4')!;
+    const cache = sw.caches.get('control-point-v5')!;
     expect(await cache.match('/assets/TeamStatsPage-a.js')).toBeTruthy();
     expect(await cache.match('/index.html')).toBeTruthy();
     // Offline: the precached chunk still loads.
@@ -146,6 +146,22 @@ describe('service worker (offline Compete)', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(got && (await got.json()).fresh).toBe(true);
     });
+  });
+
+  it('never saves a standalone page (the Predict article) as the offline app shell', async () => {
+    const sw = boot(async (req) => {
+      const p = new URL(req.url).pathname;
+      if (p === '/predict/how-it-works') return new Response('<html>article</html>', { status: 200 });
+      return new Response('<html>shell</html>', { status: 200 });
+    });
+    await sw.fire('install');
+    const cache = sw.caches.get('control-point-v5')!;
+    // The worker doesn't answer for the article at all: the browser loads it.
+    expect(await sw.get('/predict/how-it-works', 'navigate')).toBeUndefined();
+    expect(await (await cache.match('/index.html'))!.text()).toBe('<html>shell</html>');
+    // App pages still refresh the shell copy.
+    expect(await (await sw.get('/dashboard', 'navigate'))!.text()).toBe('<html>shell</html>');
+    expect(await (await cache.match('/index.html'))!.text()).toBe('<html>shell</html>');
   });
 
   it('leaves other API calls and uploads to the network', async () => {

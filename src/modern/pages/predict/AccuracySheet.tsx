@@ -2,7 +2,7 @@
 // down before the results were known, then the back-test (replaying a past
 // season) with a calibration chart.
 import { motion } from 'motion/react';
-import { Activity, BarChart3, Swords, Users } from 'lucide-react';
+import { Activity, ArrowUpRight, BarChart3, BookOpen, Swords, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Skeleton } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
@@ -18,6 +18,28 @@ function Metric({ label, value, note }: { label: string; value: string; note?: s
       <p className="mt-0.5 font-display text-2xl font-semibold tabular-nums text-foreground">{value}</p>
       {note && <p className="mt-0.5 text-xs text-muted-foreground">{note}</p>}
     </div>
+  );
+}
+
+/** The long-form explainer (served by the backend at a fixed path). */
+export const PREDICT_ARTICLE_URL = '/predict/how-it-works';
+
+function ArticleLink() {
+  return (
+    <a
+      href={PREDICT_ARTICLE_URL}
+      target="_blank"
+      rel="noopener"
+      className="group flex items-center gap-3 rounded-xl border border-border p-3 transition-colors hover:border-accent hover:bg-muted/40 focus-visible:outline-2 focus-visible:outline-accent"
+    >
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent"><BookOpen className="size-4" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold text-foreground">How Predict works</span>
+        <span className="block text-xs text-muted-foreground">Ratings, match odds and event simulation explained, with interactive charts.</span>
+      </span>
+      <ArrowUpRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" aria-hidden="true" />
+      <span className="sr-only">(opens in a new tab)</span>
+    </a>
   );
 }
 
@@ -40,6 +62,7 @@ export function AccuracySheet({ open, onOpenChange, accuracy: a, live }: {
           <SheetDescription>Back-tested on past events, and tracked live this season.</SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-8 overflow-y-auto px-6 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] text-sm">
+          <ArticleLink />
           {!a ? <Skeleton className="h-40" /> : <Report a={a} live={live} />}
         </div>
       </SheetContent>

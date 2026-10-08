@@ -13,11 +13,16 @@
 //   another's data.
 // - Other same-origin static files (icons, fonts, manifest): served from
 //   cache while a fresh copy is fetched in the background.
-// - Never cached: other /api/* calls, /uploads/* (user files), other origins.
+// - Never cached: other /api/* calls, /uploads/* (user files), other origins,
+//   and standalone pages that aren't the app (STANDALONE_PAGES).
 // Bump CACHE to drop everything cached by an older worker.
-const CACHE = 'control-point-v4';
+// v5: v4 could save the Predict article as the offline app shell.
+const CACHE = 'control-point-v5';
 const API_CACHE = 'control-point-api-v1';
 const SHELL = '/index.html';
+// Pages the server serves on their own (not the app). Left to the browser:
+// saving one as the offline shell would open it instead of the app offline.
+const STANDALONE_PAGES = ['/predict/how-it-works'];
 const API_TIMEOUT_MS = 5000;
 // Bumped each time the app drops the data copy (sign-out, workspace switch):
 // a response that was already on its way for the previous account is then
@@ -111,6 +116,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.pathname.startsWith('/uploads/')) return;
+  if (STANDALONE_PAGES.includes(url.pathname)) return;
 
   if (req.mode === 'navigate') {
     // Take the offline copy before the page starts reading the body.

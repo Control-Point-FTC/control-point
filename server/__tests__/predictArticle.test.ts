@@ -1,5 +1,5 @@
 /**
- * GET /predict/how-it-works: the unlisted Predict article. Served
+ * GET /predict/how-it-works: the Predict article. Served
  * byte-identical from one fixed file, as HTML, with its own CSP that pins
  * the page's inline script by hash. Other routes still reach the app.
  */

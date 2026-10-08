@@ -158,6 +158,11 @@ describe('Modern Predict', () => {
     expect(screen.getByText('Advancement odds before the event')).toBeInTheDocument();
     expect(screen.queryByText('Advancement odds after quals')).not.toBeInTheDocument();
     expect(screen.getByRole('img', { name: /Calibration/ })).toBeInTheDocument();
+    // The long-form explainer opens in a new tab.
+    const link = screen.getByRole('link', { name: /How Predict works/ });
+    expect(link).toHaveAttribute('href', '/predict/how-it-works');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
   });
 
   it('accuracy sheet: advancement scores show even with no played match calls', async () => {
