@@ -536,4 +536,21 @@ describe('Modern Settings — Bruno memory and morning summary', () => {
     fireEvent.click(screen.getByRole('switch', { name: /Morning summary/ }));
     await waitFor(() => expect(bodyOf('/api/profile', 'PATCH')).toMatchObject({ bruno_nudges: false }));
   });
+
+  it('after adding a fact the list is reloaded, so a fact trimmed at the cap disappears', async () => {
+    let added = false;
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/bruno/memories' && init?.method === 'POST') { added = true; return json({ memory: { id: 9, scope: 'user', content: 'Drives the robot' } }); }
+      if (url === '/api/bruno/memories') return json(added
+        ? { user: [{ id: 9, scope: 'user', content: 'Drives the robot' }], team: [], canEditTeam: false }
+        : { user: [{ id: 1, scope: 'user', content: 'Oldest fact' }], team: [], canEditTeam: false });
+      return json({});
+    });
+    setup({ section: 'bruno' });
+    expect(await screen.findByText('Oldest fact')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Something for Bruno to remember' }), { target: { value: 'Drives the robot' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByText('Drives the robot')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Oldest fact')).not.toBeInTheDocument());
+  });
 });

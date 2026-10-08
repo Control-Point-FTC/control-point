@@ -12014,6 +12014,18 @@ Rules:
   /** Save one fact unless it's a duplicate, keeping the newest within the
    *  scope's cap. Returns the new row id, or 0 for a duplicate. */
   async function storeBrunoMemory(teamId: number, memberId: number, scope: "user" | "team", fact: string): Promise<number> {
+    // One save at a time per memory list, so two chats (or a double-clicked
+    // Add) can't both pass the duplicate check before either inserts.
+    const key = scope === "team" ? `t${teamId}` : `u${teamId}:${memberId}`;
+    const prev = memoryLocks.get(key) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => storeBrunoMemoryNow(teamId, memberId, scope, fact));
+    const tail = run.catch(() => {});
+    memoryLocks.set(key, tail);
+    void tail.then(() => { if (memoryLocks.get(key) === tail) memoryLocks.delete(key); });
+    return run;
+  }
+  const memoryLocks = new Map<string, Promise<unknown>>();
+  async function storeBrunoMemoryNow(teamId: number, memberId: number, scope: "user" | "team", fact: string): Promise<number> {
     const existing = ((await dbAll(
       scope === "team" ? "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'team'" : "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'user' AND member_id = ?",
       ...(scope === "team" ? [teamId] : [teamId, memberId]),

@@ -15,15 +15,19 @@ export function BrunoMemoryGroup() {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
+  /** The list as the server has it (an add at the cap trims the oldest fact). */
+  const fetchList = async () => {
+    const res = await apiFetch('/api/bruno/memories');
+    if (!res.ok) throw new Error('load failed');
+    const body = await res.json();
+    return { user: Array.isArray(body?.user) ? body.user : [], team: Array.isArray(body?.team) ? body.team : [], canEditTeam: !!body?.canEditTeam };
+  };
+
   useEffect(() => {
     let live = true;
-    (async () => {
-      try {
-        const res = await apiFetch('/api/bruno/memories');
-        const body = await res.json();
-        if (live) setData({ user: Array.isArray(body?.user) ? body.user : [], team: Array.isArray(body?.team) ? body.team : [], canEditTeam: !!body?.canEditTeam });
-      } catch { if (live) setData({ user: [], team: [], canEditTeam: false }); }
-    })();
+    fetchList()
+      .then((d) => { if (live) setData(d); })
+      .catch(() => { if (live) setData({ user: [], team: [], canEditTeam: false }); });
     return () => { live = false; };
   }, []);
 
@@ -48,8 +52,9 @@ export function BrunoMemoryGroup() {
       const res = await apiFetch('/api/bruno/memories', { method: 'POST', body: JSON.stringify({ content, scope: 'user' }) });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error || '');
-      setData((d) => d && { ...d, user: [body.memory, ...d.user] });
       setDraft('');
+      // Reload rather than prepend: a fact the save trimmed must not linger here.
+      try { setData(await fetchList()); } catch { setData((d) => d && { ...d, user: [body.memory, ...d.user] }); }
     } catch (e: any) {
       notify(e?.message || 'Could not save that — try again.', 'error');
     } finally {
