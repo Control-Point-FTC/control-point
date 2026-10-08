@@ -23,6 +23,7 @@ import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { apiFetch } from '../../../services/api';
+import { notify, promptDialog } from '../../../components/dialog';
 import { ChangelogTab } from './ChangelogTab';
 
 type Ctl = ReturnType<typeof useOwnerConsole>;
@@ -276,6 +277,26 @@ function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
     return [...shown].sort((a, b) => compare(a[sort.key], b[sort.key], sort.dir) || b.id - a.id);
   }, [all, query, sort]);
   const showUsers = (w: any) => { ctl.setUserSearch(''); ctl.setTeamFilter(w.name); ctl.setTab('users'); };
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const deleteWorkspace = async (w: any) => {
+    const ok = await promptDialog({
+      title: `Delete ${w.name}?`,
+      message: `This permanently deletes the workspace and everything in it: ${plural(Number(w.member_count) || 0, 'member')}, ${plural(Number(w.message_count) || 0, 'message')}, ${plural(Number(w.task_count) || 0, 'task')}, its calendar, budget, inventory, files and settings. Members are signed out of it. This can't be undone. Type the workspace's name to confirm.`,
+      expected: String(w.name), placeholder: String(w.name), confirmLabel: 'Delete workspace', danger: true,
+    });
+    if (!ok) return;
+    setDeleting(w.id);
+    try {
+      const r = await apiFetch(`/api/owner/teams/${w.id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: w.name }) }).catch(() => null);
+      const j = r ? await r.json().catch(() => ({})) : {};
+      if (!r?.ok) { notify(j.error || 'Could not delete the workspace', 'error'); return; }
+      notify(`${w.name} deleted.`, 'success');
+      if (ctl.teamFilter === w.name) ctl.setTeamFilter('all');
+      await ctl.refresh();
+    } finally {
+      setDeleting(null);
+    }
+  };
   const head = { sort, onSort: toggle };
   return (
     <>
@@ -287,7 +308,7 @@ function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
       </Reveal>
       <Attention ctl={ctl} />
       <EmailHealth health={ctl.overview?.email} />
-      <Section title={`Workspaces (${teams.length}${query.trim() ? ` of ${all.length}` : ''})`} description="Every team on Control Point and how active each one is. Sort by any column; Users opens that workspace's people.">
+      <Section title={`Workspaces (${teams.length}${query.trim() ? ` of ${all.length}` : ''})`} description="Every team on Control Point and how active each one is. Sort by any column; Users opens that workspace's people, and the bin deletes the workspace.">
         {all.length > 0 && (
           <div className="relative mb-4 max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -319,7 +340,12 @@ function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
                     <TableCell className="text-right tabular-nums">{w.task_count}</TableCell>
                     <TableCell className="text-right tabular-nums">{w.feedback_count}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{when(w.last_message_at, 'MMM d, yyyy') || 'Never'}</TableCell>
-                    <TableCell className="text-right"><Button variant="outline" size="sm" onClick={() => showUsers(w)} aria-label={`Users in ${w.name}`} className="max-sm:h-11">Users</Button></TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1.5">
+                        <Button variant="outline" size="sm" onClick={() => showUsers(w)} aria-label={`Users in ${w.name}`} className="max-sm:h-11">Users</Button>
+                        <Button variant="outline" size="icon-sm" disabled={deleting === w.id} onClick={() => void deleteWorkspace(w)} aria-label={`Delete ${w.name}`} className="text-destructive hover:text-destructive max-sm:size-11"><Trash2 /></Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

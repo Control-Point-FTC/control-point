@@ -1,5 +1,5 @@
 // Owner overview: crash count for the attention strip and each workspace's
-// last message, owner only.
+// last message; the owner deleting a workspace. Owner only.
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 
@@ -37,5 +37,29 @@ describe("owner overview", () => {
 
   it("is owner only", async () => {
     expect((await t.api("/api/owner/overview", { session: admin })).status).toBe(403);
+  });
+
+  it("the owner deletes a workspace, with its name typed back", async () => {
+    const doomed = await seedTeam(t.db, "Spam Team");
+    const m = await seedMember(t.db, doomed, "Spammer", "spam@ov.test");
+    const spam = await t.session(m);
+    await t.db.execute({ sql: "INSERT INTO tasks (team_id, title) VALUES (?, 'x')", args: [doomed] });
+    const del = (body: any, session = owner) => t.api(`/api/owner/teams/${doomed}`, { method: "DELETE", body: JSON.stringify(body), session });
+    expect((await del({ confirm: "Spam Team" }, admin)).status).toBe(403);
+    expect((await del({ confirm: "spam team" })).status).toBe(400);
+    const r = await del({ confirm: "Spam Team" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.deleted).toMatchObject({ name: "Spam Team", members: 1 });
+    const count = async (sql: string) => Number(((await t.db.execute({ sql, args: [doomed] })).rows[0] as any).n);
+    expect(await count("SELECT COUNT(*) AS n FROM teams WHERE id = ?")).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM members WHERE team_id = ?")).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM tasks WHERE team_id = ?")).toBe(0);
+    expect((await t.api("/api/auth/me", { session: spam })).status).toBe(401);
+    expect((await del({ confirm: "Spam Team" })).status).toBe(404);
+  });
+
+  it("won't delete the workspace the owner is signed in to", async () => {
+    const r = await t.api(`/api/owner/teams/${busy}`, { method: "DELETE", body: JSON.stringify({ confirm: "Busy" }), session: owner });
+    expect(r.status).toBe(400);
   });
 });

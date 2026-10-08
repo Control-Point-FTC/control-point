@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
-const dialog = vi.hoisted(() => ({ notify: vi.fn(), confirmDialog: vi.fn() }));
+const dialog = vi.hoisted(() => ({ notify: vi.fn(), confirmDialog: vi.fn(), promptDialog: vi.fn() }));
 vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()), ...dialog }));
 
 import { InterfaceModeProvider } from '../interfaceMode';
@@ -42,6 +42,8 @@ beforeEach(() => {
   dialog.notify.mockReset();
   dialog.confirmDialog.mockReset();
   dialog.confirmDialog.mockResolvedValue(true);
+  dialog.promptDialog.mockReset();
+  dialog.promptDialog.mockResolvedValue(true);
   clearDrafts();
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -546,5 +548,20 @@ describe('Owner console — redesign', () => {
     expect(calls('/api/owner/users')).toHaveLength(1);
     expect(calls('/api/owner/ftc-duplicates')).toHaveLength(1);
     await waitFor(() => expect(screen.getByRole('button', { name: /Refresh/ })).not.toBeDisabled());
+  });
+
+  it('workspaces: the owner deletes one after typing its name', async () => {
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    dialog.promptDialog.mockResolvedValueOnce(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Gears' }));
+    await waitFor(() => expect(dialog.promptDialog).toHaveBeenCalledWith(expect.objectContaining({ expected: 'Gears', danger: true })));
+    expect(calls('/api/owner/teams/2', 'DELETE')).toHaveLength(0);
+    api.apiFetch.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Gears' }));
+    await waitFor(() => expect(calls('/api/owner/teams/2', 'DELETE')).toHaveLength(1));
+    expect(body('/api/owner/teams/2', 'DELETE')).toEqual({ confirm: 'Gears' });
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Gears deleted.', 'success'));
+    await waitFor(() => expect(calls('/api/owner/overview')).toHaveLength(1));
   });
 });
