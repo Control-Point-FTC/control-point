@@ -12,9 +12,13 @@ import { GRID_DEFAULTS, GRID_LIMITS, PULSE_ORIGINS, readGridPrefs, saveGridPrefs
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 import { confirmDialog } from '../../../components/dialog';
 
-/** Device-only sidebar layout (order, collapsed sections, collapsed rail). */
-export const SIDEBAR_LAYOUT_KEYS = ['cp-sidebar-order', 'cp-collapsed-nav-groups', 'cp-modern-sidebar-collapsed'];
 import { CUSTOMIZE_TABS_EVENT } from '../../chrome/CustomizeTabsDialog';
+
+/**
+ * Device-only sidebar layout: order, closed sections (Modern, and Legacy's
+ * collapsed groups) and the collapsed rail.
+ */
+export const SIDEBAR_LAYOUT_KEYS = ['cp-sidebar-order', 'cp-modern-sections-closed', 'cp-collapsed-nav-groups', 'cp-modern-sidebar-collapsed'];
 
 function useMediaQuery(q: string): boolean {
   const get = () => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches;

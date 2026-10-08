@@ -260,6 +260,8 @@ function TimezoneGroup({ team, isAdmin, onTeamSaved }: { team: any; isAdmin?: bo
 function CalendarFeedGroup() {
   const [has, setHas] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
+  // Bumped when the link is turned off: a fresh dialog forgets the dead link and makes a new one.
+  const [dialogKey, setDialogKey] = useState(0);
   const load = async () => {
     try {
       const res = await apiFetch('/api/calendar/feed');
@@ -275,7 +277,7 @@ function CalendarFeedGroup() {
       confirmLabel: 'Turn off', danger: true,
     }))) return;
     const res = await apiFetch('/api/calendar/feed', { method: 'DELETE' }).catch(() => null);
-    if (res?.ok) { setHas(false); notify('Calendar link turned off.', 'success'); }
+    if (res?.ok) { setHas(false); setDialogKey((k) => k + 1); notify('Calendar link turned off.', 'success'); }
     else notify('Could not turn off the link — try again.', 'error');
   };
   return (
@@ -289,7 +291,7 @@ function CalendarFeedGroup() {
           {has && <Button variant="ghost" className="max-sm:h-11" onClick={() => void turnOff()}><Unlink /> Turn off</Button>}
         </div>
       </SettingsRow>
-      <SubscribeDialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) void load(); }} />
+      <SubscribeDialog key={dialogKey} open={open} onOpenChange={(o) => { setOpen(o); if (!o) void load(); }} />
     </SettingsGroup>
   );
 }

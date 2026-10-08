@@ -3,6 +3,7 @@
  * forms), and unverified email signups stay off the roster (V3-M3).
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import WebSocket from "ws";
 import { startTestServer, seedTeam, seedMember, type TestServer } from "./helpers/testServer";
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -86,6 +87,31 @@ describe("sign out of other devices", () => {
     expect(await me(phone)).toBe(401);
     expect(await me(bystander)).toBe(200);
     expect((await t.post("/api/auth/sign-out-others", {})).status).toBe(401);
+  });
+
+  it("closes the other devices' live connections, so they can't keep chatting", async () => {
+    const id = await seedMember(t.db, team, "Kim", "kim@v35.test");
+    const here = await t.session(id);
+    const other = await t.session(id);
+    const socket = async (session: string) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${t.port}`);
+      const closed = new Promise<number>((res) => ws.once("close", (code) => res(code)));
+      await new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); });
+      ws.send(JSON.stringify({ type: "hello", sessionId: session }));
+      return { ws, closed };
+    };
+    const mine = await socket(here);
+    const theirs = await socket(other);
+    await new Promise((r) => setTimeout(r, 400));
+    expect((await t.post("/api/auth/sign-out-others", {}, here)).status).toBe(200);
+    expect(await theirs.closed).toBe(4001);
+    // A message sent on the closed socket can't land; this device stays connected.
+    expect(mine.ws.readyState).toBe(WebSocket.OPEN);
+    mine.ws.send(JSON.stringify({ type: "chat", content: "still here" }));
+    await new Promise((r) => setTimeout(r, 400));
+    const rows = (await t.db.execute({ sql: "SELECT content FROM messages WHERE sender_id = ?", args: [id] })).rows.map((r: any) => r.content);
+    expect(rows).toEqual(["still here"]);
+    mine.ws.close();
   });
 });
 

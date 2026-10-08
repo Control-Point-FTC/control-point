@@ -10,11 +10,16 @@ const systemTheme = (): Theme => {
 };
 const resolveChoice = (c: ThemeChoice): Theme => (c === 'system' ? systemTheme() : c);
 
+// The last choice made in this tab: what counts when storage is blocked
+// (private mode etc.), so "system" keeps following the device.
+let memoryChoice: ThemeChoice | null = null;
+
 function readStoredChoice(): ThemeChoice | null {
   try {
     const v = window.localStorage.getItem(THEME_STORAGE_KEY);
-    return v === 'light' || v === 'dark' || v === 'system' ? v : null;
-  } catch { return null; }
+    if (v === 'light' || v === 'dark' || v === 'system') return v;
+  } catch { /* storage blocked: fall back to this tab's choice */ }
+  return memoryChoice;
 }
 
 /** localStorage key for the persisted appearance choice. */
@@ -23,6 +28,7 @@ export const THEME_STORAGE_KEY = 'cp-theme';
 /** Window event fired whenever the theme changes, so every useTheme()
  *  instance (header toggle, setup wizard, …) stays in sync in the same tab. */
 const THEME_EVENT = 'cp-theme-change';
+type ThemeEventDetail = { theme: Theme; choice: ThemeChoice };
 
 function readStoredTheme(): Theme {
   const choice = readStoredChoice();
@@ -43,6 +49,7 @@ export function applyThemeClass(theme: Theme): void {
 }
 
 function persistAndApply(choice: ThemeChoice): Theme {
+  memoryChoice = choice;
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, choice);
   } catch {
@@ -50,7 +57,7 @@ function persistAndApply(choice: ThemeChoice): Theme {
   }
   const theme = resolveChoice(choice);
   applyThemeClass(theme);
-  window.dispatchEvent(new CustomEvent<Theme>(THEME_EVENT, { detail: theme }));
+  window.dispatchEvent(new CustomEvent<ThemeEventDetail>(THEME_EVENT, { detail: { theme, choice } }));
   return theme;
 }
 
@@ -82,8 +89,9 @@ export function useTheme(): {
   // Stay in sync with changes made by other hook instances or other tabs.
   useEffect(() => {
     const onThemeEvent = (e: Event) => {
-      setThemeState((e as CustomEvent<Theme>).detail === 'light' ? 'light' : 'dark');
-      setChoice(readStoredChoice() ?? readStoredTheme());
+      const d = (e as CustomEvent<ThemeEventDetail>).detail;
+      setThemeState(d?.theme === 'light' ? 'light' : 'dark');
+      setChoice(d?.choice ?? readStoredChoice() ?? readStoredTheme());
     };
     const onStorage = (e: StorageEvent) => {
       if (e.key !== THEME_STORAGE_KEY) return;

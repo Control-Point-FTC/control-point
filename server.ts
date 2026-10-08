@@ -2527,6 +2527,21 @@ async function startServer() {
     });
   };
 
+  // Close the live sockets of an account's other sign-ins (sign out other
+  // devices, password change): their sessions are gone, so must the sockets
+  // authorised by them. Sockets on `keepKey` (this device) stay open.
+  const disconnectOtherSessions = (memberIds: number[], keepKey: string | null) => {
+    const ids = new Set(memberIds);
+    clients.forEach(client => {
+      const c = client as any;
+      if (c.memberId != null && ids.has(c.memberId) && (!keepKey || c.sessionKey !== keepKey)) {
+        c.teamId = null;
+        c.memberId = null;
+        try { client.close(4001, "signed out"); } catch {}
+      }
+    });
+  };
+
   const memberSocketCount = (teamId: number | null | undefined, memberId: number): number => {
     if (teamId == null) return 0;
     let n = 0;
@@ -2739,6 +2754,8 @@ async function startServer() {
             if (member) {
               (ws as any).teamId = member.team_id;
               (ws as any).memberId = member.id;
+              // Which sign-in this socket rides on: signing out other devices closes it.
+              (ws as any).sessionKey = sessionKey(token);
               // Socket reconnect inside the grace window: cancel the pending
               // disconnect cleanup so the member stays in their call.
               cancelVoiceDisconnectCleanup(member.team_id, member.id);
@@ -4073,6 +4090,7 @@ async function startServer() {
       const placeholders = siblingIds.map(() => "?").join(",");
       if (sid) await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders}) AND id != ?`, ...siblingIds, sid);
       else await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders})`, ...siblingIds);
+      disconnectOtherSessions(siblingIds, sid);
     }
     res.json({ ok: true });
   });
@@ -4091,6 +4109,7 @@ async function startServer() {
       const placeholders = ids.map(() => "?").join(",");
       const r = (await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders}) AND id != ?`, ...ids, sid)) as any;
       removed = Number(r?.changes ?? r?.rowsAffected ?? 0);
+      disconnectOtherSessions(ids, sid);
     }
     res.json({ ok: true, removed });
   });

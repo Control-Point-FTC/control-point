@@ -604,18 +604,28 @@ describe('Modern Settings — completeness pass', () => {
     expect(screen.getByRole('combobox', { name: 'Workspace time zone' })).toHaveTextContent('Mountain (Denver)');
   });
 
-  it('the calendar link can be shown and turned off from Settings', async () => {
+  it('the calendar link can be shown and turned off; Get link then makes a new one', async () => {
+    let token: string | null = 'old';
     api.apiFetch.mockImplementation((url: string, init?: any) => {
-      if (url === '/api/calendar/feed' && !init?.method) return json({ url: 'https://cp.test/api/calendar/feed/tok.ics' });
-      if (url === '/api/calendar/feed' && init?.method === 'DELETE') return json({ ok: true });
+      const link = () => (token ? { url: `https://cp.test/api/calendar/feed/${token}.ics` } : {});
+      if (url === '/api/calendar/feed' && !init?.method) return json(link());
+      if (url === '/api/calendar/feed' && init?.method === 'POST') { token ??= 'new'; return json(link()); }
+      if (url === '/api/calendar/feed' && init?.method === 'DELETE') { token = null; return json({ ok: true }); }
       if (url === '/api/calendar/link') return json({ linked: false });
       return json({});
     });
     setup({ section: 'workspace' });
     expect(await screen.findByText('Your calendar link is on')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Show link/ }));
+    await waitFor(() => expect(screen.getByLabelText('Your calendar link')).toHaveValue('https://cp.test/api/calendar/feed/old.ics'));
+    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByLabelText('Your calendar link')).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /Turn off/ }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/calendar/feed', { method: 'DELETE' }));
     expect(await screen.findByText('Subscribe in your calendar app')).toBeInTheDocument();
+    // The dead link isn't shown again: a new one is made.
+    fireEvent.click(screen.getByRole('button', { name: /Get link/ }));
+    await waitFor(() => expect(screen.getByLabelText('Your calendar link')).toHaveValue('https://cp.test/api/calendar/feed/new.ics'));
   });
 
   it('account: sign out of other devices, sign out here, and reopen the setup guide', async () => {
@@ -638,6 +648,7 @@ describe('Modern Settings — completeness pass', () => {
     expect(localStorage.getItem('cp-theme')).toBe('system');
     localStorage.setItem('cp-sidebar-order', '["tasks"]');
     localStorage.setItem('cp-collapsed-nav-groups', '{"a":true}');
+    localStorage.setItem('cp-modern-sections-closed', '["plan"]');
     const reload = vi.fn();
     const had = window.location;
     Object.defineProperty(window, 'location', { configurable: true, value: { ...had, reload } });
@@ -646,6 +657,7 @@ describe('Modern Settings — completeness pass', () => {
       await waitFor(() => expect(reload).toHaveBeenCalled());
       expect(localStorage.getItem('cp-sidebar-order')).toBeNull();
       expect(localStorage.getItem('cp-collapsed-nav-groups')).toBeNull();
+      expect(localStorage.getItem('cp-modern-sections-closed')).toBeNull();
     } finally {
       Object.defineProperty(window, 'location', { configurable: true, value: had });
     }

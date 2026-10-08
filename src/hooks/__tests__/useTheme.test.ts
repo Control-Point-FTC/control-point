@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTheme, THEME_STORAGE_KEY } from '../useTheme';
 
@@ -17,7 +17,7 @@ beforeEach(() => {
     removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
   })) as any;
 });
-afterEach(() => { window.matchMedia = had; });
+afterEach(() => { window.matchMedia = had; vi.restoreAllMocks(); });
 
 describe('useTheme: System', () => {
   it('follows the device, and keeps following it until a fixed theme is picked', () => {
@@ -43,5 +43,22 @@ describe('useTheme: System', () => {
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe('light');
     expect(result.current.choice).toBe('system');
+  });
+
+  it('with storage blocked, System still follows the device, in every hook', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked'); });
+    const a = renderHook(() => useTheme());
+    const b = renderHook(() => useTheme());
+    act(() => a.result.current.setTheme('system'));
+    expect(b.result.current.choice).toBe('system');
+    act(() => { light = true; listeners.forEach((fn) => fn()); });
+    expect(a.result.current.theme).toBe('light');
+    expect(b.result.current.theme).toBe('light');
+    expect(document.documentElement.classList.contains('light')).toBe(true);
+    act(() => b.result.current.setTheme('dark'));
+    expect(a.result.current.choice).toBe('dark');
+    act(() => { light = false; listeners.forEach((fn) => fn()); light = true; listeners.forEach((fn) => fn()); });
+    expect(a.result.current.theme).toBe('dark');
   });
 });
