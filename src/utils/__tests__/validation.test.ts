@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isIsoDate, eventTimeError, eventError, parseMoney, formatMoney, formatMoneyCompact, budgetEntryFrom,
+  requiredTextError, communicationError, REQUIRED,
   attendanceMarkError, addDaysIso, latestTodayOnEarth, earliestTodayOnEarth, MONEY_MAX,
 } from '../validation';
 
@@ -74,7 +75,7 @@ describe('budgetEntryFrom', () => {
     expect(budgetEntryFrom(base, null)).toEqual({ type: 'expense', amount: 20, category: 'Parts', description: 'Motors', date: '2026-10-06' });
   });
   it('validates the merged result on update', () => {
-    const existing = { type: 'income', amount: 50, category: 'Sponsor', description: '', date: '2026-09-01' } as const;
+    const existing = { type: 'income', amount: 50, category: 'Sponsor', description: 'Grant', date: '2026-09-01' } as const;
     expect(budgetEntryFrom({ amount: 75 }, existing)).toMatchObject({ type: 'income', amount: 75, date: '2026-09-01' });
     expect(budgetEntryFrom({ amount: -1 }, existing)).toHaveProperty('error');
     expect(budgetEntryFrom({ type: 'gift' }, existing)).toHaveProperty('error');
@@ -82,6 +83,26 @@ describe('budgetEntryFrom', () => {
   it('rejects bad dates and over-long text', () => {
     expect(budgetEntryFrom({ ...base, date: 'tomorrow' }, null)).toHaveProperty('error');
     expect(budgetEntryFrom({ ...base, category: 'x'.repeat(81) }, null)).toHaveProperty('error');
+  });
+  it('requires a description and a category, even when editing an old blank row', () => {
+    expect(budgetEntryFrom({ ...base, description: '   ' }, null)).toEqual({ error: 'Add a description' });
+    expect(budgetEntryFrom({ ...base, category: '' }, null)).toEqual({ error: 'Add a category' });
+    const blank = { type: 'expense', amount: 5, category: 'Parts', description: '', date: '2026-09-01' } as const;
+    expect(budgetEntryFrom({ amount: 6 }, blank)).toEqual({ error: 'Add a description' });
+  });
+});
+
+describe('required text fields', () => {
+  it('names the first missing field', () => {
+    expect(requiredTextError({ title: ' ' }, REQUIRED.task)).toBe('Add a title');
+    expect(requiredTextError({ title: 'Wire the hub' }, REQUIRED.task)).toBeNull();
+    expect(requiredTextError({ title: 'Demo' }, REQUIRED.outreach)).toBe('Add a date');
+  });
+  it('log entries need a contact and subject; replies need a subject or a message', () => {
+    expect(communicationError({ recipient: 'Sponsor', subject: '' }, false)).toBe('Add a subject');
+    expect(communicationError({ recipient: '', subject: 'Hi' }, false)).toBe('Add a contact');
+    expect(communicationError({ body: '' , subject: '' }, true)).toBe('Add a message');
+    expect(communicationError({ body: 'Thanks!' }, true)).toBeNull();
   });
 });
 

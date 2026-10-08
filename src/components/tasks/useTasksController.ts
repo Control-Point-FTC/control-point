@@ -169,6 +169,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   const handleAddTask = async () => {
     if (editorSaving) return;
+    if (!String(newTask.title || '').trim()) { notify('Add a title', 'error'); return; }
     setEditorSaving(true);
     const gen = getDraft<number>(EDITOR_GEN, 0);
     const stillCurrent = () => getDraft<number>(EDITOR_GEN, 0) === gen;

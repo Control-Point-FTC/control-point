@@ -241,11 +241,13 @@ function useCooldown(start: number) {
 const sixDigits = (v: string) => v.replace(/\D/g, '').slice(0, 6);
 
 /** Email ownership check for email + password signups (6-digit code). */
-export function useVerifyEmail({ email, onVerified }: { email: string; onVerified: (data: any) => void }) {
+export function useVerifyEmail({ email, onVerified, sendFailed = false }: { email: string; onVerified: (data: any) => void; sendFailed?: boolean }) {
   const [code, setCodeRaw] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cooldown, setCooldown] = useCooldown(60);
+  // A send that failed left no code behind, so "Resend" is available at once.
+  const [cooldown, setCooldown] = useCooldown(sendFailed ? 0 : 60);
+  const [sendProblem, setSendProblem] = useState(sendFailed);
   const [resending, setResending] = useState(false);
   const setCode = (v: string) => setCodeRaw(sixDigits(v));
 
@@ -285,6 +287,7 @@ export function useVerifyEmail({ email, onVerified }: { email: string; onVerifie
       if (data.alreadyVerified) { setError('This email is already verified — try signing in.'); return; }
       if (!res.ok) throw new Error(data.error || "Couldn't resend the code");
       setCooldown(data.cooldownSeconds || 60);
+      setSendProblem(false);
     } catch (err: any) {
       setError(err.message || "Couldn't resend the code");
     } finally {
@@ -292,7 +295,7 @@ export function useVerifyEmail({ email, onVerified }: { email: string; onVerifie
     }
   };
 
-  return { code, setCode, error, busy, cooldown, resending, submit, resend };
+  return { code, setCode, error, busy, cooldown, resending, submit, resend, sendProblem };
 }
 
 /** Forgot password: email → 6-digit code → new password. */

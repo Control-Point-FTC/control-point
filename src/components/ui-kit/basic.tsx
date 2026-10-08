@@ -52,6 +52,15 @@ export function Label({ className, ...props }: React.ComponentProps<typeof Label
 
 // --- Badge ------------------------------------------------------------------
 
+/**
+ * Visible asterisk for a required field. Drawn with CSS so the label's text
+ * (and accessible name) stays exactly the field name; screen readers learn
+ * the field is required from the input's own `required` attribute.
+ */
+export function RequiredMark() {
+  return <span aria-hidden="true" data-required-mark className="text-destructive before:content-['*']" />;
+}
+
 export const badgeVariants = cva(
   'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium leading-none whitespace-nowrap [&_svg]:size-3',
   {

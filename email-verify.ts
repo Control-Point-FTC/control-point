@@ -21,6 +21,18 @@ export const VERIFY_CODE_TTL_MINUTES = 15;
 export const VERIFY_MAX_ATTEMPTS = 5;
 export const VERIFY_RESEND_COOLDOWN_SECONDS = 60;
 
+/** Last email send outcome, for the owner console's health card. */
+export type EmailHealth = { configured: boolean; lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null };
+const emailHealth: Omit<EmailHealth, "configured"> = { lastOkAt: null, lastError: null, lastErrorAt: null };
+export function getEmailHealth(): EmailHealth {
+  return { configured: isEmailConfigured(), ...emailHealth };
+}
+function recordEmailResult(error: string | null) {
+  const now = new Date().toISOString();
+  if (error) { emailHealth.lastError = error.slice(0, 300); emailHealth.lastErrorAt = now; }
+  else emailHealth.lastOkAt = now;
+}
+
 export function isEmailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
 }
@@ -139,6 +151,17 @@ export function resetEmailHtml(code: string): string {
   });
 }
 
+/** POST to Resend; a request that never reaches it (DNS, network, timeout)
+ * is recorded for the owner console too, then rethrown. */
+async function resendFetch(init: RequestInit): Promise<Response> {
+  try {
+    return await fetch("https://api.resend.com/emails", init);
+  } catch (e: any) {
+    recordEmailResult(`Could not reach the email provider: ${String(e?.message || e).slice(0, 200)}`);
+    throw e;
+  }
+}
+
 export async function sendVerificationEmail(to: string, code: string, purpose: CodePurpose = "verify"): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
@@ -146,7 +169,7 @@ export async function sendVerificationEmail(to: string, code: string, purpose: C
     console.log(`[email-verify] (no RESEND_API_KEY) ${purpose} code for ${to}: ${code}`);
     return;
   }
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await resendFetch({
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -161,8 +184,11 @@ export async function sendVerificationEmail(to: string, code: string, purpose: C
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Email send failed (${res.status}): ${body.slice(0, 200)}`);
+    const err = `Email send failed (${res.status}): ${body.slice(0, 200)}`;
+    recordEmailResult(err);
+    throw new Error(err);
   }
+  recordEmailResult(null);
 }
 
 /** Is this address already verified (account-wide, by email)? */
@@ -216,7 +242,14 @@ export async function issueVerificationCode(email: string, purpose: CodePurpose 
     codeExpiry(),
     nowIso
   );
-  await sendVerificationEmail(normalized, code, purpose);
+  try {
+    await sendVerificationEmail(normalized, code, purpose);
+  } catch (e) {
+    // A code that never left must not hold the resend cooldown: drop it so
+    // "Resend" works straight away instead of after a minute of nothing.
+    await dbRun("DELETE FROM email_verification_codes WHERE email = ? AND created_at = ?", normalized, nowIso);
+    throw e;
+  }
   return { sent: true };
 }
 
@@ -301,7 +334,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
     console.log(`[email] (no RESEND_API_KEY) to ${to}: ${subject}`);
     return;
   }
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await resendFetch({
     method: "POST",
     headers: {
       "Authorization": `Bearer ${key}`,
@@ -316,8 +349,11 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Email send failed (${res.status}): ${body.slice(0, 200)}`);
+    const err = `Email send failed (${res.status}): ${body.slice(0, 200)}`;
+    recordEmailResult(err);
+    throw new Error(err);
   }
+  recordEmailResult(null);
 }
 
 // Task fields, names and team names are user-controlled — escape them so a

@@ -141,4 +141,28 @@ describe('email verification codes', () => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce({ ok: false, status: 401, text: async () => 'bad key' } as any);
     await expect(sendVerificationEmail('x@example.com', '123456')).rejects.toThrow(/401/);
   });
+
+  it('a code that failed to send does not hold the resend cooldown (V3-H1)', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'provider down' } as any);
+    await expect(issueVerificationCode('late@example.com')).rejects.toThrow(/500/);
+    // Nothing was stored for the failed send, so an immediate resend goes out.
+    expect(await issueVerificationCode('late@example.com')).toEqual({ sent: true });
+  });
+
+  it('reports send health for the owner console', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce({ ok: false, status: 403, text: async () => 'domain not verified' } as any);
+    await expect(sendVerificationEmail('x@example.com', '123456')).rejects.toThrow();
+    let h = mod.getEmailHealth();
+    expect(h.configured).toBe(true);
+    expect(h.lastError).toMatch(/403.*domain not verified/);
+    await sendVerificationEmail('x@example.com', '123456');
+    h = mod.getEmailHealth();
+    expect(h.lastOkAt && h.lastErrorAt && h.lastOkAt >= h.lastErrorAt).toBe(true);
+  });
+
+  it('records a provider that cannot be reached at all', async () => {
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND api.resend.com'));
+    await expect(sendVerificationEmail('x@example.com', '123456')).rejects.toThrow(/ENOTFOUND/);
+    expect(mod.getEmailHealth().lastError).toMatch(/Could not reach the email provider.*ENOTFOUND/);
+  });
 });

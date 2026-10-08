@@ -48,6 +48,12 @@ function budgetSetup(admin = true, budget = BUDGET) {
   return { ...wrap(<BudgetPage {...props} />), props };
 }
 
+/** Budget entries need a description and a category (required fields). */
+function fillRequired() {
+  fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Motors' } });
+  fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'Parts' } });
+}
+
 describe('Modern Budget', () => {
   it('shows the balance, cash flow by month and a month-grouped ledger', () => {
     budgetSetup();
@@ -61,6 +67,7 @@ describe('Modern Budget', () => {
     budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10.005' } });
+    fillRequired();
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
     await waitFor(() => expect(calls('/api/budget', 'POST')).toHaveLength(1));
     // Rounded to cents before sending (the server stores cents too).
@@ -80,6 +87,7 @@ describe('Modern Budget', () => {
     budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '999999999999.99' } });
+    fillRequired();
     fireEvent.submit(document.getElementById('budget-form')!);
     expect(dialog.notify).toHaveBeenCalledWith("Amount can't be more than $1,000,000", 'error');
     expect(calls('/api/budget', 'POST')).toHaveLength(0);
@@ -174,10 +182,12 @@ describe('Modern Budget', () => {
     budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10' } });
+    fillRequired();
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
     act(() => clearDrafts()); // sign-out / workspace switch
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '20' } });
+    fillRequired();
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
     expect(pending).toHaveLength(2);
     await act(async () => { pending[0]({ ok: true, json: async () => ({}) }); });
@@ -193,10 +203,11 @@ describe('Modern Budget', () => {
     const first = budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10' } });
+    fillRequired();
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
     expect(screen.getByLabelText('Description')).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'typed after saving' } });
-    expect(screen.getByLabelText('Description')).toHaveValue('');
+    expect(screen.getByLabelText('Description')).toHaveValue('Motors');
     // Leave and come back (mode switch) while the save is in flight.
     first.unmount();
     budgetSetup();

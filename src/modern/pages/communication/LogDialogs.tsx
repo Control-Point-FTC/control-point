@@ -10,7 +10,7 @@ import { ArrowDownLeft, ArrowUpRight, Check, ChevronsUpDown, FileText, Loader2, 
 import { cn } from '../../../components/cn';
 import {
   Button, Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, Dialog, DialogContent, DialogDescription,
-  DialogHeader, DialogTitle, Input, Label, Popover, PopoverContent, PopoverTrigger, Textarea, ToggleGroup, ToggleGroupItem,
+  DialogHeader, DialogTitle, Input, Label, Popover, PopoverContent, PopoverTrigger, Textarea, ToggleGroup, ToggleGroupItem, RequiredMark,
 } from '../../../components/ui-kit';
 import { clearQuickAddDrafts, useBrunoQuickAdd, type QuickAddThread } from '../../../components/communication/useBrunoQuickAdd';
 import { clearEmailImportDrafts, useEmailImport } from '../../../components/communication/useEmailImport';
@@ -30,10 +30,10 @@ function ReviewFields({ f, extra }: { f: Fields; extra?: React.ReactNode }) {
   return (
     <div className="grid gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-2"><Label htmlFor="log-recipient">Recipient</Label><Input id="log-recipient" value={f.recipient} onChange={(e) => f.setRecipient(e.target.value)} placeholder="Who is this with?" className="h-11" /></div>
+        <div className="grid gap-2"><Label htmlFor="log-recipient">Recipient <RequiredMark /></Label><Input id="log-recipient" required value={f.recipient} onChange={(e) => f.setRecipient(e.target.value)} placeholder="Who is this with?" className="h-11" /></div>
         <div className="grid gap-2"><Label htmlFor="log-date">Date</Label><Input id="log-date" value={f.date} onChange={(e) => f.setDate(e.target.value)} placeholder="YYYY-MM-DD HH:mm" className="h-11" /></div>
       </div>
-      <div className="grid gap-2"><Label htmlFor="log-subject">Subject</Label><Input id="log-subject" value={f.subject} onChange={(e) => f.setSubject(e.target.value)} placeholder="Subject" className="h-11" /></div>
+      <div className="grid gap-2"><Label htmlFor="log-subject">Subject <RequiredMark /></Label><Input id="log-subject" required value={f.subject} onChange={(e) => f.setSubject(e.target.value)} placeholder="Subject" className="h-11" /></div>
       <div className="grid gap-2"><Label htmlFor="log-body">Message</Label><Textarea id="log-body" rows={5} value={f.body} onChange={(e) => f.setBody(e.target.value)} placeholder="Email content…" /></div>
       <div className="flex flex-wrap items-end gap-4">
         <div className="grid gap-2">

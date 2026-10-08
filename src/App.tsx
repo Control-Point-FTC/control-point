@@ -550,7 +550,7 @@ export default function App() {
   const [inviteTeamName, setInviteTeamName] = useState<string | null>(null);
   const [invitePendingTeam, setInvitePendingTeam] = useState<string | null>(null);
   // Email+password signups must verify ownership before getting a session.
-  const [verifyState, setVerifyState] = useState<{ email: string; mode: 'admin' | 'student' | 'login' | 'setup' } | null>(null);
+  const [verifyState, setVerifyState] = useState<{ email: string; mode: 'admin' | 'student' | 'login' | 'setup'; sendFailed?: boolean } | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -1618,7 +1618,7 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Login failed');
       if (data.needsVerification) {
-        setVerifyState({ email: data.email, mode: 'login' });
+        setVerifyState({ email: data.email, mode: 'login', sendFailed: data.emailSent === false });
         return;
       }
       if (data.needsPasswordSetup) {
@@ -1651,7 +1651,7 @@ export default function App() {
     // `data` rides along so the form can react (e.g. a taken FTC number).
     if (!res.ok) throw Object.assign(new Error(data.error || "Signup failed"), { data });
     if (data.needsVerification) {
-      setVerifyState({ email: data.email, mode: payload.accountType === 'admin' ? 'admin' : 'student' });
+      setVerifyState({ email: data.email, mode: payload.accountType === 'admin' ? 'admin' : 'student', sendFailed: data.emailSent === false });
       return data;
     }
     // An approval link or "ask to join": no account or session yet.
@@ -2218,7 +2218,7 @@ export default function App() {
         if (verifyState.mode === 'admin' && data?.team?.access_code) setSignupTeam(data.team);
         if (verifyState.mode === 'setup') setNeedsSetup(false);
       };
-      return <VerifyEmailPage email={verifyState.email} onBack={() => setVerifyState(null)} onVerified={onVerified} />;
+      return <VerifyEmailPage email={verifyState.email} sendFailed={verifyState.sendFailed} onBack={() => setVerifyState(null)} onVerified={onVerified} />;
     }
     if (oauthSignup) {
       const onBack = () => { setOauthSignup(null); setAuthScreen('landing'); };

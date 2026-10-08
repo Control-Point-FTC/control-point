@@ -31,6 +31,8 @@ import {
   isEmailVerified,
   markEmailVerified,
   issueVerificationCode,
+  getEmailHealth,
+  isEmailConfigured,
   checkVerificationCode,
   consumeVerificationCode,
   notifyTaskAssignees,
@@ -150,7 +152,7 @@ import {
   type ScoutEventParsed,
 } from "./server/ftcScout.js";
 import { mergeStampedDelete, mergeStampedPatch, type FieldStamps, type ShortlistPatch, type StoredShortlistEntry, type WriteOrigin } from "./src/utils/shortlist.js";
-import { eventError, budgetEntryFrom, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
+import { eventError, budgetEntryFrom, requiredTextError, communicationError, REQUIRED, formatMoney, isIsoDate, attendanceMarkError, latestTodayOnEarth, earliestTodayOnEarth } from "./src/utils/validation.js";
 import { buildScoutingContextPack } from "./server/scoutingContext.js";
 import { fileKey, r2FromEnv } from "./server/r2.js";
 import { cite, citeTeam, eventUrl, siteOf, teamUrl } from "./server/sourceLinks.js";
@@ -1989,6 +1991,34 @@ function parsePerms(json: any): string[] {
 // account_type 'admin' -> Admin role, everyone else -> Member role.
 // Ensures all three default roles exist (Admin, Member, Verified Member) —
 // creates any that are missing, so existing teams get new defaults too.
+/**
+ * A membership counts on the roster once its email is verified (V3-M3).
+ * Email+password signups are pending until they enter the code; accounts
+ * without a password (OAuth, or added by an admin) and everyone from before
+ * verification existed (grandfathered by migration 001) are unaffected.
+ * Use with the members table aliased as `m`.
+ */
+const VERIFIED_MEMBER_SQL = "(COALESCE(m.password, '') = '' OR EXISTS (SELECT 1 FROM verified_emails ve WHERE LOWER(ve.email) = LOWER(m.email)))";
+
+/**
+ * Send a signup/login verification code. Never throws: the caller still
+ * answers "check your inbox", but says whether the email actually left so
+ * the screen can say so instead of leaving someone waiting for nothing.
+ * A cooldown hit means a code went out under a minute ago, which counts as sent.
+ * With no email provider configured the answer is "not sent".
+ */
+async function sendSignupCode(email: string): Promise<boolean> {
+  try {
+    await issueVerificationCode(email);
+    // Without a provider the code is only logged (dev/test): nothing reached
+    // an inbox, so say so rather than start a cooldown for a missing email.
+    return isEmailConfigured();
+  } catch (e) {
+    console.error("verify code issue failed:", e);
+    return false;
+  }
+}
+
 async function ensureRolesSeeded(teamId: number | null | undefined) {
   // A member with no team (e.g. their workspace was deleted) has nothing to
   // seed; inserting would violate roles.team_id NOT NULL and 500 the request.
@@ -2863,8 +2893,8 @@ async function startServer() {
     }
     // Email ownership check: unverified addresses get a code, not a session.
     if (!(await isEmailVerified(email))) {
-      try { await issueVerificationCode(email); } catch (e) { console.error("verify code issue failed:", e); }
-      return res.json({ needsVerification: true, email });
+      const emailSent = await sendSignupCode(email);
+      return res.json({ needsVerification: true, email, emailSent });
     }
     // Atomic: the session is only created if, at insert time, the row still
     // has this email and the account still holds the password just checked
@@ -2951,8 +2981,8 @@ async function startServer() {
         // Unverified emails get a code, not a session — the team row already
         // exists, so verifying later lands them right back here.
         if (!(await isEmailVerified(cleanEmail))) {
-          try { await issueVerificationCode(cleanEmail); } catch (e) { console.error("verify code issue failed:", e); }
-          return res.json({ needsVerification: true, email: cleanEmail });
+          const emailSent = await sendSignupCode(cleanEmail);
+          return res.json({ needsVerification: true, email: cleanEmail, emailSent });
         }
         const sessionId = await createSession(mInfo.lastInsertRowid);
         await assignSystemRole(teamId, mInfo.lastInsertRowid, "Admin");
@@ -3013,13 +3043,15 @@ async function startServer() {
           )) as any;
           memberId = mInfo.lastInsertRowid;
         }
-        broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(await dbGet("SELECT * FROM members WHERE id = ?", memberId)) });
         // Unverified emails get a code, not a session — the membership row
         // already exists, so verifying later lands them right back here.
+        // Until then they are hidden from the roster (V3-M3) and teammates
+        // hear "joined" only once the address is verified.
         if (!(await isEmailVerified(cleanEmail))) {
-          try { await issueVerificationCode(cleanEmail); } catch (e) { console.error("verify code issue failed:", e); }
-          return res.json({ needsVerification: true, email: cleanEmail });
+          const emailSent = await sendSignupCode(cleanEmail);
+          return res.json({ needsVerification: true, email: cleanEmail, emailSent });
         }
+        broadcastToTeam(team.id, { type: "member_joined", member: sanitizeMember(await dbGet("SELECT * FROM members WHERE id = ?", memberId)) });
         const sessionId = await createSession(memberId);
         await assignSystemRole(team.id, memberId, "Member");
         const user = (await dbGet("SELECT * FROM members WHERE id = ?", memberId));
@@ -3056,6 +3088,8 @@ async function startServer() {
     await ensureOnboardingRow(email);
     const rows = await activeMemberRows(email);
     if (!rows.length) return res.status(400).json({ error: "No account found for that email" });
+    // Now verified: they appear on their teams' rosters (hidden until now, V3-M3).
+    for (const r of rows) if (r.team_id) broadcastToTeam(r.team_id, { type: "member_joined", member: sanitizeMember(r) });
     const picked = (await pickMemberRow(rows)) as any;
     const sessionId = await createSession(picked.id);
     const teamRow = (await dbGet(
@@ -4594,6 +4628,21 @@ async function startServer() {
       { sql: "DELETE FROM team_invites WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM team_join_requests WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM scouting_entries WHERE team_id = ?", args: [teamId] },
+      // Rows that point at a member (created_by / author) without ON DELETE
+      // CASCADE: they must go before the members below, or the foreign key
+      // refuses the whole batch and the workspace can never be deleted.
+      // Children first: review comments -> reviews -> snapshots/parts -> docs.
+      { sql: "DELETE FROM cad_review_comments WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM cad_reviews WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM cad_snapshots WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM cad_parts WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM cad_docs WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM checkin_sessions WHERE team_id = ?", args: [teamId] },
+      // References teams without a cascade.
+      { sql: "DELETE FROM call_moderation_log WHERE team_id = ?", args: [teamId] },
+      // No foreign key, but they belong to this workspace.
+      { sql: "DELETE FROM access_code_events WHERE team_id = ?", args: [teamId] },
+      { sql: `DELETE FROM ai_warnings WHERE team_id = ? OR member_id ${inMembers}`, args: [teamId, ...memberIds] },
       { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
       // Keep the caller's session alive so they stay signed in (teamless when
       // this was their last team); every other session on the team is dropped.
@@ -6027,7 +6076,7 @@ async function startServer() {
       SELECT m.*, t.name as team_name 
       FROM members m 
       LEFT JOIN teams t ON m.team_id = t.id
-      WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1
+      WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND ${VERIFIED_MEMBER_SQL}
     `, auth.teamId)) as any[];
     for (const m of members) {
       m.roles = await memberRoleList(m.id, auth.teamId!);
@@ -8051,7 +8100,7 @@ Rules:
              (SELECT COUNT(*) FROM feedback) as feedback,
              (SELECT COUNT(*) FROM feedback WHERE status = 'new') as new_feedback
     `));
-    res.json({ totals, teams });
+    res.json({ totals, teams, email: getEmailHealth() });
   });
 
   // Workspaces sharing an FTC number from before the one-per-number rule.
@@ -8624,6 +8673,8 @@ Rules:
       const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
       const { title, description, status, assigned_to, assignee_ids, due_date, is_board } = req.body;
+      const missingTask = requiredTextError(req.body || {}, REQUIRED.task);
+      if (missingTask) return res.status(400).json({ error: missingTask });
       const createdAt = new Date().toISOString();
       // Optional time of day it's due (HH:MM); only meaningful with a date.
       const dueTime = due_date && TASK_TIME_RE.test(String(req.body?.due_time || "")) ? String(req.body.due_time) : null;
@@ -8804,6 +8855,7 @@ Rules:
       if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined)) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
+      if (title !== undefined && !String(title ?? '').trim()) return res.status(400).json({ error: "Add a title" });
       const completedAt = status === 'done' ? new Date().toISOString() : null;
 
       // Status-only moves keep the old path; field edits update the rest.
@@ -9131,7 +9183,10 @@ Rules:
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const { title, description, date, hours, location, attendees, funds_raised } = req.body;
-      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", title, description, date, hours, location, Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), auth.teamId));
+      const missingOutreach = requiredTextError(req.body || {}, REQUIRED.outreach);
+      if (missingOutreach) return res.status(400).json({ error: missingOutreach });
+      // Optional fields default rather than reach the driver as undefined (a 500).
+      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", String(title).trim(), description ?? '', date, Math.max(0, parseFloat(hours) || 0), location ?? '', Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), auth.teamId));
 
       // Everyone hears about new outreach, as each of them chose.
       const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
@@ -9152,6 +9207,8 @@ Rules:
       const existing: any = (await dbGet("SELECT team_id FROM outreach WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       const { title, description, date, hours, location, attendees, funds_raised } = req.body || {};
+      const missingOutreach = requiredTextError(req.body || {}, REQUIRED.outreach);
+      if (missingOutreach) return res.status(400).json({ error: missingOutreach });
       (await dbRun(
         "UPDATE outreach SET title = ?, description = ?, date = ?, hours = ?, location = ?, attendees = ?, funds_raised = ? WHERE id = ?",
         title || '', description || '', date || '', hours || 0, location || '', Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), req.params.id
@@ -10758,8 +10815,11 @@ Rules:
             type: b?.type === "income" ? "income" : "expense",
             amount: b?.amount,
             date: isIsoDate(b?.date) ? b.date : today,
-            category: typeof b?.category === "string" ? b.category.trim().slice(0, 80) : "",
-            description: typeof b?.description === "string" ? b.description.trim().slice(0, 500) : "",
+            // Forms require both; Bruno fills sensible ones rather than drop the entry.
+            category: (typeof b?.category === "string" && b.category.trim().slice(0, 80)) || "General",
+            description: (typeof b?.description === "string" && b.description.trim().slice(0, 500))
+              || (typeof b?.category === "string" && b.category.trim().slice(0, 80))
+              || (b?.type === "income" ? "Income" : "Expense"),
           }, null);
           return "error" in entry ? null : entry;
         }).filter(Boolean);
@@ -11475,8 +11535,10 @@ Rules:
         if (!parent || parent.team_id !== auth.teamId) return res.status(400).json({ error: "Invalid parent entry" });
         parentId = parent.parent_id != null ? parent.parent_id : parent.id;
       }
+      const missingComm = communicationError(req.body || {}, parentId != null);
+      if (missingComm) return res.status(400).json({ error: missingComm });
       const dir = direction === 'inbound' ? 'inbound' : 'outbound';
-      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId, parentId, dir));
+      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", recipient ?? '', subject ?? '', body ?? '', date || new Date().toISOString().slice(0, 16).replace('T', ' '), type || 'email', auth.teamId, parentId, dir));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating communication:", error);
@@ -11488,9 +11550,11 @@ Rules:
     try {
       const auth = await requirePerm(req, res, "manage_communications");
       if (!auth) return;
-      const existing: any = (await dbGet("SELECT team_id FROM communications WHERE id = ?", req.params.id));
+      const existing: any = (await dbGet("SELECT team_id, parent_id FROM communications WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Not found" });
       const { recipient, subject, body, date, type, direction } = req.body || {};
+      const missingComm = communicationError(req.body || {}, existing.parent_id != null);
+      if (missingComm) return res.status(400).json({ error: missingComm });
       const dir = direction === 'inbound' ? 'inbound' : 'outbound';
       await dbRun(
         "UPDATE communications SET recipient = ?, subject = ?, body = ?, date = ?, type = ?, direction = ? WHERE id = ? AND team_id = ?",
@@ -12647,6 +12711,9 @@ Rules:
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    if (process.env.NODE_ENV === "production" && !isEmailConfigured()) {
+      console.error("[email] RESEND_API_KEY is not set: signup codes will NOT be emailed (they are only logged here). Nobody new can verify.");
+    }
   });
 
   // One-time boot cleanup: remove duplicate voice channels for every team.

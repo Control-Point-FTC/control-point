@@ -4,7 +4,7 @@
 // President; personal calendar link: everyone).
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, Check, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unlink, UserPlus } from 'lucide-react';
+import { Building2, CalendarDays, Check, ExternalLink, Loader2, LogOut, RefreshCw, ShieldCheck, Trash2, Unlink, UserPlus } from 'lucide-react';
 import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
@@ -14,7 +14,7 @@ import { AccessCode, AccessCodeHistory } from '../people/AccessCode';
 
 interface TeamDraft { name: string; ftc: string }
 
-export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, settings, refresh, onTeamSaved, onOpenSection }: any) {
+export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, settings, refresh, onTeamSaved, onOpenSection, onLeaveTeam, onDeleteTeam }: any) {
   const navigate = useNavigate();
   const team = teams.find((t: any) => t.id === currentUser?.team_id);
   const savedFtc = team?.ftc_team_number ? String(team.ftc_team_number) : /^\d+$/.test(String(team?.number ?? '').trim()) ? String(team.number).trim() : '';
@@ -162,6 +162,22 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       )}
 
       <GoogleCalendarGroup settings={settings} canSync={canSyncCalendar} onRefresh={() => refresh?.settings?.()} />
+
+      <SettingsGroup title="Leave or delete" description="Step away from this workspace, or remove it for everyone.">
+        {onLeaveTeam && (
+          <SettingsRow label="Leave this workspace" description="You lose access to its chat, tasks and files. Your other workspaces and your account stay. An admin can invite you back.">
+            <Button variant="outline" className="text-warning hover:text-warning max-sm:h-11" onClick={() => onLeaveTeam(team)}><LogOut /> Leave {team.name}</Button>
+          </SettingsRow>
+        )}
+        {onDeleteTeam && team.can_manage && (
+          <SettingsRow label="Delete this workspace" description="Permanently deletes every member, task, event, message, file, budget entry and CAD record in it, for everyone. You type its name to confirm. This can't be undone.">
+            <Button variant="destructive" className="max-sm:h-11" onClick={() => onDeleteTeam(team)}><Trash2 /> Delete {team.name}</Button>
+          </SettingsRow>
+        )}
+        <SettingsRow label="All your workspaces" description={`You're in ${teams.length} ${teams.length === 1 ? 'workspace' : 'workspaces'}. Switch, leave or delete any of them.`}>
+          <Button variant="outline" className="max-sm:h-11" onClick={() => navigate('/teams?tab=workspaces')}><Building2 /> Manage workspaces</Button>
+        </SettingsRow>
+      </SettingsGroup>
     </div>
   );
 }

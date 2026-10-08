@@ -20,7 +20,7 @@ export const ROLE_COLOR_SWATCHES = [
   '#FFC700', '#F97316', '#EF4444', '#EC4899',
   '#8B5CF6', '#3B82F6', '#22C55E', '#14B8A6', '#71717A',
 ];
-export const NEW_ROLE: RoleDraft = { name: '', color: '#71717A', permissions: ['view_ai'] };
+export const NEW_ROLE: RoleDraft = { name: '', color: '#71717A', permissions: [] };
 
 export function useRolesController({ onRefresh, teamId }: { onRefresh?: () => any; teamId?: number | null }) {
   const [roles, setRoles] = useState<Role[]>([]);

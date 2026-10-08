@@ -94,7 +94,9 @@ describe('Modern Settings — account', () => {
 
   it('only lets you delete the account after leaving every workspace', () => {
     setup({ section: 'account' });
-    expect(screen.getByRole('button', { name: 'Delete my account' })).toBeDisabled();
+    // While you're still in a workspace the way forward is the workspace list.
+    expect(screen.queryByRole('button', { name: 'Delete my account' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage workspaces' })).toBeInTheDocument();
     cleanup();
     setup({ section: 'account', teams: [] });
     fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }));
