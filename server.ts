@@ -4077,6 +4077,24 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  // Sign out everywhere else: every other session of this account (all its
+  // workspaces); this one stays signed in.
+  app.post("/api/auth/sign-out-others", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    if (!me?.email) return res.status(404).json({ error: "Account not found" });
+    const ids = ((await dbAll("SELECT id FROM members WHERE LOWER(email) = LOWER(?)", me.email)) as any[]).map((r) => r.id);
+    const sid = currentSessionId(req);
+    let removed = 0;
+    if (ids.length && sid) {
+      const placeholders = ids.map(() => "?").join(",");
+      const r = (await dbRun(`DELETE FROM sessions WHERE member_id IN (${placeholders}) AND id != ?`, ...ids, sid)) as any;
+      removed = Number(r?.changes ?? r?.rowsAffected ?? 0);
+    }
+    res.json({ ok: true, removed });
+  });
+
   // Export my data (GDPR-style download)
   app.get("/api/auth/export", async (req, res) => {
     const auth = await requireAuth(req, res);

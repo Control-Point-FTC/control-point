@@ -2038,6 +2038,9 @@ export default function App() {
       onUserSaved: (u: any) => setCurrentUser((prev: any) => (prev ? { ...prev, ...u } : u)),
       onTeamSaved: (t: any) => setTeams((prev) => prev.map((x: any) => (x.id === t.id ? { ...x, ...t } : x))),
       onStatusPick: handleStatusPick,
+      // Settings → Account: sign out here, and restart the setup guide.
+      onLogout: () => void handleLogout(),
+      onSetupGuide: openSetupGuide,
     };
     const viewProps = {
       teams, members, attendance, tasks, budget, outreach, socialProfiles, youtubeEnabled, tiktokEnabled, inventory, communications, events,

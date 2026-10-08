@@ -68,6 +68,38 @@ describe("public team-number lookup (V3-L2)", () => {
   });
 });
 
+describe("sign out of other devices", () => {
+  it("ends every other session of the account, in every workspace, and keeps this one", async () => {
+    const other = await seedTeam(t.db, "Second");
+    const id1 = await seedMember(t.db, team, "Sam", "sam@v35.test");
+    const id2 = await seedMember(t.db, other, "Sam", "sam@v35.test");
+    const here = await t.session(id1);
+    const laptop = await t.session(id1);
+    const phone = await t.session(id2);
+    const bystander = await t.session(await seedMember(t.db, team, "Bea", "bea@v35.test"));
+    const r = await t.post("/api/auth/sign-out-others", {}, here);
+    expect(r.status).toBe(200);
+    expect(r.body.removed).toBe(2);
+    const me = (s: string) => t.api("/api/auth/me", { session: s }).then((x) => x.status);
+    expect(await me(here)).toBe(200);
+    expect(await me(laptop)).toBe(401);
+    expect(await me(phone)).toBe(401);
+    expect(await me(bystander)).toBe(200);
+    expect((await t.post("/api/auth/sign-out-others", {})).status).toBe(401);
+  });
+});
+
+describe("workspace time zone", () => {
+  it("admins can set and clear it; a made-up zone is refused", async () => {
+    const set = (timezone: unknown) => t.patch(`/api/teams/${team}`, { timezone }, admin);
+    expect((await set("America/Chicago")).status).toBe(200);
+    expect((await t.db.execute({ sql: "SELECT timezone FROM teams WHERE id = ?", args: [team] })).rows[0].timezone).toBe("America/Chicago");
+    expect((await set("Mars/Olympus")).status).toBe(400);
+    expect((await set(null)).status).toBe(200);
+    expect((await t.db.execute({ sql: "SELECT timezone FROM teams WHERE id = ?", args: [team] })).rows[0].timezone).toBeNull();
+  });
+});
+
 describe("unverified signups (V3-M3)", () => {
   it("stay off the roster until they verify their email", async () => {
     const r = await t.post("/api/auth/signup", {

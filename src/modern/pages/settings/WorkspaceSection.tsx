@@ -5,13 +5,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, CalendarDays, Check, ExternalLink, Loader2, LogOut, RefreshCw, ShieldCheck, Trash2, Unlink, UserPlus } from 'lucide-react';
-import { Badge, Button, Input, Label, Skeleton, Switch } from '../../../components/ui-kit';
+import { Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Skeleton, Switch } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { ownFtcTeamChanged } from '../../../services/ftcScoutApi';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { getDraft, useDraft } from '../../drafts';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 import { AccessCode, AccessCodeHistory } from '../people/AccessCode';
+import { SubscribeDialog } from '../calendar/SubscribeDialog';
 
 interface TeamDraft { name: string; ftc: string }
 
@@ -137,6 +138,8 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
         </SettingsGroup>
       </form>
 
+      <TimezoneGroup team={team} isAdmin={isAdmin} onTeamSaved={onTeamSaved} />
+
       {(isAdmin || hasPerm?.('invite_members')) && (
         <SettingsGroup title="Invites & access">
           <SettingsRow label="Invite links" description="Make a link people can join with. Links can expire, cap their uses and need approval.">
@@ -165,6 +168,7 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
       )}
 
       <GoogleCalendarGroup settings={settings} canSync={canSyncCalendar} onRefresh={() => refresh?.settings?.()} />
+      <CalendarFeedGroup />
 
       <SettingsGroup title="Leave or delete" description="Step away from this workspace, or remove it for everyone.">
         {onLeaveTeam && (
@@ -182,6 +186,111 @@ export function WorkspaceSection({ currentUser, teams = [], isAdmin, hasPerm, se
         </SettingsRow>
       </SettingsGroup>
     </div>
+  );
+}
+
+/** Common zones first; the browser's own and the saved one are added when missing. */
+export const COMMON_ZONES: { tz: string; label: string }[] = [
+  { tz: 'America/New_York', label: 'Eastern (New York)' },
+  { tz: 'America/Chicago', label: 'Central (Chicago)' },
+  { tz: 'America/Denver', label: 'Mountain (Denver)' },
+  { tz: 'America/Phoenix', label: 'Arizona (Phoenix)' },
+  { tz: 'America/Los_Angeles', label: 'Pacific (Los Angeles)' },
+  { tz: 'America/Anchorage', label: 'Alaska (Anchorage)' },
+  { tz: 'Pacific/Honolulu', label: 'Hawaii (Honolulu)' },
+];
+const NOT_SET = '__default';
+
+export function zoneOptions(saved: string | null | undefined, browser: string | undefined): { tz: string; label: string }[] {
+  const out = [...COMMON_ZONES];
+  for (const z of [browser, saved]) if (z && !out.some((o) => o.tz === z)) out.push({ tz: z, label: z.replace(/_/g, ' ') });
+  return out;
+}
+
+/**
+ * The workspace's timezone: event reminders, the calendar feed, Bruno's
+ * morning summary and "today" all use it. Unset means Eastern time.
+ */
+function TimezoneGroup({ team, isAdmin, onTeamSaved }: { team: any; isAdmin?: boolean; onTeamSaved?: (t: any) => void }) {
+  const [value, setValue] = useState<string>(team.timezone || NOT_SET);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setValue(team.timezone || NOT_SET); }, [team.timezone]);
+  const browser = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; } })();
+  const options = zoneOptions(team.timezone, browser);
+  const change = async (next: string) => {
+    const prev = value;
+    setValue(next);
+    setSaving(true);
+    try {
+      const timezone = next === NOT_SET ? null : next;
+      const res = await apiFetch(`/api/teams/${team.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ timezone }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setValue(prev); notify(data.error || 'Could not save the timezone.', 'error'); return; }
+      onTeamSaved?.({ id: team.id, timezone });
+      notify('Timezone saved.', 'success');
+    } catch {
+      setValue(prev);
+      notify('Could not save the timezone.', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <SettingsGroup title="Time zone">
+      <SettingsRow
+        label="Workspace time zone"
+        description={`Used for event reminders, the calendar feed and Bruno's morning summary.${isAdmin ? '' : ' Admins can change it.'}`}
+      >
+        <Select value={value} onValueChange={(v) => void change(v)} disabled={!isAdmin || saving}>
+          <SelectTrigger className="w-60 max-sm:h-11" aria-label="Workspace time zone"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NOT_SET}>Not set (Eastern)</SelectItem>
+            {options.map((o) => <SelectItem key={o.tz} value={o.tz}>{o.label}{o.tz === browser ? ' — this device' : ''}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
+
+/**
+ * Your private calendar link (Google, Apple, Outlook subscribe to it). Make,
+ * copy or replace it in the subscribe dialog; turn it off here.
+ */
+function CalendarFeedGroup() {
+  const [has, setHas] = useState<boolean | null>(null);
+  const [open, setOpen] = useState(false);
+  const load = async () => {
+    try {
+      const res = await apiFetch('/api/calendar/feed');
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) setHas(!!body?.url);
+    } catch { /* offline: leave as unknown */ }
+  };
+  useEffect(() => { void load(); }, []);
+  const turnOff = async () => {
+    if (!(await confirmDialog({
+      title: 'Turn off your calendar link?',
+      message: 'Calendars subscribed with it stop updating. You can make a new link any time.',
+      confirmLabel: 'Turn off', danger: true,
+    }))) return;
+    const res = await apiFetch('/api/calendar/feed', { method: 'DELETE' }).catch(() => null);
+    if (res?.ok) { setHas(false); notify('Calendar link turned off.', 'success'); }
+    else notify('Could not turn off the link — try again.', 'error');
+  };
+  return (
+    <SettingsGroup title="Calendar subscription" description="A private link that keeps the team calendar in Google, Apple or Outlook Calendar. Only you have it.">
+      <SettingsRow
+        label={has ? 'Your calendar link is on' : 'Subscribe in your calendar app'}
+        description={has ? 'Copy it again, or replace it if it was shared by mistake.' : 'No Google sign-in needed: your calendar app checks the link for changes.'}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="max-sm:h-11" onClick={() => setOpen(true)}><CalendarDays /> {has ? 'Show link' : 'Get link'}</Button>
+          {has && <Button variant="ghost" className="max-sm:h-11" onClick={() => void turnOff()}><Unlink /> Turn off</Button>}
+        </div>
+      </SettingsRow>
+      <SubscribeDialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) void load(); }} />
+    </SettingsGroup>
   );
 }
 

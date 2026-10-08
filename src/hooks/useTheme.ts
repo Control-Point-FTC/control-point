@@ -1,6 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 
 export type Theme = 'dark' | 'light';
+/** What the person picked: a fixed theme, or follow the device. */
+export type ThemeChoice = Theme | 'system';
+
+const LIGHT_QUERY = '(prefers-color-scheme: light)';
+const systemTheme = (): Theme => {
+  try { return window.matchMedia?.(LIGHT_QUERY).matches ? 'light' : 'dark'; } catch { return 'dark'; }
+};
+const resolveChoice = (c: ThemeChoice): Theme => (c === 'system' ? systemTheme() : c);
+
+function readStoredChoice(): ThemeChoice | null {
+  try {
+    const v = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return v === 'light' || v === 'dark' || v === 'system' ? v : null;
+  } catch { return null; }
+}
 
 /** localStorage key for the persisted appearance choice. */
 export const THEME_STORAGE_KEY = 'cp-theme';
@@ -10,16 +25,12 @@ export const THEME_STORAGE_KEY = 'cp-theme';
 const THEME_EVENT = 'cp-theme-change';
 
 function readStoredTheme(): Theme {
-  try {
-    return window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
-  } catch {
-    // Storage unavailable (private mode etc.) — nothing persists, so keep
-    // whatever is on screen: a hook mounting later (e.g. the Settings popup)
-    // must not reset an in-memory light choice. First load → dark.
-    return typeof document !== 'undefined' && document.documentElement.classList.contains('light')
-      ? 'light'
-      : 'dark';
-  }
+  const choice = readStoredChoice();
+  if (choice) return resolveChoice(choice);
+  // Nothing stored, or storage unavailable (private mode etc.): keep whatever
+  // is on screen, so a hook mounting later (e.g. the Settings popup) doesn't
+  // reset an in-memory light choice. First load → dark.
+  return typeof document !== 'undefined' && document.documentElement.classList.contains('light') ? 'light' : 'dark';
 }
 
 /**
@@ -31,14 +42,16 @@ export function applyThemeClass(theme: Theme): void {
   document.documentElement.classList.toggle('light', theme === 'light');
 }
 
-function persistAndApply(theme: Theme): void {
+function persistAndApply(choice: ThemeChoice): Theme {
   try {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    window.localStorage.setItem(THEME_STORAGE_KEY, choice);
   } catch {
     /* ignore — theme just won't persist */
   }
+  const theme = resolveChoice(choice);
   applyThemeClass(theme);
   window.dispatchEvent(new CustomEvent<Theme>(THEME_EVENT, { detail: theme }));
+  return theme;
 }
 
 /**
@@ -52,10 +65,14 @@ function persistAndApply(theme: Theme): void {
  * - All hook instances in the tab stay in sync (header toggle + setup wizard).
  */
 export function useTheme(): {
+  /** What's on screen. */
   theme: Theme;
-  setTheme: (t: Theme) => void;
+  /** What was picked ('system' follows the device). */
+  choice: ThemeChoice;
+  setTheme: (t: ThemeChoice) => void;
   toggle: () => void;
 } {
+  const [choice, setChoice] = useState<ThemeChoice>(() => readStoredChoice() ?? readStoredTheme());
   const [theme, setThemeState] = useState<Theme>(() => {
     const initial = readStoredTheme();
     applyThemeClass(initial);
@@ -66,21 +83,37 @@ export function useTheme(): {
   useEffect(() => {
     const onThemeEvent = (e: Event) => {
       setThemeState((e as CustomEvent<Theme>).detail === 'light' ? 'light' : 'dark');
+      setChoice(readStoredChoice() ?? readStoredTheme());
     };
     const onStorage = (e: StorageEvent) => {
-      if (e.key === THEME_STORAGE_KEY) setThemeState(readStoredTheme());
+      if (e.key !== THEME_STORAGE_KEY) return;
+      const t = readStoredTheme();
+      applyThemeClass(t);
+      setThemeState(t);
+      setChoice(readStoredChoice() ?? t);
+    };
+    // "System": follow the device when it switches light/dark.
+    let mq: MediaQueryList | null = null;
+    try { mq = window.matchMedia?.(LIGHT_QUERY) ?? null; } catch { mq = null; }
+    const onSystem = () => {
+      if (readStoredChoice() !== 'system') return;
+      const t = systemTheme();
+      applyThemeClass(t);
+      setThemeState(t);
     };
     window.addEventListener(THEME_EVENT, onThemeEvent);
     window.addEventListener('storage', onStorage);
+    mq?.addEventListener?.('change', onSystem);
     return () => {
       window.removeEventListener(THEME_EVENT, onThemeEvent);
       window.removeEventListener('storage', onStorage);
+      mq?.removeEventListener?.('change', onSystem);
     };
   }, []);
 
-  const setTheme = useCallback((t: Theme) => {
-    persistAndApply(t);
-    setThemeState(t);
+  const setTheme = useCallback((c: ThemeChoice) => {
+    setThemeState(persistAndApply(c));
+    setChoice(c);
   }, []);
 
   // Side effects stay OUT of the state updater: persistAndApply dispatches
@@ -94,7 +127,8 @@ export function useTheme(): {
     const next: Theme = isLight ? 'dark' : 'light';
     persistAndApply(next);
     setThemeState(next);
+    setChoice(next);
   }, []);
 
-  return { theme, setTheme, toggle };
+  return { theme, choice, setTheme, toggle };
 }

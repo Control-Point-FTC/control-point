@@ -4,12 +4,16 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Palette, RotateCcw, Smartphone, Sun } from 'lucide-react';
+import { Laptop, Moon, Palette, RotateCcw, Smartphone, Sun } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Button, Slider, Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
-import { useTheme, type Theme } from '../../../hooks/useTheme';
+import { useTheme, type ThemeChoice } from '../../../hooks/useTheme';
 import { GRID_DEFAULTS, GRID_LIMITS, PULSE_ORIGINS, readGridPrefs, saveGridPrefs, type GridFade, type GridPrefs, type GridStyle, type PulseOrigin } from '../../gridPrefs';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
+import { confirmDialog } from '../../../components/dialog';
+
+/** Device-only sidebar layout (order, collapsed sections, collapsed rail). */
+export const SIDEBAR_LAYOUT_KEYS = ['cp-sidebar-order', 'cp-collapsed-nav-groups', 'cp-modern-sidebar-collapsed'];
 import { CUSTOMIZE_TABS_EVENT } from '../../chrome/CustomizeTabsDialog';
 
 function useMediaQuery(q: string): boolean {
@@ -28,7 +32,7 @@ function useMediaQuery(q: string): boolean {
 
 export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
   const { t } = useTranslation();
-  const { theme, setTheme } = useTheme();
+  const { choice, setTheme } = useTheme();
   const navigate = useNavigate();
   const [g, setG] = useState<GridPrefs>(() => readGridPrefs());
   const update = (patch: Partial<GridPrefs>) => {
@@ -37,6 +41,11 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
     saveGridPrefs(next); // applies live: this page's own background is the preview
   };
   const off = !g.enabled;
+  const resetLayout = async () => {
+    if (!(await confirmDialog({ title: 'Reset the sidebar?', message: 'Your page order and collapsed sections go back to the defaults. The page reloads.', confirmLabel: 'Reset sidebar' }))) return;
+    for (const k of SIDEBAR_LAYOUT_KEYS) { try { localStorage.removeItem(k); } catch { /* storage unavailable */ } }
+    window.location.reload();
+  };
   // The tab bar only exists on phone-width screens (same breakpoint as the shell).
   const phone = useMediaQuery('(max-width: 767px)');
 
@@ -53,10 +62,11 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
   return (
     <div>
       <SettingsGroup title="Display">
-        <SettingsRow label="Theme" description="Follows you on this device.">
-          <ToggleGroup type="single" value={theme} onValueChange={(v) => { if (v) setTheme(v as Theme); }} aria-label="Theme">
+        <SettingsRow label="Theme" description="Saved on this device. System follows your device's light or dark setting.">
+          <ToggleGroup type="single" value={choice} onValueChange={(v) => { if (v) setTheme(v as ThemeChoice); }} aria-label="Theme">
             <ToggleGroupItem value="light"><Sun /> {t('settings.lightMode')}</ToggleGroupItem>
             <ToggleGroupItem value="dark"><Moon /> {t('settings.darkMode')}</ToggleGroupItem>
+            <ToggleGroupItem value="system"><Laptop /> System</ToggleGroupItem>
           </ToggleGroup>
         </SettingsRow>
       </SettingsGroup>
@@ -68,6 +78,12 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
           </SettingsRow>
         </SettingsGroup>
       )}
+
+      <SettingsGroup title="Layout">
+        <SettingsRow label="Reset sidebar" description="Puts the sidebar back to its original order, opens every section and expands it. Saved on this device.">
+          <Button variant="outline" className="max-sm:h-11" onClick={() => void resetLayout()}><RotateCcw /> Reset sidebar</Button>
+        </SettingsRow>
+      </SettingsGroup>
 
       <SettingsGroup title="Background grid" description="Shape the grid behind your pages. Saved on this device; changes show right away.">
         <SettingsRow label="Show the grid" htmlFor="grid-on">
