@@ -6,6 +6,9 @@ import {
 } from '../../components/ui-kit';
 import { DEFAULT_MOBILE_TABS, MOBILE_TAB_CHOICES, MOBILE_TAB_SLOTS, type MobileTabChoice } from './mobileTabs';
 
+/** Dispatch on window to open the dialog from anywhere (the shell listens; phones only). */
+export const CUSTOMIZE_TABS_EVENT = 'cp:customize-tabs';
+
 export function CustomizeTabsDialog({ open, onOpenChange, current, allowed, onSave }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;

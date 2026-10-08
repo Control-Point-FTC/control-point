@@ -3,11 +3,20 @@
 // the same rules. Text fields are kept in the shared draft store, so going back
 // a step or switching the look keeps what was typed. Passwords are never
 // drafted. Drafts are cleared on sign-in (persistSession).
+import { passwordProblem } from '../../utils/password';
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch, apiUrl } from '../../services/api';
 import { useDraft } from '../../modern/drafts';
 
-export type TeamLookup = 'idle' | 'loading' | 'found' | 'notfound' | 'error';
+export type TeamLookup = 'idle' | 'loading' | 'found' | 'notfound' | 'error' | 'limited';
+
+/** Why the number couldn't be checked, for the "enter a name instead" note (null: nothing to say). */
+export function lookupNote(lookup: TeamLookup, retryAfter: number): string | null {
+  if (lookup === 'notfound') return "We couldn't find that number in the FTC database.";
+  if (lookup === 'limited') return `Too many lookups from this network — try again in ${retryAfter < 90 ? `${retryAfter} seconds` : `${Math.ceil(retryAfter / 60)} minutes`}.`;
+  if (lookup === 'error') return "The team lookup isn't reachable right now.";
+  return null;
+}
 
 /**
  * Admin signup: the FTC team number is checked against the official FTC record
@@ -26,6 +35,8 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
   // Another workspace already holds this FTC number (one per number).
   const [claimed, setClaimed] = useState(false);
   const [manual, setManual] = useState(false);
+  /** Seconds to wait after too many lookups (429). */
+  const [retryAfter, setRetryAfter] = useState(0);
   const timer = useRef<any>(null);
   // Only the newest lookup may fill the name (typing fast fires several).
   const seq = useRef(0);
@@ -53,8 +64,15 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
         setLookup('found');
         setManual(false);
         setTeamName(data.name || '');
+      } else if (res.status === 429) {
+        // Too many lookups from here: a pause, not a missing team.
+        setRetryAfter(parseInt(res.headers.get('Retry-After') || '', 10) || 60);
+        setLookup('limited');
+        setFoundName('');
+        keepOrClearName(restoring);
       } else {
-        setLookup('notfound');
+        // Only a 404 means the number isn't an FTC team; anything else is the lookup being down.
+        setLookup(res.status === 404 ? 'notfound' : 'error');
         setFoundName('');
         keepOrClearName(restoring);
       }
@@ -96,7 +114,7 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
 
   const retry = () => { setManual(false); setTeamName(''); void doLookup(teamNumber); };
 
-  return { lookup, foundName, foundSchool, claimed, manual, setManual, onNumChange, retry };
+  return { lookup, foundName, foundSchool, claimed, manual, setManual, onNumChange, retry, retryAfter };
 }
 
 /** Email + password signup for a new admin (creates a team) or student (joins one). */
@@ -114,6 +132,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   const [teamNumber, setTeamNumber] = useDraft(k('team-number'), '');
   const [accessCode, setAccessCode] = useDraft(k('access-code'), '');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -123,6 +142,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   const askToJoin = async () => {
     if (busy || !takenNumber) return;
     setError(null);
+    if (password !== confirm) { setError("Passwords don't match."); return; }
     setBusy(true);
     try {
       onDone(await onSignup({ accountType: 'student', name, email, password, requestFtcNumber: takenNumber }));
@@ -138,6 +158,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
     if (busy) return;
     setError(null);
     setTakenNumber(null);
+    if (password !== confirm) { setError("Passwords don't match."); return; }
     setBusy(true);
     try {
       const viaInvite = mode === 'student' && !!inviteToken;
@@ -156,7 +177,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   };
 
   return {
-    name, setName, email, setEmail, password, setPassword, showPw, setShowPw,
+    name, setName, email, setEmail, password, setPassword, confirm, setConfirm, showPw, setShowPw,
     teamName, setTeamName, teamNumber, setTeamNumber, accessCode, setAccessCode,
     error, busy, submit, takenNumber, askToJoin,
   };
@@ -372,7 +393,8 @@ export function useForgotPassword({ initialEmail, onDone, initialStep = 'email' 
       setStep('code');
       return;
     }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    const weak = passwordProblem(password);
+    if (weak) { setError(weak); return; }
     if (password !== confirm) { setError("Passwords don't match."); return; }
     setError(null);
     setBusy(true);

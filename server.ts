@@ -151,6 +151,7 @@ import { PredictEngine, type Forecast, type Partners } from "./server/predict/en
 import { PredictStore } from "./server/predict/store.js";
 import { syncSeasons, dataAsOf } from "./server/predict/sync.js";
 import { OfflinePackBuilder, buildPack, detectRegion, listRegions, type PackedEvent } from "./server/offline/pack.js";
+import { passwordProblem } from "./src/utils/password.js";
 import { isMessageModerator, messageActionAllowed } from "./server/messagePerms.js";
 import { PredictMonitor, eventStillOpen, type LiveAccuracy } from "./server/predict/monitor.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
@@ -2312,6 +2313,9 @@ async function startServer() {
   app.post("/api/auth/forgot-password", limit(authLimiter, "forgot", [byIp(20, 15 * MIN), byEmail(6, 60 * MIN)]));
   app.post("/api/auth/reset-password", limit(authLimiter, "resetpw", [byIp(30, 15 * MIN), byEmail(10, 15 * MIN)]));
   app.post("/api/auth/change-password", limit(authLimiter, "changepw", [byIp(20, 15 * MIN)]));
+  // Signed out, and says whether a team number has a workspace (V3-L2): enough
+  // for someone typing their number, too slow to list every team.
+  app.get("/api/ftc/lookup-public", limit(authLimiter, "ftclookup", [byIp(60, 15 * MIN)]));
   app.post("/api/auth/oauth/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
   app.post("/api/auth/google/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
   app.post("/api/teams/join", limit(authLimiter, "join", [byIp(20, 15 * MIN)]));
@@ -2962,8 +2966,8 @@ async function startServer() {
       const { accountType, name, email, password, teamName, teamNumber, accessCode, inviteToken, requestFtcNumber } = req.body || {};
       const cleanName = (name || '').trim();
       const cleanEmail = (email || '').trim().toLowerCase();
-      if (!cleanName || !cleanEmail || !password || password.length < 6) {
-        return res.status(400).json({ error: "Name, email, and a 6+ character password are required" });
+      if (!cleanName || !cleanEmail || !password || typeof password !== "string") {
+        return res.status(400).json({ error: "Name, email and a password are required" });
       }
       // Multi-team accounts: an existing email may sign up again to create or join
       // another team. When the account already has a password, it must match.
@@ -2980,6 +2984,9 @@ async function startServer() {
         // through the emailed code first ("Forgot password?").
         return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
       } else {
+        // A new password: the rules apply (an existing account above keeps its own).
+        const weak = passwordProblem(password);
+        if (weak) return res.status(400).json({ error: weak });
         hashedPassword = bcrypt.hashSync(password, 10);
       }
 
@@ -3170,9 +3177,8 @@ async function startServer() {
     const code = String((req.body || {}).code || "");
     const newPassword = String((req.body || {}).newPassword || "");
     if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
+    const weak = passwordProblem(newPassword);
+    if (weak) return res.status(400).json({ error: weak });
     // Atomic: validate + consume the code in one step so overlapping
     // requests with the same code can't both succeed.
     const check = await consumeVerificationCode(email, code);
@@ -4047,9 +4053,8 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const { currentPassword, newPassword } = req.body || {};
-    if (!newPassword || String(newPassword).length < 6) {
-      return res.status(400).json({ error: "New password must be at least 6 characters" });
-    }
+    const weak = passwordProblem(newPassword);
+    if (weak) return res.status(400).json({ error: weak });
     const member = (await dbGet("SELECT id, email, password FROM members WHERE id = ?", auth.memberId)) as any;
     if (!member) return res.status(404).json({ error: "Account not found" });
     if (!member.password) {

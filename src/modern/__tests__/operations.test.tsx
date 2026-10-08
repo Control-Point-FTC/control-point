@@ -67,6 +67,9 @@ describe('Modern Budget', () => {
     budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
     fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '10.005' } });
+    // Said up front, in money terms (not the browser's 10.00499999… tooltip).
+    expect(screen.getByText('Saved as $10.01')).toBeInTheDocument();
+    expect(screen.getByLabelText('Amount')).not.toHaveAttribute('min');
     fillRequired();
     fireEvent.click(screen.getByRole('button', { name: 'Log entry' }));
     await waitFor(() => expect(calls('/api/budget', 'POST')).toHaveLength(1));
@@ -77,7 +80,10 @@ describe('Modern Budget', () => {
   it('rejects zero or negative amounts', async () => {
     budgetSetup();
     fireEvent.click(screen.getAllByRole('button', { name: /Log transaction/ })[0]);
-    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '-50' } });
+    fireEvent.change(await screen.findByLabelText('Amount'), { target: { value: '0.004' } });
+    expect(screen.getByText('Amount must be at least $0.01')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '-50' } });
+    expect(screen.getByText('Amount must be more than $0')).toBeInTheDocument();
     fireEvent.submit(document.getElementById('budget-form')!);
     expect(dialog.notify).toHaveBeenCalledWith('Amount must be more than $0', 'error');
     expect(calls('/api/budget', 'POST')).toHaveLength(0);

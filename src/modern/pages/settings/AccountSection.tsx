@@ -1,6 +1,8 @@
 // Settings → Account & privacy: password, data export, cookie choices and
 // account deletion. Passwords are deliberately NOT kept in the draft store —
 // they stay in this component only and are cleared after a change.
+import { passwordProblem } from '../../../utils/password';
+import { PasswordChecklist } from '../../ui/PasswordChecklist';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Cookie, Download, KeyRound, Loader2, TriangleAlert } from 'lucide-react';
@@ -18,7 +20,8 @@ function PasswordForm() {
   const submit = async () => {
     setMsg(null);
     if (nw !== nw2) { setMsg({ ok: false, text: 'New passwords do not match.' }); return; }
-    if (nw.length < 6) { setMsg({ ok: false, text: 'New password must be at least 6 characters.' }); return; }
+    const weak = passwordProblem(nw);
+    if (weak) { setMsg({ ok: false, text: weak }); return; }
     setBusy(true);
     try {
       const res = await apiFetch('/api/auth/change-password', {
@@ -36,7 +39,7 @@ function PasswordForm() {
   return (
     <form className="grid gap-4 p-4 sm:max-w-sm" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
       <div className="grid gap-2"><Label htmlFor="pw-cur">Current password</Label><Input id="pw-cur" type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} /></div>
-      <div className="grid gap-2"><Label htmlFor="pw-new">New password</Label><Input id="pw-new" type="password" autoComplete="new-password" value={nw} onChange={(e) => setNw(e.target.value)} /></div>
+      <div className="grid gap-2"><Label htmlFor="pw-new">New password</Label><Input id="pw-new" type="password" autoComplete="new-password" value={nw} onChange={(e) => setNw(e.target.value)} /><PasswordChecklist value={nw} /></div>
       <div className="grid gap-2"><Label htmlFor="pw-new2">Confirm new password</Label><Input id="pw-new2" type="password" autoComplete="new-password" value={nw2} onChange={(e) => setNw2(e.target.value)} /></div>
       {msg && <p className={msg.ok ? 'text-sm text-success' : 'text-sm text-destructive'} role={msg.ok ? 'status' : 'alert'}>{msg.text}</p>}
       <Button type="submit" disabled={busy || !cur || !nw || !nw2} className="justify-self-start">{busy ? <Loader2 className="animate-spin" /> : <KeyRound />} Change password</Button>
