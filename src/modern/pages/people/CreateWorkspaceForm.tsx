@@ -5,7 +5,7 @@
 import { useId, useState } from 'react';
 import { BadgeCheck, Loader2, UserPlus } from 'lucide-react';
 import { Button, Input, Label } from '../../../components/ui-kit';
-import { useTeamLookup } from '../../../components/auth/useAuthForms';
+import { lookupNote, useTeamLookup } from '../../../components/auth/useAuthForms';
 import { apiFetch } from '../../../services/api';
 
 export interface CreateWorkspaceInput { ftc_number?: string; name?: string }
@@ -105,9 +105,9 @@ export function CreateWorkspaceForm({ onCreate, onRequested, autoFocus }: {
             </Button>
           </div>
         )}
-        {(t.lookup === 'notfound' || t.lookup === 'error') && !t.manual && (
+        {lookupNote(t.lookup, t.retryAfter) && !t.manual && (
           <p className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-            {t.lookup === 'notfound' ? 'We couldn’t find that number in the FTC database.' : 'The team lookup isn’t reachable right now.'}{' '}
+            {lookupNote(t.lookup, t.retryAfter)}{' '}
             <button type="button" onClick={() => t.setManual(true)} className="font-medium text-foreground underline underline-offset-4">Enter a team name instead</button>
           </p>
         )}

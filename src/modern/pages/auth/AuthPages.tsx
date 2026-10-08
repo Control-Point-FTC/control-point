@@ -17,6 +17,7 @@ import {
 import { oauthUrl } from '../../../services/api';
 import { DiscordIcon, GithubIcon, GoogleIcon } from '../../../components/auth/ProviderIcons';
 import {
+  lookupNote,
   PROVIDER_LABEL, useForgotPassword, useOAuthSignup, useSignupForm, useTeamLookup, useVerifyEmail, type OAuthProvider,
 } from '../../../components/auth/useAuthForms';
 import { AuthHeading, AuthLayout, FormError, OrDivider } from './AuthLayout';
@@ -372,11 +373,9 @@ function TeamNumberField({ teamNumber, setTeamNumber, teamName, setTeamName }: {
             </div>
           </motion.div>
         )}
-        {(t.lookup === 'notfound' || t.lookup === 'error' || t.lookup === 'limited') && !t.manual && (
+        {lookupNote(t.lookup, t.retryAfter) && !t.manual && (
           <p className="rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
-            {t.lookup === 'notfound' ? "We couldn't find that number in the FTC database."
-              : t.lookup === 'limited' ? `Too many lookups from this network — try again in ${t.retryAfter < 90 ? `${t.retryAfter} seconds` : `${Math.ceil(t.retryAfter / 60)} minutes`}.`
-                : "The team lookup isn't reachable right now."}{' '}
+            {lookupNote(t.lookup, t.retryAfter)}{' '}
             <button type="button" onClick={() => t.setManual(true)} className="font-medium text-foreground underline underline-offset-4">Enter your team name instead</button>
           </p>
         )}

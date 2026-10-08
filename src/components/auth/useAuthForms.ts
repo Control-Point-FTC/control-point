@@ -10,6 +10,14 @@ import { useDraft } from '../../modern/drafts';
 
 export type TeamLookup = 'idle' | 'loading' | 'found' | 'notfound' | 'error' | 'limited';
 
+/** Why the number couldn't be checked, for the "enter a name instead" note (null: nothing to say). */
+export function lookupNote(lookup: TeamLookup, retryAfter: number): string | null {
+  if (lookup === 'notfound') return "We couldn't find that number in the FTC database.";
+  if (lookup === 'limited') return `Too many lookups from this network — try again in ${retryAfter < 90 ? `${retryAfter} seconds` : `${Math.ceil(retryAfter / 60)} minutes`}.`;
+  if (lookup === 'error') return "The team lookup isn't reachable right now.";
+  return null;
+}
+
 /**
  * Admin signup: the FTC team number is checked against the official FTC record
  * and the team name is filled in from it. Falls back to a typed name when the

@@ -51,6 +51,17 @@ describe('CreateWorkspaceForm (FTC number first)', () => {
     expect(await screen.findByRole('button', { name: /Ask to join/ })).toBeInTheDocument();
   });
 
+  it('too many lookups: says to wait and still lets a typed name create the workspace', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429, headers: new Headers({ 'Retry-After': '45' }), json: async () => ({}) })));
+    const p = mount();
+    fireEvent.change(screen.getByLabelText('FTC team number'), { target: { value: '4215' } });
+    expect(await screen.findByText(/Too many lookups from this network — try again in 45 seconds/, {}, { timeout: 3000 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Enter a team name instead' }));
+    fireEvent.change(screen.getByLabelText('Team name'), { target: { value: 'Hypnotic' } });
+    fireEvent.click(screen.getByRole('button', { name: /Create workspace/ }));
+    await waitFor(() => expect(p.onCreate).toHaveBeenCalledWith({ ftc_number: '4215', name: 'Hypnotic' }));
+  });
+
   it('without a number, a typed name is required', async () => {
     const p = mount();
     const create = screen.getByRole('button', { name: /Create workspace/ });
