@@ -10,7 +10,7 @@ import {
   ToggleGroup, ToggleGroupItem, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, RequiredMark,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import { PRIORITY_META, REPEAT_OPTIONS, taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
+import { PRIORITY_META, REPEAT_OPTIONS, ruleToRepeat, taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
 import { dueMoment } from '../../../utils/countdown';
 import { Countdown } from '../../ui/Countdown';
@@ -286,7 +286,7 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
                   <SelectTrigger id="task-repeat"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {REPEAT_OPTIONS.map((o) => <SelectItem key={o.value || 'none'} value={o.value || 'none'}>{o.label}</SelectItem>)}
-                    {f.repeat === 'custom' && f.repeatRule && <SelectItem value="custom">{recurrenceLabel(f.repeatRule)}</SelectItem>}
+                    {f.repeatRule && ruleToRepeat(f.repeatRule) === 'custom' && <SelectItem value="custom">{recurrenceLabel(f.repeatRule)}</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>

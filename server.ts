@@ -8724,12 +8724,19 @@ Rules:
       await dbRun("UPDATE tasks SET next_task_id = ? WHERE id = ?", nextId, task.id);
     } catch (e) {
       // Undo the half-made copy and release the claim, so the next completion
-      // can try again instead of the series silently stopping.
+      // can try again instead of the series silently stopping. If the copy
+      // can't be removed, link it instead: releasing the claim then would let
+      // a second completion make a duplicate.
+      let removed = !nextId;
       if (nextId) {
-        await dbRun("DELETE FROM task_assignees WHERE task_id = ?", nextId).catch(() => {});
-        await dbRun("DELETE FROM tasks WHERE id = ?", nextId).catch(() => {});
+        try {
+          await dbRun("DELETE FROM task_assignees WHERE task_id = ?", nextId);
+          await dbRun("DELETE FROM tasks WHERE id = ?", nextId);
+          removed = true;
+        } catch { /* keep it and link it below */ }
       }
-      await dbRun("UPDATE tasks SET next_task_id = NULL WHERE id = ? AND next_task_id = -1", task.id).catch(() => {});
+      if (removed) await dbRun("UPDATE tasks SET next_task_id = NULL WHERE id = ? AND next_task_id = -1", task.id).catch(() => {});
+      else await dbRun("UPDATE tasks SET next_task_id = ? WHERE id = ? AND next_task_id = -1", nextId, task.id).catch(() => {});
       throw e;
     }
     for (const mid of assignees) {
@@ -8814,7 +8821,8 @@ Rules:
       if (isGeminiConfigured()) {
         try {
           const todayStr = new Date(`${todayISO}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
-          const system = `You turn pasted team notes/chat into a task list for a robotics team. Return ONLY a JSON array — no markdown fences, no commentary. Each element: {"title": string, "description": string, "status": string, "assignee_name": string|null, "due_date": string|null, "due_time": string|null, "priority": string|null, "repeat": string|null}.
+          const system = `You turn pasted team notes/chat into a task list for a robotics team. Return ONLY a JSON array — no markdown fences, no commentary. Each element: {"title": string, "description": string, "status": string, "assignee_name": string|null, "due_date": string|null, "due_time": string|null, "priority": string|null, "repeat": string|null, "source": string}.
+"source" is the exact text, copied verbatim from the input, that this task came from (usually its line or sentence).
 Today is ${todayStr} (${todayISO}). Use this to resolve EVERY relative date into an exact YYYY-MM-DD.
 
 Rules:
@@ -8843,7 +8851,10 @@ Rules:
               .slice(0, 50)
               .map((p: any) => {
                 const an = String(p.assignee_name || "").toLowerCase().trim();
+                // The verbatim excerpt this task came from, when it really is in the text.
+                const src = typeof p.source === "string" ? p.source.trim().slice(0, 500) : "";
                 return {
+                  ...(src.length >= 3 && text.includes(src) ? { _source: src } : {}),
                   title: String(p.title).slice(0, 80),
                   description: String(p.description || "").slice(0, 500),
                   status: ["todo", "in-progress", "done"].includes(p.status) ? p.status : "todo",
@@ -8872,8 +8883,9 @@ Rules:
       // The deterministic reader has the last word on structured fields: a
       // date, time, priority, repeat or assignee it finds in a line lands in
       // its field, and the phrase leaves the title (V3.5 quick-add fix).
-      // A fallback task reads its own line; one AI task reads the whole text;
-      // several AI tasks can't be tied to lines reliably, so they keep the AI's fields.
+      // Each task reads its own text: a fallback task its line, an AI task the
+      // verbatim excerpt it quoted (checked against the input), and a single
+      // AI task the whole text. One with no source keeps the AI's fields.
       const names = roster.map((m: any) => String(m.name));
       const single = items.length === 1 ? text.replace(/\s+/g, " ") : null;
       items = items.map((raw: any) => {
