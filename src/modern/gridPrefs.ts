@@ -6,6 +6,13 @@
 
 export type GridStyle = 'lines' | 'dots' | 'graph';
 export type GridFade = 'short' | 'medium' | 'long' | 'none';
+/** Where the pulse glows from (any mix; never none). */
+export type PulseOrigin = 'center' | 'edges' | 'corners';
+export const PULSE_ORIGINS: { key: PulseOrigin; label: string }[] = [
+  { key: 'center', label: 'Center' },
+  { key: 'edges', label: 'Edges' },
+  { key: 'corners', label: 'Corners' },
+];
 
 export interface GridPrefs {
   enabled: boolean;
@@ -20,6 +27,8 @@ export interface GridPrefs {
   pulse: boolean;
   /** Seconds per pulse. */
   pulseSpeed: number;
+  /** Where the pulse glows from. */
+  pulseFrom: PulseOrigin[];
   glow: boolean;
   /** Glow radius in px. */
   glowSize: number;
@@ -29,7 +38,7 @@ export interface GridPrefs {
 
 export const GRID_DEFAULTS: GridPrefs = {
   enabled: true, style: 'lines', size: 32, intensity: 0.07, thickness: 1, fade: 'medium',
-  pulse: false, pulseSpeed: 6, glow: false, glowSize: 260, glowIntensity: 0.18,
+  pulse: false, pulseSpeed: 6, pulseFrom: ['center', 'edges', 'corners'], glow: false, glowSize: 260, glowIntensity: 0.18,
 };
 
 export const GRID_LIMITS = {
@@ -59,10 +68,18 @@ export function readGridPrefs(raw: string | null = safeGet()): GridPrefs {
     fade: (['short', 'medium', 'long', 'none'] as const).includes(o.fade) ? o.fade : d.fade,
     pulse: typeof o.pulse === 'boolean' ? o.pulse : d.pulse,
     pulseSpeed: clamp(o.pulseSpeed, GRID_LIMITS.pulseSpeed, d.pulseSpeed),
+    pulseFrom: readPulseFrom(o.pulseFrom),
     glow: typeof o.glow === 'boolean' ? o.glow : d.glow,
     glowSize: Math.round(clamp(o.glowSize, GRID_LIMITS.glowSize, d.glowSize)),
     glowIntensity: clamp(o.glowIntensity, GRID_LIMITS.glowIntensity, d.glowIntensity),
   };
+}
+
+/** Known origins in their usual order; nothing valid (or none picked) means all of them. */
+function readPulseFrom(v: unknown): PulseOrigin[] {
+  const picked = new Set(Array.isArray(v) ? v : []);
+  const out = PULSE_ORIGINS.map((o) => o.key).filter((k) => picked.has(k));
+  return out.length ? out : [...GRID_DEFAULTS.pulseFrom];
 }
 
 function safeGet(): string | null {
@@ -83,6 +100,7 @@ export function applyGridPrefs(p: GridPrefs, root: HTMLElement = document.docume
   for (const s of ['lines', 'dots', 'graph'] as const) root.classList.toggle(`cp-grid-${s}`, p.enabled && p.style === s);
   root.classList.toggle('cp-grid-nofade', p.fade === 'none');
   root.classList.toggle('cp-grid-pulse', p.enabled && p.pulse);
+  for (const { key } of PULSE_ORIGINS) root.classList.toggle(`cp-pulse-${key}`, p.enabled && p.pulse && p.pulseFrom.includes(key));
   root.classList.toggle('cp-grid-glow', p.enabled && p.glow);
   root.style.setProperty('--cp-grid-size', `${p.size}px`);
   root.style.setProperty('--cp-grid-alpha', String(p.intensity));

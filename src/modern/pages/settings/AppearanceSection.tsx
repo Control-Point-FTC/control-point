@@ -8,7 +8,7 @@ import { Moon, Palette, RotateCcw, Sun } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Button, Slider, Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { useTheme, type Theme } from '../../../hooks/useTheme';
-import { GRID_DEFAULTS, GRID_LIMITS, readGridPrefs, saveGridPrefs, type GridFade, type GridPrefs, type GridStyle } from '../../gridPrefs';
+import { GRID_DEFAULTS, GRID_LIMITS, PULSE_ORIGINS, readGridPrefs, saveGridPrefs, type GridFade, type GridPrefs, type GridStyle, type PulseOrigin } from '../../gridPrefs';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
 
 export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
@@ -75,6 +75,18 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
           <Switch id="grid-pulse" checked={g.pulse} disabled={off} onCheckedChange={(v) => update({ pulse: v })} />
         </SettingsRow>
         {slider('Pulse speed', g.pulseSpeed, GRID_LIMITS.pulseSpeed, 0.5, `${g.pulseSpeed}s`, (v) => update({ pulseSpeed: v }), off || !g.pulse)}
+        <SettingsRow label="Pulse from" description="Where the glow starts. Pick any mix.">
+          <ToggleGroup
+            type="multiple"
+            value={g.pulseFrom}
+            disabled={off || !g.pulse}
+            // At least one: un-picking the last origin is ignored.
+            onValueChange={(v: string[]) => { if (v.length) update({ pulseFrom: v as PulseOrigin[] }); }}
+            aria-label="Pulse from"
+          >
+            {PULSE_ORIGINS.map((o) => <ToggleGroupItem key={o.key} value={o.key}>{o.label}</ToggleGroupItem>)}
+          </ToggleGroup>
+        </SettingsRow>
         <SettingsRow label="Cursor glow" description="A soft light that follows your pointer." htmlFor="grid-glow">
           <Switch id="grid-glow" checked={g.glow} disabled={off} onCheckedChange={(v) => update({ glow: v })} />
         </SettingsRow>

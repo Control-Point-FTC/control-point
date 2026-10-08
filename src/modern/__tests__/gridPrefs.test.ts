@@ -42,4 +42,17 @@ describe('grid preferences', () => {
     expect(root.classList.contains('cp-grid-pulse')).toBe(false);
     expect(root.classList.contains('cp-grid-glow')).toBe(false);
   });
+
+  it('pulse origins: known ones in order, never none, applied only while pulsing', () => {
+    expect(readGridPrefs(JSON.stringify({ pulseFrom: ['corners', 'bogus', 'center'] })).pulseFrom).toEqual(['center', 'corners']);
+    expect(readGridPrefs(JSON.stringify({ pulseFrom: [] })).pulseFrom).toEqual(['center', 'edges', 'corners']);
+    expect(readGridPrefs(JSON.stringify({ pulseFrom: 'edges' })).pulseFrom).toEqual(['center', 'edges', 'corners']);
+    const root = document.documentElement;
+    applyGridPrefs({ ...GRID_DEFAULTS, pulse: true, pulseFrom: ['edges'] });
+    expect(['center', 'edges', 'corners'].map((k) => root.classList.contains(`cp-pulse-${k}`))).toEqual([false, true, false]);
+    applyGridPrefs({ ...GRID_DEFAULTS, pulse: false, pulseFrom: ['edges'] });
+    expect(root.classList.contains('cp-pulse-edges')).toBe(false);
+    applyGridPrefs({ ...GRID_DEFAULTS, enabled: false, pulse: true });
+    expect(root.classList.contains('cp-pulse-center')).toBe(false);
+  });
 });
