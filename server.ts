@@ -12580,7 +12580,8 @@ Rules:
     res.status(404).json({ error: "Not found" });
   });
 
-  // "How Control Point Predict Works": an unlisted, standalone article.
+  // "How Control Point Predict Works": a standalone article, linked from
+  // Predict's "How accurate is this?" sheet.
   // One fixed file, no route params. Registered before the SPA fallback.
   // It has its own CSP (inline script pinned by hash, Google Fonts), sent
   // in the same mode as the app's (enforced when CSP_ENFORCE=1).
@@ -12594,7 +12595,9 @@ Rules:
   } catch (e) {
     console.error("[predict article] could not read the page:", e);
   }
-  app.get("/predict/how-it-works", (_req, res) => {
+  // Exact path only (Express would otherwise also match other letter cases
+  // and a trailing slash); anything else falls through to the app.
+  app.get(/^\/predict\/how-it-works$/, (_req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     if (predictArticleCsp) {
       res.setHeader(process.env.CSP_ENFORCE === "1" ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only", predictArticleCsp);
