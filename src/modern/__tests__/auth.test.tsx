@@ -162,6 +162,38 @@ describe('Modern signup', () => {
     expect(screen.getByLabelText('Password')).toHaveValue(''); // passwords are never kept
   });
 
+  it('"Ask to join" also needs matching passwords', async () => {
+    const onSignup = vi.fn(async () => { throw Object.assign(new Error('Team #4215 already has a workspace'), { data: { ftcTaken: { number: 4215 } } }); });
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={onSignup} onDone={vi.fn()} onSignIn={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Ada' } });
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'ada@x.test' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret-1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret-1' } });
+    fireEvent.change(screen.getByLabelText('FTC team number'), { target: { value: '4215' } });
+    expect(await screen.findByText('Hypnotic Robotics', {}, { timeout: 2000 })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }));
+    const ask = await screen.findByRole('button', { name: 'Ask to join team #4215 instead' });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'other-1' } });
+    fireEvent.click(ask);
+    expect(await screen.findByRole('alert')).toHaveTextContent("Passwords don't match.");
+    expect(onSignup).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rate-limited lookup says to wait, not that the team is missing', async () => {
+    fetchMock.mockImplementation(async () => ({ ok: false, status: 429, headers: new Headers({ 'Retry-After': '300' }), json: async () => ({}) }));
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('FTC team number'), { target: { value: '4215' } });
+    expect(await screen.findByText(/Too many lookups from this network — try again in 5 minutes/, {}, { timeout: 2000 })).toBeInTheDocument();
+    expect(screen.queryByText(/couldn't find that number/)).not.toBeInTheDocument();
+  });
+
+  it('a lookup outage (502) is not reported as a missing team', async () => {
+    fetchMock.mockImplementation(async () => ({ ok: false, status: 502, headers: new Headers(), json: async () => ({}) }));
+    render(<SignupPage mode="admin" onBack={vi.fn()} onSignup={vi.fn()} onDone={vi.fn()} onSignIn={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('FTC team number'), { target: { value: '4215' } });
+    expect(await screen.findByText(/isn't reachable right now/, {}, { timeout: 2000 })).toBeInTheDocument();
+  });
+
   it('student: a signup error shows and the button comes back', async () => {
     const onSignup = vi.fn(async () => { throw new Error('Invalid access code'); });
     render(<SignupPage mode="student" onBack={vi.fn()} onSignup={onSignup} onDone={vi.fn()} onSignIn={vi.fn()} />);

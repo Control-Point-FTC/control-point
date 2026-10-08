@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { apiFetch, apiUrl } from '../../services/api';
 import { useDraft } from '../../modern/drafts';
 
-export type TeamLookup = 'idle' | 'loading' | 'found' | 'notfound' | 'error';
+export type TeamLookup = 'idle' | 'loading' | 'found' | 'notfound' | 'error' | 'limited';
 
 /**
  * Admin signup: the FTC team number is checked against the official FTC record
@@ -27,6 +27,8 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
   // Another workspace already holds this FTC number (one per number).
   const [claimed, setClaimed] = useState(false);
   const [manual, setManual] = useState(false);
+  /** Seconds to wait after too many lookups (429). */
+  const [retryAfter, setRetryAfter] = useState(0);
   const timer = useRef<any>(null);
   // Only the newest lookup may fill the name (typing fast fires several).
   const seq = useRef(0);
@@ -54,8 +56,15 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
         setLookup('found');
         setManual(false);
         setTeamName(data.name || '');
+      } else if (res.status === 429) {
+        // Too many lookups from here: a pause, not a missing team.
+        setRetryAfter(parseInt(res.headers.get('Retry-After') || '', 10) || 60);
+        setLookup('limited');
+        setFoundName('');
+        keepOrClearName(restoring);
       } else {
-        setLookup('notfound');
+        // Only a 404 means the number isn't an FTC team; anything else is the lookup being down.
+        setLookup(res.status === 404 ? 'notfound' : 'error');
         setFoundName('');
         keepOrClearName(restoring);
       }
@@ -97,7 +106,7 @@ export function useTeamLookup({ teamNumber, setTeamNumber, teamName, setTeamName
 
   const retry = () => { setManual(false); setTeamName(''); void doLookup(teamNumber); };
 
-  return { lookup, foundName, foundSchool, claimed, manual, setManual, onNumChange, retry };
+  return { lookup, foundName, foundSchool, claimed, manual, setManual, onNumChange, retry, retryAfter };
 }
 
 /** Email + password signup for a new admin (creates a team) or student (joins one). */
@@ -125,6 +134,7 @@ export function useSignupForm({ mode, onSignup, onDone, inviteToken }: {
   const askToJoin = async () => {
     if (busy || !takenNumber) return;
     setError(null);
+    if (password !== confirm) { setError("Passwords don't match."); return; }
     setBusy(true);
     try {
       onDone(await onSignup({ accountType: 'student', name, email, password, requestFtcNumber: takenNumber }));

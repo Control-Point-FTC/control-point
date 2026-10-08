@@ -372,9 +372,11 @@ function TeamNumberField({ teamNumber, setTeamNumber, teamName, setTeamName }: {
             </div>
           </motion.div>
         )}
-        {(t.lookup === 'notfound' || t.lookup === 'error') && !t.manual && (
+        {(t.lookup === 'notfound' || t.lookup === 'error' || t.lookup === 'limited') && !t.manual && (
           <p className="rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
-            {t.lookup === 'notfound' ? "We couldn't find that number in the FTC database." : "The team lookup isn't reachable right now."}{' '}
+            {t.lookup === 'notfound' ? "We couldn't find that number in the FTC database."
+              : t.lookup === 'limited' ? `Too many lookups from this network — try again in ${t.retryAfter < 90 ? `${t.retryAfter} seconds` : `${Math.ceil(t.retryAfter / 60)} minutes`}.`
+                : "The team lookup isn't reachable right now."}{' '}
             <button type="button" onClick={() => t.setManual(true)} className="font-medium text-foreground underline underline-offset-4">Enter your team name instead</button>
           </p>
         )}

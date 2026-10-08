@@ -16,8 +16,12 @@ describe('password rules', () => {
 
   it('refuses what bcrypt would silently cut (72 bytes)', () => {
     expect(passwordProblem(`a1${'x'.repeat(PASSWORD_MAX - 2)}`)).toBeNull();
-    expect(passwordProblem(`a1${'x'.repeat(PASSWORD_MAX - 1)}`)).toMatch(/at most 72/);
-    expect(passwordProblem(`a1${'é'.repeat(36)}`)).toMatch(/at most 72/); // 2 bytes each
+    expect(passwordProblem(`a1${'x'.repeat(PASSWORD_MAX - 1)}`)).toMatch(/too long: up to 72 bytes/);
+    // 38 characters but 74 bytes: said in bytes, and the checklist shows why.
+    const accented = `a1${'é'.repeat(36)}`;
+    expect(passwordProblem(accented)).toMatch(/accented letters and emoji count as 2–4/);
+    expect(passwordRules(accented).find((r) => !r.ok)?.label).toMatch(/^Not too long/);
+    expect(passwordRules('goodpass-1')).toHaveLength(3); // the length cap only shows once broken
   });
 
   it('lists each rule for the live checklist', () => {
