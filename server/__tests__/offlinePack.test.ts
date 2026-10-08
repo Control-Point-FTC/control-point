@@ -28,7 +28,7 @@ function rawEvent(code: string, region: string, teams: [number, string | null][]
       { matchNum: 2, series: 0, tournamentLevel: "Quals", hasBeenPlayed: false, scheduledStartTime: null, teams: [
         { teamNumber: a, alliance: "Red" }, { teamNumber: c, alliance: "Red" }, { teamNumber: b, alliance: "Blue" }, { teamNumber: d, alliance: "Blue" }], scores: null },
       { matchNum: 1, series: 0, tournamentLevel: "Quals", hasBeenPlayed: true, actualStartTime: `${SEASON + 1}-01-10T15:00:00Z`, teams: [
-        { teamNumber: a, alliance: "Red" }, { teamNumber: b, alliance: "Red", surrogate: true }, { teamNumber: c, alliance: "Blue" }, { teamNumber: d, alliance: "Blue" }],
+        { teamNumber: a, alliance: "Red" }, { teamNumber: b, alliance: "Red", surrogate: true }, { teamNumber: c, alliance: "Blue" }, { teamNumber: d, alliance: "Blue", dq: true }],
         scores: { red: sc(120, 10), blue: sc(80) } },
     ],
   } } };
@@ -43,7 +43,7 @@ describe("packEvent / buildPack", () => {
     // Sorted: Q-1 (played) then Q-2 (scheduled).
     expect(p.event.matches.map((m) => m.n)).toEqual([1, 2]);
     const [played, next] = p.event.matches;
-    expect(played).toMatchObject({ l: "q", r: [4215, 1111], b: [2222, 3333], sur: [1111] });
+    expect(played).toMatchObject({ l: "q", r: [4215, 1111], b: [2222, 3333], sur: [1111], dq: [3333] });
     expect(played.rs).toEqual([130, 120, 10, 105, 5, 10]);
     expect(next.rs).toBeNull();
     expect(p.names.get(4215)).toEqual([4215, "Mech", "Edison", "NJ"]);

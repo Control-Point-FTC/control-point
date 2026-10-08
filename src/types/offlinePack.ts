@@ -24,6 +24,8 @@ export interface PackMatch {
   bs: PackScore | null;
   /** Surrogate robots in this match. */
   sur?: number[];
+  /** Disqualified robots in this match. */
+  dq?: number[];
 }
 
 /** Team at an event: number, quals rank, ranking score, wins, losses, ties, quals played. */

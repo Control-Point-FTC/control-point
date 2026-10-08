@@ -40,6 +40,8 @@ beforeEach(() => {
     return saved;
   });
   dialog.notify.mockReset();
+  dialog.confirmDialog.mockReset();
+  dialog.confirmDialog.mockResolvedValue(true);
 });
 afterEach(cleanup);
 
@@ -63,7 +65,7 @@ describe('Settings → Offline data', () => {
     expect(await screen.findByText(/over a week old/)).toBeInTheDocument();
     expect(screen.getByText(/2\.5 MB/)).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Download all regions' }));
-    expect(svc.downloadOfflinePack).toHaveBeenCalledWith('ALL');
+    await waitFor(() => expect(svc.downloadOfflinePack).toHaveBeenCalledWith('ALL'));
   });
 
   it('removes the copy; offline, it says to connect', async () => {
@@ -86,5 +88,31 @@ describe('Settings → Offline data', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Download NJ offline data' }));
     await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Download failed', 'error'));
     expect(screen.getByText('Nothing downloaded')).toBeInTheDocument();
+  });
+
+  it('asks before another region replaces the one on this device', async () => {
+    svc.getOfflinePack.mockResolvedValue({ pack: pack('USNJ', 'New Jersey', new Date().toISOString()), bytes: 1000, savedAt: '' });
+    dialog.confirmDialog.mockResolvedValueOnce(false);
+    render(<OfflineSection />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Download all regions' }));
+    await waitFor(() => expect(dialog.confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: 'Replace New Jersey?' })));
+    expect(svc.downloadOfflinePack).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Download all regions' }));
+    await waitFor(() => expect(svc.downloadOfflinePack).toHaveBeenCalledWith('ALL'));
+    // Updating the same region doesn't ask.
+    dialog.confirmDialog.mockClear();
+    fireEvent.click(await screen.findByRole('button', { name: /Update/ }));
+    await waitFor(() => expect(svc.downloadOfflinePack).toHaveBeenCalledTimes(2));
+    expect(dialog.confirmDialog).not.toHaveBeenCalled();
+  });
+
+  it('loads the regions again on Try again and when the connection comes back', async () => {
+    svc.fetchOfflineRegions.mockRejectedValueOnce(new Error('Could not load offline regions')).mockRejectedValueOnce(new Error('Could not load offline regions'));
+    render(<OfflineSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /Try again/ }));
+    await waitFor(() => expect(svc.fetchOfflineRegions).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Could not load offline regions')).toBeInTheDocument();
+    window.dispatchEvent(new Event('online'));
+    expect(await screen.findByRole('button', { name: 'Download NJ offline data' })).toBeInTheDocument();
   });
 });

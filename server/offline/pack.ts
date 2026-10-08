@@ -63,6 +63,8 @@ export function packEvent(raw: any, season: number): PackedEvent | null {
     };
     const sur = (m.teams ?? []).filter((t: any) => t.surrogate && t.onField !== false).map((t: any) => t.teamNumber as number);
     if (sur.length) pm.sur = sur;
+    const dq = (m.teams ?? []).filter((t: any) => t.dq && t.onField !== false).map((t: any) => t.teamNumber as number);
+    if (dq.length) pm.dq = dq;
     matches.push(pm);
   }
   matches.sort((x, y) => (x.l === y.l ? 0 : x.l === "q" ? -1 : 1) || x.s - y.s || x.n - y.n);
