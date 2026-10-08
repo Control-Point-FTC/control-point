@@ -1,13 +1,13 @@
 // Modern Owner console (phase 9a), rebuilt on the shadcn kit over the shared
 // useOwner hooks (same /api/owner/* endpoints and confirmations as Legacy).
-// Tabs: Overview (workspaces), Users, AI control, Flags and Feedback; a user
-// sheet holds the AI kill switch, timeouts, budgets, warnings, move and the
-// danger zone.
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+// Tabs: Overview (what needs you, email health, workspaces), Users, AI
+// control, Flags, Feedback, Errors and What's new; a user sheet holds the AI
+// kill switch, timeouts, budgets, warnings, move and the danger zone.
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 import {
-  AlertTriangle, Ban, Bug, Building2, Sparkles, Clock, FileText, Flag, LayoutGrid, List, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
+  AlertTriangle, ArrowDown, ArrowUp, Ban, Bug, Building2, ChevronRight, Mail, RefreshCw, Sparkles, Clock, FileText, Flag, LayoutGrid, List, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
@@ -23,6 +23,7 @@ import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { apiFetch } from '../../../services/api';
+import { notify, promptDialog } from '../../../components/dialog';
 import { ChangelogTab } from './ChangelogTab';
 
 type Ctl = ReturnType<typeof useOwnerConsole>;
@@ -36,9 +37,27 @@ const tone = (cls: string) => cls.includes('rose') ? 'border-rose-500/30 bg-rose
 
 export function OwnerPage() {
   const ctl = useOwnerConsole();
+  const [refreshing, setRefreshing] = useState(false);
+  // Bumped by Refresh: the tabs that load their own data (errors, shared FTC numbers) reload too.
+  const [refreshKey, setRefreshKey] = useState(0);
+  // The button is disabled while a refresh runs; a delete may ask for one
+  // regardless. The spinner stops only when every running refresh is done.
+  const running = useRef(0);
+  const refresh = async () => {
+    running.current += 1;
+    setRefreshing(true);
+    setRefreshKey((k) => k + 1);
+    try { await ctl.refresh(); } finally {
+      running.current -= 1;
+      if (running.current === 0) setRefreshing(false);
+    }
+  };
   return (
     <Page>
-      <PageHeader eyebrow="Owner" title="Owner console" description="Every workspace, user, AI flag and feedback note — your private command center.">
+      <PageHeader
+        eyebrow="Owner" title="Owner console" description="Every workspace, user, AI flag and feedback note — your private command center."
+        actions={<Button variant="outline" onClick={() => void refresh()} disabled={refreshing} className="max-sm:h-11"><RefreshCw className={cn(refreshing && 'animate-spin')} /> Refresh</Button>}
+      >
         <Tabs value={ctl.tab} onValueChange={(v) => ctl.setTab(v as OwnerTab)}>
           <TabsList aria-label="Owner sections" className="max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="overview" className="shrink-0 max-sm:h-11"><Building2 /> Overview</TabsTrigger>
@@ -53,12 +72,12 @@ export function OwnerPage() {
       </PageHeader>
       {ctl.loading ? <div className="grid grid-cols-2 gap-6 lg:grid-cols-4" aria-busy="true">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}</div> : (
         <>
-          {ctl.tab === 'overview' && <OverviewTab ctl={ctl} />}
+          {ctl.tab === 'overview' && <OverviewTab ctl={ctl} refreshKey={refreshKey} onRefresh={refresh} />}
           {ctl.tab === 'users' && <UsersTab ctl={ctl} />}
           {ctl.tab === 'ai' && <AiTab ctl={ctl} />}
           {ctl.tab === 'flags' && <FlagsTab ctl={ctl} />}
           {ctl.tab === 'feedback' && <FeedbackTab ctl={ctl} />}
-          {ctl.tab === 'errors' && <ErrorsTab />}
+          {ctl.tab === 'errors' && <ErrorsTab refreshKey={refreshKey} />}
           {ctl.tab === 'changelog' && <ChangelogTab />}
         </>
       )}
@@ -69,37 +88,89 @@ export function OwnerPage() {
   );
 }
 
-/** Browser crash reports from the last 7 days, grouped by message + page. */
-function ErrorsTab() {
+const utc = (v: string | null | undefined) => (v ? new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v.replace(' ', 'T') + 'Z') : null);
+const when = (v: string | null | undefined, fmt = 'MMM d, h:mm a') => { const d = utc(v); return d && !Number.isNaN(d.getTime()) ? format(d, fmt) : ''; };
+
+function StackBlock({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="grid gap-1">
+      <p className="text-muted-foreground">{label}</p>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-card p-2 font-mono text-[11px]">{text}</pre>
+    </div>
+  );
+}
+
+/**
+ * Browser crash reports from the last 7 days, grouped by message + page.
+ * A group opens to its latest individual reports: when, workspace, release,
+ * browser and the stack.
+ */
+function ErrorsTab({ refreshKey = 0 }: { refreshKey?: number }) {
   const [data, setData] = useState<{ groups: any[]; recent: any[] } | null>(null);
   const [failed, setFailed] = useState(false);
+  // The open group, by what it is (its row can move when the counts change).
+  const [open, setOpen] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
     apiFetch('/api/owner/client-errors')
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d) => { if (live) setData(d); })
-      .catch(() => { if (live) setFailed(true); });
+      .then((d) => { if (live) { setData(d); setFailed(false); } })
+      .catch(() => { if (live && !data) setFailed(true); });
     return () => { live = false; };
-  }, []);
+    // Reloads on Refresh only.
+  }, [refreshKey]);
   if (failed) return <EmptyState icon={AlertTriangle} title="Couldn't load error reports" description="Try again in a moment." />;
   if (!data) return <Skeleton className="h-40" />;
   if (!data.groups.length) return <EmptyState icon={Bug} title="No crashes reported this week" description="Render errors and failed page loads from users' browsers show up here." />;
+  const total = data.groups.reduce((n, g) => n + Number(g.n || 0), 0);
   return (
-    <Section title="Crashes this week" description="Grouped by message and page. Each report is also kept individually (newest 5,000).">
+    <Section title="Crashes this week" description={`${total} ${total === 1 ? 'report' : 'reports'} in ${data.groups.length} ${data.groups.length === 1 ? 'group' : 'groups'}, grouped by message and page. Open a group for its latest reports. Each report is also kept individually (newest 5,000).`}>
       <div className="overflow-x-auto rounded-xl border border-border">
         <Table>
           <TableHeader>
             <TableRow><TableHead>Error</TableHead><TableHead>Page</TableHead><TableHead className="text-right">Count</TableHead><TableHead>Last seen</TableHead></TableRow>
           </TableHeader>
           <TableBody>
-            {data.groups.map((g, i) => (
-              <TableRow key={i}>
-                <TableCell className="max-w-md"><span className="line-clamp-2 font-mono text-xs">{g.message}</span><span className="text-xs text-muted-foreground">{g.kind}</span></TableCell>
-                <TableCell className="font-mono text-xs">{g.route || '—'}</TableCell>
-                <TableCell className="text-right tabular-nums">{g.n}</TableCell>
-                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{g.last_seen ? format(new Date(g.last_seen.replace(' ', 'T') + 'Z'), 'MMM d, h:mm a') : ''}</TableCell>
-              </TableRow>
-            ))}
+            {data.groups.map((g) => {
+              const reports = data.recent.filter((r) => r.message === g.message && (r.route || null) === (g.route || null) && r.kind === g.kind).slice(0, 5);
+              const key = JSON.stringify([g.kind, g.route || null, g.message]);
+              const isOpen = open === key;
+              return (
+                <Fragment key={key}>
+                  <TableRow>
+                    <TableCell className="max-w-md">
+                      <button type="button" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : key)} className="flex w-full items-start gap-1.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
+                        <ChevronRight className={cn('mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-90')} aria-hidden="true" />
+                        <span className="min-w-0"><span className="line-clamp-2 font-mono text-xs">{g.message}</span><span className="text-xs text-muted-foreground">{g.kind}</span></span>
+                      </button>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{g.route || '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">{g.n}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{when(g.last_seen)}</TableCell>
+                  </TableRow>
+                  {isOpen && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={4} className="bg-muted/30">
+                        {reports.length ? (
+                          <ul className="grid gap-3" aria-label="Latest reports">
+                            {reports.map((r) => (
+                              <li key={r.id} className="grid gap-1 text-xs">
+                                <p className="text-muted-foreground">
+                                  {[when(r.created_at), r.team_name, r.release && `release ${r.release}`].filter(Boolean).join(' · ')}
+                                </p>
+                                {r.user_agent && <p className="break-all text-muted-foreground">{r.user_agent}</p>}
+                                {r.stack && <StackBlock label="JavaScript stack" text={r.stack} />}
+                                {r.component_stack && <StackBlock label="React component stack" text={r.component_stack} />}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="text-xs text-muted-foreground">No individual reports kept for this group (only the newest 200 are loaded).</p>}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -111,16 +182,16 @@ function ErrorsTab() {
  * Workspaces that share an FTC number from before the one-per-number rule.
  * Read-only: sorting them out (merge, rename, clear a number) is done by hand.
  */
-function FtcDuplicates() {
+function FtcDuplicates({ refreshKey = 0 }: { refreshKey?: number }) {
   const [groups, setGroups] = useState<{ ftc: number; teams: { id: number; name: string; members: number }[] }[] | null>(null);
   useEffect(() => {
     let live = true;
     apiFetch('/api/owner/ftc-duplicates')
       .then((r) => (r.ok ? r.json() : []))
       .then((d) => { if (live) setGroups(Array.isArray(d) ? d : []); })
-      .catch(() => { if (live) setGroups([]); });
+      .catch(() => { if (live) setGroups((g) => g ?? []); });
     return () => { live = false; };
-  }, []);
+  }, [refreshKey]);
   if (!groups?.length) return null;
   return (
     <Section title="Shared FTC numbers" description="These workspaces claimed the same FTC team before each number got one workspace. Nothing was changed — sort them out by hand.">
@@ -138,23 +209,146 @@ function FtcDuplicates() {
   );
 }
 
-function OverviewTab({ ctl }: { ctl: Ctl }) {
+type SortDir = 'asc' | 'desc';
+/** A column sort: click once for the natural order, again to flip it. */
+function useSort<K extends string>(initial: K, initialDir: SortDir) {
+  const [sort, setSort] = useState<{ key: K; dir: SortDir }>({ key: initial, dir: initialDir });
+  const toggle = (key: K, natural: SortDir) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: natural }));
+  return { sort, toggle };
+}
+const compare = (a: any, b: any, dir: SortDir) => {
+  const empty = (v: any) => v === null || v === undefined || v === '';
+  // Blanks always sort last, whichever way.
+  if (empty(a) || empty(b)) return empty(a) === empty(b) ? 0 : empty(a) ? 1 : -1;
+  const r = typeof a === 'number' && typeof b === 'number' ? a - b : String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+  return dir === 'asc' ? r : -r;
+};
+
+function SortHead({ label, k, natural = 'desc', sort, onSort, className }: { label: string; k: string; natural?: SortDir; sort: { key: string; dir: SortDir }; onSort: (k: any, natural: SortDir) => void; className?: string }) {
+  const active = sort.key === k;
+  const Arrow = sort.dir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead className={className} aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button type="button" onClick={() => onSort(k, natural)} className={cn('inline-flex items-center gap-1 rounded hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60', active && 'text-foreground')}>
+        {label}{active && <Arrow className="size-3" aria-hidden="true" />}
+      </button>
+    </TableHead>
+  );
+}
+
+const emailFailing = (h?: { configured: boolean; lastOkAt: string | null; lastErrorAt: string | null } | null) =>
+  !!h && (!h.configured || (!!h.lastErrorAt && (!h.lastOkAt || h.lastErrorAt > h.lastOkAt)));
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What needs the owner now; each item opens the tab that deals with it. */
+function Attention({ ctl }: { ctl: Ctl }) {
   const t = ctl.totals;
-  const teams = ctl.overview?.teams || [];
+  const items = [
+    ctl.openFlagCount > 0 && { key: 'flags', icon: Flag, label: plural(ctl.openFlagCount, 'open AI flag'), hint: 'Dismiss, warn, time out or disable', tab: 'flags' as OwnerTab, bad: true },
+    t.new_feedback > 0 && { key: 'feedback', icon: MessageSquareHeart, label: plural(t.new_feedback, 'new feedback note'), hint: 'Read and resolve', tab: 'feedback' as OwnerTab },
+    t.crashes_7d > 0 && { key: 'errors', icon: Bug, label: plural(t.crashes_7d, 'error report'), hint: 'From users\u2019 browsers this week', tab: 'errors' as OwnerTab },
+    emailFailing(ctl.overview?.email) && { key: 'email', icon: Mail, label: 'Email is failing', hint: 'Signup codes may not arrive — details below', bad: true },
+  ].filter(Boolean) as { key: string; icon: any; label: string; hint: string; tab?: OwnerTab; bad?: boolean }[];
+  if (!items.length) {
+    return (
+      <p role="status" className="mb-8 flex items-center gap-2 rounded-xl border border-border bg-card p-4 text-sm">
+        <ShieldCheck className="size-4 text-success" aria-hidden="true" /> Nothing needs you right now.
+      </p>
+    );
+  }
+  return (
+    <section aria-label="Needs your attention" className="mb-8">
+      <h2 className="mb-3 text-sm font-semibold">Needs your attention</h2>
+      <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {items.map((it) => {
+          const body = (
+            <>
+              <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-full', it.bad ? 'bg-destructive/15 text-destructive' : 'bg-muted text-foreground')}><it.icon className="size-4" /></span>
+              <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{it.label}</span><span className="block text-xs text-muted-foreground">{it.hint}</span></span>
+              {it.tab && <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
+            </>
+          );
+          const cls = cn('flex h-full w-full items-center gap-3 rounded-xl border bg-card p-3 text-left', it.bad ? 'border-destructive/40' : 'border-border');
+          return (
+            <li key={it.key}>
+              {it.tab
+                ? <button type="button" onClick={() => ctl.setTab(it.tab!)} className={cn(cls, 'transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60')}>{body}</button>
+                : <div className={cls}>{body}</div>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+type WsKey = 'name' | 'member_count' | 'message_count' | 'task_count' | 'feedback_count' | 'last_message_at';
+
+function OverviewTab({ ctl, refreshKey, onRefresh }: { ctl: Ctl; refreshKey?: number; onRefresh?: () => Promise<void> }) {
+  const t = ctl.totals;
+  const [query, setQuery] = useState('');
+  const { sort, toggle } = useSort<WsKey>('member_count', 'desc');
+  const all: any[] = ctl.overview?.teams || [];
+  const teams = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const shown = q ? all.filter((w) => [w.name, w.number, w.access_code].some((v) => v != null && String(v).toLowerCase().includes(q))) : all;
+    return [...shown].sort((a, b) => compare(a[sort.key], b[sort.key], sort.dir) || b.id - a.id);
+  }, [all, query, sort]);
+  const showUsers = (w: any) => { ctl.setUserSearch(''); ctl.setTeamFilter(String(w.id)); ctl.setTab('users'); };
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const deleteWorkspace = async (w: any) => {
+    const ok = await promptDialog({
+      title: `Delete ${w.name}?`,
+      message: `This permanently deletes the workspace and everything in it: ${plural(Number(w.member_count) || 0, 'member')}, ${plural(Number(w.message_count) || 0, 'message')}, ${plural(Number(w.task_count) || 0, 'task')}, its calendar, budget, inventory, files and settings. Members are signed out of it. This can't be undone. Type the workspace's name to confirm.`,
+      expected: String(w.name), placeholder: String(w.name), confirmLabel: 'Delete workspace', danger: true,
+    });
+    if (!ok) return;
+    setDeleting(w.id);
+    try {
+      const r = await apiFetch(`/api/owner/teams/${w.id}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: w.name }) }).catch(() => null);
+      const j = r ? await r.json().catch(() => ({})) : {};
+      if (!r?.ok) { notify(j.error || 'Could not delete the workspace', 'error'); return; }
+      notify(`${w.name} deleted.`, 'success');
+      if (ctl.teamFilter === String(w.id)) ctl.setTeamFilter('all');
+      // The whole page: shared FTC numbers and errors reload too.
+      await (onRefresh ? onRefresh() : ctl.refresh());
+    } finally {
+      setDeleting(null);
+    }
+  };
+  const head = { sort, onSort: toggle };
   return (
     <>
       <Reveal className="mb-8 grid grid-cols-2 gap-6 border-b border-border pb-6 lg:grid-cols-4">
         <Stat icon={Building2} label="Workspaces" value={<AnimatedValue value={t.teams || 0} />} />
-        <Stat icon={UserCircle} label="Users" value={<AnimatedValue value={t.users || 0} />} />
-        <Stat icon={Zap} label="AI messages today" value={<AnimatedValue value={ctl.aiOverview?.today?.messages || 0} />} />
-        <Stat icon={MessageSquareHeart} label="Feedback notes" value={<AnimatedValue value={t.feedback || 0} />} />
+        <Stat icon={UserCircle} label="Users" value={<AnimatedValue value={t.users || 0} />} onClick={() => ctl.setTab('users')} />
+        <Stat icon={Zap} label="AI messages today" value={<AnimatedValue value={ctl.aiOverview?.today?.messages || 0} />} onClick={() => ctl.setTab('ai')} />
+        <Stat icon={MessageSquareHeart} label="Feedback notes" value={<AnimatedValue value={t.feedback || 0} />} onClick={() => ctl.setTab('feedback')} />
       </Reveal>
+      <Attention ctl={ctl} />
       <EmailHealth health={ctl.overview?.email} />
-      <Section title="Workspaces" description="Every team on Control Point and how active each one is.">
+      <Section title={`Workspaces (${teams.length}${query.trim() ? ` of ${all.length}` : ''})`} description="Every team on Control Point and how active each one is. Sort by any column; Users opens that workspace's people, and the bin deletes the workspace.">
+        {all.length > 0 && (
+          <div className="relative mb-4 max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, FTC number or code" aria-label="Search workspaces" className="pl-9 max-sm:h-11" />
+          </div>
+        )}
         {teams.length ? (
           <div className="overflow-x-auto rounded-xl border border-border">
             <Table>
-              <TableHeader><TableRow><TableHead>Workspace</TableHead><TableHead>Code</TableHead><TableHead className="text-right">Members</TableHead><TableHead className="text-right">Messages</TableHead><TableHead className="text-right">Tasks</TableHead><TableHead className="text-right">Feedback</TableHead></TableRow></TableHeader>
+              <TableHeader>
+                <TableRow>
+                  <SortHead label="Workspace" k="name" natural="asc" {...head} />
+                  <TableHead>Code</TableHead>
+                  <SortHead label="Members" k="member_count" className="text-right" {...head} />
+                  <SortHead label="Messages" k="message_count" className="text-right" {...head} />
+                  <SortHead label="Tasks" k="task_count" className="text-right" {...head} />
+                  <SortHead label="Feedback" k="feedback_count" className="text-right" {...head} />
+                  <SortHead label="Last message" k="last_message_at" {...head} />
+                  <TableHead><span className="sr-only">Actions</span></TableHead>
+                </TableRow>
+              </TableHeader>
               <TableBody>
                 {teams.map((w: any) => (
                   <TableRow key={w.id}>
@@ -164,14 +358,21 @@ function OverviewTab({ ctl }: { ctl: Ctl }) {
                     <TableCell className="text-right tabular-nums">{w.message_count}</TableCell>
                     <TableCell className="text-right tabular-nums">{w.task_count}</TableCell>
                     <TableCell className="text-right tabular-nums">{w.feedback_count}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{when(w.last_message_at, 'MMM d, yyyy') || 'Never'}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1.5">
+                        <Button variant="outline" size="sm" onClick={() => showUsers(w)} aria-label={`Users in ${w.name}`} className="max-sm:h-11">Users</Button>
+                        <Button variant="outline" size="icon-sm" disabled={deleting === w.id} onClick={() => void deleteWorkspace(w)} aria-label={`Delete ${w.name}`} className="text-destructive hover:text-destructive max-sm:size-11"><Trash2 /></Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-        ) : <EmptyState icon={Building2} title="No workspaces yet" />}
+        ) : <EmptyState icon={Building2} title={all.length ? 'No workspaces match' : 'No workspaces yet'} />}
       </Section>
-      <FtcDuplicates />
+      <FtcDuplicates refreshKey={refreshKey} />
     </>
   );
 }
@@ -179,12 +380,12 @@ function OverviewTab({ ctl }: { ctl: Ctl }) {
 /** Is signup email working? Configured key + the last send outcome since boot. */
 function EmailHealth({ health }: { health?: { configured: boolean; lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null } }) {
   if (!health) return null;
-  const failing = !health.configured || (health.lastErrorAt && (!health.lastOkAt || health.lastErrorAt > health.lastOkAt));
-  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'not since the last restart');
+  const failing = emailFailing(health);
+  const at = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'not since the last restart');
   return (
     <div role="status" className={cn('mb-8 rounded-xl border p-4 text-sm', failing ? 'border-destructive/40 bg-destructive/10' : 'border-border bg-card')}>
       <p className="font-medium">{!health.configured ? 'Email is not configured: signup codes are not being sent' : failing ? 'The last email failed to send' : 'Email is sending normally'}</p>
-      <p className="mt-1 text-muted-foreground">Last delivered to the provider: {when(health.lastOkAt)}.{health.lastError ? ` Last error (${when(health.lastErrorAt)}): ${health.lastError}` : ''}</p>
+      <p className="mt-1 text-muted-foreground">Last delivered to the provider: {at(health.lastOkAt)}.{health.lastError ? ` Last error (${at(health.lastErrorAt)}): ${health.lastError}` : ''}</p>
     </div>
   );
 }
@@ -200,7 +401,7 @@ function UserRow({ u, ctl, extra }: { u: any; ctl: Ctl; extra?: React.ReactNode 
           {u.flags_open > 0 && <Badge variant="destructive">{u.flags_open} flag{u.flags_open > 1 ? 's' : ''}</Badge>}
           {u.warnings > 0 && <Badge variant="outline" className={tone('amber')}>{u.warnings} warn</Badge>}
         </p>
-        <p className="truncate text-xs text-muted-foreground">{u.email}{u.team_name ? ` · ${u.team_name}` : ''}{u.account_type ? ` · ${u.account_type}` : ''}{u.tokens_7d > 0 ? ` · ${fmtTokens(u.tokens_7d)} tokens / 7d` : ''}</p>
+        <p className="truncate text-xs text-muted-foreground">{u.email}{u.team_name ? ` · ${u.team_name}` : ''}{u.account_type ? ` · ${u.account_type}` : ''}{u.tokens_7d > 0 ? ` · ${fmtTokens(u.tokens_7d)} tokens / 7d` : ''}{u.last_ai_use ? ` · last AI ${when(u.last_ai_use, 'MMM d')}` : ''}</p>
       </div>
       {extra}
       <Badge variant="outline" className={cn('max-sm:hidden', tone(st.cls))}>{st.label}</Badge>
@@ -209,29 +410,73 @@ function UserRow({ u, ctl, extra }: { u: any; ctl: Ctl; extra?: React.ReactNode 
   );
 }
 
+type UserStatus = 'all' | 'flagged' | 'warned' | 'restricted' | 'ai-7d' | 'no-ai';
+type UserSort = 'newest' | 'name' | 'tokens' | 'last-ai';
+const USER_STATUSES: Record<UserStatus, string> = {
+  'all': 'Everyone', 'flagged': 'Open flags', 'warned': 'Warned', 'restricted': 'AI limited or off', 'ai-7d': 'Used AI this week', 'no-ai': 'No AI this week',
+};
+const USER_SORTS: Record<UserSort, string> = { 'newest': 'Newest first', 'name': 'Name', 'tokens': 'AI tokens (7 days)', 'last-ai': 'Last AI use' };
+const userStatusMatch = (u: any, s: UserStatus) => {
+  switch (s) {
+    case 'flagged': return u.flags_open > 0;
+    case 'warned': return u.warnings > 0;
+    // Disabled, timed out or on a daily budget.
+    case 'restricted': return aiStatusOf(u).label !== 'AI ok';
+    case 'ai-7d': return Number(u.msgs_7d || 0) > 0;
+    case 'no-ai': return !Number(u.msgs_7d || 0);
+    default: return true;
+  }
+};
+
 function UsersTab({ ctl }: { ctl: Ctl }) {
+  const [status, setStatus] = useState<UserStatus>('all');
+  const [sortBy, setSortBy] = useState<UserSort>('newest');
+  const shown = useMemo(() => {
+    const list = ctl.filteredUsers.filter((u) => userStatusMatch(u, status));
+    if (sortBy === 'newest') return list; // the server's order
+    const key = sortBy === 'name' ? 'name' : sortBy === 'tokens' ? 'tokens_7d' : 'last_ai_use';
+    return [...list].sort((a, b) => compare(sortBy === 'tokens' ? Number(a[key] || 0) : a[key], sortBy === 'tokens' ? Number(b[key] || 0) : b[key], sortBy === 'name' ? 'asc' : 'desc') || b.id - a.id);
+  }, [ctl.filteredUsers, status, sortBy]);
+  const filtered = status !== 'all' || ctl.teamFilter !== 'all' || !!ctl.userSearch;
+  // A workspace opened from Overview may have nobody in it yet: keep it choosable.
+  const teamOptions = ctl.teamFilter === 'all' || ctl.teams.some((t) => String(t.id) === ctl.teamFilter) ? ctl.teams
+    : [...ctl.teams, { id: Number(ctl.teamFilter), name: (ctl.overview?.teams || []).find((w: any) => String(w.id) === ctl.teamFilter)?.name || `Workspace #${ctl.teamFilter}` }];
+  const clear = () => { setStatus('all'); ctl.setTeamFilter('all'); ctl.setUserSearch(''); };
   return (
-    <Section title={`Users (${ctl.filteredUsers.length})`} description="Manage opens AI controls, warnings, moves and deletion.">
+    <Section title={`Users (${shown.length}${filtered ? ` of ${ctl.users.length}` : ''})`} description="Manage opens AI controls, warnings, moves and deletion.">
       <div className="mb-4 flex flex-wrap gap-2">
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={ctl.userSearch} onChange={(e) => ctl.setUserSearch(e.target.value)} placeholder="Search name or email" aria-label="Search users" className="pl-9 max-sm:h-11" />
         </div>
         <Select value={ctl.teamFilter} onValueChange={ctl.setTeamFilter}>
-          <SelectTrigger className="w-48 max-sm:h-11" aria-label="Filter by team"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-48 max-sm:h-11 max-sm:w-full" aria-label="Filter by team"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All teams</SelectItem>
-            {ctl.teams.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            {teamOptions.map((t) => <SelectItem key={t.id} value={String(t.id)}>{t.name}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={status} onValueChange={(v) => setStatus(v as UserStatus)}>
+          <SelectTrigger className="w-48 max-sm:h-11 max-sm:w-full" aria-label="Filter by status"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {(Object.keys(USER_STATUSES) as UserStatus[]).map((k) => <SelectItem key={k} value={k}>{USER_STATUSES[k]}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={(v) => setSortBy(v as UserSort)}>
+          <SelectTrigger className="w-44 max-sm:h-11 max-sm:w-full" aria-label="Sort users"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {(Object.keys(USER_SORTS) as UserSort[]).map((k) => <SelectItem key={k} value={k}>{USER_SORTS[k]}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {filtered && <Button variant="ghost" onClick={clear} className="max-sm:h-11">Clear filters</Button>}
       </div>
-      {ctl.filteredUsers.length ? (
+      {shown.length ? (
         <Stagger as="ul" className="divide-y divide-border rounded-xl border border-border">
-          {ctl.filteredUsers.map((u) => (
+          {shown.map((u) => (
             <UserRow key={u.id} u={u} ctl={ctl} extra={<Button variant="ghost" size="icon-sm" aria-label={`Delete ${u.name}`} onClick={() => void ctl.quickDeleteUser(u)} className="text-destructive hover:text-destructive max-sm:size-11"><Trash2 /></Button>} />
           ))}
         </Stagger>
-      ) : <EmptyState icon={Search} title="No users match" />}
+      ) : <EmptyState icon={Search} title="No users match" action={filtered ? <Button variant="outline" onClick={clear}>Clear filters</Button> : undefined} />}
     </Section>
   );
 }

@@ -4655,32 +4655,32 @@ async function startServer() {
 
   // Delete a workspace. The account's FINAL team cannot be deleted — an account
   // must always belong to at least one team.
-  app.delete("/api/teams/:id", async (req, res) => {
-    const auth = await requireAuth(req, res);
-    if (!auth) return;
-    const teamId = parseInt(req.params.id, 10);
-    if (!teamId) return res.status(400).json({ error: "Invalid team" });
-    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
-    const email = me?.email || "";
-    // Must be a manager of the team being deleted
-    if (!(await hasPermInTeam(email, teamId, "manage_members"))) {
-      return res.status(403).json({ error: "Not your workspace" });
-    }
-    // Final-team guard removed: an admin may delete any of their teams,
-    // including the last one — the session is kept alive and becomes teamless.
-    const memberships = (await dbAll(
-      "SELECT team_id FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email
-    )) as any[];
+  // Workspace-scoped rows that point at a member without ON DELETE CASCADE.
+  // A member referenced by any of them outside the workspace being deleted
+  // must not be hard-deleted (see deleteWorkspace). Each `?` is that workspace.
+  const MEMBER_REFS: [table: string, column: string][] = [
+    ["messages", "sender_id"], ["tasks", "assigned_to"], ["attendance", "member_id"], ["feedback", "user_id"],
+    ["resources", "created_by"], ["chat_channels", "created_by"], ["inventory", "assigned_to"],
+    ["code_files", "created_by"], ["code_commits", "author_id"], ["bruno_chats", "member_id"],
+    ["checkin_sessions", "created_by"], ["voice_channels", "created_by"], ["call_sessions", "created_by"],
+  ];
+  const REFERENCED_ELSEWHERE = [
+    ...MEMBER_REFS.map(([t, c]) => `id IN (SELECT ${c} FROM ${t} WHERE ${c} IS NOT NULL AND COALESCE(team_id, -1) != ?)`),
+    "id IN (SELECT p.member_id FROM call_participants p JOIN call_sessions cs ON cs.id = p.session_id WHERE cs.team_id != ?)",
+    "id IN (SELECT i.inviter_id FROM call_invites i JOIN call_sessions cs ON cs.id = i.session_id WHERE cs.team_id != ?)",
+    "id IN (SELECT i.invitee_id FROM call_invites i JOIN call_sessions cs ON cs.id = i.session_id WHERE cs.team_id != ?)",
+  ].join(" OR ");
+  const REFERENCED_ELSEWHERE_PARAMS = MEMBER_REFS.length + 3;
+
+  /**
+   * Deletes a workspace and everything in it (one batch). `keepMemberId`: a
+   * membership row kept as an inactive anchor (team_id nulled) so its
+   * account stays signed in teamless; `keepSessionId`: a session that
+   * survives. Other members' sessions end and their live sockets close.
+   */
+  async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
-    const callerToken = getSessionId(req);
-    const currentSessionId = callerToken ? sessionKey(callerToken) : "";
-    // The caller's membership row in the team being deleted becomes an
-    // inactive ghost anchor (team_id nulled so the team delete passes FKs) —
-    // rows in their other teams are untouched.
-    const myRowInTeam = (await dbGet(
-      "SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, teamId
-    )) as any;
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
       { sql: "DELETE FROM bruno_chats WHERE team_id = ?", args: [teamId] },
@@ -4732,19 +4732,52 @@ async function startServer() {
       { sql: `DELETE FROM notifications WHERE user_id ${inMembers}`, args: memberIds },
       // Keep the caller's session alive so they stay signed in (teamless when
       // this was their last team); every other session on the team is dropped.
-      { sql: `DELETE FROM sessions WHERE member_id ${inMembers} AND id != ?`, args: [...memberIds, currentSessionId] },
+      { sql: `DELETE FROM sessions WHERE member_id ${inMembers} AND id != ?`, args: [...memberIds, keepSessionId] },
       { sql: `DELETE FROM stream_sessions WHERE member_id ${inMembers}`, args: memberIds },
       { sql: `DELETE FROM bruno_nudges_sent WHERE member_id ${inMembers}`, args: memberIds },
       { sql: `DELETE FROM member_roles WHERE member_id ${inMembers}`, args: memberIds },
       { sql: "DELETE FROM roles WHERE team_id = ?", args: [teamId] },
+      // A member moved here from another workspace can still be referenced
+      // there (their old messages, tasks, attendance...): deleting the row
+      // would break those foreign keys and fail the whole batch. Such rows
+      // stay as inactive, teamless anchors instead.
+      { sql: `UPDATE members SET is_active = 0, team_id = NULL WHERE team_id = ? AND id != ? AND (${REFERENCED_ELSEWHERE})`, args: [teamId, keepMemberId ?? -1, ...Array(REFERENCED_ELSEWHERE_PARAMS).fill(teamId)] },
       // Hard-delete every membership in the team except the caller's own row,
       // which stays as an inactive anchor (team_id nulled so the team delete
       // passes FKs) so their session/email survive teamless.
-      { sql: "DELETE FROM members WHERE team_id = ? AND id != ?", args: [teamId, myRowInTeam?.id ?? -1] },
-      { sql: "UPDATE members SET is_active = 0, team_id = NULL WHERE id = ?", args: [myRowInTeam?.id ?? -1] },
+      { sql: "DELETE FROM members WHERE team_id = ? AND id != ?", args: [teamId, keepMemberId ?? -1] },
+      { sql: "UPDATE members SET is_active = 0, team_id = NULL WHERE id = ?", args: [keepMemberId ?? -1] },
       { sql: "DELETE FROM teams WHERE id = ?", args: [teamId] },
     ];
     await dbBatch(stmts);
+    for (const id of memberIds) if (id !== keepMemberId) disconnectMember(teamId, id);
+  }
+
+  app.delete("/api/teams/:id", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const teamId = parseInt(req.params.id, 10);
+    if (!teamId) return res.status(400).json({ error: "Invalid team" });
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    const email = me?.email || "";
+    // Must be a manager of the team being deleted
+    if (!(await hasPermInTeam(email, teamId, "manage_members"))) {
+      return res.status(403).json({ error: "Not your workspace" });
+    }
+    // Final-team guard removed: an admin may delete any of their teams,
+    // including the last one — the session is kept alive and becomes teamless.
+    const memberships = (await dbAll(
+      "SELECT team_id FROM members WHERE email = ? AND COALESCE(is_active, 1) = 1", email
+    )) as any[];
+    const callerToken = getSessionId(req);
+    const currentSessionId = callerToken ? sessionKey(callerToken) : "";
+    // The caller's membership row in the team being deleted becomes an
+    // inactive ghost anchor (team_id nulled so the team delete passes FKs) —
+    // rows in their other teams are untouched.
+    const myRowInTeam = (await dbGet(
+      "SELECT id FROM members WHERE email = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", email, teamId
+    )) as any;
+    await deleteWorkspace(teamId, { keepMemberId: myRowInTeam?.id ?? null, keepSessionId: currentSessionId });
     // If the deleted team was the active one, hand the client a session for
     // another of the account's teams so they stay signed in; with no teams
     // left the kept-alive session simply becomes teamless.
@@ -8278,7 +8311,8 @@ Rules:
         (SELECT COUNT(*) FROM members m WHERE m.team_id = t.id) as member_count,
         (SELECT COUNT(*) FROM messages msg WHERE msg.team_id = t.id) as message_count,
         (SELECT COUNT(*) FROM tasks tk WHERE tk.team_id = t.id) as task_count,
-        (SELECT COUNT(*) FROM feedback f WHERE f.team_id = t.id) as feedback_count
+        (SELECT COUNT(*) FROM feedback f WHERE f.team_id = t.id) as feedback_count,
+        (SELECT MAX(msg.timestamp) FROM messages msg WHERE msg.team_id = t.id) as last_message_at
       FROM teams t ORDER BY t.id DESC
     `));
     const totals = (await dbGet(`
@@ -8286,9 +8320,30 @@ Rules:
              (SELECT COUNT(*) FROM teams) as teams,
              (SELECT COUNT(*) FROM messages) as messages,
              (SELECT COUNT(*) FROM feedback) as feedback,
-             (SELECT COUNT(*) FROM feedback WHERE status = 'new') as new_feedback
+             (SELECT COUNT(*) FROM feedback WHERE status = 'new') as new_feedback,
+             (SELECT COUNT(*) FROM client_errors WHERE created_at >= datetime('now', '-7 days')) as crashes_7d
     `));
     res.json({ totals, teams, email: getEmailHealth() });
+  });
+
+  // The app owner deletes any workspace (abandoned, spam, duplicates). Same
+  // cleanup as an admin's delete. The workspace's name must be typed back.
+  app.delete("/api/owner/teams/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const teamId = parseInt(req.params.id, 10);
+    const team = Number.isFinite(teamId) ? ((await dbGet("SELECT id, name FROM teams WHERE id = ?", teamId)) as any) : null;
+    if (!team) return res.status(404).json({ error: "Workspace not found" });
+    if (String(req.body?.confirm ?? "").trim() !== String(team.name).trim()) {
+      return res.status(400).json({ error: "Type the workspace's name to delete it" });
+    }
+    if ((auth as any).teamId === teamId) {
+      return res.status(400).json({ error: "You're signed in to this workspace. Switch to another one first, or delete it from its settings." });
+    }
+    const members = (await dbGet("SELECT COUNT(*) AS n FROM members WHERE team_id = ?", teamId)) as any;
+    await deleteWorkspace(teamId, { keepMemberId: null, keepSessionId: "" });
+    console.log(`[owner] workspace ${teamId} (${team.name}) deleted with ${members?.n ?? 0} members`);
+    res.json({ ok: true, deleted: { id: teamId, name: team.name, members: Number(members?.n || 0) } });
   });
 
   // Workspaces sharing an FTC number from before the one-per-number rule.
