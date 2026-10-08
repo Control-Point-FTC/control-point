@@ -15,6 +15,7 @@ import { Reveal } from '../../ui/motion';
 import { OutlookTab, AllianceTab, FieldTab, MatchesTab } from './PredictTabs';
 import { AccuracySheet } from './AccuracySheet';
 import { ratingsStale } from '../../../services/predictApi';
+import { useHalfMinuteTick } from '../../ui/Countdown';
 
 type Ctl = ReturnType<typeof usePredictController>;
 
@@ -158,6 +159,8 @@ function StageStrip({ ctl }: { ctl: Ctl }) {
 
 /** How old the match data behind the ratings is; flagged once syncs have stopped landing. */
 function RatingsAge({ asOf }: { asOf: string }) {
+  // Re-render as time passes, so a page left open still flips to the warning.
+  useHalfMinuteTick();
   const exact = new Date(asOf).toLocaleString();
   if (!ratingsStale(asOf)) return <span title={exact}>Ratings synced {relTime(asOf)}</span>;
   return (

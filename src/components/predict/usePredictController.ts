@@ -108,7 +108,12 @@ export function usePredictController() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, teamReload]);
 
-  useEffect(() => { loadStatus(); }, [loadStatus]);
+  // Again every 10 minutes, so a page left open picks up the next sync's age.
+  useEffect(() => {
+    loadStatus();
+    const id = window.setInterval(loadStatus, 10 * 60_000);
+    return () => window.clearInterval(id);
+  }, [loadStatus]);
 
   // Every request (initial, Refresh, Try again) gets an id and only the latest
   // may update state, so a slow answer for an old selection can't overwrite it.

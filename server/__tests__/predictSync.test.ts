@@ -35,6 +35,15 @@ describe("dataAsOf", () => {
       await new Promise((r) => setTimeout(r, 5));
       await store.syncScout(2025);
       expect(dataAsOf((s) => store.lastSync(s), [2024, 2025])).toBe(store.lastSync(2025));
+      // A sync where an event fails doesn't move the clock either.
+      const done = store.lastSync(2025);
+      const partial = new PredictStore(dir, {
+        scout: async (q: string) => (q.includes("eventsSearch") ? { data: { eventsSearch: [{ code: "X1", type: "Qualifier", updatedAt: "1" }] } } : { errors: [{ message: "down" }] }),
+        advancement: async () => null, gapMs: 0,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      await partial.syncScout(2025);
+      expect(partial.lastSync(2025)).toBe(done);
       // A failed download (event list unavailable) doesn't move the clock.
       const broken = new PredictStore(dir, { scout: async () => ({ errors: [{ message: "down" }] }), advancement: async () => null, gapMs: 0 });
       await expect(broken.syncScout(2025)).rejects.toThrow(/event list unavailable/);

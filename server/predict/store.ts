@@ -53,9 +53,14 @@ export class PredictStore {
     return this.readJson(join(this.seasonDir("scout", season), "_status.json"), { complete: false }).complete === true;
   }
 
-  /** When the season's event list was last downloaded (null = never). */
+  /**
+   * When the season was last downloaded in full (null = never). A sync where
+   * some events failed doesn't count: their stored results are out of date.
+   */
   lastSync(season: number): string | null {
-    const at = this.readJson<{ lastSync?: unknown }>(join(this.seasonDir("scout", season), "_status.json"), {}).lastSync;
+    const st = this.readJson<{ complete?: boolean; lastSync?: unknown; lastComplete?: unknown }>(join(this.seasonDir("scout", season), "_status.json"), {});
+    // Status files from before lastComplete: lastSync counted only if that sync was complete.
+    const at = st.lastComplete ?? (st.complete === true ? st.lastSync : null);
     return typeof at === "string" && !Number.isNaN(Date.parse(at)) ? at : null;
   }
 
@@ -98,7 +103,8 @@ export class PredictStore {
     writeFileSync(join(dir, "_index.json"), JSON.stringify(next));
     // Only a sync with no failures marks the season complete (older seasons
     // stop syncing once complete; unfinished ones keep retrying).
-    writeFileSync(join(dir, "_status.json"), JSON.stringify({ complete: failed === 0, lastSync: new Date().toISOString(), failed }));
+    const now = new Date().toISOString();
+    writeFileSync(join(dir, "_status.json"), JSON.stringify({ complete: failed === 0, lastSync: now, lastComplete: failed === 0 ? now : this.lastSync(season), failed }));
     return fetched;
   }
 
