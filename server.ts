@@ -11783,7 +11783,8 @@ Rules:
         const secondMessages = [
           ...messages,
           { role: "model", text: firstText },
-          { role: "user", text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. If a search failed or more rows matched than are listed, say that too. Don't ask for another lookup.` },
+          // Rows (up to 12,000 chars) and their incomplete/failed notes must reach the model whole.
+          { role: "user", maxChars: 14000, text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. If a search failed or more rows matched than are listed, say that too. Don't ask for another lookup.` },
         ];
         let secondUsage: any = null;
         const second = await aiChat({
@@ -11834,20 +11835,23 @@ Rules:
           logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
           if (hold.blocked && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
+            // What the user has seen of the second pass, so a failure part-way saves the same text.
+            let secondShown = "";
             const looked = await followUpWithLookups(fullText, {
               stream: true,
-              onChunk: (chunk) => { const out = hold2.push(chunk); if (out) res.write(out); },
+              onChunk: (chunk) => { const out = hold2.push(chunk); if (out) { secondShown += out; res.write(out); } },
               signal: streamAbort.signal,
             }).catch((e) => { console.error("Bruno lookup pass failed:", e?.message); return null; });
             if (streamAbort.signal.aborted) { res.end(); return; }
             const tail2 = hold2.end();
-            if (tail2) res.write(tail2);
+            if (tail2) { secondShown += tail2; res.write(tail2); }
             if (looked) {
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
             } else {
               const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
               res.write(sorry);
-              fullText = extractLookupBlocks(fullText).text + sorry;
+              const shown = extractLookupBlocks(fullText).text;
+              fullText = (secondShown.trim() ? `${shown}\n\n${secondShown.trim()}` : shown) + sorry;
             }
           }
           // Strip the NavGPT ```switch handoff block and any data-action proposal

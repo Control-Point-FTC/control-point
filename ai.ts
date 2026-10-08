@@ -679,6 +679,8 @@ BUDGET SKILL:
 export interface ChatMessage {
   role: "user" | "model";
   text: string;
+  /** Per-message character cap (default 2,000). Lookup results need more. */
+  maxChars?: number;
 }
 
 // --- Secret persona: NavGPT ❤️ ------------------------------------------------
@@ -730,9 +732,11 @@ export async function buildHelperChat(
   const capped = messages
     .filter((m) => m && (m.role === "user" || m.role === "model") && m.text)
     .slice(-12)
-    .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, 2000) }] }));
+    .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, Math.min(m.maxChars || 2000, 16000)) }] }));
   const trimmed: typeof capped = [];
-  let budget = HISTORY_CHAR_BUDGET;
+  // A long lookup-results message brings its own allowance, so it never
+  // pushes out the question it answers.
+  let budget = HISTORY_CHAR_BUDGET + capped.reduce((n, m) => n + Math.max(0, m.parts[0].text.length - 2000), 0);
   for (let i = capped.length - 1; i >= 0; i--) {
     const len = capped[i].parts[0].text.length;
     if (trimmed.length > 0 && len > budget) break;
