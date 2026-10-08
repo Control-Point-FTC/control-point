@@ -116,7 +116,9 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.pathname.startsWith('/uploads/')) return;
-  if (STANDALONE_PAGES.includes(url.pathname)) return;
+  // Compared case-insensitively and without trailing slashes, so no spelling
+  // of a standalone page can end up saved as the shell.
+  if (STANDALONE_PAGES.includes(url.pathname.toLowerCase().replace(/\/+$/, ''))) return;
 
   if (req.mode === 'navigate') {
     // Take the offline copy before the page starts reading the body.

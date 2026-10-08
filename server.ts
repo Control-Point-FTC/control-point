@@ -12595,7 +12595,9 @@ Rules:
   } catch (e) {
     console.error("[predict article] could not read the page:", e);
   }
-  app.get("/predict/how-it-works", (_req, res) => {
+  // Exact path only (Express would otherwise also match other letter cases
+  // and a trailing slash); anything else falls through to the app.
+  app.get(/^\/predict\/how-it-works$/, (_req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     if (predictArticleCsp) {
       res.setHeader(process.env.CSP_ENFORCE === "1" ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only", predictArticleCsp);

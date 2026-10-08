@@ -156,8 +156,10 @@ describe('service worker (offline Compete)', () => {
     });
     await sw.fire('install');
     const cache = sw.caches.get('control-point-v5')!;
-    // The worker doesn't answer for the article at all: the browser loads it.
-    expect(await sw.get('/predict/how-it-works', 'navigate')).toBeUndefined();
+    // The worker doesn't answer for the article at all, in any spelling: the browser loads it.
+    for (const p of ['/predict/how-it-works', '/predict/how-it-works/', '/Predict/How-It-Works', '/PREDICT/HOW-IT-WORKS//']) {
+      expect(await sw.get(p, 'navigate')).toBeUndefined();
+    }
     expect(await (await cache.match('/index.html'))!.text()).toBe('<html>shell</html>');
     // App pages still refresh the shell copy.
     expect(await (await sw.get('/dashboard', 'navigate'))!.text()).toBe('<html>shell</html>');

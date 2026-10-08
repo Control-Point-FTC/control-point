@@ -39,7 +39,8 @@ describe("Predict article page", () => {
   it("is a single fixed route: lookalike paths don't serve the file", async () => {
     // (Requests outside this route fall through to the app; production's
     // static handler has its own traversal guard, tested separately.)
-    for (const p of ["/predict/how-it-works.html", "/predict/how-it-works/extra", "/predict/how-it-works%2F..%2Fserver.ts", "/predict"]) {
+    for (const p of ["/predict/how-it-works.html", "/predict/how-it-works/extra", "/predict/how-it-works%2F..%2Fserver.ts", "/predict",
+      "/predict/how-it-works/", "/Predict/How-It-Works", "/PREDICT/HOW-IT-WORKS"]) {
       const r = await fetch(`${t.base}${p}`);
       expect(await r.text()).not.toContain("How Control Point Predict Works");
     }
