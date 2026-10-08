@@ -73,6 +73,17 @@ export function TasksPage(props: any) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linked, tasks]);
 
+  // "New task" from elsewhere (the Dashboard): /tasks?new=1 opens the editor.
+  const wantsNew = params.get('new') === '1';
+  useEffect(() => {
+    if (!wantsNew) return;
+    if (ctl.canManageTasks) ctl.openNewTask('todo');
+    const next = new URLSearchParams(params);
+    next.delete('new');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsNew]);
+
   // Search + assignee filters on top of the shared team/board filter.
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();

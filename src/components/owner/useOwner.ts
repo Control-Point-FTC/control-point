@@ -89,8 +89,13 @@ export function useOwnerConsole() {
     }).catch(() => null);
     if (res?.ok) {
       // Resolved feedback is deleted server-side (user gets notified), so drop it from the list.
-      if (status === 'resolved') setFeedback((fs) => fs.filter((f) => f.id !== id));
-      else setFeedback((fs) => fs.map((f) => (f.id === id ? { ...f, status } : f)));
+      if (status === 'resolved') {
+        setFeedback((fs) => fs.filter((f) => f.id !== id));
+        notify('Resolved. The reporter has been notified.', 'success');
+      } else setFeedback((fs) => fs.map((f) => (f.id === id ? { ...f, status } : f)));
+      // Tab badge and overview counts come from the overview: refresh them too.
+      const o = await json('/api/owner/overview').catch(() => null);
+      if (o) setOverview(o);
     } else notify('Could not update feedback', 'error');
   };
 

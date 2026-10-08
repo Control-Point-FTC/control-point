@@ -2,6 +2,7 @@
 // account deletion. Passwords are deliberately NOT kept in the draft store —
 // they stay in this component only and are cleared after a change.
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Cookie, Download, KeyRound, Loader2, TriangleAlert } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
@@ -45,6 +46,7 @@ function PasswordForm() {
 
 export function AccountSection({ currentUser, teams = [] }: any) {
   const user = currentUser || {};
+  const navigate = useNavigate();
   const [exporting, setExporting] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmEmail, setConfirmEmail] = useState('');
@@ -111,11 +113,13 @@ export function AccountSection({ currentUser, teams = [] }: any) {
             <p className="flex items-center gap-2 text-sm font-semibold text-destructive"><TriangleAlert className="size-4" /> Delete account</p>
             <p className="mt-0.5 text-sm text-muted-foreground">
               {teams.length > 0
-                ? `Leave or delete your ${teams.length === 1 ? 'workspace' : `${teams.length} workspaces`} first (People → Workspaces), then you can delete your account.`
+                ? `Leave or delete your ${teams.length === 1 ? 'workspace' : `${teams.length} workspaces`} first, then you can delete your account.`
                 : 'Permanently deletes your account and personal data. This can’t be undone.'}
             </p>
           </div>
-          <Button variant="destructive" disabled={teams.length > 0} onClick={() => { setConfirmEmail(''); setDeleteOpen(true); }} className="shrink-0">Delete my account</Button>
+          {teams.length > 0
+            ? <Button variant="outline" onClick={() => navigate('/teams?tab=workspaces')} className="shrink-0">Manage workspaces</Button>
+            : <Button variant="destructive" onClick={() => { setConfirmEmail(''); setDeleteOpen(true); }} className="shrink-0">Delete my account</Button>}
         </div>
       </section>
 

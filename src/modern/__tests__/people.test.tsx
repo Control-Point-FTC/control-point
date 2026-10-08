@@ -189,7 +189,7 @@ describe('Settings → Roles', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create role' }));
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/roles', expect.objectContaining({ method: 'POST' })));
     expect(JSON.parse(api.apiFetch.mock.calls.find((c) => c[0] === '/api/roles' && c[1]?.method === 'POST')![1].body))
-      .toEqual({ name: 'Drive Team', color: '#3B82F6', permissions: ['view_ai', 'manage_members'] });
+      .toEqual({ name: 'Drive Team', color: '#3B82F6', permissions: ['manage_members'] }); // AI is opt-in for new roles
   });
 
   it('system roles cannot be edited; without manage_roles the page is read-only', async () => {

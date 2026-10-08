@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { Trash2 } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
+import { communicationError } from '../../utils/validation';
 import { getDraft, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 
@@ -66,6 +67,8 @@ export function useCommunicationController({ communications, setCommunications, 
 
   const handleAdd = async () => {
     const submitted = getDraft<NewComm>('comm:new', newComm);
+    const missing = communicationError(submitted as any, false);
+    if (missing) { notify(missing, 'error'); return; }
     let res: any = null;
     try {
       res = await apiFetch('/api/communications', {
@@ -142,6 +145,8 @@ export function useCommunicationController({ communications, setCommunications, 
   const handleEdit = async () => {
     if (!editingEntry) return;
     const submitted = getDraft<EditForm>('comm:edit', editForm);
+    const missing = communicationError(submitted as any, editingEntry.parent_id != null);
+    if (missing) { notify(missing, 'error'); return; }
     let res: any = null;
     try {
       res = await apiFetch(`/api/communications/${editingEntry.id}`, {

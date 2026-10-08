@@ -255,10 +255,10 @@ function Resend({ cooldown, resending, onResend }: { cooldown: number; resending
 // ---------------------------------------------------------------------------
 // Email check after signup / first login
 
-export function VerifyEmailPage({ email, onBack, onVerified }: {
-  email: string; onBack: () => void; onVerified: (data: any) => void;
+export function VerifyEmailPage({ email, onBack, onVerified, sendFailed = false }: {
+  email: string; onBack: () => void; onVerified: (data: any) => void; sendFailed?: boolean;
 }) {
-  const v = useVerifyEmail({ email, onVerified });
+  const v = useVerifyEmail({ email, onVerified, sendFailed });
   return (
     <AuthLayout onBack={onBack}>
       <AuthHeading
@@ -267,8 +267,10 @@ export function VerifyEmailPage({ email, onBack, onVerified }: {
         description={<>We sent a 6-digit code to <span className="font-medium text-foreground">{email}</span>. Enter it to verify your account.</>}
       />
       <form onSubmit={v.submit} className="grid gap-5">
+        {v.sendProblem && <FormError>We couldn't send the email just now. Tap "Resend code" below to try again.</FormError>}
         <CodeInput label="Verification code" value={v.code} onChange={v.setCode} />
         {v.error && <FormError>{v.error}</FormError>}
+        <p className="text-center text-xs text-muted-foreground">Can't find it? Check your spam and Promotions folders for an email from Control Point.</p>
         <Button type="submit" size="lg" disabled={v.busy} className="h-11">{v.busy ? 'Verifying…' : 'Verify email'}</Button>
         <Resend cooldown={v.cooldown} resending={v.resending} onResend={v.resend} />
       </form>

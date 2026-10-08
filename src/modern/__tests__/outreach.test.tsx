@@ -76,7 +76,7 @@ describe('Modern Outreach', () => {
     const { props } = setup();
     fireEvent.click(screen.getByRole('button', { name: /Log event/ }));
     fireEvent.click(await screen.findByRole('radio', { name: 'Workshop' }));
-    expect(screen.getByLabelText('Event title *')).toHaveValue('Workshop');
+    expect(screen.getByLabelText('Event title')).toHaveValue('Workshop');
     fireEvent.change(screen.getByLabelText('Location'), { target: { value: ' Library ' } });
     fireEvent.change(screen.getByLabelText('Attendees'), { target: { value: '25' } });
     fireEvent.change(screen.getByLabelText('Funds ($)'), { target: { value: '12.345' } });
@@ -165,12 +165,12 @@ describe('Modern Outreach', () => {
     api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'POST' ? new Promise((r) => { resolve = r; }) : json({})));
     const first = setup();
     fireEvent.click(screen.getByRole('button', { name: /Log event/ }));
-    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'Science fair' } });
+    fireEvent.change(await screen.findByLabelText('Event title'), { target: { value: 'Science fair' } });
     first.unmount();
     const second = setup();
-    expect(await screen.findByLabelText('Event title *')).toHaveValue('Science fair');
+    expect(await screen.findByLabelText('Event title')).toHaveValue('Science fair');
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Log event' }));
-    expect(screen.getByLabelText('Event title *')).toBeDisabled();
+    expect(screen.getByLabelText('Event title')).toBeDisabled();
     second.unmount();
     setup();
     expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
@@ -184,15 +184,15 @@ describe('Modern Outreach', () => {
     api.apiFetch.mockImplementation((_u: string, init?: any) => (init?.method === 'POST' ? new Promise((r) => { pending.push(r); }) : json({})));
     setup();
     fireEvent.click(screen.getByRole('button', { name: /Log event/ }));
-    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'First' } });
+    fireEvent.change(await screen.findByLabelText('Event title'), { target: { value: 'First' } });
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Log event' }));
     act(() => clearDrafts());
     fireEvent.click(screen.getAllByRole('button', { name: /Log event/ })[0]);
-    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'Second' } });
+    fireEvent.change(await screen.findByLabelText('Event title'), { target: { value: 'Second' } });
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Log event' }));
     expect(pending).toHaveLength(2);
     await act(async () => { pending[0]({ ok: true, json: async () => ({}) }); });
-    expect(screen.getByLabelText('Event title *')).toBeDisabled();
+    expect(screen.getByLabelText('Event title')).toBeDisabled();
     await act(async () => { pending[1]({ ok: true, json: async () => ({}) }); });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
@@ -241,7 +241,7 @@ describe('Modern Outreach', () => {
   it('events with fractional hours can be edited and keep their hours', async () => {
     setup({ outreach: [{ ...EVENTS[0], hours: 1.5 }] });
     await menu('Actions for Library demo', /Edit event/);
-    fireEvent.change(await screen.findByLabelText('Event title *'), { target: { value: 'Library demo (renamed)' } });
+    fireEvent.change(await screen.findByLabelText('Event title'), { target: { value: 'Library demo (renamed)' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(calls('/api/outreach/1', 'PATCH')).toHaveLength(1));
     expect(body('/api/outreach/1', 'PATCH')).toMatchObject({ hours: 1.5, title: 'Library demo (renamed)' });

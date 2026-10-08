@@ -146,6 +146,7 @@ function OverviewTab({ ctl }: { ctl: Ctl }) {
         <Stat icon={Zap} label="AI messages today" value={<AnimatedValue value={ctl.aiOverview?.today?.messages || 0} />} />
         <Stat icon={MessageSquareHeart} label="Feedback notes" value={<AnimatedValue value={t.feedback || 0} />} />
       </Reveal>
+      <EmailHealth health={ctl.overview?.email} />
       <Section title="Workspaces" description="Every team on Control Point and how active each one is.">
         {teams.length ? (
           <div className="overflow-x-auto rounded-xl border border-border">
@@ -169,6 +170,19 @@ function OverviewTab({ ctl }: { ctl: Ctl }) {
       </Section>
       <FtcDuplicates />
     </>
+  );
+}
+
+/** Is signup email working? Configured key + the last send outcome since boot. */
+function EmailHealth({ health }: { health?: { configured: boolean; lastOkAt: string | null; lastError: string | null; lastErrorAt: string | null } }) {
+  if (!health) return null;
+  const failing = !health.configured || (health.lastErrorAt && (!health.lastOkAt || health.lastErrorAt > health.lastOkAt));
+  const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'not since the last restart');
+  return (
+    <div role="status" className={cn('mb-8 rounded-xl border p-4 text-sm', failing ? 'border-destructive/40 bg-destructive/10' : 'border-border bg-card')}>
+      <p className="font-medium">{!health.configured ? 'Email is not configured: signup codes are not being sent' : failing ? 'The last email failed to send' : 'Email is sending normally'}</p>
+      <p className="mt-1 text-muted-foreground">Last delivered to the provider: {when(health.lastOkAt)}.{health.lastError ? ` Last error (${when(health.lastErrorAt)}): ${health.lastError}` : ''}</p>
+    </div>
   );
 }
 

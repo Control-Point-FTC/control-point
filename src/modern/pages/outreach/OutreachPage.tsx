@@ -12,7 +12,7 @@ import { cn } from '../../../components/cn';
 import {
   Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DropdownMenu,
   DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, Label, Sheet, SheetContent,
-  SheetDescription, SheetFooter, SheetHeader, SheetTitle, Textarea, ToggleGroup, ToggleGroupItem,
+  SheetDescription, SheetFooter, SheetHeader, SheetTitle, Textarea, ToggleGroup, ToggleGroupItem, RequiredMark,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { OUTREACH_PRESETS, useOutreachController } from '../../../components/outreach/useOutreachController';
@@ -266,7 +266,7 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
           <SheetTitle>{ctl.editingId ? 'Edit outreach event' : 'Log outreach event'}</SheetTitle>
           <SheetDescription>{ctl.editingId ? 'Update the details below.' : 'Pick a quick type or fill in the details.'}</SheetDescription>
         </SheetHeader>
-        <form id="outreach-form" className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void ctl.handleSubmit(); }}>
+        <form id="outreach-form" noValidate className="flex-1 space-y-5 overflow-y-auto px-6 py-5" onSubmit={(e) => { e.preventDefault(); void ctl.handleSubmit(); }}>
           <fieldset disabled={ctl.saving} className="m-0 min-w-0 space-y-5 border-0 p-0">
           {!ctl.editingId && (
             <ToggleGroup variant="chips" type="single" aria-label="Quick type" value={OUTREACH_PRESETS.includes(f.title) ? f.title : ''} onValueChange={(v) => { if (v) ctl.setForm((cur) => ({ ...cur, title: v })); }}>
@@ -276,8 +276,8 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
             </ToggleGroup>
           )}
           <div className="grid gap-2">
-            <Label htmlFor="oe-title">Event title *</Label>
-            <Input id="oe-title" value={f.title} onChange={ctl.set('title')} placeholder="e.g. Library STEM Demo" className="max-sm:h-11" />
+            <Label htmlFor="oe-title">Event title <RequiredMark /></Label>
+            <Input id="oe-title" required value={f.title} onChange={ctl.set('title')} placeholder="e.g. Library STEM Demo" className="max-sm:h-11" />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="oe-description">Description</Label>
@@ -285,8 +285,8 @@ function EventSheet({ ctl }: { ctl: Ctl }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2">
-              <Label htmlFor="oe-date">Date *</Label>
-              <Input id="oe-date" type="date" value={f.date} onChange={ctl.set('date')} className="max-sm:h-11" />
+              <Label htmlFor="oe-date">Date <RequiredMark /></Label>
+              <Input id="oe-date" required type="date" value={f.date} onChange={ctl.set('date')} className="max-sm:h-11" />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="oe-location">Location</Label>

@@ -133,6 +133,32 @@ export interface BudgetEntry { type: 'income' | 'expense'; amount: number; categ
  * Validate a budget create (existing = null) or update (patch merged over the
  * stored row). Returns the clean entry or a user-facing error.
  */
+/**
+ * Required text fields, shared by forms and the API so a blank title or
+ * description is refused in both places. Returns the first problem as a
+ * sentence ("Add a description"), or null when every field has text.
+ */
+export function requiredTextError(values: Record<string, unknown>, fields: Array<[key: string, label: string]>): string | null {
+  for (const [key, label] of fields) {
+    if (!String(values?.[key] ?? '').trim()) return `Add ${/^[aeiou]/i.test(label) ? 'an' : 'a'} ${label}`;
+  }
+  return null;
+}
+
+/** Required fields per record type (the form and the API use the same lists). */
+export const REQUIRED = {
+  task: [['title', 'title']] as Array<[string, string]>,
+  budget: [['description', 'description'], ['category', 'category']] as Array<[string, string]>,
+  outreach: [['title', 'title'], ['date', 'date']] as Array<[string, string]>,
+  communication: [['recipient', 'contact'], ['subject', 'subject']] as Array<[string, string]>,
+};
+
+/** A log entry needs a contact and subject; a reply in a thread needs a subject or a message. */
+export function communicationError(values: Record<string, unknown>, isReply: boolean): string | null {
+  if (!isReply) return requiredTextError(values, REQUIRED.communication);
+  return String(values?.body ?? '').trim() || String(values?.subject ?? '').trim() ? null : 'Add a message';
+}
+
 export function budgetEntryFrom(body: any, existing: Partial<BudgetEntry> | null): BudgetEntry | { error: string } {
   const b = body || {};
   const pick = <K extends keyof BudgetEntry>(k: K) => (b[k] !== undefined ? b[k] : existing?.[k]);
@@ -146,5 +172,7 @@ export function budgetEntryFrom(body: any, existing: Partial<BudgetEntry> | null
   if (category.length > 80) return { error: 'Category must be 80 characters or fewer' };
   const description = String(pick('description') ?? '').trim();
   if (description.length > 500) return { error: 'Description must be 500 characters or fewer' };
+  const missing = requiredTextError({ description, category }, REQUIRED.budget);
+  if (missing) return { error: missing };
   return { type, amount: money.value, category, description, date };
 }

@@ -6,7 +6,7 @@ import { CalendarDays, CheckCircle2, Circle, CircleDot, Crown, Loader2, Pencil, 
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Switch, Textarea,
-  ToggleGroup, ToggleGroupItem, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator,
+  ToggleGroup, ToggleGroupItem, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, RequiredMark,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { taskAssigneeIds, type useTasksController } from '../../../components/tasks/useTasksController';
@@ -158,7 +158,7 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
               </div>
             )}
             <div className="grid gap-2">
-              <Label htmlFor="task-title">Title</Label>
+              <Label htmlFor="task-title">Title <RequiredMark /></Label>
               <Input id="task-title" required autoFocus={editing} value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder="What needs doing?" />
             </div>
             <div className="grid gap-2">

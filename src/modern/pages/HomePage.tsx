@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { format } from 'date-fns';
 import {
   AtSign, CalendarDays, CheckCircle2, CircleDot, Clock, ListTodo, LogOut, MapPin, RefreshCw, Sparkles,
-  Trophy, UserCheck, Wallet, Users, ArrowUpRight, Compass, ChevronRight, CalendarCheck, PartyPopper,
+  Trophy, UserCheck, Wallet, Users, ArrowUpRight, Compass, ChevronRight, CalendarCheck, PartyPopper, Plus,
 } from 'lucide-react';
 import { cn } from '../../components/cn';
 import {
@@ -56,7 +56,7 @@ export function HomePage(props: HomePageProps) {
     teams, members, attendance, tasks, setTasks, events, budget, currentUser, isAdmin, hiddenDates,
     setAttendance, setLoading, onRefresh, onRequestComplete, summary, insights, isAiLoading,
     updateSummary, updateInsights, onboardingState, onContinueSetup, onDismissChecklist, notifications,
-    activeChannelId,
+    activeChannelId, hasScope,
   } = props;
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -90,6 +90,12 @@ export function HomePage(props: HomePageProps) {
         actions={
           <>
             <CheckInControl self={self} />
+            {/* Always here (audit V3-M2): a fixed way to add a task, never a rotating suggestion. */}
+            {hasScope?.('tasks') && (
+              <Button variant="outline" onClick={() => navigate('/tasks?new=1')}>
+                <Plus /> New task
+              </Button>
+            )}
             {/* The Dashboard's one primary action (audit UX-7). */}
             <Button onClick={() => openBruno()} className="hidden sm:inline-flex">
               <Sparkles /> Ask Bruno <kbd className="ml-1 rounded border border-current/30 px-1 text-[11px] font-medium opacity-70">⌘J</kbd>

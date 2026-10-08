@@ -13,7 +13,7 @@ import { confirmDialog, notify } from '../dialog';
 import { getDraft, inEpoch, useDraft } from '../../modern/drafts';
 import { useContextMenu } from '../contextmenu/ContextMenuProvider';
 import { defaultTeamId } from '../tasks/useTasksController';
-import { MONEY_CONFIRM_AT, formatMoney, parseMoney } from '../../utils/validation';
+import { MONEY_CONFIRM_AT, REQUIRED, formatMoney, parseMoney, requiredTextError } from '../../utils/validation';
 
 export interface BudgetForm { team_id: string; type: string; amount: string; category: string; description: string; date: string }
 const today = () => format(new Date(), 'yyyy-MM-dd');
@@ -72,8 +72,11 @@ export function useBudgetController({ budget, setBudget, teams, refresh, hasScop
 
   const handleAdd = async () => {
     if (getDraft('budget:saving', false)) return;
-    const money = parseMoney(getDraft<BudgetForm>(FORM_KEY, newItem).amount);
+    const form = getDraft<BudgetForm>(FORM_KEY, newItem);
+    const money = parseMoney(form.amount);
     if (money.ok === false) { notify(money.error, 'error'); return; }
+    const missing = requiredTextError(form as any, REQUIRED.budget);
+    if (missing) { notify(missing, 'error'); return; }
     // Large entries are usually a typo (an extra zero) — ask before saving.
     if (money.value >= MONEY_CONFIRM_AT && !(await confirmDialog({
       title: 'Large amount',

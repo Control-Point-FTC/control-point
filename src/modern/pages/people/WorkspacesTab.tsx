@@ -53,14 +53,14 @@ export function WorkspacesTab({ ctl, teams, members, onSwitchTeam, onDeleteTeam,
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-4">
                   {!active && <Button variant="outline" size="sm" className="max-sm:h-11" onClick={() => onSwitchTeam(team.id)}><Repeat /> Switch</Button>}
                   {active && <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Check className="size-3.5 text-success" /> You’re here</span>}
-                  {ctl.isAdmin ? (
-                    <>
-                      <Button variant="ghost" size="sm" className="ml-auto max-sm:h-11" onClick={() => ctl.openEditTeam(team)}><Pencil /> Edit</Button>
-                      <Button variant="ghost" size="icon-sm" className="text-destructive hover:text-destructive max-sm:size-11" aria-label={`Delete ${team.name}`} onClick={() => onDeleteTeam(team)}><Trash2 /></Button>
-                    </>
-                  ) : (
-                    <Button variant="ghost" size="sm" className="ml-auto text-warning hover:text-warning max-sm:h-11" onClick={() => onLeaveTeam(team)}><LogOut /> Leave</Button>
-                  )}
+                  {/* Your role in THIS workspace decides what you can do with it
+                      (not your role in the active one). Anyone may leave; the
+                      server asks a last admin to hand over first. */}
+                  <span className="ml-auto flex flex-wrap gap-1">
+                    {team.can_manage && active && <Button variant="ghost" size="sm" className="max-sm:h-11" onClick={() => ctl.openEditTeam(team)}><Pencil /> Edit</Button>}
+                    <Button variant="ghost" size="sm" className="text-warning hover:text-warning max-sm:h-11" onClick={() => onLeaveTeam(team)}><LogOut /> Leave</Button>
+                    {team.can_manage && <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive max-sm:h-11" onClick={() => onDeleteTeam(team)}><Trash2 /> Delete</Button>}
+                  </span>
                 </div>
               </motion.div>
             </StaggerItem>

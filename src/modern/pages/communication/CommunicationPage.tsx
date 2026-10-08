@@ -12,7 +12,7 @@ import { cn } from '../../../components/cn';
 import {
   Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DropdownMenu, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuTrigger, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Textarea,
-  ToggleGroup, ToggleGroupItem,
+  ToggleGroup, ToggleGroupItem, RequiredMark,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { ImportEmailDialog, QuickAddDialog } from './LogDialogs';
@@ -227,8 +227,8 @@ function NewLogSheet({ ctl }: { ctl: Ctl }) {
               <ToggleGroupItem value="email"><Mail /> Email</ToggleGroupItem>
               <ToggleGroupItem value="announcement"><Megaphone /> Announcement</ToggleGroupItem>
             </ToggleGroup>
-            <div className="grid gap-2"><Label htmlFor="comm-to">To</Label><Input id="comm-to" value={f.recipient} onChange={(e) => set({ recipient: e.target.value })} placeholder="Sponsor, parents, venue…" /></div>
-            <div className="grid gap-2"><Label htmlFor="comm-subject">Subject</Label><Input id="comm-subject" value={f.subject} onChange={(e) => set({ subject: e.target.value })} /></div>
+            <div className="grid gap-2"><Label htmlFor="comm-to">To <RequiredMark /></Label><Input id="comm-to" required value={f.recipient} onChange={(e) => set({ recipient: e.target.value })} placeholder="Sponsor, parents, venue…" /></div>
+            <div className="grid gap-2"><Label htmlFor="comm-subject">Subject <RequiredMark /></Label><Input id="comm-subject" required value={f.subject} onChange={(e) => set({ subject: e.target.value })} /></div>
             <div className="grid gap-2"><Label htmlFor="comm-date">Sent</Label><Input id="comm-date" type="datetime-local" value={toInput(f.date)} onChange={(e) => set({ date: fromInput(e.target.value) })} /></div>
             <div className="grid gap-2"><Label htmlFor="comm-body">Message</Label><Textarea id="comm-body" value={f.body} onChange={(e) => set({ body: e.target.value })} className="min-h-40" /></div>
           </div>
@@ -287,8 +287,8 @@ function EditDialog({ ctl }: { ctl: Ctl }) {
           </ToggleGroup>
           {isRoot && (
             <>
-              <div className="grid gap-2"><Label htmlFor="edit-to">To</Label><Input id="edit-to" value={f.recipient} onChange={(ev) => set({ recipient: ev.target.value })} /></div>
-              <div className="grid gap-2"><Label htmlFor="edit-subject">Subject</Label><Input id="edit-subject" value={f.subject} onChange={(ev) => set({ subject: ev.target.value })} /></div>
+              <div className="grid gap-2"><Label htmlFor="edit-to">To <RequiredMark /></Label><Input id="edit-to" required value={f.recipient} onChange={(ev) => set({ recipient: ev.target.value })} /></div>
+              <div className="grid gap-2"><Label htmlFor="edit-subject">Subject <RequiredMark /></Label><Input id="edit-subject" required value={f.subject} onChange={(ev) => set({ subject: ev.target.value })} /></div>
             </>
           )}
           <div className="grid gap-2"><Label htmlFor="edit-date">When</Label><Input id="edit-date" type="datetime-local" value={toInput(f.date)} onChange={(ev) => set({ date: fromInput(ev.target.value) })} /></div>
