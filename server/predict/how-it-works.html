@@ -1,22 +1,10 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>How Control Point Predict Works</title>
-<meta name="description" content="How Control Point Predict rates FTC robots, predicts matches, simulates whole events and estimates advancement odds, with the real accuracy numbers.">
-<meta property="og:title" content="How Control Point Predict Works">
-<meta property="og:description" content="Robot ratings, match odds, event simulation and how accurate it all is, explained with real FTC data.">
-<meta property="og:image" content="/og-image.jpg">
-<meta property="og:type" content="article">
-<meta name="theme-color" content="#0f1116">
-<link rel="icon" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
 <style>
-/* Layout: one reading column (~66ch) on a foam-tile ground; figures break out wider like a match-day programme.
-   Motion: Arc-style springs, staggered blur-in reveals, a floating section pill with a sliding indicator. */
+/* Layout: one reading column (~66ch) on a foam-tile ground; figures break out wider like a match-day programme. */
 :root {
   --bg: #eceff3;        /* field foam tile */
   --paper: #ffffff;     /* figure panels */
@@ -29,33 +17,23 @@
   --gold: #a87f00;      /* gold that reads as text on light */
   --gold-fill: #f5c400; /* Control Point gold */
   --good: #1f8a5b;
-  --glass: rgba(255,255,255,.72);
-  --glow: rgba(245,196,0,.16);
-  --shadow: 0 18px 40px -24px rgba(20,24,32,.35);
   --display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   --body: "Source Serif 4", Georgia, "Times New Roman", serif;
   --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
-  --spring: cubic-bezier(.34, 1.56, .64, 1);
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0f1116; --paper: #171a21; --ink: #e8eaee; --muted: #9aa2b1; --line: #2a303b; --tile: #1a1e26;
-    --red: #ff5e63; --blue: #5d95ff; --gold: #f5c400; --gold-fill: #f5c400; --good: #3fc48a;
-    --glass: rgba(23,26,33,.72); --glow: rgba(245,196,0,.10); --shadow: 0 18px 40px -20px rgba(0,0,0,.7); color-scheme: dark;
+    --red: #ff5e63; --blue: #5d95ff; --gold: #f5c400; --gold-fill: #f5c400; --good: #3fc48a; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1116; --paper: #171a21; --ink: #e8eaee; --muted: #9aa2b1; --line: #2a303b; --tile: #1a1e26;
-  --red: #ff5e63; --blue: #5d95ff; --gold: #f5c400; --gold-fill: #f5c400; --good: #3fc48a;
-  --glass: rgba(23,26,33,.72); --glow: rgba(245,196,0,.10); --shadow: 0 18px 40px -20px rgba(0,0,0,.7); color-scheme: dark;
+  --red: #ff5e63; --blue: #5d95ff; --gold: #f5c400; --gold-fill: #f5c400; --good: #3fc48a; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 84px; }
 body {
-  margin: 0;
   background-color: var(--bg);
   background-image:
     linear-gradient(var(--tile) 1px, transparent 1px),
@@ -64,80 +42,17 @@ body {
   color: var(--ink);
   font: 400 1.125rem/1.68 var(--body);
   padding: 0 20px;
-  -webkit-font-smoothing: antialiased;
 }
-img { max-width: 100%; }
-[hidden] { display: none !important; }
-.wrap { max-width: 1040px; margin: 0 auto; padding-block: 104px 96px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 48px 96px; }
 .col { max-width: 40rem; margin: 0 auto; }
 
-/* ---------- floating bar (Arc-style pill) ---------- */
-.bar {
-  position: fixed; z-index: 50; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 14px);
-  transform: translateX(-50%);
-  width: min(1040px, calc(100% - 24px));
-  display: flex; align-items: center; gap: .5rem;
-  padding: 6px; border-radius: 14px;
-  background: var(--glass); border: 1px solid var(--line);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-.bar .progress { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--gold-fill); transform-origin: left; transform: scaleX(0); }
-.home {
-  flex: none; display: inline-flex; align-items: center; gap: .5rem; text-decoration: none; color: var(--ink);
-  font-family: var(--display); font-weight: 800; font-size: .86rem; padding: .45rem .75rem .45rem .5rem; border-radius: 9px;
-  transition: background .25s var(--ease), transform .35s var(--spring);
-}
-.home:hover { background: var(--bg); }
-.home:active { transform: scale(.96); }
-.home .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--gold-fill); display: grid; place-items: center; }
-.home .mark svg { width: 14px; height: 14px; }
-.home .lbl-short { display: none; }
-.toc { position: relative; flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
-.toc::-webkit-scrollbar { display: none; }
-.toc a {
-  position: relative; z-index: 1; flex: none; text-decoration: none; color: var(--muted);
-  font-family: var(--display); font-weight: 650; font-size: .82rem; padding: .45rem .7rem; border-radius: 8px;
-  transition: color .25s var(--ease);
-}
-.toc a.active { color: #15171c; }
-.toc .ind { position: absolute; z-index: 0; top: 0; height: 100%; border-radius: 8px; background: var(--gold-fill); transition: transform .5s var(--spring), width .5s var(--spring), opacity .3s; opacity: 0; }
-.kbtn {
-  flex: none; font-family: var(--mono); font-size: .74rem; color: var(--muted); background: var(--bg); border: 1px solid var(--line);
-  border-radius: 8px; padding: .4rem .55rem; cursor: pointer; transition: transform .35s var(--spring), color .2s;
-}
-.kbtn:hover { color: var(--ink); }
-.kbtn:active { transform: scale(.94); }
-@media (max-width: 640px) {
-  .home .lbl-long { display: none; } .home .lbl-short { display: inline; }
-  .kbtn { display: none; }
-}
-
-/* ---------- command palette ---------- */
-.pal-back { position: fixed; inset: 0; z-index: 80; background: rgba(10,12,16,.35); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); opacity: 0; transition: opacity .25s var(--ease); }
-.pal-back.open { opacity: 1; }
-.pal {
-  position: fixed; z-index: 81; left: 50%; top: 18vh; width: min(560px, calc(100% - 32px));
-  transform: translateX(-50%) scale(.96); opacity: 0; transition: transform .45s var(--spring), opacity .2s var(--ease);
-  background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 30px 80px -30px rgba(0,0,0,.55); overflow: hidden;
-}
-.pal.open { transform: translateX(-50%) scale(1); opacity: 1; }
-.pal input { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); font: 500 1rem var(--display); padding: 1rem 1.1rem; outline: none; }
-.pal ul { list-style: none; margin: 0; padding: .4rem; max-height: 50vh; overflow: auto; }
-.pal li { display: flex; justify-content: space-between; gap: 1rem; padding: .6rem .75rem; border-radius: 9px; cursor: pointer; font-family: var(--display); font-weight: 600; font-size: .95rem; }
-.pal li span { font-family: var(--mono); font-size: .74rem; color: var(--muted); font-weight: 400; }
-.pal li.sel { background: var(--gold-fill); color: #15171c; }
-.pal li.sel span { color: #15171c; }
-
 /* ---------- type ---------- */
-h1, h2, h3, .eyebrow, .fig-label, .stat b, .btn { font-family: var(--display); }
+h1, h2, h3, .eyebrow, .kicker, .fig-label, .stat b, .btn { font-family: var(--display); }
 h1 {
   font-size: clamp(2.6rem, 7.5vw, 5.4rem); line-height: .92; margin: 0;
   font-weight: 900; font-stretch: 72%; letter-spacing: -.01em; text-transform: uppercase; text-wrap: balance;
 }
 h1 .gold { color: var(--gold); }
-h1 .w { display: inline-block; }
 h2 {
   font-size: clamp(1.7rem, 3.6vw, 2.4rem); line-height: 1.02; margin: 0 0 .6rem;
   font-weight: 850; font-stretch: 78%; text-transform: uppercase; text-wrap: balance;
@@ -146,22 +61,18 @@ h3 { font-size: 1.15rem; font-weight: 750; font-stretch: 90%; margin: 1.6rem 0 .
 .eyebrow { display: flex; align-items: center; gap: .6rem; font-size: .8rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-stretch: 100%; }
 .eyebrow .num { background: var(--gold-fill); color: #15171c; padding: .1rem .45rem; border-radius: 3px; font-variant-numeric: tabular-nums; }
 p { margin: 0 0 1.05rem; }
-.lede { font-size: 1.32rem; line-height: 1.55; }
+.lede { font-size: 1.32rem; line-height: 1.55; color: var(--ink); }
 .muted { color: var(--muted); }
 code, .mono { font-family: var(--mono); font-size: .86em; }
 code { background: var(--paper); border: 1px solid var(--line); padding: .05em .35em; border-radius: 4px; }
 strong { font-weight: 600; }
+.r { color: var(--red); font-weight: 600; }
+.b { color: var(--blue); font-weight: 600; }
 a { color: var(--blue); }
 :focus-visible { outline: 3px solid var(--gold-fill); outline-offset: 2px; }
 
 section { margin-top: 5.5rem; }
 .section-head { display: grid; gap: .7rem; margin-bottom: 1.4rem; }
-
-/* ---------- reveal (only when JS + motion are on) ---------- */
-.anim .reveal { opacity: 0; transform: translateY(16px); filter: blur(6px); transition: opacity .7s var(--ease), transform .8s var(--spring), filter .7s var(--ease); transition-delay: calc(var(--i, 0) * 70ms); }
-.anim .reveal.in { opacity: 1; transform: none; filter: none; }
-.anim h1 .w { opacity: 0; transform: translateY(.35em) rotate(2deg); filter: blur(8px); transition: opacity .7s var(--ease), transform .9s var(--spring), filter .7s var(--ease); transition-delay: calc(var(--i) * 80ms + 120ms); }
-.anim.loaded h1 .w { opacity: 1; transform: none; filter: none; }
 
 /* ---------- hero ---------- */
 .hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 2.5rem; align-items: end; }
@@ -169,12 +80,11 @@ section { margin-top: 5.5rem; }
 .byline { font-family: var(--mono); font-size: .8rem; color: var(--muted); letter-spacing: .02em; }
 @media (max-width: 820px) { .hero { grid-template-columns: 1fr; } }
 
-.matchcard { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); min-width: 0; transition: transform .6s var(--spring); }
-.matchcard:hover { transform: translateY(-3px); }
+/* match card */
+.matchcard { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: 0 18px 40px -24px rgba(0,0,0,.35); min-width: 0; }
 .mc-top { display: flex; justify-content: space-between; align-items: center; padding: .7rem 1rem; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: .76rem; color: var(--muted); gap: .5rem; flex-wrap: wrap; }
 .live-dot { display: inline-flex; align-items: center; gap: .4rem; color: var(--good); font-weight: 600; }
-.live-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: pulse 2s infinite; }
-@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(31,138,91,.5); } 70% { box-shadow: 0 0 0 8px rgba(31,138,91,0); } 100% { box-shadow: 0 0 0 0 rgba(31,138,91,0); } }
+.live-dot::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
 .mc-sides { display: grid; grid-template-columns: 1fr 1fr; }
 .side { padding: 1rem 1rem 1.1rem; display: grid; gap: .25rem; }
 .side.red { border-top: 5px solid var(--red); }
@@ -185,25 +95,16 @@ section { margin-top: 5.5rem; }
 .side.blue .pct { color: var(--blue); }
 .side .score { font-family: var(--mono); font-size: .8rem; }
 .mc-bar { display: flex; height: 10px; }
-.mc-bar span { transition: flex-grow .9s var(--spring); }
 .mc-bar span:first-child { background: var(--red); }
 .mc-bar span:last-child { background: var(--blue); }
-.mc-foot { padding: .65rem 1rem; font-size: .82rem; color: var(--muted); border-top: 1px solid var(--line); font-style: italic; min-height: 3.6em; }
-.mc-dots { display: flex; gap: 6px; padding: 0 1rem .8rem; }
-.mc-dots button { width: 8px; height: 8px; padding: 0; border-radius: 50%; border: 0; background: var(--line); cursor: pointer; transition: width .45s var(--spring), background .3s; }
-.mc-dots button[aria-pressed="true"] { width: 22px; border-radius: 4px; background: var(--gold-fill); }
+.mc-foot { padding: .65rem 1rem; font-size: .82rem; color: var(--muted); border-top: 1px solid var(--line); font-family: var(--body); font-style: italic; }
 
-/* ---------- panels with pointer glow ---------- */
+/* ---------- figures ---------- */
 figure { margin: 2.2rem auto; max-width: 1040px; }
 figure.narrow { max-width: 46rem; }
-.panel { position: relative; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 1.3rem 1.3rem 1rem; overflow: hidden; isolation: isolate; }
-.panel::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .4s var(--ease);
-  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%), var(--glow), transparent 60%); }
-.panel:hover::before { opacity: 1; }
-.scroll-x { overflow-x: auto; }
+.panel { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 1.3rem 1.3rem 1rem; overflow-x: auto; }
 .fig-label { font-size: .74rem; letter-spacing: .14em; font-weight: 800; text-transform: uppercase; color: var(--gold); margin-bottom: .2rem; }
 .fig-title { font-family: var(--display); font-weight: 750; font-size: 1.12rem; font-stretch: 92%; margin-bottom: .8rem; }
-.fig-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
 figcaption { font-size: .9rem; color: var(--muted); line-height: 1.5; max-width: 46rem; margin: .7rem auto 0; padding: 0 .2rem; }
 svg { display: block; width: 100%; height: auto; overflow: visible; }
 svg text { font-family: var(--mono); fill: var(--muted); font-size: 11px; }
@@ -217,167 +118,84 @@ svg .axis { stroke: var(--muted); stroke-width: 1; }
 .legend { display: flex; flex-wrap: wrap; gap: .4rem 1.1rem; font-family: var(--mono); font-size: .76rem; color: var(--muted); margin-top: .5rem; }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: .35rem; }
 
-/* chart entrance animations */
-.bar-h, .bar-v, .pop, .draw { transform-box: fill-box; }
-.anim .bar-h { transform-origin: left center; transform: scaleX(0); transition: transform .9s var(--spring); transition-delay: calc(var(--i, 0) * 90ms); }
-.anim .bar-v { transform-origin: center bottom; transform: scaleY(0); transition: transform .9s var(--spring); transition-delay: calc(var(--i, 0) * 70ms); }
-.anim .pop { transform-origin: center; transform: scale(0); transition: transform .6s var(--spring); transition-delay: calc(var(--i, 0) * 45ms); }
-.anim .draw { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 1.6s var(--ease); }
-.anim .fade-late { opacity: 0; transition: opacity .6s var(--ease) .5s; }
-.anim .seen .bar-h, .anim .seen .bar-v, .anim .seen .pop { transform: none; }
-.anim .seen .draw { stroke-dashoffset: 0; }
-.anim .seen .fade-late { opacity: 1; }
-[data-tip] { cursor: default; }
-.bar-h:hover, .bar-v:hover { filter: brightness(1.1); }
-
-.tip {
-  position: fixed; z-index: 90; pointer-events: none; padding: .4rem .6rem; border-radius: 8px;
-  background: var(--ink); color: var(--bg); font: 500 .76rem/1.35 var(--mono); max-width: 240px;
-  opacity: 0; transform: translateY(4px) scale(.96); transition: opacity .15s, transform .3s var(--spring);
-}
-.tip.on { opacity: 1; transform: none; }
-
 /* pipeline */
 .pipe { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; position: relative; }
-.stage { border: 1px solid var(--line); border-radius: 10px; padding: .9rem .9rem 1rem; background: var(--bg); display: grid; gap: .35rem; align-content: start; position: relative; min-width: 0; cursor: pointer;
-  transition: transform .5s var(--spring), border-color .3s, background .3s; }
-.stage:hover, .stage.on { transform: translateY(-4px); border-color: var(--gold-fill); }
-.stage.on { background: var(--paper); }
+.stage { border: 1px solid var(--line); border-radius: 8px; padding: .9rem .9rem 1rem; background: var(--bg); display: grid; gap: .35rem; align-content: start; position: relative; min-width: 0; }
 .stage .n { font-family: var(--display); font-weight: 900; font-stretch: 70%; font-size: 2rem; line-height: 1; color: var(--gold); }
 .stage b { font-family: var(--display); font-weight: 750; font-size: 1rem; }
 .stage p { font-size: .88rem; line-height: 1.45; margin: 0; color: var(--muted); }
 .stage .out { font-family: var(--mono); font-size: .74rem; color: var(--ink); border-top: 1px dashed var(--line); padding-top: .45rem; margin-top: .2rem; }
 .stage:not(:last-child)::after { content: "→"; position: absolute; right: -.75rem; top: 1.1rem; font-family: var(--display); font-weight: 900; color: var(--gold); font-size: 1.1rem; }
-.pipe-detail { margin-top: 1rem; display: grid; grid-template-rows: 0fr; transition: grid-template-rows .55s var(--spring); }
-.pipe-detail.open { grid-template-rows: 1fr; }
-.pipe-detail > div { overflow: hidden; }
-.pipe-detail .inner { border-top: 1px solid var(--line); padding-top: .9rem; font-size: .95rem; display: grid; gap: .4rem; }
-.pipe-detail .inner b { font-family: var(--display); }
 @media (max-width: 760px) { .pipe { grid-template-columns: 1fr 1fr; } .stage:nth-child(2)::after { content: none; } }
 @media (max-width: 460px) { .pipe { grid-template-columns: 1fr; } .stage::after { content: none !important; } }
 
-/* chips */
+/* component chips */
 .chips { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
-.chip { border-radius: 10px; padding: .8rem; border: 1px solid var(--line); background: var(--bg); min-width: 0; transition: transform .5s var(--spring); }
-.chip:hover { transform: translateY(-3px) rotate(-.4deg); }
+.chip { border-radius: 8px; padding: .8rem; border: 1px solid var(--line); background: var(--bg); min-width: 0; }
 .chip .k { font-family: var(--mono); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 .chip .v { font-family: var(--display); font-weight: 850; font-stretch: 75%; font-size: 1.9rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .chip .d { font-size: .82rem; color: var(--muted); line-height: 1.35; }
 .chip.pen .v { color: var(--red); }
 @media (max-width: 640px) { .chips { grid-template-columns: 1fr 1fr; } }
 
-.calc { font-family: var(--mono); font-size: .86rem; line-height: 1.9; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem; overflow-x: auto; white-space: nowrap; }
+/* worked example */
+.calc { font-family: var(--mono); font-size: .86rem; line-height: 1.9; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem; overflow-x: auto; white-space: nowrap; }
 .calc .hl { background: var(--gold-fill); color: #15171c; padding: 0 .25rem; border-radius: 3px; }
 
-/* stats */
-.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin: 2rem 0; }
+/* stats strip */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 2rem 0; }
 .stat { background: var(--paper); padding: 1rem; display: grid; gap: .15rem; min-width: 0; }
 .stat b { font-weight: 900; font-stretch: 70%; font-size: 2.3rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .stat span { font-size: .82rem; color: var(--muted); line-height: 1.35; }
 @media (max-width: 700px) { .stats { grid-template-columns: 1fr 1fr; } }
 
+/* pullquote */
 .pull { font-family: var(--display); font-weight: 800; font-stretch: 80%; font-size: clamp(1.5rem, 3.2vw, 2.1rem); line-height: 1.1; text-transform: uppercase; border-left: 6px solid var(--gold-fill); padding: .3rem 0 .3rem 1.1rem; margin: 2.4rem 0; text-wrap: balance; }
 
-/* controls */
+/* playground */
 .play { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 1.6rem; align-items: center; }
 @media (max-width: 760px) { .play { grid-template-columns: 1fr; } }
-.ctrl { display: grid; gap: 1rem; min-width: 0; }
+.ctrl { display: grid; gap: 1rem; }
 .ctrl label { display: grid; gap: .3rem; font-family: var(--mono); font-size: .8rem; color: var(--muted); }
 .ctrl label .row { display: flex; justify-content: space-between; gap: .5rem; }
 .ctrl label .row b { color: var(--ink); font-variant-numeric: tabular-nums; }
 input[type=range] { width: 100%; accent-color: var(--gold-fill); }
-.seg { position: relative; display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
-.seg button { position: relative; z-index: 1; font-family: var(--mono); font-size: .76rem; background: transparent; color: var(--muted); border: 0; padding: .45rem .7rem; cursor: pointer; transition: color .25s; }
-.seg button[aria-pressed="true"] { color: #15171c; font-weight: 600; }
-.seg .seg-ind { position: absolute; z-index: 0; top: 0; bottom: 0; left: 0; background: var(--gold-fill); border-radius: 7px; transition: transform .5s var(--spring), width .5s var(--spring); }
-.btn {
-  display: inline-flex; align-items: center; gap: .5rem; border: 0; cursor: pointer; border-radius: 9px;
-  background: var(--gold-fill); color: #15171c; font-weight: 800; font-size: .9rem; padding: .6rem 1rem;
-  transition: transform .35s var(--spring), box-shadow .3s; box-shadow: 0 6px 18px -8px rgba(245,196,0,.7);
-}
-.btn:hover { transform: translateY(-1px); }
-.btn:active { transform: scale(.96); }
-.btn.ghost { background: var(--bg); color: var(--ink); border: 1px solid var(--line); box-shadow: none; }
-.btn[disabled] { opacity: .6; cursor: progress; }
-.row-btns { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { font-family: var(--mono); font-size: .76rem; background: var(--bg); color: var(--muted); border: 0; padding: .45rem .7rem; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--gold-fill); color: #15171c; font-weight: 600; }
 .readout { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; font-family: var(--display); }
-.readout .big { font-weight: 900; font-stretch: 70%; font-size: 3.2rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--red); transition: color .3s; }
+.readout .big { font-weight: 900; font-stretch: 70%; font-size: 3.2rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--red); }
 .readout .lbl { font-size: .95rem; color: var(--muted); font-weight: 600; }
-.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
-.kpi { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .75rem; background: var(--bg); min-width: 0; }
-.kpi b { display: block; font-family: var(--display); font-weight: 900; font-stretch: 72%; font-size: 1.9rem; line-height: 1; font-variant-numeric: tabular-nums; }
-.kpi span { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
-.note { font-family: var(--mono); font-size: .76rem; color: var(--muted); }
 
+/* lists */
 ul.clean { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: .55rem; }
 ul.clean li { padding-left: 1.3rem; position: relative; }
 ul.clean li::before { content: ""; position: absolute; left: 0; top: .72em; width: .55rem; height: .55rem; background: var(--gold-fill); border-radius: 2px; }
 
-/* verdict cards (expandable) */
+/* verdict cards */
 .verdicts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
 @media (max-width: 680px) { .verdicts { grid-template-columns: 1fr; } }
-.verdict { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; display: grid; gap: .35rem; align-content: start; min-width: 0; transition: transform .5s var(--spring), border-color .3s; }
-.verdict:hover { transform: translateY(-3px); }
-.verdict.wide { grid-column: 1 / -1; }
+.verdict { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 1rem 1.1rem; display: grid; gap: .35rem; align-content: start; min-width: 0; }
 .tag { justify-self: start; font-family: var(--mono); font-size: .7rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; padding: .15rem .5rem; border-radius: 999px; border: 1px solid currentColor; }
 .tag.ship { color: var(--good); }
 .tag.no { color: var(--red); }
 .tag.off { color: var(--gold); }
 .verdict b { font-family: var(--display); font-size: 1.05rem; font-weight: 750; }
 .verdict p { font-size: .92rem; line-height: 1.5; margin: 0; color: var(--muted); }
-.more { justify-self: start; background: none; border: 0; padding: .2rem 0; color: var(--ink); font: 600 .78rem var(--mono); cursor: pointer; display: inline-flex; align-items: center; gap: .35rem; }
-.more .chev { display: inline-block; transition: transform .45s var(--spring); }
-.more[aria-expanded="true"] .chev { transform: rotate(90deg); }
-.expand { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .55s var(--spring); }
-.expand.open { grid-template-rows: 1fr; }
-.expand > div { overflow: hidden; }
-.expand .inner { padding-top: .4rem; font-size: .88rem; color: var(--muted); line-height: 1.5; }
 
+/* table */
 .tbl { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
 .tbl th, .tbl td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line); }
-.tbl tr { transition: background .2s; }
-.tbl tbody tr:hover { background: var(--bg); }
 .tbl th { font-family: var(--mono); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
 .tbl td.n { font-family: var(--mono); text-align: right; }
 .tbl th.n { text-align: right; }
 
-footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink); font-size: .9rem; color: var(--muted); display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
-.btn-home { text-decoration: none; }
+footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink); font-size: .9rem; color: var(--muted); }
 
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  *, *::before, *::after { transition-duration: 0s !important; animation: none !important; }
+@media (prefers-reduced-motion: no-preference) {
+  .side .pct { transition: color .2s; }
 }
 </style>
-</head>
-<body>
-
-<nav class="bar" aria-label="Article">
-  <a class="home" href="/" title="Go to Control Point">
-    <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#15171c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></span>
-    <span class="lbl-long">Control Point home</span><span class="lbl-short">Home</span>
-  </a>
-  <div class="toc" id="toc">
-    <span class="ind" id="tocInd" aria-hidden="true"></span>
-    <a href="#overview">Overview</a>
-    <a href="#ratings">Ratings</a>
-    <a href="#matches">Matches</a>
-    <a href="#events">Events</a>
-    <a href="#accuracy">Accuracy</a>
-    <a href="#lab">Lab notes</a>
-    <a href="#limits">Limits</a>
-  </div>
-  <button class="kbtn" id="palBtn" type="button" aria-label="Jump to a section">⌘K</button>
-  <span class="progress" id="progress" aria-hidden="true"></span>
-</nav>
-
-<div class="pal-back" id="palBack" hidden></div>
-<div class="pal" id="pal" role="dialog" aria-modal="true" aria-label="Jump to a section" hidden>
-  <input id="palInput" type="text" placeholder="Jump to…" autocomplete="off" aria-label="Filter sections">
-  <ul id="palList" role="listbox"></ul>
-</div>
-
-<div class="tip" id="tip" role="status" aria-live="polite"></div>
 
 <div class="wrap">
 
@@ -385,80 +203,78 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 <header class="hero">
   <div class="intro">
     <div class="eyebrow"><span>Control Point</span><span>·</span><span>Predict, explained</span></div>
-    <h1 id="title"><span class="w" style="--i:0">How</span> <span class="w" style="--i:1">Control</span> <span class="w" style="--i:2">Point</span> <span class="w gold" style="--i:3">Predict</span> <span class="w" style="--i:4">works</span></h1>
-    <p class="lede reveal">Before a qualifier starts, Predict can tell your team who's likely to win each match, where you'll probably rank, who might pick you, and your odds of advancing. Here's what's going on under the hood, in plain language, with the real numbers.</p>
-    <div class="byline reveal" style="--i:1">FTC seasons 2022–23 to 2025–26 · 5,175 events · tested on 37,395 matches it never saw while tuning</div>
+    <h1>How Control Point <span class="gold">Predict</span> works</h1>
+    <p class="lede">Before a qualifier starts, Predict can tell your team who's likely to win each match, where you'll probably rank, who might pick you, and your odds of advancing. Here's what's going on under the hood, in plain language, with the real numbers.</p>
+    <div class="byline">FTC seasons 2022–23 to 2025–26 · 5,175 events · tested on 37,395 matches it never saw while tuning</div>
   </div>
 
-  <div class="matchcard reveal" style="--i:2" aria-label="Example match predictions">
-    <div class="mc-top"><span id="mcLabel">Q-27 · example qualifier</span><span class="live-dot">Live ratings</span></div>
+  <div class="matchcard" aria-label="Example match prediction">
+    <div class="mc-top"><span>Q-27 · example qualifier</span><span class="live-dot">Live ratings</span></div>
     <div class="mc-sides">
       <div class="side red">
         <span class="teams">Red alliance</span>
-        <span class="pct" id="mcRed">66%</span>
-        <span class="score" id="mcRedScore">expected 145 pts<br>80% range 90–200</span>
+        <span class="pct">66%</span>
+        <span class="score">expected 145 pts<br>80% range 90–200</span>
       </div>
       <div class="side blue">
         <span class="teams">Blue alliance</span>
-        <span class="pct" id="mcBlue">34%</span>
-        <span class="score" id="mcBlueScore">expected 120 pts<br>80% range 71–169</span>
+        <span class="pct">34%</span>
+        <span class="score">expected 120 pts<br>80% range 71–169</span>
       </div>
     </div>
-    <div class="mc-bar" aria-hidden="true"><span id="mcBarR" style="flex:66 1 0"></span><span id="mcBarB" style="flex:34 1 0"></span></div>
-    <div class="mc-foot" id="mcFoot">A 66% favourite loses about one match in three. That's the point: the number is a probability, not a promise.</div>
-    <div class="mc-dots" id="mcDots" role="group" aria-label="Example matches"></div>
+    <div class="mc-bar" aria-hidden="true"><span style="flex:66"></span><span style="flex:34"></span></div>
+    <div class="mc-foot">A 66% favourite loses about one match in three. That's the point: the number is a probability, not a promise.</div>
   </div>
 </header>
 
 <!-- ================= 1. BIG PICTURE ================= -->
-<section id="overview" data-name="Overview">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">01</span><span>The big picture</span></div>
     <h2>Four steps, from match history to advancement odds</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <p>Predict is a chain. Each link feeds the next, and every number you see in the app comes out the end of it. First it learns how strong every robot is from the matches it has already played. Then it turns two alliances' strengths into a win probability and a likely score. Then it plays out a whole event a thousand times. Finally it applies the season's advancement rules to see who qualifies in each of those thousand versions.</p>
   </div>
-  <figure class="reveal">
+  <figure>
     <div class="panel">
       <div class="fig-label">Figure 1</div>
-      <div class="fig-title">The Predict pipeline <span class="note">· tap a step</span></div>
-      <div class="pipe" id="pipe">
-        <div class="stage" tabindex="0" role="button" aria-expanded="false" data-k="0"><span class="n">1</span><b>Rate every robot</b><p>Every played match nudges each robot's rating for auto, TeleOp, endgame and penalties.</p><span class="out">→ a strength per robot</span></div>
-        <div class="stage" tabindex="0" role="button" aria-expanded="false" data-k="1"><span class="n">2</span><b>Predict a match</b><p>Add up each alliance, account for how noisy FTC scores are, compare the two.</p><span class="out">→ win %, score range</span></div>
-        <div class="stage" tabindex="0" role="button" aria-expanded="false" data-k="2"><span class="n">3</span><b>Simulate the event</b><p>Play the rest of quals, rank teams, pick alliances, run the bracket. Repeat 1,000×.</p><span class="out">→ ranks, picks, champions</span></div>
-        <div class="stage" tabindex="0" role="button" aria-expanded="false" data-k="3"><span class="n">4</span><b>Apply the rules</b><p>Advancement points, awards and slots, skipping teams that already qualified.</p><span class="out">→ your odds of advancing</span></div>
+      <div class="fig-title">The Predict pipeline</div>
+      <div class="pipe">
+        <div class="stage"><span class="n">1</span><b>Rate every robot</b><p>Every played match nudges each robot's rating for auto, TeleOp, endgame and penalties.</p><span class="out">→ a strength per robot</span></div>
+        <div class="stage"><span class="n">2</span><b>Predict a match</b><p>Add up each alliance, account for how noisy FTC scores are, compare the two.</p><span class="out">→ win %, score range</span></div>
+        <div class="stage"><span class="n">3</span><b>Simulate the event</b><p>Play the rest of quals, rank teams, pick alliances, run the bracket. Repeat 1,000×.</p><span class="out">→ ranks, picks, champions</span></div>
+        <div class="stage"><span class="n">4</span><b>Apply the rules</b><p>Advancement points, awards and slots, skipping teams that already qualified.</p><span class="out">→ your odds of advancing</span></div>
       </div>
-      <div class="pipe-detail" id="pipeDetail"><div><div class="inner" id="pipeInner"></div></div></div>
     </div>
     <figcaption>The data comes from FTC Scout (every match since 2022) and the official FIRST Events API (schedules, ranks, alliances and advancement lists). During a live event the server keeps both in sync in the background.</figcaption>
   </figure>
 </section>
 
 <!-- ================= 2. RATINGS ================= -->
-<section id="ratings" data-name="Ratings">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">02</span><span>Step one</span></div>
     <h2>A rating is a guess at how many points a robot adds</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <p>FTC has a scoring problem for anyone trying to rate teams: you never see one robot's score, only the alliance's. Predict handles that the way the best FRC rating systems do. Each robot carries an <strong>expected contribution</strong>, in real game points, to whatever alliance it plays on. It's split into four parts, because a robot that's great in auto and weak in endgame is a different partner from one that's the other way around.</p>
   </div>
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 2</div>
       <div class="fig-title">One robot's rating (example)</div>
       <div class="chips">
-        <div class="chip"><div class="k">Auto</div><div class="v" data-count="18.4">18.4</div><div class="d">points in the 30 s autonomous period</div></div>
-        <div class="chip"><div class="k">TeleOp</div><div class="v" data-count="41.2">41.2</div><div class="d">driver-controlled, not counting endgame</div></div>
-        <div class="chip"><div class="k">Endgame</div><div class="v" data-count="12.9">12.9</div><div class="d">parking, climbing, the last 20 s</div></div>
-        <div class="chip pen"><div class="k">Penalties</div><div class="v" data-count="3.1">3.1</div><div class="d">points it tends to give the <em>other</em> alliance</div></div>
+        <div class="chip"><div class="k">Auto</div><div class="v">18.4</div><div class="d">points in the 30 s autonomous period</div></div>
+        <div class="chip"><div class="k">TeleOp</div><div class="v">41.2</div><div class="d">driver-controlled, not counting endgame</div></div>
+        <div class="chip"><div class="k">Endgame</div><div class="v">12.9</div><div class="d">parking, climbing, the last 20 s</div></div>
+        <div class="chip pen"><div class="k">Penalties</div><div class="v">3.1</div><div class="d">points it tends to give the <em>other</em> alliance</div></div>
       </div>
     </div>
     <figcaption>Strength (the non-penalty part) is 18.4 + 41.2 + 12.9 = 72.5 points. Penalties are kept apart because they score for the opponent.</figcaption>
   </figure>
 
-  <div class="col reveal">
+  <div class="col">
     <h3>How a rating moves after a match</h3>
     <p>After every match, Predict compares what each alliance was expected to score in each part with what it actually scored. The miss is split equally between the two robots, and each robot's rating moves by a fraction of its share. That fraction is the <strong>gain</strong>.</p>
     <div class="calc" role="group" aria-label="Worked example of a rating update">
@@ -470,50 +286,16 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     <p style="margin-top:1rem">The gain starts high, so a team's first few matches teach Predict a lot, and it shrinks as evidence builds up. It never drops below a floor, so a team that genuinely improves mid-season still gets noticed.</p>
   </div>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 3</div>
-      <div class="fig-title">Gain vs. matches played this season <span class="note">· hover the curve</span></div>
-      <div class="scroll-x"><svg id="gainChart" viewBox="0 0 640 250" role="img" aria-label="Line chart: gain starts at 0.65 for a first match, falls to 0.33 by about the tenth match, and stays at that floor."></svg></div>
+      <div class="fig-title">Gain vs. matches played this season</div>
+      <svg id="gainChart" viewBox="0 0 640 250" role="img" aria-label="Line chart: gain starts at 0.65 for a first match, falls to 0.33 by about the tenth match, and stays at that floor."></svg>
     </div>
     <figcaption>gain = max(0.33, 0.65 ÷ (1 + n/10)). Playoff matches count half, because teams play differently in eliminations (defence, strategy, different partners).</figcaption>
   </figure>
 
-  <figure class="reveal">
-    <div class="panel">
-      <div class="fig-head">
-        <div><div class="fig-label">Interactive</div><div class="fig-title">Watch a rating learn</div></div>
-        <div class="row-btns">
-          <button class="btn" id="learnPlay" type="button">▶ Play a season</button>
-          <button class="btn ghost" id="learnLuck" type="button">New luck</button>
-        </div>
-      </div>
-      <div class="play">
-        <div class="ctrl">
-          <label for="learnTrue"><span class="row"><span>The robot's real strength</span><b id="learnTrueVal">85 pts</b></span>
-            <input id="learnTrue" type="range" min="30" max="130" step="1" value="85"></label>
-          <div style="display:grid;gap:.35rem">
-            <span class="note">Where Predict starts</span>
-            <div class="seg" role="group" aria-label="Starting point" id="learnStart">
-              <span class="seg-ind" aria-hidden="true"></span>
-              <button type="button" aria-pressed="true" data-v="55">Average team (55)</button>
-              <button type="button" aria-pressed="false" data-v="35">Rookie guess (35)</button>
-            </div>
-          </div>
-          <div class="kpis">
-            <div class="kpi"><b id="learnN">0</b><span>matches played</span></div>
-            <div class="kpi"><b id="learnR">55</b><span>Predict's rating</span></div>
-            <div class="kpi"><b id="learnK">0.65</b><span>current gain</span></div>
-          </div>
-          <p class="note" style="margin:0">Each match shows the robot's share of a noisy alliance score (± about 22 pts, as in real FTC). The faint line is the same robot rated with a fixed, cautious gain of 0.33.</p>
-        </div>
-        <div class="scroll-x"><svg id="learnChart" viewBox="0 0 520 260" role="img" aria-label="Chart of a rating converging toward the robot's real strength over 20 matches."></svg></div>
-      </div>
-    </div>
-    <figcaption>Fast at first, steady later. A high early gain gets a new team close to its real level within a handful of matches. The floor keeps the rating moving if the robot really does change.</figcaption>
-  </figure>
-
-  <div class="col reveal">
+  <div class="col">
     <h3>Three more things a rating knows</h3>
     <ul class="clean">
       <li><strong>Robots get better during a season.</strong> A rating grows by 5% for every week since the team last played, for up to 8 weeks. Two months between a team's first qualifier and its next one is a lot of build time.</li>
@@ -522,49 +304,45 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     </ul>
   </div>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
-      <div class="fig-label">Figure 4 · interactive</div>
+      <div class="fig-label">Figure 4</div>
       <div class="fig-title">Where a team starts a new season</div>
-      <div class="ctrl" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:.6rem">
-        <label for="z1"><span class="row"><span>Finished last season</span><b id="z1Val">z = +1.5</b></span><input id="z1" type="range" min="-2" max="2.5" step="0.1" value="1.5"></label>
-        <label for="z2"><span class="row"><span>The season before</span><b id="z2Val">z = +1.0</b></span><input id="z2" type="range" min="-2" max="2.5" step="0.1" value="1.0"></label>
-      </div>
-      <div class="scroll-x"><svg id="carryChart" viewBox="0 0 640 150" role="img" aria-label="Number line of starting z-scores: the veteran's starting point moves as the sliders change; a team with no history starts at −0.7."></svg></div>
+      <svg id="carryChart" viewBox="0 0 640 170" role="img" aria-label="Diagram of starting z-scores: a veteran that finished at z = +1.5 last season and +1.0 the season before starts at +1.10; a team with no history starts at −0.7."></svg>
     </div>
     <figcaption>Starting z = 0.6 × last season + 0.2 × the season before. The z-score then becomes points using the spread of scores seen so far in the new season, so the start adapts to whatever this year's game rewards.</figcaption>
   </figure>
 </section>
 
 <!-- ================= 3. MATCH ================= -->
-<section id="matches" data-name="Matches">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">03</span><span>Step two</span></div>
     <h2>From two alliances to one probability</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <p>To predict a match, Predict adds up each alliance's robots, then adds the penalty points the <em>other</em> alliance tends to give away. That's the expected score.</p>
     <p>FTC scores are noisy, though. A ring falls off, a robot tips, a driver misses a park. So each expected score comes with a spread. Fitted on 2024–25, the typical miss is about <code>14 + 0.2 × expected</code> points: bigger scores have bigger swings. On top of that goes the uncertainty in each robot's rating. A team Predict barely knows gets a wider curve.</p>
     <p>Draw both alliances as curves and ask how often red's curve lands to the right of blue's. That share is red's win probability.</p>
   </div>
-  <figure class="reveal">
+  <figure>
     <div class="panel">
       <div class="fig-label">Figure 5</div>
       <div class="fig-title">Two score curves, one win probability</div>
-      <div class="scroll-x"><svg id="bellChart" viewBox="0 0 900 300" role="img" aria-label="Two overlapping bell curves: red centred at 145 points, blue at 120 points. Red wins about 66% of the time."></svg></div>
-      <div class="legend"><span><i style="background:var(--red)"></i>Red · expected 145</span><span><i style="background:var(--blue)"></i>Blue · expected 120</span><span><i style="background:var(--gold-fill)"></i>Shaded: 80% score range</span></div>
+      <svg id="bellChart" viewBox="0 0 900 300" role="img" aria-label="Two overlapping bell curves: red centred at 145 points, blue at 120 points. Red wins about 66% of the time."></svg>
+      <div class="legend"><span><i style="background:var(--red)"></i>Red · expected 145</span><span><i style="background:var(--blue)"></i>Blue · expected 120</span><span><i style="background:var(--gold-fill)"></i>80% score range</span></div>
     </div>
     <figcaption>The 25-point gap is real, but the curves overlap a lot, so red wins about two times in three. The shaded bands are the 80% ranges shown in the app; in testing, real scores landed inside them 82% of the time.</figcaption>
   </figure>
 
-  <div class="col reveal">
+  <div class="col">
     <h3>A final calibration touch</h3>
-    <p>Even good models are a little over- or under-confident. Muse added <strong>Platt scaling</strong>: a tiny correction, fitted on 2024–25, that gently pulls probabilities toward 50% (multiply the log-odds by 0.937, nudge by 0.020). It keeps every prediction in the same order; only a call that was already within half a point of 50% can tip to the other side. It just makes "70%" mean 70%. On the test season it cut calibration error from 0.017 to 0.0105.</p>
+    <p>Even good models are a little over- or under-confident. Muse added <strong>Platt scaling</strong>: a tiny correction, fitted on 2024–25, that gently pulls probabilities toward 50% (multiply the log-odds by 0.937, nudge by 0.020). Because the correction is monotonic it never changes the order of predictions — though a probability sitting right at 49.9% could tip just over 50%. It just makes "70%" mean 70%. On the test season it cut calibration error from 0.017 to 0.0105.</p>
   </div>
 
-  <figure class="reveal">
+  <figure>
     <div class="panel">
-      <div class="fig-label">Interactive</div>
+      <div class="fig-label">Try it</div>
       <div class="fig-title">Win-probability playground</div>
       <div class="play">
         <div class="ctrl">
@@ -573,73 +351,43 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
           <label for="blueExp"><span class="row"><span>Blue expected score</span><b id="blueVal">120</b></span>
             <input id="blueExp" type="range" min="20" max="300" step="1" value="120"></label>
           <div style="display:grid;gap:.35rem">
-            <span class="note">How well Predict knows these robots</span>
-            <div class="seg" role="group" aria-label="Rating certainty" id="certSeg">
-              <span class="seg-ind" aria-hidden="true"></span>
-              <button type="button" aria-pressed="true" data-v="well">Well known</button>
-              <button type="button" aria-pressed="false" data-v="new">First match</button>
-              <button type="button" aria-pressed="false" data-v="pre">Before the event</button>
+            <span class="mono muted" style="font-size:.8rem">How well Predict knows these robots</span>
+            <div class="seg" role="group" aria-label="Rating certainty">
+              <button type="button" id="certWell" aria-pressed="true">Well known</button>
+              <button type="button" id="certNew" aria-pressed="false">First match</button>
+              <button type="button" id="certPre" aria-pressed="false">Before the event</button>
             </div>
           </div>
           <div class="readout"><span class="big" id="probOut">66%</span><span class="lbl">chance red wins</span></div>
-          <p class="note" style="margin:0" id="probNote">σ red 43.2 · σ blue 38.3 · calibrated</p>
+          <p class="mono muted" style="font-size:.78rem;margin:0" id="probNote">σ red 43.2 · σ blue 38.3 · calibrated</p>
         </div>
-        <div class="scroll-x"><svg id="playChart" viewBox="0 0 520 220" role="img" aria-label="Live chart of the two score curves for the chosen expected scores."></svg></div>
+        <svg id="playChart" viewBox="0 0 520 220" role="img" aria-label="Live chart of the two score curves for the chosen expected scores."></svg>
       </div>
     </div>
-    <figcaption>This uses the same formula as the app: σ = 14 + 0.2 × expected, plus rating uncertainty, then Platt scaling. "Well known" adds 10 points² per robot, "First match" 350, and "Before the event" 150 plus the extra 500 that event-start predictions carry, because a team's level moves during an event.</figcaption>
+    <figcaption>This uses the same formula as the app: σ = 14 + 0.2 × expected, plus rating uncertainty, then Platt scaling. "Well known" adds 10 points² per robot, "First match" 350, and "Before the event" 150 + the extra 500 that event-start predictions carry, because a team's level moves during an event.</figcaption>
   </figure>
+
 </section>
 
 <!-- ================= 4. EVENT ================= -->
-<section id="events" data-name="Events">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">04</span><span>Step three</span></div>
     <h2>Playing the whole event a thousand times</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <p>Advancing isn't about one match. It depends on your rank, who picks whom, the bracket and the awards. All of those interact, and there's no neat formula for the whole thing. So Predict does what a coach does in their head, only a thousand times over: it imagines the event.</p>
   </div>
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 6</div>
       <div class="fig-title">One simulated run</div>
-      <div class="scroll-x"><svg id="runChart" viewBox="0 0 640 330" role="img" aria-label="Flow of a single simulated event: draw today's robot strengths, play remaining quals, rank teams, select alliances, run the double-elimination bracket, hand out awards, count advancement points."></svg></div>
+      <svg id="runChart" viewBox="0 0 640 330" role="img" aria-label="Flow of a single simulated event: draw today's robot strengths, play remaining quals, rank teams, select alliances, run the double-elimination bracket, hand out awards, count advancement points."></svg>
     </div>
     <figcaption>A thousand runs give a thousand outcomes. If your team advances in 412 of them, your odds are 41%. The same runs give your likely rank range, your chance of being a captain or a pick, and your chance of winning.</figcaption>
   </figure>
 
-  <figure class="reveal">
-    <div class="panel">
-      <div class="fig-head">
-        <div><div class="fig-label">Interactive</div><div class="fig-title">Run a 24-team qualifier 1,000 times</div></div>
-        <div class="row-btns"><button class="btn" id="simRun" type="button">▶ Run 1,000 events</button></div>
-      </div>
-      <div class="play">
-        <div class="ctrl">
-          <div style="display:grid;gap:.35rem">
-            <span class="note">Your robot</span>
-            <div class="seg" role="group" aria-label="Your robot's strength" id="simSeg">
-              <span class="seg-ind" aria-hidden="true"></span>
-              <button type="button" aria-pressed="false" data-v="105">Top-3 robot</button>
-              <button type="button" aria-pressed="true" data-v="72">Mid-pack</button>
-              <button type="button" aria-pressed="false" data-v="52">Underdog</button>
-            </div>
-          </div>
-          <div class="kpis">
-            <div class="kpi"><b id="simRuns">0</b><span>events run</span></div>
-            <div class="kpi"><b id="simTop4">–</b><span>seeded top 4</span></div>
-            <div class="kpi"><b id="simMed">–</b><span>typical rank</span></div>
-          </div>
-          <p class="note" style="margin:0">A toy version: 24 robots, 6 qualification matches each with random partners, 2 ranking points per win and the average score as the tiebreaker. Each robot's form for the day is drawn once per run. The real simulator adds bonus RPs, alliance selection, playoffs, awards and the official rules.</p>
-        </div>
-        <div class="scroll-x"><svg id="simChart" viewBox="0 0 520 240" role="img" aria-label="Histogram of your robot's final qualification rank across simulated events."></svg></div>
-      </div>
-    </div>
-    <figcaption>The spread is the point. Even a top-3 robot sometimes lands outside the top 4 because of the schedule, its partners and a bad day; an underdog occasionally sneaks in. Predict reports exactly these chances instead of a single guess.</figcaption>
-  </figure>
-
-  <div class="col reveal">
+  <div class="col">
     <h3>The details that make it realistic</h3>
     <ul class="clean">
       <li><strong>A robot's day is drawn once per run.</strong> If a team is having a great day in one simulated event, it's great all day long, not great in one match and awful in the next. That's how real events feel.</li>
@@ -651,133 +399,116 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     </ul>
   </div>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 7</div>
       <div class="fig-title">2025–26 advancement points, at a glance</div>
-      <div class="scroll-x"><svg id="pointsChart" viewBox="0 0 640 230" role="img" aria-label="Bar chart of maximum advancement points by source: Inspire award 60, playoffs win 40, alliance captain of alliance 1: 20, quals rank 1: about 16, other judged award 12."></svg></div>
+      <svg id="pointsChart" viewBox="0 0 640 230" role="img" aria-label="Bar chart of maximum advancement points by source: Inspire award 60, playoffs win 40, alliance captain of alliance 1: 20, quals rank 1: about 16, other judged award 12."></svg>
     </div>
     <figcaption>All of these were read off official FIRST data and checked against every published total (1,786 of 1,786 match). Only a team's highest award counts. The quals points come from a bell-curve formula on rank, so a mid-table team still earns a few.</figcaption>
   </figure>
 
-  <div class="col reveal">
+  <div class="col">
     <h3>"What if we pick them?"</h3>
     <p>Because the simulator can force any pairing, the app answers partner questions. If you're likely to captain: "if we pick team X, our odds become…". If you're likely to be picked: "if captain Y picks us…". When we tested this on real alliances, knowing the actual partner cut the error on "this alliance wins the event" by about 16% compared with general after-quals odds (Brier 0.072 vs 0.086).</p>
   </div>
 </section>
 
 <!-- ================= 5. HOW GOOD ================= -->
-<section id="accuracy" data-name="Accuracy">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">05</span><span>The scoreboard</span></div>
     <h2>How good is it, really?</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <p>A prediction model can look brilliant on the data it learned from. So every setting was tuned on the <strong>2024–25</strong> season, then locked, and the numbers below come from <strong>2025–26</strong>, a season it had never seen. Every prediction was made using only matches that had already happened at that moment, exactly as it would be live.</p>
   </div>
 
-  <div class="stats reveal" role="list">
-    <div class="stat" role="listitem"><b data-count="72.7" data-suffix="%">72.7%</b><span>of matches called right with live ratings</span></div>
-    <div class="stat" role="listitem"><b data-count="82" data-suffix="%">82%</b><span>of real scores inside the 80% range (honest ranges)</span></div>
-    <div class="stat" role="listitem"><b data-count="0.064" data-dec="3">0.064</b><span>advancement Brier after alliance selection (lower is better)</span></div>
-    <div class="stat" role="listitem"><b data-count="37395" data-dec="0">37,395</b><span>test matches · 508 advancing events</span></div>
+  <div class="stats" role="list">
+    <div class="stat" role="listitem"><b>72.7%</b><span>of matches called right with live ratings</span></div>
+    <div class="stat" role="listitem"><b>82%</b><span>of real scores inside the 80% range (honest ranges)</span></div>
+    <div class="stat" role="listitem"><b>0.064</b><span>advancement Brier after alliance selection (lower is better)</span></div>
+    <div class="stat" role="listitem"><b>37,395</b><span>test matches · 508 advancing events</span></div>
   </div>
 
-  <div class="col reveal">
+  <div class="col">
     <p>Accuracy isn't the whole story. The <strong>Brier score</strong> measures how close the probabilities were: 0 is perfect, and a coin flip gets 0.25. It rewards saying 90% when you're sure and 55% when you're not.</p>
   </div>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 8</div>
       <div class="fig-title">Match predictions vs. simple baselines (2025–26, Brier, lower is better)</div>
-      <div class="scroll-x"><svg id="brierChart" viewBox="0 0 640 230" role="img" aria-label="Bar chart of Brier scores: coin flip 0.248, last-event OPR 0.208, rating frozen at event start 0.199, season-average score 0.188, live rating 0.179."></svg></div>
+      <svg id="brierChart" viewBox="0 0 640 230" role="img" aria-label="Bar chart of Brier scores: coin flip 0.248, last-event OPR 0.208, rating frozen at event start 0.199, season-average score 0.188, live rating 0.179."></svg>
     </div>
     <figcaption>OPR from a team's last event is what many teams use today. Live ratings beat it by a wide margin. The season-average baseline is surprisingly strong, but it's only available once a team has played this season, and it has no notion of uncertainty, partners or awards.</figcaption>
   </figure>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 9</div>
       <div class="fig-title">It learns fast: accuracy by matches already played</div>
-      <div class="scroll-x"><svg id="expChart" viewBox="0 0 640 250" role="img" aria-label="Grouped bars: with 0 prior matches live accuracy 65%, 1 to 3 matches 70%, 4 to 9 matches 74%, 10 or more 75%. Last-event OPR is 57%, 56%, 66% and 72%."></svg></div>
+      <svg id="expChart" viewBox="0 0 640 250" role="img" aria-label="Grouped bars: with 0 prior matches live accuracy 65%, 1 to 3 matches 70%, 4 to 9 matches 74%, 10 or more 75%. Last-event OPR is 57%, 56%, 66% and 72%."></svg>
       <div class="legend"><span><i style="background:var(--gold-fill)"></i>Predict, live</span><span><i style="background:var(--muted)"></i>Last-event OPR</span></div>
     </div>
     <figcaption>Fewest prior matches among the four robots in the match. Early in a season, carrying last season over (as a z-score) is what keeps Predict well ahead of OPR, which has almost nothing to go on yet.</figcaption>
   </figure>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
-      <div class="fig-head">
-        <div><div class="fig-label">Figure 10</div><div class="fig-title">Does "70%" mean 70%? Calibration on the test season</div></div>
-        <div class="seg" role="group" aria-label="Which predictions" id="calSeg">
-          <span class="seg-ind" aria-hidden="true"></span>
-          <button type="button" aria-pressed="true" data-v="both">Both</button>
-          <button type="button" aria-pressed="false" data-v="match">Match odds</button>
-          <button type="button" aria-pressed="false" data-v="adv">Advancement</button>
-        </div>
-      </div>
-      <div class="scroll-x"><svg id="calChart" viewBox="0 0 640 330" role="img" aria-label="Calibration chart: predicted probability on the x axis, actual win rate on the y axis. Dots for match predictions and for advancement odds sit close to the diagonal."></svg></div>
+      <div class="fig-label">Figure 10</div>
+      <div class="fig-title">Does "70%" mean 70%? Calibration on the test season</div>
+      <svg id="calChart" viewBox="0 0 640 330" role="img" aria-label="Calibration chart: predicted probability on the x axis, actual win rate on the y axis. Dots for match predictions and for advancement odds sit close to the diagonal."></svg>
       <div class="legend"><span><i style="background:var(--gold-fill)"></i>Match win odds (37,395 matches)</span><span><i style="background:var(--blue)"></i>Advancement odds before the event</span><span><i style="background:var(--line)"></i>Perfect calibration</span></div>
     </div>
-    <figcaption>Each dot groups predictions of about the same probability and shows how often that outcome really happened. Dots on the diagonal mean the numbers can be taken at face value. Hover a dot for its numbers.</figcaption>
+    <figcaption>Each dot groups predictions of about the same probability and shows how often that outcome really happened. Dots on the diagonal mean the numbers can be taken at face value.</figcaption>
   </figure>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 11</div>
       <div class="fig-title">Advancement odds sharpen as the event unfolds (Brier, lower is better)</div>
-      <div class="scroll-x"><svg id="stageChart" viewBox="0 0 640 210" role="img" aria-label="Bar chart: advancement Brier is 0.129 before the event, 0.086 after quals, 0.064 after alliance selection, versus 0.151 for a naive top-ranked-teams-advance guess that already needs the quals results."></svg></div>
+      <svg id="stageChart" viewBox="0 0 640 210" role="img" aria-label="Bar chart: advancement Brier is 0.129 before the event, 0.086 after quals, 0.064 after alliance selection, versus 0.151 for a naive top-ranked-teams-advance guess that already needs the quals results."></svg>
     </div>
     <figcaption>Even before a single match is played, Predict beats the naive guess that can only be made after quals. Before the event, its rank estimates are off by about 5 places on average, and the 10–90% rank range catches the real rank 86% of the time.</figcaption>
   </figure>
 </section>
 
 <!-- ================= 6. EXPERIMENTS ================= -->
-<section id="lab" data-name="Lab notes">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">06</span><span>Lab notes</span></div>
     <h2>What we tried, and what made the cut</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <p>Predict improves through small experiments, each judged the same way: tune on 2024–25, test on 2025–26, and compare against the baselines on identical matches. An idea ships only if it helps calibration and doesn't make anything else worse. Plenty of good-sounding ideas don't make it.</p>
   </div>
 
   <div class="verdicts">
-    <div class="verdict reveal" style="--i:0"><span class="tag ship">Shipped</span><b>Platt calibration</b><p>A two-number correction to win probabilities. Calibration error on the test season fell from 0.017 to 0.0105, and accuracy barely moved, because favourites almost always stay favourites.</p>
-      <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
-      <div class="expand"><div><div class="inner">Fitted by maximum likelihood on 2024–25 live predictions: a = 0.937, b = 0.020. On 2025–26, live Brier went from 0.1791 to 0.1789 and pre-event accuracy from 68.65% to 68.78%. The correction keeps predictions in the same order. Its small offset can tip a raw call between about 49.5% and 50% to the other side, which is where that small accuracy change comes from.</div></div></div></div>
-    <div class="verdict reveal" style="--i:1"><span class="tag ship">Shipped</span><b>Fair starting ratings</b><p>A newcomer on the blue side used to get a slightly different starting rating than one on red, because red's result was counted first. Now both sides see the same starting point.</p>
-      <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
-      <div class="expand"><div><div class="inner">It affects about one match per season replay, so every test metric moved by 0.0002 or less. It's a correctness fix: swapping red and blue now gives mirrored ratings, and a blue newcomer's start no longer depends on red's score.</div></div></div></div>
-    <div class="verdict reveal" style="--i:2"><span class="tag no">Rejected</span><b>Smarter credit splitting</b><p>Giving more of an alliance's surprise to the robot Predict is less sure about (TrueSkill-style). It sounds clever, but it made predictions worse.</p>
-      <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
-      <div class="expand"><div><div class="inner">On 2025–26, live accuracy dropped 0.25 points and Brier rose from 0.1791 to 0.1806, with worse calibration. The other settings were tuned for equal sharing, and changing the split without a full retune hurt.</div></div></div></div>
-    <div class="verdict reveal" style="--i:3"><span class="tag no">Rejected</span><b>Alliance declines</b><p>Letting high-ranked teams turn down invitations to captain their own alliance. It fit 2024–25 slightly better but predicted real 2025–26 picks clearly worse.</p>
-      <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
-      <div class="expand"><div><div class="inner">Pick log-likelihood on 2,540 real 2025–26 picks: −5,080 with declines vs −4,952 without. Advancement Brier slipped too (0.1287 → 0.1290 before the event, 0.0855 → 0.0866 after quals). And in playoffs, favourites actually win more often than predicted, so stacked alliances aren't being over-rated.</div></div></div></div>
-    <div class="verdict wide reveal" style="--i:4"><span class="tag off">Built, switched off</span><b>Robot rebuild detection</b><p>Teams coming back from a long break are hard to predict, because many have rebuilt. Predict now has a mode that grows less certain after a break and learns faster from the next few matches. It does what it says (see below), but after a full refit, the odds of advancing from an event got slightly worse. So it's in the code, switched off, waiting for a better fit.</p>
-      <button class="more" type="button" aria-expanded="false">Details <span class="chev">›</span></button>
-      <div class="expand"><div><div class="inner">After a break of 4+ weeks, uncertainty grows by 200 points² per week away and the learning rate resets as if the robot had played 4 matches. On 2025–26, the error on the 2nd–3rd match after 8+ weeks off fell from 33.6 to 32.1 points, and overall score error from 27.95 to 27.88. Win odds were unchanged, but advancement Brier went from 0.1286 to 0.1291, so it stays off.</div></div></div></div>
+    <div class="verdict"><span class="tag ship">Shipped</span><b>Platt calibration</b><p>A two-number correction to win probabilities. Calibration error on the test season fell from 0.017 to 0.0105, and accuracy is unchanged because favourites stay favourites.</p></div>
+    <div class="verdict"><span class="tag ship">Shipped</span><b>Fair starting ratings</b><p>A newcomer on the blue side used to get a slightly different starting rating than one on red, because red's result was counted first. Now both sides see the same starting point. The numbers barely moved; it's about being right.</p></div>
+    <div class="verdict"><span class="tag no">Rejected</span><b>Smarter credit splitting</b><p>Giving more of an alliance's surprise to the robot Predict is less sure about (TrueSkill-style). It sounds clever, but on the test season live accuracy dropped 0.25 points and Brier got worse (0.1791 → 0.1806).</p></div>
+    <div class="verdict"><span class="tag no">Rejected</span><b>Alliance declines</b><p>Letting high-ranked teams turn down invitations to captain their own alliance. It fit 2024–25 slightly better but predicted real 2025–26 picks clearly worse, and every advancement number slipped. Real captains already behave the way the simpler model says.</p></div>
+    <div class="verdict" style="grid-column:1/-1"><span class="tag off">Built, switched off</span><b>Robot rebuild detection</b><p>Teams coming back from a long break are hard to predict, because many have rebuilt. Predict now has a mode that grows less certain after a break and learns faster from the next few matches. It does what it says (see below), but after a full refit, the odds of advancing from an event got slightly worse. So it's in the code, switched off, waiting for a better fit.</p></div>
   </div>
 
-  <figure class="narrow reveal">
+  <figure class="narrow">
     <div class="panel">
       <div class="fig-label">Figure 12</div>
       <div class="fig-title">Why rebuilds are hard: score error after a break (2024–25)</div>
-      <div class="scroll-x"><svg id="breakChart" viewBox="0 0 640 260" role="img" aria-label="Bar chart of mean absolute score error by situation: no recent break 22 points; first match after 2 to 4 weeks off 28; after 4 to 8 weeks 36; after 8 or more weeks 58; second to third match after 8 weeks 45; fourth to sixth 36."></svg></div>
+      <svg id="breakChart" viewBox="0 0 640 260" role="img" aria-label="Bar chart of mean absolute score error by situation: no recent break 22 points; first match after 2 to 4 weeks off 28; after 4 to 8 weeks 36; after 8 or more weeks 58; second to third match after 8 weeks 45; fourth to sixth 36."></svg>
     </div>
     <figcaption>Alliance score error (MAE, points) on the tuning season. On a robot's first match after two months off, the error is more than 2½ times the usual. A rebuilt robot only shows itself once it plays, so the error stays high for a few matches.</figcaption>
   </figure>
 </section>
 
 <!-- ================= 7. LIMITS ================= -->
-<section id="limits" data-name="Limits">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span class="num">07</span><span>Fine print</span></div>
     <h2>What Predict can't know</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <ul class="clean">
       <li><strong>A new robot until it plays.</strong> If you rebuilt over the break, Predict still thinks you're the old robot until your first match.</li>
       <li><strong>The 2025–26 bonus RPs</strong> were fitted on the season's earliest matches, because the bonuses didn't exist before. A refit with the full season is waiting on official data access.</li>
@@ -791,14 +522,13 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 </section>
 
 <!-- ================= APPENDIX ================= -->
-<section id="settings" data-name="Settings">
-  <div class="col section-head reveal">
+<section>
+  <div class="col section-head">
     <div class="eyebrow"><span>For the curious</span></div>
     <h2>The settings, in one table</h2>
   </div>
-  <div class="col reveal">
+  <div class="col">
     <div class="panel" style="padding:.6rem .8rem">
-      <div class="scroll-x">
       <table class="tbl">
         <thead><tr><th>Setting</th><th class="n">Value</th><th>What it does</th></tr></thead>
         <tbody>
@@ -817,28 +547,19 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
           <tr><td>Simulations</td><td class="n">1,000</td><td>Runs per event and starting point</td></tr>
         </tbody>
       </table>
-      </div>
     </div>
-    <p class="muted" style="font-size:.9rem;margin-top:1rem">All fitted on 2024–25 and tested on 2025–26.</p>
+    <p class="muted" style="font-size:.9rem;margin-top:1rem">All fitted on 2024–25 and tested on 2025–26. The full back-test report, with every number above and how to reproduce it, lives in the repository at <code>docs/predict/backtest-report.md</code>.</p>
   </div>
 </section>
 
 <footer class="col">
-  <span>Control Point Predict · built by Muse and Claude for FIRST Tech Challenge teams · numbers as of October 2026.</span>
-  <a class="btn btn-home" href="/">Go to Control Point →</a>
+  Control Point Predict · built by Muse and Claude for FIRST Tech Challenge teams · numbers as of October 2026.
 </footer>
 </div>
 
 <script>
 (() => {
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const root = document.documentElement;
-  if (!reduce) root.classList.add("anim");
-  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("loaded")));
-  setTimeout(() => root.classList.add("loaded"), 800); // in case frames are throttled (background tab)
-
   const NS = "http://www.w3.org/2000/svg";
-  const $ = (id) => document.getElementById(id);
   const el = (tag, attrs = {}, parent) => {
     const n = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
@@ -848,7 +569,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
   const txt = (parent, x, y, s, attrs = {}) => { const t = el("text", { x, y, ...attrs }, parent); t.textContent = s; return t; };
   const css = (v) => `var(--${v})`;
 
-  // ---------- maths (same formulas as the app) ----------
+  // Normal distribution helpers
   const erf = (x) => { // Abramowitz–Stegun 7.1.26
     const s = Math.sign(x); x = Math.abs(x);
     const t = 1 / (1 + 0.3275911 * x);
@@ -859,209 +580,9 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
   const pdf = (x, m, s) => Math.exp(-0.5 * ((x - m) / s) ** 2) / (s * Math.sqrt(2 * Math.PI));
   const platt = (p) => { p = Math.min(1 - 1e-9, Math.max(1e-9, p)); const z = 0.937 * Math.log(p / (1 - p)) + 0.020; return 1 / (1 + Math.exp(-z)); };
   const sigma = (mu, unc) => Math.hypot(14 + 0.2 * Math.max(0, mu), Math.sqrt(unc));
-  const gain = (n) => Math.max(0.33, 0.65 / (1 + n / 10));
-  let seed = 7;
-  const rand = () => { seed = (seed + 0x6d2b79f5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-  const gauss = () => { let u = 0; while (!u) u = rand(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rand()); };
 
-  // ---------- tooltip ----------
-  const tip = $("tip");
-  document.addEventListener("pointerover", (e) => { const t = e.target.closest && e.target.closest("[data-tip]"); if (t) { tip.textContent = t.getAttribute("data-tip"); tip.classList.add("on"); } });
-  document.addEventListener("pointerout", (e) => { if (e.target.closest && e.target.closest("[data-tip]")) tip.classList.remove("on"); });
-  document.addEventListener("pointermove", (e) => {
-    if (!tip.classList.contains("on")) return;
-    const w = tip.offsetWidth, h = tip.offsetHeight;
-    tip.style.left = Math.min(innerWidth - w - 8, e.clientX + 14) + "px";
-    tip.style.top = Math.max(8, e.clientY - h - 12) + "px";
-  });
-
-  // ---------- pointer glow on panels ----------
-  document.querySelectorAll(".panel").forEach((p) => p.addEventListener("pointermove", (e) => {
-    const r = p.getBoundingClientRect();
-    p.style.setProperty("--mx", e.clientX - r.left + "px");
-    p.style.setProperty("--my", e.clientY - r.top + "px");
-  }));
-
-  // ---------- count-up numbers ----------
-  const countUp = (node) => {
-    const target = parseFloat(node.dataset.count);
-    const dec = node.dataset.dec != null ? +node.dataset.dec : (String(node.dataset.count).split(".")[1] || "").length;
-    const suf = node.dataset.suffix || "";
-    const fmt = (v) => (dec === 0 ? Math.round(v).toLocaleString("en-US") : v.toFixed(dec)) + suf;
-    if (reduce) { node.textContent = fmt(target); return; }
-    const t0 = performance.now(), dur = 1100;
-    const step = (t) => { const k = Math.min(1, (t - t0) / dur); const e = 1 - Math.pow(1 - k, 3); node.textContent = fmt(target * e); if (k < 1) requestAnimationFrame(step); };
-    requestAnimationFrame(step);
-  };
-
-  // ---------- reveal on scroll ----------
-  const io = new IntersectionObserver((entries) => {
-    entries.forEach((en) => {
-      if (!en.isIntersecting) return;
-      en.target.classList.add("in", "seen");
-      en.target.querySelectorAll("[data-count]").forEach(countUp);
-      io.unobserve(en.target);
-    });
-  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
-  document.querySelectorAll(".reveal").forEach((n) => io.observe(n));
-
-  // ---------- floating bar: active section + progress ----------
-  const sections = [...document.querySelectorAll("section[id]")];
-  const links = [...document.querySelectorAll("#toc a")];
-  const ind = $("tocInd"), toc = $("toc");
-  let activeId = "";
-  function moveInd(a) {
-    if (!a) { ind.style.opacity = "0"; return; }
-    ind.style.opacity = "1";
-    ind.style.width = a.offsetWidth + "px";
-    ind.style.transform = `translateX(${a.offsetLeft}px)`;
-    const l = a.offsetLeft, r = l + a.offsetWidth;
-    if (l < toc.scrollLeft || r > toc.scrollLeft + toc.clientWidth) toc.scrollTo({ left: l - 12, behavior: reduce ? "auto" : "smooth" });
-  }
-  function onScroll() {
-    const max = document.documentElement.scrollHeight - innerHeight;
-    $("progress").style.transform = `scaleX(${max > 0 ? Math.min(1, scrollY / max) : 0})`;
-    let cur = "";
-    for (const s of sections) if (s.getBoundingClientRect().top < innerHeight * 0.35) cur = s.id;
-    if (cur !== activeId) {
-      activeId = cur;
-      let a = null;
-      links.forEach((l) => { const on = l.getAttribute("href") === "#" + cur; l.classList.toggle("active", on); if (on) a = l; });
-      moveInd(a);
-    }
-  }
-  addEventListener("scroll", onScroll, { passive: true });
-  addEventListener("resize", () => { activeId = ""; onScroll(); });
-  onScroll();
-
-  // ---------- command palette ----------
-  const pal = $("pal"), palBack = $("palBack"), palInput = $("palInput"), palList = $("palList");
-  const items = [...sections.map((s) => ({ id: s.id, name: s.dataset.name, hint: s.querySelector("h2") ? s.querySelector("h2").textContent : "" })),
-    { id: "__home", name: "Control Point home", hint: "tryctrlpoint.org" }];
-  let sel = 0, shown = items, opener = null, palIsOpen = false;
-  function renderPal() {
-    const q = palInput.value.trim().toLowerCase();
-    shown = items.filter((i) => !q || (i.name + " " + i.hint).toLowerCase().includes(q));
-    sel = Math.min(sel, Math.max(0, shown.length - 1));
-    palList.replaceChildren(...shown.map((i, k) => {
-      const li = document.createElement("li");
-      li.setAttribute("role", "option");
-      li.className = k === sel ? "sel" : "";
-      li.setAttribute("aria-selected", String(k === sel));
-      li.textContent = i.name;
-      const sp = document.createElement("span"); sp.textContent = i.hint.length > 42 ? i.hint.slice(0, 40) + "…" : i.hint; li.appendChild(sp);
-      li.addEventListener("click", () => go(i));
-      li.addEventListener("pointermove", () => { if (sel !== k) { sel = k; renderPal(); } });
-      return li;
-    }));
-  }
-  function openPal() {
-    opener = document.activeElement;
-    palIsOpen = true;
-    pal.hidden = false; palBack.hidden = false; palInput.value = ""; sel = 0; renderPal();
-    palInput.focus();
-    requestAnimationFrame(() => { if (!palIsOpen) return; pal.classList.add("open"); palBack.classList.add("open"); });
-  }
-  function closePal() {
-    palIsOpen = false;
-    pal.classList.remove("open"); palBack.classList.remove("open");
-    setTimeout(() => { if (!palIsOpen) { pal.hidden = true; palBack.hidden = true; } }, reduce ? 0 : 220);
-    // Back to whatever opened it; Safari doesn't focus a clicked button, so fall back to the ⌘K button.
-    const back = opener && opener !== document.body && document.contains(opener) ? opener : $("palBtn");
-    back.focus({ preventScroll: true });
-    opener = null;
-  }
-  function go(i) {
-    closePal();
-    if (i.id === "__home") { location.href = "/"; return; }
-    const t = $(i.id); if (t) t.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
-  }
-  $("palBtn").addEventListener("click", openPal);
-  palBack.addEventListener("click", closePal);
-  palInput.addEventListener("input", () => { sel = 0; renderPal(); });
-  addEventListener("keydown", (e) => {
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName) && document.activeElement !== palInput;
-    if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing && pal.hidden)) { e.preventDefault(); pal.hidden ? openPal() : closePal(); return; }
-    if (pal.hidden) return;
-    if (e.key === "Tab") { e.preventDefault(); palInput.focus(); return; } // focus stays in the dialog
-    if (e.key === "Escape") closePal();
-    else if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(shown.length - 1, sel + 1); renderPal(); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(0, sel - 1); renderPal(); }
-    else if (e.key === "Enter" && shown[sel]) { e.preventDefault(); go(shown[sel]); }
-  });
-
-  // ---------- segmented controls with sliding indicator ----------
-  function seg(id, onChange) {
-    const g = $(id), indEl = g.querySelector(".seg-ind"), btns = [...g.querySelectorAll("button")];
-    const place = () => { const b = btns.find((x) => x.getAttribute("aria-pressed") === "true"); if (!b) return; indEl.style.width = b.offsetWidth + "px"; indEl.style.transform = `translateX(${b.offsetLeft}px)`; indEl.style.top = b.offsetTop + "px"; indEl.style.height = b.offsetHeight + "px"; };
-    btns.forEach((b) => b.addEventListener("click", () => { btns.forEach((x) => x.setAttribute("aria-pressed", String(x === b))); place(); onChange(b.dataset.v); }));
-    addEventListener("resize", place);
-    requestAnimationFrame(place);
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(place);
-    return () => btns.find((x) => x.getAttribute("aria-pressed") === "true").dataset.v;
-  }
-
-  // ---------- hero: cycling example matches ----------
-  (function () {
-    const examples = [
-      { label: "Q-27 · example qualifier", r: 145, b: 120, unc: 20 },
-      { label: "Q-41 · two evenly matched alliances", r: 132, b: 129, unc: 20 },
-      { label: "SF-1 · a strong favourite", r: 210, b: 128, unc: 20 },
-      { label: "Q-3 · first match, rookies on blue", r: 118, b: 104, unc: 2 * 350 },
-    ];
-    const foot = (p) => p >= 0.85 ? `Even a ${Math.round(p * 100)}% favourite drops about one match in ${Math.max(2, Math.round(1 / (1 - p)))}.`
-      : p >= 0.58 ? `A ${Math.round(p * 100)}% favourite loses about one match in ${Math.max(2, Math.round(1 / (1 - p)))}. That's the point: the number is a probability, not a promise.`
-      : p > 0.42 ? "Close to a coin flip. A few points of luck decide matches like this." : "The underdog here is red. Upsets happen more often than people expect.";
-    const dots = $("mcDots");
-    let idx = 0, shownP = 0.66, timer;
-    const range = (m, s) => `${Math.max(0, Math.round(m - 1.2816 * s))}–${Math.round(m + 1.2816 * s)}`;
-    function show(i, user) {
-      idx = i;
-      const e = examples[i];
-      const sR = sigma(e.r, e.unc), sB = sigma(e.b, e.unc);
-      const p = platt(Phi((e.r - e.b) / Math.hypot(sR, sB)));
-      $("mcLabel").textContent = e.label;
-      $("mcRedScore").innerHTML = `expected ${e.r} pts<br>80% range ${range(e.r, sR)}`;
-      $("mcBlueScore").innerHTML = `expected ${e.b} pts<br>80% range ${range(e.b, sB)}`;
-      $("mcBarR").style.flexGrow = (p * 100).toFixed(1);
-      $("mcBarB").style.flexGrow = ((1 - p) * 100).toFixed(1);
-      $("mcFoot").textContent = foot(p);
-      [...dots.children].forEach((d, k) => d.setAttribute("aria-pressed", String(k === i)));
-      const from = shownP, t0 = performance.now();
-      const step = (t) => { const k = reduce ? 1 : Math.min(1, (t - t0) / 700); const v = from + (p - from) * (1 - Math.pow(1 - k, 3));
-        $("mcRed").textContent = Math.round(v * 100) + "%"; $("mcBlue").textContent = (100 - Math.round(v * 100)) + "%"; if (k < 1) requestAnimationFrame(step); else shownP = p; };
-      requestAnimationFrame(step);
-      if (user) restart();
-    }
-    examples.forEach((e, k) => { const b = document.createElement("button"); b.type = "button"; b.setAttribute("aria-label", e.label); b.setAttribute("aria-pressed", String(k === 0)); b.addEventListener("click", () => show(k, true)); dots.appendChild(b); });
-    function restart() { clearInterval(timer); if (!reduce) timer = setInterval(() => show((idx + 1) % examples.length), 5200); }
-    restart();
-  })();
-
-  // ---------- pipeline details ----------
-  (function () {
-    const info = [
-      "<b>Ratings.</b> Four numbers per robot (auto, TeleOp, endgame, penalties), updated after every played match from the alliance's miss, split equally between the two robots. New this season? The start comes from last season's z-score, or a rookie default.",
-      "<b>Match model.</b> Expected alliance score = its robots' non-penalty ratings + the penalties the opponents tend to give away. Spread = 14 + 0.2 × expected, widened by rating uncertainty. P(red wins) is the overlap of the two curves, then calibrated.",
-      "<b>Event simulation.</b> 1,000 runs. Each run draws every robot's form for the day once, plays the unplayed quals, ranks by the season's RP rules and tiebreakers, picks alliances like real captains, then runs the real double-elimination bracket.",
-      "<b>Advancement.</b> 2025–26 points: quals rank (bell-curve formula), alliance selection (21 − alliance number for captain and first pick), playoffs (40/20/10/5) and awards (Inspire 60/30/15, other judged 12/6/3, highest only). Slots go down the list, skipping teams already qualified.",
-    ];
-    const stages = [...document.querySelectorAll("#pipe .stage")], det = $("pipeDetail"), inner = $("pipeInner");
-    let open = -1;
-    const toggle = (k) => {
-      open = open === k ? -1 : k;
-      stages.forEach((s, i) => { s.classList.toggle("on", i === open); s.setAttribute("aria-expanded", String(i === open)); });
-      if (open >= 0) inner.innerHTML = info[open];
-      det.classList.toggle("open", open >= 0);
-    };
-    stages.forEach((s, i) => {
-      s.addEventListener("click", () => toggle(i));
-      s.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(i); } });
-    });
-  })();
-
-  // ---------- bar chart helper ----------
-  function hbar(svg, rows, { max, fmt, left = 190, width = 640, rowH = 34, top = 10, ticks = [], tip }) {
+  // Generic bar chart (horizontal)
+  function hbar(svg, rows, { max, fmt, left = 190, width = 640, rowH = 34, top = 10, ticks = [] }) {
     const right = width - 60;
     const x = (v) => left + (v / max) * (right - left);
     ticks.forEach((t) => {
@@ -1071,124 +592,51 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     rows.forEach((r, i) => {
       const y = top + i * rowH;
       txt(svg, left - 10, y + rowH / 2 + 4, r.label, { "text-anchor": "end", class: r.strong ? "t-ink" : "" });
-      el("rect", { x: left, y: y + 6, width: Math.max(1, x(r.v) - left), height: rowH - 12, rx: 3, fill: css(r.color || "muted"), opacity: r.dim ? 0.45 : 1, class: "bar-h", style: `--i:${i}`, "data-tip": tip ? tip(r) : `${r.label}: ${fmt(r.v)}` }, svg);
-      txt(svg, x(r.v) + 8, y + rowH / 2 + 4, fmt(r.v), { class: (r.strong ? "t-ink " : "") + "fade-late" });
+      el("rect", { x: left, y: y + 6, width: Math.max(1, x(r.v) - left), height: rowH - 12, rx: 3, fill: css(r.color || "muted"), opacity: r.dim ? 0.45 : 1 }, svg);
+      txt(svg, x(r.v) + 8, y + rowH / 2 + 4, fmt(r.v), { class: r.strong ? "t-ink" : "" });
     });
   }
 
-  // ---------- Figure 3: gain curve with hover ----------
+  // ---------- Figure 3: gain curve ----------
   (function () {
-    const svg = $("gainChart");
+    const svg = document.getElementById("gainChart");
     const L = 50, R = 610, T = 16, B = 210;
     const x = (n) => L + (n / 30) * (R - L), y = (k) => B - (k / 0.7) * (B - T);
     [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7].forEach((k) => { el("line", { x1: L, x2: R, y1: y(k), y2: y(k), class: "grid" }, svg); txt(svg, L - 8, y(k) + 4, k.toFixed(1), { "text-anchor": "end" }); });
     [0, 5, 10, 15, 20, 25, 30].forEach((n) => txt(svg, x(n), B + 18, n, { "text-anchor": "middle" }));
     txt(svg, (L + R) / 2, B + 36, "matches played this season", { "text-anchor": "middle" });
     let d = "";
-    for (let n = 0; n <= 30; n += 0.25) d += (n ? "L" : "M") + x(n).toFixed(1) + "," + y(gain(n)).toFixed(1);
+    for (let n = 0; n <= 30; n += 0.25) { const k = Math.max(0.33, 0.65 / (1 + n / 10)); d += (n ? "L" : "M") + x(n).toFixed(1) + "," + y(k).toFixed(1); }
     el("line", { x1: L, x2: R, y1: y(0.33), y2: y(0.33), stroke: css("muted"), "stroke-dasharray": "4 4" }, svg);
     txt(svg, R, y(0.33) - 7, "floor 0.33", { "text-anchor": "end" });
-    el("path", { d, fill: "none", stroke: css("gold-fill"), "stroke-width": 3.5, "stroke-linejoin": "round", pathLength: 1, class: "draw" }, svg);
-    const cross = el("line", { y1: T, y2: B, stroke: css("ink"), "stroke-width": 1, opacity: 0 }, svg);
-    const dot = el("circle", { r: 6, fill: css("ink"), opacity: 0 }, svg);
-    const lab = txt(svg, 0, 0, "", { class: "t-ink", opacity: 0 });
-    const hit = el("rect", { x: L, y: T, width: R - L, height: B - T, fill: "transparent" }, svg);
-    hit.addEventListener("pointermove", (e) => {
-      const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
-      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-      const n = Math.round(Math.max(0, Math.min(30, ((p.x - L) / (R - L)) * 30)));
-      const k = gain(n);
-      cross.setAttribute("x1", x(n)); cross.setAttribute("x2", x(n));
-      dot.setAttribute("cx", x(n)); dot.setAttribute("cy", y(k));
-      lab.textContent = `match ${n + 1}: gain ${k.toFixed(2)}`;
-      lab.setAttribute("x", x(n) + (n > 20 ? -10 : 10)); lab.setAttribute("y", y(k) - 12); lab.setAttribute("text-anchor", n > 20 ? "end" : "start");
-      [cross, dot, lab].forEach((q) => q.setAttribute("opacity", q === cross ? 0.35 : 1));
-    });
-    hit.addEventListener("pointerleave", () => [cross, dot, lab].forEach((q) => q.setAttribute("opacity", 0)));
-  })();
-
-  // ---------- Interactive: watch a rating learn ----------
-  (function () {
-    const svg = $("learnChart");
-    const L = 44, R = 505, T = 14, B = 222, N = 20, YMAX = 150;
-    const x = (n) => L + (n / N) * (R - L), y = (v) => B - (Math.max(0, Math.min(YMAX, v)) / YMAX) * (B - T);
-    const startSeg = seg("learnStart", () => reset(true));
-    const trueIn = $("learnTrue");
-    let obs = [], frame = 0, playing = false, raf;
-    function makeObs() { obs = []; for (let i = 0; i < N; i++) obs.push(gauss() * 22); }
-    function series(real, start, gainFn) { const out = [start]; let r = start; for (let i = 0; i < N; i++) { r += gainFn(i) * ((real + obs[i]) - r); out.push(r); } return out; }
-    function draw(upto) {
-      svg.replaceChildren();
-      [0, 30, 60, 90, 120, 150].forEach((v) => { el("line", { x1: L, x2: R, y1: y(v), y2: y(v), class: "grid" }, svg); txt(svg, L - 8, y(v) + 4, v, { "text-anchor": "end" }); });
-      [0, 5, 10, 15, 20].forEach((n) => txt(svg, x(n), B + 18, n, { "text-anchor": "middle" }));
-      txt(svg, (L + R) / 2, B + 34, "matches played", { "text-anchor": "middle" });
-      const real = +trueIn.value, start = +startSeg();
-      el("line", { x1: L, x2: R, y1: y(real), y2: y(real), stroke: css("gold"), "stroke-width": 2, "stroke-dasharray": "6 5" }, svg);
-      txt(svg, R, y(real) - 8, `real strength ${real}`, { "text-anchor": "end", class: "t-gold" });
-      const fast = series(real, start, gain), slow = series(real, start, () => 0.33);
-      const path = (s, n) => s.slice(0, n + 1).map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1)).join("");
-      for (let i = 0; i < upto; i++) el("circle", { cx: x(i + 1), cy: y(real + obs[i]), r: 3, fill: css("muted"), opacity: 0.55, "data-tip": `match ${i + 1}: this robot's share looked like ${Math.round(real + obs[i])} pts` }, svg);
-      el("path", { d: path(slow, upto), fill: "none", stroke: css("muted"), "stroke-width": 2, opacity: 0.45 }, svg);
-      el("path", { d: path(fast, upto), fill: "none", stroke: css("red"), "stroke-width": 3, "stroke-linejoin": "round" }, svg);
-      el("circle", { cx: x(upto), cy: y(fast[upto]), r: 6, fill: css("red"), stroke: css("paper"), "stroke-width": 2 }, svg);
-      $("learnN").textContent = upto;
-      $("learnR").textContent = Math.round(fast[upto]);
-      $("learnK").textContent = gain(upto).toFixed(2);
-      $("learnTrueVal").textContent = real + " pts";
-    }
-    function play() {
-      cancelAnimationFrame(raf);
-      playing = true; frame = 0; $("learnPlay").disabled = true;
-      let last = 0;
-      const tick = (t) => {
-        if (reduce) { frame = N; draw(N); done(); return; }
-        if (t - last > 180) { last = t; frame++; draw(frame); }
-        if (frame < N) raf = requestAnimationFrame(tick); else done();
-      };
-      raf = requestAnimationFrame(tick);
-    }
-    function done() { playing = false; $("learnPlay").disabled = false; $("learnPlay").textContent = "▶ Replay"; }
-    function reset(keepLuck) { cancelAnimationFrame(raf); if (!keepLuck) makeObs(); playing = false; $("learnPlay").disabled = false; draw(N); }
-    trueIn.addEventListener("input", () => { if (!playing) draw(N); });
-    $("learnPlay").addEventListener("click", play);
-    $("learnLuck").addEventListener("click", () => { reset(false); play(); });
-    makeObs(); draw(N);
+    el("path", { d, fill: "none", stroke: css("gold-fill"), "stroke-width": 3.5, "stroke-linejoin": "round" }, svg);
+    const marks = [[0, "1st match: 0.65"], [3, "4th: 0.50"]];
+    marks.forEach(([n, s]) => { const k = Math.max(0.33, 0.65 / (1 + n / 10)); el("circle", { cx: x(n), cy: y(k), r: 5, fill: css("ink") }, svg); txt(svg, x(n) + 10, y(k) - 8, s, { class: "t-ink" }); });
   })();
 
   // ---------- Figure 4: carry-over ----------
   (function () {
-    const svg = $("carryChart");
-    const L = 40, R = 600, mid = 82;
-    const x = (z) => L + ((z + 2) / 4.5) * (R - L);
+    const svg = document.getElementById("carryChart");
+    const L = 40, R = 600, mid = 92;
+    const x = (z) => L + ((z + 2) / 4) * (R - L);
     el("line", { x1: L, x2: R, y1: mid, y2: mid, class: "axis" }, svg);
     [-2, -1, 0, 1, 2].forEach((z) => { el("line", { x1: x(z), x2: x(z), y1: mid - 5, y2: mid + 5, class: "axis" }, svg); txt(svg, x(z), mid + 22, (z > 0 ? "+" : "") + z, { "text-anchor": "middle" }); });
-    txt(svg, x(0.25), mid + 42, "z-score (0 = season average)", { "text-anchor": "middle" });
-    const rook = el("g", { transform: `translate(${x(-0.7)},0)` }, svg);
-    el("line", { x1: 0, x2: 0, y1: 36, y2: mid, stroke: css("blue"), "stroke-width": 2 }, rook);
-    el("circle", { cx: 0, cy: mid, r: 8, fill: css("blue") }, rook);
-    txt(rook, 0, 28, "no history: −0.7", { "text-anchor": "middle", class: "t-ink" });
-    const mkMover = (c, dashed, labelY) => {
-      const g = el("g", { style: "transition: transform .6s var(--spring)" }, svg);
-      el("line", { x1: 0, x2: 0, y1: labelY + 6, y2: mid, stroke: css(c), "stroke-width": 2, "stroke-dasharray": dashed ? "3 3" : "" }, g);
-      el("circle", { cx: 0, cy: mid, r: dashed ? 5 : 9, fill: css(c) }, g);
-      const t = txt(g, 0, labelY, "", { "text-anchor": "middle", class: dashed ? "" : "t-ink" });
-      return { g, t };
-    };
-    const last = mkMover("muted", true, 10), start = mkMover("gold-fill", false, 52);
-    const fmtZ = (z) => (z >= 0 ? "+" : "−") + Math.abs(z).toFixed(2);
-    function upd() {
-      const z1 = +$("z1").value, z2 = +$("z2").value, s = 0.6 * z1 + 0.2 * z2;
-      $("z1Val").textContent = "z = " + fmtZ(z1).replace(/0$/, "");
-      $("z2Val").textContent = "z = " + fmtZ(z2).replace(/0$/, "");
-      last.g.style.transform = `translate(${x(z1)}px, 0px)`; last.t.textContent = `last season ${fmtZ(z1)}`;
-      start.g.style.transform = `translate(${x(s)}px, 0px)`; start.t.textContent = `starts at ${fmtZ(s)}`;
-    }
-    $("z1").addEventListener("input", upd); $("z2").addEventListener("input", upd);
-    upd();
+    txt(svg, x(0), mid + 40, "z-score (0 = season average)", { "text-anchor": "middle" });
+    const pts = [
+      { z: 1.5, label: "finished last season +1.5", c: "muted", y: 30, r: 5 },
+      { z: 0.6 * 1.5 + 0.2 * 1.0, label: "veteran starts at +1.10", c: "gold-fill", y: 62, r: 8, strong: true },
+      { z: -0.7, label: "no history: −0.7", c: "blue", y: 62, r: 8, strong: true },
+    ];
+    pts.forEach((p) => {
+      el("line", { x1: x(p.z), x2: x(p.z), y1: p.y + 6, y2: mid, stroke: css(p.c), "stroke-width": 2, "stroke-dasharray": p.strong ? "" : "3 3" }, svg);
+      el("circle", { cx: x(p.z), cy: mid, r: p.r, fill: css(p.c) }, svg);
+      txt(svg, x(p.z), p.y, p.label, { "text-anchor": "middle", class: p.strong ? "t-ink" : "" });
+    });
+    txt(svg, x(1.5) + 70, 132, "(+1.0 the season before)", { "text-anchor": "middle" });
   })();
 
-  // ---------- bell curves ----------
-  function bells(svg, { muR, muB, sR, sB, L = 40, R, T = 20, B, xmin = 0, xmax = 320, labels = true }) {
+  // ---------- bell curve drawer ----------
+  function bells(svg, { muR, muB, sR, sB, W, H, L = 40, R, T = 20, B, xmin = 0, xmax = 320, labels = true }) {
     svg.replaceChildren();
     const x = (v) => L + ((v - xmin) / (xmax - xmin)) * (R - L);
     const peak = Math.max(pdf(muR, muR, sR), pdf(muB, muB, sB));
@@ -1201,7 +649,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
       let area = `M${x(lo)},${B}`;
       for (let v = lo; v <= hi; v += 1) area += `L${x(v).toFixed(1)},${y(pdf(v, m, s)).toFixed(1)}`;
       area += `L${x(hi)},${B}Z`;
-      el("path", { d: area, fill: css(c), opacity: 0.16, "data-tip": `${c === "red" ? "Red" : "Blue"} 80% range: ${Math.round(lo)}–${Math.round(hi)} pts` }, svg);
+      el("path", { d: area, fill: css(c), opacity: 0.16 }, svg);
       let d = "";
       for (let v = xmin; v <= xmax; v += 1) d += (v === xmin ? "M" : "L") + x(v).toFixed(1) + "," + y(pdf(v, m, s)).toFixed(1);
       el("path", { d, fill: "none", stroke: css(c), "stroke-width": 3 }, svg);
@@ -1213,51 +661,43 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 
   // ---------- Figure 5 ----------
   (function () {
-    const svg = $("bellChart");
+    const svg = document.getElementById("bellChart");
     const unc = 2 * 10;
     bells(svg, { muR: 145, muB: 120, sR: sigma(145, unc), sB: sigma(120, unc), L: 40, R: 860, T: 24, B: 250, xmin: 0, xmax: 320 });
     const p = platt(Phi((145 - 120) / Math.hypot(sigma(145, unc), sigma(120, unc))));
     txt(svg, 860, 40, `P(red wins) = ${Math.round(p * 100)}%`, { "text-anchor": "end", class: "t-ink t-big" });
   })();
 
-  // ---------- playground (tweened) ----------
+
+  // ---------- playground ----------
   (function () {
-    const svg = $("playChart");
-    const r = $("redExp"), b = $("blueExp");
+    const svg = document.getElementById("playChart");
+    const r = document.getElementById("redExp"), b = document.getElementById("blueExp");
+    const btns = { well: document.getElementById("certWell"), new: document.getElementById("certNew"), pre: document.getElementById("certPre") };
     const UNC = { well: 10, new: 350, pre: 150 + 500 };
-    const cert = seg("certSeg", () => animateTo());
-    let cur = null, raf;
-    function target() { const unc = 2 * UNC[cert()]; const muR = +r.value, muB = +b.value; return { muR, muB, sR: sigma(muR, unc), sB: sigma(muB, unc) }; }
-    function render(s) {
-      const p = platt(Phi((s.muR - s.muB) / Math.hypot(s.sR, s.sB)));
-      $("redVal").textContent = Math.round(s.muR);
-      $("blueVal").textContent = Math.round(s.muB);
-      const out = $("probOut");
+    let mode = "well";
+    function draw() {
+      const muR = +r.value, muB = +b.value, unc = 2 * UNC[mode];
+      const sR = sigma(muR, unc), sB = sigma(muB, unc);
+      const p = platt(Phi((muR - muB) / Math.hypot(sR, sB)));
+      document.getElementById("redVal").textContent = muR;
+      document.getElementById("blueVal").textContent = muB;
+      const out = document.getElementById("probOut");
       out.textContent = Math.round(p * 100) + "%";
       out.style.color = p >= 0.5 ? "var(--red)" : "var(--blue)";
-      $("probNote").textContent = `σ red ${s.sR.toFixed(1)} · σ blue ${s.sB.toFixed(1)} · calibrated`;
-      bells(svg, { ...s, L: 20, R: 500, T: 18, B: 180, xmin: 0, xmax: 360, labels: true });
+      document.getElementById("probNote").textContent = `σ red ${sR.toFixed(1)} · σ blue ${sB.toFixed(1)} · calibrated`;
+      bells(svg, { muR, muB, sR, sB, L: 20, R: 500, T: 18, B: 180, xmin: 0, xmax: 360, labels: true });
     }
-    function animateTo(instant) {
-      const t = target();
-      cancelAnimationFrame(raf); // a newer change always wins over a tween in flight
-      if (!cur || instant || reduce) { cur = t; render(cur); return; }
-      const from = { ...cur }, t0 = performance.now();
-      const step = (now) => {
-        const k = Math.min(1, (now - t0) / 420), e = 1 - Math.pow(1 - k, 3);
-        cur = { muR: from.muR + (t.muR - from.muR) * e, muB: from.muB + (t.muB - from.muB) * e, sR: from.sR + (t.sR - from.sR) * e, sB: from.sB + (t.sB - from.sB) * e };
-        render(cur);
-        if (k < 1) raf = requestAnimationFrame(step);
-      };
-      raf = requestAnimationFrame(step);
-    }
-    r.addEventListener("input", () => animateTo(true)); b.addEventListener("input", () => animateTo(true));
-    animateTo(true);
+    r.addEventListener("input", draw); b.addEventListener("input", draw);
+    Object.entries(btns).forEach(([k, btn]) => btn.addEventListener("click", () => {
+      mode = k; Object.values(btns).forEach((x) => x.setAttribute("aria-pressed", String(x === btn))); draw();
+    }));
+    draw();
   })();
 
   // ---------- Figure 6: one run ----------
   (function () {
-    const svg = $("runChart");
+    const svg = document.getElementById("runChart");
     const steps = [
       ["Draw today's strength", "each robot ~ its rating ± uncertainty"],
       ["Play the remaining quals", "real results kept; the rest simulated"],
@@ -1269,105 +709,29 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     const x0 = 24, w = 592, h = 42, gap = 12;
     steps.forEach(([a, s], i) => {
       const y = 8 + i * (h + gap);
-      const g = el("g", { class: "pop", style: `--i:${i * 2}` }, svg);
-      el("rect", { x: x0, y, width: w, height: h, rx: 8, fill: css("bg"), stroke: css("line") }, g);
-      el("rect", { x: x0, y, width: 40, height: h, rx: 8, fill: css("gold-fill") }, g);
-      el("rect", { x: x0 + 30, y, width: 10, height: h, fill: css("gold-fill") }, g);
-      const n = txt(g, x0 + 20, y + h / 2 + 5, String(i + 1), { "text-anchor": "middle" });
+      el("rect", { x: x0, y, width: w, height: h, rx: 7, fill: css("bg"), stroke: css("line") }, svg);
+      el("rect", { x: x0, y, width: 40, height: h, rx: 7, fill: css("gold-fill") }, svg);
+      el("rect", { x: x0 + 30, y, width: 10, height: h, fill: css("gold-fill") }, svg);
+      const n = txt(svg, x0 + 20, y + h / 2 + 5, String(i + 1), { "text-anchor": "middle", fill: "#15171c" });
       n.setAttribute("style", "font-family:var(--display);font-weight:900;font-size:16px;fill:#15171c");
-      txt(g, x0 + 56, y + 18, a, { class: "t-ink", style: "font-family:var(--display);font-weight:750;font-size:14px" });
-      txt(g, x0 + 56, y + 34, s);
+      txt(svg, x0 + 56, y + 18, a, { class: "t-ink", style: "font-family:var(--display);font-weight:750;font-size:14px" });
+      txt(svg, x0 + 56, y + 34, s);
       if (i < steps.length - 1) el("line", { x1: x0 + 20, x2: x0 + 20, y1: y + h, y2: y + h + gap, stroke: css("gold-fill"), "stroke-width": 3 }, svg);
     });
-    txt(svg, x0 + w, 8 + 6 * (h + gap) + 4, "× 1,000 runs per event", { "text-anchor": "end", class: "t-gold fade-late", style: "font-family:var(--display);font-weight:800;font-size:14px" });
-  })();
-
-  // ---------- Interactive: 1,000-event simulator ----------
-  (function () {
-    const svg = $("simChart");
-    const NT = 24, ROUNDS = 6, RUNS = 1000;
-    const field = []; for (let i = 0; i < NT - 1; i++) field.push(40 + (i * 70) / (NT - 2)); // 40..110 pts per robot
-    // Picking another robot stops any run in progress and clears the results.
-    const strengthSeg = seg("simSeg", () => {
-      cancelAnimationFrame(raf);
-      counts = new Array(NT).fill(0); runs = 0;
-      const btn = $("simRun"); btn.disabled = false; btn.textContent = "▶ Run 1,000 events";
-      drawHist(); kpis();
-    });
-    let counts = new Array(NT).fill(0), runs = 0, raf;
-    function oneEvent(you) {
-      const ratings = [you, ...field];
-      const day = ratings.map((r) => r + gauss() * 12);
-      const rp = new Array(NT).fill(0), pts = new Array(NT).fill(0);
-      const order = [...Array(NT).keys()];
-      for (let rd = 0; rd < ROUNDS; rd++) {
-        for (let i = NT - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
-        for (let m = 0; m < NT; m += 4) {
-          const red = [order[m], order[m + 1]], blue = [order[m + 2], order[m + 3]];
-          const mr = day[red[0]] + day[red[1]], mb = day[blue[0]] + day[blue[1]];
-          const sr = mr + gauss() * (14 + 0.2 * mr), sb = mb + gauss() * (14 + 0.2 * mb);
-          const w = sr > sb ? red : blue;
-          w.forEach((t) => (rp[t] += 2));
-          red.forEach((t) => (pts[t] += sr)); blue.forEach((t) => (pts[t] += sb));
-        }
-      }
-      let rank = 1;
-      for (let t = 1; t < NT; t++) if (rp[t] > rp[0] || (rp[t] === rp[0] && pts[t] > pts[0])) rank++;
-      return rank;
-    }
-    function kpis() {
-      $("simRuns").textContent = runs.toLocaleString("en-US");
-      if (!runs) { $("simTop4").textContent = "–"; $("simMed").textContent = "–"; return; }
-      const top4 = counts.slice(0, 4).reduce((a, b) => a + b, 0) / runs;
-      let acc = 0, med = 1; for (let i = 0; i < NT; i++) { acc += counts[i]; if (acc >= runs / 2) { med = i + 1; break; } }
-      $("simTop4").textContent = Math.round(top4 * 100) + "%";
-      $("simMed").textContent = "#" + med;
-    }
-    function drawHist() {
-      svg.replaceChildren();
-      const L = 36, R = 510, T = 12, B = 200;
-      const max = Math.max(0.2, ...counts.map((c) => (runs ? c / runs : 0)));
-      const ymax = Math.ceil(max * 10) / 10;
-      const y = (p) => B - (p / ymax) * (B - T);
-      for (let p = 0; p <= ymax + 1e-9; p += 0.1) { el("line", { x1: L, x2: R, y1: y(p), y2: y(p), class: "grid" }, svg); txt(svg, L - 6, y(p) + 4, Math.round(p * 100) + "%", { "text-anchor": "end" }); }
-      const bw = (R - L) / NT;
-      el("rect", { x: L, y: T, width: bw * 4, height: B - T, fill: css("gold-fill"), opacity: 0.1 }, svg);
-      txt(svg, L + 4, T + 12, "top 4", { class: "t-gold" });
-      counts.forEach((c, i) => {
-        const p = runs ? c / runs : 0;
-        el("rect", { x: L + i * bw + 2, y: y(p), width: bw - 4, height: Math.max(0, B - y(p)), rx: 2, fill: css(i < 4 ? "gold-fill" : "muted"), opacity: i < 4 ? 1 : 0.55, "data-tip": `rank ${i + 1}: ${(p * 100).toFixed(1)}% of runs` }, svg);
-        if (i === 0 || (i + 1) % 4 === 0) txt(svg, L + i * bw + bw / 2, B + 16, i + 1, { "text-anchor": "middle" });
-      });
-      txt(svg, (L + R) / 2, B + 34, "final qualification rank", { "text-anchor": "middle" });
-    }
-    function run() {
-      cancelAnimationFrame(raf);
-      counts = new Array(NT).fill(0); runs = 0;
-      const you = +strengthSeg();
-      const btn = $("simRun"); btn.disabled = true;
-      const batch = reduce ? RUNS : 40;
-      const tick = () => {
-        for (let k = 0; k < batch && runs < RUNS; k++) { counts[oneEvent(you) - 1]++; runs++; }
-        drawHist(); kpis();
-        if (runs < RUNS) raf = requestAnimationFrame(tick); else { btn.disabled = false; btn.textContent = "▶ Run again"; }
-      };
-      raf = requestAnimationFrame(tick);
-    }
-    $("simRun").addEventListener("click", run);
-    drawHist(); kpis();
+    txt(svg, x0 + w, 8 + 6 * (h + gap) + 4, "× 1,000 runs per event", { "text-anchor": "end", class: "t-gold", style: "font-family:var(--display);font-weight:800;font-size:14px" });
   })();
 
   // ---------- Figure 7: points ----------
-  hbar($("pointsChart"), [
+  hbar(document.getElementById("pointsChart"), [
     { label: "Inspire award (1st)", v: 60, color: "gold-fill", strong: true },
     { label: "Win the event", v: 40, color: "red" },
     { label: "Captain, alliance 1", v: 20, color: "blue" },
     { label: "Rank 1 in quals (~)", v: 16, color: "muted" },
     { label: "Other judged award", v: 12, color: "gold-fill", dim: true },
-  ], { max: 70, fmt: (v) => String(v), left: 170, ticks: [0, 20, 40, 60], tip: (r) => `${r.label}: up to ${r.v} advancement points` });
+  ], { max: 70, fmt: (v) => String(v), left: 170, ticks: [0, 20, 40, 60] });
 
   // ---------- Figure 8: Brier ----------
-  hbar($("brierChart"), [
+  hbar(document.getElementById("brierChart"), [
     { label: "Coin flip", v: 0.248, color: "muted", dim: true },
     { label: "Last-event OPR", v: 0.208, color: "muted" },
     { label: "Rating, event start", v: 0.199, color: "gold-fill", dim: true },
@@ -1377,18 +741,18 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 
   // ---------- Figure 9: experience ----------
   (function () {
-    const svg = $("expChart");
-    const data = [["0", 65.1, 57.0, 2867], ["1–3", 70.2, 56.3, 7941], ["4–9", 73.7, 66.3, 11506], ["10+", 74.8, 71.8, 15081]];
+    const svg = document.getElementById("expChart");
+    const data = [["0", 65.1, 57.0], ["1–3", 70.2, 56.3], ["4–9", 73.7, 66.3], ["10+", 74.8, 71.8]];
     const L = 50, R = 620, T = 14, B = 206, lo = 50, hi = 80;
     const y = (v) => B - ((v - lo) / (hi - lo)) * (B - T);
     [50, 55, 60, 65, 70, 75, 80].forEach((v) => { el("line", { x1: L, x2: R, y1: y(v), y2: y(v), class: "grid" }, svg); txt(svg, L - 8, y(v) + 4, v + "%", { "text-anchor": "end" }); });
     const gw = (R - L) / data.length, bw = 44;
-    data.forEach(([lab, a, o, n], i) => {
+    data.forEach(([lab, a, o], i) => {
       const cx = L + gw * i + gw / 2;
-      el("rect", { x: cx - bw - 3, y: y(a), width: bw, height: B - y(a), rx: 3, fill: css("gold-fill"), class: "bar-v", style: `--i:${i * 2}`, "data-tip": `${lab} prior matches: Predict ${a}% (${n.toLocaleString("en-US")} matches)` }, svg);
-      el("rect", { x: cx + 3, y: y(o), width: bw, height: B - y(o), rx: 3, fill: css("muted"), opacity: 0.55, class: "bar-v", style: `--i:${i * 2 + 1}`, "data-tip": `${lab} prior matches: last-event OPR ${o}%` }, svg);
-      txt(svg, cx - bw / 2 - 3, y(a) - 6, a.toFixed(0) + "%", { "text-anchor": "middle", class: "t-ink fade-late" });
-      txt(svg, cx + bw / 2 + 3, y(o) - 6, o.toFixed(0) + "%", { "text-anchor": "middle", class: "fade-late" });
+      el("rect", { x: cx - bw - 3, y: y(a), width: bw, height: B - y(a), rx: 3, fill: css("gold-fill") }, svg);
+      el("rect", { x: cx + 3, y: y(o), width: bw, height: B - y(o), rx: 3, fill: css("muted"), opacity: 0.55 }, svg);
+      txt(svg, cx - bw / 2 - 3, y(a) - 6, a.toFixed(0) + "%", { "text-anchor": "middle", class: "t-ink" });
+      txt(svg, cx + bw / 2 + 3, y(o) - 6, o.toFixed(0) + "%", { "text-anchor": "middle" });
       txt(svg, cx, B + 18, lab, { "text-anchor": "middle", class: "t-ink" });
     });
     txt(svg, (L + R) / 2, B + 36, "prior matches this season (fewest of the four robots) · axis starts at 50%", { "text-anchor": "middle" });
@@ -1396,7 +760,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 
   // ---------- Figure 10: calibration ----------
   (function () {
-    const svg = $("calChart");
+    const svg = document.getElementById("calChart");
     const L = 60, R = 610, T = 14, B = 280;
     const sz = Math.min(R - L, B - T);
     const x = (p) => L + p * sz, y = (p) => B - p * sz;
@@ -1408,18 +772,18 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     });
     el("line", { x1: x(0), y1: y(0), x2: x(1), y2: y(1), stroke: css("line"), "stroke-width": 3 }, svg);
     txt(svg, x(0.5), B + 34, "predicted", { "text-anchor": "middle" });
-    txt(svg, 16, y(0.5), "actually happened", { "text-anchor": "middle", transform: `rotate(-90 16 ${y(0.5)})` });
-    const match = [[0.054, 0.074, 2425], [0.151, 0.162, 3128], [0.25, 0.254, 3545], [0.351, 0.371, 3979], [0.451, 0.449, 4396], [0.55, 0.561, 4427], [0.65, 0.652, 4487], [0.75, 0.774, 4233], [0.849, 0.851, 3763], [0.946, 0.934, 3012]];
+    const yl = txt(svg, 16, y(0.5), "actually happened", { "text-anchor": "middle", transform: `rotate(-90 16 ${y(0.5)})` });
+    void yl;
+    const match = [[0.054, 0.074], [0.151, 0.162], [0.25, 0.254], [0.351, 0.371], [0.451, 0.449], [0.55, 0.561], [0.65, 0.652], [0.75, 0.774], [0.849, 0.851], [0.946, 0.934]];
     const adv = [[0.05, 0.04], [0.14, 0.13], [0.25, 0.23], [0.34, 0.35], [0.45, 0.50], [0.55, 0.57], [0.65, 0.73], [0.75, 0.78], [0.85, 0.84], [0.97, 0.96]];
-    const gAdv = el("g", { style: "transition: opacity .35s" }, svg), gMatch = el("g", { style: "transition: opacity .35s" }, svg);
-    adv.forEach(([p, a], i) => { const g = el("g", { class: "pop", style: `--i:${i + 10}` }, gAdv); el("rect", { x: x(p) - 6, y: y(a) - 6, width: 12, height: 12, fill: css("blue"), transform: `rotate(45 ${x(p)} ${y(a)})`, "data-tip": `Advancement: predicted ${Math.round(p * 100)}% → happened ${Math.round(a * 100)}%` }, g); });
-    match.forEach(([p, a, n], i) => el("circle", { cx: x(p), cy: y(a), r: 7, fill: css("gold-fill"), stroke: css("paper"), "stroke-width": 1.5, class: "pop", style: `--i:${i}`, "data-tip": `Match odds: predicted ${(p * 100).toFixed(1)}% → won ${(a * 100).toFixed(1)}% (${n.toLocaleString("en-US")} matches)` }, gMatch));
+    adv.forEach(([p, a]) => el("rect", { x: x(p) - 5, y: y(a) - 5, width: 10, height: 10, fill: css("blue"), transform: `rotate(45 ${x(p)} ${y(a)})` }, svg));
+    match.forEach(([p, a]) => el("circle", { cx: x(p), cy: y(a), r: 6, fill: css("gold-fill"), stroke: css("paper"), "stroke-width": 1.5 }, svg));
+    // legend note inside empty corner
     txt(svg, x(0.04), y(0.93), "on the line = honest odds", { class: "t-ink" });
-    seg("calSeg", (v) => { gMatch.style.opacity = v === "adv" ? 0.08 : 1; gAdv.style.opacity = v === "match" ? 0.08 : 1; });
   })();
 
   // ---------- Figure 11: stages ----------
-  hbar($("stageChart"), [
+  hbar(document.getElementById("stageChart"), [
     { label: "Before the event", v: 0.129, color: "gold-fill", dim: true },
     { label: "After quals", v: 0.086, color: "gold-fill" },
     { label: "After alliance selection", v: 0.064, color: "gold-fill", strong: true },
@@ -1427,22 +791,15 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
   ], { max: 0.17, fmt: (v) => v.toFixed(3), left: 190, ticks: [0, 0.05, 0.1, 0.15], rowH: 38 });
 
   // ---------- Figure 12: breaks ----------
-  hbar($("breakChart"), [
+  hbar(document.getElementById("breakChart"), [
     { label: "No recent break", v: 22.3, color: "muted", strong: true },
     { label: "1st match, 2–4 wk off", v: 28.4, color: "gold-fill", dim: true },
     { label: "1st match, 4–8 wk off", v: 36.2, color: "gold-fill" },
     { label: "1st match, 8+ wk off", v: 57.8, color: "red", strong: true },
     { label: "2nd–3rd match, 8+ wk", v: 45.3, color: "red", dim: true },
     { label: "4th–6th match, 8+ wk", v: 36.4, color: "gold-fill" },
-  ], { max: 65, fmt: (v) => v.toFixed(0) + " pts", left: 180, ticks: [0, 20, 40, 60], tip: (r) => `${r.label}: off by ${r.v.toFixed(1)} pts on average` });
-
-  // ---------- expandable verdicts ----------
-  document.querySelectorAll(".verdict .more").forEach((b) => b.addEventListener("click", () => {
-    const open = b.getAttribute("aria-expanded") !== "true";
-    b.setAttribute("aria-expanded", String(open));
-    b.nextElementSibling.classList.toggle("open", open);
-  }));
+  ], { max: 65, fmt: (v) => v.toFixed(0) + " pts", left: 180, ticks: [0, 20, 40, 60] });
 })();
 </script>
-</body>
-</html>
+
+</body></html>
