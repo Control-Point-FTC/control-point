@@ -426,3 +426,125 @@ describe('Owner console — What’s new', () => {
     expect(await screen.findByText('Notebook')).toBeInTheDocument();
   });
 });
+
+describe('Owner console — redesign', () => {
+  const withOverview = (overview: any, extra: Record<string, any> = {}) => api.apiFetch.mockImplementation((url: string, init?: any) => {
+    if (init?.method) return json({});
+    if (url === '/api/owner/overview') return json(overview);
+    if (url in extra) return json(extra[url]);
+    if (url.startsWith('/api/owner/ai-overview')) return json({ today: { messages: 0 }, flags: { open: 2 }, daily: [], top: [] });
+    if (url.startsWith('/api/owner/ai-flags')) return json([]);
+    return json(DB[url] ?? null);
+  });
+  const OV = DB['/api/owner/overview'];
+
+  it('overview: what needs you, each item opening its tab', async () => {
+    withOverview({ ...OV, totals: { ...OV.totals, new_feedback: 1, crashes_7d: 4 }, email: { configured: true, lastOkAt: null, lastError: 'bad key', lastErrorAt: '2026-10-08T00:00:00Z' } });
+    setup();
+    const strip = await screen.findByRole('region', { name: 'Needs your attention' });
+    expect(within(strip).getByText('2 open AI flags')).toBeInTheDocument();
+    expect(within(strip).getByText('1 new feedback note')).toBeInTheDocument();
+    expect(within(strip).getByText('Email is failing')).toBeInTheDocument();
+    fireEvent.click(within(strip).getByRole('button', { name: /4 error reports/ }));
+    expect(screen.getByRole('tab', { name: /Errors/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('overview: all clear when nothing needs you', async () => {
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/owner/overview') return json({ ...OV, totals: { ...OV.totals, new_feedback: 0, crashes_7d: 0 } });
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [] });
+      if (url.startsWith('/api/owner/ai-flags')) return json([]);
+      return json(DB[url] ?? null);
+    });
+    setup();
+    expect(await screen.findByText('Nothing needs you right now.')).toBeInTheDocument();
+  });
+
+  it('workspaces: search, sort by any column, and open their users', async () => {
+    withOverview({ ...OV, teams: [...OV.teams, { id: 3, name: 'Alpha', access_code: 'QQQ', member_count: 1, message_count: 500, task_count: 0, feedback_count: 0, last_message_at: '2026-10-07T18:30:00.000Z' }] });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    const names = () => screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent);
+    // Most members first by default.
+    expect(names()).toEqual(['Robo #4215', 'Gears', 'Alpha']);
+    fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
+    expect(names()).toEqual(['Alpha', 'Robo #4215', 'Gears']);
+    expect(screen.getByRole('columnheader', { name: /Messages/ })).toHaveAttribute('aria-sort', 'descending');
+    fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
+    expect(names()).toEqual(['Gears', 'Robo #4215', 'Alpha']);
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    expect(names()).toEqual(['Alpha', 'Gears', 'Robo #4215']);
+    expect(screen.getAllByText('Never')).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText('Search workspaces'), { target: { value: '4215' } });
+    expect(names()).toEqual(['Robo #4215']);
+    expect(screen.getByText('Workspaces (1 of 3)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Users in Robo' }));
+    expect(await screen.findByText(/ada@x.test/)).toBeInTheDocument();
+    expect(screen.queryByText(/bo@x.test/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' })[0]);
+    expect(screen.getByText(/bo@x.test/)).toBeInTheDocument();
+  });
+
+  it('users: status filter and sort', async () => {
+    const users = [
+      ...USERS,
+      { id: 13, name: 'Cy', email: 'cy@x.test', team_name: 'Robo', warnings: 2, msgs_7d: 3, tokens_7d: 90000, last_ai_use: '2026-10-07 12:00:00' },
+    ];
+    withOverview(OV, { '/api/owner/users': users });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Users/);
+    await screen.findByText(/cy@x.test/);
+    const order = () => screen.getAllByRole('button', { name: /^Delete / }).map((b) => b.getAttribute('aria-label'));
+    expect(order()).toEqual(['Delete Ada', 'Delete Bo', 'Delete Cy']);
+    expect(screen.getByText(/last AI Oct 7/)).toBeInTheDocument();
+    const pick = (label: string, option: string) => {
+      fireEvent.click(screen.getByRole('combobox', { name: label }));
+      fireEvent.click(screen.getByRole('option', { name: option }));
+    };
+    pick('Sort users', 'AI tokens (7 days)');
+    expect(order()).toEqual(['Delete Cy', 'Delete Ada', 'Delete Bo']);
+    pick('Filter by status', 'Warned');
+    expect(order()).toEqual(['Delete Cy']);
+    expect(screen.getByText('Users (1 of 3)')).toBeInTheDocument();
+    pick('Filter by status', 'AI limited or off');
+    expect(order()).toEqual(['Delete Bo']);
+    pick('Filter by status', 'Open flags');
+    expect(order()).toEqual(['Delete Ada']);
+    pick('Filter by status', 'No AI this week');
+    expect(order()).toEqual(['Delete Ada', 'Delete Bo']);
+  });
+
+  it('errors: a group opens to its latest reports with the stack', async () => {
+    const errors = {
+      groups: [{ message: 'Cannot read x', route: '/tasks', kind: 'render', n: 2, last_seen: '2026-10-08 09:00:00' }],
+      recent: [
+        { id: 2, message: 'Cannot read x', route: '/tasks', kind: 'render', created_at: '2026-10-08 09:00:00', team_name: 'Robo', release: 'abc123', user_agent: 'Firefox', stack: 'at Board (tasks.tsx:10)' },
+        { id: 1, message: 'Other', route: '/tasks', kind: 'render', created_at: '2026-10-08 08:00:00', stack: 'at Elsewhere' },
+      ],
+    };
+    withOverview(OV, { '/api/owner/client-errors': errors });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Errors/);
+    const toggle = await screen.findByRole('button', { name: /Cannot read x/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    const list = screen.getByRole('list', { name: 'Latest reports' });
+    expect(within(list).getByText('at Board (tasks.tsx:10)')).toBeInTheDocument();
+    expect(within(list).getByText(/Robo · release abc123/)).toBeInTheDocument();
+    expect(within(list).queryByText('at Elsewhere')).not.toBeInTheDocument();
+  });
+
+  it('refresh reloads everything without blanking the page', async () => {
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    api.apiFetch.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    expect(screen.getByRole('cell', { name: /Robo/ })).toBeInTheDocument();
+    await waitFor(() => expect(calls('/api/owner/overview')).toHaveLength(1));
+    expect(calls('/api/owner/users')).toHaveLength(1);
+    expect(calls('/api/owner/ftc-duplicates')).toHaveLength(1);
+    await waitFor(() => expect(screen.getByRole('button', { name: /Refresh/ })).not.toBeDisabled());
+  });
+});

@@ -41,8 +41,9 @@ export function useOwnerConsole() {
   const flagFilterRef = useRef(flagFilter);
   flagFilterRef.current = flagFilter;
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
+  // `quiet`: a refresh keeps what's on screen until the new numbers land.
+  const loadAll = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     // The initial load takes part in latest-wins too: a refresh started while
     // it runs (e.g. opening AI Control) must not be overwritten by it.
     const ids = { users: ++seq.current.users, ai: ++seq.current.ai, flags: ++seq.current.flags };
@@ -143,7 +144,7 @@ export function useOwnerConsole() {
   return {
     tab, setTab, overview, feedback, users, aiOverview, flags, flagFilter, chooseFlagFilter, loading, userSearch, setUserSearch,
     teamFilter, setTeamFilter, selectedId, setSelectedId, totals, openFlagCount, teams, filteredUsers,
-    setFeedbackStatus, handleFlagAction, quickDeleteUser, reloadFlags, reloadUsers, reloadAi, reloadAfterChange,
+    setFeedbackStatus, handleFlagAction, quickDeleteUser, reloadFlags, reloadUsers, reloadAi, reloadAfterChange, refresh: () => loadAll(true),
   };
 }
 

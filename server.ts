@@ -8221,7 +8221,8 @@ Rules:
         (SELECT COUNT(*) FROM members m WHERE m.team_id = t.id) as member_count,
         (SELECT COUNT(*) FROM messages msg WHERE msg.team_id = t.id) as message_count,
         (SELECT COUNT(*) FROM tasks tk WHERE tk.team_id = t.id) as task_count,
-        (SELECT COUNT(*) FROM feedback f WHERE f.team_id = t.id) as feedback_count
+        (SELECT COUNT(*) FROM feedback f WHERE f.team_id = t.id) as feedback_count,
+        (SELECT MAX(msg.timestamp) FROM messages msg WHERE msg.team_id = t.id) as last_message_at
       FROM teams t ORDER BY t.id DESC
     `));
     const totals = (await dbGet(`
@@ -8229,7 +8230,8 @@ Rules:
              (SELECT COUNT(*) FROM teams) as teams,
              (SELECT COUNT(*) FROM messages) as messages,
              (SELECT COUNT(*) FROM feedback) as feedback,
-             (SELECT COUNT(*) FROM feedback WHERE status = 'new') as new_feedback
+             (SELECT COUNT(*) FROM feedback WHERE status = 'new') as new_feedback,
+             (SELECT COUNT(*) FROM client_errors WHERE created_at >= datetime('now', '-7 days')) as crashes_7d
     `));
     res.json({ totals, teams, email: getEmailHealth() });
   });
