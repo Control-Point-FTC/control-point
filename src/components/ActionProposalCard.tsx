@@ -1,5 +1,26 @@
 import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
 import type { ActionProposal } from '../services/aiService';
+import { normalizeBrunoTask } from '../utils/brunoTasks';
+import { recurrenceLabel } from '../utils/quickAdd';
+
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** A task as it will be saved: title, then due date and time, priority, people, repeat. */
+function taskSummary(it: any): string {
+  // The roster lives on the server; names are shown as Bruno wrote them.
+  const t = normalizeBrunoTask(it, localToday(), []);
+  const people = [...(Array.isArray(it.assignees) ? it.assignees : []), ...(typeof it.assignee === 'string' ? [it.assignee] : [])].filter(Boolean);
+  const parts = [
+    t.due_date ? `due ${t.due_date}${t.due_time ? ` at ${t.due_time}` : ''}` : '',
+    t.priority ? `${t.priority} priority` : '',
+    people.length ? `→ ${people.join(', ')}` : '',
+    t.recurrence ? recurrenceLabel(t.recurrence).toLowerCase() : '',
+  ].filter(Boolean);
+  return `${t.title.slice(0, 60)}${parts.length ? ` — ${parts.join(' · ')}` : ''}`;
+}
 
 export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; destructive?: boolean }> = {
   event: { label: 'Calendar', icon: Calendar },
@@ -27,7 +48,7 @@ export function itemSummary(kind: ActionProposal['kind'], it: any): string {
     const to = String(it.recipient || '').slice(0, 40);
     return `${subj}${to ? ` → ${to}` : ''}${it.date ? ` — ${it.date}` : ''}`;
   }
-  if (kind === 'task') return `${title}${it.due_date ? ` — due ${it.due_date}` : ''}`;
+  if (kind === 'task') return taskSummary(it);
   const amt = !isNaN(parseFloat(it.amount)) ? `$${parseFloat(it.amount).toFixed(2)}` : '';
   const dir = it.type === 'income' ? 'in' : 'out';
   return `${title} — ${amt} ${dir}${it.date ? ` — ${it.date}` : ''}`;

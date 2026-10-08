@@ -59,6 +59,7 @@ import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence } from "./src/utils/quickAdd.js";
+import { normalizeBrunoTask, recoverEventTime } from "./src/utils/brunoTasks.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
@@ -10961,26 +10962,34 @@ Rules:
   // (a JSON array) when the user confirms task entries. Parse, validate, strip.
   // Tasks are only PROPOSED here — confirmed via POST /api/ai/apply-actions.
   const TASKS_BLOCK_RE = /```tasks\s*\r?\n([\s\S]*?)\r?\n```/;
-  function extractTasksBlock(fullText: string): { text: string; tasks: { title: string; description: string; due_date: string }[] | null } {
+  type RawBrunoTask = { title: string; description: string; due_date: string; due_time?: string; priority?: string; assignees?: string[]; repeat?: unknown };
+  function extractTasksBlock(fullText: string): { text: string; tasks: RawBrunoTask[] | null } {
     const src = String(fullText || "");
     const m = src.match(TASKS_BLOCK_RE);
     if (!m) return { text: src, tasks: null };
-    let tasks: { title: string; description: string; due_date: string }[] | null = null;
+    let tasks: RawBrunoTask[] | null = null;
     try {
       const p = JSON.parse(m[1]);
       if (Array.isArray(p) && p.length > 0 && p.length <= 20) {
-        const valid = p.map((t: any) => {
+        const valid = p.map((t: any): RawBrunoTask | null => {
           if (!t || typeof t.title !== "string" || !t.title.trim()) return null;
           let due = "";
           if (typeof t.due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.due_date) && !isNaN(new Date(t.due_date + "T00:00:00").getTime())) {
             due = t.due_date;
           }
+          // Names as written; resolved against the roster when applied.
+          const names = [...(Array.isArray(t.assignees) ? t.assignees : []), ...(typeof t.assignee === "string" ? [t.assignee] : [])]
+            .filter((n: any) => typeof n === "string" && n.trim()).map((n: string) => n.trim().slice(0, 80)).slice(0, 20);
           return {
             title: t.title.trim().slice(0, 120),
             description: typeof t.description === "string" ? t.description.trim().slice(0, 500) : "",
             due_date: due,
+            ...(typeof t.due_time === "string" && TASK_TIME_RE.test(t.due_time) ? { due_time: t.due_time } : {}),
+            ...(typeof t.priority === "string" ? { priority: t.priority.slice(0, 10) } : {}),
+            ...(names.length ? { assignees: names } : {}),
+            ...(t.repeat ? { repeat: typeof t.repeat === "string" ? t.repeat.slice(0, 20) : t.repeat } : {}),
           };
-        }).filter(Boolean);
+        }).filter((t): t is RawBrunoTask => !!t);
         if (valid.length) tasks = valid;
       }
     } catch { /* malformed JSON — treat as no tasks */ }
@@ -11266,7 +11275,18 @@ Rules:
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
       // inserted until the user taps the confirm button, which calls
       // POST /api/ai/apply-actions with the parsed items.
+      // A reply may carry several blocks of one kind (pasted meeting notes):
+      // strip until none are left.
       const stripActionBlocks = (rawText: string): string => {
+        let t = rawText;
+        for (let pass = 0; pass < 8; pass++) {
+          const before = t;
+          t = stripActionBlocksOnce(t);
+          if (t === before) break;
+        }
+        return t;
+      };
+      const stripActionBlocksOnce = (rawText: string): string => {
         let t = extractSwitchBlock(rawText).text;
         t = extractEventBlock(t).text;
         t = extractDeleteEventBlock(t).text;
@@ -11404,7 +11424,7 @@ Rules:
       const auth = await requireAuth(req, res);
       if (!auth) return;
       const actions = req.body?.actions;
-      if (!Array.isArray(actions) || !actions.length || actions.length > 4) {
+      if (!Array.isArray(actions) || !actions.length || actions.length > 12) {
         return res.status(400).json({ error: "No actions to apply" });
       }
       // Bruno's proposals are applied with exactly the permission the direct
@@ -11430,8 +11450,10 @@ Rules:
         if (kind === "event") {
           const { events } = extractEventBlock("```event\n" + JSON.stringify(items) + "\n```");
           if (!events?.length) continue;
+          const eventToday = todayIn(await teamTimeZone(auth.teamId, req.body?.tz));
           for (const e of events) {
-            (await insertTeamEvent(auth.teamId, auth.memberId, e));
+            // A time the model left in the title or notes still lands in the time fields.
+            (await insertTeamEvent(auth.teamId, auth.memberId, recoverEventTime(e, eventToday)));
           }
           applied.event = (applied.event || 0) + events.length;
           const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
@@ -11490,11 +11512,24 @@ Rules:
         } else if (kind === "task") {
           const { tasks } = extractTasksBlock("```tasks\n" + JSON.stringify(items) + "\n```");
           if (!tasks?.length) continue;
-          for (const t of tasks) {
-            (await dbRun(
-              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, 'todo', NULL, ?, 0, ?)",
-              auth.teamId, t.title, t.description, t.due_date || null, createdAt
-            ));
+          // Assignee, priority, repeat, date AND time land in their own fields
+          // (whatever the model left in the title or description is read out
+          // of it), against the team's roster and the team's today.
+          const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+          const todayISO = todayIn(await teamTimeZone(auth.teamId, req.body?.tz));
+          const names = roster.map((m: any) => String(m.name));
+          for (const raw of tasks) {
+            const t = normalizeBrunoTask(raw, todayISO, names);
+            const ids = t.assignees.map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
+            const info = await dbRun(
+              "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, 0, ?, ?, ?)",
+              auth.teamId, t.title, t.description, ids[0] ?? null, t.due_date, t.due_date ? t.due_time : null, createdAt, t.priority, t.recurrence ? JSON.stringify(t.recurrence) : null,
+            );
+            const taskId = Number(info.lastInsertRowid);
+            if (ids.length) {
+              await setTaskAssignees(taskId, ids, auth.teamId);
+              for (const mid of ids) if (mid !== auth.memberId) void createNotification(mid, `New task assigned: ${t.title}`, "task", { task_id: taskId });
+            }
           }
           applied.task = (applied.task || 0) + tasks.length;
         } else if (kind === "budget") {
@@ -11515,6 +11550,7 @@ Rules:
       // Bruno's writes are live-synced like the direct API's.
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
       if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
+      if (applied.task) broadcastToTeam(auth.teamId, { type: "tasks_changed" });
       res.json({ ok: true, applied });
     } catch (error) {
       console.error("AI apply-actions error:", error);

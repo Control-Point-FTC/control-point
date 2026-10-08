@@ -159,7 +159,8 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
   // the names themselves; what follows ("tomorrow at noon") stays for the
   // date and time readers.
   {
-    const lead = text.match(/[\s,;]+(?:and\s+)?(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:?)\s+/i);
+    // "(Assigned to Arnav)" too: AI replies like to put it in brackets.
+    const lead = text.match(/[\s,;(]+(?:and\s+)?(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:?)\s+/i);
     if (lead && lead.index != null) {
       let pos = lead.index + lead[0].length;
       const found: string[] = [];
@@ -169,7 +170,7 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
         let hit: { name: string; len: number } | null = null;
         for (const n of names) {
           for (const form of [n, n.split(/\s+/)[0]]) {
-            const re = new RegExp(`^${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,;.!?])`, 'i');
+            const re = new RegExp(`^${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,;.!?)])`, 'i');
             const mm = rest.match(re);
             if (mm && (!hit || mm[0].length > hit.len)) hit = { name: n, len: mm[0].length };
           }
@@ -186,7 +187,7 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
       }
       if (found.length) {
         for (const f of found) if (!out.assignees.includes(f)) out.assignees.push(f);
-        text = `${text.slice(0, lead.index)} ${text.slice(pos)}`;
+        text = `${text.slice(0, lead.index)} ${text.slice(pos)}`.replace(/^\s*\)|\(\s*\)/g, ' ').replace(/(\s)\)/, '$1');
       }
     }
   }

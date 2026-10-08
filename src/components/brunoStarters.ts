@@ -136,6 +136,94 @@ const POOLS: Record<string, StarterPool> = {
       'Explain Road Runner vs Pedro Pathing for BIOBUZZ',
     ],
   },
+  predict: {
+    greeting:
+      'I can see the forecast on your screen — ask me to explain it, run what-ifs, or plan how to improve your odds.',
+    prompts: [
+      'Explain this prediction in plain English',
+      'Why is our advancement chance what it is?',
+      'What would it take to raise our odds at this event?',
+      'Which matches matter most for our ranking here?',
+      'What if we lose our first two qualification matches?',
+      'Who are the strongest teams in this field?',
+      'If we captain an alliance, who should we pick?',
+      'Which captains are most likely to pick us?',
+      'How confident should we be in this forecast?',
+      'What score do we need to average to rank top 4?',
+      'Compare us to the teams ranked just above us',
+      'How accurate have these predictions been on past events?',
+    ],
+  },
+  budget: {
+    greeting: 'I can log spending and income, and help you plan where the money goes.',
+    prompts: [
+      'Log $45.99 for goBILDA servos today',
+      'We got a $500 sponsorship from a local business — add it',
+      'How much have we spent this season?',
+      'What are our biggest spending categories?',
+      'Log the $150 registration fee for the qualifier',
+      'Help me plan a budget for the rest of the season',
+      'Add three purchases: wheels $60, belts $25, bearings $18',
+      'Are we on track to stay under budget?',
+    ],
+  },
+  cad: {
+    greeting: 'I can help with mechanism design, part choices and your CAD review notes.',
+    prompts: [
+      'How should we design an intake for BIOBUZZ pollen?',
+      'What gear ratio should our arm use?',
+      'Review our drivetrain choice — mecanum or tank?',
+      'What should we check before a CAD design review?',
+      'Suggest a lighter way to build our lift',
+      'Which parts in our BOM are still missing?',
+      'How do we keep CAD and the real robot in sync?',
+      'Help me write notes for our latest CAD snapshot',
+    ],
+  },
+  chat: {
+    greeting: 'I can help you write messages, summarise discussions and turn chat into tasks or events.',
+    prompts: [
+      'Turn the plans in this channel into tasks',
+      'Draft an announcement about Saturday’s build session',
+      'Summarise what the team decided this week',
+      'Schedule the meeting we just talked about',
+      'Write a friendly reminder about team dues',
+      'Draft a message welcoming our new members',
+    ],
+  },
+  resources: {
+    greeting: 'I can point you to good FTC resources and help organise your team’s links.',
+    prompts: [
+      'What are the best resources for learning Road Runner?',
+      'Find guides for tuning a PID lift',
+      'What should every rookie read first?',
+      'Recommend resources for our engineering portfolio',
+      'Where can we learn about BIOBUZZ game strategy?',
+      'What CAD tutorials are good for beginners?',
+    ],
+  },
+  teams: {
+    greeting: 'I can help organise people — roles, who owns what, and onboarding new members.',
+    prompts: [
+      'Suggest roles for a 12-person team',
+      'Who has the most open tasks right now?',
+      'Help me plan onboarding for new members',
+      'Who hasn’t been assigned anything this week?',
+      'Draft a welcome message for a new mentor',
+      'How should we split build and programming work?',
+    ],
+  },
+  inbox: {
+    greeting: 'I can help you work through what needs you — tasks, mentions and updates.',
+    prompts: [
+      'What do I need to do today?',
+      'Which of my tasks are overdue?',
+      'Summarise this week’s team updates',
+      'What’s coming up on the calendar?',
+      'Help me prioritise my tasks',
+      'Did anything change on the calendar this week?',
+    ],
+  },
   dashboard: {
     greeting: DEFAULT_GREETING,
     prompts: [
@@ -162,8 +250,8 @@ const POOLS: Record<string, StarterPool> = {
 export function starterPoolForPath(pathname: string): StarterPool {
   const seg = (pathname || '').split('/')[1] || 'dashboard';
   if (POOLS[seg]) return POOLS[seg];
-  // CAD sub-pages
-  if (seg.startsWith('cad')) return POOLS.dashboard;
+  // CAD sub-pages (/cad-parts, /cad-reviews, …)
+  if (seg.startsWith('cad')) return POOLS.cad;
   return POOLS.dashboard;
 }
 
