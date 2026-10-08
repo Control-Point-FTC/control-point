@@ -9,18 +9,22 @@ import { apiFetch } from './api';
 import { normalizeBrunoTask, recoverEventTime } from '../utils/brunoTasks';
 import type { ActionProposal } from './aiService';
 
-export interface ProposalContext { today: string; roster: string[] }
+export interface ProposalContext { today: string; roster: string[]; loadedAt?: number }
 
+/** The roster and the team's date can change (a new member, midnight):
+ *  a card mounting after this long refreshes them first. */
+const MAX_AGE_MS = 60_000;
 let ctx: ProposalContext | null = null;
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
 export const getProposalContext = () => ctx;
 /** Test hook. */
-export function setProposalContext(c: ProposalContext | null) { ctx = c; listeners.forEach((l) => l()); }
+export function setProposalContext(c: ProposalContext | null) { ctx = c ? { ...c, loadedAt: c.loadedAt ?? Date.now() } : null; listeners.forEach((l) => l()); }
 
 export function loadProposalContext(): Promise<void> {
-  if (ctx || loading) return loading || Promise.resolve();
+  if (loading) return loading;
+  if (ctx && Date.now() - (ctx.loadedAt || 0) < MAX_AGE_MS) return Promise.resolve();
   const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
   const run: Promise<void> = (async () => {
     try {

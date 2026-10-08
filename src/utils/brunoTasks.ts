@@ -63,12 +63,30 @@ export function rosterMatch(name: unknown, roster: string[]): string | null {
 
 /** A piece of text that is clearly a field instruction, not ordinary context:
  *  "high priority", "assign to Arnav", "due Friday at 4pm", "every week",
- *  "repeats monthly". A bare "weekly report" or "Saturday's meet" is not. */
-const INSTRUCTION_RE = /\b(?:priority|urgent|asap|assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:|due\b|deadline|every\s+(?:day|week|month|other|\d+|mon|tue|wed|thu|fri|sat|sun)|repeat(?:s|ing)?\b|recurring)/i;
+ *  "repeats monthly". It must START with the instruction (after an optional
+ *  "make it", "it's", "this is" or "and"), or be a short phrase of six words
+ *  or fewer: "We meet every week to review", "Due to rain we moved it" and
+ *  "the weekly report" stay context. */
+const INSTRUCTION = String.raw`(?:(?:low|medium|normal|high|top|urgent)\s+priority|priority\s*:?\s*(?:low|medium|high|urgent)|urgent|asap|assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:|due(?!\s+to\b)\b|deadline|every\s+(?:day|week|month|other|\d+|mon|tue|wed|thu|fri|sat|sun)|repeat(?:s|ing)?\b|recurring)`;
+const STARTS_WITH_INSTRUCTION = new RegExp(String.raw`^(?:(?:and|make it|it'?s|this is|it is)\s+)?${INSTRUCTION}`, 'i');
+const HAS_INSTRUCTION = new RegExp(INSTRUCTION, 'i');
+const isInstruction = (piece: string) =>
+  STARTS_WITH_INSTRUCTION.test(piece) || (HAS_INSTRUCTION.test(piece) && piece.split(/\s+/).length <= 6);
+const ASSIGN_PHRASE = /(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:)/i;
 
-/** Split title text on commas/semicolons and description text into sentences. */
-const pieces = (text: string, sentences: boolean) =>
-  text.split(sentences ? /(?<=[.!?;])\s+|\n+/ : /\s*[,;]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+/** Split title text on commas/semicolons and description text into sentences;
+ *  names after "assign to Ada" stay with it ("assign to Ada, Grace and Lin"). */
+function pieces(text: string, sentences: boolean, roster: string[]): string[] {
+  const raw = text.split(sentences ? /(?<=[.!?;])\s+|\n+/ : /\s*[,;]\s*|\s+-\s+/).map((p) => p.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const p of raw) {
+    const prev = out[out.length - 1];
+    const names = p.replace(/^and\s+/i, '').split(/\s+(?:and|&)\s+/i);
+    if (prev && ASSIGN_PHRASE.test(prev) && names.every((n) => rosterMatch(n, roster))) out[out.length - 1] = `${prev}, ${p}`;
+    else out.push(p);
+  }
+  return out;
+}
 
 export interface NormalizeOptions {
   /** Read fields out of instruction phrases in the title/description (the
@@ -87,8 +105,8 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
     // Only instruction pieces are parsed and removed; the rest stays word for word.
     const strip = (text: string, sentences: boolean) => {
       const keep: string[] = [];
-      for (const piece of pieces(text, sentences)) {
-        if (!INSTRUCTION_RE.test(piece)) { keep.push(piece); continue; }
+      for (const piece of pieces(text, sentences, roster)) {
+        if (!isInstruction(piece)) { keep.push(piece); continue; }
         const q = parseQuickAdd(piece, today, roster);
         recovered.push(q);
         if (q.title.trim().length >= 3) keep.push(q.title.trim());
@@ -123,6 +141,7 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
 }
 
 const TIME_RANGE_RE = /\s*\b(?:from\s+|at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to|until)\s*(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)/i;
+const TIME_RANGE_24_RE = /\s*\b(?:from\s+|at\s+)?([01]?\d|2[0-3]):([0-5]\d)\s*(?:-|–|to|until)\s*([01]?\d|2[0-3]):([0-5]\d)\b/i;
 const TIME_ONE_RE = /\s*\b(?:at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)|\s*\bat\s+(\d{1,2}):([0-5]\d)\b|\s*\bat\s+noon\b/i;
 const hhmm = (h: string, m: string | undefined, ap: string | undefined): string | null => {
   let hour = Number(h);
@@ -142,6 +161,12 @@ export function recoverEventTime<E extends { title: string; notes?: string; time
   for (const key of ['title', 'notes'] as const) {
     const text = String(e[key] || '');
     if (!text) continue;
+    const r24 = text.match(TIME_RANGE_24_RE);
+    if (r24) {
+      const start = hhmm(r24[1], r24[2], undefined);
+      const end = hhmm(r24[3], r24[4], undefined);
+      if (start && end && end > start) return { ...e, time: start, end, [key]: tidy(text.replace(r24[0], ' '), e[key]) };
+    }
     const r = text.match(TIME_RANGE_RE);
     if (r) {
       const endAp = r[6];
