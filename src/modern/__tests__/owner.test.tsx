@@ -277,3 +277,26 @@ describe('Modern QR check-in', () => {
     await act(async () => {});
   });
 });
+
+describe('Owner console — What’s new', () => {
+  it('lists releases and publishes a new one with one change per line', async () => {
+    const entries = [{ id: 1, version: '3.5.0', date: '2026-10-08', title: 'Repeating events', added: ['A'], improved: [], fixed: [], posted_at: null }];
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/owner/changelog' && !init?.method) return json({ entries, discord: false });
+      if (url === '/api/owner/changelog' && init?.method === 'POST') return json({ entry: { id: 2, ...JSON.parse(init.body), posted_at: null } });
+      return json(DB[url] ?? null);
+    });
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/What’s new/);
+    expect(await screen.findByText('Repeating events')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /New release/ }));
+    expect((screen.getByLabelText('Version') as HTMLInputElement).value).toBe('3.6.0');
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Notebook' } });
+    fireEvent.change(document.getElementById('cl-added')!, { target: { value: 'Personal notebook\n\nBruno writes pages' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    await waitFor(() => expect(calls('/api/owner/changelog', 'POST')).toHaveLength(1));
+    expect(body('/api/owner/changelog', 'POST')).toMatchObject({ version: '3.6.0', title: 'Notebook', added: ['Personal notebook', 'Bruno writes pages'], improved: [], fixed: [] });
+    expect(await screen.findByText('Notebook')).toBeInTheDocument();
+  });
+});

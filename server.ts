@@ -25,7 +25,7 @@ import multer from "multer";
 import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
+import { dbGet, dbAll, dbRun, dbExec, dbBatch, dbBatchResults } from "./db.js";
 import { runMigrations } from "./migrations/runner.js";
 import {
   isEmailVerified,
@@ -58,7 +58,10 @@ import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
 import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
-import { nextOccurrence, parseQuickAdd, readRecurrence } from "./src/utils/quickAdd.js";
+import { buildIcs } from "./server/ics.js";
+import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } from "./src/utils/changelog.js";
+import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
+import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, runLookups } from "./server/brunoLookup.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
@@ -4607,6 +4610,7 @@ async function startServer() {
       { sql: "DELETE FROM code_commits WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM code_repos WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM events WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM calendar_feeds WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM budget WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM outreach WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM social_stats WHERE team_id = ?", args: [teamId] },
@@ -8169,6 +8173,112 @@ Rules:
     res.json({ recent: rows, groups });
   });
 
+  // ---- What's new: owner-edited changelog ----
+  // Releases live in changelog_entries; the owner adds and edits them in the
+  // Owner console. An empty table is seeded once from the built-in list.
+  const rowToEntry = (r: any) => {
+    const arr = (v: any) => { try { const a = JSON.parse(v || "[]"); return Array.isArray(a) ? a.map(String) : []; } catch { return []; } };
+    return { id: Number(r.id), version: r.version, date: r.date, title: r.title, added: arr(r.added), improved: arr(r.improved), fixed: arr(r.fixed), updated_at: r.updated_at, posted_at: r.posted_at || null };
+  };
+  const listChangelog = async () =>
+    ((await dbAll("SELECT * FROM changelog_entries")) as any[]).map(rowToEntry).sort((a, b) => compareVersions(a.version, b.version));
+  try {
+    // Seeded once (a settings flag, not "the table is empty"): releases the
+    // owner deletes stay deleted.
+    const seeded = (await dbGet("SELECT value FROM settings WHERE key = 'changelog_seeded'")) as any;
+    if (!seeded) {
+      const now = new Date().toISOString();
+      await dbBatch(CHANGELOG.map((e) => ({
+        sql: "INSERT OR IGNORE INTO changelog_entries (version, date, title, added, improved, fixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        args: [e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), now],
+      })).concat([{ sql: "INSERT OR REPLACE INTO settings (key, value) VALUES ('changelog_seeded', '1')", args: [] }]));
+    }
+  } catch (e) { console.error("changelog seed failed:", e); }
+  const discordChangelogWebhook = () => {
+    const url = (process.env.DISCORD_CHANGELOG_WEBHOOK || "").trim();
+    return /^https:\/\/(?:canary\.|ptb\.)?(?:discord|discordapp)\.com\/api\/webhooks\//.test(url) ? url : "";
+  };
+
+  // Everyone (signed in or not) reads the releases; there's nothing private in them.
+  app.get("/api/changelog", async (_req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-cache");
+      res.json((await listChangelog()).map(({ id, updated_at, posted_at, ...e }) => e));
+    } catch (error) {
+      console.error("Error reading changelog:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/owner/changelog", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    res.json({ entries: await listChangelog(), discord: !!discordChangelogWebhook() });
+  });
+
+  app.post("/api/owner/changelog", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const v = changelogEntryFrom(req.body);
+    if ("error" in v) return res.status(400).json({ error: v.error });
+    const e = v.entry;
+    if (await dbGet("SELECT id FROM changelog_entries WHERE version = ?", e.version)) return res.status(409).json({ error: `v${e.version} already exists` });
+    const info = await dbRun(
+      "INSERT INTO changelog_entries (version, date, title, added, improved, fixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), new Date().toISOString(),
+    );
+    res.json({ entry: rowToEntry(await dbGet("SELECT * FROM changelog_entries WHERE id = ?", info.lastInsertRowid)) });
+  });
+
+  app.put("/api/owner/changelog/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    if (!(await dbGet("SELECT id FROM changelog_entries WHERE id = ?", id))) return res.status(404).json({ error: "Release not found" });
+    const v = changelogEntryFrom(req.body);
+    if ("error" in v) return res.status(400).json({ error: v.error });
+    const e = v.entry;
+    if (await dbGet("SELECT id FROM changelog_entries WHERE version = ? AND id != ?", e.version, id)) return res.status(409).json({ error: `v${e.version} already exists` });
+    await dbRun(
+      "UPDATE changelog_entries SET version = ?, date = ?, title = ?, added = ?, improved = ?, fixed = ?, updated_at = ? WHERE id = ?",
+      e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), new Date().toISOString(), id,
+    );
+    res.json({ entry: rowToEntry(await dbGet("SELECT * FROM changelog_entries WHERE id = ?", id)) });
+  });
+
+  app.delete("/api/owner/changelog/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const info = await dbRun("DELETE FROM changelog_entries WHERE id = ?", parseInt(req.params.id, 10));
+    if (!info.changes) return res.status(404).json({ error: "Release not found" });
+    res.json({ ok: true });
+  });
+
+  // Post a release to the Discord changelog channel (DISCORD_CHANGELOG_WEBHOOK).
+  app.post("/api/owner/changelog/:id/discord", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const url = discordChangelogWebhook();
+    if (!url) return res.status(400).json({ error: "Set DISCORD_CHANGELOG_WEBHOOK on the server to post to Discord" });
+    const id = parseInt(req.params.id, 10);
+    const row = await dbGet("SELECT * FROM changelog_entries WHERE id = ?", id);
+    if (!row) return res.status(404).json({ error: "Release not found" });
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: changelogDiscordText(rowToEntry(row)), allowed_mentions: { parse: [] } }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!r.ok) return res.status(502).json({ error: `Discord said ${r.status}` });
+      await dbRun("UPDATE changelog_entries SET posted_at = ? WHERE id = ?", new Date().toISOString(), id);
+      res.json({ entry: rowToEntry(await dbGet("SELECT * FROM changelog_entries WHERE id = ?", id)) });
+    } catch (error) {
+      console.error("Discord changelog post failed:", error);
+      res.status(502).json({ error: "Couldn't reach Discord — try again" });
+    }
+  });
+
   app.get("/api/owner/feedback", async (req, res) => {
     const auth = await requireOwner(req, res);
     if (!auth) return;
@@ -9194,11 +9304,18 @@ Rules:
   });
 
   // Shared team-event insert (used by the admin route and by Bruno).
-  async function insertTeamEvent(teamId: number, memberId: number, e: { title: string; date: string; time?: string; end?: string; notes?: string }) {
-    const info = (await dbRun(
-      "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      e.title, e.notes || "", e.date, e.time || "", (e.time && e.end) || "", "", "meeting", teamId, memberId
-    )) as any;
+  interface TeamEventFields {
+    title: string; date: string; time?: string; end?: string; notes?: string;
+    location?: string; event_type?: string; reminder_minutes?: number | null;
+    recurrence?: string | null; series_id?: number | null;
+  }
+  const EVENT_INSERT_SQL = "INSERT INTO events (title, description, date, start_time, end_time, location, event_type, team_id, created_by, reminder_minutes, recurrence, series_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  const eventInsertArgs = (teamId: number, memberId: number, e: TeamEventFields) => [
+    e.title, e.notes || "", e.date, e.time || "", (e.time && e.end) || "", e.location || "", e.event_type || "meeting",
+    teamId, memberId, e.reminder_minutes ?? null, e.recurrence ?? null, e.series_id ?? null,
+  ];
+  async function insertTeamEvent(teamId: number, memberId: number, e: TeamEventFields) {
+    const info = (await dbRun(EVENT_INSERT_SQL, ...eventInsertArgs(teamId, memberId, e))) as any;
     const eventId = info.lastInsertRowid;
     // Push to linked personal Google Calendars (if the admin enabled sync)
     const newEvent = (await dbGet("SELECT * FROM events WHERE id = ?", eventId)) as any;
@@ -9206,36 +9323,124 @@ Rules:
     return eventId;
   }
 
+  /** Push every occurrence of a series saved in one transaction to linked Google Calendars. */
+  async function syncSeriesRows(teamId: number, seriesId: number, exceptId?: number) {
+    const rows = (await dbAll("SELECT * FROM events WHERE series_id = ? AND team_id = ?", seriesId, teamId)) as any[];
+    for (const row of rows) if (row.id !== exceptId) void syncEventToCalendars(row, teamId);
+  }
+
+  /** A submitted repeat rule: null for none, or an error message. */
+  function repeatFrom(raw: unknown, firstDate: string): { rule: EventRepeat | null } | { error: string } {
+    if (raw === undefined || raw === null || raw === "" || raw === false) return { rule: null };
+    const rule = readEventRepeat(raw);
+    if (!rule) return { error: "Pick how often the event repeats" };
+    if (rule.until && rule.until <= firstDate) return { error: "The repeat end date must be after the first event" };
+    return { rule };
+  }
+
+  const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86400000);
+
   app.post("/api/events", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
-      const { title, description, date, start_time, end_time, location, event_type } = req.body;
+      const { title, description, date, start_time, end_time, location, event_type, repeat, reminder_minutes } = req.body;
       const invalid = eventError({ title, date, start_time, end_time });
       if (invalid) return res.status(400).json({ error: invalid });
+      const rep = repeatFrom(repeat, date);
+      if ("error" in rep) return res.status(400).json({ error: rep.error });
       // The creator is the signed-in member (a client-supplied created_by is ignored).
-      const id = await insertTeamEvent(auth.teamId, auth.memberId, {
-        title: String(title).trim(), date, time: start_time, notes: description,
-      });
-      // Preserve the extra fields the admin form collects
-      (await dbRun("UPDATE events SET end_time = ?, location = ?, event_type = ? WHERE id = ?",
-        end_time || '', location || '', event_type || 'meeting', id));
+      const fields: TeamEventFields = {
+        title: String(title).trim(), date, time: start_time, end: end_time, notes: description,
+        location: location || "", event_type: event_type || "meeting", reminder_minutes: cleanReminder(reminder_minutes),
+        recurrence: rep.rule ? JSON.stringify(rep.rule) : null,
+      };
+      let id: number;
+      let count = 1;
+      if (rep.rule) {
+        // The whole series in one write transaction: all of it or none of it.
+        // The first row is the series head (series_id = its own id); the write
+        // lock is held from the first statement, so it is the team's newest head
+        // when the followers look it up.
+        const dates = seriesDates(date, rep.rule);
+        count = dates.length;
+        const head = "(SELECT MAX(id) FROM events WHERE team_id = ? AND series_id = id)";
+        const results = await dbBatchResults([
+          { sql: EVENT_INSERT_SQL, args: eventInsertArgs(auth.teamId, auth.memberId, fields) },
+          { sql: "UPDATE events SET series_id = id WHERE id = last_insert_rowid()" },
+          ...dates.slice(1).map((d) => ({
+            sql: EVENT_INSERT_SQL.replace(/VALUES \((.*)\?\)$/, `VALUES ($1${head})`),
+            args: [...eventInsertArgs(auth.teamId, auth.memberId, { ...fields, date: d }).slice(0, -1), auth.teamId],
+          })),
+        ]);
+        id = results[0].lastInsertRowid;
+        await syncSeriesRows(auth.teamId, id);
+      } else {
+        id = Number(await insertTeamEvent(auth.teamId, auth.memberId, fields));
+      }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
       void notifyTeamUpdate(auth.teamId!, auth.memberId, everyone.map((m) => m.id), "event",
-        `New calendar event: ${String(title).trim()} on ${date}${start_time ? ` at ${start_time}` : ""}`, { event_id: Number(id) });
-      res.json({ id });
+        count > 1
+          ? `New repeating event: ${fields.title}, ${count} times from ${date}${start_time ? ` at ${start_time}` : ""}`
+          : `New calendar event: ${fields.title} on ${date}${start_time ? ` at ${start_time}` : ""}`,
+        { event_id: id }, count);
+      res.json({ id, count });
     } catch (error) {
       console.error("Error creating event:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
+  // Calendar writes for one team run one at a time, so an edit reads a
+  // series and rewrites it with no other edit of that team in between (two
+  // overlapping repeat-rule changes can't both leave a run behind).
+  const calendarLocks = new Map<number, Promise<unknown>>();
+  function withCalendarLock<T>(teamId: number, fn: () => Promise<T>): Promise<T> {
+    const prev = calendarLocks.get(teamId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tail = run.catch(() => {});
+    calendarLocks.set(teamId, tail);
+    void tail.then(() => { if (calendarLocks.get(teamId) === tail) calendarLocks.delete(teamId); });
+    return run;
+  }
+  /** Members' Google copies of these events. Read BEFORE the events are
+   *  deleted: a foreign-key cascade takes the mappings with them. */
+  async function googleCopiesOf(ids: number[]): Promise<{ member_id: number; google_event_id: string }[]> {
+    if (!ids.length) return [];
+    return (await dbAll(
+      `SELECT member_id, google_event_id FROM event_calendar_sync WHERE event_id IN (${ids.map(() => "?").join(",")})`, ...ids,
+    )) as any[];
+  }
+  async function removeGoogleCopies(copies: { member_id: number; google_event_id: string }[]) {
+    for (const c of copies) {
+      try {
+        const accessToken = await getGoogleAccessToken(c.member_id);
+        if (!accessToken) continue;
+        await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(c.google_event_id)}`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10_000),
+        }).catch(() => {});
+      } catch (e) {
+        console.error("Calendar sync delete failed:", (e as any)?.message);
+      }
+    }
+  }
+
+  // scope "following" (repeating events only) applies the edit to this
+  // occurrence and every later one in its series; a date change shifts them
+  // all by the same number of days. A changed repeat rule (with "following",
+  // or on a one-off event) replaces the later occurrences with a new run.
+  // Every row is validated first and all writes are one transaction; linked
+  // Google Calendars are updated only after it commits.
   app.patch("/api/events/:id", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
-      const { title, description, date, start_time, end_time, location, event_type } = req.body;
+      // Google cleanup runs after the lock is released (a slow Google must
+      // not hold up the team's other calendar edits).
+      let cleanup: { member_id: number; google_event_id: string }[] = [];
+      await withCalendarLock(auth.teamId, async () => {
+      const { title, description, date, start_time, end_time, location, event_type, reminder_minutes, repeat, scope } = req.body;
       const existing: any = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
       // Validate the event as it will be stored (patch merged over the row).
@@ -9246,39 +9451,283 @@ Rules:
         end_time: end_time ?? existing.end_time,
       });
       if (invalid) return res.status(400).json({ error: invalid });
-      (await dbRun(
-        "UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ? WHERE id = ?"
-      , title ?? existing.title,
-        description ?? existing.description,
-        date ?? existing.date,
-        start_time ?? existing.start_time,
-        end_time ?? existing.end_time,
-        location ?? existing.location,
-        event_type ?? existing.event_type,
-        req.params.id));
-      const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", req.params.id)) as any;
-      if (updatedEvent) void updateSyncedEvent(updatedEvent);
+      const newDate: string = date ?? existing.date;
+      const following = scope === "following" && !!existing.series_id;
+      let ruleChange: { rule: EventRepeat | null } | null = null;
+      // An unchanged rule is left alone (its end date may already be behind this occurrence).
+      if (repeat !== undefined && (following || !existing.series_id)
+        && JSON.stringify(readEventRepeat(repeat)) !== JSON.stringify(readEventRepeat(existing.recurrence))) {
+        const rep = repeatFrom(repeat, newDate);
+        if ("error" in rep) return res.status(400).json({ error: rep.error });
+        ruleChange = rep;
+      }
+      const delta = daysBetween(existing.date, newDate);
+      let rows: any[] = following
+        ? (await dbAll("SELECT * FROM events WHERE series_id = ? AND team_id = ? AND date >= ? ORDER BY date", existing.series_id, auth.teamId, existing.date)) as any[]
+        : [existing];
+      const stmts: { sql: string; args?: any[] }[] = [];
+      // A new rule replaces the later occurrences: deleted by condition (not
+      // by the ids read above), with their sync rows, in the same transaction.
+      const removed = ruleChange && following ? rows.filter((r) => r.id !== existing.id).map((r) => Number(r.id)) : [];
+      const removedCopies = await googleCopiesOf(removed);
+      if (ruleChange && following) {
+        const later = "SELECT id FROM events WHERE series_id = ? AND team_id = ? AND date >= ? AND id != ?";
+        const laterArgs = [existing.series_id, auth.teamId, existing.date, existing.id];
+        stmts.push({ sql: `DELETE FROM event_calendar_sync WHERE event_id IN (${later})`, args: laterArgs });
+        stmts.push({ sql: `DELETE FROM events WHERE id IN (${later})`, args: laterArgs });
+        rows = [existing];
+      }
+      const reminder = reminder_minutes !== undefined ? cleanReminder(reminder_minutes) : undefined;
+      const merged = rows.map((r) => ({
+        r,
+        next: {
+          title: title ?? r.title,
+          description: description ?? r.description,
+          date: r.id === existing.id ? newDate : addDays(r.date, delta),
+          start_time: start_time ?? r.start_time,
+          end_time: end_time ?? r.end_time,
+          location: location ?? r.location,
+          event_type: event_type ?? r.event_type,
+          reminder_minutes: reminder !== undefined ? reminder : r.reminder_minutes,
+        },
+      }));
+      // Each later occurrence keeps its own fields where the edit leaves them
+      // out, so check every merged row before writing any of them.
+      for (const { next } of merged) {
+        const bad = eventError(next);
+        if (bad) return res.status(400).json({ error: `${bad} (on ${next.date})` });
+      }
+      for (const { r, next } of merged) {
+        // A new time (or lead time) means the reminder should go out again.
+        const retime = next.date !== r.date || (next.start_time || "") !== (r.start_time || "") || (next.reminder_minutes ?? null) !== (r.reminder_minutes ?? null);
+        stmts.push({
+          sql: `UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, reminder_minutes = ?${retime ? ", reminder_sent_at = NULL" : ""} WHERE id = ?`,
+          args: [next.title, next.description, next.date, next.start_time, next.end_time, next.location, next.event_type, next.reminder_minutes, r.id],
+        });
+      }
+      const seriesId = Number(existing.series_id || existing.id);
+      if (ruleChange?.rule) {
+        const head = merged.find((m) => m.r.id === existing.id)!.next;
+        const recurrence = JSON.stringify(ruleChange.rule);
+        stmts.push({ sql: "UPDATE events SET recurrence = ?, series_id = ? WHERE id = ?", args: [recurrence, seriesId, existing.id] });
+        for (const d of seriesDates(head.date, ruleChange.rule).slice(1)) {
+          stmts.push({
+            sql: EVENT_INSERT_SQL,
+            args: eventInsertArgs(auth.teamId, existing.created_by ?? auth.memberId, {
+              title: head.title, date: d, time: head.start_time, end: head.end_time, notes: head.description,
+              location: head.location, event_type: head.event_type, reminder_minutes: head.reminder_minutes, recurrence, series_id: seriesId,
+            }),
+          });
+        }
+      } else if (ruleChange) {
+        stmts.push({ sql: "UPDATE events SET recurrence = NULL WHERE id = ?", args: [existing.id] });
+      }
+      await dbBatchResults(stmts);
+      // Linked calendars follow once the database has committed.
+      cleanup = removedCopies;
+      for (const { r } of merged) {
+        const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", r.id)) as any;
+        if (updatedEvent) void updateSyncedEvent(updatedEvent);
+      }
+      if (ruleChange?.rule) {
+        // Only the new run (rows not synced before) is pushed as new events.
+        const fresh = (await dbAll(
+          "SELECT e.* FROM events e WHERE e.series_id = ? AND e.team_id = ? AND e.id != ? AND NOT EXISTS (SELECT 1 FROM event_calendar_sync s WHERE s.event_id = e.id) AND e.date > ?",
+          seriesId, auth.teamId, existing.id, newDate,
+        )) as any[];
+        for (const row of fresh) void syncEventToCalendars(row, auth.teamId);
+      }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
-      res.json({ ok: true });
+      res.json({ ok: true, updated: merged.length });
+      });
+      if (cleanup.length) void removeGoogleCopies(cleanup);
     } catch (error) {
       console.error("Error updating event:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
 
+  // ?scope=following deletes this occurrence and every later one in its
+  // series; ?scope=all deletes the whole series. Default: just this one.
   app.delete("/api/events/:id", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
       if (!auth) return;
-      const existing: any = (await dbGet("SELECT team_id FROM events WHERE id = ?", req.params.id));
+      let cleanup: { member_id: number; google_event_id: string }[] = [];
+      await withCalendarLock(auth.teamId, async () => {
+      const existing: any = (await dbGet("SELECT id, team_id, series_id, date FROM events WHERE id = ?", req.params.id));
       if (!existing || existing.team_id !== auth.teamId) return res.status(404).json({ error: "Event not found" });
-      await deleteSyncedEvent(Number(req.params.id));
-      (await dbRun("DELETE FROM events WHERE id = ?", req.params.id));
+      const scope = String(req.query.scope || "");
+      const ids: number[] = existing.series_id && (scope === "all" || scope === "following")
+        ? ((await dbAll(
+          `SELECT id FROM events WHERE series_id = ? AND team_id = ?${scope === "following" ? " AND date >= ?" : ""}`,
+          ...(scope === "following" ? [existing.series_id, auth.teamId, existing.date] : [existing.series_id, auth.teamId]),
+        )) as any[]).map((r) => Number(r.id))
+        : [Number(existing.id)];
+      const copies = await googleCopiesOf(ids);
+      const inIds = ids.map(() => "?").join(",");
+      await dbBatchResults([
+        { sql: `DELETE FROM event_calendar_sync WHERE event_id IN (${inIds})`, args: ids },
+        { sql: `DELETE FROM events WHERE team_id = ? AND id IN (${inIds})`, args: [auth.teamId, ...ids] },
+      ]);
+      cleanup = copies;
       broadcastToTeam(auth.teamId, { type: "events_changed" });
-      res.json({ ok: true });
+      res.json({ ok: true, deleted: ids.length });
+      });
+      if (cleanup.length) void removeGoogleCopies(cleanup);
     } catch (error) {
       console.error("Error deleting event:", error);
       res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // ---- Event reminders ----
+  // Once a minute: events whose reminder time has come get one inbox
+  // notification per verified, active member. The claim and the inbox rows
+  // are one transaction: the claim only matches the date, time and lead time
+  // the sweep read (an event moved meanwhile is left for its new time), and
+  // the inserts only happen if this sweep's claim stuck. A failure rolls it
+  // all back, so the next sweep retries. A reminder whose event already
+  // started (server was down) is marked sent and skipped.
+  let remindersRunning = false;
+  const sendEventReminders = async () => {
+    if (remindersRunning) return;
+    remindersRunning = true;
+    try {
+      const now = Date.now();
+      // Stored dates are team-local; a few days either side covers every
+      // timezone and the longest lead time.
+      const from = new Date(now - 2 * 86400000).toISOString().slice(0, 10);
+      const to = new Date(now + 4 * 86400000).toISOString().slice(0, 10);
+      const due = (await dbAll(
+        "SELECT e.id, e.title, e.date, e.start_time, e.reminder_minutes, e.team_id, t.timezone FROM events e JOIN teams t ON t.id = e.team_id WHERE e.reminder_minutes IS NOT NULL AND e.reminder_sent_at IS NULL AND e.date BETWEEN ? AND ?",
+        from, to,
+      )) as any[];
+      for (const e of due) {
+        try {
+          const tz = resolveTimeZone(e.timezone);
+          const at = reminderDueMs(e, tz);
+          if (at == null || now < at) continue;
+          const claimMark = `${new Date(now).toISOString()}#${crypto.randomBytes(6).toString("hex")}`;
+          const claim = {
+            sql: "UPDATE events SET reminder_sent_at = ? WHERE id = ? AND reminder_sent_at IS NULL AND date = ? AND COALESCE(start_time, '') = ? AND reminder_minutes = ?",
+            args: [claimMark, e.id, e.date, e.start_time || "", e.reminder_minutes],
+          };
+          if (now >= eventStartMs(e, tz)) { await dbRun(claim.sql, ...claim.args); continue; }
+          const members = (await dbAll(
+            `SELECT m.id, m.team_id FROM members m WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND ${VERIFIED_MEMBER_SQL}`, e.team_id,
+          )) as any[];
+          const content = reminderText(e);
+          const stamp = new Date(now).toISOString();
+          const meta = JSON.stringify({ event_id: Number(e.id), reminder: true });
+          const results = await dbBatchResults([
+            claim,
+            ...members.map((m) => ({
+              sql: "INSERT INTO notifications (user_id, content, type, timestamp, meta) SELECT ?, ?, 'system', ?, ? WHERE EXISTS (SELECT 1 FROM events WHERE id = ? AND reminder_sent_at = ?)",
+              args: [m.id, content, stamp, meta, e.id, claimMark],
+            })),
+          ]);
+          // Live delivery for the rows this sweep actually wrote.
+          members.forEach((m, i) => {
+            const r = results[i + 1];
+            if (!r?.changes) return;
+            sendToMember(m.team_id, m.id, { type: "notification", notification: { id: r.lastInsertRowid, user_id: m.id, content, type: "system", timestamp: stamp, is_read: 0, meta } });
+          });
+        } catch (err) {
+          console.error(`Event reminder ${e.id} failed (will retry):`, err);
+        }
+      }
+    } catch (err) {
+      console.error("Event reminders failed:", err);
+    } finally {
+      remindersRunning = false;
+    }
+  };
+  setInterval(() => void sendEventReminders(), Number(process.env.EVENT_REMINDER_SWEEP_MS) || 60 * 1000).unref();
+
+  // ---- Calendar subscribe feed (ICS) ----
+  // One secret URL per membership. Google/Apple/Outlook poll it, so the team
+  // calendar shows in personal calendars. The token is the only credential:
+  // it stops working when the member leaves the workspace, and the member
+  // can replace it (the old URL then 404s).
+  const feedUrl = (req: any, token: string) =>
+    `${(process.env.APP_URL || "").replace(/\/$/, "") || getBaseUrl(req)}/api/calendar/feed/${token}.ics`;
+
+  app.get("/api/calendar/feed", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      const row = (await dbGet("SELECT token FROM calendar_feeds WHERE member_id = ? AND team_id = ?", auth.memberId, auth.teamId)) as any;
+      res.json({ url: row ? feedUrl(req, row.token) : null });
+    } catch (error) {
+      console.error("Error reading calendar feed:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // Create the subscribe URL, or replace it with { reset: true }.
+  app.post("/api/calendar/feed", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth || !auth.teamId) return auth && res.status(400).json({ error: "Join a workspace first" });
+      const row = (await dbGet("SELECT token, team_id FROM calendar_feeds WHERE member_id = ?", auth.memberId)) as any;
+      if (row && row.team_id === auth.teamId && !req.body?.reset) return res.json({ url: feedUrl(req, row.token) });
+      const token = crypto.randomBytes(24).toString("base64url");
+      await dbRun(
+        "INSERT OR REPLACE INTO calendar_feeds (member_id, team_id, token, created_at) VALUES (?, ?, ?, ?)",
+        auth.memberId, auth.teamId, token, new Date().toISOString(),
+      );
+      res.json({ url: feedUrl(req, token) });
+    } catch (error) {
+      console.error("Error creating calendar feed:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.delete("/api/calendar/feed", async (req, res) => {
+    try {
+      const auth = await requireAuth(req, res);
+      if (!auth) return;
+      await dbRun("DELETE FROM calendar_feeds WHERE member_id = ?", auth.memberId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error removing calendar feed:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // The feed itself: no session (calendar apps can't sign in), the token is the key.
+  app.get("/api/calendar/feed/:file", async (req, res) => {
+    try {
+      const m = /^([A-Za-z0-9_-]{24,64})\.ics$/.exec(String(req.params.file));
+      if (!m) return res.status(404).type("text/plain").send("Not found");
+      const feed = (await dbGet(
+        "SELECT f.team_id FROM calendar_feeds f JOIN members m ON m.id = f.member_id WHERE f.token = ? AND m.team_id = f.team_id AND COALESCE(m.is_active, 1) = 1",
+        m[1],
+      )) as any;
+      if (!feed) return res.status(404).type("text/plain").send("Not found");
+      const team = (await dbGet("SELECT name, timezone FROM teams WHERE id = ?", feed.team_id)) as any;
+      const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+      const events = (await dbAll(
+        "SELECT id, title, description, date, start_time, end_time, location, event_type, reminder_minutes FROM events WHERE team_id = ? AND date >= ? ORDER BY date ASC, start_time ASC LIMIT 3000",
+        feed.team_id, since,
+      )) as any[];
+      let host = "tryctrlpoint.org";
+      try { host = new URL(feedUrl(req, "x")).hostname || host; } catch { /* keep default */ }
+      const body = buildIcs({
+        calendarName: `${team?.name || "Team"} · Control Point`,
+        timeZone: resolveTimeZone(team?.timezone),
+        host,
+        events,
+        now: Date.now(),
+      });
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Content-Disposition", 'inline; filename="control-point.ics"');
+      res.setHeader("Cache-Control", "private, max-age=900");
+      res.send(body);
+    } catch (error) {
+      console.error("Error serving calendar feed:", error);
+      res.status(500).type("text/plain").send("Calendar unavailable");
     }
   });
 

@@ -9,12 +9,68 @@ import { setScreenEntity } from '../../services/brunoContext';
 import { streamBuildHelper, extractActionProposals, applyActionProposals, notifyBrunoDataChanged, type ActionProposal } from '../../services/aiService';
 import { useDraft, getDraft, newSessionId } from '../../modern/drafts';
 import { eventTimeError } from '../../utils/validation';
+import { readEventRepeat, cleanReminder, DEFAULT_COUNT, type EventRepeat } from '../../utils/eventSeries';
 
+export type RepeatChoice = '' | 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'custom';
 export interface EventForm {
   title: string; description: string; date: string; start_time: string; end_time: string;
   location: string; event_type: string; team_id: string;
+  /** How often it repeats ('' = doesn't). 'custom' keeps a rule set elsewhere (Bruno). */
+  repeat: RepeatChoice;
+  /** The rule behind 'custom' (and the stored rule when editing). */
+  repeat_rule: EventRepeat | null;
+  repeat_end: 'count' | 'until';
+  repeat_count: string;
+  repeat_until: string;
+  /** Reminder lead time in minutes ('' = none). */
+  reminder: string;
+  /** Editing a repeating event: just this one, or this and the later ones. */
+  scope: 'one' | 'following';
 }
-const EMPTY_EVENT: EventForm = { title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '' };
+const EMPTY_EVENT: EventForm = {
+  title: '', description: '', date: '', start_time: '', end_time: '', location: '', event_type: 'meeting', team_id: '',
+  repeat: '', repeat_rule: null, repeat_end: 'count', repeat_count: String(DEFAULT_COUNT), repeat_until: '', reminder: '', scope: 'one',
+};
+
+export function repeatChoiceOf(r: EventRepeat | null): RepeatChoice {
+  if (!r) return '';
+  if (r.freq === 'daily' && r.interval === 1) return 'daily';
+  if (r.freq === 'weekly' && r.interval === 1) return 'weekly';
+  if (r.freq === 'weekly' && r.interval === 2) return 'biweekly';
+  if (r.freq === 'monthly' && r.interval === 1) return 'monthly';
+  return 'custom';
+}
+
+/** The repeat rule the form describes, or null for a one-off event. */
+export function repeatFromForm(f: EventForm): EventRepeat | null {
+  const base: Pick<EventRepeat, 'freq' | 'interval'> | null =
+    f.repeat === 'daily' ? { freq: 'daily', interval: 1 }
+      : f.repeat === 'weekly' ? { freq: 'weekly', interval: 1 }
+        : f.repeat === 'biweekly' ? { freq: 'weekly', interval: 2 }
+          : f.repeat === 'monthly' ? { freq: 'monthly', interval: 1 }
+            : f.repeat === 'custom' && f.repeat_rule ? { freq: f.repeat_rule.freq, interval: f.repeat_rule.interval }
+              : null;
+  if (!base) return null;
+  return readEventRepeat(f.repeat_end === 'until' && f.repeat_until ? { ...base, until: f.repeat_until } : { ...base, count: Number(f.repeat_count) || DEFAULT_COUNT });
+}
+
+/** Problems with the repeat fields, for the editor. Only when the rule can
+ *  change here (a new or one-off event, or "this and following") and was
+ *  actually changed: a series' own end date may already be behind a later
+ *  occurrence. */
+export function repeatError(f: EventForm, editing?: any): string | null {
+  if (!f.repeat) return null;
+  if (editing?.series_id && f.scope !== 'following') return null;
+  if (editing && JSON.stringify(repeatFromForm(f)) === JSON.stringify(readEventRepeat(editing.recurrence))) return null;
+  if (f.repeat_end === 'until') {
+    if (!f.repeat_until) return 'Pick the last date it repeats on';
+    if (f.date && f.repeat_until <= f.date) return 'The last date must be after the first event';
+  } else {
+    const n = Number(f.repeat_count);
+    if (!Number.isInteger(n) || n < 2 || n > 100) return 'Repeat 2 to 100 times';
+  }
+  return null;
+}
 const EMPTY_LIST: any[] = [];
 
 export const EVENT_TYPES = [
@@ -45,7 +101,9 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   const [cursor, setCursor] = useState(() => new Date());
   const [showModal, setShowModal] = useDraft<boolean>('calendar:editor-open', false);
   const [editingId, setEditingId] = useDraft<number | null>('calendar:editing-id', null);
-  const [form, setForm] = useDraft<EventForm>('calendar:form', EMPTY_EVENT);
+  const [storedForm, setForm] = useDraft<EventForm>('calendar:form', EMPTY_EVENT);
+  // Drafts saved before a field existed still get its default.
+  const form: EventForm = { ...EMPTY_EVENT, ...storedForm };
   // Editor session counter: bumped whenever the editor opens or closes, so a
   // Bruno reply that lands after its session ended (even in the other mode)
   // never writes into a newer draft.
@@ -162,9 +220,20 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
       start_time: e.start_time || '', end_time: e.end_time || '',
       location: e.location || '', event_type: e.event_type || 'meeting',
       team_id: e.team_id ? String(e.team_id) : '',
+      ...repeatFields(readEventRepeat(e.recurrence)),
+      reminder: cleanReminder(e.reminder_minutes) != null ? String(e.reminder_minutes) : '',
+      scope: 'one',
     });
     setShowModal(true);
   };
+
+  function repeatFields(r: EventRepeat | null): Pick<EventForm, 'repeat' | 'repeat_rule' | 'repeat_end' | 'repeat_count' | 'repeat_until'> {
+    return {
+      repeat: repeatChoiceOf(r), repeat_rule: r,
+      repeat_end: r?.until ? 'until' : 'count',
+      repeat_count: String(r?.count || DEFAULT_COUNT), repeat_until: r?.until || '',
+    };
+  }
 
   function closeEditor() {
     bumpGen();
@@ -177,15 +246,31 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
 
   const handleSave = async () => {
     if (!form.title.trim() || !form.date) return;
-    const timeError = eventTimeError(form.start_time, form.end_time);
+    const editingEvent = editingId ? (events || []).find((e: any) => e.id === editingId) : null;
+    const timeError = eventTimeError(form.start_time, form.end_time) || repeatError(form, editingEvent);
     if (timeError) { notify(timeError, 'error'); return; }
-    const payload = { ...form, team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id };
+    const inSeries = !!editingEvent?.series_id;
+    const following = inSeries && form.scope === 'following';
+    const fields = {
+      title: form.title, description: form.description, date: form.date, start_time: form.start_time, end_time: form.end_time,
+      location: form.location, event_type: form.event_type,
+      team_id: form.team_id ? Number(form.team_id) : null, created_by: currentUser?.id,
+      reminder_minutes: cleanReminder(form.reminder),
+    };
+    // The repeat rule is only sent where it can change: a new event, a
+    // one-off being made repeating, or "this and following".
+    const rule = repeatFromForm(form);
+    const payload = {
+      ...fields,
+      ...(!inSeries || following ? { repeat: rule } : {}),
+      ...(following ? { scope: 'following' } : {}),
+    };
     const id = editingId;
     // The editor closes immediately (optimistic), so its draft is cleared now.
     closeEditor();
     const prev = events;
     if (id) {
-      setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, ...payload } : e)));
+      setEvents((es: any[]) => es.map((e: any) => (e.id === id ? { ...e, ...fields } : e)));
       try {
         const res = await apiFetch(`/api/events/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || '');
@@ -196,10 +281,12 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
       }
     } else {
       const tempId = `temp-${Date.now()}`;
-      setEvents((es: any[]) => [...es, { ...payload, id: tempId }]);
+      setEvents((es: any[]) => [...es, { ...fields, id: tempId }]);
       try {
         const res = await apiFetch('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || '');
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || '');
+        if (body?.count > 1) notify(`Added ${body.count} events to the calendar.`, 'success');
         refresh.events();
       } catch (err: any) {
         setEvents((es: any[]) => es.filter((e: any) => e.id !== tempId));
@@ -210,13 +297,19 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
 
   /** Delete with confirm + optimistic removal. `onConfirmed` runs right after
    *  the user confirms (the editor/sheet closes before the request, as before). */
-  const deleteEvent = async (id: number, title?: string, onConfirmed?: () => void) => {
-    if (!(await confirmDialog({ title: 'Delete event', message: title ? `Delete "${title}"?` : 'Delete this event?', confirmLabel: 'Delete', danger: true }))) return false;
+  /** `scope` (repeating events): 'following' = this and later ones, 'all' = the whole series. */
+  const deleteEvent = async (id: number, title?: string, onConfirmed?: () => void, scope: 'one' | 'following' | 'all' = 'one') => {
+    const target = (events || []).find((e: any) => e.id === id);
+    const sid = target?.series_id;
+    const what = !sid || scope === 'one' ? (title ? `Delete "${title}"?` : 'Delete this event?')
+      : scope === 'all' ? `Delete every "${title || 'event'}" in this series?` : `Delete this "${title || 'event'}" and every one after it?`;
+    if (!(await confirmDialog({ title: scope === 'all' && sid ? 'Delete series' : 'Delete event', message: what, confirmLabel: 'Delete', danger: true }))) return false;
     onConfirmed?.();
     const prev = events;
-    setEvents((es: any[]) => es.filter((e: any) => e.id !== id));
+    const gone = (e: any) => e.id === id || (!!sid && e.series_id === sid && (scope === 'all' || (scope === 'following' && e.date >= target.date)));
+    setEvents((es: any[]) => es.filter((e: any) => !gone(e)));
     try {
-      const res = await apiFetch(`/api/events/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/events/${id}${sid && scope !== 'one' ? `?scope=${scope}` : ''}`, { method: 'DELETE' });
       if (res.ok) { refresh.events(); return true; }
       setEvents(prev);
       notify('Could not delete event — try again.', 'error');
@@ -254,7 +347,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
 
   const handleDelete = async () => {
     if (!editingId) return;
-    await deleteEvent(editingId, undefined, closeEditor);
+    await deleteEvent(editingId, form.title, closeEditor, form.scope === 'following' ? 'following' : 'one');
   };
 
   const now = new Date();
@@ -278,7 +371,7 @@ export function useCalendarController({ events, setEvents, refresh, currentUser,
   const upcoming = upcomingWhere();
 
   return {
-    canManageCalendar, cursor, setCursor, todayKey, byDate, upcoming, upcomingWhere, isEventFinished,
+    events, canManageCalendar, cursor, setCursor, todayKey, byDate, upcoming, upcomingWhere, isEventFinished,
     showModal, setShowModal, editingId, form, setForm, openNew, openEdit, closeEditor, handleSave, handleDelete, deleteEvent, moveEvent,
     aiOpen, setAiOpen, aiText, setAiText, aiBusy, aiNote, aiProposals, setAiProposals, aiCreating, resetAi, handleAiParse, handleAiCreateAll,
   };

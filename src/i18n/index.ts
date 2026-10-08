@@ -37,6 +37,9 @@ const resources = {
       settingsPage: {
         groupYou: "User settings",
         groupWorkspace: "Workspace settings",
+        groupAbout: "About",
+        whatsNew: "What’s new",
+        whatsNewUnseen: "New updates",
         profile: "Profile",
         profileHint: "Photo, name, status, accent",
         appearance: "Appearance",
