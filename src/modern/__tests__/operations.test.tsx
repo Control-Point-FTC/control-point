@@ -229,23 +229,49 @@ const PARTS = [
   { id: 2, team_id: 1, name: 'Control Hub', sku: 'REV-31-1595', part_number: '', quantity: 1, category: 'Electronics', cost: 300, location: '' },
   { id: 3, team_id: 1, name: 'Zip ties', sku: 'ZIP-100', part_number: '', quantity: 100, category: '', cost: 0.05, location: '' },
 ];
-function invSetup(manage = true, inventory = PARTS) {
+function invSetup(manage = true, inventory: any[] = PARTS) {
   const props = { inventory, setInventory: vi.fn(), teams: TEAMS, refresh: { inventory: vi.fn() }, hasScope: (s: string) => manage && s === 'inventory', currentUser: { id: 7, team_id: 1 } };
   return { ...wrap(<InventoryPage {...props} />), props };
 }
 
 describe('Modern Inventory', () => {
-  it('shows parts as cards with category chips and search', () => {
+  it('shows parts as cards with supplier chips and search', () => {
     invSetup();
     expect(screen.getByText('Core Hex Motor')).toBeInTheDocument();
     expect(screen.getByText('Uncategorized')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('radio', { name: 'Electronics' }));
+    // Suppliers come from the data: REV (by SKU format) and the rest as Other.
+    fireEvent.click(screen.getByRole('radio', { name: 'Other' }));
     expect(screen.queryByText('Core Hex Motor')).not.toBeInTheDocument();
+    expect(screen.getByText('Zip ties')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'REV Robotics' }));
+    expect(screen.queryByText('Zip ties')).not.toBeInTheDocument();
     expect(screen.getByText('Control Hub')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('radio', { name: 'All' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'All suppliers' }));
     fireEvent.change(screen.getByLabelText('Search parts'), { target: { value: '41-13' } });
     expect(screen.getByText('Core Hex Motor')).toBeInTheDocument();
     expect(screen.queryByText('Zip ties')).not.toBeInTheDocument();
+  });
+
+  it("a part's name opens its order page; a saved link wins; no supplier, no link", () => {
+    invSetup(true, [...PARTS, { id: 4, team_id: 1, name: 'Axon Max+', sku: 'BOX-9', part_number: '', quantity: 2, category: 'Motion', cost: 40, location: '', url: 'https://axon-robotics.com/products/max' }]);
+    expect(screen.getByRole('link', { name: /Core Hex Motor: order from REV Robotics/ })).toHaveAttribute('href', 'https://www.revrobotics.com/rev-41-1300/');
+    const axon = screen.getByRole('link', { name: /Axon Max\+: order from Axon Robotics/ });
+    expect(axon).toHaveAttribute('href', 'https://axon-robotics.com/products/max');
+    expect(axon).toHaveAttribute('target', '_blank');
+    expect(screen.queryByRole('link', { name: /Zip ties/ })).not.toBeInTheDocument();
+  });
+
+  it('printing swaps in a stock-check sheet with every shown part, by location', async () => {
+    invSetup();
+    expect(screen.queryByRole('region', { name: 'Inventory print sheet' })).not.toBeInTheDocument();
+    act(() => { window.dispatchEvent(new Event('beforeprint')); });
+    const sheet = await screen.findByRole('region', { name: 'Inventory print sheet' });
+    const rows = within(sheet).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[1].textContent);
+    // "Bin A" first, then parts with no location by name.
+    expect(rows).toEqual(['Core Hex Motor · Motion', 'Control Hub · Electronics', 'Zip ties']);
+    expect(within(sheet).getByText(/3 parts/)).toBeInTheDocument();
+    act(() => { window.dispatchEvent(new Event('afterprint')); });
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Inventory print sheet' })).not.toBeInTheDocument());
   });
 
   it('read-only without the inventory permission', () => {
@@ -280,6 +306,19 @@ describe('Modern Inventory', () => {
     await waitFor(() => expect(screen.getByLabelText('Part name *')).toHaveValue('Ultra 90 Gearbox'));
     expect(screen.getByLabelText('SKU (unique) *')).toHaveValue('REV-41-1600');
     expect(screen.getByLabelText('Cost per unit')).toHaveValue(49);
+  });
+
+  it("REV import that couldn't read the page fills the SKU and link and says so", async () => {
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/inventory/scrape-rev'
+      ? json({ sku: 'REV-41-1600', url: 'https://www.revrobotics.com/rev-41-1600/', supplier: 'rev', partial: true, note: 'Only the SKU and link.' })
+      : json({})));
+    invSetup();
+    fireEvent.click(screen.getByRole('button', { name: /Add part/ }));
+    fireEvent.change(await screen.findByLabelText(/Import from REV Robotics/), { target: { value: 'REV-41-1600' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(screen.getByLabelText('SKU (unique) *')).toHaveValue('REV-41-1600'));
+    expect(screen.getByLabelText('Purchase link')).toHaveValue('https://www.revrobotics.com/rev-41-1600/');
+    expect(dialog.notify).toHaveBeenCalledWith('Only the SKU and link.', 'info');
   });
 
   it('edits (PATCH) and deletes after confirm', async () => {
