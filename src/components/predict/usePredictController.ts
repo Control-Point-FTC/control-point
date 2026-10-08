@@ -61,9 +61,10 @@ export function usePredictController() {
   const [names, setNames] = useState<Map<number, string>>(new Map());
   const [accuracy, setAccuracy] = useState<PredictAccuracy | null>(null);
   const [live, setLive] = useState<LiveAccuracy | null>(null);
+  const [dataAsOf, setDataAsOf] = useState<string | null>(null);
   // Status (back-test + live scores) loads on mount and again whenever the
   // accuracy sheet opens, so a page left open through a sync isn't stale.
-  const loadStatus = useCallback(() => { fetchPredictStatus().then((s) => { setAccuracy(s.accuracy); setLive(s.live ?? null); }).catch(() => {}); }, []);
+  const loadStatus = useCallback(() => { fetchPredictStatus().then((s) => { setAccuracy(s.accuracy); setLive(s.live ?? null); setDataAsOf(s.dataAsOf ?? null); }).catch(() => {}); }, []);
   const [showAccuracy, setShowAccuracyState] = useState(false);
   const [autoStepped, setAutoStepped] = useState(() => params.has('season'));
   const [teamReload, setTeamReload] = useState(0);
@@ -107,7 +108,12 @@ export function usePredictController() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, teamReload]);
 
-  useEffect(() => { loadStatus(); }, [loadStatus]);
+  // Again every 10 minutes, so a page left open picks up the next sync's age.
+  useEffect(() => {
+    loadStatus();
+    const id = window.setInterval(loadStatus, 10 * 60_000);
+    return () => window.clearInterval(id);
+  }, [loadStatus]);
 
   // Every request (initial, Refresh, Try again) gets an id and only the latest
   // may update state, so a slow answer for an old selection can't overwrite it.
@@ -117,7 +123,7 @@ export function usePredictController() {
     if (!code) return;
     const latest = () => id === reqId.current;
     setLoading(true); setFcError(null);
-    if (force) setRefreshKey((k) => k + 1); // re-runs the Alliance scenarios too
+    if (force) { setRefreshKey((k) => k + 1); loadStatus(); } // re-runs the Alliance scenarios too, and re-checks the ratings' age
     fetchForecast(season, code, { force }).then((f) => { if (latest()) setFc(f); })
       .catch((e) => { if (latest()) { setFc(null); setFcError(e instanceof PredictError ? e : new PredictError(String(e?.message ?? e), 0)); } })
       .finally(() => { if (latest()) setLoading(false); });
@@ -150,7 +156,7 @@ export function usePredictController() {
     events, myTeam, teamError, retryTeam,
     code, chooseEvent, tab, setTab,
     fc, fcError, loading, load, refreshKey, nameOf,
-    accuracy, live, showAccuracy, setShowAccuracy,
+    accuracy, live, showAccuracy, setShowAccuracy, dataAsOf,
   };
 }
 

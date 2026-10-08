@@ -5,7 +5,7 @@
 // and the accuracy report in a side sheet.
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Check, CircleHelp, CloudOff, ListOrdered, RefreshCw, Settings as SettingsIcon, Sparkles, Swords, Target, Users } from 'lucide-react';
+import { Check, CircleHelp, CloudOff, ListOrdered, RefreshCw, Settings as SettingsIcon, Sparkles, Swords, Target, TriangleAlert, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Badge, Button, Skeleton, Tabs, TabsContent, TabsList, TabsTrigger, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { relTime, seasonShort, SEASON_NAMES } from '../../../components/scout/ScoutUi';
@@ -14,6 +14,8 @@ import { Page, PageHeader, EmptyState } from '../../ui/page';
 import { Reveal } from '../../ui/motion';
 import { OutlookTab, AllianceTab, FieldTab, MatchesTab } from './PredictTabs';
 import { AccuracySheet } from './AccuracySheet';
+import { ratingsStale } from '../../../services/predictApi';
+import { useHalfMinuteTick } from '../../ui/Countdown';
 
 type Ctl = ReturnType<typeof usePredictController>;
 
@@ -146,11 +148,25 @@ function StageStrip({ ctl }: { ctl: Ctl }) {
         <span><span className="font-medium text-foreground">{fc.slots}</span> advancement slot{fc.slots === 1 ? '' : 's'}{fc.slotsSource !== 'official' ? ' (estimated)' : ''}</span>
         <span>{fc.runs.toLocaleString()} simulations</span>
         <span>Updated {relTime(fc.generatedAt)}</span>
+        {ctl.dataAsOf && <RatingsAge asOf={ctl.dataAsOf} />}
         <Button variant="ghost" size="sm" onClick={() => ctl.load(true)} disabled={ctl.loading} className="ml-auto max-sm:h-11">
           <RefreshCw className={cn(ctl.loading && 'animate-spin motion-reduce:animate-none')} /> Refresh
         </Button>
       </div>
     </Reveal>
+  );
+}
+
+/** How old the match data behind the ratings is; flagged once syncs have stopped landing. */
+function RatingsAge({ asOf }: { asOf: string }) {
+  // Re-render as time passes, so a page left open still flips to the warning.
+  useHalfMinuteTick();
+  const exact = new Date(asOf).toLocaleString();
+  if (!ratingsStale(asOf)) return <span title={exact}>Ratings synced {relTime(asOf)}</span>;
+  return (
+    <span title={exact} className="inline-flex items-center gap-1 font-medium text-warning">
+      <TriangleAlert className="size-3.5" aria-hidden /> Ratings last synced {relTime(asOf)} — odds may be out of date
+    </span>
   );
 }
 

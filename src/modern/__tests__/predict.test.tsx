@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { FtcTeamProfile } from '../../types/ftcScout';
 
@@ -163,6 +163,36 @@ describe('Modern Predict', () => {
     expect(link).toHaveAttribute('href', '/predict/how-it-works');
     expect(link).toHaveAttribute('target', '_blank');
     expect(link.getAttribute('rel')).toContain('noopener');
+  });
+
+  it('shows how old the ratings are, and warns once syncs stop landing', async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+    predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date(Date.now() - 3 * 3600_000).toISOString() });
+    renderPage('/predict?season=2025&event=USNJCMPPKWY');
+    expect(await screen.findByText('Ratings synced 3 h ago')).toBeInTheDocument();
+    expect(screen.queryByText(/may be out of date/)).not.toBeInTheDocument();
+    // Refresh re-checks the age: a server whose syncs stopped is flagged.
+    predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date(Date.now() - 3 * 864e5).toISOString() });
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    expect(await screen.findByText(/odds may be out of date/)).toBeInTheDocument();
+  });
+
+  it('a page left open flips to the warning as the ratings age, and re-checks the status', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+      // Synced just under the 36-hour mark.
+      predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date(Date.now() - (36 * 3600_000 - 20_000)).toISOString() });
+      renderPage('/predict?season=2025&event=USNJCMPPKWY');
+      expect(await screen.findByText(/Ratings synced/)).toBeInTheDocument();
+      const calls = predict.fetchPredictStatus.mock.calls.length;
+      await act(async () => { vi.advanceTimersByTime(31_000); });
+      expect(screen.getByText(/odds may be out of date/)).toBeInTheDocument();
+      await act(async () => { vi.advanceTimersByTime(10 * 60_000); });
+      expect(predict.fetchPredictStatus.mock.calls.length).toBeGreaterThan(calls);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('accuracy sheet: advancement scores show even with no played match calls', async () => {
