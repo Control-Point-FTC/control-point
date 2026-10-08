@@ -105,7 +105,15 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
     // Only instruction pieces are parsed and removed; the rest stays word for word.
     const strip = (text: string, sentences: boolean) => {
       const keep: string[] = [];
-      for (const piece of pieces(text, sentences, roster)) {
+      for (const whole of pieces(text, sentences, roster)) {
+        // A parenthetical instruction is read on its own, however long the
+        // sentence around it: "Test autonomous paths (Assigned to Arnav)."
+        const piece = whole.replace(/\(([^()]*)\)/g, (m, inner: string) => {
+          if (!STARTS_WITH_INSTRUCTION.test(inner.trim())) return m;
+          recovered.push(parseQuickAdd(inner.trim(), today, roster));
+          return '';
+        }).replace(/\s+([.,;!?])/g, '$1').trim();
+        if (!piece) continue;
         if (!isInstruction(piece)) { keep.push(piece); continue; }
         const q = parseQuickAdd(piece, today, roster);
         recovered.push(q);
@@ -141,7 +149,7 @@ export function normalizeBrunoTask(t: BrunoTaskIn, today: string, roster: string
 }
 
 const TIME_RANGE_RE = /\s*\b(?:from\s+|at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|to|until)\s*(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)/i;
-const TIME_RANGE_24_RE = /\s*\b(?:from\s+|at\s+)?([01]?\d|2[0-3]):([0-5]\d)\s*(?:-|–|to|until)\s*([01]?\d|2[0-3]):([0-5]\d)\b/i;
+const TIME_RANGE_24_RE = /\s*\b(?:from\s+|at\s+)?([01]?\d|2[0-3]):([0-5]\d)\s*(?:-|–|to|until)\s*([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:am|pm|a\.m\.|p\.m\.))/i;
 const TIME_ONE_RE = /\s*\b(?:at\s+)?(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)|\s*\bat\s+(\d{1,2}):([0-5]\d)\b|\s*\bat\s+noon\b/i;
 const hhmm = (h: string, m: string | undefined, ap: string | undefined): string | null => {
   let hour = Number(h);
@@ -161,18 +169,19 @@ export function recoverEventTime<E extends { title: string; notes?: string; time
   for (const key of ['title', 'notes'] as const) {
     const text = String(e[key] || '');
     if (!text) continue;
-    const r24 = text.match(TIME_RANGE_24_RE);
-    if (r24) {
-      const start = hhmm(r24[1], r24[2], undefined);
-      const end = hhmm(r24[3], r24[4], undefined);
-      if (start && end && end > start) return { ...e, time: start, end, [key]: tidy(text.replace(r24[0], ' '), e[key]) };
-    }
+    // AM/PM first: "from 3:00 to 5:00 pm" is 15:00-17:00, not 03:00-05:00.
     const r = text.match(TIME_RANGE_RE);
     if (r) {
       const endAp = r[6];
       const start = hhmm(r[1], r[2], r[3] || endAp);
       const end = hhmm(r[4], r[5], endAp);
       if (start && end && end > start) return { ...e, time: start, end, [key]: tidy(text.replace(r[0], ' '), e[key]) };
+    }
+    const r24 = text.match(TIME_RANGE_24_RE);
+    if (r24) {
+      const start = hhmm(r24[1], r24[2], undefined);
+      const end = hhmm(r24[3], r24[4], undefined);
+      if (start && end && end > start) return { ...e, time: start, end, [key]: tidy(text.replace(r24[0], ' '), e[key]) };
     }
     const one = text.match(TIME_ONE_RE);
     if (one) {

@@ -47,7 +47,7 @@ describe("runLookups", () => {
       CREATE TABLE members (id INTEGER PRIMARY KEY, team_id INTEGER, name TEXT);
       CREATE TABLE chat_channels (id INTEGER PRIMARY KEY, team_id INTEGER, name TEXT);
       CREATE TABLE messages (id INTEGER PRIMARY KEY, team_id INTEGER, sender_id INTEGER, content TEXT, timestamp TEXT, channel_id INTEGER, deleted_at TEXT);
-      CREATE TABLE tasks (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, status TEXT, due_date TEXT, due_time TEXT, priority TEXT, created_at TEXT);
+      CREATE TABLE tasks (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, status TEXT, due_date TEXT, due_time TEXT, priority TEXT, created_at TEXT, completed_at TEXT);
       CREATE TABLE task_assignees (task_id INTEGER, member_id INTEGER);
       CREATE TABLE events (id INTEGER PRIMARY KEY, team_id INTEGER, title TEXT, description TEXT, date TEXT, start_time TEXT, end_time TEXT, location TEXT, event_type TEXT);
       CREATE TABLE communications (id INTEGER PRIMARY KEY, team_id INTEGER, recipient TEXT, subject TEXT, body TEXT, date TEXT, direction TEXT, parent_id INTEGER);
@@ -61,7 +61,8 @@ describe("runLookups", () => {
         (3, 1, 2, 'Ada in build', '2026-10-06T19:00:00Z', 11, NULL),
         (4, 1, 1, 'Late night (Oct 7 in New York)', '2026-10-07T05:00:00Z', 10, NULL),
         (5, 2, 3, 'Other team secret', '2026-10-06T19:00:00Z', 12, NULL);
-      INSERT INTO tasks VALUES (1, 1, 'Order wheels', '', 'done', '2026-10-05', NULL, 'high', '2026-10-01'), (2, 1, 'Fix lift', 'It slips', 'todo', '2026-10-09', '18:00', NULL, '2026-10-02'), (3, 2, 'Other team task', '', 'done', '2026-10-05', NULL, NULL, '2026-10-01');
+      INSERT INTO tasks VALUES (1, 1, 'Order wheels', '', 'done', '2026-10-05', NULL, 'high', '2026-10-01', '2026-10-05T15:00:00Z'), (2, 1, 'Fix lift', 'It slips', 'todo', '2026-10-09', '18:00', NULL, '2026-10-02', NULL), (3, 2, 'Other team task', '', 'done', '2026-10-05', NULL, NULL, '2026-10-01', '2026-10-05T15:00:00Z'),
+        (4, 1, 'Tune PID', '', 'done', '2026-09-01', NULL, NULL, '2026-08-20', '2026-10-06T14:00:00Z');
       INSERT INTO task_assignees VALUES (1, 1), (2, 2);
       INSERT INTO events VALUES (1, 1, 'Qualifier', '', '2026-12-12', '', '', 'Gym', 'competition'), (2, 2, 'Other event', '', '2026-12-12', '', '', '', 'meeting');
       INSERT INTO communications VALUES (1, 1, 'REV Robotics', 'Wheel order', 'Asked about lead times', '2026-10-03', 'outbound', NULL);
@@ -80,17 +81,44 @@ describe("runLookups", () => {
 
   it("tasks by status and assignee; events, communications, budget; never another team's", async () => {
     const done = await runLookups(dbAll, 1, "America/New_York", [{ kind: "tasks", status: "done" }]);
-    expect(done).toContain("#1 Order wheels — done, due 2026-10-05, high priority, assigned to Arnav Patel");
+    expect(done).toContain("#1 Order wheels — done, finished Oct 5, 11:00 AM, due 2026-10-05, high priority, assigned to Arnav Patel");
     expect(done).not.toContain("Other team task");
     expect(await runLookups(dbAll, 1, "UTC", [{ kind: "tasks", person: "Ada", query: "lift" }])).toContain("Fix lift — todo, due 2026-10-09 18:00");
     const mix = await runLookups(dbAll, 1, "UTC", [{ kind: "events", from: "2026-12-01" }, { kind: "communications", person: "rev" }, { kind: "budget" }]);
     expect(mix).toContain("2026-12-12 (all day) Qualifier @ Gym [competition]");
     expect(mix).not.toContain("Other event");
     expect(mix).toContain('to REV Robotics: "Wheel order"');
-    expect(mix).toContain("Total of these rows: +$500.00 in, -$60.00 out.");
+    expect(mix).toContain("Total of all 2 matching entries: +$500.00 in, -$60.00 out.");
   });
 
   it("says plainly when nothing matches; LIKE wildcards are literal", async () => {
     expect(await runLookups(dbAll, 1, "UTC", [{ kind: "messages", query: "100%_done" }])).toBe('Lookup: messages ("100%_done") — nothing found');
+  });
+
+  it("finished tasks are dated by when they were finished, team-local", async () => {
+    const out = await runLookups(dbAll, 1, "America/New_York", [{ kind: "tasks", status: "done", from: "2026-10-06", to: "2026-10-06" }]);
+    expect(out).toContain("Tune PID — done, finished Oct 6");
+    expect(out).not.toContain("Order wheels");
+  });
+
+  it("task and event descriptions come back", async () => {
+    expect(await runLookups(dbAll, 1, "UTC", [{ kind: "tasks", query: "lift" }])).toContain("— It slips");
+  });
+
+  it("flags rows past the limit and totals the budget over every match", async () => {
+    const big = createClient({ url: ":memory:" });
+    const bigAll = async (sql: string, ...args: any[]) => (await big.execute({ sql, args })).rows as any[];
+    await big.execute("CREATE TABLE budget (id INTEGER PRIMARY KEY, team_id INTEGER, type TEXT, amount REAL, category TEXT, description TEXT, date TEXT)");
+    for (let i = 0; i < 61; i++) await big.execute({ sql: "INSERT INTO budget (team_id, type, amount, category, date) VALUES (1, 'expense', 1, 'Parts', '2026-10-01')", args: [] });
+    const out = await runLookups(bigAll, 1, "UTC", [{ kind: "budget" }]);
+    expect(out).toContain("60 shown, MORE matched");
+    expect(out).toContain("Total of all 61 matching entries: +$0.00 in, -$61.00 out.");
+  });
+
+  it("a failed search says it failed, not that nothing exists", async () => {
+    const broken = async () => { throw new Error("no such table"); };
+    const out = await runLookups(broken, 1, "UTC", [{ kind: "outreach" }]);
+    expect(out).toContain("SEARCH FAILED");
+    expect(out).not.toContain("nothing found");
   });
 });

@@ -127,12 +127,24 @@ const clip = (s: unknown, n: number) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
+const utcFrom = (date: string, tz: string) => new Date(zonedMidnightMs(date, tz)).toISOString();
+const utcBefore = (date: string, tz: string) => new Date(zonedMidnightMs(nextDay(date), tz)).toISOString();
+
+/** Rows past the limit mean the list is cut short; say so instead of letting it read as complete. */
+function capped<T>(rows: T[], limit: number): { rows: T[]; more: boolean } {
+  return rows.length > limit ? { rows: rows.slice(0, limit), more: true } : { rows, more: false };
+}
+
 function when(ms: number, tz: string) {
   return new Date(ms).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Promise<string[]> {
+interface LookupRows { lines: string[]; more: boolean; summary?: string }
+
+async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Promise<LookupRows> {
   const lines: string[] = [];
+  let more = false;
+  let summary: string | undefined;
   if (q.kind === "messages") {
     const w = wordsWhere(q.query, ["m.content"]);
     const args: any[] = [teamId];
@@ -142,15 +154,17 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     args.push(...w.args);
     if (q.channel) { sql += " AND LOWER(c.name) = ?"; args.push(q.channel.toLowerCase()); }
     if (q.person) { sql += " AND (LOWER(mem.name) = ? OR LOWER(mem.name) LIKE ? ESCAPE '\\')"; args.push(q.person.toLowerCase(), `${likeEsc(q.person.toLowerCase())} %`); }
-    if (q.from) { sql += " AND m.timestamp >= ?"; args.push(new Date(zonedMidnightMs(q.from, tz)).toISOString()); }
-    if (q.to) { sql += " AND m.timestamp < ?"; args.push(new Date(zonedMidnightMs(nextDay(q.to), tz)).toISOString()); }
-    sql += " ORDER BY m.id DESC LIMIT 60";
-    const rows = (await db(sql, ...args)).reverse();
+    if (q.from) { sql += " AND m.timestamp >= ?"; args.push(utcFrom(q.from, tz)); }
+    if (q.to) { sql += " AND m.timestamp < ?"; args.push(utcBefore(q.to, tz)); }
+    sql += " ORDER BY m.id DESC LIMIT 61";
+    const c = capped(await db(sql, ...args), 60);
+    more = c.more;
+    const rows = c.rows.reverse();
     for (const r of rows) lines.push(`[${when(Date.parse(r.timestamp), tz)}${r.channel ? ` · #${r.channel}` : ""}] ${r.sender}: ${clip(r.content, 300)}`);
   } else if (q.kind === "tasks") {
     const w = wordsWhere(q.query, ["t.title", "COALESCE(t.description, '')"]);
     const args: any[] = [teamId, ...w.args];
-    let sql = `SELECT t.id, t.title, t.status, t.due_date, t.due_time, t.priority, t.created_at,
+    let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at,
       (SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id) AS people
       FROM tasks t WHERE t.team_id = ?${w.sql}`;
     if (q.status === "open") sql += " AND t.status != 'done'";
@@ -159,21 +173,35 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
       sql += ` AND EXISTS (SELECT 1 FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id AND (LOWER(mm.name) = ? OR LOWER(mm.name) LIKE ? ESCAPE '\\'))`;
       args.push(q.person.toLowerCase(), `${likeEsc(q.person.toLowerCase())} %`);
     }
-    if (q.from) { sql += " AND COALESCE(t.due_date, substr(t.created_at, 1, 10)) >= ?"; args.push(q.from); }
-    if (q.to) { sql += " AND COALESCE(t.due_date, substr(t.created_at, 1, 10)) <= ?"; args.push(q.to); }
-    sql += " ORDER BY COALESCE(t.due_date, '9999') ASC, t.id DESC LIMIT 40";
-    for (const r of await db(sql, ...args)) {
-      lines.push(`#${r.id} ${clip(r.title, 120)} — ${r.status}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}`);
+    // Finished tasks are dated by when they were finished (team-local day);
+    // everything else by its due date, or the day it was made.
+    const done = q.status === "done";
+    if (done) {
+      if (q.from) { sql += " AND t.completed_at >= ?"; args.push(utcFrom(q.from, tz)); }
+      if (q.to) { sql += " AND t.completed_at < ?"; args.push(utcBefore(q.to, tz)); }
+      sql += " ORDER BY t.completed_at DESC, t.id DESC LIMIT 41";
+    } else {
+      if (q.from) { sql += " AND COALESCE(t.due_date, substr(t.created_at, 1, 10)) >= ?"; args.push(q.from); }
+      if (q.to) { sql += " AND COALESCE(t.due_date, substr(t.created_at, 1, 10)) <= ?"; args.push(q.to); }
+      sql += " ORDER BY COALESCE(t.due_date, '9999') ASC, t.id DESC LIMIT 41";
+    }
+    const c = capped(await db(sql, ...args), 40);
+    more = c.more;
+    for (const r of c.rows) {
+      const finished = r.status === "done" && r.completed_at ? `, finished ${when(Date.parse(r.completed_at), tz)}` : "";
+      lines.push(`#${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);
     const args: any[] = [teamId, ...w.args];
-    let sql = `SELECT id, title, date, start_time, end_time, location, event_type FROM events WHERE team_id = ?${w.sql}`;
+    let sql = `SELECT id, title, description, date, start_time, end_time, location, event_type FROM events WHERE team_id = ?${w.sql}`;
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
     if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
-    sql += " ORDER BY date ASC, start_time ASC LIMIT 60";
-    for (const r of await db(sql, ...args)) {
-      lines.push(`#${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]`);
+    sql += " ORDER BY date ASC, start_time ASC LIMIT 61";
+    const c = capped(await db(sql, ...args), 60);
+    more = c.more;
+    for (const r of c.rows) {
+      lines.push(`#${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "communications") {
     const w = wordsWhere(q.query, ["recipient", "subject", "body"]);
@@ -182,8 +210,10 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     if (q.person) { sql += " AND LOWER(recipient) LIKE ? ESCAPE '\\'"; args.push(`%${likeEsc(q.person.toLowerCase())}%`); }
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
     if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
-    sql += " ORDER BY date DESC, id DESC LIMIT 30";
-    for (const r of await db(sql, ...args)) {
+    sql += " ORDER BY date DESC, id DESC LIMIT 31";
+    const c = capped(await db(sql, ...args), 30);
+    more = c.more;
+    for (const r of c.rows) {
       lines.push(`${r.date} ${r.direction === "inbound" ? "from" : "to"} ${clip(r.recipient, 60)}: "${clip(r.subject, 100)}" — ${clip(r.body, 240)}${r.parent_id ? " (reply in a thread)" : ""}`);
     }
   } else if (q.kind === "outreach") {
@@ -192,27 +222,32 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     let sql = `SELECT title, description, date, hours, location FROM outreach WHERE team_id = ?${w.sql}`;
     if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
     if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
-    sql += " ORDER BY date DESC LIMIT 40";
-    for (const r of await db(sql, ...args)) {
+    sql += " ORDER BY date DESC LIMIT 41";
+    const c = capped(await db(sql, ...args), 40);
+    more = c.more;
+    for (const r of c.rows) {
       lines.push(`${r.date} ${clip(r.title, 120)}${r.hours ? `, ${r.hours} h` : ""}${r.location ? ` @ ${clip(r.location, 60)}` : ""}${r.description ? ` — ${clip(r.description, 160)}` : ""}`);
     }
   } else if (q.kind === "budget") {
     const w = wordsWhere(q.query, ["COALESCE(description, '')", "COALESCE(category, '')"]);
     const args: any[] = [teamId, ...w.args];
-    let sql = `SELECT type, amount, category, description, date FROM budget WHERE team_id = ?${w.sql}`;
-    if (q.from) { sql += " AND date >= ?"; args.push(q.from); }
-    if (q.to) { sql += " AND date <= ?"; args.push(q.to); }
-    sql += " ORDER BY date DESC LIMIT 60";
-    let income = 0;
-    let spent = 0;
-    for (const r of await db(sql, ...args)) {
+    let where = `FROM budget WHERE team_id = ?${w.sql}`;
+    if (q.from) { where += " AND date >= ?"; args.push(q.from); }
+    if (q.to) { where += " AND date <= ?"; args.push(q.to); }
+    const c = capped(await db(`SELECT type, amount, category, description, date ${where} ORDER BY date DESC LIMIT 61`, ...args), 60);
+    more = c.more;
+    for (const r of c.rows) {
       const amt = Number(r.amount) || 0;
-      if (r.type === "income") income += amt; else spent += amt;
       lines.push(`${r.date || "no date"} ${r.type === "income" ? "+" : "-"}$${amt.toFixed(2)} ${clip(r.category, 40)}${r.description ? ` — ${clip(r.description, 120)}` : ""}`);
     }
-    if (lines.length) lines.push(`Total of these rows: +$${income.toFixed(2)} in, -$${spent.toFixed(2)} out.`);
+    if (lines.length) {
+      // Totals cover every matching entry, not just the rows listed.
+      const [t] = await db(`SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) AS income,
+        COALESCE(SUM(CASE WHEN type = 'income' THEN 0 ELSE amount END), 0) AS spent ${where}`, ...args);
+      summary = `Total of all ${Number(t?.n) || lines.length} matching entries: +$${(Number(t?.income) || 0).toFixed(2)} in, -$${(Number(t?.spent) || 0).toFixed(2)} out.`;
+    }
   }
-  return lines;
+  return { lines, more, summary };
 }
 
 function describe(q: LookupQuery): string {
@@ -225,9 +260,16 @@ function describe(q: LookupQuery): string {
 export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[]): Promise<string> {
   const parts: string[] = [];
   for (const q of queries.slice(0, MAX_LOOKUPS)) {
-    let lines: string[];
-    try { lines = await runOne(db, teamId, tz, q); } catch (e) { console.error("Bruno lookup failed:", (e as any)?.message); lines = []; }
-    parts.push(`Lookup: ${describe(q)} — ${lines.length ? `${lines.length} found` : "nothing found"}${lines.length ? `\n${lines.join("\n")}` : ""}`);
+    let r: LookupRows;
+    try { r = await runOne(db, teamId, tz, q); } catch (e) {
+      console.error("Bruno lookup failed:", (e as any)?.message);
+      // A failed search is not an empty one: say so, so Bruno never claims the records don't exist.
+      parts.push(`Lookup: ${describe(q)} — SEARCH FAILED (a database error, not an empty result). Tell the user this search didn't work and to try again; don't say nothing exists.`);
+      continue;
+    }
+    const { lines, more, summary } = r;
+    const count = !lines.length ? "nothing found" : more ? `${lines.length} shown, MORE matched but are not listed (incomplete — say so, or suggest a narrower search)` : `${lines.length} found`;
+    parts.push(`Lookup: ${describe(q)} — ${count}${lines.length ? `\n${lines.join("\n")}` : ""}${summary ? `\n${summary}` : ""}`);
   }
   const out = parts.join("\n\n");
   return out.length > 12000 ? `${out.slice(0, 12000)}\n… (more rows not shown — ask a narrower question)` : out;
