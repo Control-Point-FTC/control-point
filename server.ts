@@ -60,6 +60,7 @@ import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } fr
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
+import { createLookupHold, extractLookupBlocks, runLookups } from "./server/brunoLookup.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
@@ -11321,6 +11322,30 @@ Rules:
         }
         (await dbRun("UPDATE bruno_chats SET updated_at = datetime('now') WHERE id = ?", chat.id));
       }
+      // Bruno lookups (phase 4b): a reply that ends with a ```lookup block asks
+      // for team data. Run it for this team and let Bruno answer from the rows
+      // in a second pass; the block itself is never shown or saved.
+      const lookupTz = await teamTimeZone(auth.teamId, req.body?.tz);
+      const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; onUsage: (u: any) => void }) => {
+        const { text: shownFirst, queries } = extractLookupBlocks(firstText);
+        if (!queries.length || !auth.teamId) return null;
+        const rows = await runLookups(dbAll as any, auth.teamId, lookupTz, queries);
+        if (opts.signal.aborted) return null;
+        const second = await aiChat({
+          extraSystem: systemExtra,
+          messages: [
+            ...messages,
+            { role: "model", text: firstText },
+            { role: "user", text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. Don't ask for another lookup.` },
+          ],
+          maxTokens,
+          stream: opts.stream,
+          onChunk: opts.onChunk,
+          onUsage: opts.onUsage,
+          signal: opts.signal,
+        });
+        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider };
+      };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
@@ -11331,6 +11356,7 @@ Rules:
         req.on("close", () => streamAbort.abort());
         try {
           let usage: any = null;
+          const hold = createLookupHold();
           // Hybrid provider: Gemini (free) handles everything; Anthropic is
           // fallback on quota. The router decides deterministically — no
           // model call is spent choosing the provider.
@@ -11341,11 +11367,32 @@ Rules:
             stream: true,
             webSearch: req.body?.webSearch === true,
             images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
-            onChunk: (chunk) => res.write(chunk),
+            onChunk: (chunk) => { const out = hold.push(chunk); if (out) res.write(out); },
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
           });
-          const fullText = aiReply.text;
+          const tail = hold.end();
+          if (tail) res.write(tail);
+          let fullText = aiReply.text;
+          if (hold.blocked && !streamAbort.signal.aborted) {
+            const hold2 = createLookupHold();
+            const looked = await followUpWithLookups(fullText, {
+              stream: true,
+              onChunk: (chunk) => { const out = hold2.push(chunk); if (out) res.write(out); },
+              signal: streamAbort.signal,
+              onUsage: (u) => { usage = { ...(usage || {}), ...u }; },
+            }).catch((e) => { console.error("Bruno lookup pass failed:", e?.message); return null; });
+            if (streamAbort.signal.aborted) { res.end(); return; }
+            const tail2 = hold2.end();
+            if (tail2) res.write(tail2);
+            if (looked) {
+              fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
+            } else {
+              const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
+              res.write(sorry);
+              fullText = extractLookupBlocks(fullText).text + sorry;
+            }
+          }
           const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
           logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length, "ok", aiReply.provider);
           // Strip the NavGPT ```switch handoff block and any data-action proposal
@@ -11386,7 +11433,11 @@ Rules:
         onUsage: (u) => { nonStreamUsage = u; },
         signal: nonStreamAbort.signal,
       });
-      const result = aiReply.text;
+      let result = aiReply.text;
+      if (extractLookupBlocks(String(result || "")).queries.length) {
+        const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, onUsage: () => {} }).catch(() => null);
+        result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
+      }
       let finalResult = stripActionBlocks(String(result || ""));
       finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
