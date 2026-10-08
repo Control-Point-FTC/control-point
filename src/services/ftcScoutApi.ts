@@ -5,6 +5,8 @@
 import { apiFetch } from './api';
 import type { FtcEventFull, FtcTeamProfile, FtcTeamSearchHit, ShortlistEntry } from '../types/ftcScout';
 import type { ShortlistPatch } from '../utils/shortlist';
+import { getOfflinePack } from './offlinePack';
+import { packEvent, packSearch, packTeamProfile } from '../utils/offlinePack';
 
 export const SCOUT_TTL_MS = 10 * 60 * 1000;
 
@@ -18,6 +20,9 @@ export class ScoutHttpError extends Error {
 }
 
 interface Entry<T> { expiresAt: number; data: T }
+
+/** Answers from the offline pack: returned, but never cached (the next try goes back to the network). */
+const transient = new WeakSet<object>();
 
 /** A keyed TTL cache with in-flight de-duplication. Exported for tests. */
 export function createTtlCache<T>(ttlMs: number, now: () => number = Date.now) {
@@ -40,7 +45,7 @@ export function createTtlCache<T>(ttlMs: number, now: () => number = Date.now) {
       const p: Promise<T> = load()
         .then((data) => {
           // A forced reload may have superseded this request; keep the newest.
-          if (inflight.get(key) === p) store.set(key, { expiresAt: now() + ttlMs, data });
+          if (inflight.get(key) === p && !(typeof data === 'object' && data && transient.has(data))) store.set(key, { expiresAt: now() + ttlMs, data });
           return data;
         })
         .finally(() => { if (inflight.get(key) === p) inflight.delete(key); });
@@ -73,12 +78,35 @@ async function getJson<T>(url: string, signal?: AbortSignal, timeoutMs?: number)
   return body as T;
 }
 
+/**
+ * No connection (or FTC data down): answer from the offline region pack when
+ * it has the answer, otherwise fail as before. A real answer from the server
+ * (404, 400) is never replaced.
+ */
+export function isOfflineFailure(e: unknown): boolean {
+  return !(e instanceof ScoutHttpError) || e.status >= 502;
+}
+async function orOffline<T>(live: () => Promise<T>, offline: (pack: NonNullable<Awaited<ReturnType<typeof getOfflinePack>>>['pack']) => T | null): Promise<T> {
+  try {
+    return await live();
+  } catch (e) {
+    if (!isOfflineFailure(e)) throw e;
+    const saved = await getOfflinePack();
+    const hit = saved ? offline(saved.pack) : null;
+    if (hit) { if (typeof hit === 'object') transient.add(hit); return hit; }
+    throw e;
+  }
+}
+
 /** A team's season profile. `number` omitted = the workspace's own team. */
 export function fetchScoutTeam(season: number, number?: number | null, opts?: { force?: boolean }): Promise<FtcTeamProfile> {
   const key = `${number ?? 'me'}:${season}`;
   const q = new URLSearchParams({ season: String(season) });
   if (number) q.set('number', String(number));
-  return teamCache.get(key, () => getJson<FtcTeamProfile>(`/api/ftc/scout/team?${q}`), opts);
+  return teamCache.get(key, () => orOffline(
+    () => getJson<FtcTeamProfile>(`/api/ftc/scout/team?${q}`),
+    (pack) => (number ? packTeamProfile(pack, season, number) : null),
+  ), opts);
 }
 
 export function peekScoutTeam(season: number, number?: number | null): FtcTeamProfile | null {
@@ -87,7 +115,10 @@ export function peekScoutTeam(season: number, number?: number | null): FtcTeamPr
 
 export function fetchScoutEvent(season: number, code: string, opts?: { force?: boolean }): Promise<FtcEventFull> {
   const key = `${season}:${code.toUpperCase()}`;
-  return eventCache.get(key, () => getJson<FtcEventFull>(`/api/ftc/scout/event?season=${season}&code=${encodeURIComponent(code)}`), opts);
+  return eventCache.get(key, () => orOffline(
+    () => getJson<FtcEventFull>(`/api/ftc/scout/event?season=${season}&code=${encodeURIComponent(code)}`),
+    (pack) => packEvent(pack, season, code),
+  ), opts);
 }
 
 export function peekScoutEvent(season: number, code: string): FtcEventFull | null {
@@ -100,10 +131,12 @@ export function peekScoutEvent(season: number, code: string): FtcEventFull | nul
 export async function searchScoutTeams(q: string, season: number): Promise<FtcTeamSearchHit[]> {
   const term = q.trim();
   if (term.length < 2 && !/^\d+$/.test(term)) return [];
-  return searchCache.get(`${season}:${term.toLowerCase()}`, async () => {
-    const body = await getJson<{ results: FtcTeamSearchHit[] }>(`/api/ftc/scout/search?season=${season}&q=${encodeURIComponent(term)}`);
-    return body.results || [];
-  });
+  return searchCache.get(`${season}:${term.toLowerCase()}`, () => orOffline(
+    async () => (await getJson<{ results: FtcTeamSearchHit[] }>(`/api/ftc/scout/search?season=${season}&q=${encodeURIComponent(term)}`)).results || [],
+    // Team names don't change between seasons: any pack answers a search.
+    // Nothing in the pack: say search is down rather than "no such team".
+    (pack) => { const hits = packSearch(pack, term); return hits.length ? hits : null; },
+  ));
 }
 
 // ---- Scouting shortlist (server-persisted, shared by the workspace) ----

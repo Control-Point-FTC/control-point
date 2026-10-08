@@ -11,7 +11,11 @@ import { ADVANCING_TYPES, SCOUT_EVENT_LIST_QUERY, parseScoutEventRecord, scoutEv
 import type { EventRecord } from "./types.js";
 import type { FirstAdvancement } from "../ftcEvents.js";
 
-export interface EventMeta { code: string; type: string; start: string | null; end: string | null; region: string | null; updatedAt: string | null; remote?: boolean }
+export interface EventMeta {
+  code: string; type: string; start: string | null; end: string | null; region: string | null; updatedAt: string | null; remote?: boolean;
+  /** Layout the stored file was downloaded in (missing = 1). */
+  format?: number;
+}
 
 export interface StoreDeps {
   /** POST a GraphQL query to FTC Scout. */
@@ -22,6 +26,12 @@ export interface StoreDeps {
   gapMs?: number;
   log?: (msg: string) => void;
 }
+
+/**
+ * Layout of stored event files. 2 = team names and towns included (for the
+ * offline pack). A season stored in an older layout is downloaded again once.
+ */
+export const STORE_FORMAT = 2;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -48,9 +58,14 @@ export class PredictStore {
     return existsSync(join(this.seasonDir("scout", season), "_index.json"));
   }
 
-  /** True once a sync of the season finished with every event downloaded. */
+  private status(season: number): { complete?: boolean; lastSync?: unknown; lastComplete?: unknown; failed?: number; format?: number } {
+    return this.readJson(join(this.seasonDir("scout", season), "_status.json"), {});
+  }
+
+  /** True once a sync of the season finished with every event downloaded (in the current layout). */
   isComplete(season: number): boolean {
-    return this.readJson(join(this.seasonDir("scout", season), "_status.json"), { complete: false }).complete === true;
+    const st = this.status(season);
+    return st.complete === true && (st.format ?? 1) >= STORE_FORMAT;
   }
 
   /**
@@ -58,7 +73,7 @@ export class PredictStore {
    * some events failed doesn't count: their stored results are out of date.
    */
   lastSync(season: number): string | null {
-    const st = this.readJson<{ complete?: boolean; lastSync?: unknown; lastComplete?: unknown }>(join(this.seasonDir("scout", season), "_status.json"), {});
+    const st = this.status(season);
     // Status files from before lastComplete: lastSync counted only if that sync was complete.
     const at = st.lastComplete ?? (st.complete === true ? st.lastSync : null);
     return typeof at === "string" && !Number.isNaN(Date.parse(at)) ? at : null;
@@ -75,12 +90,15 @@ export class PredictStore {
     const listResp = await this.deps.scout(SCOUT_EVENT_LIST_QUERY, { season });
     const list = listResp?.data?.eventsSearch;
     if (!Array.isArray(list) || listResp?.errors?.length) throw new Error(`event list unavailable${listResp?.errors?.length ? `: ${JSON.stringify(listResp.errors).slice(0, 200)}` : ""}`);
+    const prevFormat = this.status(season).format ?? 1;
     const old = this.index(season);
     const next: Record<string, EventMeta> = {};
     const todo: EventMeta[] = [];
     for (const e of list) {
       const meta: EventMeta = { code: e.code, type: e.type, start: e.start ?? null, end: e.end ?? null, region: e.regionCode ?? null, updatedAt: e.updatedAt ?? null, remote: !!(e.remote || e.hybrid) };
-      next[e.code] = old[e.code] && old[e.code].updatedAt === meta.updatedAt && existsSync(join(dir, `${e.code}.json`)) ? old[e.code] : meta;
+      // Unchanged since the last sync and stored in the current layout: keep.
+      const kept = old[e.code];
+      next[e.code] = kept && kept.updatedAt === meta.updatedAt && (kept.format ?? 1) >= STORE_FORMAT && existsSync(join(dir, `${e.code}.json`)) ? kept : meta;
       if (next[e.code] === meta && !meta.remote) todo.push(meta);
     }
     let fetched = 0, failed = 0;
@@ -90,6 +108,7 @@ export class PredictStore {
         const body = await this.deps.scout(q, { season, code: e.code });
         if (body?.errors?.length || !body?.data?.eventByCode) throw new Error(body?.errors?.length ? JSON.stringify(body.errors).slice(0, 200) : "no event in response");
         writeFileSync(join(dir, `${e.code}.json`), JSON.stringify(body));
+        e.format = STORE_FORMAT;
         fetched++;
       } catch (err) {
         failed++;
@@ -103,8 +122,10 @@ export class PredictStore {
     writeFileSync(join(dir, "_index.json"), JSON.stringify(next));
     // Only a sync with no failures marks the season complete (older seasons
     // stop syncing once complete; unfinished ones keep retrying).
+    // The season counts as stored in the current layout once every event is.
+    const format = failed === 0 ? STORE_FORMAT : prevFormat;
     const now = new Date().toISOString();
-    writeFileSync(join(dir, "_status.json"), JSON.stringify({ complete: failed === 0, lastSync: now, lastComplete: failed === 0 ? now : this.lastSync(season), failed }));
+    writeFileSync(join(dir, "_status.json"), JSON.stringify({ complete: failed === 0, lastSync: now, lastComplete: failed === 0 ? now : this.lastSync(season), failed, format }));
     return fetched;
   }
 
@@ -145,6 +166,11 @@ export class PredictStore {
       const path = join(dir, f);
       return { code: f.slice(0, -5), path, mtimeMs: statSync(path).mtimeMs };
     });
+  }
+
+  /** One stored event file as downloaded (FTC Scout response), or null. */
+  readEventFile(path: string): any {
+    return this.readJson(path, null);
   }
 
   /** Parse one stored event file (null when not an official in-person event with matches). */

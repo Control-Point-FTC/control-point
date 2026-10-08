@@ -7,6 +7,8 @@ import "express-async-errors";
 import "dotenv/config";
 import path from "path";
 import fs from "fs";
+import { gzip } from "zlib";
+import { promisify } from "util";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 
@@ -148,6 +150,7 @@ import {
 import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
 import { PredictStore } from "./server/predict/store.js";
 import { syncSeasons, dataAsOf } from "./server/predict/sync.js";
+import { OfflinePackBuilder, buildPack, detectRegion, listRegions, type PackedEvent } from "./server/offline/pack.js";
 import { passwordProblem } from "./src/utils/password.js";
 import { isMessageModerator, messageActionAllowed } from "./server/messagePerms.js";
 import { PredictMonitor, eventStillOpen, type LiveAccuracy } from "./server/predict/monitor.js";
@@ -5942,6 +5945,66 @@ async function startServer() {
     const row = (await dbGet("SELECT ftc_team_number FROM teams WHERE id = ?", teamId)) as any;
     return parseInt(row?.ftc_team_number, 10) || null;
   }
+
+  // ---- Offline region pack (V3.5 phase 6b) ----
+  const gzipAsync = promisify(gzip);
+  const offlineBuilder = new OfflinePackBuilder(predictStore);
+  const offlinePacks = new Map<string, { json: string; gz: Buffer }>();
+  /** The newest season with stored events, and its packed events. */
+  async function offlineSeason(): Promise<{ season: number; events: PackedEvent[]; version: string } | null> {
+    for (const s of [...predictSeasons].sort((a, b) => b - a)) {
+      const got = await offlineBuilder.events(s);
+      if (got.events.length) return { season: s, ...got };
+    }
+    return null;
+  }
+
+  app.get("/api/offline/regions", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const got = await offlineSeason();
+    if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
+    const myTeam = await myFtcTeam(auth.teamId);
+    const asEvents = (evs: PackedEvent[]) => evs.map((e) => ({ region: e.event.region, teams: e.event.teams.map((t) => t[0]) }));
+    // This season's events first; early in a season, last season's.
+    const detected = detectRegion(asEvents(got.events), myTeam)
+      ?? detectRegion(predictEngine.seasonData(got.season - 1).events.map((e) => ({ region: e.region ?? null, teams: e.teams })), myTeam);
+    res.json(listRegions(got.events, got.season, predictStore.lastSync(got.season), detected));
+  });
+
+  app.get("/api/offline/pack", async (req, res) => {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const region = String(req.query.region || "").toUpperCase();
+    if (!/^(ALL|[A-Z0-9]{2,8})$/.test(region)) return res.status(400).json({ error: "Choose a region" });
+    // The age is read before the files, so a sync finishing during the read
+    // can only make the label older than the results, never newer.
+    const syncedBefore = new Map(predictSeasons.map((x) => [x, predictStore.lastSync(x)]));
+    const got = await offlineSeason();
+    if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
+    if (region !== "ALL" && !got.events.some((e) => e.event.region === region)) return res.status(404).json({ error: "No events in that region this season" });
+    const dataAsOf = syncedBefore.get(got.season) ?? null;
+    // Keyed by the stored files' version (read with the events): any file a
+    // sync rewrote, even one that partly failed, makes a new pack. dataAsOf
+    // only labels its age.
+    const key = `${got.season}:${region}:${got.version}:${dataAsOf}`;
+    let built = offlinePacks.get(key);
+    if (!built) {
+      const json = JSON.stringify(buildPack(got.events, got.season, region, dataAsOf));
+      built = { json, gz: await gzipAsync(json) };
+      offlinePacks.set(key, built);
+      // Keep a handful (the full pack is a few MB).
+      while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
+    }
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Vary", "Accept-Encoding");
+    res.type("application/json");
+    if (/\bgzip\b/.test(String(req.headers["accept-encoding"] || ""))) {
+      res.setHeader("Content-Encoding", "gzip");
+      return res.send(built.gz);
+    }
+    res.send(built.json);
+  });
 
   app.get("/api/predict/status", async (req, res) => {
     const auth = await requireAuth(req, res);
