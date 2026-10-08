@@ -172,6 +172,22 @@ describe('Modern call UI', () => {
   });
 });
 
+describe('call stage: one or two people', () => {
+  it('one person gets a centred, capped tile and a note, not a screen-wide box', () => {
+    setVoiceMock(makeVoiceMock({ status: 'connected', session, participants: [participants[0]], expanded: true }));
+    render(<CallStage />);
+    const grid = screen.getByTestId('call-grid');
+    expect(grid.className).toMatch(/max-w-2xl/);
+    expect(grid.className).toMatch(/mx-auto/);
+    expect(screen.getByText("You're the only one here. Others can join from the channel.")).toBeInTheDocument();
+    cleanup();
+    setVoiceMock(makeVoiceMock({ status: 'connected', session, participants, expanded: true }));
+    render(<CallStage />);
+    expect(screen.getByTestId('call-grid').className).toMatch(/max-w-5xl/);
+    expect(screen.queryByText(/only one here/)).not.toBeInTheDocument();
+  });
+});
+
 describe('9f review fixes', () => {
   it('the stage keeps the camera button on phones; settings minimizes the call first', () => {
     const v = makeVoiceMock({ status: 'connected', session, participants, expanded: true });

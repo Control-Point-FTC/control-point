@@ -97,14 +97,24 @@ export async function getMicStream(deviceId: string | undefined, prefs: DevicePr
 
 export type VideoQuality = 'low' | 'medium' | 'high';
 
-// NOTE: No forced width/height — the camera uses its native orientation.
-// Forcing 16:9 landscape (e.g. 1280x720) on a phone held vertically gives a
-// sideways/letterboxed stream. We only hint at frame rate and facing mode,
-// letting the device pick the right resolution for its current orientation.
+// Resolution: the SAME ideal for width and height, so the hint never forces
+// an orientation (16:9 landscape on a phone held upright comes out sideways).
+// The browser picks the closest mode either way round: 640 -> 480p,
+// 1280 -> 720p, 1920 -> 1080p. With no hint at all most browsers open the
+// camera at 640x480, which looked soft on any tile bigger than a thumbnail.
 const VIDEO_CONSTRAINTS: Record<VideoQuality, MediaTrackConstraints> = {
-  low: { frameRate: { ideal: 15 }, facingMode: 'user' },
-  medium: { frameRate: { ideal: 24 }, facingMode: 'user' },
-  high: { frameRate: { ideal: 30 }, facingMode: 'user' },
+  low: { width: { ideal: 640 }, height: { ideal: 640 }, frameRate: { ideal: 15 }, facingMode: 'user' },
+  medium: { width: { ideal: 1280 }, height: { ideal: 1280 }, frameRate: { ideal: 30 }, facingMode: 'user' },
+  high: { width: { ideal: 1920 }, height: { ideal: 1920 }, frameRate: { ideal: 30 }, facingMode: 'user' },
+};
+
+/**
+ * Screen share: full resolution up to 1440p at up to 30 fps. The track is
+ * marked as "detail" content, so the encoder keeps text sharp (it lowers the
+ * frame rate under pressure instead of the resolution).
+ */
+export const SCREEN_CONSTRAINTS: MediaTrackConstraints = {
+  width: { max: 2560 }, height: { max: 1440 }, frameRate: { ideal: 30, max: 30 },
 };
 
 /** Call this only from a user gesture (join with video / toggle camera on). */
@@ -143,7 +153,18 @@ export async function getScreenStream(): Promise<MediaStream> {
     throw new MediaError('not-supported', 'Screen sharing is not supported in this browser.');
   }
   try {
-    return await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: SCREEN_CONSTRAINTS, audio: false });
+    } catch (err: any) {
+      // A browser that rejects the constraints still gets a plain share.
+      if (err?.name !== 'TypeError' && err?.name !== 'OverconstrainedError') throw err;
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    }
+    for (const t of stream.getVideoTracks()) {
+      try { (t as any).contentHint = 'detail'; } catch { /* unsupported */ }
+    }
+    return stream;
   } catch (err: any) {
     if (err?.name === 'NotAllowedError') {
       throw new MediaError('denied', 'Screen share was cancelled.');

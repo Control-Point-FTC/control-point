@@ -288,10 +288,15 @@ export function CallStage({ onOpenSettings }: { onOpenSettings?: () => void }) {
             )}
           </div>
         ) : (
-          <div className={cn('grid auto-rows-fr gap-3', grid)}>
-            {v.participants.map((p) => <Tile key={p.memberId} p={p} onMenu={v.openMenu} />)}
-            {n === 0 && <p className="col-span-full py-16 text-center text-sm text-muted-foreground">{v.status === 'joining' ? 'Joining the call…' : 'No one else is here yet.'}</p>}
-          </div>
+          // One or two people: a centred, capped stage instead of tiles that
+          // stretch across the whole screen.
+          <>
+            <div data-testid="call-grid" className={cn('grid auto-rows-fr gap-3', grid, n === 1 && 'mx-auto w-full max-w-sm sm:max-w-xl lg:max-w-2xl', n === 2 && 'mx-auto w-full max-w-5xl')}>
+              {v.participants.map((p) => <Tile key={p.memberId} p={p} onMenu={v.openMenu} />)}
+              {n === 0 && <p className="col-span-full py-16 text-center text-sm text-muted-foreground">{v.status === 'joining' ? 'Joining the call…' : 'No one else is here yet.'}</p>}
+            </div>
+            {n === 1 && v.participants[0]?.isSelf && v.status !== 'joining' && <p className="mt-4 text-center text-sm text-muted-foreground">You're the only one here. Others can join from the channel.</p>}
+          </>
         )}
       </main>
       {/* Control dock */}

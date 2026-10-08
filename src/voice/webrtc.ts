@@ -65,6 +65,18 @@ export interface VoiceEngineOptions {
   audioQuality?: 'low' | 'medium' | 'high';
 }
 
+/**
+ * Video sender caps (bps). Without them the encoder starts low and, under
+ * the default "balanced" preference, drops resolution first: screen text
+ * turned to mush. These are ceilings; congestion control still backs off.
+ */
+export function cameraBitrate(height: number): number {
+  if (height >= 1000) return 2_500_000;
+  if (height >= 700) return 1_500_000;
+  return 600_000;
+}
+export const SCREEN_BITRATE = 3_000_000;
+
 /** Opus maxbitrate (bps) per audio quality setting. */
 export const AUDIO_QUALITY_BITRATES: Record<'low' | 'medium' | 'high', number> = {
   low: 24000,
@@ -222,9 +234,24 @@ export class VoiceEngine {
       void this.applyAudioBitrate(peer.micSender);
     }
     const camTrack = this.cameraStream?.getVideoTracks()[0];
-    if (camTrack) peer.cameraSender = pc.addTrack(camTrack, this.cameraStream!);
+    if (camTrack) {
+      peer.cameraSender = pc.addTrack(camTrack, this.cameraStream!);
+      void this.applyVideoParams(peer.cameraSender, 'camera');
+    }
     const screenTrack = this.screenStream?.getVideoTracks()[0];
-    if (screenTrack) peer.screenSender = pc.addTrack(screenTrack, this.screenStream!);
+    if (screenTrack) {
+      peer.screenSender = pc.addTrack(screenTrack, this.screenStream!);
+      void this.applyVideoParams(peer.screenSender, 'screen');
+    }
+
+    // Encoder settings only stick once a sender is negotiated (before that
+    // it has no encodings and setParameters is refused): re-apply them each
+    // time negotiation settles, which also covers a camera or screen added mid-call.
+    pc.addEventListener('signalingstatechange', () => {
+      if (pc.signalingState !== 'stable' || peer.closed) return;
+      void this.applyVideoParams(peer.cameraSender, 'camera');
+      void this.applyVideoParams(peer.screenSender, 'screen');
+    });
 
     pc.onicecandidate = (ev) => {
       if (ev.candidate && ev.candidate.candidate) {
@@ -453,6 +480,31 @@ export class VoiceEngine {
     );
   }
 
+  /**
+   * Bitrate cap and degradation preference for a video sender. Camera: keep
+   * motion smooth; screen: keep the resolution (text stays readable) and let
+   * the frame rate drop instead.
+   */
+  private async applyVideoParams(sender: RTCRtpSender | null, kind: 'camera' | 'screen'): Promise<void> {
+    if (!sender?.track) return;
+    try {
+      const params = sender.getParameters() as RTCRtpSendParameters & { degradationPreference?: string };
+      if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+      const settings = sender.track.getSettings?.() ?? {};
+      // The short side decides the tier, so an upright phone counts like landscape.
+      const short = Math.min(Number(settings.width) || 0, Number(settings.height) || 0) || Number(settings.height) || 720;
+      for (const enc of params.encodings) {
+        enc.maxBitrate = kind === 'screen' ? SCREEN_BITRATE : cameraBitrate(short);
+        enc.maxFramerate = 30;
+        if (kind === 'screen') enc.scaleResolutionDownBy = 1;
+      }
+      params.degradationPreference = kind === 'screen' ? 'maintain-resolution' : 'balanced';
+      await sender.setParameters(params);
+    } catch {
+      /* sender/encoding API unsupported — the browser defaults stand */
+    }
+  }
+
   /** Apply the current Opus maxbitrate to one audio RTCRtpSender. */
   private async applyAudioBitrate(sender: RTCRtpSender): Promise<void> {
     try {
@@ -576,6 +628,7 @@ export class VoiceEngine {
         }
         peer.cameraSender = null;
       }
+      if (track) await this.applyVideoParams(peer.cameraSender, 'camera');
     }
     if (old && old !== stream) for (const t of old.getTracks()) t.stop();
   }
@@ -602,6 +655,7 @@ export class VoiceEngine {
         }
         peer.screenSender = null;
       }
+      if (track) await this.applyVideoParams(peer.screenSender, 'screen');
     }
     if (old && old !== stream) for (const t of old.getTracks()) t.stop();
   }
