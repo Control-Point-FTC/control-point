@@ -151,6 +151,17 @@ export function resetEmailHtml(code: string): string {
   });
 }
 
+/** POST to Resend; a request that never reaches it (DNS, network, timeout)
+ * is recorded for the owner console too, then rethrown. */
+async function resendFetch(init: RequestInit): Promise<Response> {
+  try {
+    return await fetch("https://api.resend.com/emails", init);
+  } catch (e: any) {
+    recordEmailResult(`Could not reach the email provider: ${String(e?.message || e).slice(0, 200)}`);
+    throw e;
+  }
+}
+
 export async function sendVerificationEmail(to: string, code: string, purpose: CodePurpose = "verify"): Promise<void> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
@@ -158,7 +169,7 @@ export async function sendVerificationEmail(to: string, code: string, purpose: C
     console.log(`[email-verify] (no RESEND_API_KEY) ${purpose} code for ${to}: ${code}`);
     return;
   }
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await resendFetch({
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -323,7 +334,7 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
     console.log(`[email] (no RESEND_API_KEY) to ${to}: ${subject}`);
     return;
   }
-  const res = await fetch("https://api.resend.com/emails", {
+  const res = await resendFetch({
     method: "POST",
     headers: {
       "Authorization": `Bearer ${key}`,

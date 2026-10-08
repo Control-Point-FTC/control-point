@@ -159,4 +159,10 @@ describe('email verification codes', () => {
     h = mod.getEmailHealth();
     expect(h.lastOkAt && h.lastErrorAt && h.lastOkAt >= h.lastErrorAt).toBe(true);
   });
+
+  it('records a provider that cannot be reached at all', async () => {
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND api.resend.com'));
+    await expect(sendVerificationEmail('x@example.com', '123456')).rejects.toThrow(/ENOTFOUND/);
+    expect(mod.getEmailHealth().lastError).toMatch(/Could not reach the email provider.*ENOTFOUND/);
+  });
 });

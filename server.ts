@@ -1998,18 +1998,21 @@ function parsePerms(json: any): string[] {
  * verification existed (grandfathered by migration 001) are unaffected.
  * Use with the members table aliased as `m`.
  */
-const VERIFIED_MEMBER_SQL = "(COALESCE(m.password, '') = '' OR EXISTS (SELECT 1 FROM verified_emails ve WHERE ve.email = LOWER(m.email)))";
+const VERIFIED_MEMBER_SQL = "(COALESCE(m.password, '') = '' OR EXISTS (SELECT 1 FROM verified_emails ve WHERE LOWER(ve.email) = LOWER(m.email)))";
 
 /**
  * Send a signup/login verification code. Never throws: the caller still
  * answers "check your inbox", but says whether the email actually left so
  * the screen can say so instead of leaving someone waiting for nothing.
  * A cooldown hit means a code went out under a minute ago, which counts as sent.
+ * With no email provider configured the answer is "not sent".
  */
 async function sendSignupCode(email: string): Promise<boolean> {
   try {
     await issueVerificationCode(email);
-    return true;
+    // Without a provider the code is only logged (dev/test): nothing reached
+    // an inbox, so say so rather than start a cooldown for a missing email.
+    return isEmailConfigured();
   } catch (e) {
     console.error("verify code issue failed:", e);
     return false;
