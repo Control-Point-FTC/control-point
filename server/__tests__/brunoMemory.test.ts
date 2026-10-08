@@ -56,6 +56,14 @@ describe("memories", () => {
     expect((await del(`/api/bruno/memories/${teamFact.body.memory.id}`, admin)).status).toBe(200);
   });
 
+  it("a manual add goes through the same duplicate check as chat", async () => {
+    const first = await t.post("/api/bruno/memories", { content: "Drives the robot" }, member);
+    expect(first.status).toBe(200);
+    expect((await t.post("/api/bruno/memories", { content: "drives the robot." }, member)).status).toBe(409);
+    expect(await rows("SELECT id FROM bruno_memories WHERE member_id = ?", memberId)).toHaveLength(1);
+    await del(`/api/bruno/memories/${first.body.memory.id}`, member);
+  });
+
   it("the nudge setting is saved on the profile", async () => {
     const r = await t.patch("/api/profile", { name: "Arnav", role: "", bruno_nudges: false }, member);
     expect(r.status).toBe(200);
@@ -72,6 +80,9 @@ describe("morning nudge", () => {
       const info = await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, '', 'todo', ?, ?, 0, ?)", args: [team, title, who, due, new Date().toISOString()] });
       if (who) await t.db.execute({ sql: "INSERT INTO task_assignees (task_id, member_id) VALUES (?, ?)", args: [Number(info.lastInsertRowid), who] });
     }
+    // A board-only task the student's task page hides doesn't count for them.
+    const board = await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, 'Board budget', '', 'todo', ?, ?, 1, ?)", args: [team, memberId, today, new Date().toISOString()] });
+    await t.db.execute({ sql: "INSERT INTO task_assignees (task_id, member_id) VALUES (?, ?)", args: [Number(board.lastInsertRowid), memberId] });
     let notes: any[] = [];
     for (let i = 0; i < 40 && notes.length < 2; i++) {
       await new Promise((r) => setTimeout(r, 250));
