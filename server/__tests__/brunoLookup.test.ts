@@ -67,6 +67,7 @@ describe("runLookups", () => {
       INSERT INTO events VALUES (1, 1, 'Qualifier', '', '2026-12-12', '', '', 'Gym', 'competition'), (2, 2, 'Other event', '', '2026-12-12', '', '', '', 'meeting');
       INSERT INTO communications VALUES (1, 1, 'REV Robotics', 'Wheel order', 'Asked about lead times', '2026-10-03', 'outbound', NULL);
       INSERT INTO budget VALUES (1, 1, 'expense', 60, 'Wheels', 'Mecanum wheels', '2026-10-03'), (2, 1, 'income', 500, 'Sponsor', 'Acme', '2026-10-04');
+      ALTER TABLE tasks ADD COLUMN assigned_to INTEGER;
     `);
   });
 
@@ -120,5 +121,18 @@ describe("runLookups", () => {
     const out = await runLookups(broken, 1, "UTC", [{ kind: "outreach" }]);
     expect(out).toContain("SEARCH FAILED");
     expect(out).not.toContain("nothing found");
+  });
+
+  it("a timed communication on the last day of the range is found", async () => {
+    await db.execute("INSERT INTO communications VALUES (2, 1, 'goBILDA', 'Quote', 'Asked for a quote', '2026-10-06 14:30', 'outbound', NULL)");
+    const out = await runLookups(dbAll, 1, "UTC", [{ kind: "communications", from: "2026-10-06", to: "2026-10-06" }]);
+    expect(out).toContain('to goBILDA: "Quote"');
+  });
+
+  it("a task with only the legacy assigned_to is found by person and named", async () => {
+    await db.execute("INSERT INTO tasks (id, team_id, title, status, assigned_to, created_at) VALUES (5, 1, 'Sweep the shop', 'done', 2, '2026-10-01')");
+    const out = await runLookups(dbAll, 1, "UTC", [{ kind: "tasks", person: "Ada", query: "sweep" }]);
+    expect(out).toContain("Sweep the shop — done");
+    expect(out).toContain("assigned to Ada Lovelace");
   });
 });
