@@ -486,6 +486,21 @@ describe('Modern Settings — background grid', () => {
     expect(document.documentElement.classList.contains('cp-grid-glow')).toBe(false);
   });
 
+  it('Pulse from: choose where the glow starts, never none, only with the pulse on', () => {
+    setup({ section: 'appearance' });
+    const center = () => screen.getByRole('button', { name: 'Center' });
+    expect(center()).toBeDisabled();
+    fireEvent.click(screen.getByRole('switch', { name: 'Pulse' }));
+    expect(document.documentElement.classList.contains('cp-pulse-center')).toBe(true);
+    fireEvent.click(center());
+    fireEvent.click(screen.getByRole('button', { name: 'Edges' }));
+    expect(['center', 'edges', 'corners'].map((k) => document.documentElement.classList.contains(`cp-pulse-${k}`))).toEqual([false, false, true]);
+    expect(JSON.parse(localStorage.getItem('cp-grid-prefs') || '{}').pulseFrom).toEqual(['corners']);
+    // The last one can't be turned off.
+    fireEvent.click(screen.getByRole('button', { name: 'Corners' }));
+    expect(document.documentElement.classList.contains('cp-pulse-corners')).toBe(true);
+  });
+
   it('only admins get the team colour control; nobody gets a personal colour picker', () => {
     setup({ section: 'appearance', admin: false });
     expect(screen.queryByRole('button', { name: /Team colour/ })).not.toBeInTheDocument();

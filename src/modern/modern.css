@@ -90,12 +90,18 @@ html[data-ui="modern"] .m-canvas {
   --cp-grid-strong: rgb(var(--grid-rgb, 255 199 0) / calc(var(--cp-grid-alpha) * var(--cp-grid-k) * var(--cp-pulse, 1) * 2.2));
   --cp-layer-fade: radial-gradient(120% var(--cp-grid-fade) at 50% 0, transparent 0%, var(--sh-background) 100%) no-repeat;
   --cp-layer-glow: linear-gradient(transparent, transparent);
+  --cp-layer-pulse-center: linear-gradient(transparent, transparent);
+  --cp-layer-pulse-edges: linear-gradient(transparent, transparent);
+  --cp-layer-pulse-corners: linear-gradient(transparent, transparent);
   --cp-layer-pattern:
     linear-gradient(var(--cp-grid-line) var(--cp-grid-width), transparent var(--cp-grid-width)) 0 0 / var(--cp-grid-size) var(--cp-grid-size),
     linear-gradient(90deg, var(--cp-grid-line) var(--cp-grid-width), transparent var(--cp-grid-width)) 0 0 / var(--cp-grid-size) var(--cp-grid-size);
   background:
     radial-gradient(1200px 320px at 50% -120px, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 70%),
     var(--cp-layer-glow),     /* above the fade: the fade shapes the grid, not the pointer light */
+    var(--cp-layer-pulse-center),
+    var(--cp-layer-pulse-edges),
+    var(--cp-layer-pulse-corners),
     var(--cp-layer-fade),
     var(--cp-layer-pattern),
     var(--sh-background);
@@ -123,6 +129,28 @@ html[data-ui="modern"].cp-grid-glow .m-canvas {
 /* Pulse: the grid slowly brightens and fades */
 @keyframes cp-grid-pulse { 0%, 100% { --cp-pulse: 1; } 50% { --cp-pulse: 2.2; } }
 html[data-ui="modern"].cp-grid-pulse .m-canvas { animation: cp-grid-pulse var(--cp-grid-pulse-speed, 6s) ease-in-out infinite; }
+/* Pulse from: soft glows in the team colour at the centre, the edges and/or
+   the corners of the first screen, breathing with the pulse (0 at rest). They
+   scroll with the page, like the accent glow at the top. */
+html[data-ui="modern"].cp-grid-pulse .m-canvas {
+  --cp-pulse-glow: rgb(var(--grid-rgb, 255 199 0) / calc(var(--cp-grid-alpha) * var(--cp-grid-k) * (var(--cp-pulse, 1) - 1) * 1.5));
+}
+html[data-ui="modern"].cp-pulse-center .m-canvas {
+  --cp-layer-pulse-center: radial-gradient(60vw 40vh at 50% 45vh, var(--cp-pulse-glow), transparent 70%) no-repeat;
+}
+html[data-ui="modern"].cp-pulse-edges .m-canvas {
+  --cp-layer-pulse-edges:
+    radial-gradient(50vw 22vh at 50% 0, var(--cp-pulse-glow), transparent 70%) no-repeat,
+    radial-gradient(22vw 40vh at 0 45vh, var(--cp-pulse-glow), transparent 70%) no-repeat,
+    radial-gradient(22vw 40vh at 100% 45vh, var(--cp-pulse-glow), transparent 70%) no-repeat;
+}
+html[data-ui="modern"].cp-pulse-corners .m-canvas {
+  --cp-layer-pulse-corners:
+    radial-gradient(35vmin circle at 0 0, var(--cp-pulse-glow), transparent 70%) no-repeat,
+    radial-gradient(35vmin circle at 100% 0, var(--cp-pulse-glow), transparent 70%) no-repeat,
+    radial-gradient(35vmin circle at 0 90vh, var(--cp-pulse-glow), transparent 70%) no-repeat,
+    radial-gradient(35vmin circle at 100% 90vh, var(--cp-pulse-glow), transparent 70%) no-repeat;
+}
 @media (prefers-reduced-motion: reduce) {
   html[data-ui="modern"].cp-grid-pulse .m-canvas { animation: none; }
 }
