@@ -80,16 +80,26 @@ export function packEvent(raw: any, season: number): PackedEvent | null {
   };
 }
 
+/** FNV-1a: a short, stable fingerprint of the file list (not security sensitive). */
+function shortHash(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return `${s.length.toString(36)}-${(h >>> 0).toString(36)}`;
+}
+
 const yieldLoop = () => new Promise<void>((r) => setImmediate(r));
+
+/** A season's packed events, and a version that changes whenever any stored event file does. */
+export interface PackedSeason { events: PackedEvent[]; version: string }
 
 export class OfflinePackBuilder {
   private packed = new Map<number, Map<string, { mtimeMs: number; ev: PackedEvent | null }>>();
-  private refreshing = new Map<number, Promise<PackedEvent[]>>();
+  private refreshing = new Map<number, Promise<PackedSeason>>();
 
   constructor(private src: PackSource) {}
 
   /** Every event of a season, re-packing only files that changed (one refresh at a time). */
-  events(season: number): Promise<PackedEvent[]> {
+  events(season: number): Promise<PackedSeason> {
     const running = this.refreshing.get(season);
     if (running) return running;
     const p = this.refresh(season).finally(() => this.refreshing.delete(season));
@@ -97,8 +107,8 @@ export class OfflinePackBuilder {
     return p;
   }
 
-  private async refresh(season: number): Promise<PackedEvent[]> {
-    if (!this.src.hasSeason(season)) return [];
+  private async refresh(season: number): Promise<PackedSeason> {
+    if (!this.src.hasSeason(season)) return { events: [], version: "" };
     const cache = this.packed.get(season) ?? new Map();
     const seen = new Set<string>();
     const files = this.src.eventFiles(season);
@@ -111,7 +121,10 @@ export class OfflinePackBuilder {
     }
     for (const code of [...cache.keys()]) if (!seen.has(code)) cache.delete(code);
     this.packed.set(season, cache);
-    return [...cache.values()].map((x) => x.ev).filter((x): x is PackedEvent => !!x);
+    // Read in the same pass as the events, so a pack built from them always
+    // matches its version (no sync can slip between the two).
+    const version = files.map((f) => `${f.code}@${f.mtimeMs}`).sort().join(",");
+    return { events: [...cache.values()].map((x) => x.ev).filter((x): x is PackedEvent => !!x), version: shortHash(version) };
   }
 }
 
