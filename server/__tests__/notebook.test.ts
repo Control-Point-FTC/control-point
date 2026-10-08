@@ -106,6 +106,12 @@ describe("team notebook", () => {
     await page({ content: [{ attachments: [{ text: "hiddenattachmentindex" }], text: "Ordinary note" }] });
     expect((await get("/search?q=hiddenattachmentindex")).body).toEqual([]);
   });
+  it("applies the search result limit after protection filtering across batches", async () => {
+    const visible = await page({ title: "searchlimitunique" });
+    for (let i = 0; i < 55; i++) await page({ title: "searchlimitunique", protected: true }, adminSession);
+    expect((await get("/search?q=searchlimitunique&limit=1")).body.map((p: any) => p.id)).toEqual([visible.id]);
+    expect((await store.search(ctx(admin, "bruno"), "searchlimitunique", 1)).map(p => p.id)).toEqual([visible.id]);
+  });
   it("checks fresh membership on every store operation", async () => {
     const person = await seedMember(t.db, team, "Leaving", "leaving@notebook.test", "admin");
     const context = ctx(person);

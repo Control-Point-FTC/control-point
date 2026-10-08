@@ -269,13 +269,23 @@ export class NotebookStore {
     const escaped = query.trim().replace(/[\\%_]/g, "\\$&");
     // Visibility filtering precedes the result limit: hidden matches never
     // displace permitted results or expose their titles/snippets.
-    const rows = await s.all("SELECT * FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND (title LIKE ? ESCAPE '\\' OR plain LIKE ? ESCAPE '\\') ORDER BY updated_at DESC,id DESC", ctx.teamId, `%${escaped}%`, `%${escaped}%`);
+    const permitted = new Set((await s.tree()).pages.map(p => p.id));
     const hits = [];
-    for (const row of rows) {
-      try { await s.item("page", row.id); } catch (e) { if (e instanceof NotebookError && e.status === 404) continue; throw e; }
-      const at = row.plain.toLowerCase().indexOf(query.trim().toLowerCase());
-      hits.push({ id: row.id, sectionId: row.section_id, title: row.title, snippet: row.plain.slice(Math.max(0, at - 60), Math.max(0, at - 60) + 200) });
-      if (hits.length >= Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 30))) break;
+    const count = Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 30));
+    let cursor: Row | undefined;
+    while (hits.length < count) {
+      const rows = await s.all(`SELECT id,section_id,title,plain,updated_at FROM notebook_pages
+        WHERE team_id=? AND deleted_at IS NULL AND (title LIKE ? ESCAPE '\\' OR plain LIKE ? ESCAPE '\\')
+        ${cursor ? "AND (updated_at < ? OR (updated_at = ? AND id < ?))" : ""}
+        ORDER BY updated_at DESC,id DESC LIMIT 50`, ctx.teamId, `%${escaped}%`, `%${escaped}%`, ...(cursor ? [cursor.updated_at, cursor.updated_at, cursor.id] : []));
+      if (!rows.length) break;
+      for (const row of rows) {
+        if (!permitted.has(row.id)) continue;
+        const at = row.plain.toLowerCase().indexOf(query.trim().toLowerCase());
+        hits.push({ id: row.id, sectionId: row.section_id, title: row.title, snippet: row.plain.slice(Math.max(0, at - 60), Math.max(0, at - 60) + 200) });
+        if (hits.length >= count) break;
+      }
+      cursor = rows[rows.length - 1];
     }
     return hits;
   }); }
@@ -349,7 +359,13 @@ export class NotebookStore {
   export(ctx: NotebookContext) { return this.session(ctx, async s => {
     const tree = await s.tree();
     const pages = [];
-    for (const page of tree.pages) pages.push(await s.page(await s.item("page", page.id)));
+    let bytes = Buffer.byteLength(JSON.stringify(tree), "utf8");
+    for (const page of tree.pages) {
+      const row = await s.item("page", page.id);
+      bytes += Buffer.byteLength(row.content, "utf8") + Buffer.byteLength(row.canvas, "utf8");
+      if (bytes > 10_000_000) throw new NotebookError("Notebook export is too large for a single response", 413);
+      pages.push(await s.page(row));
+    }
     return { ...tree, pages };
   }); }
 }
