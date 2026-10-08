@@ -92,4 +92,13 @@ describe('Greptile round 2 on #119', () => {
   it('24-hour event ranges are recovered', () => {
     expect(recoverEventTime({ title: 'Build session', notes: 'From 15:00 to 17:00 in the shop', date: '2026-10-10' })).toMatchObject({ time: '15:00', end: '17:00', notes: 'in the shop' });
   });
+
+  it('space-separated pm ranges are afternoon, not morning', () => {
+    expect(recoverEventTime({ title: 'Build', notes: 'From 3:00 to 5:00 pm in the shop', date: '2026-10-10' })).toMatchObject({ time: '15:00', end: '17:00', notes: 'in the shop' });
+  });
+
+  it('a parenthetical assignment inside a long sentence is still read', () => {
+    const t = normalizeBrunoTask({ title: 'Autonomous', description: 'Task to test autonomous paths on the practice field (Assigned to Arnav).' }, today, roster);
+    expect(t).toMatchObject({ assignees: ['Arnav Patel'], description: 'Task to test autonomous paths on the practice field.' });
+  });
 });
