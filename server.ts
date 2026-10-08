@@ -75,6 +75,7 @@ import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
+import { deleteNotebookData, notebookStore, ownerKey, registerNotebookRoutes, unlockGrants } from "./server/notebook.js";
 import { buildArticleCsp, buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
@@ -4089,7 +4090,11 @@ async function startServer() {
     const feedback = await dbAll("SELECT id, team_id, user_id, category, message, status, created_at FROM feedback WHERE user_id = ? ORDER BY created_at DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
     const messages = await dbAll("SELECT id, team_id, sender_id, content, timestamp FROM messages WHERE sender_id = ? ORDER BY timestamp DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
     const notifications = await dbAll("SELECT id, user_id, content, type, is_read, timestamp FROM notifications WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", auth.memberId, EXPORT_LIMIT);
-    res.json({ exported_at: new Date().toISOString(), member, attendance, feedback, messages, notifications });
+    // The personal notebook (sections still locked on this sign-in are left out).
+    const owner = ownerKey(await authEmail(auth));
+    const session = currentSessionId(req);
+    const notebook = owner ? await notebookStore.exportAll({ owner, unlocked: (id) => unlockGrants.has(session, id) }) : null;
+    res.json({ exported_at: new Date().toISOString(), member, attendance, feedback, messages, notifications, notebook });
   });
 
   // Delete my account — only when the account has zero team memberships.
@@ -4136,7 +4141,10 @@ async function startServer() {
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
       ]);
+      // The personal notebook belongs to the account: it goes too.
+      await deleteNotebookData(ownerKey(email));
     } else {
+      await deleteNotebookData(ownerKey(email));
       await dbBatch([
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
@@ -7209,6 +7217,13 @@ async function startServer() {
 
   // ---- Voice & video calling ----
   registerVoiceRoutes(app, voiceDeps);
+
+  // ---- Personal notebook (private to each account) ----
+  registerNotebookRoutes(app, {
+    requireAuth: requireAuth as any,
+    accountEmail: (auth) => authEmail(auth),
+    sessionKey: (req) => { const token = getSessionId(req); return token ? sessionKey(token) : null; },
+  });
 
   // ---- Manual scouting (works with no FTC data; synced from devices) ----
   registerScoutingRoutes(app, {
