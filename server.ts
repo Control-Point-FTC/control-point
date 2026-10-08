@@ -25,7 +25,7 @@ import multer from "multer";
 import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { dbGet, dbAll, dbRun, dbExec, dbBatch } from "./db.js";
+import { dbGet, dbAll, dbRun, dbExec, dbBatch, dbBatchResults } from "./db.js";
 import { runMigrations } from "./migrations/runner.js";
 import {
   isEmailVerified,
@@ -9319,16 +9319,10 @@ Rules:
     return eventId;
   }
 
-  /** Insert the rest of a series (every date after the first) in one batch and
-   *  sync them. The first occurrence already exists as `seriesId`. */
-  async function insertSeriesFollowers(teamId: number, memberId: number, seriesId: number, e: TeamEventFields, dates: string[]) {
-    if (!dates.length) return;
-    await dbBatch(dates.map((d) => ({ sql: EVENT_INSERT_SQL, args: eventInsertArgs(teamId, memberId, { ...e, date: d, series_id: seriesId }) })));
-    const rows = (await dbAll(
-      `SELECT * FROM events WHERE series_id = ? AND team_id = ? AND id != ? AND date IN (${dates.map(() => "?").join(",")})`,
-      seriesId, teamId, seriesId, ...dates,
-    )) as any[];
-    for (const row of rows) void syncEventToCalendars(row, teamId);
+  /** Push every occurrence of a series saved in one transaction to linked Google Calendars. */
+  async function syncSeriesRows(teamId: number, seriesId: number, exceptId?: number) {
+    const rows = (await dbAll("SELECT * FROM events WHERE series_id = ? AND team_id = ?", seriesId, teamId)) as any[];
+    for (const row of rows) if (row.id !== exceptId) void syncEventToCalendars(row, teamId);
   }
 
   /** A submitted repeat rule: null for none, or an error message. */
@@ -9357,13 +9351,28 @@ Rules:
         location: location || "", event_type: event_type || "meeting", reminder_minutes: cleanReminder(reminder_minutes),
         recurrence: rep.rule ? JSON.stringify(rep.rule) : null,
       };
-      const id = Number(await insertTeamEvent(auth.teamId, auth.memberId, fields));
+      let id: number;
       let count = 1;
       if (rep.rule) {
+        // The whole series in one write transaction: all of it or none of it.
+        // The first row is the series head (series_id = its own id); the write
+        // lock is held from the first statement, so it is the team's newest head
+        // when the followers look it up.
         const dates = seriesDates(date, rep.rule);
         count = dates.length;
-        await dbRun("UPDATE events SET series_id = ? WHERE id = ?", id, id);
-        await insertSeriesFollowers(auth.teamId, auth.memberId, id, fields, dates.slice(1));
+        const head = "(SELECT MAX(id) FROM events WHERE team_id = ? AND series_id = id)";
+        const results = await dbBatchResults([
+          { sql: EVENT_INSERT_SQL, args: eventInsertArgs(auth.teamId, auth.memberId, fields) },
+          { sql: "UPDATE events SET series_id = id WHERE id = last_insert_rowid()" },
+          ...dates.slice(1).map((d) => ({
+            sql: EVENT_INSERT_SQL.replace(/VALUES \((.*)\?\)$/, `VALUES ($1${head})`),
+            args: [...eventInsertArgs(auth.teamId, auth.memberId, { ...fields, date: d }).slice(0, -1), auth.teamId],
+          })),
+        ]);
+        id = results[0].lastInsertRowid;
+        await syncSeriesRows(auth.teamId, id);
+      } else {
+        id = Number(await insertTeamEvent(auth.teamId, auth.memberId, fields));
       }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
@@ -9383,6 +9392,8 @@ Rules:
   // occurrence and every later one in its series; a date change shifts them
   // all by the same number of days. A changed repeat rule (with "following",
   // or on a one-off event) replaces the later occurrences with a new run.
+  // Every row is validated first and all writes are one transaction; linked
+  // Google Calendars are updated only after it commits.
   app.patch("/api/events/:id", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_calendar");
@@ -9412,15 +9423,17 @@ Rules:
       let rows: any[] = following
         ? (await dbAll("SELECT * FROM events WHERE series_id = ? AND team_id = ? AND date >= ? ORDER BY date", existing.series_id, auth.teamId, existing.date)) as any[]
         : [existing];
-      if (ruleChange && following) {
-        // The later occurrences are replaced by the new run below.
-        for (const r of rows) if (r.id !== existing.id) await deleteSyncedEvent(r.id);
-        await dbRun("DELETE FROM events WHERE series_id = ? AND team_id = ? AND date >= ? AND id != ?", existing.series_id, auth.teamId, existing.date, existing.id);
+      const stmts: { sql: string; args?: any[] }[] = [];
+      // A new rule replaces the later occurrences.
+      const removed = ruleChange && following ? rows.filter((r) => r.id !== existing.id).map((r) => Number(r.id)) : [];
+      if (removed.length) {
+        stmts.push({ sql: `DELETE FROM events WHERE team_id = ? AND id IN (${removed.map(() => "?").join(",")})`, args: [auth.teamId, ...removed] });
         rows = [existing];
       }
       const reminder = reminder_minutes !== undefined ? cleanReminder(reminder_minutes) : undefined;
-      await dbBatch(rows.map((r) => {
-        const next = {
+      const merged = rows.map((r) => ({
+        r,
+        next: {
           title: title ?? r.title,
           description: description ?? r.description,
           date: r.id === existing.id ? newDate : addDays(r.date, delta),
@@ -9429,33 +9442,56 @@ Rules:
           location: location ?? r.location,
           event_type: event_type ?? r.event_type,
           reminder_minutes: reminder !== undefined ? reminder : r.reminder_minutes,
-        };
+        },
+      }));
+      // Each later occurrence keeps its own fields where the edit leaves them
+      // out, so check every merged row before writing any of them.
+      for (const { next } of merged) {
+        const bad = eventError(next);
+        if (bad) return res.status(400).json({ error: `${bad} (on ${next.date})` });
+      }
+      for (const { r, next } of merged) {
         // A new time (or lead time) means the reminder should go out again.
         const retime = next.date !== r.date || (next.start_time || "") !== (r.start_time || "") || (next.reminder_minutes ?? null) !== (r.reminder_minutes ?? null);
-        return {
+        stmts.push({
           sql: `UPDATE events SET title = ?, description = ?, date = ?, start_time = ?, end_time = ?, location = ?, event_type = ?, reminder_minutes = ?${retime ? ", reminder_sent_at = NULL" : ""} WHERE id = ?`,
           args: [next.title, next.description, next.date, next.start_time, next.end_time, next.location, next.event_type, next.reminder_minutes, r.id],
-        };
-      }));
-      if (ruleChange) {
-        const seriesId = existing.series_id || existing.id;
-        if (ruleChange.rule) {
-          await dbRun("UPDATE events SET recurrence = ?, series_id = ? WHERE id = ?", JSON.stringify(ruleChange.rule), seriesId, existing.id);
-          const head = (await dbGet("SELECT * FROM events WHERE id = ?", existing.id)) as any;
-          await insertSeriesFollowers(auth.teamId, head.created_by ?? auth.memberId, seriesId, {
-            title: head.title, date: head.date, time: head.start_time, end: head.end_time, notes: head.description,
-            location: head.location, event_type: head.event_type, reminder_minutes: head.reminder_minutes, recurrence: head.recurrence,
-          }, seriesDates(head.date, ruleChange.rule).slice(1));
-        } else {
-          await dbRun("UPDATE events SET recurrence = NULL WHERE id = ?", existing.id);
-        }
+        });
       }
-      for (const r of rows) {
+      const seriesId = Number(existing.series_id || existing.id);
+      if (ruleChange?.rule) {
+        const head = merged.find((m) => m.r.id === existing.id)!.next;
+        const recurrence = JSON.stringify(ruleChange.rule);
+        stmts.push({ sql: "UPDATE events SET recurrence = ?, series_id = ? WHERE id = ?", args: [recurrence, seriesId, existing.id] });
+        for (const d of seriesDates(head.date, ruleChange.rule).slice(1)) {
+          stmts.push({
+            sql: EVENT_INSERT_SQL,
+            args: eventInsertArgs(auth.teamId, existing.created_by ?? auth.memberId, {
+              title: head.title, date: d, time: head.start_time, end: head.end_time, notes: head.description,
+              location: head.location, event_type: head.event_type, reminder_minutes: head.reminder_minutes, recurrence, series_id: seriesId,
+            }),
+          });
+        }
+      } else if (ruleChange) {
+        stmts.push({ sql: "UPDATE events SET recurrence = NULL WHERE id = ?", args: [existing.id] });
+      }
+      await dbBatchResults(stmts);
+      // Linked calendars follow once the database has committed.
+      for (const id of removed) await deleteSyncedEvent(id);
+      for (const { r } of merged) {
         const updatedEvent = (await dbGet("SELECT * FROM events WHERE id = ?", r.id)) as any;
         if (updatedEvent) void updateSyncedEvent(updatedEvent);
       }
+      if (ruleChange?.rule) {
+        // Only the new run (rows not synced before) is pushed as new events.
+        const fresh = (await dbAll(
+          "SELECT e.* FROM events e WHERE e.series_id = ? AND e.team_id = ? AND e.id != ? AND NOT EXISTS (SELECT 1 FROM event_calendar_sync s WHERE s.event_id = e.id) AND e.date > ?",
+          seriesId, auth.teamId, existing.id, newDate,
+        )) as any[];
+        for (const row of fresh) void syncEventToCalendars(row, auth.teamId);
+      }
       broadcastToTeam(auth.teamId, { type: "events_changed" });
-      res.json({ ok: true, updated: rows.length });
+      res.json({ ok: true, updated: merged.length });
     } catch (error) {
       console.error("Error updating event:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -9477,8 +9513,8 @@ Rules:
           ...(scope === "following" ? [existing.series_id, auth.teamId, existing.date] : [existing.series_id, auth.teamId]),
         )) as any[]).map((r) => Number(r.id))
         : [Number(existing.id)];
+      await dbBatchResults([{ sql: `DELETE FROM events WHERE team_id = ? AND id IN (${ids.map(() => "?").join(",")})`, args: [auth.teamId, ...ids] }]);
       for (const id of ids) await deleteSyncedEvent(id);
-      await dbBatch(ids.map((id) => ({ sql: "DELETE FROM events WHERE id = ? AND team_id = ?", args: [id, auth.teamId] })));
       broadcastToTeam(auth.teamId, { type: "events_changed" });
       res.json({ ok: true, deleted: ids.length });
     } catch (error) {
@@ -9489,10 +9525,12 @@ Rules:
 
   // ---- Event reminders ----
   // Once a minute: events whose reminder time has come get one inbox
-  // notification per verified, active member. The claim (reminder_sent_at)
-  // is a conditional UPDATE, so overlapping sweeps or a second process never
-  // send twice. A reminder whose event already started (server was down)
-  // is marked sent and skipped.
+  // notification per verified, active member. The claim and the inbox rows
+  // are one transaction: the claim only matches the date, time and lead time
+  // the sweep read (an event moved meanwhile is left for its new time), and
+  // the inserts only happen if this sweep's claim stuck. A failure rolls it
+  // all back, so the next sweep retries. A reminder whose event already
+  // started (server was down) is marked sent and skipped.
   let remindersRunning = false;
   const sendEventReminders = async () => {
     if (remindersRunning) return;
@@ -9508,15 +9546,38 @@ Rules:
         from, to,
       )) as any[];
       for (const e of due) {
-        const tz = resolveTimeZone(e.timezone);
-        const at = reminderDueMs(e, tz);
-        if (at == null || now < at) continue;
-        const claim = await dbRun("UPDATE events SET reminder_sent_at = ? WHERE id = ? AND reminder_sent_at IS NULL", new Date(now).toISOString(), e.id);
-        if (!claim.changes || now >= eventStartMs(e, tz)) continue;
-        const members = (await dbAll(
-          `SELECT m.id FROM members m WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND ${VERIFIED_MEMBER_SQL}`, e.team_id,
-        )) as any[];
-        for (const m of members) await createNotification(m.id, reminderText(e), "system", { event_id: Number(e.id), reminder: true });
+        try {
+          const tz = resolveTimeZone(e.timezone);
+          const at = reminderDueMs(e, tz);
+          if (at == null || now < at) continue;
+          const claimMark = `${new Date(now).toISOString()}#${crypto.randomBytes(6).toString("hex")}`;
+          const claim = {
+            sql: "UPDATE events SET reminder_sent_at = ? WHERE id = ? AND reminder_sent_at IS NULL AND date = ? AND COALESCE(start_time, '') = ? AND reminder_minutes = ?",
+            args: [claimMark, e.id, e.date, e.start_time || "", e.reminder_minutes],
+          };
+          if (now >= eventStartMs(e, tz)) { await dbRun(claim.sql, ...claim.args); continue; }
+          const members = (await dbAll(
+            `SELECT m.id, m.team_id FROM members m WHERE m.team_id = ? AND COALESCE(m.is_active, 1) = 1 AND ${VERIFIED_MEMBER_SQL}`, e.team_id,
+          )) as any[];
+          const content = reminderText(e);
+          const stamp = new Date(now).toISOString();
+          const meta = JSON.stringify({ event_id: Number(e.id), reminder: true });
+          const results = await dbBatchResults([
+            claim,
+            ...members.map((m) => ({
+              sql: "INSERT INTO notifications (user_id, content, type, timestamp, meta) SELECT ?, ?, 'system', ?, ? WHERE EXISTS (SELECT 1 FROM events WHERE id = ? AND reminder_sent_at = ?)",
+              args: [m.id, content, stamp, meta, e.id, claimMark],
+            })),
+          ]);
+          // Live delivery for the rows this sweep actually wrote.
+          members.forEach((m, i) => {
+            const r = results[i + 1];
+            if (!r?.changes) return;
+            sendToMember(m.team_id, m.id, { type: "notification", notification: { id: r.lastInsertRowid, user_id: m.id, content, type: "system", timestamp: stamp, is_read: 0, meta } });
+          });
+        } catch (err) {
+          console.error(`Event reminder ${e.id} failed (will retry):`, err);
+        }
       }
     } catch (err) {
       console.error("Event reminders failed:", err);

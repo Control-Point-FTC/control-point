@@ -73,6 +73,25 @@ describe("repeating events", () => {
     ]);
   });
 
+  it("a this-and-following edit is checked on every occurrence; a bad one changes nothing", async () => {
+    const r = await t.post("/api/events", { title: "Scrim", date: "2099-07-01", start_time: "10:00", end_time: "11:00", repeat: { freq: "daily", interval: 1, count: 3 } }, admin);
+    const all = await series(r.body.id);
+    // The first occurrence runs longer; the later ones still end at 11:00.
+    await t.patch(`/api/events/${all[0].id}`, { end_time: "12:00" }, admin);
+    const bad = await t.patch(`/api/events/${all[0].id}`, { start_time: "11:30", scope: "following" }, admin);
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/End time must be after the start time \(on 2099-07-02\)/);
+    expect((await series(r.body.id)).map((e) => [e.start_time, e.end_time])).toEqual([["10:00", "12:00"], ["10:00", "11:00"], ["10:00", "11:00"]]);
+  });
+
+  it("the series head and its followers are written together", async () => {
+    const r = await t.post("/api/events", { title: "Atomic", date: "2099-09-01", repeat: { freq: "weekly", interval: 1, count: 3 } }, admin);
+    const all = await series(r.body.id);
+    expect(all).toHaveLength(3);
+    expect(all.every((e) => Number(e.series_id) === r.body.id)).toBe(true);
+    expect(Number(all[0].id)).toBe(r.body.id);
+  });
+
   it("changing the rule replaces later occurrences; a one-off can become a series", async () => {
     const r = await t.post("/api/events", { title: "Review", date: "2099-04-01", repeat: { freq: "weekly", interval: 1, count: 6 } }, admin);
     const all = await series(r.body.id);
