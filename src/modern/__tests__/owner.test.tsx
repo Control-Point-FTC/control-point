@@ -650,4 +650,25 @@ describe('Owner console — redesign', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Second/ })).toHaveAttribute('aria-expanded', 'true'));
     expect(screen.getByRole('button', { name: /First/ })).toHaveAttribute('aria-expanded', 'false');
   });
+
+  it('Refresh keeps spinning until every running refresh is done (a delete during a refresh)', async () => {
+    setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    const held: (() => void)[] = [];
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (init?.method) return json({ ok: true, deleted: { id: 2, name: 'Gears', members: 4 } });
+      if (url === '/api/owner/overview') return new Promise((res) => { held.push(() => res({ ok: true, status: 200, json: async () => DB[url] })); });
+      if (url.startsWith('/api/owner/ai-overview')) return json({ today: {}, flags: { open: 0 }, daily: [], top: [] });
+      if (url.startsWith('/api/owner/ai-flags')) return json([]);
+      return json(DB[url] ?? null);
+    });
+    const button = () => screen.getByRole('button', { name: /Refresh/ });
+    fireEvent.click(button());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Gears' }));
+    await waitFor(() => expect(held).toHaveLength(2));
+    await act(async () => { held[1](); });
+    expect(button()).toBeDisabled();
+    await act(async () => { held[0](); });
+    await waitFor(() => expect(button()).not.toBeDisabled());
+  });
 });

@@ -40,11 +40,17 @@ export function OwnerPage() {
   const [refreshing, setRefreshing] = useState(false);
   // Bumped by Refresh: the tabs that load their own data (errors, shared FTC numbers) reload too.
   const [refreshKey, setRefreshKey] = useState(0);
-  // The button is disabled while a refresh runs; a delete may ask for one regardless.
+  // The button is disabled while a refresh runs; a delete may ask for one
+  // regardless. The spinner stops only when every running refresh is done.
+  const running = useRef(0);
   const refresh = async () => {
+    running.current += 1;
     setRefreshing(true);
     setRefreshKey((k) => k + 1);
-    try { await ctl.refresh(); } finally { setRefreshing(false); }
+    try { await ctl.refresh(); } finally {
+      running.current -= 1;
+      if (running.current === 0) setRefreshing(false);
+    }
   };
   return (
     <Page>
