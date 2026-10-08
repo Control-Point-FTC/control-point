@@ -81,9 +81,13 @@ const label = (s: WebSource) => {
   try { return mdText(new URL(s.url).hostname.replace(/^www\./, "")); } catch { return "source"; }
 };
 
+/** A URL that can't end the markdown link early: characters markdown reads
+ *  inside a link target (\ ( ) < > and spaces) are percent-encoded. */
+const mdUrl = (u: string) => u.replace(/[\\()<>\s]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+
 /** "Sources: [gobilda.com](…) · [REV](…)" under the answer; "" with none. */
 export function sourcesFooter(list: WebSource[]): string {
   const s = dedupeSources(list);
   if (!s.length) return "";
-  return `\n\n_Sources: ${s.map((x) => `[${label(x)}](${x.url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`).join(" · ")}_`;
+  return `\n\n_Sources: ${s.map((x) => `[${label(x)}](${mdUrl(x.url)})`).join(" · ")}_`;
 }

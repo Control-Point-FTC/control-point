@@ -170,11 +170,13 @@ describe("source footer markdown", () => {
       { url: "https://a.example/x", title: "C:\\path\\" },
       { url: "https://b.example/y", title: `${"x".repeat(59)}\\tail` },
       { url: "https://c.example/z_(1)", title: "snake_case [beta] *now*" },
+      { url: "https://d.example/?q=\\", title: "Backslash query" },
     ]);
     expect(links(md)).toEqual([
       { text: "C:\\path\\", url: "https://a.example/x" },
       { text: `${"x".repeat(59)}\\`, url: "https://b.example/y" },
       { text: "snake_case [beta] *now*", url: "https://c.example/z_%281%29" },
+      { text: "Backslash query", url: "https://d.example/?q=%5C" },
     ]);
   });
 });
