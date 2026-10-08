@@ -563,6 +563,8 @@ describe('Owner console — redesign', () => {
     expect(body('/api/owner/teams/2', 'DELETE')).toEqual({ confirm: 'Gears' });
     await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('Gears deleted.', 'success'));
     await waitFor(() => expect(calls('/api/owner/overview')).toHaveLength(1));
+    // Shared FTC numbers reload too (the deleted workspace may have been one).
+    await waitFor(() => expect(calls('/api/owner/ftc-duplicates')).toHaveLength(1));
   });
 
   it('users: workspaces are told apart by id, even with the same name (or "all")', async () => {

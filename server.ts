@@ -4598,6 +4598,23 @@ async function startServer() {
 
   // Delete a workspace. The account's FINAL team cannot be deleted — an account
   // must always belong to at least one team.
+  // Workspace-scoped rows that point at a member without ON DELETE CASCADE.
+  // A member referenced by any of them outside the workspace being deleted
+  // must not be hard-deleted (see deleteWorkspace). Each `?` is that workspace.
+  const MEMBER_REFS: [table: string, column: string][] = [
+    ["messages", "sender_id"], ["tasks", "assigned_to"], ["attendance", "member_id"], ["feedback", "user_id"],
+    ["resources", "created_by"], ["chat_channels", "created_by"], ["inventory", "assigned_to"],
+    ["code_files", "created_by"], ["code_commits", "author_id"], ["bruno_chats", "member_id"],
+    ["checkin_sessions", "created_by"], ["voice_channels", "created_by"], ["call_sessions", "created_by"],
+  ];
+  const REFERENCED_ELSEWHERE = [
+    ...MEMBER_REFS.map(([t, c]) => `id IN (SELECT ${c} FROM ${t} WHERE ${c} IS NOT NULL AND COALESCE(team_id, -1) != ?)`),
+    "id IN (SELECT p.member_id FROM call_participants p JOIN call_sessions cs ON cs.id = p.session_id WHERE cs.team_id != ?)",
+    "id IN (SELECT i.inviter_id FROM call_invites i JOIN call_sessions cs ON cs.id = i.session_id WHERE cs.team_id != ?)",
+    "id IN (SELECT i.invitee_id FROM call_invites i JOIN call_sessions cs ON cs.id = i.session_id WHERE cs.team_id != ?)",
+  ].join(" OR ");
+  const REFERENCED_ELSEWHERE_PARAMS = MEMBER_REFS.length + 3;
+
   /**
    * Deletes a workspace and everything in it (one batch). `keepMemberId`: a
    * membership row kept as an inactive anchor (team_id nulled) so its
@@ -4663,6 +4680,11 @@ async function startServer() {
       { sql: `DELETE FROM bruno_nudges_sent WHERE member_id ${inMembers}`, args: memberIds },
       { sql: `DELETE FROM member_roles WHERE member_id ${inMembers}`, args: memberIds },
       { sql: "DELETE FROM roles WHERE team_id = ?", args: [teamId] },
+      // A member moved here from another workspace can still be referenced
+      // there (their old messages, tasks, attendance...): deleting the row
+      // would break those foreign keys and fail the whole batch. Such rows
+      // stay as inactive, teamless anchors instead.
+      { sql: `UPDATE members SET is_active = 0, team_id = NULL WHERE team_id = ? AND id != ? AND (${REFERENCED_ELSEWHERE})`, args: [teamId, keepMemberId ?? -1, ...Array(REFERENCED_ELSEWHERE_PARAMS).fill(teamId)] },
       // Hard-delete every membership in the team except the caller's own row,
       // which stays as an inactive anchor (team_id nulled so the team delete
       // passes FKs) so their session/email survive teamless.

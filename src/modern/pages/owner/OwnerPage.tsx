@@ -40,8 +40,8 @@ export function OwnerPage() {
   const [refreshing, setRefreshing] = useState(false);
   // Bumped by Refresh: the tabs that load their own data (errors, shared FTC numbers) reload too.
   const [refreshKey, setRefreshKey] = useState(0);
+  // The button is disabled while a refresh runs; a delete may ask for one regardless.
   const refresh = async () => {
-    if (refreshing) return;
     setRefreshing(true);
     setRefreshKey((k) => k + 1);
     try { await ctl.refresh(); } finally { setRefreshing(false); }
@@ -66,7 +66,7 @@ export function OwnerPage() {
       </PageHeader>
       {ctl.loading ? <div className="grid grid-cols-2 gap-6 lg:grid-cols-4" aria-busy="true">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}</div> : (
         <>
-          {ctl.tab === 'overview' && <OverviewTab ctl={ctl} refreshKey={refreshKey} />}
+          {ctl.tab === 'overview' && <OverviewTab ctl={ctl} refreshKey={refreshKey} onRefresh={refresh} />}
           {ctl.tab === 'users' && <UsersTab ctl={ctl} />}
           {ctl.tab === 'ai' && <AiTab ctl={ctl} />}
           {ctl.tab === 'flags' && <FlagsTab ctl={ctl} />}
@@ -278,7 +278,7 @@ function Attention({ ctl }: { ctl: Ctl }) {
 
 type WsKey = 'name' | 'member_count' | 'message_count' | 'task_count' | 'feedback_count' | 'last_message_at';
 
-function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
+function OverviewTab({ ctl, refreshKey, onRefresh }: { ctl: Ctl; refreshKey?: number; onRefresh?: () => Promise<void> }) {
   const t = ctl.totals;
   const [query, setQuery] = useState('');
   const { sort, toggle } = useSort<WsKey>('member_count', 'desc');
@@ -304,7 +304,8 @@ function OverviewTab({ ctl, refreshKey }: { ctl: Ctl; refreshKey?: number }) {
       if (!r?.ok) { notify(j.error || 'Could not delete the workspace', 'error'); return; }
       notify(`${w.name} deleted.`, 'success');
       if (ctl.teamFilter === String(w.id)) ctl.setTeamFilter('all');
-      await ctl.refresh();
+      // The whole page: shared FTC numbers and errors reload too.
+      await (onRefresh ? onRefresh() : ctl.refresh());
     } finally {
       setDeleting(null);
     }

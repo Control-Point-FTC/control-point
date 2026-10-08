@@ -62,4 +62,21 @@ describe("owner overview", () => {
     const r = await t.api(`/api/owner/teams/${busy}`, { method: "DELETE", body: JSON.stringify({ confirm: "Busy" }), session: owner });
     expect(r.status).toBe(400);
   });
+
+  it("deleting a workspace keeps a moved member who still has messages in their old one", async () => {
+    const old = await seedTeam(t.db, "Old Home");
+    const fresh = await seedTeam(t.db, "New Home");
+    const mover = await seedMember(t.db, old, "Mo", "mo@ov.test");
+    await t.db.execute({ sql: "INSERT INTO messages (sender_id, content, timestamp, team_id) VALUES (?, 'from before', ?, ?)", args: [mover, new Date().toISOString(), old] });
+    // Moved by the owner: same row, new workspace.
+    await t.db.execute({ sql: "UPDATE members SET team_id = ? WHERE id = ?", args: [fresh, mover] });
+    const stayer = await seedMember(t.db, fresh, "Stay", "stay@ov.test");
+    const r = await t.api(`/api/owner/teams/${fresh}`, { method: "DELETE", body: JSON.stringify({ confirm: "New Home" }), session: owner });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const row = (id: number) => t.db.execute({ sql: "SELECT team_id, is_active FROM members WHERE id = ?", args: [id] }).then((x) => x.rows[0] as any);
+    expect(await row(mover)).toMatchObject({ team_id: null, is_active: 0 });
+    expect(await row(stayer)).toBeUndefined();
+    const msgs = (await t.db.execute({ sql: "SELECT content FROM messages WHERE team_id = ?", args: [old] })).rows.map((x: any) => x.content);
+    expect(msgs).toEqual(["from before"]);
+  });
 });
