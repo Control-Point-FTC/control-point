@@ -11816,7 +11816,7 @@ Rules:
           return "";
         }
       };
-      const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal }) => {
+      const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
         const rows = await runLookups(dbAll as any, auth.teamId, lookupTz, queries);
@@ -11836,6 +11836,9 @@ Rules:
           onChunk: opts.onChunk,
           onUsage: (u) => { secondUsage = u; },
           signal: opts.signal,
+          // The answering call is routed on the lookup rows, not the question:
+          // keep the first call's web search if it had one.
+          webSearch: opts.grounded,
         });
         // The second call is its own AI request: log it on its own row (with
         // its own provider) so daily limits count both calls.
@@ -11882,6 +11885,7 @@ Rules:
               stream: true,
               onChunk: (chunk) => { const out = hold2.push(chunk); if (out) { secondShown += out; res.write(out); } },
               signal: streamAbort.signal,
+              grounded: aiReply.grounded,
             }).catch((e) => { console.error("Bruno lookup pass failed:", e?.message); return null; });
             if (streamAbort.signal.aborted) { res.end(); return; }
             const tail2 = hold2.end();
@@ -11943,7 +11947,7 @@ Rules:
       // Same rule as the stream: any ```lookup block (even an unfinished or
       // unreadable one) is never shown or saved; if it can't run, say so.
       if (String(result || "").includes("```lookup")) {
-        const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal }).catch(() => null);
+        const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
       }
       const memNS = extractRememberBlocks(String(result || ""));

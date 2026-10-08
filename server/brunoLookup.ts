@@ -136,7 +136,7 @@ function capped<T>(rows: T[], limit: number): { rows: T[]; more: boolean } {
 }
 
 function when(ms: number, tz: string) {
-  return new Date(ms).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Date(ms).toLocaleString("en-US", { timeZone: tz, year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 interface LookupRows { lines: string[]; more: boolean; summary?: string }
