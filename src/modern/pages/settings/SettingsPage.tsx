@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, BellRing, Bot, Building2, KeyRound, Palette, ShieldCheck, ShieldHalf, Sparkles, UserRound, Users } from 'lucide-react';
+import { Bell, BellRing, Bot, Building2, HardDriveDownload, KeyRound, Palette, ShieldCheck, ShieldHalf, Sparkles, UserRound, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Page, PageHeader } from '../../ui/page';
 import { ProfileSection } from './ProfileSection';
@@ -20,11 +20,12 @@ import { WorkspaceSection } from './WorkspaceSection';
 import { AdminSection } from './AdminSection';
 import { MembersSection, RolesSection } from './PeopleSections';
 import { NotificationsSection } from './NotificationsSection';
+import { OfflineSection } from './OfflineSection';
 import { WhatsNewDialog } from '../WhatsNewDialog';
 import { hasUnseenUpdate } from '../../../components/WhatsNewModal';
 import { useChangelog } from '../../../utils/changelogStore';
 
-export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'calls' | 'bruno' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
+export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'calls' | 'bruno' | 'offline' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
 
 interface SectionDef { id: SettingsSectionId; label: string; hint: string; icon: ComponentType<{ className?: string }>; group: 'You' | 'Workspace' }
 
@@ -43,6 +44,7 @@ export function SettingsPage(props: any) {
     { id: 'notifications', label: k('notifications'), hint: k('notificationsHint'), icon: BellRing, group: 'You' },
     { id: 'calls', label: k('calls'), hint: k('callsHint'), icon: Bell, group: 'You' },
     { id: 'bruno', label: k('bruno'), hint: k('brunoHint'), icon: Bot, group: 'You' },
+    { id: 'offline', label: k('offline'), hint: k('offlineHint'), icon: HardDriveDownload, group: 'You' },
     { id: 'account', label: k('account'), hint: k('accountHint'), icon: KeyRound, group: 'You' },
     // Team-wide settings. Each card inside keeps its own gate.
     { id: 'workspace', label: k('workspace'), hint: isAdmin ? k('workspaceHintAdmin') : k('workspaceHint'), icon: Building2, group: 'Workspace' },
@@ -151,6 +153,7 @@ export function SettingsPage(props: any) {
               {active === 'notifications' && <NotificationsSection />}
               {active === 'calls' && <CallsSection />}
               {active === 'bruno' && <BrunoSection {...props} />}
+              {active === 'offline' && <OfflineSection />}
               {active === 'account' && <AccountSection {...props} />}
               {active === 'workspace' && <WorkspaceSection {...props} onOpenSection={go} />}
               {active === 'members' && <MembersSection {...props} />}

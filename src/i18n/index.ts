@@ -50,6 +50,8 @@ const resources = {
         callsHint: "Devices, camera, chimes",
         bruno: "Bruno AI",
         brunoHint: "How Bruno answers you",
+        offline: "Offline data",
+        offlineHint: "Your region's teams and results, no Wi-Fi needed",
         account: "Account & privacy",
         accountHint: "Password, data, deletion",
         workspace: "Overview",
