@@ -1,15 +1,30 @@
 // Settings → Appearance: theme, and the background grid (owner request: let
 // everyone customise it). The grid's colour isn't a personal choice: it
 // follows the workspace's team colour, which admins set.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Moon, Palette, RotateCcw, Sun } from 'lucide-react';
+import { Moon, Palette, RotateCcw, Smartphone, Sun } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Button, Slider, Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { useTheme, type Theme } from '../../../hooks/useTheme';
-import { GRID_DEFAULTS, GRID_LIMITS, readGridPrefs, saveGridPrefs, type GridFade, type GridPrefs, type GridStyle } from '../../gridPrefs';
+import { GRID_DEFAULTS, GRID_LIMITS, PULSE_ORIGINS, readGridPrefs, saveGridPrefs, type GridFade, type GridPrefs, type GridStyle, type PulseOrigin } from '../../gridPrefs';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
+import { CUSTOMIZE_TABS_EVENT } from '../../chrome/CustomizeTabsDialog';
+
+function useMediaQuery(q: string): boolean {
+  const get = () => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches;
+  const [on, setOn] = useState(get);
+  useEffect(() => {
+    const mq = window.matchMedia?.(q);
+    if (!mq) return;
+    const change = () => setOn(mq.matches);
+    change();
+    mq.addEventListener?.('change', change);
+    return () => mq.removeEventListener?.('change', change);
+  }, [q]);
+  return on;
+}
 
 export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
   const { t } = useTranslation();
@@ -22,6 +37,8 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
     saveGridPrefs(next); // applies live: this page's own background is the preview
   };
   const off = !g.enabled;
+  // The tab bar only exists on phone-width screens (same breakpoint as the shell).
+  const phone = useMediaQuery('(max-width: 767px)');
 
   const slider = (label: string, value: number, [min, max]: readonly [number, number], step: number, shown: string, on: (v: number) => void, disabled: boolean) => (
     <div className={cn('grid gap-1.5 border-b border-border px-4 py-3 last:border-b-0', disabled && 'opacity-50')}>
@@ -43,6 +60,14 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
           </ToggleGroup>
         </SettingsRow>
       </SettingsGroup>
+
+      {phone && (
+        <SettingsGroup title="Phone tab bar">
+          <SettingsRow label="Tabs at the bottom" description="Choose the three pages next to Bruno and More. Saved on this device.">
+            <Button variant="outline" className="max-sm:h-11" onClick={() => window.dispatchEvent(new Event(CUSTOMIZE_TABS_EVENT))}><Smartphone /> Customize tab bar</Button>
+          </SettingsRow>
+        </SettingsGroup>
+      )}
 
       <SettingsGroup title="Background grid" description="Shape the grid behind your pages. Saved on this device; changes show right away.">
         <SettingsRow label="Show the grid" htmlFor="grid-on">
@@ -75,6 +100,18 @@ export function AppearanceSection({ isAdmin }: { isAdmin?: boolean }) {
           <Switch id="grid-pulse" checked={g.pulse} disabled={off} onCheckedChange={(v) => update({ pulse: v })} />
         </SettingsRow>
         {slider('Pulse speed', g.pulseSpeed, GRID_LIMITS.pulseSpeed, 0.5, `${g.pulseSpeed}s`, (v) => update({ pulseSpeed: v }), off || !g.pulse)}
+        <SettingsRow label="Pulse from" description="Where the glow starts. Pick any mix.">
+          <ToggleGroup
+            type="multiple"
+            value={g.pulseFrom}
+            disabled={off || !g.pulse}
+            // At least one: un-picking the last origin is ignored.
+            onValueChange={(v: string[]) => { if (v.length) update({ pulseFrom: v as PulseOrigin[] }); }}
+            aria-label="Pulse from"
+          >
+            {PULSE_ORIGINS.map((o) => <ToggleGroupItem key={o.key} value={o.key}>{o.label}</ToggleGroupItem>)}
+          </ToggleGroup>
+        </SettingsRow>
         <SettingsRow label="Cursor glow" description="A soft light that follows your pointer." htmlFor="grid-glow">
           <Switch id="grid-glow" checked={g.glow} disabled={off} onCheckedChange={(v) => update({ glow: v })} />
         </SettingsRow>

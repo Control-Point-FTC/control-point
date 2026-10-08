@@ -63,6 +63,7 @@ import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { buildIcs } from "./server/ics.js";
+import { resourceKey } from "./src/utils/resourceUrl.js";
 import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } from "./src/utils/changelog.js";
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
@@ -150,6 +151,7 @@ import { PredictEngine, type Forecast, type Partners } from "./server/predict/en
 import { PredictStore } from "./server/predict/store.js";
 import { syncSeasons, dataAsOf } from "./server/predict/sync.js";
 import { OfflinePackBuilder, buildPack, detectRegion, listRegions, type PackedEvent } from "./server/offline/pack.js";
+import { passwordProblem } from "./src/utils/password.js";
 import { isMessageModerator, messageActionAllowed } from "./server/messagePerms.js";
 import { PredictMonitor, eventStillOpen, type LiveAccuracy } from "./server/predict/monitor.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
@@ -2311,6 +2313,9 @@ async function startServer() {
   app.post("/api/auth/forgot-password", limit(authLimiter, "forgot", [byIp(20, 15 * MIN), byEmail(6, 60 * MIN)]));
   app.post("/api/auth/reset-password", limit(authLimiter, "resetpw", [byIp(30, 15 * MIN), byEmail(10, 15 * MIN)]));
   app.post("/api/auth/change-password", limit(authLimiter, "changepw", [byIp(20, 15 * MIN)]));
+  // Signed out, and says whether a team number has a workspace (V3-L2): enough
+  // for someone typing their number, too slow to list every team.
+  app.get("/api/ftc/lookup-public", limit(authLimiter, "ftclookup", [byIp(60, 15 * MIN)]));
   app.post("/api/auth/oauth/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
   app.post("/api/auth/google/complete", limit(authLimiter, "oauthdone", [byIp(20, 15 * MIN)]));
   app.post("/api/teams/join", limit(authLimiter, "join", [byIp(20, 15 * MIN)]));
@@ -2961,8 +2966,8 @@ async function startServer() {
       const { accountType, name, email, password, teamName, teamNumber, accessCode, inviteToken, requestFtcNumber } = req.body || {};
       const cleanName = (name || '').trim();
       const cleanEmail = (email || '').trim().toLowerCase();
-      if (!cleanName || !cleanEmail || !password || password.length < 6) {
-        return res.status(400).json({ error: "Name, email, and a 6+ character password are required" });
+      if (!cleanName || !cleanEmail || !password || typeof password !== "string") {
+        return res.status(400).json({ error: "Name, email and a password are required" });
       }
       // Multi-team accounts: an existing email may sign up again to create or join
       // another team. When the account already has a password, it must match.
@@ -2979,6 +2984,9 @@ async function startServer() {
         // through the emailed code first ("Forgot password?").
         return res.status(400).json({ error: "An account with that email already exists — sign in instead" });
       } else {
+        // A new password: the rules apply (an existing account above keeps its own).
+        const weak = passwordProblem(password);
+        if (weak) return res.status(400).json({ error: weak });
         hashedPassword = bcrypt.hashSync(password, 10);
       }
 
@@ -3169,9 +3177,8 @@ async function startServer() {
     const code = String((req.body || {}).code || "");
     const newPassword = String((req.body || {}).newPassword || "");
     if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
+    const weak = passwordProblem(newPassword);
+    if (weak) return res.status(400).json({ error: weak });
     // Atomic: validate + consume the code in one step so overlapping
     // requests with the same code can't both succeed.
     const check = await consumeVerificationCode(email, code);
@@ -4046,9 +4053,8 @@ async function startServer() {
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const { currentPassword, newPassword } = req.body || {};
-    if (!newPassword || String(newPassword).length < 6) {
-      return res.status(400).json({ error: "New password must be at least 6 characters" });
-    }
+    const weak = passwordProblem(newPassword);
+    if (weak) return res.status(400).json({ error: weak });
     const member = (await dbGet("SELECT id, email, password FROM members WHERE id = ?", auth.memberId)) as any;
     if (!member) return res.status(404).json({ error: "Account not found" });
     if (!member.password) {
@@ -7955,6 +7961,17 @@ async function startServer() {
 
   // Paste a blob of text (chat logs, notes) — Bruno AI extracts every link,
   // writes a title + description, and categorizes each one.
+  const resourceLocks = new Map<number, Promise<unknown>>();
+  /** Run `fn` after any save already running for this team. */
+  function withResourceLock<T>(teamId: number, fn: () => Promise<T>): Promise<T> {
+    const prev = resourceLocks.get(teamId) || Promise.resolve();
+    const run = prev.catch(() => {}).then(fn);
+    const tail = run.catch(() => {});
+    resourceLocks.set(teamId, tail);
+    void tail.then(() => { if (resourceLocks.get(teamId) === tail) resourceLocks.delete(teamId); });
+    return run;
+  }
+
   app.post("/api/resources/parse", async (req, res) => {
     try {
       const auth = await requireAuth(req, res);
@@ -7992,7 +8009,19 @@ Rules:
           console.error("resources AI parse error:", e?.message);
         }
       }
-      res.json({ items, count: items.length });
+      // Mark what's already in the library (or repeated in the paste) so the
+      // preview can leave it out; the save checks again.
+      const existing = ((await dbAll("SELECT url FROM resources WHERE team_id = ?", auth.teamId)) as any[]).map((r) => String(r.url));
+      const savedKeys = new Set(existing.map(resourceKey));
+      const seen = new Set<string>();
+      items = items.map((it) => {
+        const k = resourceKey(it.url);
+        const duplicate = savedKeys.has(k) ? "saved" : seen.has(k) ? "repeat" : undefined;
+        seen.add(k);
+        return duplicate ? { ...it, duplicate } : it;
+      });
+      const fresh = items.filter((it) => !it.duplicate).length;
+      res.json({ items, count: items.length, fresh, duplicates: items.length - fresh });
     } catch (e: any) {
       console.error("resources parse error:", e?.message);
       res.status(500).json({ error: "Could not read those links" });
@@ -8003,23 +8032,33 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     const items = Array.isArray(req.body?.items) ? req.body.items : [req.body];
-    const saved: any[] = [];
-    for (const it of items.slice(0, 50)) {
-      const url = String(it?.url || "").trim().slice(0, 2000);
-      if (!/^https?:\/\//i.test(url)) continue;
-      const title = String(it?.title || "").trim().slice(0, 200) || url;
-      const description = String(it?.description || "").trim().slice(0, 1000);
-      const category = (RESOURCE_CATEGORIES as readonly string[]).includes(it?.category) ? it.category : "Other";
-      const dup: any = await dbGet("SELECT id FROM resources WHERE team_id = ? AND url = ?", auth.teamId, url);
-      if (dup) continue;
-      const info = await dbRun(
-        "INSERT INTO resources (team_id, url, title, description, category, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-        auth.teamId, url, title, description, category, auth.memberId
-      );
-      saved.push({ id: info.lastInsertRowid, url, title, description, category });
-    }
-    if (saved.length) broadcastToTeam(auth.teamId, { type: "resources_changed" });
-    res.json({ ok: true, saved, count: saved.length });
+    // One save per team at a time: two imports of the same links at once
+    // must not both pass the duplicate check.
+    const result = await withResourceLock(auth.teamId, async () => {
+      const saved: any[] = [];
+      const skipped: { url: string; title: string }[] = [];
+      // Same page = same key (www, https, trailing slash, tracking params,
+      // YouTube link forms), against the library and earlier links in this save.
+      const keys = new Set(((await dbAll("SELECT url FROM resources WHERE team_id = ?", auth.teamId)) as any[]).map((r) => resourceKey(r.url)));
+      for (const it of items.slice(0, 50)) {
+        const url = String(it?.url || "").trim().slice(0, 2000);
+        if (!/^https?:\/\//i.test(url)) continue;
+        const title = String(it?.title || "").trim().slice(0, 200) || url;
+        const description = String(it?.description || "").trim().slice(0, 1000);
+        const category = (RESOURCE_CATEGORIES as readonly string[]).includes(it?.category) ? it.category : "Other";
+        const key = resourceKey(url);
+        if (keys.has(key)) { skipped.push({ url, title }); continue; }
+        keys.add(key);
+        const info = await dbRun(
+          "INSERT INTO resources (team_id, url, title, description, category, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+          auth.teamId, url, title, description, category, auth.memberId
+        );
+        saved.push({ id: info.lastInsertRowid, url, title, description, category });
+      }
+      return { saved, skipped };
+    });
+    if (result.saved.length) broadcastToTeam(auth.teamId, { type: "resources_changed" });
+    res.json({ ok: true, saved: result.saved, count: result.saved.length, skipped: result.skipped });
   });
 
   app.delete("/api/resources/:id", async (req, res) => {

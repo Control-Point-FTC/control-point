@@ -7,7 +7,7 @@ import { ClockWeather } from './chrome/ClockWeather';
 import { useLocation } from 'react-router-dom';
 import { TipsBar } from './chrome/TipsBar';
 import { readMobileTabs, resolveMobileTabs, saveMobileTabs, type MobileTabChoice } from './chrome/mobileTabs';
-import { CustomizeTabsDialog } from './chrome/CustomizeTabsDialog';
+import { CustomizeTabsDialog, CUSTOMIZE_TABS_EVENT } from './chrome/CustomizeTabsDialog';
 import { BugButton } from './chrome/BugButton';
 import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -18,7 +18,7 @@ import {
 import { cn } from '../components/cn';
 import { assetUrl } from '../services/api';
 import { useTheme } from '../hooks/useTheme';
-import { PRESENCE_META, PRESENCE_SETTINGS, PRESENCE_SETTING_META, PresenceDot } from '../components/presence';
+import { PRESENCE_SETTINGS, PRESENCE_SETTING_META, PresenceDot, ownPresence } from '../components/presence';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
   DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuRadioGroup, DropdownMenuRadioItem,
@@ -94,6 +94,12 @@ export function ModernShell(props: ModernShellProps) {
   const [mobilePicks, setMobilePicks] = useState<string[]>(readMobileTabs);
   const tabAllowed = (id: string) => props.visibleTabs.some((v) => v.id === id);
   const mobileTabs = resolveMobileTabs(mobilePicks, tabAllowed);
+  // Settings → Appearance opens the same dialog (V3-L12: it was only in More).
+  useEffect(() => {
+    const open = () => setCustomizeOpen(true);
+    window.addEventListener(CUSTOMIZE_TABS_EVENT, open);
+    return () => window.removeEventListener(CUSTOMIZE_TABS_EVENT, open);
+  }, []);
   useEffect(() => writeJSON(COLLAPSE_KEY, collapsed), [collapsed]);
   // Printing (Export → Print): light theme on paper, the reader's theme after.
   useEffect(() => installPrintTheme(), []);
@@ -592,7 +598,8 @@ function UserFooter(props: ModernShellProps & { collapsed: boolean }) {
 
 function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, onSetupGuide, onOpenWhatsNew, onStatusPick }: ModernShellProps & { collapsed: boolean }) {
   const { theme, toggle } = useTheme();
-  const presence = user?.presence || 'offline';
+  const own = ownPresence(user?.presence_status);
+  const presence = own.dot;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -611,7 +618,7 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
           {!collapsed && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] font-semibold text-text-base">{user?.name}</span>
-              <span className="block truncate text-xs text-text-muted">{PRESENCE_META[presence]?.label || user?.role}</span>
+              <span className="block truncate text-xs text-text-muted">{own.label}</span>
             </span>
           )}
         </button>

@@ -25,7 +25,7 @@ import { useBudgetController } from '../../../components/budget/useBudgetControl
 import { Page, PageHeader, Section, EmptyState } from '../../ui/page';
 import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
-import { MONEY_MAX, formatMoneyCompact } from '../../../utils/validation';
+import { formatMoney, formatMoneyCompact, parseMoney } from '../../../utils/validation';
 
 type Ctl = ReturnType<typeof useBudgetController>;
 const money = (n: number) => `$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -285,8 +285,10 @@ function EntrySheet({ ctl, teams, budget }: { ctl: Ctl; teams: any[]; budget: an
             <Label htmlFor="budget-amount">Amount</Label>
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-              <Input id="budget-amount" type="number" inputMode="decimal" step="any" min="0.01" max={MONEY_MAX} required value={f.amount} onChange={(e) => set({ amount: e.target.value })} className="pl-7 font-display text-lg tabular-nums" placeholder="0.00" />
+              <Input id="budget-amount" type="number" inputMode="decimal" step="any" required value={f.amount} onChange={(e) => set({ amount: e.target.value })} className="pl-7 font-display text-lg tabular-nums" placeholder="0.00" aria-describedby="budget-amount-note" />
             </div>
+            {/* The app's own check (not the browser's, which shows float noise like 0.00499999…). */}
+            <AmountNote raw={f.amount} />
           </div>
           <div className="grid gap-2">
             <Label htmlFor="budget-description">Description <RequiredMark /></Label>
@@ -322,4 +324,13 @@ function EntrySheet({ ctl, teams, budget }: { ctl: Ctl; teams: any[]; budget: an
       </SheetContent>
     </Sheet>
   );
+}
+
+/** Under the amount: why it can't be saved, or what it rounds to (cents). */
+function AmountNote({ raw }: { raw: string }) {
+  if (!String(raw ?? '').trim()) return null;
+  const m = parseMoney(raw);
+  if (m.ok === false) return <p id="budget-amount-note" className="text-xs text-destructive">{m.error}</p>;
+  if (m.value !== Number(raw)) return <p id="budget-amount-note" className="text-xs text-muted-foreground">Saved as {formatMoney(m.value)}</p>;
+  return null;
 }

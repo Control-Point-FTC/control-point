@@ -45,6 +45,29 @@ describe("required fields (API)", () => {
   });
 });
 
+describe("password rules (V3-L4)", () => {
+  it("a new password must be 8+ characters with a letter and a number or symbol", async () => {
+    for (const password of ["short1", "allletters", "12345678"]) {
+      const r = await t.post("/api/auth/signup", { accountType: "student", name: "Weak", email: `weak-${password}@v35.test`, password, accessCode: "JOIN-35" });
+      expect(r.status, password).toBe(400);
+      expect(r.body.error).toMatch(/^Password needs:/);
+    }
+    const ok = await t.post("/api/auth/signup", { accountType: "student", name: "Strong", email: "strong@v35.test", password: "goodpass-1", accessCode: "JOIN-35" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const change = await t.post("/api/auth/change-password", { currentPassword: "x", newPassword: "short" }, admin);
+    expect(change.status).toBe(400);
+    expect(change.body.error).toMatch(/^Password needs:/);
+  });
+});
+
+describe("public team-number lookup (V3-L2)", () => {
+  it("is rate limited per IP, so it can't list every team's workspace", async () => {
+    let last = 0;
+    for (let i = 0; i < 61; i++) last = (await t.api("/api/ftc/lookup-public?number=x")).status;
+    expect(last).toBe(429);
+  });
+});
+
 describe("unverified signups (V3-M3)", () => {
   it("stay off the roster until they verify their email", async () => {
     const r = await t.post("/api/auth/signup", {

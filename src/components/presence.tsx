@@ -17,6 +17,16 @@ export const PRESENCE_SETTING_META: Record<string, { dot: string; label: string;
   invisible: { dot: 'bg-zinc-600', label: 'Invisible', desc: 'Appear offline' },
 };
 
+/**
+ * Your own status for your own chip: you're using the app, so it's the status
+ * you picked (Invisible shows the offline dot), never a stale "offline" from
+ * when the page loaded.
+ */
+export function ownPresence(setting: string | null | undefined): { dot: string; label: string } {
+  const s = setting && PRESENCE_SETTING_META[setting] ? setting : 'online';
+  return { dot: s === 'invisible' ? 'offline' : s, label: PRESENCE_SETTING_META[s].label };
+}
+
 export const PresenceDot = ({ presence, className }: any) => {
   const meta = PRESENCE_META[presence] || PRESENCE_META.offline;
   return (

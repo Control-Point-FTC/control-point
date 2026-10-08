@@ -486,6 +486,39 @@ describe('Modern Settings — background grid', () => {
     expect(document.documentElement.classList.contains('cp-grid-glow')).toBe(false);
   });
 
+  it('phones get "Customize tab bar" here too; wider screens do not (V3-L12)', () => {
+    setup({ section: 'appearance' });
+    expect(screen.queryByRole('button', { name: /Customize tab bar/ })).not.toBeInTheDocument();
+    cleanup();
+    const had = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q === '(max-width: 767px)', addEventListener() {}, removeEventListener() {} })) as any;
+    const opened = vi.fn();
+    window.addEventListener('cp:customize-tabs', opened);
+    try {
+      setup({ section: 'appearance' });
+      fireEvent.click(screen.getByRole('button', { name: /Customize tab bar/ }));
+      expect(opened).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('cp:customize-tabs', opened);
+      window.matchMedia = had;
+    }
+  });
+
+  it('Pulse from: choose where the glow starts, never none, only with the pulse on', () => {
+    setup({ section: 'appearance' });
+    const center = () => screen.getByRole('button', { name: 'Center' });
+    expect(center()).toBeDisabled();
+    fireEvent.click(screen.getByRole('switch', { name: 'Pulse' }));
+    expect(document.documentElement.classList.contains('cp-pulse-center')).toBe(true);
+    fireEvent.click(center());
+    fireEvent.click(screen.getByRole('button', { name: 'Edges' }));
+    expect(['center', 'edges', 'corners'].map((k) => document.documentElement.classList.contains(`cp-pulse-${k}`))).toEqual([false, false, true]);
+    expect(JSON.parse(localStorage.getItem('cp-grid-prefs') || '{}').pulseFrom).toEqual(['corners']);
+    // The last one can't be turned off.
+    fireEvent.click(screen.getByRole('button', { name: 'Corners' }));
+    expect(document.documentElement.classList.contains('cp-pulse-corners')).toBe(true);
+  });
+
   it('only admins get the team colour control; nobody gets a personal colour picker', () => {
     setup({ section: 'appearance', admin: false });
     expect(screen.queryByRole('button', { name: /Team colour/ })).not.toBeInTheDocument();
