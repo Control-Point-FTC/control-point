@@ -129,12 +129,12 @@ export function CadPartsTab() {
           {
             label: 'Set status',
             run: () => false,
-            render: (ids, busy, done) => (
+            render: (ids, busy, exec) => (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Check /> Set status</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {STATUS_ORDER.map((s) => (
-                    <DropdownMenuItem key={s} onSelect={() => { void ctl.bulkUpdate(ids.map(Number), { status: s }).then(done); }}>
+                    <DropdownMenuItem key={s} onSelect={() => { exec(() => ctl.bulkUpdate(ids.map(Number), { status: s })); }}>
                       <span className={cn('size-2 rounded-full', STATUS_BAR[s])} /> {PART_STATUS_LABELS[s]}
                     </DropdownMenuItem>
                   ))}
@@ -145,11 +145,11 @@ export function CadPartsTab() {
           {
             label: 'Move to',
             run: () => false,
-            render: (ids, busy, done) => (
+            render: (ids, busy, exec) => (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Package /> Move to</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  {CAD_SECTIONS.map((s) => <DropdownMenuItem key={s} onSelect={() => { void ctl.bulkUpdate(ids.map(Number), { section: s }).then(done); }}>{s}</DropdownMenuItem>)}
+                  {CAD_SECTIONS.map((s) => <DropdownMenuItem key={s} onSelect={() => { exec(() => ctl.bulkUpdate(ids.map(Number), { section: s })); }}>{s}</DropdownMenuItem>)}
                 </DropdownMenuContent>
               </DropdownMenu>
             ),

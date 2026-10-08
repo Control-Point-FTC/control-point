@@ -165,12 +165,12 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
           {
             label: 'Set category',
             run: () => false,
-            render: (ids, busy, done) => (
+            render: (ids, busy, exec) => (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Tags /> Set category</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
                   {[...new Set([...INVENTORY_CATEGORIES, ...ctl.categories])].map((c) => (
-                    <DropdownMenuItem key={c} onSelect={() => { void ctl.bulkSetCategory(ids.map(Number), c).then(done); }}>{c}</DropdownMenuItem>
+                    <DropdownMenuItem key={c} onSelect={() => { exec(() => ctl.bulkSetCategory(ids.map(Number), c)); }}>{c}</DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>

@@ -108,7 +108,12 @@ export function RowCheckbox({ sel, id, label, className }: { sel: Selection; id:
   return (
     <span
       className={cn('inline-flex shrink-0 items-center justify-center max-sm:-m-3 max-sm:p-3', className)}
-      onClick={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        // The padding around the box is part of the target (44px on phones);
+        // a click on the box itself is handled by the box.
+        if (!(e.target as Element).closest('[data-slot="checkbox"]')) sel.toggle(id, e.shiftKey);
+      }}
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); }}
       data-row-checkbox
@@ -131,8 +136,12 @@ export interface BulkAction {
   run: (ids: RowId[]) => Promise<void | boolean> | void | boolean;
   /** Hidden when false (e.g. no permission). */
   show?: boolean;
-  /** Renders instead of a button (e.g. a dropdown of statuses). */
-  render?: (ids: RowId[], busy: boolean, done: () => void) => ReactNode;
+  /**
+   * Renders instead of a button (e.g. a dropdown of statuses). Start the
+   * work with `exec`: it holds the bar busy (so a second action can't
+   * overlap the first) and clears the selection when it finishes.
+   */
+  render?: (ids: RowId[], busy: boolean, exec: (task: () => unknown) => void) => ReactNode;
 }
 
 /** Floating toolbar for the current selection. Esc clears it. */
@@ -154,16 +163,22 @@ export function BulkBar({ sel, noun, plural, actions, className }: {
   }, [open, busy, sel]);
 
   const label = `${sel.count} ${sel.count === 1 ? noun : plural || `${noun}s`} selected`;
-  const go = async (a: BulkAction) => {
-    if (busy) return;
+  // One action at a time: a ref, not just state, so two clicks in the same
+  // tick can't both start.
+  const running = useRef(false);
+  const exec = async (task: () => unknown) => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     try {
-      const keep = await a.run(sel.ids);
+      const keep = await task();
       if (keep !== false) sel.clear();
     } finally {
+      running.current = false;
       setBusy(false);
     }
   };
+  const go = (a: BulkAction) => exec(() => a.run(sel.ids));
   return (
     <AnimatePresence>
       {open && (
@@ -185,7 +200,7 @@ export function BulkBar({ sel, noun, plural, actions, className }: {
             {label}
           </span>
           {actions.filter((a) => a.show !== false).map((a) => (
-            a.render ? <span key={a.label}>{a.render(sel.ids, busy, () => sel.clear())}</span> : (
+            a.render ? <span key={a.label}>{a.render(sel.ids, busy, (task) => { void exec(task); })}</span> : (
               <Button
                 key={a.label}
                 size="sm"

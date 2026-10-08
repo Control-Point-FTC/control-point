@@ -177,11 +177,11 @@ export function MembersTab({ ctl, members, teams, currentUser, canManageRoles, o
               label: 'Give role',
               show: canManageRoles && roles.length > 0,
               run: () => false,
-              render: (ids, busy, done) => (
+              render: (ids, busy, exec) => (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><ShieldCheck /> Give role</Button></DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
-                    {roles.map((r: any) => <DropdownMenuItem key={r.id} onSelect={() => { void ctl.bulkGiveRole(ids.map(Number), r.id).then(done); }}><span className="size-2 rounded-full" style={{ backgroundColor: r.color }} /> {r.name}</DropdownMenuItem>)}
+                    {roles.map((r: any) => <DropdownMenuItem key={r.id} onSelect={() => { exec(() => ctl.bulkGiveRole(ids.map(Number), r.id)); }}><span className="size-2 rounded-full" style={{ backgroundColor: r.color }} /> {r.name}</DropdownMenuItem>)}
                   </DropdownMenuContent>
                 </DropdownMenu>
               ),

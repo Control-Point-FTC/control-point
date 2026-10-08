@@ -31,6 +31,15 @@ import { BulkImportDialog } from './TaskDialogs';
 type View = 'board' | 'list' | 'insights';
 
 const NO_TASKS: any[] = [];
+const LIST_RANK: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2 };
+/** The list view's order: in progress, then to do, then done; soonest due first. */
+function listOrder(tasks: any[]) {
+  return [...tasks].sort((a, b) => (LIST_RANK[a.status] - LIST_RANK[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
+}
+/** The board's reading order: column by column, cards top to bottom. */
+function boardOrder(tasks: any[]) {
+  return TASK_COLUMNS.flatMap((c) => tasks.filter((t) => t.status === c.id));
+}
 const taskId = (t: any) => t.id as number;
 
 export function TasksPage(props: any) {
@@ -103,7 +112,9 @@ export function TasksPage(props: any) {
   const open = visible.filter((t: any) => t.status !== 'done');
   const overdue = open.filter(isOverdue);
   // Multi-select works on what's shown (search + filters), for task managers.
-  const sel = useSelection(view === 'insights' || !ctl.canManageTasks ? NO_TASKS : visible, taskId);
+  // Rows in the order they're on screen, so shift-click ranges match what you see.
+  const shownInOrder = useMemo(() => (view === 'list' ? listOrder(visible) : view === 'board' ? boardOrder(visible) : NO_TASKS), [view, visible]);
+  const sel = useSelection(ctl.canManageTasks ? shownInOrder : NO_TASKS, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;
   const memberById = useMemo(() => new Map(members.map((m: any) => [m.id, m])), [members]);
   const assigneesOf = (t: any) => taskAssigneeIds(t).map((id) => memberById.get(id)).filter(Boolean);
@@ -186,12 +197,12 @@ export function TasksPage(props: any) {
           {
             label: 'Move to',
             run: () => false,
-            render: (ids, busy, done) => (
+            render: (ids, busy, exec) => (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><ArrowRight /> Move to</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {(['todo', 'in-progress'] as const).map((s) => (
-                    <DropdownMenuItem key={s} onSelect={() => { void ctl.bulkSetStatus(ids.map(Number), s).then(done); }}>
+                    <DropdownMenuItem key={s} onSelect={() => { exec(() => ctl.bulkSetStatus(ids.map(Number), s)); }}>
                       <span className={cn('size-2 rounded-full', STATUS_META[s].dot)} /> {STATUS_META[s].label}
                     </DropdownMenuItem>
                   ))}
@@ -202,14 +213,14 @@ export function TasksPage(props: any) {
           {
             label: 'Assign',
             run: () => false,
-            render: (ids, busy, done) => (
+            render: (ids, busy, exec) => (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><UserPlus /> Assign</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
                   {members.map((m: any) => (
-                    <DropdownMenuItem key={m.id} onSelect={() => { void ctl.bulkAssign(ids.map(Number), m.id).then(done); }}>{m.name}</DropdownMenuItem>
+                    <DropdownMenuItem key={m.id} onSelect={() => { exec(() => ctl.bulkAssign(ids.map(Number), m.id)); }}>{m.name}</DropdownMenuItem>
                   ))}
-                  <DropdownMenuItem onSelect={() => { void ctl.bulkAssign(ids.map(Number), null).then(done); }}>Unassign everyone</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => { exec(() => ctl.bulkAssign(ids.map(Number), null)); }}>Unassign everyone</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ),
@@ -359,8 +370,7 @@ function ListView({ tasks, ctl, assigneesOf, onOpen, sel }: {
   tasks: any[]; ctl: ReturnType<typeof useTasksController>; assigneesOf: (t: any) => any[]; onOpen: (id: number) => void;
   sel: Selection | null;
 }) {
-  const order: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done': 2 };
-  const sorted = [...tasks].sort((a, b) => (order[a.status] - order[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
+  const sorted = useMemo(() => listOrder(tasks), [tasks]);
   // Only the rows near the screen are rendered once the list is long.
   const vr = useVirtualRows(sorted.length, 57);
   return (

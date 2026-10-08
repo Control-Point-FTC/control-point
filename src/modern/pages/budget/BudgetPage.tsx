@@ -247,11 +247,11 @@ function Ledger({ ctl, budget }: { ctl: Ctl; budget: any[] }) {
             label: 'Set category',
             show: cats.length > 0,
             run: () => false,
-            render: (ids, busy, done) => (
+            render: (ids, busy, exec) => (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild><Button size="sm" variant="outline" disabled={busy} className="max-sm:h-11"><Tags /> Set category</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
-                  {cats.map((c) => <DropdownMenuItem key={c} onSelect={() => { void ctl.bulkSetCategory(ids.map(Number), c).then(done); }}>{c}</DropdownMenuItem>)}
+                  {cats.map((c) => <DropdownMenuItem key={c} onSelect={() => { exec(() => ctl.bulkSetCategory(ids.map(Number), c)); }}>{c}</DropdownMenuItem>)}
                 </DropdownMenuContent>
               </DropdownMenu>
             ),

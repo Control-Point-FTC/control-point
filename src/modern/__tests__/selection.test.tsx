@@ -74,6 +74,39 @@ describe('BulkBar', () => {
   });
 });
 
+describe('BulkBar menu actions', () => {
+  function MenuHarness({ task }: { task: () => Promise<void> }) {
+    const sel = useSelection(rows, getId);
+    return (
+      <div>
+        <RowCheckbox sel={sel} id={1} label="Select Row 1" />
+        <BulkBar sel={sel} noun="row" actions={[{ label: 'Pick', run: () => false, render: (_ids, busy, exec) => <button disabled={busy} onClick={() => exec(task)}>Pick one</button> }]} />
+      </div>
+    );
+  }
+  it('holds the bar busy so a second action cannot overlap the first', async () => {
+    let finish = () => {};
+    const task = vi.fn(() => new Promise<void>((r) => { finish = r; }));
+    render(<MenuHarness task={task} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select Row 1' }));
+    const pick = screen.getByRole('button', { name: 'Pick one' });
+    fireEvent.click(pick);
+    fireEvent.click(pick);
+    expect(task).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByRole('toolbar')).not.toBeInTheDocument());
+  });
+
+  it('the padding around a row checkbox selects too (44px phone target)', () => {
+    render(<MenuHarness task={async () => {}} />);
+    const box = screen.getByRole('checkbox', { name: 'Select Row 1' });
+    fireEvent.click(box.parentElement!);
+    expect(box).toHaveAttribute('data-state', 'checked');
+    fireEvent.click(box);
+    expect(box).toHaveAttribute('data-state', 'unchecked');
+  });
+});
+
 describe('runBulk / bulkDelete', () => {
   it('reports partial failures once', async () => {
     const ok = await runBulk([1, 2, 3], async (id) => id !== 2, { verb: 'Deleted', noun: 'task' });
