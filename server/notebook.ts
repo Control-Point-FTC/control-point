@@ -356,12 +356,23 @@ export class NotebookStore {
 
 type NotebookDeps = { requireAuth: (req: any, res: any) => Promise<{ memberId: number; teamId: number | null } | null>; ensureRolesSeeded: (teamId: number) => Promise<void> };
 export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new NotebookStore()) {
+  const initializing = new Map<number, Promise<void>>();
+  const initializeRoles = async (teamId: number) => {
+    let pending = initializing.get(teamId);
+    if (!pending) {
+      pending = deps.ensureRolesSeeded(teamId);
+      initializing.set(teamId, pending);
+    }
+    try { await pending; } finally { if (initializing.get(teamId) === pending) initializing.delete(teamId); }
+  };
   const handle = (fn: (ctx: NotebookContext, req: any) => Promise<unknown>) => async (req: any, res: any) => {
+    // Protected response bodies must not persist in browser/shared HTTP caches.
+    res.setHeader("Cache-Control", "no-store");
     const auth = await deps.requireAuth(req, res);
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
     try {
-      await deps.ensureRolesSeeded(auth.teamId);
+      await initializeRoles(auth.teamId);
       // Client input can never select a principal or grant admin access.
       const result = await fn({ memberId: auth.memberId, teamId: auth.teamId, source: "human" }, req);
       res.json(result);

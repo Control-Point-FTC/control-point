@@ -53,6 +53,20 @@ describe("team notebook", () => {
     expect(results.map(r => r.notebooks[0].id)).toEqual(Array(3).fill(results[0].notebooks[0].id));
     expect(results[0].sections).toHaveLength(1);
   });
+  it("initializes roles and the starter consistently for concurrent HTTP first visits", async () => {
+    const fresh = await seedTeam(t.db, "Concurrent HTTP first visit");
+    const person = await seedMember(t.db, fresh, "Member", "concurrenthttp@notebook.test");
+    const session = await t.session(person);
+    const results = await Promise.all(Array.from({ length: 4 }, () => get("/tree", session)));
+    expect(results.map(r => r.status)).toEqual([200, 200, 200, 200]);
+    expect(new Set(results.map(r => r.body.notebooks[0].id)).size).toBe(1);
+    const roles = (await t.db.execute({ sql: "SELECT name FROM roles WHERE team_id=?", args: [fresh] })).rows;
+    expect(roles.map(r => r.name).sort()).toEqual(["Admin", "Member", "Verified Member"]);
+  });
+  it("forbids HTTP caching of notebook response bodies", async () => {
+    const res = await fetch(`${t.base}/api/notebook/tree`);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+  });
   it("persists authored text and canvas and shares saves with another member", async () => {
     const p = await page();
     const saved = await put(`/pages/${p.id}`, { content: doc("Odometry calibration"), canvas: { items: [{ text: "Linear slides" }] }, baseRevision: p.revision });
