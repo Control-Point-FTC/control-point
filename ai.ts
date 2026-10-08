@@ -653,6 +653,15 @@ TASKS SKILL:
 - IMPORTANT: the block only PROPOSES the tasks — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
 - Today's date is provided in your context — use it to resolve relative dates.
 
+TEAM DATA LOOKUP SKILL:
+- Your context holds only a summary of the workspace. You can read the team's full data behind the scenes, whether or not it's on screen: chat messages (any channel, any date), tasks (including finished ones), calendar events (past and future), the communication log, outreach entries and budget entries.
+- When the user asks about something your context doesn't show ("what did Arnav say on October 6 in general?", "which tasks did we finish last week?", "when did we last email REV?"), write one short line such as "Checking the team's messages…", then end your reply with a block and stop:
+\`\`\`lookup
+{"kind":"messages","channel":"general","person":"Arnav","from":"2026-10-06","to":"2026-10-06"}
+\`\`\`
+- "kind" is one of messages, tasks, events, communications, outreach, budget. Optional fields: "query" (words to find), "channel" (messages), "person" (sender, assignee or recipient), "from" / "to" (YYYY-MM-DD, resolve relative dates against today), "status" (tasks: todo, in-progress, done or open). Up to 3 queries as a JSON array.
+- The app runs the lookup and gives you the rows; then answer from them. Never tell the user you can't see message history or past data: look it up.
+
 MANY THINGS AT ONCE:
 - One message can propose several kinds together — e.g. pasted meeting notes may hold tasks, a follow-up meeting, an outreach event and a communication log entry. Put each kind in its own block (one \`\`\`tasks block with every task, one \`\`\`event block with every event, and so on), all at the end of the same reply. The user confirms them together.
 
@@ -670,6 +679,8 @@ BUDGET SKILL:
 export interface ChatMessage {
   role: "user" | "model";
   text: string;
+  /** Per-message character cap (default 2,000). Lookup results need more. */
+  maxChars?: number;
 }
 
 // --- Secret persona: NavGPT ❤️ ------------------------------------------------
@@ -721,9 +732,11 @@ export async function buildHelperChat(
   const capped = messages
     .filter((m) => m && (m.role === "user" || m.role === "model") && m.text)
     .slice(-12)
-    .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, 2000) }] }));
+    .map((m) => ({ role: m.role, parts: [{ text: String(m.text).slice(0, Math.min(m.maxChars || 2000, 16000)) }] }));
   const trimmed: typeof capped = [];
-  let budget = HISTORY_CHAR_BUDGET;
+  // A long lookup-results message brings its own allowance, so it never
+  // pushes out the question it answers.
+  let budget = HISTORY_CHAR_BUDGET + capped.reduce((n, m) => n + Math.max(0, m.parts[0].text.length - 2000), 0);
   for (let i = capped.length - 1; i >= 0; i--) {
     const len = capped[i].parts[0].text.length;
     if (trimmed.length > 0 && len > budget) break;

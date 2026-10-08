@@ -63,6 +63,7 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
+import { createLookupHold, extractLookupBlocks, runLookups } from "./server/brunoLookup.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
@@ -11770,6 +11771,40 @@ Rules:
         }
         (await dbRun("UPDATE bruno_chats SET updated_at = datetime('now') WHERE id = ?", chat.id));
       }
+      // Bruno lookups (phase 4b): a reply that ends with a ```lookup block asks
+      // for team data. Run it for this team and let Bruno answer from the rows
+      // in a second pass; the block itself is never shown or saved.
+      const lookupTz = await teamTimeZone(auth.teamId, req.body?.tz);
+      const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
+        const { text: shownFirst, queries } = extractLookupBlocks(firstText);
+        if (!queries.length || !auth.teamId) return null;
+        const rows = await runLookups(dbAll as any, auth.teamId, lookupTz, queries);
+        if (opts.signal.aborted) return null;
+        const secondMessages = [
+          ...messages,
+          { role: "model", text: firstText },
+          // Rows (up to 12,000 chars) and their incomplete/failed notes must reach the model whole.
+          { role: "user", maxChars: 14000, text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. If a search failed or more rows matched than are listed, say that too. Don't ask for another lookup.` },
+        ];
+        let secondUsage: any = null;
+        const second = await aiChat({
+          extraSystem: systemExtra,
+          messages: secondMessages,
+          maxTokens,
+          stream: opts.stream,
+          onChunk: opts.onChunk,
+          onUsage: (u) => { secondUsage = u; },
+          signal: opts.signal,
+          // The answering call is routed on the lookup rows, not the question:
+          // keep the first call's web search if it had one.
+          webSearch: opts.grounded,
+        });
+        // The second call is its own AI request: log it on its own row (with
+        // its own provider) so daily limits count both calls.
+        const secondPromptChars = secondMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+        logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
+        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider };
+      };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
@@ -11780,6 +11815,7 @@ Rules:
         req.on("close", () => streamAbort.abort());
         try {
           let usage: any = null;
+          const hold = createLookupHold();
           // Hybrid provider: Gemini (free) handles everything; Anthropic is
           // fallback on quota. The router decides deterministically — no
           // model call is spent choosing the provider.
@@ -11790,13 +11826,51 @@ Rules:
             stream: true,
             webSearch: req.body?.webSearch === true,
             images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
-            onChunk: (chunk) => res.write(chunk),
+            onChunk: (chunk) => { const out = hold.push(chunk); if (out) res.write(out); },
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
           });
-          const fullText = aiReply.text;
-          const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
-          logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length, "ok", aiReply.provider);
+          const tail = hold.end();
+          if (tail) res.write(tail);
+          let fullText = aiReply.text;
+          // The first call's own counts, logged before any lookup pass (which logs itself).
+          const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+          logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
+          if (hold.blocked && !streamAbort.signal.aborted) {
+            const hold2 = createLookupHold();
+            // The answer starts its own paragraph, live and in the saved reply alike.
+            const gap = extractLookupBlocks(fullText).text ? "\n\n" : "";
+            let gapWritten = false;
+            // What the user has seen of the second pass, so a failure part-way saves the same text.
+            let secondShown = "";
+            const looked = await followUpWithLookups(fullText, {
+              stream: true,
+              onChunk: (chunk) => {
+                const out = hold2.push(chunk);
+                if (!out) return;
+                if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+                secondShown += out;
+                res.write(out);
+              },
+              signal: streamAbort.signal,
+              grounded: aiReply.grounded,
+            }).catch((e) => { console.error("Bruno lookup pass failed:", e?.message); return null; });
+            if (streamAbort.signal.aborted) { res.end(); return; }
+            const tail2 = hold2.end();
+            if (tail2) {
+              if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+              secondShown += tail2;
+              res.write(tail2);
+            }
+            if (looked) {
+              fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
+            } else {
+              const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
+              res.write(sorry);
+              const shown = extractLookupBlocks(fullText).text;
+              fullText = (secondShown.trim() ? `${shown}\n\n${secondShown.trim()}` : shown) + sorry;
+            }
+          }
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
@@ -11835,12 +11909,18 @@ Rules:
         onUsage: (u) => { nonStreamUsage = u; },
         signal: nonStreamAbort.signal,
       });
-      const result = aiReply.text;
+      let result = aiReply.text;
+      const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, firstPromptChars, String(result || "").length, "ok", aiReply.provider);
+      // Same rule as the stream: any ```lookup block (even an unfinished or
+      // unreadable one) is never shown or saved; if it can't run, say so.
+      if (String(result || "").includes("```lookup")) {
+        const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
+        result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
+      }
       let finalResult = stripActionBlocks(String(result || ""));
       finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
-      const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
-      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
