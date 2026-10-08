@@ -308,6 +308,27 @@ describe('Modern Inventory', () => {
     expect(screen.getByLabelText('Cost per unit')).toHaveValue(49);
   });
 
+  it('importing a different product starts its fields over instead of mixing two parts', async () => {
+    let n = 0;
+    api.apiFetch.mockImplementation((url: string) => (url === '/api/inventory/scrape-rev'
+      ? json(++n === 1
+        ? { name: 'Ultra 90 Gearbox', sku: 'REV-41-1600', cost: 49, url: 'https://www.revrobotics.com/rev-41-1600/', supplier: 'rev' }
+        : { sku: 'REV-41-1300', url: 'https://www.revrobotics.com/rev-41-1300/', supplier: 'rev', partial: true, note: 'Only the SKU and link.' })
+      : json({})));
+    invSetup();
+    fireEvent.click(screen.getByRole('button', { name: /Add part/ }));
+    const box = await screen.findByLabelText(/Import from REV Robotics/);
+    fireEvent.change(box, { target: { value: 'REV-41-1600' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(screen.getByLabelText('Part name *')).toHaveValue('Ultra 90 Gearbox'));
+    fireEvent.change(screen.getByLabelText(/Import from REV Robotics/), { target: { value: 'REV-41-1300' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+    await waitFor(() => expect(screen.getByLabelText('SKU (unique) *')).toHaveValue('REV-41-1300'));
+    expect(screen.getByLabelText('Part name *')).toHaveValue('');
+    expect(screen.getByLabelText('Cost per unit')).toHaveValue(null);
+    expect(screen.getByLabelText('Purchase link')).toHaveValue('https://www.revrobotics.com/rev-41-1300/');
+  });
+
   it("REV import that couldn't read the page fills the SKU and link and says so", async () => {
     api.apiFetch.mockImplementation((url: string) => (url === '/api/inventory/scrape-rev'
       ? json({ sku: 'REV-41-1600', url: 'https://www.revrobotics.com/rev-41-1600/', supplier: 'rev', partial: true, note: 'Only the SKU and link.' })

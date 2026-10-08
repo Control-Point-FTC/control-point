@@ -10416,6 +10416,8 @@ Rules:
     }
     const base = { url: target.url, supplier: "rev" };
     if (product.name || product.sku) return res.json({ ...base, ...product, sku: product.sku || target.sku || undefined });
+    // REV says the page doesn't exist: a mistyped or retired part, not a hiccup.
+    if (status === 404) return res.status(404).json({ error: "REV says that page doesn't exist. Check the link: product pages look like revrobotics.com/rev-41-1600/." });
     // The page couldn't be read, but the link names the part: fill what we know.
     if (target.sku) {
       return res.json({
@@ -10423,7 +10425,6 @@ Rules:
         note: "REV's page couldn't be read just now, so only the SKU and link were filled in. Add the name and price, then save.",
       });
     }
-    if (status === 404) return res.status(404).json({ error: "REV says that page doesn't exist. Check the link: product pages look like revrobotics.com/rev-41-1600/." });
     res.status(502).json({ error: status ? `REV's page couldn't be read (status ${status}). Try again, or enter the part by hand.` : "Couldn't reach REV Robotics. Try again, or enter the part by hand." });
   });
 
@@ -10608,7 +10609,9 @@ Rules:
           }
         }
         if (!items.length && isPdf && text) {
-          items = parseGobildaOrder(text); // regex fallback for PDFs when AI is off or misses
+          // Regex fallback for PDFs when AI is off or misses: it only reads
+          // goBILDA orders, so every line it finds is goBILDA's.
+          items = parseGobildaOrder(text).map((it) => ({ ...it, supplier: "gobilda" }));
         }
         if (!items.length) {
           return res.status(422).json({

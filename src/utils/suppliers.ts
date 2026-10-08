@@ -27,7 +27,8 @@ export const SUPPLIERS: Supplier[] = [
   },
   {
     id: 'gobilda', label: 'goBILDA', domains: ['gobilda.com'],
-    sku: /^\d{4}-\d{4}-\d{4}$/, name: /\bgo\s?bilda\b/i,
+    // "5203-2402-0019", or the 10-digit codes on goBILDA order PDFs ("5027103001").
+    sku: /^(\d{4}-\d{4}-\d{4}|\d{10})$/, name: /\bgo\s?bilda\b/i,
     link: (q) => `https://www.gobilda.com/search.php?search_query=${enc(q)}`,
   },
   {

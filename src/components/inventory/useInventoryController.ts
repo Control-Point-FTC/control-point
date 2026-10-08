@@ -182,7 +182,12 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
     }
     setIsLoadingRev(true);
     // Fill the form only if nobody signed out / switched workspace meanwhile.
-    const fill = inEpoch((data: any) => setNewPart((p) => ({
+    const fill = inEpoch((data: any) => setNewPart((cur) => {
+      // A different product than the one already in the form: start its
+      // product fields over rather than keep the old name or price.
+      const switching = !!(data.sku && cur.sku && String(data.sku).toUpperCase() !== String(cur.sku).toUpperCase());
+      const p = switching ? { ...cur, name: '', part_number: '', cost: '', category: '', url: '', supplier: '' } : cur;
+      return {
       ...p,
       name: data.name || p.name,
       sku: data.sku || p.sku,
@@ -191,7 +196,8 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
       category: INVENTORY_CATEGORIES.includes(data.category) ? data.category : p.category,
       url: data.url || p.url,
       supplier: data.supplier || p.supplier,
-    })));
+      };
+    }));
     try {
       const res = await apiFetch('/api/inventory/scrape-rev', {
         method: 'POST',

@@ -6,6 +6,7 @@ describe('supplier detection', () => {
     expect(detectSupplier({ url: 'https://www.revrobotics.com/rev-41-1600/', sku: '3110-0001-0001' })).toBe('rev');
     expect(detectSupplier({ sku: 'REV-41-1600' })).toBe('rev');
     expect(detectSupplier({ sku: '2000-0025-0002' })).toBe('gobilda');
+    expect(detectSupplier({ sku: '5027103001', name: 'Hub mount' })).toBe('gobilda');
     expect(detectSupplier({ sku: 'am-2985' })).toBe('andymark');
     expect(detectSupplier({ sku: '91251A540' })).toBe('mcmaster');
     expect(detectSupplier({ sku: 'BOX-12', name: 'Axon Max+ servo' })).toBe('axon');
