@@ -77,6 +77,11 @@ export function cameraBitrate(height: number): number {
 }
 export const SCREEN_BITRATE = 3_000_000;
 
+/** Stop a replaced local stream, unless it's (still) the one in use. */
+function release(old: MediaStream | null, current: MediaStream | null): void {
+  if (old && old !== current) for (const t of old.getTracks()) t.stop();
+}
+
 /** Opus maxbitrate (bps) per audio quality setting. */
 export const AUDIO_QUALITY_BITRATES: Record<'low' | 'medium' | 'high', number> = {
   low: 24000,
@@ -616,9 +621,10 @@ export class VoiceEngine {
         } catch {
           peer.cameraSender = peer.pc.addTrack(track, stream!);
         }
-        // A newer call replaced this stream (and stopped this one) while we
-        // waited: it attaches its own track to every peer, so stop here.
-        if (this.cameraStream !== stream) return;
+        // A newer call replaced this stream while we waited: it attaches its
+        // own track to every peer, so stop here; but the stream this call
+        // replaced is still ours to release (the newer call only knows ours).
+        if (this.cameraStream !== stream) { release(old, this.cameraStream); return; }
       } else if (track && !peer.cameraSender) {
         // Camera added mid-call: renegotiation required so the remote side
         // learns about the new m-line.
@@ -634,7 +640,7 @@ export class VoiceEngine {
       // Not awaited: the loop must not pause between peers (see the stale check above).
       if (track) void this.applyVideoParams(peer.cameraSender, 'camera');
     }
-    if (old && old !== stream) for (const t of old.getTracks()) t.stop();
+    release(old, stream);
   }
 
   /** Attach/detach the local screen share; same renegotiation rules as camera. */
@@ -649,9 +655,10 @@ export class VoiceEngine {
         } catch {
           peer.screenSender = peer.pc.addTrack(track, stream!);
         }
-        // A newer call replaced this stream (and stopped this one) while we
-        // waited: it attaches its own track to every peer, so stop here.
-        if (this.screenStream !== stream) return;
+        // A newer call replaced this stream while we waited: it attaches its
+        // own track to every peer, so stop here; but the stream this call
+        // replaced is still ours to release (the newer call only knows ours).
+        if (this.screenStream !== stream) { release(old, this.screenStream); return; }
       } else if (track && !peer.screenSender) {
         peer.screenSender = peer.pc.addTrack(track, stream!);
       } else if (!track && peer.screenSender) {
@@ -665,7 +672,7 @@ export class VoiceEngine {
       // Not awaited: the loop must not pause between peers (see the stale check above).
       if (track) void this.applyVideoParams(peer.screenSender, 'screen');
     }
-    if (old && old !== stream) for (const t of old.getTracks()) t.stop();
+    release(old, stream);
   }
 
   getLocalMicStream(): MediaStream | null {

@@ -157,4 +157,17 @@ describe('engine: settings after negotiation, and overlapping changes', () => {
     }
     engine.dispose?.();
   });
+
+  it('switching cameras then turning the camera off releases both cameras', async () => {
+    const engine = engineWithPeers([2, 3]);
+    const a = track();
+    await engine.setCameraStream(fakeStream(a)); // A in use (senders exist)
+    const b = track();
+    const switching = engine.setCameraStream(fakeStream(b)); // waits in replaceTrack
+    const off = engine.setCameraStream(null);
+    await Promise.all([switching, off]);
+    expect(a.stop).toHaveBeenCalled();
+    expect(b.stop).toHaveBeenCalled();
+    engine.dispose?.();
+  });
 });
