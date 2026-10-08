@@ -83,7 +83,8 @@ export function fetchForecast(season: number, code: string, opts?: { force?: boo
 }
 
 export function fetchPartners(season: number, code: string, opts?: { force?: boolean; myTeam?: number | null }): Promise<Partners> {
-  return partnersCache.get(`${season}:${code}`, () => getJson<Partners>(`/api/predict/partners?season=${season}&code=${encodeURIComponent(code)}`)
+  // Keyed by our team too: an answer worked out before it was known must not be reused.
+  return partnersCache.get(`${season}:${code}:${opts?.myTeam ?? 0}`, () => getJson<Partners>(`/api/predict/partners?season=${season}&code=${encodeURIComponent(code)}`)
     .catch((e) => offlinePredict<Partners>(e, season, code, (f, ev) => (opts?.myTeam ? f.partners(ev, opts.myTeam) : null))), opts);
 }
 

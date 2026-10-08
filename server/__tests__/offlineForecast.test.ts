@@ -57,7 +57,7 @@ beforeAll(async () => {
   vi.setSystemTime(new Date("2025-11-25T12:00:00Z"));
   engine = new PredictEngine(store, [2025]);
   await engine.rebuild();
-  const predict = engine.offlineData(2025, new Set(TEAMS), ["Qualifier"])!;
+  const predict = engine.offlineData(2025, new Set(TEAMS), ["Qualifier"], ["USXXQ1", "USXXQNOW"])!;
   // Through JSON, as the device gets it.
   pack = JSON.parse(JSON.stringify({
     format: OFFLINE_PACK_FORMAT, region: "USXX", regionName: "USXX", season: 2025, builtAt: "", dataAsOf: null,
@@ -91,6 +91,10 @@ describe("offline forecast", () => {
     expect(pack.predict!.awardSlots.Qualifier).toBeDefined();
     expect(pack.predict!.model).not.toHaveProperty("accuracy");
     expect(offlineForecaster({ ...pack, predict: undefined })).toBeNull();
+    // The results the ratings include, by event (not whatever scores the pack holds).
+    expect(pack.predict!.played.USXXQ1).toHaveLength(18);
+    expect(pack.predict!.played.USXXQNOW).toEqual([]);
+    expect(offlineForecaster(pack)!.storedPlayedKeys(2025, "USXXQ1").has("qual:0:1")).toBe(true);
   });
 });
 

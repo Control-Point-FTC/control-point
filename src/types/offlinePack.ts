@@ -64,6 +64,8 @@ export interface OfflinePredict {
   awardSlots: Record<string, { type: string; placement: number }[]>;
   /** Award history of the pack's teams. */
   awards: [number, AwardRecord[]][];
+  /** Per event, the match keys (`level:series:number`) already folded into `book`. */
+  played: Record<string, string[]>;
 }
 
 export interface OfflinePack {

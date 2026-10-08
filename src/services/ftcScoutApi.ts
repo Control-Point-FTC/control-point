@@ -67,6 +67,7 @@ const searchCache = createTtlCache<FtcTeamSearchHit[]>(SCOUT_TTL_MS);
 
 /** Called on team switch / logout. */
 export function clearScoutCache(): void {
+  forgetOwnTeam();
   teamCache.invalidate();
   eventCache.invalidate();
   searchCache.invalidate();
@@ -99,14 +100,26 @@ async function orOffline<T>(live: () => Promise<T>, offline: (pack: NonNullable<
   }
 }
 
+// The workspace's own FTC team number, remembered from the last live answer
+// so its pages open offline from the pack. Forgotten on workspace switch and
+// sign-out (clearScoutCache).
+const OWN_TEAM_KEY = 'cp-own-ftc-team';
+function rememberOwnTeam(n: number): void { try { localStorage.setItem(OWN_TEAM_KEY, String(n)); } catch { /* storage unavailable */ } }
+function forgetOwnTeam(): void { try { localStorage.removeItem(OWN_TEAM_KEY); } catch { /* storage unavailable */ } }
+function ownTeam(): number | null { try { return parseInt(localStorage.getItem(OWN_TEAM_KEY) || '', 10) || null; } catch { return null; } }
+
 /** A team's season profile. `number` omitted = the workspace's own team. */
 export function fetchScoutTeam(season: number, number?: number | null, opts?: { force?: boolean }): Promise<FtcTeamProfile> {
   const key = `${number ?? 'me'}:${season}`;
   const q = new URLSearchParams({ season: String(season) });
   if (number) q.set('number', String(number));
   return teamCache.get(key, () => orOffline(
-    () => getJson<FtcTeamProfile>(`/api/ftc/scout/team?${q}`),
-    (pack) => (number ? packTeamProfile(pack, season, number) : null),
+    async () => {
+      const p = await getJson<FtcTeamProfile>(`/api/ftc/scout/team?${q}`);
+      if (!number && p?.number) rememberOwnTeam(p.number);
+      return p;
+    },
+    (pack) => { const n = number || ownTeam(); return n ? packTeamProfile(pack, season, n) : null; },
   ), opts);
 }
 

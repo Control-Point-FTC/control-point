@@ -22,8 +22,9 @@ export class OfflineForecaster extends Forecaster {
     this.awardHistory = new Map(pack.predict.awards);
     this.seasonBook = RatingBook.fromData(pack.predict.book);
     this.regions = new Map(pack.events.filter((e) => e.region).map((e) => [e.code, e.region!]));
-    // Results in the pack were already in the ratings when it was built.
-    this.played = new Map(pack.events.map((e) => [e.code, new Set(e.matches.filter((m) => m.rs && m.bs).map((m) => `${m.l === 'q' ? 'qual' : 'playoff'}:${m.s}:${m.n}`))]));
+    // Results the ratings already include; any other played result in the pack
+    // is folded in on the device (Forecaster.eventBook).
+    this.played = new Map(Object.entries(pack.predict.played ?? {}).map(([c, keys]) => [c, new Set(keys)]));
   }
 
   protected book(season: number): RatingBook | null {

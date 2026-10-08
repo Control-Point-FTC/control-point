@@ -52,9 +52,12 @@ describe('Predict offline', () => {
     offline.getOfflinePack.mockResolvedValue({ pack: pack(false), bytes: 1, savedAt: '' });
     await expect(fetchForecast(2025, 'USNJQ1')).rejects.toThrow('Failed to fetch');
     expect(sim.forecast).not.toHaveBeenCalled();
-    // Alliance options need our team.
+    // Alliance options need our team; an answer for "no team" isn't reused once it's known.
     offline.getOfflinePack.mockResolvedValue({ pack: pack(), bytes: 1, savedAt: '' });
     await expect(fetchPartners(2025, 'USNJQ1')).rejects.toThrow('Failed to fetch');
+    api.apiFetch.mockClear();
+    expect((await fetchPartners(2025, 'USNJQ1', { myTeam: 4215 })).myTeam).toBe(4215);
+    expect(api.apiFetch).toHaveBeenCalledTimes(1);
   });
 
   it('a gateway error (FTC data down) also falls back', async () => {

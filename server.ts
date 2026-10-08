@@ -5985,7 +5985,7 @@ async function startServer() {
     if (!built) {
       const pack = buildPack(got.events, got.season, region, dataAsOf);
       // Ratings for offline Predict, once the engine has them.
-      if (predictEngine.ready) pack.predict = predictEngine.offlineData(got.season, new Set(pack.teams.map((t) => t[0])), pack.events.map((e) => e.type)) ?? undefined;
+      if (predictEngine.ready) pack.predict = predictEngine.offlineData(got.season, new Set(pack.teams.map((t) => t[0])), pack.events.map((e) => e.type), pack.events.map((e) => e.code)) ?? undefined;
       const json = JSON.stringify(pack);
       built = { json, gz: await gzipAsync(json) };
       if (predictStore.lastSync(got.season) === dataAsOf && predictEngine.readyAt === readyBefore) {

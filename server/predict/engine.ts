@@ -144,7 +144,7 @@ export class PredictEngine extends Forecaster {
   }
 
   /** Everything the browser needs to forecast these teams' events offline (V3.5 phase 6b). */
-  offlineData(season: number, teams: Set<number>, types: (string | null)[]): OfflinePredict | null {
+  offlineData(season: number, teams: Set<number>, types: (string | null)[], codes: string[]): OfflinePredict | null {
     const book = this.book(season);
     if (!book) return null;
     const lite = (recs: AdvancementRecord[]) => recs.map((r) => ({ ...r, advancement: r.advancement && { ...r.advancement, rows: r.advancement.rows.filter((x) => teams.has(x.team)) } }));
@@ -155,6 +155,10 @@ export class PredictEngine extends Forecaster {
       advancement: { [season]: lite(this.advancementRecords(season)), [season - 1]: lite(this.advancementRecords(season - 1)) },
       awardSlots: Object.fromEntries([...new Set(types.map((t) => normType(t)))].map((t) => [t, this.awardSlots(season, t)])),
       awards: [...teams].filter((t) => this.awardHistory.has(t)).map((t) => [t, this.awardHistory.get(t)!] as [number, AwardRecord[]]),
+      // The results the ratings actually include: the pack's files may be newer
+      // (a sync between writing them and the rebuild), and the device folds
+      // those in itself.
+      played: Object.fromEntries(codes.map((c) => [c, [...this.storedPlayedKeys(season, c)]])),
     };
   }
 }
