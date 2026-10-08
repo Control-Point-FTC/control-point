@@ -64,6 +64,14 @@ describe("memories", () => {
     await del(`/api/bruno/memories/${first.body.memory.id}`, member);
   });
 
+  it("two saves of the same fact at once keep one copy", async () => {
+    const both = await Promise.all([1, 2, 3].map(() => t.post("/api/bruno/memories", { content: "Team captain" }, member)));
+    expect(both.map((r) => r.status).sort()).toEqual([200, 409, 409]);
+    const saved = await rows("SELECT id FROM bruno_memories WHERE member_id = ? AND content = 'Team captain'", memberId);
+    expect(saved).toHaveLength(1);
+    await del(`/api/bruno/memories/${saved[0].id}`, member);
+  });
+
   it("the nudge setting is saved on the profile", async () => {
     const r = await t.patch("/api/profile", { name: "Arnav", role: "", bruno_nudges: false }, member);
     expect(r.status).toBe(200);

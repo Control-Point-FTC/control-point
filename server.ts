@@ -11883,17 +11883,30 @@ Rules:
           logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
           if (hold.blocked && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
+            // The answer starts its own paragraph, live and in the saved reply alike.
+            const gap = extractLookupBlocks(fullText).text ? "\n\n" : "";
+            let gapWritten = false;
             // What the user has seen of the second pass, so a failure part-way saves the same text.
             let secondShown = "";
             const looked = await followUpWithLookups(fullText, {
               stream: true,
-              onChunk: (chunk) => { const out = hold2.push(chunk); if (out) { secondShown += out; res.write(out); } },
+              onChunk: (chunk) => {
+                const out = hold2.push(chunk);
+                if (!out) return;
+                if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+                secondShown += out;
+                res.write(out);
+              },
               signal: streamAbort.signal,
               grounded: aiReply.grounded,
             }).catch((e) => { console.error("Bruno lookup pass failed:", e?.message); return null; });
             if (streamAbort.signal.aborted) { res.end(); return; }
             const tail2 = hold2.end();
-            if (tail2) { secondShown += tail2; res.write(tail2); }
+            if (tail2) {
+              if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+              secondShown += tail2;
+              res.write(tail2);
+            }
             if (looked) {
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
               webSources.push(...(looked.sources || []));
@@ -12009,6 +12022,18 @@ Rules:
   /** Save one fact unless it's a duplicate, keeping the newest within the
    *  scope's cap. Returns the new row id, or 0 for a duplicate. */
   async function storeBrunoMemory(teamId: number, memberId: number, scope: "user" | "team", fact: string): Promise<number> {
+    // One save at a time per memory list, so two chats (or a double-clicked
+    // Add) can't both pass the duplicate check before either inserts.
+    const key = scope === "team" ? `t${teamId}` : `u${teamId}:${memberId}`;
+    const prev = memoryLocks.get(key) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => storeBrunoMemoryNow(teamId, memberId, scope, fact));
+    const tail = run.catch(() => {});
+    memoryLocks.set(key, tail);
+    void tail.then(() => { if (memoryLocks.get(key) === tail) memoryLocks.delete(key); });
+    return run;
+  }
+  const memoryLocks = new Map<string, Promise<unknown>>();
+  async function storeBrunoMemoryNow(teamId: number, memberId: number, scope: "user" | "team", fact: string): Promise<number> {
     const existing = ((await dbAll(
       scope === "team" ? "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'team'" : "SELECT content FROM bruno_memories WHERE team_id = ? AND scope = 'user' AND member_id = ?",
       ...(scope === "team" ? [teamId] : [teamId, memberId]),

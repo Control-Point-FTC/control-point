@@ -21,6 +21,53 @@ function freePort(): Promise<number> {
   });
 }
 
+// `npx tsx server.ts` is three processes (npx → tsx → node). Killing only the
+// npx pid left the node server running after every suite, so each server
+// gets its own process group and the whole group is killed. Groups still
+// alive when the test worker exits (a suite that never called stop) go too.
+const liveGroups = new Set<number>();
+const killGroup = (pid: number, signal: NodeJS.Signals) => {
+  try { process.kill(-pid, signal); } catch { /* already gone */ }
+};
+const killAllGroups = () => { for (const pid of liveGroups) killGroup(pid, "SIGKILL"); };
+process.once("exit", killAllGroups);
+// Ctrl-C / a killed run doesn't emit "exit": clean up, then end the way Node
+// would have (re-raise the signal with our listener gone).
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  const onSignal = () => { killAllGroups(); process.removeListener(sig, onSignal); process.kill(process.pid, sig); };
+  process.once(sig, onSignal);
+}
+
+/** Start `npx tsx server.ts` in its own process group (POSIX). */
+export function spawnServerProcess(env: Record<string, string | undefined>, stdio: any = "ignore"): ChildProcess {
+  const win = process.platform === "win32";
+  // Windows can't spawn the npx.cmd shim without a shell.
+  const proc = spawn(win ? "npx tsx server.ts" : "npx", win ? [] : ["tsx", "server.ts"], {
+    cwd: REPO, env: env as NodeJS.ProcessEnv, stdio, shell: win, detached: !win,
+  });
+  if (proc.pid && !win) liveGroups.add(proc.pid);
+  return proc;
+}
+
+/** Stop a server started by spawnServerProcess: the whole tree, not just npx.
+ *  On Windows it resolves once taskkill has finished, so a restart on the same
+ *  port never reaches the old server. */
+export function killServerProcess(proc: ChildProcess | null | undefined, signal: NodeJS.Signals = "SIGTERM"): Promise<void> {
+  if (!proc?.pid) return Promise.resolve();
+  const pid = proc.pid;
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const tk = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+      tk.once("exit", () => resolve());
+      tk.once("error", () => resolve());
+    });
+  }
+  killGroup(pid, signal);
+  // Anything that ignores SIGTERM is force-killed shortly after.
+  setTimeout(() => { killGroup(pid, "SIGKILL"); liveGroups.delete(pid); }, 2000).unref();
+  return Promise.resolve();
+}
+
 export interface TestServer {
   base: string;
   port: number;
@@ -45,20 +92,15 @@ export async function startTestServer(prefix = "cp-test-", extraEnv: Record<stri
   const logFd = process.env.CP_TEST_SERVER_LOG ? openSync(process.env.CP_TEST_SERVER_LOG, "a") : null;
   let proc: ChildProcess;
   try {
-    proc = spawn("npx", ["tsx", "server.ts"], {
-      cwd: REPO,
-      env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off", ...extraEnv },
-      stdio: logFd != null ? ["ignore", logFd, logFd] : "ignore",
-      shell: process.platform === "win32",
-    });
+    proc = spawnServerProcess(
+      { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port), RESEND_API_KEY: "", PREDICT_SYNC: "off", ...extraEnv },
+      logFd != null ? ["ignore", logFd, logFd] : "ignore",
+    );
   } finally {
     if (logFd != null) closeSync(logFd);
   }
   const kill = async () => {
-    if (proc.pid) {
-      if (process.platform === "win32") spawn("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
-      else proc.kill("SIGTERM");
-    }
+    await killServerProcess(proc);
     await new Promise((r) => setTimeout(r, 500));
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
   };
