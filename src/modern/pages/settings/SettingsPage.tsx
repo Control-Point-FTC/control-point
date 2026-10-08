@@ -4,11 +4,11 @@
 // Settings, then Workspace Settings (Overview, Members, Roles, Admin) under
 // the workspace's name; Esc leaves. Personal sections are for everyone;
 // workspace sections follow the same gates as before.
-import { useEffect, useRef, type ComponentType } from 'react';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, BellRing, Bot, Building2, KeyRound, Palette, ShieldCheck, ShieldHalf, UserRound, Users } from 'lucide-react';
+import { Bell, BellRing, Bot, Building2, KeyRound, Palette, ShieldCheck, ShieldHalf, Sparkles, UserRound, Users } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Page, PageHeader } from '../../ui/page';
 import { ProfileSection } from './ProfileSection';
@@ -20,6 +20,9 @@ import { WorkspaceSection } from './WorkspaceSection';
 import { AdminSection } from './AdminSection';
 import { MembersSection, RolesSection } from './PeopleSections';
 import { NotificationsSection } from './NotificationsSection';
+import { WhatsNewDialog } from '../WhatsNewDialog';
+import { hasUnseenUpdate } from '../../../components/WhatsNewModal';
+import { CURRENT_VERSION } from '../../../utils/changelog';
 
 export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'calls' | 'bruno' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
 
@@ -58,6 +61,9 @@ export function SettingsPage(props: any) {
     setParams(next, { replace: true });
   };
   const current = sections.find((s) => s.id === active)!;
+  // What's new: the changelog, one click from Settings (also in the account menu and ⌘K).
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [unseen, setUnseen] = useState(() => hasUnseenUpdate());
   // Like Discord: Esc closes Settings (back where you came from), unless a
   // dialog, menu or text field has it.
   const navigate = useNavigate();
@@ -120,6 +126,19 @@ export function SettingsPage(props: any) {
                 </li>
               );
             })}
+            <li className="shrink-0">
+              <p className="mb-1 mt-5 hidden truncate px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground lg:block">{k('groupAbout')}</p>
+              <button
+                type="button"
+                onClick={() => { setWhatsNewOpen(true); setUnseen(false); }}
+                className="relative flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-lg:rounded-full max-lg:border max-lg:border-border"
+              >
+                <Sparkles className="relative size-4 shrink-0" />
+                <span className="relative whitespace-nowrap font-medium">{k('whatsNew')}</span>
+                <span className="relative ml-auto text-xs tabular-nums text-muted-foreground max-lg:ml-0">v{CURRENT_VERSION}</span>
+                {unseen && <span className="relative size-2 shrink-0 rounded-full bg-accent" aria-label={k('whatsNewUnseen')} />}
+              </button>
+            </li>
           </ul>
         </nav>
         <div className="min-w-0">
@@ -139,6 +158,7 @@ export function SettingsPage(props: any) {
           </AnimatePresence>
         </div>
       </div>
+      <WhatsNewDialog open={whatsNewOpen} onClose={() => setWhatsNewOpen(false)} />
     </Page>
   );
 }

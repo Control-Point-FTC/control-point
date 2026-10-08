@@ -20,8 +20,7 @@ describe('Modern What’s new', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('V3.5 ships as 2.1.0, after the 2.0.0 redesign', () => {
-    expect(CHANGELOG[0].version).toBe('2.1.0');
-    expect(CHANGELOG[1].version).toBe('2.0.0');
+  it('newest first: 3.5.0 (V3.5), 3.0.0 (V3), then the 2.0.0 redesign', () => {
+    expect(CHANGELOG.slice(0, 3).map((e) => e.version)).toEqual(['3.5.0', '3.0.0', '2.0.0']);
   });
 });

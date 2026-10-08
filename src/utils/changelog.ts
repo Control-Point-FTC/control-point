@@ -13,7 +13,7 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    version: '2.1.0',
+    version: '3.5.0',
     date: '2026-10-08',
     title: 'Repeating events, reviews and bulk select',
     added: [
@@ -43,6 +43,49 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Forms could be saved with required fields empty',
       'Budget notifications showed "$$" before the amount',
       'People who hadn’t verified their email showed up in the member list and attendance',
+    ],
+  },
+  {
+    version: '3.0.0',
+    date: '2026-10-07',
+    title: 'Invite links, scouting and offline Compete',
+    added: [
+      'Invite links: revocable, expiring join links (with optional approval) replace sharing the access code',
+      'One workspace per FTC team number: look your number up when creating a workspace, or Ask to join if it’s taken',
+      'Manual scouting in Team Stats → Scout: entries save on your device first and sync when you’re back online',
+      'Offline Compete: Team Stats, Scout, Predict, Tasks and Calendar keep working offline with your last copy',
+      'Tasks can be due at a time, and the dashboard counts down live to your tasks and the next event',
+      'Calendar: double-click a day to add, double-click an event to edit, right-click for a menu, drag to move; events have end times and an All day switch',
+      'Right-click any row for its actions: tasks, budget, inventory, chat, calendar, outreach and members',
+      'Edit your own chat messages (marked edited for everyone)',
+      'One Export menu on lists: download CSV (budget, inventory, attendance, scouting) or print / save as PDF',
+      'Drag to reorder the sidebar (Alt + ↑/↓ from the keyboard), and pick your own phone tab bar',
+      'Notification controls: team updates instantly, as a digest or off, and opt out of @everyone',
+      'Attendance at a glance on the dashboard for admins: this week vs last, missed-meeting streaks, best streak',
+      'A clock and local weather in the top bar',
+      'A tips bar on every page and a bug-report button in the corner',
+      'Background grid settings are back, with much more to customise',
+      'Predict: a “How it works” article, linked from “How accurate is this?”',
+      'The Code page works like an editor: toolbar, file explorer, tabs and a status bar',
+    ],
+    improved: [
+      'Discord-style Settings: Members and Roles live under your workspace; Settings and Log out sit beside your profile',
+      'Bruno’s side panel is redesigned, Bruno cites where its FTC stats come from, and it gets counts, dates and weekdays right',
+      'AI buttons are simply called “Bruno”',
+      'Long lists stay fast, and every page loads faster',
+      'Predict win chances are better calibrated',
+      'FTC data is more reliable: a last good copy when sites are slow, plus links to the official pages',
+      'Buttons and toggles look the same everywhere',
+      'Your workspace access code stays hidden until you reveal it',
+      'Uploaded files are stored on Cloudflare R2',
+      'Modern is now the only look (Classic was retired), and the app is English only',
+    ],
+    fixed: [
+      'Security fixes: closed account-takeover paths and leaks between workspaces; sign-in now uses a secure cookie',
+      'Events, budget entries and attendance are checked before saving',
+      'Confirm dialogs opened from a side panel couldn’t be clicked',
+      'FTC data sometimes showed as “unreachable” when it wasn’t',
+      'Turning off someone’s Admin switch didn’t remove their admin access',
     ],
   },
   {
