@@ -57,7 +57,8 @@ import {
 import { safeGet, checkPublicUrl, UnsafeUrlError } from "./server/safeFetch.js";
 import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
-import { workspaceFactsBlock, resolveTimeZone } from "./server/workspaceFacts.js";
+import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
+import { nextOccurrence, parseQuickAdd, readRecurrence } from "./src/utils/quickAdd.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
@@ -8668,11 +8669,94 @@ Rules:
   });
 
   const TASK_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const TASK_PRIORITIES = ["low", "medium", "high", "urgent"];
+  /** A known priority, lower-cased, or null. */
+  const cleanPriority = (v: unknown): string | null => {
+    const p = String(v ?? "").toLowerCase().trim();
+    return TASK_PRIORITIES.includes(p) ? p : null;
+  };
+  /** A valid repeat rule as stored JSON, or null. */
+  const cleanRecurrence = (v: unknown): string | null => {
+    const r = readRecurrence(v);
+    return r ? JSON.stringify(r) : null;
+  };
+
+  /**
+   * A recurring task was completed: create the next one, once. The new due
+   * date steps from the old due date (or today when it had none), so a task
+   * finished late doesn't drift. Returns the new task, or null.
+   */
+  /** The first occurrence after `from` that is not before `today` (jumps, no step cap). */
+  function catchUpOccurrence(from: string, rule: { freq: "daily" | "weekly" | "monthly"; interval: number }, today: string): string {
+    let due = nextOccurrence(from, rule);
+    if (due >= today) return due;
+    if (rule.freq === "monthly") {
+      while (due < today) due = nextOccurrence(due, rule); // at most ~12 steps a year behind
+      return due;
+    }
+    const step = (rule.freq === "daily" ? 1 : 7) * Math.max(1, rule.interval);
+    const behind = Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${due}T12:00:00Z`)) / 86400000);
+    const jump = Math.ceil(behind / step) * step;
+    return new Date(Date.parse(`${due}T12:00:00Z`) + jump * 86400000).toISOString().slice(0, 10);
+  }
+
+  async function spawnNextRecurringTask(task: any, teamId: number, actorId: number): Promise<any | null> {
+    const rule = readRecurrence(task.recurrence);
+    if (!rule) return null;
+    // Claim the slot first: two completions racing can't both create one.
+    const claim = (await dbRun("UPDATE tasks SET next_task_id = -1 WHERE id = ? AND next_task_id IS NULL", task.id)) as any;
+    if (!Number(claim?.changes ?? claim?.rowsAffected ?? 0)) return null;
+    let due = "";
+    let assignees: number[] = [];
+    try {
+      const tz = await teamTimeZone(teamId);
+      const today = todayIn(tz);
+      const from = /^\d{4}-\d{2}-\d{2}$/.test(String(task.due_date || "")) ? String(task.due_date) : today;
+      due = catchUpOccurrence(from, rule, today);
+      // Current team members only (someone may have left since).
+      const current = await getTaskAssigneeIds(Number(task.id));
+      for (const mid of current) {
+        const m = (await dbGet("SELECT team_id FROM members WHERE id = ? AND COALESCE(is_active, 1) = 1", mid)) as any;
+        if (m && m.team_id === teamId) assignees.push(mid);
+      }
+      // The copy, its link and its assignees are one transaction: either the
+      // whole next task exists, or nothing does. We hold the claim (-1), so
+      // the link step always applies to us.
+      await dbBatch([
+        {
+          sql: "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)",
+          args: [teamId, task.title, task.description ?? "", assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence],
+        },
+        { sql: "UPDATE tasks SET next_task_id = last_insert_rowid() WHERE id = ? AND next_task_id = -1", args: [task.id] },
+        ...assignees.map((mid) => ({
+          sql: "INSERT OR IGNORE INTO task_assignees (task_id, member_id) SELECT next_task_id, ? FROM tasks WHERE id = ?",
+          args: [mid, task.id],
+        })),
+      ]);
+    } catch (e) {
+      // Nothing was written: release the claim so the next completion can
+      // try again instead of the series silently stopping.
+      await dbRun("UPDATE tasks SET next_task_id = NULL WHERE id = ? AND next_task_id = -1", task.id).catch((err) => console.error("could not release repeat claim:", err));
+      throw e;
+    }
+    const nextId = Number(((await dbGet("SELECT next_task_id FROM tasks WHERE id = ?", task.id)) as any)?.next_task_id) || 0;
+    if (nextId <= 0) return null;
+    for (const mid of assignees) {
+      if (mid !== actorId) createNotification(mid, `Next up (repeats): ${task.title}, due ${due}`, "task", { task_id: nextId });
+    }
+    const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", nextId)) as any;
+    created.assignee_ids = assignees;
+    broadcastToTeam(teamId, { type: "task_created", task: created });
+    return created;
+  }
+
   app.post("/api/tasks", async (req, res) => {
     try {
       const auth = await requirePerm(req, res, "manage_tasks");
       if (!auth) return;
       const { title, description, status, assigned_to, assignee_ids, due_date, is_board } = req.body;
+      const priority = cleanPriority(req.body?.priority);
+      const recurrence = cleanRecurrence(req.body?.recurrence);
       const missingTask = requiredTextError(req.body || {}, REQUIRED.task);
       if (missingTask) return res.status(400).json({ error: missingTask });
       const createdAt = new Date().toISOString();
@@ -8697,7 +8781,7 @@ Rules:
       }
       const legacyAssignedTo = validIds[0] || null;
 
-      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description, status || 'todo', legacyAssignedTo, due_date, dueTime, is_board || 0, createdAt));
+      const info = (await dbRun("INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", auth.teamId, title, description ?? '', ['todo', 'in-progress', 'done'].includes(status) ? status : 'todo', legacyAssignedTo, due_date || null, dueTime, is_board ? 1 : 0, createdAt, priority, recurrence));
 
       const taskId = Number(info.lastInsertRowid);
       await setTaskAssignees(taskId, validIds, auth.teamId);
@@ -8731,12 +8815,16 @@ Rules:
       const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
       const rosterList = roster.map((m: any) => `${m.name} (id ${m.id})`).join(", ") || "no members";
       let items: any[] = [];
+      // "Today" is the team's today, not the server's UTC date: an evening
+      // entry in the US must not land a day late.
+      const tz = await teamTimeZone(auth.teamId, req.body?.tz);
+      const todayISO = todayIn(tz);
+      const tomorrowISO = new Date(Date.parse(`${todayISO}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
       if (isGeminiConfigured()) {
         try {
-          const today = new Date();
-          const todayStr = today.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-          const todayISO = today.toISOString().slice(0, 10);
-          const system = `You turn pasted team notes/chat into a task list for a robotics team. Return ONLY a JSON array — no markdown fences, no commentary. Each element: {"title": string, "description": string, "status": string, "assignee_name": string|null, "due_date": string|null}.
+          const todayStr = new Date(`${todayISO}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+          const system = `You turn pasted team notes/chat into a task list for a robotics team. Return ONLY a JSON array — no markdown fences, no commentary. Each element: {"title": string, "description": string, "status": string, "assignee_name": string|null, "due_date": string|null, "due_time": string|null, "priority": string|null, "repeat": string|null, "source": string}.
+"source" is the exact text, copied verbatim from the input, that this task came from (usually its line or sentence).
 Today is ${todayStr} (${todayISO}). Use this to resolve EVERY relative date into an exact YYYY-MM-DD.
 
 Rules:
@@ -8747,11 +8835,14 @@ Rules:
 - "assignee_name": match to a name from this roster when the text names someone: ${rosterList}. Use the exact roster name or null.
 - "due_date": YYYY-MM-DD. Resolve relative dates against today (${todayISO}):
   * "next thursday" / "thursday" → the next upcoming Thursday (if today is Friday Oct 2, "next thursday" = 2026-10-08)
-  * "tomorrow" → ${new Date(Date.now() + 86400000).toISOString().slice(0, 10)}, "today" → ${todayISO}
+  * "tomorrow" → ${tomorrowISO}, "today" → ${todayISO}
   * "next week" → 7 days from today; "in 2 weeks" → 14 days from today
   * "by friday", "due monday" → the next upcoming such weekday (if that weekday is today, use today)
-  * explicit dates like "Oct 8" or "10/8" → ${String(today.getFullYear())}-10-08 (use current year unless clearly past, then next year)
+  * explicit dates like "Oct 8" or "10/8" → ${todayISO.slice(0, 4)}-10-08 (use current year unless clearly past, then next year)
   * else null. Never guess a date that wasn't mentioned.
+- "due_time": 24-hour HH:MM when a time is given ("4:30pm" → "16:30", "at noon" → "12:00"), else null. Never put the time in the title or description.
+- "priority": "low", "medium", "high" or "urgent" when the text says so ("high priority", "urgent", "asap"), else null. Never put it in the description.
+- "repeat": "daily", "weekly", "biweekly" or "monthly" when the task repeats ("every Saturday" → "weekly"), else null.
 - Skip non-actionable chatter.`;
           const raw = await aiGenerate(system, text.slice(0, 15000), 4096);
           const parsed = JSON.parse(String(raw).replace(/^```(?:json)?/i, "").replace(/```$/, "").trim());
@@ -8762,13 +8853,19 @@ Rules:
               .slice(0, 50)
               .map((p: any) => {
                 const an = String(p.assignee_name || "").toLowerCase().trim();
+                // The verbatim excerpt this task came from, when it really is in the text.
+                const src = typeof p.source === "string" ? p.source.trim() : "";
                 return {
+                  ...(src.length >= 3 && text.includes(src) ? { _source: src } : {}),
                   title: String(p.title).slice(0, 80),
                   description: String(p.description || "").slice(0, 500),
                   status: ["todo", "in-progress", "done"].includes(p.status) ? p.status : "todo",
                   assigned_to: (an && byName.get(an)) || null,
                   assignee_name: (an && byName.get(an)) ? roster.find((m: any) => m.id === byName.get(an))?.name || null : null,
                   due_date: /^\d{4}-\d{2}-\d{2}$/.test(String(p.due_date || "")) ? p.due_date : null,
+                  due_time: TASK_TIME_RE.test(String(p.due_time || "")) ? p.due_time : null,
+                  priority: cleanPriority(p.priority),
+                  recurrence: p.repeat === "daily" ? { freq: "daily", interval: 1 } : p.repeat === "weekly" ? { freq: "weekly", interval: 1 } : p.repeat === "biweekly" ? { freq: "weekly", interval: 2 } : p.repeat === "monthly" ? { freq: "monthly", interval: 1 } : null,
                 };
               });
           }
@@ -8779,11 +8876,42 @@ Rules:
       // Fallback: one task per non-empty line when AI is unavailable or found nothing.
       if (!items.length) {
         const lines = text.split(/\r?\n/).map((l) => l.trim().replace(/^[-*•\d.)\s]+/, "").trim()).filter((l) => l.length > 2);
+        // Each fallback task remembers its own line for the field reader below.
         items = [...new Set(lines)].slice(0, 50).map((title) => ({
           title: title.slice(0, 80), description: "", status: "todo",
-          assigned_to: null, assignee_name: null, due_date: null,
+          assigned_to: null, assignee_name: null, due_date: null, _source: title,
         }));
       }
+      // The deterministic reader has the last word on structured fields: a
+      // date, time, priority, repeat or assignee it finds in a line lands in
+      // its field, and the phrase leaves the title (V3.5 quick-add fix).
+      // Each task reads its own text: a fallback task its line, an AI task the
+      // verbatim excerpt it quoted (checked against the input), and a single
+      // AI task the whole text. One with no source keeps the AI's fields.
+      const names = roster.map((m: any) => String(m.name));
+      const single = items.length === 1 ? text.replace(/\s+/g, " ") : null;
+      items = items.map((raw: any) => {
+        const { _source, ...it } = raw;
+        // A task reads its own full excerpt (so notes around it can't override
+        // its fields); the whole text only when the AI quoted none.
+        const source: string | null = _source ?? single ?? null;
+        if (!source) return it;
+        const q = parseQuickAdd(source, todayISO, names);
+        const who = q.assignees[0] ? roster.find((m: any) => m.name === q.assignees[0]) : null;
+        return {
+          ...it,
+          // Without AI the whole line became the title: use the cleaned one.
+          title: (q.title && q.title.length >= 3 && String(it.title).trim() === source.trim().replace(/^[-*•\d.)\s]+/, "").slice(0, 80).trim() ? q.title : it.title).slice(0, 80),
+          // "Today" that only comes from a bare time never beats a date the AI read.
+          due_date: (q.date_is_default ? (it.due_date || q.due_date) : (q.due_date || it.due_date)) || null,
+          due_time: q.due_time || it.due_time || null,
+          priority: q.priority || it.priority || null,
+          recurrence: q.recurrence || it.recurrence || null,
+          assigned_to: who?.id ?? it.assigned_to ?? null,
+          assignee_name: who?.name ?? it.assignee_name ?? null,
+          assignee_ids: q.assignees.length ? roster.filter((m: any) => q.assignees.includes(m.name)).map((m: any) => m.id) : (it.assigned_to ? [it.assigned_to] : []),
+        };
+      });
       if (!items.length) return res.status(422).json({ error: "No tasks found in that text" });
       res.json({ items, count: items.length, roster: roster.map((m: any) => ({ id: m.id, name: m.name })) });
     } catch (error) {
@@ -8805,21 +8933,26 @@ Rules:
         const title = String(it?.title || "").trim().slice(0, 200);
         if (!title) continue;
         const status = ["todo", "in-progress", "done"].includes(it?.status) ? it.status : "todo";
-        let targetAssignedTo: number | null = null;
-        if (it?.assigned_to) {
-          const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", it.assigned_to)) as any;
-          if (m && m.team_id === auth.teamId) targetAssignedTo = it.assigned_to;
+        // Everyone named (assignee_ids), else the single assigned_to; team members only.
+        const wanted: number[] = (Array.isArray(it?.assignee_ids) && it.assignee_ids.length ? it.assignee_ids : it?.assigned_to ? [it.assigned_to] : [])
+          .map(Number).filter((n: number) => Number.isFinite(n));
+        const targets: number[] = [];
+        for (const mid of [...new Set(wanted)].slice(0, 20)) {
+          const m = (await dbGet("SELECT team_id FROM members WHERE id = ?", mid)) as any;
+          if (m && m.team_id === auth.teamId) targets.push(mid);
         }
         const due = /^\d{4}-\d{2}-\d{2}$/.test(String(it?.due_date || "")) ? it.due_date : null;
+        const dueTime = due && TASK_TIME_RE.test(String(it?.due_time || "")) ? String(it.due_time) : null;
         const info = (await dbRun(
-          "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, is_board, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-          auth.teamId, title, String(it?.description || "").trim().slice(0, 1000), status, targetAssignedTo, due, 0, createdAt
+          "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          auth.teamId, title, String(it?.description || "").trim().slice(0, 1000), status, targets[0] ?? null, due, dueTime, 0, createdAt,
+          cleanPriority(it?.priority), cleanRecurrence(it?.recurrence)
         ));
         const bulkTaskId = Number(info.lastInsertRowid);
         saved.push(bulkTaskId);
-        if (targetAssignedTo) {
-          await setTaskAssignees(bulkTaskId, [targetAssignedTo], auth.teamId);
-          createNotification(targetAssignedTo, `New task assigned: ${title}`, 'task', { task_id: bulkTaskId });
+        if (targets.length) {
+          await setTaskAssignees(bulkTaskId, targets, auth.teamId);
+          for (const mid of targets) createNotification(mid, `New task assigned: ${title}`, 'task', { task_id: bulkTaskId });
         }
       }
       // Bulk import: receivers just refresh their task list.
@@ -8851,8 +8984,8 @@ Rules:
       if (req.body?.status === 'done' && task.status !== 'done') {
         return res.status(400).json({ error: "Mark a task done through the completion dialog — proof is required." });
       }
-      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time } = req.body;
-      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined)) {
+      const { status, title, description, assigned_to, assignee_ids, due_date, is_board, due_time, priority, recurrence } = req.body;
+      if (!canManage && (title !== undefined || description !== undefined || assigned_to !== undefined || assignee_ids !== undefined || due_date !== undefined || due_time !== undefined || is_board !== undefined || priority !== undefined || recurrence !== undefined)) {
         return res.status(403).json({ error: "Only team managers can edit task details" });
       }
       if (title !== undefined && !String(title ?? '').trim()) return res.status(400).json({ error: "Add a title" });
@@ -8864,7 +8997,11 @@ Rules:
       if (status !== undefined) {
         sets.push('status = ?', 'completed_at = ?');
         vals.push(status, status === 'done' ? completedAt : null);
+        // Reopened: whatever review it had no longer applies.
+        if (status !== 'done') sets.push('review_status = NULL');
       }
+      if (priority !== undefined) { sets.push('priority = ?'); vals.push(cleanPriority(priority)); }
+      if (recurrence !== undefined) { sets.push('recurrence = ?'); vals.push(cleanRecurrence(recurrence)); }
       if (title !== undefined) { sets.push('title = ?'); vals.push(title); }
       if (description !== undefined) { sets.push('description = ?'); vals.push(description); }
       if (due_date !== undefined) { sets.push('due_date = ?'); vals.push(due_date || null); }
@@ -8935,6 +9072,49 @@ Rules:
     }
   });
 
+  // Review a done task: approve it, or send it back to the assignees with a
+  // note (it reopens as In Progress). Managers only.
+  app.post("/api/tasks/:id/review", async (req, res) => {
+    try {
+      const auth = await requirePerm(req, res, "manage_tasks");
+      if (!auth) return;
+      const task = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
+      if (!task || task.team_id !== auth.teamId) return res.status(404).json({ error: "Task not found" });
+      if (task.status !== "done") return res.status(400).json({ error: "Only finished tasks can be reviewed" });
+      const action = String(req.body?.action || "");
+      const note = String(req.body?.note || "").trim().slice(0, 1000);
+      const now = new Date().toISOString();
+      const assignees = await getTaskAssigneeIds(Number(task.id));
+      const reviewer = ((await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any)?.name || "A manager";
+      // Each write re-checks the task is still done, so a review racing with
+      // another manager's (or a reopen) can't stamp a reopened task.
+      const changed = (r: any) => Number(r?.changes ?? r?.rowsAffected ?? 0) > 0;
+      const reopened = () => res.status(409).json({ error: "This task was reopened in the meantime — refresh and look again." });
+      if (action === "approve") {
+        const r = await dbRun("UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ? AND status = 'done'", auth.memberId, now, note || null, task.id);
+        if (!changed(r)) return reopened();
+        for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} approved your task: ${task.title}`, "task", { task_id: Number(task.id) });
+      } else if (action === "send_back") {
+        if (!note) return res.status(400).json({ error: "Say what needs to change" });
+        const r = await dbRun(
+          "UPDATE tasks SET status = 'in-progress', completed_at = NULL, review_status = 'changes_requested', reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ? AND status = 'done'",
+          auth.memberId, now, note, task.id
+        );
+        if (!changed(r)) return reopened();
+        for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} sent back "${task.title}": ${note}`, "task", { task_id: Number(task.id) });
+      } else {
+        return res.status(400).json({ error: "Unknown review action" });
+      }
+      const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
+      updated.assignee_ids = assignees;
+      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
+      res.json({ success: true, task: updated });
+    } catch (error) {
+      console.error("Error reviewing task:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Mark a task done WITH proof: completion notes + optional screenshots.
   // If the task is unassigned, the completer becomes the assignee.
   app.post("/api/tasks/:id/complete", (req: any, res: any) => {
@@ -8973,10 +9153,16 @@ Rules:
       const now = new Date().toISOString();
       // Unassigned task: the completer claims it.
       const assignee = task.assigned_to || auth.memberId;
+      // Done isn't accepted yet: a manager reviews it (approve, or send it
+      // back). A manager finishing a task approves their own work.
+      const review = canManage ? "approved" : "pending";
       await dbRun(
-        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ? WHERE id = ?",
-        now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, req.params.id
+        "UPDATE tasks SET status = 'done', completed_at = ?, completed_by = ?, completion_notes = ?, completion_images = ?, assigned_to = ?, review_status = ?, review_note = NULL, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+        now, auth.memberId, notes || null, JSON.stringify(allImages), assignee, review, canManage ? auth.memberId : null, canManage ? now : null, req.params.id
       );
+      // A repeating task rolls forward the moment it's done.
+      try { await spawnNextRecurringTask({ ...task, id: Number(req.params.id) }, auth.teamId!, auth.memberId); }
+      catch (e) { console.error("recurring task spawn failed:", e); }
       if (task.assigned_to && task.assigned_to !== auth.memberId) {
         const completer = (await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any;
         createNotification(task.assigned_to, `Task completed by ${completer?.name || "a teammate"}: ${task.title}`, 'task', { task_id: Number(req.params.id) });
