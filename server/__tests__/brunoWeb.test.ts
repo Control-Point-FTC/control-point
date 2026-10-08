@@ -10,6 +10,7 @@ vi.mock("../../ai", async (orig) => ({ ...(await orig<object>()), getAISetting: 
 
 import { aiChat, needsWebSearch, routeChatRequest } from "../../ai-hybrid";
 import { anthropicSources, geminiSources, sourcesFooter } from "../webSources";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { extractLookupBlocks, followUpPrompt, runLookups } from "../brunoLookup";
 
 const sse = (events: any[], every = 31) => {
@@ -145,10 +146,36 @@ describe("source helpers", () => {
     expect(f.startsWith("\n\n_Sources: [S1](https://s1.example/)")).toBe(true);
     // Both parentheses are encoded, so the whole URL stays one markdown link.
     const odd = sourcesFooter([{ url: "https://x.example/a_(b)", title: "Bad [title](evil)" }]);
-    expect(odd).toBe("\n\n_Sources: [Bad titleevil](https://x.example/a_%28b%29)_");
-    expect(odd.match(/\[([^\]]+)\]\(([^()\s]+)\)/)?.[2]).toBe("https://x.example/a_%28b%29");
+    expect(odd).toBe("\n\n_Sources: [Bad \\[title\\]\\(evil\\)](https://x.example/a_%28b%29)_");
+    const link: any = (fromMarkdown(odd) as any).children[0].children[0].children.find((n: any) => n.type === "link");
+    expect(link.url).toBe("https://x.example/a_%28b%29");
     expect(sourcesFooter([{ url: "https://www.gobilda.com/x", title: "" }])).toContain("[gobilda.com]");
     expect(sourcesFooter([])).toBe("");
+  });
+});
+
+describe("source footer markdown", () => {
+  const links = (md: string) => {
+    const out: { text: string; url: string }[] = [];
+    const walk = (n: any) => {
+      if (n.type === "link") out.push({ text: n.children.map((c: any) => c.value ?? "").join(""), url: n.url });
+      (n.children || []).forEach(walk);
+    };
+    walk(fromMarkdown(md));
+    return out;
+  };
+
+  it("titles with backslashes, brackets, underscores or a cut at 60 characters stay one link each", () => {
+    const md = sourcesFooter([
+      { url: "https://a.example/x", title: "C:\\path\\" },
+      { url: "https://b.example/y", title: `${"x".repeat(59)}\\tail` },
+      { url: "https://c.example/z_(1)", title: "snake_case [beta] *now*" },
+    ]);
+    expect(links(md)).toEqual([
+      { text: "C:\\path\\", url: "https://a.example/x" },
+      { text: `${"x".repeat(59)}\\`, url: "https://b.example/y" },
+      { text: "snake_case [beta] *now*", url: "https://c.example/z_%281%29" },
+    ]);
   });
 });
 

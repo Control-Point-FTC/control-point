@@ -11915,7 +11915,8 @@ Rules:
             }
             if (looked) {
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
-              webSources.push(...(looked.sources || []));
+              // The answer's own pages first: the cap must never hide them.
+              webSources.unshift(...(looked.sources || []));
             } else {
               const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
               res.write(sorry);
@@ -11975,7 +11976,7 @@ Rules:
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
-        if (looked) webSourcesNS.push(...(looked.sources || []));
+        if (looked) webSourcesNS.unshift(...(looked.sources || []));
       }
       const memNS = extractRememberBlocks(String(result || ""));
       result = memNS.text;

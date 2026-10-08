@@ -72,10 +72,13 @@ export function dedupeSources(list: WebSource[], max = MAX_SOURCES): WebSource[]
   return out;
 }
 
+/** Markdown-safe link text: shortened first, then every character that could
+ *  end the link or the surrounding _italics_ is escaped. */
+const mdText = (t: string) => t.replace(/[\\`*_[\]()<>#|~]/g, (c) => `\\${c}`);
 const label = (s: WebSource) => {
-  const t = s.title.replace(/[[\]()]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
-  if (t) return t;
-  try { return new URL(s.url).hostname.replace(/^www\./, ""); } catch { return "source"; }
+  const t = s.title.replace(/\s+/g, " ").trim().slice(0, 60).trim();
+  if (t) return mdText(t);
+  try { return mdText(new URL(s.url).hostname.replace(/^www\./, "")); } catch { return "source"; }
 };
 
 /** "Sources: [gobilda.com](…) · [REV](…)" under the answer; "" with none. */
