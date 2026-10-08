@@ -16,7 +16,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 // Talks to a freshly booted dev server; the first requests can be slow.
 vi.setConfig({ testTimeout: 30_000 });
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, readdirSync, unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createClient } from "@libsql/client";
 import { sessionDbId, withSession } from "./helpers/session";
+import { killServerProcess, spawnServerProcess } from "./helpers/testServer";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -75,13 +76,7 @@ beforeAll(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
 
-  // Windows needs a shell to resolve npx.cmd.
-  proc = spawn("npx", ["tsx", "server.ts"], {
-    shell: process.platform === "win32",
-    cwd: REPO,
-    env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) },
-    stdio: "ignore",
-  });
+  proc = spawnServerProcess({ ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) });
   await waitForServer(base);
 
   // Seed directly against the same file the server migrated on boot.
@@ -142,7 +137,7 @@ afterAll(async () => {
       }
     }
   } catch {}
-  if (proc) { proc.kill("SIGKILL"); proc = null; }
+  if (proc) { await killServerProcess(proc, "SIGKILL"); proc = null; }
   await new Promise((r) => setTimeout(r, 500));
   try { (globalThis as any).__db?.close(); } catch {}
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}

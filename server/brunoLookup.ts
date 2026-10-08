@@ -187,8 +187,10 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
       if (q.to) { sql += " AND t.completed_at < ?"; args.push(utcBefore(q.to, tz)); }
       sql += " ORDER BY t.completed_at DESC, t.id DESC LIMIT 41";
     } else {
-      if (q.from) { sql += " AND COALESCE(t.due_date, substr(t.created_at, 1, 10)) >= ?"; args.push(q.from); }
-      if (q.to) { sql += " AND COALESCE(t.due_date, substr(t.created_at, 1, 10)) <= ?"; args.push(q.to); }
+      // Due dates are team-local days already; created_at is a UTC timestamp,
+      // so an undated task is matched on the team-local day it was made.
+      if (q.from) { sql += " AND ((t.due_date IS NOT NULL AND t.due_date >= ?) OR (t.due_date IS NULL AND t.created_at >= ?))"; args.push(q.from, utcFrom(q.from, tz)); }
+      if (q.to) { sql += " AND ((t.due_date IS NOT NULL AND t.due_date <= ?) OR (t.due_date IS NULL AND t.created_at < ?))"; args.push(q.to, utcBefore(q.to, tz)); }
       sql += " ORDER BY COALESCE(t.due_date, '9999') ASC, t.id DESC LIMIT 41";
     }
     const c = capped(await db(sql, ...args), 40);

@@ -135,4 +135,12 @@ describe("runLookups", () => {
     expect(out).toContain("Sweep the shop — done");
     expect(out).toContain("assigned to Ada Lovelace");
   });
+
+  it("an undated task is matched on the team-local day it was made", async () => {
+    await db.execute("INSERT INTO tasks (id, team_id, title, status, created_at) VALUES (6, 1, 'Late-night idea', 'todo', '2026-10-07T02:00:00.000Z')");
+    const ny = await runLookups(dbAll, 1, "America/New_York", [{ kind: "tasks", from: "2026-10-06", to: "2026-10-06" }]);
+    expect(ny).toContain("Late-night idea");
+    const utc = await runLookups(dbAll, 1, "UTC", [{ kind: "tasks", from: "2026-10-06", to: "2026-10-06" }]);
+    expect(utc).not.toContain("Late-night idea");
+  });
 });
