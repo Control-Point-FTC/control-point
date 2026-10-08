@@ -72,7 +72,7 @@ describe('Modern Calendar', () => {
     await waitFor(() => expect(api.apiFetch).toHaveBeenCalledWith('/api/events', expect.objectContaining({ method: 'POST' })));
     expect(JSON.parse(api.apiFetch.mock.calls[0][1].body)).toEqual({
       title: 'Scrimmage', description: '', date: today, start_time: '18:00', end_time: '', location: '',
-      event_type: 'competition', team_id: null, created_by: 7,
+      event_type: 'competition', team_id: null, created_by: 7, reminder_minutes: null, repeat: null,
     });
     expect(props.setEvents).toHaveBeenCalled();
     await waitFor(() => expect(props.refresh.events).toHaveBeenCalled());

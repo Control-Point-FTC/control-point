@@ -5,7 +5,7 @@
 // managers can create, edit or delete. Dates use the browser locale.
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, List, MapPin, Pencil, Plus, Rows3, Trash2 } from 'lucide-react';
+import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
 import {
@@ -15,6 +15,7 @@ import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { useCalendarController, toDateKey, EVENT_TYPES } from '../../../components/calendar/useCalendarController';
 import { Page, PageHeader, EmptyState, Section } from '../../ui/page';
 import { EventEditorSheet, EventViewSheet, keyToDate, localTime, timeRange, typeMeta } from './CalendarSheets';
+import { SubscribeDialog } from './SubscribeDialog';
 
 type View = 'month' | 'week' | 'agenda';
 
@@ -31,6 +32,7 @@ export function CalendarPage(props: any) {
   const [viewId, setViewId] = useState<number | string | null>(null);
   const [dragging, setDragging] = useState<number | string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [subscribeOpen, setSubscribeOpen] = useState(false);
   const pendingOpen = useRef<number | null>(null);
   const cancelPendingOpen = () => { if (pendingOpen.current) { window.clearTimeout(pendingOpen.current); pendingOpen.current = null; } };
   useEffect(() => cancelPendingOpen, []);
@@ -68,7 +70,13 @@ export function CalendarPage(props: any) {
       ...(ctl.canManageCalendar && !String(e.id).startsWith('temp-') ? [
         { label: 'Edit', icon: Pencil, action: () => actions.edit(e) },
         { separator: true },
-        { label: 'Delete', icon: Trash2, danger: true, action: () => void ctl.deleteEvent(e.id, e.title) },
+        ...(e.series_id ? [
+          { label: 'Delete this event', icon: Trash2, danger: true, action: () => void ctl.deleteEvent(e.id, e.title) },
+          { label: 'Delete this and following', icon: Trash2, danger: true, action: () => void ctl.deleteEvent(e.id, e.title, undefined, 'following') },
+          { label: 'Delete whole series', icon: Trash2, danger: true, action: () => void ctl.deleteEvent(e.id, e.title, undefined, 'all') },
+        ] : [
+          { label: 'Delete', icon: Trash2, danger: true, action: () => void ctl.deleteEvent(e.id, e.title) },
+        ]),
       ] : []),
     ];
   });
@@ -104,8 +112,11 @@ export function CalendarPage(props: any) {
         eyebrow="Calendar"
         title={title}
         description={`${monthEventCount} ${monthEventCount === 1 ? 'event' : 'events'} this month · meetings, competitions and deadlines`}
-        actions={ctl.canManageCalendar && (
-          <Button onClick={() => ctl.openNew(selected || todayKey)}><Plus /> New event</Button>
+        actions={(
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setSubscribeOpen(true)}><CalendarPlus /> Subscribe</Button>
+            {ctl.canManageCalendar && <Button onClick={() => ctl.openNew(selected || todayKey)}><Plus /> New event</Button>}
+          </div>
         )}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -167,7 +178,7 @@ export function CalendarPage(props: any) {
             <Section
               title={keyToDate(selected).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
               action={ctl.canManageCalendar && (
-                <Button variant="ghost" size="sm" onClick={() => ctl.openNew(selected)}><Plus /> Add</Button>
+                <Button variant="outline" size="sm" onClick={() => ctl.openNew(selected)}><Plus /> Add</Button>
               )}
             >
               <EventList events={dayEvents(selected)} onOpen={(e) => setViewId(e.id)} isFinished={ctl.isEventFinished} empty="Nothing scheduled." />
@@ -184,6 +195,7 @@ export function CalendarPage(props: any) {
 
       <EventViewSheet event={viewEvent} onOpenChange={(o) => { if (!o) setViewId(null); }} ctl={ctl} teams={teams} />
       {ctl.canManageCalendar && <EventEditorSheet ctl={ctl} teams={teams} />}
+      <SubscribeDialog open={subscribeOpen} onOpenChange={setSubscribeOpen} />
     </Page>
     </CalendarActionsCtx.Provider>
   );
@@ -352,7 +364,7 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
               key={key}
               dateKey={key}
               className={cn(
-                'group relative min-h-14 border-border p-1 sm:min-h-20 sm:p-1.5 xl:min-h-28',
+                'group relative min-h-[3.25rem] border-border p-0.5 sm:min-h-20 sm:p-1.5 xl:min-h-28',
                 i % 7 !== 6 && 'border-r', i < days.length - 7 && 'border-b',
                 !inMonth && 'bg-muted/30',
                 isSel && 'bg-accent/[0.06]',
@@ -365,15 +377,20 @@ function MonthGrid({ cursor, todayKey, selected, dayEvents, onSelectDay, onOpenE
                 aria-label={`${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}${list.length ? `, ${list.length} ${list.length === 1 ? 'event' : 'events'}` : ''}`}
                 className="absolute inset-0 rounded-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               />
-              <div className="pointer-events-none relative flex items-center justify-between">
+              {/* Phones: number centred with the event dots under it (the
+                  selected day's list sits right below the grid). Wider: number
+                  left, dots right, then chips from xl up. */}
+              <div className="pointer-events-none relative flex flex-col items-center gap-1 pt-1 sm:flex-row sm:justify-between sm:pt-0">
                 <span className={cn(
-                  'flex size-6 items-center justify-center rounded-full text-xs font-medium tabular-nums',
+                  'flex size-7 items-center justify-center rounded-full text-sm font-medium tabular-nums sm:size-6 sm:text-xs',
                   isToday ? 'bg-accent text-accent-ink' : inMonth ? 'text-foreground' : 'text-muted-foreground/60',
+                  isSel && !isToday && 'ring-2 ring-accent/60 sm:ring-0',
                 )}>{d.getDate()}</span>
                 {/* Narrow grids: dots instead of chips (the day list shows details). */}
                 {list.length > 0 && (
-                  <span className="flex gap-0.5 xl:hidden">
+                  <span className="flex items-center gap-0.5 xl:hidden">
                     {list.slice(0, 3).map((e: any) => <span key={e.id} className={cn('size-1.5 rounded-full', typeMeta(e.event_type).dot)} />)}
+                    {list.length > 3 && <span className="text-[9px] leading-none font-semibold text-muted-foreground">+</span>}
                   </span>
                 )}
               </div>
@@ -438,7 +455,7 @@ function WeekColumns({ start, todayKey, dayEvents, isFinished, onOpenEvent, canM
               {list.length === 0 && <p className="px-1 text-xs text-muted-foreground/70 sm:hidden">Free</p>}
             </div>
             {canManage && (
-              <Button variant="ghost" size="sm" className="mt-2 w-full justify-start text-muted-foreground" onClick={() => onAdd(key)} aria-label={`Add event on ${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`}>
+              <Button variant="outline" size="sm" className="mt-2 w-full justify-start border-dashed text-muted-foreground hover:text-foreground" onClick={() => onAdd(key)} aria-label={`Add event on ${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`}>
                 <Plus /> Add
               </Button>
             )}
@@ -530,7 +547,10 @@ function AgendaRow({ e, onOpen, finished, showDate }: { e: any; onOpen: (e: any)
       className={cn('flex min-h-11 w-full items-start gap-3 rounded-xl border border-border border-l-[3px] bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', meta.bar)}
     >
       <span className="min-w-0 flex-1">
-        <span className={cn('block truncate text-sm font-medium', finished && 'text-muted-foreground line-through')}>{e.title}</span>
+        <span className={cn('flex items-center gap-1.5 text-sm font-medium', finished && 'text-muted-foreground line-through')}>
+          <span className="truncate">{e.title}</span>
+          {e.series_id && <Repeat className="size-3 shrink-0 text-muted-foreground" aria-label="Repeats" />}
+        </span>
         <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           {showDate && <span>{keyToDate(e.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>}
           <span>{timeRange(e)}</span>

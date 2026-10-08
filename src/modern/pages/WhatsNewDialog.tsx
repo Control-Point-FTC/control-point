@@ -6,7 +6,8 @@ import { motion, MotionConfig } from 'motion/react';
 import { Bug, Sparkles, Wrench } from 'lucide-react';
 import { cn } from '../../components/cn';
 import { Badge, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui-kit';
-import { CHANGELOG, CURRENT_VERSION, type ChangelogEntry } from '../../utils/changelog';
+import { type ChangelogEntry } from '../../utils/changelog';
+import { useChangelog } from '../../utils/changelogStore';
 import { markVersionSeen } from '../../components/WhatsNewModal';
 
 const SECTIONS = [
@@ -35,8 +36,11 @@ function Release({ entry }: { entry: ChangelogEntry }) {
 }
 
 export function WhatsNewDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // The owner's releases (Owner console → What's new), built-in list until they load.
+  const CHANGELOG = useChangelog();
+  const CURRENT_VERSION = CHANGELOG[0]?.version || '';
   const [version, setVersion] = useState(CHANGELOG[0]?.version);
-  useEffect(() => { if (open) { markVersionSeen(); setVersion(CHANGELOG[0]?.version); } }, [open]);
+  useEffect(() => { if (open) { markVersionSeen(); setVersion(CHANGELOG[0]?.version); } }, [open, CURRENT_VERSION]);
   const entry = CHANGELOG.find((e) => e.version === version) ?? CHANGELOG[0];
   // Outside ModernShell's MotionConfig, so honour reduced motion here too.
   return (

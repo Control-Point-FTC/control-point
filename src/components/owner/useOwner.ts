@@ -11,7 +11,7 @@ import { apiFetch } from '../../services/api';
 import { confirmDialog, notify } from '../dialog';
 import { deleteDraft, getDraft, useDraft } from '../../modern/drafts';
 
-export type OwnerTab = 'overview' | 'users' | 'ai' | 'flags' | 'feedback' | 'errors';
+export type OwnerTab = 'overview' | 'users' | 'ai' | 'flags' | 'feedback' | 'errors' | 'changelog';
 
 /** The owner's timezone drives "today" and the daily history server-side. */
 export function aiOverviewUrl() {
