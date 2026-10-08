@@ -106,6 +106,26 @@ describe('Modern Resources', () => {
     expect(screen.getByLabelText('Title for https://old.example/')).toHaveValue('Old link');
   });
 
+  it('judges links against the library as it is when Bruno answers', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') {
+        // A teammate saves gm0 while Bruno is reading.
+        list = [...LIST, { id: 9, url: 'https://gm0.org/', title: 'gm0', description: '', category: 'Community', created_by: 8, created_by_name: 'Lin', created_at: null }];
+        return { items: [{ url: 'https://gm0.org', title: 'Game Manual 0', description: '', category: 'Community' }, { url: 'https://new.example/', title: 'New', description: '', category: 'Other' }], count: 2 };
+      }
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText('Left out 1 already in your library: Game Manual 0.')).toBeInTheDocument();
+    // The page shows the fresh library too.
+    expect(screen.getByText('4 saved links')).toBeInTheDocument();
+  });
+
   it('says so when every link is already saved', async () => {
     api.apiJson.mockImplementation(async (url: string, init?: any) => {
       if (url === '/api/resources' && !init?.method) return list;

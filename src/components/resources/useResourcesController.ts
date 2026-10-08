@@ -78,10 +78,6 @@ const SAVE_ERROR_KEY = 'res:save-error';
 
 export function useResourcesController() {
   const [resources, setResources] = useState<ResourceItem[]>([]);
-  // The library as it is when a reply lands (not when the request started).
-  const resourcesRef = useRef(resources);
-  resourcesRef.current = resources;
-  const libraryLoaded = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState('All');
@@ -106,7 +102,7 @@ export function useResourcesController() {
     setLoadError(null);
     try {
       const list = await apiJson<ResourceItem[]>('/api/resources');
-      if (seq === loadSeq.current) { setResources(Array.isArray(list) ? list : []); libraryLoaded.current = true; }
+      if (seq === loadSeq.current) setResources(Array.isArray(list) ? list : []);
     } catch (e: any) {
       if (seq === loadSeq.current) setLoadError(e?.message || 'Could not load resources');
     } finally {
@@ -146,6 +142,9 @@ export function useResourcesController() {
     setParseError(null);
     setSaveError(null);
     const show = inEpoch((list: ParsedItem[] | null, dups: ParsedItem[] = []) => { if (latest()) { setPreview(list); setSkipped(dups); } });
+    // The library just read for the comparison also refreshes the page
+    // (and wins over any older load still in flight).
+    const refreshList = inEpoch((l: ResourceItem[]) => { ++loadSeq.current; setResources(l); });
     // Errors go to whichever page is mounted, under the same guards.
     const fail = inEpoch((msg: string) => { if (latest()) setParseError(msg); });
     try {
@@ -165,13 +164,15 @@ export function useResourcesController() {
           category: RESOURCE_CATEGORIES.includes(it.category as any) ? it.category : 'Other',
         }));
         // Same page = same key (www, https, a trailing slash, tracking
-        // parameters, YouTube link forms). Checked against the library as it
-        // is now (kept live by resources_changed), so a link a teammate just
-        // deleted counts as new. Only if the library never loaded do the
-        // server's marks decide what's already saved.
-        const existing = libraryLoaded.current
-          ? resourcesRef.current.map((r) => r.url)
+        // parameters, YouTube link forms). Checked against the library read
+        // now, after the reply, so a link a teammate saved or deleted while
+        // Bruno was reading is judged as it is. If that read fails, the
+        // server's marks (from when it parsed) decide.
+        const latestLibrary = await apiJson<ResourceItem[]>('/api/resources').catch(() => null);
+        const existing = Array.isArray(latestLibrary)
+          ? latestLibrary.map((r) => r.url)
           : list.filter((it) => it.duplicate === 'saved').map((it) => it.url || '');
+        if (Array.isArray(latestLibrary)) refreshList(latestLibrary);
         const { fresh, duplicates } = splitDuplicates(rows, existing);
         const dups: ParsedItem[] = duplicates;
         if (!fresh.length) {
