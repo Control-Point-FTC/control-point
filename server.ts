@@ -5972,10 +5972,13 @@ async function startServer() {
     const region = String(req.query.region || "").toUpperCase();
     if (!/^(ALL|[A-Z0-9]{2,8})$/.test(region)) return res.status(400).json({ error: "Choose a region" });
     const readyBefore = predictEngine.readyAt;
+    // The age is read before the files, so a sync finishing during the read
+    // can only make the label older than the results, never newer.
+    const syncedBefore = new Map(predictSeasons.map((x) => [x, predictStore.lastSync(x)]));
     const got = await offlineSeason();
     if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
     if (region !== "ALL" && !got.events.some((e) => e.event.region === region)) return res.status(404).json({ error: "No events in that region this season" });
-    const dataAsOf = predictStore.lastSync(got.season);
+    const dataAsOf = syncedBefore.get(got.season) ?? null;
     // Keyed by the stored files' version (read with the events): any file a
     // sync rewrote, even one that partly failed, makes a new pack. Ratings
     // change with each rebuild, so they're part of the key too. dataAsOf
