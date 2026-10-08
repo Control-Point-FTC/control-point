@@ -4115,8 +4115,11 @@ async function startServer() {
         { sql: `DELETE FROM attendance WHERE member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM messages WHERE sender_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM tasks WHERE assigned_to IN (${ph})`, args: ids },
-        { sql: `DELETE FROM feedback WHERE author_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM feedback WHERE user_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM call_participants WHERE member_id IN (${ph})`, args: ids },
+        // Bruno's personal facts and morning-summary records go with the account.
+        { sql: `DELETE FROM bruno_memories WHERE scope = 'user' AND member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM bruno_nudges_sent WHERE member_id IN (${ph})`, args: ids },
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
       ]);
@@ -8548,6 +8551,9 @@ Rules:
       await dbRun("DELETE FROM bruno_chats WHERE id = ?", c.id);
     }
     await dbRun("DELETE FROM ai_usage WHERE member_id = ?", target.id);
+    // Bruno's personal facts about them (team facts stay with the team).
+    await dbRun("DELETE FROM bruno_memories WHERE scope = 'user' AND member_id = ?", target.id);
+    await dbRun("DELETE FROM bruno_nudges_sent WHERE member_id = ?", target.id);
     await dbRun("DELETE FROM members WHERE id = ?", target.id);
     return { ok: true };
   }
