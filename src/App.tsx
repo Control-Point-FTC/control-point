@@ -36,6 +36,7 @@ function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
     </div>
   );
 }
+import { setProposalContext } from './services/proposalContext';
 import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
 import { SetupChecklist, fetchOnboardingState, saveOnboardingState, defaultOnboardingState, shouldShowWelcome, shouldShowChecklist, firstIncompleteWizardStep, resolveTourSteps, type OnboardingState } from './components/onboarding';
 import { clearFtcCache } from './components/ftcCache';
@@ -1434,6 +1435,7 @@ export default function App() {
     clearScreenContext();
     clearPredictCache();
     clearDrafts(); // unsent input never follows you into another workspace
+    setProposalContext(null); // Bruno confirm cards: the new team's roster and today
     if (typeof localStorage === 'undefined') return;
     [
       'ftcSummaryCache', 'ftcSummaryTimestamp', 'ftcSummaryItemCount',

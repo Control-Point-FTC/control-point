@@ -75,3 +75,21 @@ describe('Greptile review on #119', () => {
     expect(recoverEventTime({ title: 'Scrimmage', notes: 'High priority: bring batteries, 1-3pm', date: '2026-10-10' })).toMatchObject({ notes: 'High priority: bring batteries,', time: '13:00', end: '15:00' });
   });
 });
+
+describe('Greptile round 2 on #119', () => {
+  it('names after "assign to" stay with it', () => {
+    const t = normalizeBrunoTask({ title: 'Wire the hub, assign to Ada, Grace' }, today, roster);
+    expect(t).toMatchObject({ title: 'Wire the hub', assignees: ['Ada Lovelace', 'Grace Hopper'] });
+    const u = normalizeBrunoTask({ title: 'Wire the hub, assign to Ada and Grace, high priority' }, today, roster);
+    expect(u).toMatchObject({ title: 'Wire the hub', assignees: ['Ada Lovelace', 'Grace Hopper'], priority: 'high' });
+  });
+
+  it('context sentences that merely mention a keyword stay context', () => {
+    const t = normalizeBrunoTask({ title: 'Plan practice', description: 'We meet every week to review the robot. Due to rain we moved it inside.' }, today, roster);
+    expect(t).toMatchObject({ description: 'We meet every week to review the robot. Due to rain we moved it inside.', recurrence: null, due_date: null });
+  });
+
+  it('24-hour event ranges are recovered', () => {
+    expect(recoverEventTime({ title: 'Build session', notes: 'From 15:00 to 17:00 in the shop', date: '2026-10-10' })).toMatchObject({ time: '15:00', end: '17:00', notes: 'in the shop' });
+  });
+});
