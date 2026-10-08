@@ -28,7 +28,15 @@ import {
 } from "./ai.js";
 
 const ANTHROPIC_API_BASE = "https://api.anthropic.com/v1";
-const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+// claude-sonnet-4-20250514 was retired on 2026-06-15 (requests 404), so the
+// fallback had been failing. ANTHROPIC_MODEL still overrides this.
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
+// Bruno is chat: low effort keeps time-to-first-token down (the model skips
+// thinking on most simple requests); ANTHROPIC_EFFORT overrides it.
+const DEFAULT_ANTHROPIC_EFFORT = "low";
+// On a policy decline, the API re-runs the request on a fallback model it
+// picks by refusal category (Claude API only).
+const ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const ANTHROPIC_TIMEOUT_MS = 90_000;
 const ANTHROPIC_VERSION = "2023-06-01";
 
@@ -53,6 +61,14 @@ interface OpenAIProviderConfig {
 export function anthropicModel(): string {
   return process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
 }
+
+function anthropicEffort(): string {
+  const e = String(process.env.ANTHROPIC_EFFORT || "").toLowerCase();
+  return ["low", "medium", "high", "xhigh", "max"].includes(e) ? e : DEFAULT_ANTHROPIC_EFFORT;
+}
+
+/** What Bruno says when every model declined the request (stop_reason "refusal"). */
+export const ANTHROPIC_REFUSAL_MSG = "I can't help with that one. Try rephrasing, or ask me something else.";
 
 export function isAnthropicConfigured(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;
@@ -257,12 +273,18 @@ async function callAnthropicChat(opts: {
       role: m.role === "model" ? "assistant" : "user",
       content: m.text || " ",
     })),
+    // Without this the API answers with one JSON body, which the SSE reader
+    // below finds no events in, so streamed fallback replies came back empty.
+    stream: opts.stream,
+    output_config: { effort: anthropicEffort() },
+    fallbacks: "default",
   };
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "x-api-key": anthropicKey(),
     "anthropic-version": ANTHROPIC_VERSION,
+    "anthropic-beta": ANTHROPIC_FALLBACK_BETA,
   };
 
   const res = await fetchWithPolicy(
@@ -279,7 +301,10 @@ async function callAnthropicChat(opts: {
     const data = await res.json();
     const u = extractAnthropicUsage(data);
     if (u && opts.onUsage) opts.onUsage(u);
-    return extractAnthropicText(data);
+    const text = extractAnthropicText(data);
+    // Read stop_reason before content: a decline has no text.
+    if (data?.stop_reason === "refusal" && !text.trim()) return ANTHROPIC_REFUSAL_MSG;
+    return text;
   }
 
   const reader = res.body.getReader();
@@ -287,6 +312,7 @@ async function callAnthropicChat(opts: {
   let buffer = "";
   let full = "";
   let lastUsage: AiUsage | null = null;
+  let refused = false;
   const maxAccumChars = Math.max(8000, opts.maxTokens * 8);
   for (;;) {
     if (opts.signal?.aborted) break;
@@ -320,12 +346,19 @@ async function callAnthropicChat(opts: {
         if (parsed?.type === "message_delta" && parsed?.usage) {
           lastUsage = extractAnthropicUsage({ usage: parsed.usage });
         }
+        if (parsed?.type === "message_delta" && parsed?.delta?.stop_reason === "refusal") refused = true;
       } catch { /* skip malformed chunk */ }
     }
     if (full.length >= maxAccumChars) break;
   }
   try { await reader.cancel(); } catch { /* noop */ }
   if (lastUsage && opts.onUsage) opts.onUsage(lastUsage);
+  if (refused) {
+    // A decline mid-reply: say so rather than ending on half a sentence.
+    const note = full.trim() ? `\n\n(${ANTHROPIC_REFUSAL_MSG})` : ANTHROPIC_REFUSAL_MSG;
+    full += note;
+    opts.onChunk?.(note);
+  }
   return full;
 }
 
