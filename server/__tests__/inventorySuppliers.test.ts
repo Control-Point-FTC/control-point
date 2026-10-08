@@ -77,6 +77,10 @@ describe("REV import", () => {
         <div itemprop="brand" itemscope itemtype="https://schema.org/Brand"><span itemprop="name">REV Robotics</span></div>
         <meta itemprop="price" content="34.00"></div>`;
     expect(parseRevProduct(micro)).toMatchObject({ name: "Smart Robot Servo", sku: "REV-41-1097", cost: 34 });
+    // A price inside the product's Offer counts.
+    const offer = `<div itemscope itemtype="https://schema.org/Product"><h1 itemprop="name">Servo Hub</h1>
+      <div itemprop="offers" itemscope itemtype="https://schema.org/Offer"><meta itemprop="price" content="99.99"><meta itemprop="priceCurrency" content="USD"></div></div>`;
+    expect(parseRevProduct(offer)).toMatchObject({ name: "Servo Hub", cost: 99.99 });
   });
 
   it("rejects anything that isn't REV; a REV link always comes back with its SKU and link", async () => {

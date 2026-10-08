@@ -72,7 +72,9 @@ export function parseRevProduct(html: string): RevProduct {
   if (product.length) {
     out.name ||= prop("name") || undefined;
     out.sku ||= prop("sku") || undefined;
-    out.cost ??= num(prop("price"));
+    // The price lives on the product or inside its offer(s).
+    const offerPrice = product.find('[itemprop="offers"] [itemprop="price"], [itemprop="offers"][itemprop="price"]').first();
+    out.cost ??= num(prop("price") || offerPrice.attr("content") || offerPrice.text());
   }
   // 3. The BigCommerce theme REV used when this importer was written, then Open Graph.
   out.name ||= $("h1.productView-title").text().trim() || undefined;
