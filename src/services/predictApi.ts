@@ -25,7 +25,7 @@ export interface PredictAccuracy {
   pickTop3: number;
 }
 
-export interface PredictStatus { ready: boolean; readyAt: string | null; syncing: boolean; seasons: number[]; accuracy: PredictAccuracy; live?: LiveAccuracy | null }
+export interface PredictStatus { ready: boolean; readyAt: string | null; /** When the match data behind the ratings was last downloaded. */ dataAsOf?: string | null; syncError?: string | null; syncing: boolean; seasons: number[]; accuracy: PredictAccuracy; live?: LiveAccuracy | null }
 
 /** Error with the HTTP status: 503 = warming up, 422 = event can't be forecast. */
 export class PredictError extends Error {
@@ -58,3 +58,7 @@ export function clearPredictCache(): void {
   forecastCache.invalidate();
   partnersCache.invalidate();
 }
+
+/** Ratings older than this get a warning: syncs run every 2 hours. */
+export const RATINGS_STALE_MS = 36 * 60 * 60 * 1000;
+export const ratingsStale = (asOf: string | null | undefined, now = Date.now()): boolean => !!asOf && now - Date.parse(asOf) > RATINGS_STALE_MS;

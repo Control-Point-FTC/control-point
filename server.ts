@@ -146,6 +146,7 @@ import {
 } from "./server/ftcEvents.js";
 import { PredictEngine, type Forecast, type Partners } from "./server/predict/engine.js";
 import { PredictStore } from "./server/predict/store.js";
+import { syncSeasons, dataAsOf } from "./server/predict/sync.js";
 import { isMessageModerator, messageActionAllowed } from "./server/messagePerms.js";
 import { PredictMonitor, eventStillOpen, type LiveAccuracy } from "./server/predict/monitor.js";
 import type { FirstAlliance, FirstMatch, FirstRanking } from "./server/ftcEvents.js";
@@ -5889,17 +5890,15 @@ async function startServer() {
     return n;
   }
   let predictSyncing = false;
+  /** The last sync's download failures (null = the last sync downloaded every season). */
+  let predictSyncError: string | null = null;
   async function syncPredict(): Promise<void> {
     if (predictSyncing) return;
     predictSyncing = true;
     try {
-      for (const s of predictSeasons) {
-        // Older seasons don't change: stop once a sync completed without failures.
-        if (s < currentFtcSeason() - 1 && predictStore.isComplete(s)) continue;
-        const n = await predictStore.syncScout(s);
-        const a = await predictStore.syncAdvancement(s);
-        if (n || a) console.log(`[predict] ${s}: ${n} events, ${a} advancement lists updated`);
-      }
+      const { errors } = await syncSeasons(predictStore, predictSeasons, currentFtcSeason(), (m) => console.log(m));
+      predictSyncError = errors.length ? errors.map((e) => `${e.season}: ${e.message}`).join("; ").slice(0, 300) : null;
+      // Rebuild even after a failed download: other seasons may have new data.
       await predictEngine.rebuild();
       predictCache.clear();
       console.log(`[predict] ratings rebuilt (${predictSeasons.join(", ")})`);
@@ -5908,6 +5907,7 @@ async function startServer() {
       if (snapped) console.log(`[predict] snapshots recorded for ${snapped} current events`);
       scoreLive();
     } catch (e) {
+      predictSyncError = (e as Error).message;
       console.error("[predict] sync failed:", (e as Error).message);
     } finally {
       predictSyncing = false;
@@ -5940,7 +5940,7 @@ async function startServer() {
   app.get("/api/predict/status", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy, live: predictLive });
+    res.json({ ready: predictEngine.ready, readyAt: predictEngine.readyAt, dataAsOf: dataAsOf((s) => predictStore.lastSync(s), predictSeasons), syncError: predictSyncError, syncing: predictSyncing, seasons: predictSeasons, accuracy: predictEngine.accuracy, live: predictLive });
   });
 
   app.get("/api/predict/event", async (req, res) => {

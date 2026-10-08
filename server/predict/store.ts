@@ -53,6 +53,12 @@ export class PredictStore {
     return this.readJson(join(this.seasonDir("scout", season), "_status.json"), { complete: false }).complete === true;
   }
 
+  /** When the season's event list was last downloaded (null = never). */
+  lastSync(season: number): string | null {
+    const at = this.readJson<{ lastSync?: unknown }>(join(this.seasonDir("scout", season), "_status.json"), {}).lastSync;
+    return typeof at === "string" && !Number.isNaN(Date.parse(at)) ? at : null;
+  }
+
   /**
    * Download events that are new or changed since the last sync.
    * Returns how many were fetched.

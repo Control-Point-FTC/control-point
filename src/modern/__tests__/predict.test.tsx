@@ -165,6 +165,18 @@ describe('Modern Predict', () => {
     expect(link.getAttribute('rel')).toContain('noopener');
   });
 
+  it('shows how old the ratings are, and warns once syncs stop landing', async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+    predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date(Date.now() - 3 * 3600_000).toISOString() });
+    renderPage('/predict?season=2025&event=USNJCMPPKWY');
+    expect(await screen.findByText('Ratings synced 3 h ago')).toBeInTheDocument();
+    expect(screen.queryByText(/may be out of date/)).not.toBeInTheDocument();
+    // Refresh re-checks the age: a server whose syncs stopped is flagged.
+    predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date(Date.now() - 3 * 864e5).toISOString() });
+    fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+    expect(await screen.findByText(/odds may be out of date/)).toBeInTheDocument();
+  });
+
   it('accuracy sheet: advancement scores show even with no played match calls', async () => {
     scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
     predict.fetchPredictStatus.mockResolvedValue(status(0, 30));
