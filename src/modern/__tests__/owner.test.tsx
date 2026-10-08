@@ -31,6 +31,7 @@ const DB: Record<string, any> = {
 };
 
 beforeEach(() => {
+  localStorage.removeItem('cp-owner-feedback-view');
   api.apiFetch.mockReset();
   api.apiFetch.mockImplementation((url: string, init?: any) => {
     if (init?.method) return json({ deleted: [1], skipped: [] });
@@ -43,7 +44,7 @@ beforeEach(() => {
   dialog.confirmDialog.mockResolvedValue(true);
   clearDrafts();
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const setup = () => render(<InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}><MemoryRouter><OwnerPage /></MemoryRouter></InterfaceModeProvider>);
 const tab = (name: RegExp) => fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
@@ -125,6 +126,131 @@ describe('Modern Owner console', () => {
     tab(/Users/);
     fireEvent.click((await screen.findAllByRole('button', { name: 'Manage' }))[0]);
     expect(await screen.findByLabelText('Warning reason')).toHaveValue('half typed');
+  });
+});
+
+describe('Owner feedback views', () => {
+  const note = DB['/api/owner/feedback'][0];
+  const feedback = async (notes = [note]) => {
+    const original = api.apiFetch.getMockImplementation()!;
+    api.apiFetch.mockImplementation((url: string, init?: any) => url === '/api/owner/feedback' && !init?.method ? json(notes) : original(url, init));
+    const rendered = setup();
+    await screen.findByRole('cell', { name: /Robo/ });
+    tab(/Feedback/);
+    return rendered;
+  };
+  const choose = (view: 'Grid' | 'List') => fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Feedback view' })).getByRole('radio', { name: view }));
+
+  it('defaults to responsive grid cards and switches to the original list', async () => {
+    await feedback();
+    const notes = screen.getByRole('list', { name: 'Feedback notes' });
+    expect(notes).toHaveClass('grid', 'grid-cols-1', 'md:grid-cols-2', 'xl:grid-cols-3');
+    expect(screen.getByRole('radio', { name: 'Grid' })).toHaveAttribute('aria-checked', 'true');
+    choose('List');
+    expect(notes).toHaveClass('space-y-3');
+    expect(notes).not.toHaveClass('grid');
+    expect(screen.getByRole('radio', { name: 'List' })).toHaveAttribute('aria-checked', 'true');
+    // Clicking the selected item must not clear the view.
+    choose('List');
+    expect(screen.getByRole('radio', { name: 'List' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('remembers the view on re-render, tab return and remount', async () => {
+    const first = await feedback();
+    choose('List');
+    expect(localStorage.getItem('cp-owner-feedback-view')).toBe('list');
+    first.rerender(<InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}><MemoryRouter><OwnerPage /></MemoryRouter></InterfaceModeProvider>);
+    expect(screen.getByRole('list', { name: 'Feedback notes' })).toHaveClass('space-y-3');
+    tab(/Overview/);
+    tab(/Feedback/);
+    expect(screen.getByRole('radio', { name: 'List' })).toHaveAttribute('aria-checked', 'true');
+    first.unmount();
+    await feedback();
+    expect(screen.getByRole('list', { name: 'Feedback notes' })).toHaveClass('space-y-3');
+    choose('Grid');
+    expect(localStorage.getItem('cp-owner-feedback-view')).toBe('grid');
+  });
+
+  it('defaults to grid for an invalid stored view', async () => {
+    localStorage.setItem('cp-owner-feedback-view', 'unknown');
+    await feedback();
+    expect(screen.getByRole('radio', { name: 'Grid' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('keeps working when storage reads and writes throw', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Storage unavailable'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage unavailable'); });
+    await feedback();
+    expect(screen.getByRole('list', { name: 'Feedback notes' })).toHaveClass('grid');
+    choose('List');
+    expect(screen.getByRole('list', { name: 'Feedback notes' })).toHaveClass('space-y-3');
+    choose('Grid');
+    expect(screen.getByRole('list', { name: 'Feedback notes' })).toHaveClass('grid');
+  });
+
+  it.each(['Grid', 'List'] as const)('%s preserves resolve, reopen and the empty state', async (view) => {
+    await feedback([{ ...note, status: 'resolved' }]);
+    choose(view);
+    const reopen = screen.getByRole('button', { name: 'Reopen' });
+    expect(reopen).toHaveClass('max-sm:h-11');
+    fireEvent.click(reopen);
+    await screen.findByRole('button', { name: 'Resolve' });
+    expect(body('/api/owner/feedback/31', 'PATCH')).toEqual({ status: 'new' });
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+    expect(await screen.findByText('No feedback yet')).toBeInTheDocument();
+    expect(body('/api/owner/feedback/31', 'PATCH')).toEqual({ status: 'resolved' });
+    expect(calls('/api/owner/feedback/31', 'PATCH')).toHaveLength(2);
+  });
+
+  it.each(['Grid', 'List'] as const)('%s preserves image, video, file attachments and metadata', async (view) => {
+    await feedback([
+      { ...note, screenshot_url: '/image.png', attachment_type: 'image/png' },
+      { ...note, id: 32, message: 'Video note', screenshot_url: '/video.mp4', attachment_type: 'video/mp4' },
+      { ...note, id: 33, message: 'File note', screenshot_url: '/logs.txt', attachment_name: 'logs.txt', attachment_type: 'text/plain' },
+    ]);
+    choose(view);
+    const notes = screen.getByRole('list', { name: 'Feedback notes' });
+    expect(within(notes).getAllByRole('listitem')).toHaveLength(3);
+    const image = screen.getByAltText('Feedback attachment');
+    expect(image).toHaveAttribute('src', '/image.png');
+    const link = image.closest('a')!;
+    expect(link).toHaveAttribute('href', '/image.png');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noreferrer');
+    const video = notes.querySelector('video')!;
+    expect(video).toHaveAttribute('src', '/video.mp4');
+    expect(video).toHaveAttribute('controls');
+    const file = screen.getByRole('link', { name: 'logs.txt' });
+    expect(file).toHaveAttribute('href', '/logs.txt');
+    expect(file).toHaveAttribute('target', '_blank');
+    expect(file).toHaveAttribute('rel', 'noreferrer');
+    expect(within(notes).getAllByText(/Ada · ada@x.test · Robo · Sep 1, 2026/)).toHaveLength(3);
+  });
+
+  it('expands overflowing grid messages without clamping list messages', async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(200);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(120);
+    await feedback();
+    const message = screen.getByText(note.message);
+    expect(message).toHaveClass('line-clamp-6');
+    const more = screen.getByRole('button', { name: 'Show more' });
+    expect(more).toHaveAttribute('aria-controls', message.id);
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(more);
+    expect(message).not.toHaveClass('line-clamp-6');
+    expect(screen.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }));
+    expect(message).toHaveClass('line-clamp-6');
+    choose('List');
+    expect(screen.getByText(note.message)).not.toHaveClass('line-clamp-6');
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+  });
+
+  it('does not offer expansion for messages that fit', async () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(40);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(40);
+    await feedback();
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
   });
 });
 

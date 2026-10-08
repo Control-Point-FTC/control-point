@@ -3,11 +3,11 @@
 // Tabs: Overview (workspaces), Users, AI control, Flags and Feedback; a user
 // sheet holds the AI kill switch, timeouts, budgets, warnings, move and the
 // danger zone.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 import {
-  AlertTriangle, Ban, Bug, Building2, Sparkles, Clock, FileText, Flag, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
+  AlertTriangle, Ban, Bug, Building2, Sparkles, Clock, FileText, Flag, LayoutGrid, List, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
@@ -341,38 +341,75 @@ function FlagReview({ flag, ctl }: { flag: any; ctl: Ctl }) {
   );
 }
 
+function FeedbackMessage({ message }: { message: string }) {
+  const id = useId();
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || expanded) return;
+    const measure = () => setOverflow(element.scrollHeight > element.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [message, expanded]);
+  return (
+    <>
+      <p ref={ref} id={id} className={cn('whitespace-pre-wrap break-words text-sm', !expanded && 'line-clamp-6')}>{message}</p>
+      {(overflow || expanded) && <Button variant="outline" size="sm" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded((value) => !value)} className="mt-2 max-sm:h-11">{expanded ? 'Show less' : 'Show more'}</Button>}
+    </>
+  );
+}
+
 function FeedbackTab({ ctl }: { ctl: Ctl }) {
+  const [view, setView] = useState<'grid' | 'list'>(() => {
+    try { return localStorage.getItem('cp-owner-feedback-view') === 'list' ? 'list' : 'grid'; }
+    catch { return 'grid'; }
+  });
+  const grid = view === 'grid';
   if (!ctl.feedback.length) return <EmptyState icon={MessageSquareHeart} title="No feedback yet" />;
   return (
-    <Stagger as="ul" className="space-y-3">
+    <>
+    <ToggleGroup type="single" aria-label="Feedback view" value={view} onValueChange={(value) => {
+      if (value !== 'grid' && value !== 'list') return;
+      setView(value);
+      try { localStorage.setItem('cp-owner-feedback-view', value); } catch { /* Keep the view usable without storage. */ }
+    }} className="mb-5">
+      <ToggleGroupItem value="grid" className="max-sm:h-11"><LayoutGrid /> Grid</ToggleGroupItem>
+      <ToggleGroupItem value="list" className="max-sm:h-11"><List /> List</ToggleGroupItem>
+    </ToggleGroup>
+    <Stagger as="ul" aria-label="Feedback notes" className={grid ? 'grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3' : 'space-y-3'}>
       {ctl.feedback.map((f) => {
         const url: string = f.screenshot_url || '';
         const isVideo = (f.attachment_type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(url);
         const isImage = (f.attachment_type || '').startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(url);
         return (
-          <StaggerItem as="li" key={f.id} className="rounded-xl border border-border bg-card p-4">
-            <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1">
+          <StaggerItem as="li" key={f.id} className={cn('min-w-0 rounded-xl border border-border bg-card p-4', grid && 'flex flex-col')}>
+            <div className={cn('flex items-start gap-3', grid && 'flex-1 flex-col')}>
+              <div className={cn('min-w-0 flex-1', grid && 'w-full')}>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <Badge variant="soft">{f.category}</Badge>
                   <Badge variant="outline" className={f.status === 'new' ? tone('emerald') : tone('')}>{f.status}</Badge>
                 </div>
-                <p className="whitespace-pre-wrap text-sm">{f.message}</p>
+                {grid ? <FeedbackMessage key={f.message} message={f.message} /> : <p className="whitespace-pre-wrap break-words text-sm">{f.message}</p>}
                 {url && (
                   <div className="mt-2">
-                    {isVideo ? <video src={url} controls className="max-h-48 rounded-lg border border-border" />
-                      : isImage ? <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="Feedback attachment" className="max-h-40 rounded-lg border border-border object-contain" /></a>
-                        : <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs hover:border-accent/40"><FileText className="size-4 text-accent" /><span className="max-w-48 truncate">{f.attachment_name || 'Download attachment'}</span></a>}
+                    {isVideo ? <video src={url} controls className="max-h-48 max-w-full rounded-lg border border-border" />
+                      : isImage ? <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="Feedback attachment" className="max-h-40 max-w-full rounded-lg border border-border object-contain" /></a>
+                        : <a href={url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs hover:border-accent/40"><FileText className="size-4 shrink-0 text-accent" /><span className="max-w-48 truncate">{f.attachment_name || 'Download attachment'}</span></a>}
                   </div>
                 )}
-                <p className="mt-2 text-xs text-muted-foreground">{f.user_name} · {f.user_email}{f.team_name ? ` · ${f.team_name}` : ''}{f.created_at ? ` · ${format(new Date(f.created_at), 'MMM d, yyyy h:mm a')}` : ''}</p>
+                <p className="mt-2 break-words text-xs text-muted-foreground">{f.user_name} · {f.user_email}{f.team_name ? ` · ${f.team_name}` : ''}{f.created_at ? ` · ${format(new Date(f.created_at), 'MMM d, yyyy h:mm a')}` : ''}</p>
               </div>
-              <Button variant="outline" size="sm" onClick={() => void ctl.setFeedbackStatus(f.id, f.status === 'new' ? 'resolved' : 'new')} className="shrink-0 max-sm:h-11">{f.status === 'new' ? 'Resolve' : 'Reopen'}</Button>
+              <Button variant="outline" size="sm" onClick={() => void ctl.setFeedbackStatus(f.id, f.status === 'new' ? 'resolved' : 'new')} className={cn('shrink-0 max-sm:h-11', grid && 'mt-auto')}>{f.status === 'new' ? 'Resolve' : 'Reopen'}</Button>
             </div>
           </StaggerItem>
         );
       })}
     </Stagger>
+    </>
   );
 }
 
