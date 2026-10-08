@@ -13,6 +13,39 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '2.1.0',
+    date: '2026-10-08',
+    title: 'Repeating events, reviews and bulk select',
+    added: [
+      'Repeating calendar events: every day, week, 2 weeks or month, ending after a number of times or on a date. Edit or delete just one, this and the following ones, or the whole series',
+      'Event reminders, from 10 minutes to 2 days before: everyone on the team gets a notification in their Inbox',
+      'Subscribe to the team calendar from Google, Apple or Outlook: Calendar → Subscribe gives you a private link, and new events show up on their own',
+      'Select many at once on every list (tasks, inventory, budget, CAD parts, outreach, communication, resources, members, attendance): select all, shift-click a range, then move, assign, change category or delete in one go',
+      'Task priority (low to urgent) and repeating tasks: finishing one schedules the next',
+      'Done tasks wait for a manager’s review: approve, or send back with a note so the assignees know what to fix',
+      'Tasks → Completed: everything awaiting review or approved, with bulk Approve',
+      'Leave or delete a workspace from Settings → Workspace',
+      'A New task button that is always on the dashboard',
+    ],
+    improved: [
+      'Quick-add understands times (4:30pm, noon, 3-5pm), priority, "every week" and "assign to Arnav", and puts each one in its own field instead of the description',
+      'Task cards count down live when they are due within a week or overdue',
+      'Move around the task board with the keyboard: arrows between cards, Shift + arrows to move a card',
+      'The month calendar is easier to use on phones, and the "+ Add" on each day looks like a button',
+      'Right-click now works on attendance rows, the conversation list and resource links',
+      'The verify screen says when a sign-up email didn’t send, with a tip to check spam',
+      'New roles start with Bruno (AI) turned off; turn it on per role',
+    ],
+    fixed: [
+      'Deleting a workspace failed when it had QR check-ins, CAD files or call history',
+      '"Today" in quick-add was a day late for evening entries in US time zones',
+      'Editing one field of an inventory item or CAD part blanked the others',
+      'Forms could be saved with required fields empty',
+      'Budget notifications showed "$$" before the amount',
+      'People who hadn’t verified their email showed up in the member list and attendance',
+    ],
+  },
+  {
     version: '2.0.0',
     date: '2026-10-06',
     title: 'Control Point, redesigned',

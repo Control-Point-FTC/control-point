@@ -20,7 +20,8 @@ describe('Modern What’s new', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('the redesign ships as 2.0.0', () => {
-    expect(CHANGELOG[0].version).toBe('2.0.0');
+  it('V3.5 ships as 2.1.0, after the 2.0.0 redesign', () => {
+    expect(CHANGELOG[0].version).toBe('2.1.0');
+    expect(CHANGELOG[1].version).toBe('2.0.0');
   });
 });
