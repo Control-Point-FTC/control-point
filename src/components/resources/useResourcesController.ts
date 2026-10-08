@@ -142,9 +142,14 @@ export function useResourcesController() {
     setParseError(null);
     setSaveError(null);
     const show = inEpoch((list: ParsedItem[] | null, dups: ParsedItem[] = []) => { if (latest()) { setPreview(list); setSkipped(dups); } });
-    // The library just read for the comparison also refreshes the page
-    // (and wins over any older load still in flight).
-    const refreshList = inEpoch((l: ResourceItem[]) => { ++loadSeq.current; setResources(l); });
+    // The library read for the comparison also refreshes the page. It claims
+    // a load number when it starts, so a newer refresh (a teammate's change
+    // arriving meanwhile) wins over it, and it settles the loading state.
+    const refreshList = inEpoch((seq: number, l: ResourceItem[] | null) => {
+      if (seq !== loadSeq.current) return;
+      if (l) { setResources(l); setLoading(false); setLoadError(null); }
+      else void fetchResources(); // the read failed: load the page's list normally
+    });
     // Errors go to whichever page is mounted, under the same guards.
     const fail = inEpoch((msg: string) => { if (latest()) setParseError(msg); });
     try {
@@ -168,11 +173,12 @@ export function useResourcesController() {
         // now, after the reply, so a link a teammate saved or deleted while
         // Bruno was reading is judged as it is. If that read fails, the
         // server's marks (from when it parsed) decide.
+        const readSeq = ++loadSeq.current;
         const latestLibrary = await apiJson<ResourceItem[]>('/api/resources').catch(() => null);
         const existing = Array.isArray(latestLibrary)
           ? latestLibrary.map((r) => r.url)
           : list.filter((it) => it.duplicate === 'saved').map((it) => it.url || '');
-        if (Array.isArray(latestLibrary)) refreshList(latestLibrary);
+        refreshList(readSeq, Array.isArray(latestLibrary) ? latestLibrary : null);
         const { fresh, duplicates } = splitDuplicates(rows, existing);
         const dups: ParsedItem[] = duplicates;
         if (!fresh.length) {

@@ -126,6 +126,25 @@ describe('Modern Resources', () => {
     expect(screen.getByText('4 saved links')).toBeInTheDocument();
   });
 
+  it('the fresh library read also clears an earlier load error', async () => {
+    let first = true;
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) {
+        if (first) { first = false; throw new Error('offline'); }
+        return list;
+      }
+      if (url === '/api/resources/parse') return { items: [{ url: 'https://new.example/', title: 'New', description: '', category: 'Other' }], count: 1 };
+      return {};
+    });
+    setup();
+    expect(await screen.findByText("Couldn't load resources")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(1\)/)).toBeInTheDocument();
+    expect(await screen.findByText('Core Hex Motor')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load resources")).not.toBeInTheDocument();
+  });
+
   it('says so when every link is already saved', async () => {
     api.apiJson.mockImplementation(async (url: string, init?: any) => {
       if (url === '/api/resources' && !init?.method) return list;
