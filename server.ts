@@ -5971,12 +5971,16 @@ async function startServer() {
     if (!auth) return;
     const region = String(req.query.region || "").toUpperCase();
     if (!/^(ALL|[A-Z0-9]{2,8})$/.test(region)) return res.status(400).json({ error: "Choose a region" });
+    // The sync version is read before the files: a pack read while a sync
+    // finishes is sent but not kept, so it's never cached under the new version.
+    const syncedBefore = new Map(predictSeasons.map((x) => [x, predictStore.lastSync(x)]));
+    const readyBefore = predictEngine.readyAt;
     const got = await offlineSeason();
     if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
     if (region !== "ALL" && !got.events.some((e) => e.event.region === region)) return res.status(404).json({ error: "No events in that region this season" });
-    const dataAsOf = predictStore.lastSync(got.season);
+    const dataAsOf = syncedBefore.get(got.season) ?? null;
     // Ratings change with each rebuild, so they're part of the key.
-    const key = `${got.season}:${region}:${dataAsOf}:${predictEngine.readyAt}`;
+    const key = `${got.season}:${region}:${dataAsOf}:${readyBefore}`;
     let built = offlinePacks.get(key);
     if (!built) {
       const pack = buildPack(got.events, got.season, region, dataAsOf);
@@ -5984,9 +5988,11 @@ async function startServer() {
       if (predictEngine.ready) pack.predict = predictEngine.offlineData(got.season, new Set(pack.teams.map((t) => t[0])), pack.events.map((e) => e.type)) ?? undefined;
       const json = JSON.stringify(pack);
       built = { json, gz: await gzipAsync(json) };
-      offlinePacks.set(key, built);
-      // Keep a handful (the full pack is a few MB).
-      while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
+      if (predictStore.lastSync(got.season) === dataAsOf && predictEngine.readyAt === readyBefore) {
+        offlinePacks.set(key, built);
+        // Keep a handful (the full pack is a few MB).
+        while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
+      }
     }
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Vary", "Accept-Encoding");

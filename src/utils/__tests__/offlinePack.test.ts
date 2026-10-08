@@ -10,7 +10,7 @@ const pack: OfflinePack = {
     teams: [[1111, 2, 2, 2, 1, 0, 3], [4215, 1, 2.5, 3, 0, 0, 3], [2222, null, null, null, null, null, null]],
     awards: [['Inspire', 1, 4215]],
     matches: [
-      { l: 'q', s: 0, n: 1, t: '2026-01-10T15:00:00Z', r: [4215, 1111], b: [2222, 3333], rs: [130, 120, 10, 105, 5, 10], bs: [80, 80, 10, 65, 5, 0], sur: [1111] },
+      { l: 'q', s: 0, n: 1, t: '2026-01-10T15:00:00Z', r: [4215, 1111], b: [2222, 3333], rs: [130, 120, 10, 105, 5, 10], bs: [80, 80, 10, 65, 5, 0], sur: [1111], dq: [3333] },
       { l: 'p', s: 2, n: 1, t: null, r: [4215, 1111], b: [2222, 3333], rs: null, bs: null },
     ],
   }],
@@ -35,7 +35,7 @@ describe('offline pack', () => {
     expect(q1.red.score).toEqual({ total: 130, totalNp: 120, auto: 10, teleop: 105, endgame: 5, penaltiesCommitted: 10, penaltiesByOpp: 0 });
     expect(q1.blue.score?.penaltiesByOpp).toBe(10);
     expect(q1.red.teams[1]).toEqual({ number: 1111, name: 'Robo Rams', surrogate: true });
-    expect(q1.blue.teams[1]).toEqual({ number: 3333, name: 'Team 3333' });
+    expect(q1.blue.teams[1]).toEqual({ number: 3333, name: 'Team 3333', dq: true });
     expect(sf).toMatchObject({ label: 'M-2', played: false, level: 'playoff' });
     expect(packEvent(pack, 2024, 'USNJQ1')).toBeNull();
     expect(packEvent(pack, 2025, 'OTHER')).toBeNull();
@@ -43,7 +43,9 @@ describe('offline pack', () => {
 
   it('builds a team season from its events', () => {
     const p = packTeamProfile(pack, 2025, 4215)!;
-    expect(p).toMatchObject({ number: 4215, name: 'Mech', city: 'Edison', season: 2025, stale: true });
+    // A region's pack may miss the team's events elsewhere.
+    expect(p).toMatchObject({ number: 4215, name: 'Mech', city: 'Edison', season: 2025, stale: true, partial: true });
+    expect(packTeamProfile({ ...pack, region: 'ALL' }, 2025, 4215)).not.toHaveProperty('partial');
     expect(p.events).toHaveLength(1);
     expect(p.events[0].stats).toMatchObject({ rank: 1, wins: 3, awards: ['Inspire'] });
     expect(packTeamProfile(pack, 2025, 9999)).toBeNull();

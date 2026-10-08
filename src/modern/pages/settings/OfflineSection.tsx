@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { CloudDownload, HardDrive, RefreshCw, Trash2, TriangleAlert } from 'lucide-react';
 import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui-kit';
-import { notify } from '../../../components/dialog';
+import { confirmDialog, notify } from '../../../components/dialog';
 import { relTime } from '../../../components/scout/ScoutUi';
 import { downloadOfflinePack, fetchOfflineRegions, getOfflinePack, onOfflinePackChange, removeOfflinePack, type SavedPack } from '../../../services/offlinePack';
 import { packAsOf, packStale } from '../../../utils/offlinePack';
@@ -27,13 +27,35 @@ export function OfflineSection() {
     let live = true;
     void getOfflinePack().then((p) => { if (live) setSaved(p); });
     const off = onOfflinePackChange((p) => { if (live) setSaved(p); });
-    fetchOfflineRegions()
-      .then((r) => { if (live) setRegions(r); })
-      .catch((e) => { if (live) setRegionsError(typeof navigator !== 'undefined' && navigator.onLine === false ? 'Connect to the internet to download offline data.' : (e as Error).message); });
     return () => { live = false; off(); };
   }, []);
 
+  // The region list: again on Retry, and when the connection comes back.
+  const [regionsTry, setRegionsTry] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setRegionsError(null);
+    fetchOfflineRegions()
+      .then((r) => { if (live) setRegions(r); })
+      .catch((e) => { if (live) setRegionsError(typeof navigator !== 'undefined' && navigator.onLine === false ? 'Connect to the internet to download offline data.' : (e as Error).message); });
+    return () => { live = false; };
+  }, [regionsTry]);
+  useEffect(() => {
+    const back = () => setRegionsTry((n) => n + 1);
+    window.addEventListener('online', back);
+    return () => window.removeEventListener('online', back);
+  }, []);
+
   const download = async (code: string, label: string) => {
+    // One region per device: say so before replacing a different one.
+    if (saved && saved.pack.region !== code) {
+      const ok = await confirmDialog({
+        title: `Replace ${saved.pack.regionName}?`,
+        message: `This device keeps one download at a time. ${label} will replace your ${saved.pack.regionName} offline data.`,
+        confirmLabel: `Download ${label}`,
+      });
+      if (!ok) return;
+    }
     setBusy(code);
     try {
       const p = await downloadOfflinePack(code);
@@ -89,7 +111,12 @@ export function OfflineSection() {
       </SettingsGroup>
 
       <SettingsGroup title="Download" description={regions ? `FTC teams, events, match results and Predict ratings for the ${regions.season}–${String((regions.season + 1) % 100).padStart(2, '0')} season.` : undefined}>
-        {regionsError && <p role="alert" className="px-4 py-4 text-sm text-muted-foreground">{regionsError}</p>}
+        {regionsError && !regions && (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
+            <p role="alert" className="text-sm text-muted-foreground">{regionsError}</p>
+            <Button variant="outline" size="sm" onClick={() => setRegionsTry((n) => n + 1)} className="max-sm:h-11"><RefreshCw /> Try again</Button>
+          </div>
+        )}
         {!regions && !regionsError && <p className="px-4 py-4 text-sm text-muted-foreground">Loading regions…</p>}
         {regions && (
           <>

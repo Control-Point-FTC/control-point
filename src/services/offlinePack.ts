@@ -40,6 +40,13 @@ let memo: Promise<SavedPack | null> | null = null;
 const listeners = new Set<(p: SavedPack | null) => void>();
 const announce = (p: SavedPack | null) => { memo = Promise.resolve(p); listeners.forEach((l) => l(p)); };
 
+// Other tabs: told when this one saves or removes the pack, so they read it again.
+const channel: BroadcastChannel | null = (() => {
+  try { return typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('control-point-offline-pack') : null; } catch { return null; }
+})();
+if (channel) channel.onmessage = () => { memo = null; void getOfflinePack().then((p) => listeners.forEach((l) => l(p))); };
+const tellOtherTabs = () => { try { channel?.postMessage('changed'); } catch { /* channel closed */ } };
+
 /** The pack on this device (read once, then kept in memory). Never throws. */
 export function getOfflinePack(): Promise<SavedPack | null> {
   memo ??= withStore<SavedPack | undefined>('readonly', (s) => s.get(KEY) as IDBRequest<SavedPack | undefined>)
@@ -74,10 +81,12 @@ export async function downloadOfflinePack(region: string): Promise<SavedPack> {
   const saved: SavedPack = { pack, bytes: text.length, savedAt: new Date().toISOString() };
   await withStore('readwrite', (s) => s.put(saved, KEY));
   announce(saved);
+  tellOtherTabs();
   return saved;
 }
 
 export async function removeOfflinePack(): Promise<void> {
   await withStore('readwrite', (s) => s.delete(KEY));
   announce(null);
+  tellOtherTabs();
 }

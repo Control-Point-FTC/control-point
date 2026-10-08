@@ -50,9 +50,9 @@ function eventFull(pack: OfflinePack, ev: PackEvent, names: Map<number, string>)
   const nameOf = (n: number) => names.get(n) ?? `Team ${n}`;
   const awardsOf = (n: number) => ev.awards.filter((a) => a[2] === n).map((a) => a[0]);
   const matches: FtcMatchFull[] = ev.matches.map((m) => {
-    const sur = new Set(m.sur ?? []);
+    const sur = new Set(m.sur ?? []), dq = new Set(m.dq ?? []);
     const side = (teams: number[], s: PackScore | null, opp: PackScore | null) => ({
-      teams: teams.map((n) => ({ number: n, name: nameOf(n), ...(sur.has(n) ? { surrogate: true } : {}) })),
+      teams: teams.map((n) => ({ number: n, name: nameOf(n), ...(sur.has(n) ? { surrogate: true } : {}), ...(dq.has(n) ? { dq: true } : {}) })),
       score: split(s, opp),
     });
     const level = m.l === 'q' ? 'qual' as const : 'playoff' as const;
@@ -84,7 +84,10 @@ export function packTeamProfile(pack: OfflinePack, season: number, number: numbe
   if (!team && !events.length) return null;
   const name = team?.[1] ?? `Team ${number}`;
   return {
-    ...freshness(pack), number, name, school: null, sponsors: [], city: team?.[2] ?? null, state: team?.[3] ?? null, country: null,
+    ...freshness(pack),
+    // A region's pack misses the team's events elsewhere (e.g. a championship).
+    ...(pack.region !== 'ALL' ? { partial: true } : {}),
+    number, name, school: null, sponsors: [], city: team?.[2] ?? null, state: team?.[3] ?? null, country: null,
     rookieYear: null, season, seasons: [season], totalTeams: null,
     opr: { tot: null, auto: null, dc: null, eg: null }, oprSource: null,
     events: events.map((e) => ({
