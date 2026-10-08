@@ -116,11 +116,13 @@ describe("PredictStore layout upgrade", () => {
       hasSeason: () => true, eventFiles: () => files, lastSync: () => null,
       readEventFile: () => { reads++; return rawEvent("USNJQ1", "USNJ", [[1, "a"], [2, "b"], [3, "c"], [4, "d"]]); },
     });
-    expect(await b.events(SEASON)).toHaveLength(1);
-    await b.events(SEASON);
+    const first = await b.events(SEASON);
+    expect(first.events).toHaveLength(1);
+    expect((await b.events(SEASON)).version).toBe(first.version);
     expect(reads).toBe(1);
+    // A rewritten file (e.g. by a sync where other events failed): new version.
     files[0] = { ...files[0], mtimeMs: 2 };
-    await b.events(SEASON);
+    expect((await b.events(SEASON)).version).not.toBe(first.version);
     expect(reads).toBe(2);
   });
 });

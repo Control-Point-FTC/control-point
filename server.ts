@@ -5945,10 +5945,10 @@ async function startServer() {
   const offlineBuilder = new OfflinePackBuilder(predictStore);
   const offlinePacks = new Map<string, { json: string; gz: Buffer }>();
   /** The newest season with stored events, and its packed events. */
-  async function offlineSeason(): Promise<{ season: number; events: PackedEvent[] } | null> {
+  async function offlineSeason(): Promise<{ season: number; events: PackedEvent[]; version: string } | null> {
     for (const s of [...predictSeasons].sort((a, b) => b - a)) {
-      const events = await offlineBuilder.events(s);
-      if (events.length) return { season: s, events };
+      const got = await offlineBuilder.events(s);
+      if (got.events.length) return { season: s, ...got };
     }
     return null;
   }
@@ -5971,23 +5971,21 @@ async function startServer() {
     if (!auth) return;
     const region = String(req.query.region || "").toUpperCase();
     if (!/^(ALL|[A-Z0-9]{2,8})$/.test(region)) return res.status(400).json({ error: "Choose a region" });
-    // The sync version is read before the files: a pack read while a sync
-    // finishes is sent but not kept, so it's never cached under the new version.
-    const syncedBefore = new Map(predictSeasons.map((x) => [x, predictStore.lastSync(x)]));
     const got = await offlineSeason();
     if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
     if (region !== "ALL" && !got.events.some((e) => e.event.region === region)) return res.status(404).json({ error: "No events in that region this season" });
-    const dataAsOf = syncedBefore.get(got.season) ?? null;
-    const key = `${got.season}:${region}:${dataAsOf}`;
+    const dataAsOf = predictStore.lastSync(got.season);
+    // Keyed by the stored files' version (read with the events): any file a
+    // sync rewrote, even one that partly failed, makes a new pack. dataAsOf
+    // only labels its age.
+    const key = `${got.season}:${region}:${got.version}:${dataAsOf}`;
     let built = offlinePacks.get(key);
     if (!built) {
       const json = JSON.stringify(buildPack(got.events, got.season, region, dataAsOf));
       built = { json, gz: await gzipAsync(json) };
-      if (predictStore.lastSync(got.season) === dataAsOf) {
-        offlinePacks.set(key, built);
-        // Keep a handful (the full pack is a few MB).
-        while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
-      }
+      offlinePacks.set(key, built);
+      // Keep a handful (the full pack is a few MB).
+      while (offlinePacks.size > 6) offlinePacks.delete(offlinePacks.keys().next().value!);
     }
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Vary", "Accept-Encoding");
