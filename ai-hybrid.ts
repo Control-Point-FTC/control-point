@@ -26,6 +26,7 @@ import {
   type AiUsage,
   type ChatMessage,
 } from "./ai.js";
+import { anthropicSources, dedupeSources, type WebSource } from "./server/webSources.js";
 
 const ANTHROPIC_API_BASE = "https://api.anthropic.com/v1";
 // claude-sonnet-4-20250514 was retired on 2026-06-15 (requests 404), so the
@@ -38,6 +39,13 @@ const DEFAULT_ANTHROPIC_EFFORT = "low";
 // picks by refusal category (Claude API only).
 const ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const ANTHROPIC_TIMEOUT_MS = 90_000;
+// Claude's server-side web tools for grounded questions (prices, stock, rule
+// changes). Capped so a reply stays quick and well under the server loop's
+// iteration limit (no pause_turn to resume).
+const ANTHROPIC_WEB_TOOLS = [
+  { type: "web_search_20260209", name: "web_search", max_uses: 3 },
+  { type: "web_fetch_20260209", name: "web_fetch", max_uses: 2 },
+];
 const ANTHROPIC_VERSION = "2023-06-01";
 
 export type AIProvider = "gemini" | "anthropic";
@@ -102,6 +110,12 @@ const NEEDS_WEB_PATTERNS: RegExp[] = [
   /\b(what|when|where|who|which)\b[^?.!]{0,80}\b20(2[6-9]|[3-9]\d)\b/i, // dated factual questions
   /\b(20(2[6-9]|[3-9]\d))\b.{0,40}\b(season|kickoff|championship|worlds)\b/i,
   /\b(price|pricing|in\s+stock|availability|backorder)\b/i, // supplier facts
+  /\bhow\s+much\b.{0,40}\b(cost|costs|charge|sell)\b/i, // "how much does a servo cost"
+  /\b(costs?|cheap(est|er)|on\s+sale|discount|coupon|lead\s+time|out\s+of\s+stock|sold\s+out|restock(ed)?|discontinued)\b/i,
+  /\bwhere\s+(can|do|should|could)\s+(i|we)\s+(buy|get|order)\b|\bwhere\s+to\s+(buy|order)\b/i,
+  /\b(fact[-\s]?check|double[-\s]?check|verify)\b/i, // "fact-check that"
+  /\bis\s+(that|this|it)\s+(still\s+)?(true|correct|accurate|up\s+to\s+date)\b/i,
+  /\bstill\b.{0,30}\b(available|legal|allowed|sold|made|in\s+stock|true)\b/i,
   /https?:\/\//i, // pasted link to research
 ];
 
@@ -136,12 +150,15 @@ export function routeChatRequest(opts: {
   if (opts.hasImages) {
     return { provider: "gemini", grounded: false, reason: "image input: Gemini vision path" };
   }
-  // Explicit client request (a future "Search web" toggle) always wins.
-  if (opts.webSearch === true) {
-    return { provider: "gemini", grounded: true, reason: "explicit web-search request" };
-  }
-  if (needsWebSearch(opts.text)) {
-    return { provider: "gemini", grounded: true, reason: "message needs current web information" };
+  // Web questions are grounded. Gemini's google_search is the free default;
+  // Claude searches with its own web tools when the owner chose Anthropic or
+  // Gemini isn't set up.
+  const web = opts.webSearch === true ? "explicit web-search request" : needsWebSearch(opts.text) ? "message needs current web information" : "";
+  if (web) {
+    const claude = isAnthropicConfigured() && (opts.forceProvider === "anthropic" || !isGeminiConfigured());
+    return claude
+      ? { provider: "anthropic", grounded: true, reason: `${web}: Claude web search` }
+      : { provider: "gemini", grounded: true, reason: web };
   }
   // Owner override: everything goes to the chosen provider (ungrounded here).
   if (opts.forceProvider === "gemini") {
@@ -264,6 +281,9 @@ async function callAnthropicChat(opts: {
   onChunk?: (text: string) => void;
   onUsage?: (u: AiUsage) => void;
   signal?: AbortSignal;
+  /** Let Claude search the web and read pages (server tools). */
+  webSearch?: boolean;
+  onSources?: (s: WebSource[]) => void;
 }): Promise<string> {
   const body: any = {
     model: anthropicModel(),
@@ -279,6 +299,7 @@ async function callAnthropicChat(opts: {
     output_config: { effort: anthropicEffort() },
     fallbacks: "default",
   };
+  if (opts.webSearch) body.tools = ANTHROPIC_WEB_TOOLS;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -287,20 +308,47 @@ async function callAnthropicChat(opts: {
     "anthropic-beta": ANTHROPIC_FALLBACK_BETA,
   };
 
-  const res = await fetchWithPolicy(
+  const send = (b: any) => fetchWithPolicy(
     `${ANTHROPIC_API_BASE}/messages`,
-    { method: "POST", headers, body: JSON.stringify(body) },
+    { method: "POST", headers, body: JSON.stringify(b) },
     { timeoutMs: ANTHROPIC_TIMEOUT_MS, label: "Anthropic", signal: opts.signal }
   );
+  let res = await send(body);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Anthropic API error ${res.status}: ${text.slice(0, 2000)}`);
+    // Web tools turned off for the organization (or not offered on this
+    // model): answer without them rather than fail the whole reply.
+    if (body.tools && res.status === 400 && /web_search|web_fetch|tool/i.test(text)) {
+      console.warn("[AI] Anthropic rejected the web tools; retrying once without them");
+      const { tools: _t, ...plain } = body;
+      res = await send(plain);
+      if (!res.ok) {
+        const t2 = await res.text().catch(() => "");
+        throw new Error(`Anthropic API error ${res.status}: ${t2.slice(0, 2000)}`);
+      }
+    } else {
+      throw new Error(`Anthropic API error ${res.status}: ${text.slice(0, 2000)}`);
+    }
   }
+  const cited: WebSource[] = [];
+  const results: WebSource[] = [];
+  const collect = (ev: any) => {
+    const f = anthropicSources(ev);
+    cited.push(...f.cited);
+    results.push(...f.results);
+  };
+  // Pages Claude cited, else the top pages it searched.
+  const reportSources = () => {
+    const list = cited.length ? cited : results.slice(0, 3);
+    if (list.length) opts.onSources?.(list);
+  };
 
   if (!opts.stream || !res.body) {
     const data = await res.json();
     const u = extractAnthropicUsage(data);
     if (u && opts.onUsage) opts.onUsage(u);
+    for (const b of data?.content || []) collect(b);
+    reportSources();
     const text = extractAnthropicText(data);
     // Read stop_reason before content: a decline may have no text, or stop part-way.
     if (data?.stop_reason === "refusal") return text.trim() ? `${text}\n\n(${ANTHROPIC_REFUSAL_MSG})` : ANTHROPIC_REFUSAL_MSG;
@@ -336,6 +384,7 @@ async function callAnthropicChat(opts: {
       if (!payload) continue;
       try {
         const parsed = JSON.parse(payload);
+        collect(parsed);
         if (parsed?.type === "content_block_delta" && parsed?.delta?.type === "text_delta") {
           const text = parsed.delta.text || "";
           if (text) {
@@ -363,6 +412,7 @@ async function callAnthropicChat(opts: {
     throw new Error(`Anthropic API error ${status}: ${streamError.type}: ${String(streamError.message || "").slice(0, 500)}`);
   }
   if (lastUsage && opts.onUsage) opts.onUsage(lastUsage);
+  reportSources();
   if (refused) {
     // A decline mid-reply: say so rather than ending on half a sentence.
     const note = full.trim() ? `\n\n(${ANTHROPIC_REFUSAL_MSG})` : ANTHROPIC_REFUSAL_MSG;
@@ -487,6 +537,8 @@ export interface AIChatResult {
   text: string;
   provider: AIProvider;
   grounded: boolean;
+  /** Web pages the answer drew on (grounded replies only). */
+  sources: WebSource[];
 }
 
 /**
@@ -506,6 +558,8 @@ export async function aiChat(opts: {
   onUsage?: (u: AiUsage) => void;
   signal?: AbortSignal;
 }): Promise<AIChatResult> {
+  const sources: WebSource[] = [];
+  const onSources = (s: WebSource[]) => { sources.push(...s); };
   if (!isGeminiConfigured() && !isAnthropicConfigured()) {
     throw new Error("AI not configured: set GEMINI_API_KEY or ANTHROPIC_API_KEY");
   }
@@ -541,8 +595,10 @@ export async function aiChat(opts: {
         onChunk: opts.onChunk,
         onUsage: opts.onUsage,
         signal: opts.signal,
+        webSearch: route.grounded,
+        onSources,
       });
-      return { text, provider: "anthropic", grounded: false };
+      return { text, provider: "anthropic", grounded: route.grounded, sources: dedupeSources(sources) };
     } catch (err: any) {
       fail("anthropic", err);
     }
@@ -560,9 +616,10 @@ export async function aiChat(opts: {
       opts.extraSystem,
       opts.onUsage,
       opts.signal,
-      route.grounded
+      route.grounded,
+      onSources
     );
-    return { text, provider: "gemini", grounded: route.grounded };
+    return { text, provider: "gemini", grounded: route.grounded, sources: dedupeSources(sources) };
   } catch (err: any) {
     if (isAnthropicConfigured() && isGeminiFailoverable(err)) {
       console.warn(`[AI] Gemini failed (%s); failing over once to Anthropic`, String(err?.message || err).slice(0, 120));
@@ -575,8 +632,11 @@ export async function aiChat(opts: {
           onChunk: opts.onChunk,
           onUsage: opts.onUsage,
           signal: opts.signal,
+          // A grounded question keeps its web search on the fallback too.
+          webSearch: route.grounded,
+          onSources,
         });
-        return { text, provider: "anthropic", grounded: false };
+        return { text, provider: "anthropic", grounded: route.grounded, sources: dedupeSources(sources) };
       } catch (anthropicErr: any) {
         fail("anthropic", anthropicErr);
       }

@@ -78,6 +78,9 @@ Copy the essentials into a `.env` file:
 # ANTHROPIC_API_KEY=""
 # ANTHROPIC_MODEL="claude-sonnet-5-5"   # optional; this is the default
 # ANTHROPIC_EFFORT="low"                # optional: low | medium | high | xhigh | max
+# Bruno web checks (prices, stock, fact-checks) use Gemini google_search grounding, or
+# Claude's web_search / web_fetch tools when Claude answers. Turn web search on for the
+# organization in the Claude Console; if it is off, Claude answers without it.
 ```
 
 Google sign-in only works for emails already on the team roster — an admin adds members first, then they link their Google account.

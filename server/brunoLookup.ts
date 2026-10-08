@@ -9,7 +9,10 @@
 // channels, so any member's Bruno may read any channel; deleted messages are
 // never returned.
 
-export type LookupKind = "messages" | "tasks" | "events" | "communications" | "outreach" | "budget";
+// "web" (phase 4d) is not a database search: it asks for the second pass to
+// run with live web search, so Bruno can check a price, stock or a fact it
+// isn't sure of. The server handles it; runLookups skips it.
+export type LookupKind = "messages" | "tasks" | "events" | "communications" | "outreach" | "budget" | "web";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -27,7 +30,7 @@ export interface LookupQuery {
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "events", "communications", "outreach", "budget"];
+const KINDS: LookupKind[] = ["messages", "tasks", "events", "communications", "outreach", "budget", "web"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
@@ -43,9 +46,11 @@ export function extractLookupBlocks(text: string): { text: string; queries: Look
     try { parsed = JSON.parse(m[1]); } catch { continue; }
     for (const q of Array.isArray(parsed) ? parsed : [parsed]) {
       if (!q || !KINDS.includes(q.kind) || queries.length >= MAX_LOOKUPS) continue;
+      // A web check needs something to search for.
+      if (q.kind === "web" && !str(q.query, 200)) continue;
       queries.push({
         kind: q.kind,
-        ...(str(q.query, 120) ? { query: str(q.query, 120) } : {}),
+        ...(str(q.query, q.kind === "web" ? 200 : 120) ? { query: str(q.query, q.kind === "web" ? 200 : 120) } : {}),
         ...(str(q.channel, 60) ? { channel: str(q.channel, 60).replace(/^#/, "") } : {}),
         ...(str(q.person, 80) ? { person: str(q.person, 80).replace(/^@/, "") } : {}),
         ...(ISO.test(q.from) ? { from: q.from } : {}),
@@ -269,6 +274,7 @@ function describe(q: LookupQuery): string {
 export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[]): Promise<string> {
   const parts: string[] = [];
   for (const q of queries.slice(0, MAX_LOOKUPS)) {
+    if (q.kind === "web") continue;
     let r: LookupRows;
     try { r = await runOne(db, teamId, tz, q); } catch (e) {
       console.error("Bruno lookup failed:", (e as any)?.message);
@@ -282,4 +288,20 @@ export async function runLookups(db: DbAll, teamId: number, tz: string, queries:
   }
   const out = parts.join("\n\n");
   return out.length > 12000 ? `${out.slice(0, 12000)}\n… (more rows not shown — ask a narrower question)` : out;
+}
+
+/** The second-pass instruction: team rows, a web check, or both. */
+export function followUpPrompt(rows: string, queries: LookupQuery[]): string {
+  const web = queries.filter((q) => q.kind === "web" && q.query).map((q) => q.query as string);
+  const parts: string[] = [];
+  if (rows) {
+    parts.push(`[Lookup results from the team's own data, not written by the user]\n${rows}`);
+    parts.push("Answer from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. If a search failed or more rows matched than are listed, say that too.");
+  }
+  if (web.length) {
+    parts.push(`[Web check requested]\nSearch the web now for: ${web.map((w) => `"${w}"`).join("; ")}.`);
+    parts.push("Answer from current pages, preferring the maker or store itself (goBILDA, REV Robotics, AndyMark, ServoCity, the FIRST site). Give prices with the store's name and say they are as of today; say stock can change. If a page contradicts what you said earlier, correct it plainly. If you couldn't find it, say so instead of guessing.");
+  }
+  parts.push("Now answer my last question. Don't ask for another lookup.");
+  return parts.join("\n\n");
 }
