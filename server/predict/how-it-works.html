@@ -337,7 +337,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 
   <div class="col">
     <h3>A final calibration touch</h3>
-    <p>Even good models are a little over- or under-confident. Muse added <strong>Platt scaling</strong>: a tiny correction, fitted on 2024–25, that gently pulls probabilities toward 50% (multiply the log-odds by 0.937, nudge by 0.020). It never changes who's favoured. It just makes "70%" mean 70%. On the test season it cut calibration error from 0.017 to 0.0105.</p>
+    <p>Even good models are a little over- or under-confident. Muse added <strong>Platt scaling</strong>: a tiny correction, fitted on 2024–25, that gently pulls probabilities toward 50% (multiply the log-odds by 0.937, nudge by 0.020). Because the correction is monotonic it never changes the order of predictions — though a probability sitting right at 49.9% could tip just over 50%. It just makes "70%" mean 70%. On the test season it cut calibration error from 0.017 to 0.0105.</p>
   </div>
 
   <figure>
@@ -459,7 +459,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
       <div class="fig-label">Figure 10</div>
       <div class="fig-title">Does "70%" mean 70%? Calibration on the test season</div>
       <svg id="calChart" viewBox="0 0 640 330" role="img" aria-label="Calibration chart: predicted probability on the x axis, actual win rate on the y axis. Dots for match predictions and for advancement odds sit close to the diagonal."></svg>
-      <div class="legend"><span><i style="background:var(--gold-fill)"></i>Match win odds (36,395 matches)</span><span><i style="background:var(--blue)"></i>Advancement odds before the event</span><span><i style="background:var(--line)"></i>Perfect calibration</span></div>
+      <div class="legend"><span><i style="background:var(--gold-fill)"></i>Match win odds (37,395 matches)</span><span><i style="background:var(--blue)"></i>Advancement odds before the event</span><span><i style="background:var(--line)"></i>Perfect calibration</span></div>
     </div>
     <figcaption>Each dot groups predictions of about the same probability and shows how often that outcome really happened. Dots on the diagonal mean the numbers can be taken at face value.</figcaption>
   </figure>
