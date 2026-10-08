@@ -59,6 +59,7 @@ import { RateLimiter, limit, clientIp, normEmail } from "./server/rateLimit.js";
 import { DurableFtcCache, recordSourceOk, recordSourceFailure, sourceHealth } from "./server/ftcStore.js";
 import { workspaceFactsBlock, resolveTimeZone, todayIn } from "./server/workspaceFacts.js";
 import { buildIcs } from "./server/ics.js";
+import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } from "./src/utils/changelog.js";
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
@@ -8168,6 +8169,110 @@ Rules:
        GROUP BY message, route, kind ORDER BY n DESC LIMIT 50`
     );
     res.json({ recent: rows, groups });
+  });
+
+  // ---- What's new: owner-edited changelog ----
+  // Releases live in changelog_entries; the owner adds and edits them in the
+  // Owner console. An empty table is seeded once from the built-in list.
+  const rowToEntry = (r: any) => {
+    const arr = (v: any) => { try { const a = JSON.parse(v || "[]"); return Array.isArray(a) ? a.map(String) : []; } catch { return []; } };
+    return { id: Number(r.id), version: r.version, date: r.date, title: r.title, added: arr(r.added), improved: arr(r.improved), fixed: arr(r.fixed), updated_at: r.updated_at, posted_at: r.posted_at || null };
+  };
+  const listChangelog = async () =>
+    ((await dbAll("SELECT * FROM changelog_entries")) as any[]).map(rowToEntry).sort((a, b) => compareVersions(a.version, b.version));
+  try {
+    const n = (await dbGet("SELECT COUNT(*) AS n FROM changelog_entries")) as any;
+    if (!Number(n?.n)) {
+      const now = new Date().toISOString();
+      await dbBatch(CHANGELOG.map((e) => ({
+        sql: "INSERT OR IGNORE INTO changelog_entries (version, date, title, added, improved, fixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        args: [e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), now],
+      })));
+    }
+  } catch (e) { console.error("changelog seed failed:", e); }
+  const discordChangelogWebhook = () => {
+    const url = (process.env.DISCORD_CHANGELOG_WEBHOOK || "").trim();
+    return /^https:\/\/(?:canary\.|ptb\.)?(?:discord|discordapp)\.com\/api\/webhooks\//.test(url) ? url : "";
+  };
+
+  // Everyone (signed in or not) reads the releases; there's nothing private in them.
+  app.get("/api/changelog", async (_req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-cache");
+      res.json((await listChangelog()).map(({ id, updated_at, posted_at, ...e }) => e));
+    } catch (error) {
+      console.error("Error reading changelog:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/owner/changelog", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    res.json({ entries: await listChangelog(), discord: !!discordChangelogWebhook() });
+  });
+
+  app.post("/api/owner/changelog", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const v = changelogEntryFrom(req.body);
+    if ("error" in v) return res.status(400).json({ error: v.error });
+    const e = v.entry;
+    if (await dbGet("SELECT id FROM changelog_entries WHERE version = ?", e.version)) return res.status(409).json({ error: `v${e.version} already exists` });
+    const info = await dbRun(
+      "INSERT INTO changelog_entries (version, date, title, added, improved, fixed, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), new Date().toISOString(),
+    );
+    res.json({ entry: rowToEntry(await dbGet("SELECT * FROM changelog_entries WHERE id = ?", info.lastInsertRowid)) });
+  });
+
+  app.put("/api/owner/changelog/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const id = parseInt(req.params.id, 10);
+    if (!(await dbGet("SELECT id FROM changelog_entries WHERE id = ?", id))) return res.status(404).json({ error: "Release not found" });
+    const v = changelogEntryFrom(req.body);
+    if ("error" in v) return res.status(400).json({ error: v.error });
+    const e = v.entry;
+    if (await dbGet("SELECT id FROM changelog_entries WHERE version = ? AND id != ?", e.version, id)) return res.status(409).json({ error: `v${e.version} already exists` });
+    await dbRun(
+      "UPDATE changelog_entries SET version = ?, date = ?, title = ?, added = ?, improved = ?, fixed = ?, updated_at = ? WHERE id = ?",
+      e.version, e.date, e.title, JSON.stringify(e.added), JSON.stringify(e.improved), JSON.stringify(e.fixed), new Date().toISOString(), id,
+    );
+    res.json({ entry: rowToEntry(await dbGet("SELECT * FROM changelog_entries WHERE id = ?", id)) });
+  });
+
+  app.delete("/api/owner/changelog/:id", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const info = await dbRun("DELETE FROM changelog_entries WHERE id = ?", parseInt(req.params.id, 10));
+    if (!info.changes) return res.status(404).json({ error: "Release not found" });
+    res.json({ ok: true });
+  });
+
+  // Post a release to the Discord changelog channel (DISCORD_CHANGELOG_WEBHOOK).
+  app.post("/api/owner/changelog/:id/discord", async (req, res) => {
+    const auth = await requireOwner(req, res);
+    if (!auth) return;
+    const url = discordChangelogWebhook();
+    if (!url) return res.status(400).json({ error: "Set DISCORD_CHANGELOG_WEBHOOK on the server to post to Discord" });
+    const id = parseInt(req.params.id, 10);
+    const row = await dbGet("SELECT * FROM changelog_entries WHERE id = ?", id);
+    if (!row) return res.status(404).json({ error: "Release not found" });
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: changelogDiscordText(rowToEntry(row)), allowed_mentions: { parse: [] } }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!r.ok) return res.status(502).json({ error: `Discord said ${r.status}` });
+      await dbRun("UPDATE changelog_entries SET posted_at = ? WHERE id = ?", new Date().toISOString(), id);
+      res.json({ entry: rowToEntry(await dbGet("SELECT * FROM changelog_entries WHERE id = ?", id)) });
+    } catch (error) {
+      console.error("Discord changelog post failed:", error);
+      res.status(502).json({ error: "Couldn't reach Discord — try again" });
+    }
   });
 
   app.get("/api/owner/feedback", async (req, res) => {

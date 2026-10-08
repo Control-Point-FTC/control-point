@@ -259,3 +259,57 @@ export const CHANGELOG: ChangelogEntry[] = [
 ];
 
 export const CURRENT_VERSION = CHANGELOG[0].version;
+
+// --- Owner-edited changelog (V3.5) -------------------------------------------
+// The owner writes releases in the Owner console; they live in the database
+// (changelog_entries) and What's new reads them from /api/changelog. The list
+// above seeds an empty table once and is the offline fallback.
+
+/** Newest first: 3.10.0 > 3.5.0 > 3.0.0 > 2.0.0. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pb[i] || 0) - (pa[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+export const CHANGELOG_LIMITS = { title: 120, item: 400, items: 50 } as const;
+
+/** Validate an entry from the owner editor; returns the clean entry or an error. */
+export function changelogEntryFrom(body: any): { entry: ChangelogEntry } | { error: string } {
+  const version = typeof body?.version === 'string' ? body.version.trim().replace(/^v/i, '') : '';
+  if (!/^\d{1,4}(\.\d{1,4}){0,2}$/.test(version)) return { error: 'Version must look like 3.5 or 3.5.1' };
+  const date = typeof body?.date === 'string' ? body.date.trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) return { error: 'Pick a release date' };
+  const title = typeof body?.title === 'string' ? body.title.trim() : '';
+  if (!title) return { error: 'Give the release a title' };
+  if (title.length > CHANGELOG_LIMITS.title) return { error: `Title must be ${CHANGELOG_LIMITS.title} characters or fewer` };
+  const list = (v: unknown, label: string): string[] | string => {
+    const raw = Array.isArray(v) ? v : typeof v === 'string' ? v.split('\n') : [];
+    const items = raw.map((s) => String(s ?? '').trim().replace(/^[-•*]\s*/, '')).filter(Boolean);
+    if (items.length > CHANGELOG_LIMITS.items) return `${label}: ${CHANGELOG_LIMITS.items} items at most`;
+    if (items.some((s) => s.length > CHANGELOG_LIMITS.item)) return `${label}: each item must be ${CHANGELOG_LIMITS.item} characters or fewer`;
+    return items;
+  };
+  const added = list(body?.added, 'New');
+  const improved = list(body?.improved, 'Improved');
+  const fixed = list(body?.fixed, 'Fixed');
+  for (const l of [added, improved, fixed]) if (typeof l === 'string') return { error: l };
+  if (!(added as string[]).length && !(improved as string[]).length && !(fixed as string[]).length) return { error: 'Add at least one change' };
+  return { entry: { version, date, title, added: added as string[], improved: improved as string[], fixed: fixed as string[] } };
+}
+
+/** The release as a Discord message (markdown, under Discord's 2000-character limit). */
+export function changelogDiscordText(e: ChangelogEntry): string {
+  const when = new Date(`${e.date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const parts = [`**Control Point v${e.version}: ${e.title}** (${when})`];
+  const block = (label: string, items: string[]) => { if (items.length) parts.push(`\n${label}\n${items.map((i) => `• ${i}`).join('\n')}`); };
+  block('✨ **New**', e.added);
+  block('🔧 **Improved**', e.improved);
+  block('🐛 **Fixed**', e.fixed);
+  const text = parts.join('\n');
+  return text.length <= 2000 ? text : `${text.slice(0, 1990).replace(/\n[^\n]*$/, '')}\n…`;
+}

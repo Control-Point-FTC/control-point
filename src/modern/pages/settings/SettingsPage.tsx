@@ -22,7 +22,7 @@ import { MembersSection, RolesSection } from './PeopleSections';
 import { NotificationsSection } from './NotificationsSection';
 import { WhatsNewDialog } from '../WhatsNewDialog';
 import { hasUnseenUpdate } from '../../../components/WhatsNewModal';
-import { CURRENT_VERSION } from '../../../utils/changelog';
+import { useChangelog } from '../../../utils/changelogStore';
 
 export type SettingsSectionId = 'profile' | 'appearance' | 'notifications' | 'calls' | 'bruno' | 'account' | 'workspace' | 'members' | 'roles' | 'admin';
 
@@ -63,7 +63,9 @@ export function SettingsPage(props: any) {
   const current = sections.find((s) => s.id === active)!;
   // What's new: the changelog, one click from Settings (also in the account menu and ⌘K).
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
-  const [unseen, setUnseen] = useState(() => hasUnseenUpdate());
+  const releases = useChangelog();
+  const [opened, setOpened] = useState(false);
+  const unseen = !opened && hasUnseenUpdate();
   // Like Discord: Esc closes Settings (back where you came from), unless a
   // dialog, menu or text field has it.
   const navigate = useNavigate();
@@ -130,12 +132,12 @@ export function SettingsPage(props: any) {
               <p className="mb-1 mt-5 hidden truncate px-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground lg:block">{k('groupAbout')}</p>
               <button
                 type="button"
-                onClick={() => { setWhatsNewOpen(true); setUnseen(false); }}
+                onClick={() => { setWhatsNewOpen(true); setOpened(true); }}
                 className="relative flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-lg:rounded-full max-lg:border max-lg:border-border"
               >
                 <Sparkles className="relative size-4 shrink-0" />
                 <span className="relative whitespace-nowrap font-medium">{k('whatsNew')}</span>
-                <span className="relative ml-auto text-xs tabular-nums text-muted-foreground max-lg:ml-0">v{CURRENT_VERSION}</span>
+                <span className="relative ml-auto text-xs tabular-nums text-muted-foreground max-lg:ml-0">v{releases[0]?.version}</span>
                 {unseen && <span className="relative size-2 shrink-0 rounded-full bg-accent" aria-label={k('whatsNewUnseen')} />}
               </button>
             </li>

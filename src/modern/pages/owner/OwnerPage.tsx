@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts';
 import {
-  AlertTriangle, Ban, Bug, Building2, Clock, FileText, Flag, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
+  AlertTriangle, Ban, Bug, Building2, Sparkles, Clock, FileText, Flag, MessageSquare, MessageSquareHeart, Search, ShieldCheck, Timer, Trash2, UserCircle, UserX, Users, Zap,
 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
@@ -23,6 +23,7 @@ import { Reveal, Stagger, StaggerItem } from '../../ui/motion';
 import { AnimatedValue } from '../../AnimatedValue';
 import { MemberAvatar } from '../tasks/AssigneePicker';
 import { apiFetch } from '../../../services/api';
+import { ChangelogTab } from './ChangelogTab';
 
 type Ctl = ReturnType<typeof useOwnerConsole>;
 // Legacy status classes are tuned for dark; Modern badges get their own tones.
@@ -46,6 +47,7 @@ export function OwnerPage() {
             <TabsTrigger value="flags" className="shrink-0 max-sm:h-11"><Flag /> Flags{ctl.openFlagCount > 0 && <Badge variant="destructive" className="ml-1">{ctl.openFlagCount}</Badge>}</TabsTrigger>
             <TabsTrigger value="feedback" className="shrink-0 max-sm:h-11"><MessageSquareHeart /> Feedback{ctl.totals.new_feedback > 0 && <Badge variant="soft" className="ml-1">{ctl.totals.new_feedback}</Badge>}</TabsTrigger>
             <TabsTrigger value="errors" className="shrink-0 max-sm:h-11"><Bug /> Errors</TabsTrigger>
+            <TabsTrigger value="changelog" className="shrink-0 max-sm:h-11"><Sparkles /> What’s new</TabsTrigger>
           </TabsList>
         </Tabs>
       </PageHeader>
@@ -57,6 +59,7 @@ export function OwnerPage() {
           {ctl.tab === 'flags' && <FlagsTab ctl={ctl} />}
           {ctl.tab === 'feedback' && <FeedbackTab ctl={ctl} />}
           {ctl.tab === 'errors' && <ErrorsTab />}
+          {ctl.tab === 'changelog' && <ChangelogTab />}
         </>
       )}
       {ctl.selectedId !== null && (
