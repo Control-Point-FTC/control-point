@@ -9182,7 +9182,8 @@ Rules:
       const { title, description, date, hours, location, attendees, funds_raised } = req.body;
       const missingOutreach = requiredTextError(req.body || {}, REQUIRED.outreach);
       if (missingOutreach) return res.status(400).json({ error: missingOutreach });
-      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", title, description, date, hours, location, Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), auth.teamId));
+      // Optional fields default rather than reach the driver as undefined (a 500).
+      const info = (await dbRun("INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", String(title).trim(), description ?? '', date, Math.max(0, parseFloat(hours) || 0), location ?? '', Math.max(0, parseInt(attendees) || 0), Math.max(0, parseFloat(funds_raised) || 0), auth.teamId));
 
       // Everyone hears about new outreach, as each of them chose.
       const allMembers = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
@@ -11534,7 +11535,7 @@ Rules:
       const missingComm = communicationError(req.body || {}, parentId != null);
       if (missingComm) return res.status(400).json({ error: missingComm });
       const dir = direction === 'inbound' ? 'inbound' : 'outbound';
-      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", recipient, subject, body, date, type || 'email', auth.teamId, parentId, dir));
+      const info = (await dbRun("INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", recipient ?? '', subject ?? '', body ?? '', date || new Date().toISOString().slice(0, 16).replace('T', ' '), type || 'email', auth.teamId, parentId, dir));
       res.json({ id: info.lastInsertRowid });
     } catch (error) {
       console.error("Error creating communication:", error);
