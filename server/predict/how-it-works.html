@@ -373,7 +373,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
 
 <div class="pal-back" id="palBack" hidden></div>
 <div class="pal" id="pal" role="dialog" aria-modal="true" aria-label="Jump to a section" hidden>
-  <input id="palInput" type="text" placeholder="Jump to…" autocomplete="off" aria-label="Filter sections">
+  <input id="palInput" type="text" placeholder="Jump to…" autocomplete="off" aria-label="Filter sections" role="combobox" aria-autocomplete="list" aria-controls="palList" aria-expanded="true">
   <ul id="palList" role="listbox"></ul>
 </div>
 
@@ -946,6 +946,7 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
     palList.replaceChildren(...shown.map((i, k) => {
       const li = document.createElement("li");
       li.setAttribute("role", "option");
+      li.id = "pal-opt-" + i.id;
       li.className = k === sel ? "sel" : "";
       li.setAttribute("aria-selected", String(k === sel));
       li.textContent = i.name;
@@ -954,6 +955,10 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
       li.addEventListener("pointermove", () => { if (sel !== k) { sel = k; renderPal(); } });
       return li;
     }));
+    // Tell assistive tech which option Enter opens, and keep it on screen.
+    const cur = palList.children[sel];
+    if (cur) { palInput.setAttribute("aria-activedescendant", cur.id); cur.scrollIntoView({ block: "nearest" }); }
+    else palInput.removeAttribute("aria-activedescendant");
   }
   function openPal() {
     opener = document.activeElement;
@@ -981,8 +986,8 @@ footer { margin-top: 5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink)
   palInput.addEventListener("input", () => { sel = 0; renderPal(); });
   addEventListener("keydown", (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName) && document.activeElement !== palInput;
-    if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing && pal.hidden)) { e.preventDefault(); pal.hidden ? openPal() : closePal(); return; }
-    if (pal.hidden) return;
+    if ((e.key === "k" && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing && !palIsOpen)) { e.preventDefault(); palIsOpen ? closePal() : openPal(); return; }
+    if (!palIsOpen) return; // closing starts now, even while the fade-out runs
     if (e.key === "Tab") { e.preventDefault(); palInput.focus(); return; } // focus stays in the dialog
     if (e.key === "Escape") closePal();
     else if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(shown.length - 1, sel + 1); renderPal(); }
