@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 
 // Talks to a freshly booted dev server; the first requests can be slow.
 vi.setConfig({ testTimeout: 30_000 });
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createClient } from "@libsql/client";
 import { sessionDbId, withSession } from "./helpers/session";
+import { killServerProcess, spawnServerProcess } from "./helpers/testServer";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -72,22 +73,13 @@ async function api(path: string, session: string | null, opts: RequestInit = {})
 }
 
 async function bootServer(): Promise<void> {
-  // Windows can't spawn the npx.cmd shim without a shell.
-  const win = process.platform === "win32";
-  proc = spawn(win ? "npx tsx server.ts" : "npx", win ? [] : ["tsx", "server.ts"], {
-    shell: win,
-    cwd: REPO,
-    env: { ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) },
-    stdio: "ignore",
-  });
+  proc = spawnServerProcess({ ...process.env, DATABASE_URL: `file:${dbPath}`, PORT: String(port) });
   await waitForServer(base);
 }
 
 async function killServer(): Promise<void> {
   if (proc) {
-    // With a shell (Windows) the server is a grandchild — kill the tree.
-    if (process.platform === "win32" && proc.pid) spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"]);
-    else proc.kill("SIGKILL");
+    await killServerProcess(proc, "SIGKILL");
     proc = null;
   }
   await new Promise((r) => setTimeout(r, 800));
