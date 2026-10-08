@@ -8892,9 +8892,9 @@ Rules:
       const single = items.length === 1 ? text.replace(/\s+/g, " ") : null;
       items = items.map((raw: any) => {
         const { _source, ...it } = raw;
-        // One task reads the whole text (nothing after a 500th character is lost);
-        // several read their own excerpt.
-        const source: string | null = single ?? _source ?? null;
+        // A task reads its own full excerpt (so notes around it can't override
+        // its fields); the whole text only when the AI quoted none.
+        const source: string | null = _source ?? single ?? null;
         if (!source) return it;
         const q = parseQuickAdd(source, todayISO, names);
         const who = q.assignees[0] ? roster.find((m: any) => m.name === q.assignees[0]) : null;
