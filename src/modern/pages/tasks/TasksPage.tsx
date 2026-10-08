@@ -125,7 +125,8 @@ export function TasksPage(props: any) {
   // Rows in the order they're on screen, so shift-click ranges match what you see.
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>('pending');
   const completed = useMemo(() => completedOrder(visible, reviewFilter), [visible, reviewFilter]);
-  const awaitingReview = visible.filter((t: any) => t.status === 'done' && t.review_status === 'pending').length;
+  // Same rule as the Awaiting review list: done and not approved yet (older tasks have no review status).
+  const awaitingReview = visible.filter((t: any) => t.status === 'done' && t.review_status !== 'approved').length;
   const shownInOrder = useMemo(() => (view === 'list' ? listOrder(visible) : view === 'board' ? boardOrder(visible) : view === 'completed' ? completed : NO_TASKS), [view, visible, completed]);
   const sel = useSelection(ctl.canManageTasks ? shownInOrder : NO_TASKS, taskId);
   const viewTask = viewTaskId ? ctl.filteredTasks.find((t: any) => t.id === viewTaskId) ?? null : null;

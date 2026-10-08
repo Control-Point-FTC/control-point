@@ -54,6 +54,18 @@ describe('parseQuickAdd', () => {
     expect(p('Wire hub, assign to Max and Ada')).toMatchObject({ title: 'Wire hub', assignees: ['Max', 'Ada Lovelace'] });
   });
 
+  it('review cases: assignee then a date, morning 24-hour times, default dates are marked', () => {
+    expect(p('Wire hub assign to Ada tomorrow at noon')).toMatchObject({ title: 'Wire hub', assignees: ['Ada Lovelace'], due_date: '2026-10-09', due_time: '12:00' });
+    expect(p('Wire hub, assign to Ada Lovelace and Max, friday')).toMatchObject({ title: 'Wire hub', assignees: ['Ada Lovelace', 'Max'], due_date: '2026-10-09' });
+    expect(p('Open lab at 06:30').due_time).toBe('06:30');
+    expect(p('Open lab at 18:30').due_time).toBe('18:30');
+    expect(p('Open lab at 6:30').due_time).toBe('18:30');
+    expect(p('Drive practice 07:00-09:00 saturday')).toMatchObject({ due_time: '07:00', end_time: '09:00' });
+    const weekend = p('Finish CAD this weekend at 4:30pm');
+    expect(weekend).toMatchObject({ due_time: '16:30', due_date: TODAY, date_is_default: true });
+    expect(p('Finish CAD friday at 4:30pm').date_is_default).toBeFalsy();
+  });
+
   it('leaves plain text alone', () => {
     expect(p('Write the judge presentation script')).toEqual({
       title: 'Write the judge presentation script', due_date: null, due_time: null, end_time: null, priority: null, recurrence: null, assignees: [],

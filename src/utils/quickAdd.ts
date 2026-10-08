@@ -24,6 +24,8 @@ export interface QuickParse {
   recurrence: Recurrence | null;
   /** Roster names mentioned as assignees (exact roster spelling). */
   assignees: string[];
+  /** True when due_date is only "today" because a time was given without a date. */
+  date_is_default?: boolean;
 }
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -83,7 +85,7 @@ export function readRecurrence(v: unknown): Recurrence | null {
   return { freq: o.freq, interval };
 }
 
-function to24(h: number, m: number, ampm: string | undefined): string | null {
+function to24(h: number, m: number, ampm: string | undefined, raw = ''): string | null {
   if (m > 59) return null;
   const ap = (ampm || '').toLowerCase().replace(/\./g, '');
   if (ap.startsWith('p')) { if (h < 1 || h > 12) return null; h = h === 12 ? 12 : h + 12; }
@@ -91,7 +93,8 @@ function to24(h: number, m: number, ampm: string | undefined): string | null {
   else {
     if (h > 23) return null;
     // "at 4" in a team schedule means the afternoon; 7 and under read as PM.
-    if (h >= 1 && h <= 7) h += 12;
+    // A leading zero ("06:30") is already 24-hour.
+    if (h >= 1 && h <= 7 && !raw.startsWith('0')) h += 12;
   }
   return `${pad(h)}:${pad(m)}`;
 }
@@ -152,35 +155,59 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
     const used = findName(m[2]) ? m[2] : m[2].split(' ')[0];
     text = text.replace(`@${used}`, ' ');
   }
-  // "assign(ed) to Ada (and Grace)", "for Ada" only when it is a roster name.
-  take(/[\s,;]+(?:and\s+)?(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:?)\s+([\p{L}][\p{L}'.-]*(?:\s+(?:and|&)\s+[\p{L}][\p{L}'.-]*|\s[\p{L}][\p{L}'.-]*)*)[\s,;.]*/iu, (m) => {
-    const parts = m[1].split(/\s+(?:and|&)\s+/i);
-    const found: string[] = [];
-    for (const p of parts) {
-      const words = p.trim().split(/\s+/);
-      // Longest roster match from the start ("Ada Lovelace" before "Ada").
-      let hit: string | undefined;
-      for (let k = words.length; k > 0 && !hit; k--) hit = findName(words.slice(0, k).join(' '));
-      if (hit) found.push(hit);
+  // "assign(ed) to Ada (and Grace)": only roster names are taken, and only
+  // the names themselves; what follows ("tomorrow at noon") stays for the
+  // date and time readers.
+  {
+    const lead = text.match(/[\s,;]+(?:and\s+)?(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:?)\s+/i);
+    if (lead && lead.index != null) {
+      let pos = lead.index + lead[0].length;
+      const found: string[] = [];
+      for (let guard = 0; guard < 10; guard++) {
+        const rest = text.slice(pos);
+        // Longest roster name (full name, then first name) at this spot.
+        let hit: { name: string; len: number } | null = null;
+        for (const n of names) {
+          for (const form of [n, n.split(/\s+/)[0]]) {
+            const re = new RegExp(`^${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,;.!?])`, 'i');
+            const mm = rest.match(re);
+            if (mm && (!hit || mm[0].length > hit.len)) hit = { name: n, len: mm[0].length };
+          }
+        }
+        if (!hit) break;
+        if (!found.includes(hit.name)) found.push(hit.name);
+        pos += hit.len;
+        const joiner = text.slice(pos).match(/^(?:\s*,\s*|\s+(?:and|&)\s+)/i);
+        // Only continue past "and"/"," when another roster name follows.
+        if (!joiner) break;
+        const after = text.slice(pos + joiner[0].length);
+        if (!names.some((n) => [n, n.split(/\s+/)[0]].some((f) => after.toLowerCase().startsWith(f.toLowerCase())))) break;
+        pos += joiner[0].length;
+      }
+      if (found.length) {
+        for (const f of found) if (!out.assignees.includes(f)) out.assignees.push(f);
+        text = `${text.slice(0, lead.index)} ${text.slice(pos)}`;
+      }
     }
-    if (!found.length) return false;
-    for (const f of found) if (!out.assignees.includes(f)) out.assignees.push(f);
-  });
+  }
 
   // ---- Time (before dates, so "at 4:30pm" doesn't read as a date) ----
   const T = '(\\d{1,2})(?::(\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?|am|pm)?';
   take(new RegExp(`[\\s,;]+(?:from\\s+|at\\s+)?${T}\\s*(?:-|–|to|until|till)\\s*${T}(?=[\\s,;.]|$)`, 'i'), (m) => {
-    if (!m[3] && !m[6] && !/\b(from|at)\b/i.test(m[0])) return false;
+    // A range needs am/pm, "from"/"at", or two full HH:MM times ("07:00-09:00").
+    if (!m[3] && !m[6] && !/\b(from|at)\b/i.test(m[0]) && !(m[2] && m[5])) return false;
     const endAp = m[6] || undefined;
     // "3-5pm": the start takes the end's am/pm when it has none.
-    const start = to24(Number(m[1]), Number(m[2] || 0), m[3] || endAp);
-    const end = to24(Number(m[4]), Number(m[5] || 0), endAp || m[3]);
+    const start = to24(Number(m[1]), Number(m[2] || 0), m[3] || endAp, m[1]);
+    const end = to24(Number(m[4]), Number(m[5] || 0), endAp || m[3], m[4]);
     if (!start || !end) return false;
     out.due_time = start; out.end_time = end;
   });
   if (!out.due_time) {
     take(new RegExp(`[\\s,;]+(?:at|@|by|around|before)\\s+${T}(?=[\\s,;.]|$)`, 'i'), (m) => {
-      const t = to24(Number(m[1]), Number(m[2] || 0), m[3]);
+      // "at 06:30" / "at 18:30" are already 24-hour (to24 keeps them); a
+      // plain "at 4" or "at 4:30" gets the afternoon guess.
+      const t = to24(Number(m[1]), Number(m[2] || 0), m[3], m[1]);
       if (!t) return false;
       out.due_time = t;
     });
@@ -247,7 +274,7 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
 
   // A time with no date means today, or tomorrow if that time has passed is
   // unknowable here, so today.
-  if (out.due_time && !out.due_date) out.due_date = today;
+  if (out.due_time && !out.due_date) { out.due_date = today; out.date_is_default = true; }
 
   out.title = text
     .replace(/\s+/g, ' ')

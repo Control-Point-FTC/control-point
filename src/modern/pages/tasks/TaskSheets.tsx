@@ -286,6 +286,7 @@ export function TaskEditorSheet({ ctl, members, teams }: { ctl: Ctl; members: an
                   <SelectTrigger id="task-repeat"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {REPEAT_OPTIONS.map((o) => <SelectItem key={o.value || 'none'} value={o.value || 'none'}>{o.label}</SelectItem>)}
+                    {f.repeat === 'custom' && f.repeatRule && <SelectItem value="custom">{recurrenceLabel(f.repeatRule)}</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>

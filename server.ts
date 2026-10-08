@@ -8686,26 +8686,52 @@ Rules:
    * date steps from the old due date (or today when it had none), so a task
    * finished late doesn't drift. Returns the new task, or null.
    */
+  /** The first occurrence after `from` that is not before `today` (jumps, no step cap). */
+  function catchUpOccurrence(from: string, rule: { freq: "daily" | "weekly" | "monthly"; interval: number }, today: string): string {
+    let due = nextOccurrence(from, rule);
+    if (due >= today) return due;
+    if (rule.freq === "monthly") {
+      while (due < today) due = nextOccurrence(due, rule); // at most ~12 steps a year behind
+      return due;
+    }
+    const step = (rule.freq === "daily" ? 1 : 7) * Math.max(1, rule.interval);
+    const behind = Math.round((Date.parse(`${today}T12:00:00Z`) - Date.parse(`${due}T12:00:00Z`)) / 86400000);
+    const jump = Math.ceil(behind / step) * step;
+    return new Date(Date.parse(`${due}T12:00:00Z`) + jump * 86400000).toISOString().slice(0, 10);
+  }
+
   async function spawnNextRecurringTask(task: any, teamId: number, actorId: number): Promise<any | null> {
     const rule = readRecurrence(task.recurrence);
     if (!rule) return null;
     // Claim the slot first: two completions racing can't both create one.
     const claim = (await dbRun("UPDATE tasks SET next_task_id = -1 WHERE id = ? AND next_task_id IS NULL", task.id)) as any;
     if (!Number(claim?.changes ?? claim?.rowsAffected ?? 0)) return null;
-    const tz = await teamTimeZone(teamId);
-    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(task.due_date || "")) ? String(task.due_date) : todayIn(tz);
-    let due = nextOccurrence(from, rule);
-    // Skip forward past today when catching up on an overdue series.
-    const today = todayIn(tz);
-    for (let i = 0; due < today && i < 400; i++) due = nextOccurrence(due, rule);
-    const assignees = await getTaskAssigneeIds(Number(task.id));
-    const info = (await dbRun(
-      "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)",
-      teamId, task.title, task.description, assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence
-    )) as any;
-    const nextId = Number(info.lastInsertRowid);
-    await setTaskAssignees(nextId, assignees, teamId);
-    await dbRun("UPDATE tasks SET next_task_id = ? WHERE id = ?", nextId, task.id);
+    let nextId = 0;
+    let due = "";
+    let assignees: number[] = [];
+    try {
+      const tz = await teamTimeZone(teamId);
+      const today = todayIn(tz);
+      const from = /^\d{4}-\d{2}-\d{2}$/.test(String(task.due_date || "")) ? String(task.due_date) : today;
+      due = catchUpOccurrence(from, rule, today);
+      assignees = await getTaskAssigneeIds(Number(task.id));
+      const info = (await dbRun(
+        "INSERT INTO tasks (team_id, title, description, status, assigned_to, due_date, due_time, is_board, created_at, priority, recurrence) VALUES (?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)",
+        teamId, task.title, task.description, assignees[0] ?? null, due, task.due_time ?? null, task.is_board ? 1 : 0, new Date().toISOString(), task.priority ?? null, task.recurrence
+      )) as any;
+      nextId = Number(info.lastInsertRowid);
+      await setTaskAssignees(nextId, assignees, teamId);
+      await dbRun("UPDATE tasks SET next_task_id = ? WHERE id = ?", nextId, task.id);
+    } catch (e) {
+      // Undo the half-made copy and release the claim, so the next completion
+      // can try again instead of the series silently stopping.
+      if (nextId) {
+        await dbRun("DELETE FROM task_assignees WHERE task_id = ?", nextId).catch(() => {});
+        await dbRun("DELETE FROM tasks WHERE id = ?", nextId).catch(() => {});
+      }
+      await dbRun("UPDATE tasks SET next_task_id = NULL WHERE id = ? AND next_task_id = -1", task.id).catch(() => {});
+      throw e;
+    }
     for (const mid of assignees) {
       if (mid !== actorId) createNotification(mid, `Next up (repeats): ${task.title}, due ${due}`, "task", { task_id: nextId });
     }
@@ -8837,19 +8863,22 @@ Rules:
       // Fallback: one task per non-empty line when AI is unavailable or found nothing.
       if (!items.length) {
         const lines = text.split(/\r?\n/).map((l) => l.trim().replace(/^[-*•\d.)\s]+/, "").trim()).filter((l) => l.length > 2);
+        // Each fallback task remembers its own line for the field reader below.
         items = [...new Set(lines)].slice(0, 50).map((title) => ({
           title: title.slice(0, 80), description: "", status: "todo",
-          assigned_to: null, assignee_name: null, due_date: null,
+          assigned_to: null, assignee_name: null, due_date: null, _source: title,
         }));
       }
       // The deterministic reader has the last word on structured fields: a
       // date, time, priority, repeat or assignee it finds in a line lands in
       // its field, and the phrase leaves the title (V3.5 quick-add fix).
+      // A fallback task reads its own line; one AI task reads the whole text;
+      // several AI tasks can't be tied to lines reliably, so they keep the AI's fields.
       const names = roster.map((m: any) => String(m.name));
-      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      const single = items.length === 1 ? [text.replace(/\s+/g, " ")] : null;
-      items = items.map((it: any, i: number) => {
-        const source = single ? single[0] : (items.length === lines.length ? lines[i] : null);
+      const single = items.length === 1 ? text.replace(/\s+/g, " ") : null;
+      items = items.map((raw: any) => {
+        const { _source, ...it } = raw;
+        const source: string | null = _source ?? single;
         if (!source) return it;
         const q = parseQuickAdd(source, todayISO, names);
         const who = q.assignees[0] ? roster.find((m: any) => m.name === q.assignees[0]) : null;
@@ -8857,7 +8886,8 @@ Rules:
           ...it,
           // Without AI the whole line became the title: use the cleaned one.
           title: (q.title && q.title.length >= 3 && String(it.title).trim() === source.trim().replace(/^[-*•\d.)\s]+/, "").slice(0, 80).trim() ? q.title : it.title).slice(0, 80),
-          due_date: q.due_date || it.due_date || null,
+          // "Today" that only comes from a bare time never beats a date the AI read.
+          due_date: (q.date_is_default ? (it.due_date || q.due_date) : (q.due_date || it.due_date)) || null,
           due_time: q.due_time || it.due_time || null,
           priority: q.priority || it.priority || null,
           recurrence: q.recurrence || it.recurrence || null,
@@ -9040,15 +9070,21 @@ Rules:
       const now = new Date().toISOString();
       const assignees = await getTaskAssigneeIds(Number(task.id));
       const reviewer = ((await dbGet("SELECT name FROM members WHERE id = ?", auth.memberId)) as any)?.name || "A manager";
+      // Each write re-checks the task is still done, so a review racing with
+      // another manager's (or a reopen) can't stamp a reopened task.
+      const changed = (r: any) => Number(r?.changes ?? r?.rowsAffected ?? 0) > 0;
+      const reopened = () => res.status(409).json({ error: "This task was reopened in the meantime — refresh and look again." });
       if (action === "approve") {
-        await dbRun("UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ?", auth.memberId, now, note || null, task.id);
+        const r = await dbRun("UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ? AND status = 'done'", auth.memberId, now, note || null, task.id);
+        if (!changed(r)) return reopened();
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} approved your task: ${task.title}`, "task", { task_id: Number(task.id) });
       } else if (action === "send_back") {
         if (!note) return res.status(400).json({ error: "Say what needs to change" });
-        await dbRun(
-          "UPDATE tasks SET status = 'in-progress', completed_at = NULL, review_status = 'changes_requested', reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ?",
+        const r = await dbRun(
+          "UPDATE tasks SET status = 'in-progress', completed_at = NULL, review_status = 'changes_requested', reviewed_by = ?, reviewed_at = ?, review_note = ? WHERE id = ? AND status = 'done'",
           auth.memberId, now, note, task.id
         );
+        if (!changed(r)) return reopened();
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} sent back "${task.title}": ${note}`, "task", { task_id: Number(task.id) });
       } else {
         return res.status(400).json({ error: "Unknown review action" });

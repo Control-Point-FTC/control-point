@@ -22,8 +22,10 @@ export interface TaskForm {
   status: string;
   /** '' | low | medium | high | urgent */
   priority?: string;
-  /** '' | daily | weekly | biweekly | monthly */
+  /** '' | daily | weekly | biweekly | monthly | custom */
   repeat?: string;
+  /** The stored rule when it isn't one of the menu's (e.g. every 3 weeks). */
+  repeatRule?: Recurrence | null;
 }
 
 /** Form repeat choice <-> stored rule. */
@@ -34,16 +36,20 @@ export const REPEAT_OPTIONS = [
   { value: 'biweekly', label: 'Every 2 weeks' },
   { value: 'monthly', label: 'Every month' },
 ];
-export function repeatToRule(v: string | undefined): Recurrence | null {
+export function repeatToRule(v: string | undefined, custom?: Recurrence | null): Recurrence | null {
+  if (v === 'custom') return custom ?? null;
   return v === 'daily' ? { freq: 'daily', interval: 1 } : v === 'weekly' ? { freq: 'weekly', interval: 1 }
     : v === 'biweekly' ? { freq: 'weekly', interval: 2 } : v === 'monthly' ? { freq: 'monthly', interval: 1 } : null;
 }
 export function ruleToRepeat(v: unknown): string {
   const r = readRecurrence(v);
   if (!r) return '';
-  if (r.freq === 'daily') return 'daily';
-  if (r.freq === 'monthly') return 'monthly';
-  return r.interval === 2 ? 'biweekly' : 'weekly';
+  if (r.freq === 'daily' && r.interval === 1) return 'daily';
+  if (r.freq === 'monthly' && r.interval === 1) return 'monthly';
+  if (r.freq === 'weekly' && r.interval === 1) return 'weekly';
+  if (r.freq === 'weekly' && r.interval === 2) return 'biweekly';
+  // Anything else (every 3 weeks, every 2 days…) is kept exactly as stored.
+  return 'custom';
 }
 export const PRIORITY_META: Record<string, { label: string; tone: string }> = {
   urgent: { label: 'Urgent', tone: 'border-rose-500/40 bg-rose-500/15 text-rose-600 dark:text-rose-300' },
@@ -190,6 +196,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       status: task.status || 'todo',
       priority: task.priority || '',
       repeat: ruleToRepeat(task.recurrence),
+      repeatRule: readRecurrence(task.recurrence),
     });
     setIsBoardTask(!!task.is_board);
     setShowAddTask(true);
@@ -221,7 +228,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
             due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
             is_board: isBoardTask ? 1 : 0,
             priority: newTask.priority || null,
-            recurrence: repeatToRule(newTask.repeat),
+            recurrence: repeatToRule(newTask.repeat, newTask.repeatRule),
           }),
         });
         if (res.ok) {
@@ -236,9 +243,9 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...newTask, repeat: undefined, is_board: isBoardTask ? 1 : 0,
+          ...newTask, repeat: undefined, repeatRule: undefined, is_board: isBoardTask ? 1 : 0,
           due_time: newTask.due_date && newTask.due_time ? newTask.due_time : null,
-          priority: newTask.priority || null, recurrence: repeatToRule(newTask.repeat),
+          priority: newTask.priority || null, recurrence: repeatToRule(newTask.repeat, newTask.repeatRule),
         }),
       });
       if (res.ok) {
@@ -335,6 +342,7 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
       due_time: t.due_time || (t.due_date ? '' : prev.due_time),
       priority: t.priority || prev.priority || '',
       repeat: t.recurrence ? ruleToRepeat(t.recurrence) : prev.repeat || '',
+      repeatRule: t.recurrence ? readRecurrence(t.recurrence) : prev.repeatRule ?? null,
       status: ['todo', 'in-progress', 'done'].includes(t.status) ? t.status : prev.status,
       assignee_ids: Array.isArray(t.assignee_ids) && t.assignee_ids.length ? t.assignee_ids : t.assigned_to ? [t.assigned_to] : prev.assignee_ids,
     }));

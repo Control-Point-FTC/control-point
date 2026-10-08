@@ -56,6 +56,18 @@ describe("priority + repeat", () => {
   });
 });
 
+describe("repeat catch-up", () => {
+  it("a series years behind jumps to the first date from today on", async () => {
+    const r = await t.post("/api/tasks", { title: "Daily log (old)", recurrence: { freq: "daily", interval: 1 }, due_date: "2020-01-01" }, admin);
+    const id = r.body.id ?? r.body.task?.id;
+    await t.post(`/api/tasks/${id}/complete`, { notes: "caught up" }, admin);
+    const next = await task((await task(id)).next_task_id);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    expect(next.due_date >= today).toBe(true);
+    expect(next.due_date <= new Date(Date.parse(`${today}T12:00:00Z`) + 86400000).toISOString().slice(0, 10)).toBe(true);
+  });
+});
+
 describe("review", () => {
   it("managers approve or send back with a note; members can't review", async () => {
     const r = await t.post("/api/tasks", { title: "Wire the hub", assignee_ids: [memberId] }, admin);
@@ -89,5 +101,12 @@ describe("quick-add parse (no AI configured in tests)", () => {
     const it0 = r.body.items[0];
     expect(it0).toMatchObject({ title: "Test autonomous paths", priority: "high", due_time: "16:30", assigned_to: memberId, assignee_ids: [memberId] });
     expect(it0.due_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("each pasted line keeps its own fields, even with a duplicate line", async () => {
+    const r = await t.post("/api/tasks/parse", { text: "Charge batteries tomorrow 5pm\nCharge batteries tomorrow 5pm\nOrder parts friday" }, admin);
+    expect(r.body.items.map((i: any) => [i.title, i.due_time])).toEqual([["Charge batteries", "17:00"], ["Order parts", null]]);
+    expect(r.body.items[1].due_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(r.body.items.every((i: any) => !("_source" in i))).toBe(true);
   });
 });
