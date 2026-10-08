@@ -140,10 +140,13 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
 
   // ---- Assignees ----
   const names = [...roster].filter(Boolean).sort((a, b) => b.length - a.length);
+  // A first name stands for someone only when exactly one member has it.
+  const firstOf = (n: string) => n.toLowerCase().split(/\s+/)[0];
+  const uniqueFirst = (n: string) => names.filter((m) => firstOf(m) === firstOf(n)).length === 1;
   const findName = (s: string) => {
     const lower = s.toLowerCase().trim();
-    return names.find((n) => n.toLowerCase() === lower)
-      || names.find((n) => n.toLowerCase().split(/\s+/)[0] === lower);
+    const firsts = names.filter((n) => firstOf(n) === lower);
+    return names.find((n) => n.toLowerCase() === lower) || (firsts.length === 1 ? firsts[0] : undefined);
   };
   // "@Ada" mentions
   for (let guard = 0; guard < 10; guard++) {
@@ -159,7 +162,8 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
   // the names themselves; what follows ("tomorrow at noon") stays for the
   // date and time readers.
   {
-    const lead = text.match(/[\s,;]+(?:and\s+)?(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:?)\s+/i);
+    // "(Assigned to Arnav)" too: AI replies like to put it in brackets.
+    const lead = text.match(/[\s,;(]+(?:and\s+)?(?:assign(?:ed)?\s+(?:it\s+)?to|give\s+(?:it\s+)?to|owner\s*:?)\s+/i);
     if (lead && lead.index != null) {
       let pos = lead.index + lead[0].length;
       const found: string[] = [];
@@ -168,8 +172,8 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
         // Longest roster name (full name, then first name) at this spot.
         let hit: { name: string; len: number } | null = null;
         for (const n of names) {
-          for (const form of [n, n.split(/\s+/)[0]]) {
-            const re = new RegExp(`^${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,;.!?])`, 'i');
+          for (const form of uniqueFirst(n) ? [n, n.split(/\s+/)[0]] : [n]) {
+            const re = new RegExp(`^${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[\\s,;.!?)])`, 'i');
             const mm = rest.match(re);
             if (mm && (!hit || mm[0].length > hit.len)) hit = { name: n, len: mm[0].length };
           }
@@ -181,12 +185,12 @@ export function parseQuickAdd(input: string, today: string, roster: string[] = [
         // Only continue past "and"/"," when another roster name follows.
         if (!joiner) break;
         const after = text.slice(pos + joiner[0].length);
-        if (!names.some((n) => [n, n.split(/\s+/)[0]].some((f) => after.toLowerCase().startsWith(f.toLowerCase())))) break;
+        if (!names.some((n) => (uniqueFirst(n) ? [n, n.split(/\s+/)[0]] : [n]).some((f) => after.toLowerCase().startsWith(f.toLowerCase())))) break;
         pos += joiner[0].length;
       }
       if (found.length) {
         for (const f of found) if (!out.assignees.includes(f)) out.assignees.push(f);
-        text = `${text.slice(0, lead.index)} ${text.slice(pos)}`;
+        text = `${text.slice(0, lead.index)} ${text.slice(pos)}`.replace(/^\s*\)|\(\s*\)/g, ' ').replace(/(\s)\)/, '$1');
       }
     }
   }

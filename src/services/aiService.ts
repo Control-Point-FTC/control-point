@@ -257,9 +257,9 @@ export function extractActionProposals(text: string): ActionProposal[] {
   const t = String(text || "");
   const proposals: ActionProposal[] = [];
   (Object.keys(ACTION_BLOCK_RES) as ActionProposal['kind'][]).forEach((kind) => {
-    const m = t.match(ACTION_BLOCK_RES[kind]);
-    if (!m) return;
-    const items = parseActionBlock(kind, m[1]);
+    // Several blocks of one kind (long pasted notes) become one group.
+    const re = new RegExp(ACTION_BLOCK_RES[kind].source, 'g');
+    const items = [...t.matchAll(re)].flatMap((m) => parseActionBlock(kind, m[1])).slice(0, 20);
     if (items.length) proposals.push({ kind, items });
   });
   return proposals;
@@ -270,7 +270,9 @@ export function extractActionProposals(text: string): ActionProposal[] {
  * Throws on permission/validation errors with a human-readable message.
  */
 export async function applyActionProposals(actions: ActionProposal[]): Promise<Record<string, number>> {
-  const { ok, applied, error } = await postJSON('/api/ai/apply-actions', { actions });
+  // Send exactly what the confirm card showed (see proposalContext).
+  const { resolveProposals } = await import('./proposalContext');
+  const { ok, applied, error } = await postJSON('/api/ai/apply-actions', { actions: resolveProposals(actions) });
   if (!ok) throw new Error(error || "Couldn't save those — please try again");
   return applied || {};
 }

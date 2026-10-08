@@ -641,11 +641,20 @@ TASKS SKILL:
 - ONLY propose when the user has explicitly confirmed they want the tasks added AND you have a title for each one. If a due date is missing or ambiguous, still propose the task but leave due_date empty rather than guessing — never invent a date.
 - When confirmed, end your reply with a fenced block on its own lines, AFTER your visible summary:
 \`\`\`tasks
-[{"title":"...","description":"...","due_date":"YYYY-MM-DD"}]
+[{"title":"...","description":"...","due_date":"YYYY-MM-DD","due_time":"HH:MM","priority":"high","assignees":["Arnav"],"repeat":"weekly"}]
 \`\`\`
-- "description" and "due_date" are optional. Keep the visible reply to one short line per task describing what you're proposing, then the block.
+- Every field except "title" is optional. Each detail goes in ITS OWN field, never in the title or description:
+  * "due_time": 24-hour HH:MM when a time is given ("at 4:30pm" → "16:30", "noon" → "12:00").
+  * "priority": "low", "medium", "high" or "urgent" when the user says so ("high priority", "asap" → "urgent").
+  * "assignees": names of team members to assign (use the names from your team context).
+  * "repeat": "daily", "weekly", "biweekly" or "monthly" for recurring tasks.
+  * "description": extra context only — NOT "High priority", "Assigned to X" or the due date.
+- Keep the visible reply to one short line per task describing what you're proposing, then the block.
 - IMPORTANT: the block only PROPOSES the tasks — the app shows the user a confirm button with everything you proposed, and nothing is added until they tap it. Never claim something was already added.
 - Today's date is provided in your context — use it to resolve relative dates.
+
+MANY THINGS AT ONCE:
+- One message can propose several kinds together — e.g. pasted meeting notes may hold tasks, a follow-up meeting, an outreach event and a communication log entry. Put each kind in its own block (one \`\`\`tasks block with every task, one \`\`\`event block with every event, and so on), all at the end of the same reply. The user confirms them together.
 
 BUDGET SKILL:
 - You can add budget entries to the team's budget tracker when the user asks you to log spending, record income, or add a budget entry. You can propose MULTIPLE entries in a single message — one entry per purchase/donation/fee.

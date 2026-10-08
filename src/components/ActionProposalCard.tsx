@@ -1,5 +1,20 @@
 import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
 import type { ActionProposal } from '../services/aiService';
+import { recurrenceLabel } from '../utils/quickAdd';
+import { resolveEventItem, resolveTaskItem, useProposalContext } from '../services/proposalContext';
+
+/** A task exactly as it will be saved: title, due date and time, priority, people, repeat. */
+function taskSummary(it: any): string {
+  const t = resolveTaskItem(it);
+  const parts = [
+    t.due_date ? `due ${t.due_date}${t.due_time ? ` at ${t.due_time}` : ''}` : t.due_time ? `due today at ${t.due_time}` : '',
+    t.priority ? `${t.priority} priority` : '',
+    t.assignees.length ? `→ ${t.assignees.join(', ')}` : '',
+    t.repeat ? recurrenceLabel(t.repeat).toLowerCase() : '',
+    t.unmatched.length ? `not assigned (no single team member named ${t.unmatched.join(', ')})` : '',
+  ].filter(Boolean);
+  return `${t.title.slice(0, 60)}${parts.length ? ` — ${parts.join(' · ')}` : ''}`;
+}
 
 export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: any; destructive?: boolean }> = {
   event: { label: 'Calendar', icon: Calendar },
@@ -10,7 +25,8 @@ export const KIND_META: Record<ActionProposal['kind'], { label: string; icon: an
   communication: { label: 'Communication log', icon: Mail },
 };
 
-export function itemSummary(kind: ActionProposal['kind'], it: any): string {
+export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
+  const it = kind === 'event' ? resolveEventItem(raw) : raw;
   const title = String(it.title || it.description || it.category || 'Untitled').slice(0, 60);
   if (kind === 'event') {
     // Show an end only if the server will keep it (valid HH:MM after the start).
@@ -27,7 +43,7 @@ export function itemSummary(kind: ActionProposal['kind'], it: any): string {
     const to = String(it.recipient || '').slice(0, 40);
     return `${subj}${to ? ` → ${to}` : ''}${it.date ? ` — ${it.date}` : ''}`;
   }
-  if (kind === 'task') return `${title}${it.due_date ? ` — due ${it.due_date}` : ''}`;
+  if (kind === 'task') return taskSummary(it);
   const amt = !isNaN(parseFloat(it.amount)) ? `$${parseFloat(it.amount).toFixed(2)}` : '';
   const dir = it.type === 'income' ? 'in' : 'out';
   return `${title} — ${amt} ${dir}${it.date ? ` — ${it.date}` : ''}`;
@@ -42,6 +58,7 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   onConfirm: () => void;
   onDismiss: () => void;
 }) {
+  useProposalContext(); // re-render once the team's roster and today load
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const isDestructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   if (status === 'done') {
