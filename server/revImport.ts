@@ -62,12 +62,22 @@ export function parseRevProduct(html: string): RevProduct {
       out.cost ??= num(offer?.price ?? offer?.lowPrice);
     }
   });
-  // 2. Microdata / Open Graph.
-  out.name ||= $('[itemprop="name"]').first().text().trim() || $('meta[property="og:title"]').attr("content")?.trim() || undefined;
-  out.sku ||= $('[itemprop="sku"]').first().text().trim() || $('[itemprop="sku"]').attr("content")?.trim() || undefined;
-  out.cost ??= num($('meta[itemprop="price"]').attr("content") || $('meta[property="product:price:amount"]').attr("content"));
-  // 3. The BigCommerce theme REV used when this importer was written.
+  // 2. Microdata inside the Product itself (a breadcrumb, the store or a
+  // related item also carry itemprop="name"), then the product title.
+  const product = $('[itemscope][itemtype*="schema.org/Product"]').first();
+  const prop = (name: string) => {
+    const el = product.find(`[itemprop="${name}"]`).filter((_, e) => $(e).closest("[itemscope]").is(product)).first();
+    return (el.attr("content") || el.text() || "").trim();
+  };
+  if (product.length) {
+    out.name ||= prop("name") || undefined;
+    out.sku ||= prop("sku") || undefined;
+    out.cost ??= num(prop("price"));
+  }
+  // 3. The BigCommerce theme REV used when this importer was written, then Open Graph.
   out.name ||= $("h1.productView-title").text().trim() || undefined;
+  out.name ||= $('meta[property="og:title"]').attr("content")?.trim() || undefined;
+  out.cost ??= num($('meta[property="product:price:amount"]').attr("content"));
   out.sku ||= $("dd.productView-info-value--sku").text().trim() || undefined;
   const upc = $("dd.productView-info-value--upc").text().trim();
   if (upc) out.part_number = upc;

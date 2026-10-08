@@ -285,6 +285,8 @@ export function useInventoryController({ inventory, setInventory, teams, refresh
             quantity: parseInt(it.quantity, 10) || 0,
             cost: parseFloat(it.unitPrice) || 0,
             category: it.category || 'Other',
+            // Who sells it, as the invoice reader found it (the server checks it).
+            supplier: it.supplier || undefined,
           })),
         }),
       });

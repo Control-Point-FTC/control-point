@@ -26,7 +26,7 @@ import { simpleGit, SimpleGit } from "simple-git";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { parseRevProduct, revTarget, type RevProduct } from "./server/revImport.js";
-import { SUPPLIERS, cleanPurchaseUrl, detectSupplier, supplierById } from "./src/utils/suppliers.js";
+import { MAX_PURCHASE_URL, SUPPLIERS, cleanPurchaseUrl, detectSupplier, supplierById } from "./src/utils/suppliers.js";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch, dbBatchResults } from "./db.js";
 import { runMigrations } from "./migrations/runner.js";
 import {
@@ -10268,7 +10268,7 @@ Rules:
       if (!raw) out.url = null;
       else {
         const url = cleanPurchaseUrl(raw);
-        if (!url) return { error: "The purchase link must be a web address (https://…)" };
+        if (!url) return { error: raw.length > MAX_PURCHASE_URL ? "That purchase link is too long — use the product page's own address." : "The purchase link must be a web address (https://…)" };
         out.url = url;
       }
     }

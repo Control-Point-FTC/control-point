@@ -65,16 +65,20 @@ const byId = new Map(SUPPLIERS.map((s) => [s.id, s]));
 export const supplierById = (id: unknown): Supplier | null => (typeof id === 'string' && byId.get(id)) || null;
 export const supplierLabel = (id: unknown): string => supplierById(id)?.label || '';
 
+/** Longest purchase link kept; longer ones are refused, never shortened. */
+export const MAX_PURCHASE_URL = 2000;
+
 /** An http(s) URL, trimmed, or null. "revrobotics.com/x" gains https://. */
 export function cleanPurchaseUrl(v: unknown): string | null {
   let s = typeof v === 'string' ? v.trim() : '';
-  if (!s) return null;
+  if (!s || s.length > MAX_PURCHASE_URL) return null;
   if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = `https://${s}`;
   try {
     const u = new URL(s);
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
     if (!u.hostname.includes('.')) return null;
-    return u.toString().slice(0, 500);
+    const out = u.toString();
+    return out.length > MAX_PURCHASE_URL ? null : out;
   } catch {
     return null;
   }

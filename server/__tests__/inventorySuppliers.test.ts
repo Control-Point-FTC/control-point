@@ -33,6 +33,10 @@ describe("purchase link and supplier", () => {
 
     expect((await t.post("/api/inventory", { name: "X", sku: "X-1", url: "javascript:alert(1)" }, admin)).status).toBe(400);
     expect((await t.post("/api/inventory", { name: "X", sku: "X-2", supplier: "acme" }, admin)).status).toBe(400);
+    // Too long is refused, never saved shortened.
+    const long = await t.post("/api/inventory", { name: "X", sku: "X-3", url: `https://www.amazon.com/dp/B0?${"q=1&".repeat(600)}` }, admin);
+    expect(long.status).toBe(400);
+    expect(long.body.error).toMatch(/too long/);
 
     // PATCH: only what's sent; "" clears the link, "auto" clears the choice.
     expect((await t.patch(`/api/inventory/${ax.body.id}`, { url: "", supplier: "auto" }, admin)).status).toBe(200);
@@ -67,6 +71,12 @@ describe("REV import", () => {
     const theme = `<h1 class="productView-title">Core Hex Motor</h1><dd class="productView-info-value--sku">REV-41-1300</dd><span class="price price--withoutTax price--main">$22.00</span>`;
     expect(parseRevProduct(theme)).toMatchObject({ name: "Core Hex Motor", sku: "REV-41-1300", cost: 22 });
     expect(parseRevProduct(`<meta property="og:title" content="Servo Hub | REV Robotics">`)).toMatchObject({ name: "Servo Hub" });
+    // Breadcrumbs and the store also carry itemprop="name": only the Product's own counts.
+    const micro = `<ol itemscope itemtype="https://schema.org/BreadcrumbList"><li itemprop="itemListElement" itemscope itemtype="https://schema.org/ListItem"><span itemprop="name">Motion</span></li></ol>
+      <div itemscope itemtype="https://schema.org/Product"><h1 itemprop="name">Smart Robot Servo</h1><span itemprop="sku">REV-41-1097</span>
+        <div itemprop="brand" itemscope itemtype="https://schema.org/Brand"><span itemprop="name">REV Robotics</span></div>
+        <meta itemprop="price" content="34.00"></div>`;
+    expect(parseRevProduct(micro)).toMatchObject({ name: "Smart Robot Servo", sku: "REV-41-1097", cost: 34 });
   });
 
   it("rejects anything that isn't REV; a REV link always comes back with its SKU and link", async () => {

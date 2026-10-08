@@ -335,7 +335,7 @@ describe('Modern Inventory', () => {
 
   it('imports an invoice: parse → review (untick one) → confirm', async () => {
     api.apiFetch.mockImplementation((url: string) => {
-      if (url === '/api/inventory/import-invoice/parse') return json({ items: [{ sku: 'A1', name: 'Bolt pack', quantity: 2, unitPrice: 5, category: 'Hardware' }, { sku: 'B2', name: 'Wheel', quantity: 4, unitPrice: 12, category: 'Wheels' }] });
+      if (url === '/api/inventory/import-invoice/parse') return json({ items: [{ sku: 'A1', name: 'Bolt pack', quantity: 2, unitPrice: 5, category: 'Hardware', supplier: 'axon' }, { sku: 'B2', name: 'Wheel', quantity: 4, unitPrice: 12, category: 'Wheels' }] });
       if (url === '/api/inventory/import-invoice/confirm') return json({ added: 1, merged: 0 });
       return json({});
     });
@@ -346,7 +346,7 @@ describe('Modern Inventory', () => {
     fireEvent.click(within(dlg).getByRole('checkbox', { name: 'Import Wheel' }));
     fireEvent.click(within(dlg).getByRole('button', { name: 'Import 1 item' }));
     await waitFor(() => expect(calls('/api/inventory/import-invoice/confirm', 'POST')).toHaveLength(1));
-    expect(body('/api/inventory/import-invoice/confirm', 'POST').items).toEqual([{ sku: 'A1', name: 'Bolt pack', quantity: 2, cost: 5, category: 'Hardware' }]);
+    expect(body('/api/inventory/import-invoice/confirm', 'POST').items).toEqual([{ sku: 'A1', name: 'Bolt pack', quantity: 2, cost: 5, category: 'Hardware', supplier: 'axon' }]);
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(props.refresh.inventory).toHaveBeenCalled();
     expect(dialog.notify).toHaveBeenCalledWith('Import complete: 1 added, 0 restocked', 'success');

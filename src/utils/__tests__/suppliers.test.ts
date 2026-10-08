@@ -36,5 +36,8 @@ describe('purchase links', () => {
     expect(cleanPurchaseUrl('ftp://x.com/a')).toBeNull();
     expect(cleanPurchaseUrl('localhost')).toBeNull();
     expect(cleanPurchaseUrl(' www.andymark.com/products/x ')).toBe('https://www.andymark.com/products/x');
+    const long = `https://www.amazon.com/dp/B0?${'q=1&'.repeat(400)}`;
+    expect(cleanPurchaseUrl(long)).toBe(long);
+    expect(cleanPurchaseUrl(`${long}${'x'.repeat(2000)}`)).toBeNull();
   });
 });
