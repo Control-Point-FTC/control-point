@@ -516,3 +516,41 @@ describe('Modern Settings — What’s new', () => {
     expect(within(btn).queryByLabelText('New updates')).not.toBeInTheDocument();
   });
 });
+
+describe('Modern Settings — Bruno memory and morning summary', () => {
+  it('lists what Bruno remembers, forgets one, and saves the morning summary switch', async () => {
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/bruno/memories' && !init?.method) return json({ user: [{ id: 1, scope: 'user', content: 'Prefers Java' }], team: [{ id: 2, scope: 'team', content: 'We run mecanum' }], canEditTeam: false });
+      if (url === '/api/bruno/memories/1') return json({ ok: true });
+      if (url === '/api/profile') return json({ user: { ...me, bruno_nudges: 0 } });
+      return json({});
+    });
+    setup({ section: 'bruno' });
+    expect(await screen.findByText('Prefers Java')).toBeInTheDocument();
+    expect(screen.getByText('We run mecanum')).toBeInTheDocument();
+    // Team facts aren't editable for non-managers.
+    expect(screen.queryByRole('button', { name: 'Forget: We run mecanum' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Forget: Prefers Java' }));
+    await waitFor(() => expect(screen.queryByText('Prefers Java')).not.toBeInTheDocument());
+    expect(api.apiFetch).toHaveBeenCalledWith('/api/bruno/memories/1', expect.objectContaining({ method: 'DELETE' }));
+    fireEvent.click(screen.getByRole('switch', { name: /Morning summary/ }));
+    await waitFor(() => expect(bodyOf('/api/profile', 'PATCH')).toMatchObject({ bruno_nudges: false }));
+  });
+
+  it('after adding a fact the list is reloaded, so a fact trimmed at the cap disappears', async () => {
+    let added = false;
+    api.apiFetch.mockImplementation((url: string, init?: any) => {
+      if (url === '/api/bruno/memories' && init?.method === 'POST') { added = true; return json({ memory: { id: 9, scope: 'user', content: 'Drives the robot' } }); }
+      if (url === '/api/bruno/memories') return json(added
+        ? { user: [{ id: 9, scope: 'user', content: 'Drives the robot' }], team: [], canEditTeam: false }
+        : { user: [{ id: 1, scope: 'user', content: 'Oldest fact' }], team: [], canEditTeam: false });
+      return json({});
+    });
+    setup({ section: 'bruno' });
+    expect(await screen.findByText('Oldest fact')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Something for Bruno to remember' }), { target: { value: 'Drives the robot' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    expect(await screen.findByText('Drives the robot')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Oldest fact')).not.toBeInTheDocument());
+  });
+});

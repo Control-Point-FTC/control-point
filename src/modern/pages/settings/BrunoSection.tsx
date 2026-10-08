@@ -3,18 +3,20 @@
 // preferences (this device) and — for the one team that has it — the
 // NavGPT ❤️ persona.
 import { useState } from 'react';
-import { ChevronDown, GraduationCap, Heart } from 'lucide-react';
+import { ChevronDown, GraduationCap, Heart, Sun } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
 import { confirmDialog, notify } from '../../../components/dialog';
 import { BRUNO_PREF_KEYS as K, navGptQualifies, useBoolPref, useStringPref } from '../../../components/settings/prefs';
 import { SettingsGroup, SettingsRow } from './SettingsPage';
+import { BrunoMemoryGroup } from './BrunoMemory';
 
 export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, onTeamSaved }: any) {
   const user = currentUser || {};
   const team = teams.find((t: any) => t.id === user.team_id);
   const [teach, setTeach] = useState(user.bruno_teach_mode === 1);
+  const [nudges, setNudges] = useState(user.bruno_nudges !== 0);
   const [level, setLevel] = useState<string>(user.bruno_output_level === 'max' ? 'high' : (user.bruno_output_level || 'medium'));
   // One in-flight lock per control (as Legacy tracks teach/level/persona
   // separately), so a save of one never unlocks another mid-request.
@@ -109,7 +111,16 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
         <SettingsRow label="Answer length" description="Longer answers use more AI tokens — typically only a few dollars a month for a team.">
           {seg(level, changeLevel, [['low', 'Short'], ['medium', 'Medium'], ['high', 'Long']], 'Output length', !!busy.level)}
         </SettingsRow>
+        <SettingsRow label="Morning summary" description="At 8 AM, one note in your Inbox when you have tasks due today or overdue (and, for managers, unassigned team tasks). Nothing to report, no note." htmlFor="bruno-nudges">
+          <span className="flex items-center gap-2"><Sun className={cn('size-4', nudges ? 'text-accent' : 'text-muted-foreground')} /><Switch id="bruno-nudges" checked={nudges} disabled={!!busy.nudges} onCheckedChange={(next) => {
+            if (busy.nudges) return;
+            setNudges(next);
+            void saveProfile('nudges', { bruno_nudges: next }, () => setNudges(!next), next ? 'Morning summary on.' : 'Morning summary off.');
+          }} /></span>
+        </SettingsRow>
       </SettingsGroup>
+
+      <BrunoMemoryGroup />
 
       <SettingsGroup title="Answer style" description="On this device.">
         <SettingsRow label="Explanations" description="How technical Bruno’s explanations are." stack>
