@@ -86,6 +86,15 @@ export function sameRatingParams(x: Partial<RatingParams>, y: Partial<RatingPara
 }
 
 type Vec = Record<Component, number>;
+
+export interface RatingBookData {
+  params: RatingParams;
+  ratings: [number, TeamRating][];
+  base: Vec; baseSq: Vec; baseReady: boolean;
+  history: [number, (number | null)[]][];
+  season: number | null;
+  now: number;
+}
 const zero = (): Vec => ({ auto: 0, teleop: 0, endgame: 0, pen: 0 });
 
 export const npOf = (r: { auto: number; teleop: number; endgame: number }) => r.auto + r.teleop + r.endgame;
@@ -284,6 +293,34 @@ export class RatingBook {
     c.season = this.season;
     c.now = this.now;
     return c;
+  }
+
+  /**
+   * Plain-JSON copy (for the offline pack), optionally only some teams'
+   * ratings and history; the population baseline is always kept.
+   */
+  toData(teams?: Set<number>): RatingBookData {
+    const keep = (t: number) => !teams || teams.has(t);
+    return {
+      params: this.params,
+      ratings: [...this.ratings].filter(([t]) => keep(t)).map(([t, r]) => [t, { ...r }]),
+      base: { ...this.base }, baseSq: { ...this.baseSq }, baseReady: this.baseReady,
+      // JSON has no NaN (a season a team skipped): stored as null.
+      history: [...this.history].filter(([t]) => keep(t)).map(([t, h]) => [t, h.map((z) => (Number.isFinite(z) ? z : null))]),
+      season: this.season, now: this.now,
+    };
+  }
+
+  static fromData(d: RatingBookData): RatingBook {
+    const b = new RatingBook(d.params);
+    for (const [t, r] of d.ratings) b.ratings.set(t, { ...r });
+    b.base = { ...d.base };
+    b.baseSq = { ...d.baseSq };
+    b.baseReady = d.baseReady;
+    b.history = new Map(d.history.map(([t, h]) => [t, h.map((z) => z ?? NaN)]));
+    b.season = d.season;
+    b.now = d.now;
+    return b;
   }
 
   /** Copy of current ratings, grown to now (for "as of event start" snapshots). */

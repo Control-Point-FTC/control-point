@@ -147,8 +147,16 @@ function StageStrip({ ctl }: { ctl: Ctl }) {
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted-foreground">
         <span><span className="font-medium text-foreground">{fc.slots}</span> advancement slot{fc.slots === 1 ? '' : 's'}{fc.slotsSource !== 'official' ? ' (estimated)' : ''}</span>
         <span>{fc.runs.toLocaleString()} simulations</span>
-        <span>Updated {relTime(fc.generatedAt)}</span>
-        {ctl.dataAsOf && <RatingsAge asOf={ctl.dataAsOf} />}
+        {fc.offline ? (
+          <span className="inline-flex items-center gap-1 font-medium text-foreground" title={new Date(fc.offline.asOf).toLocaleString()}>
+            <CloudOff className="size-3.5" aria-hidden /> Offline forecast from your {fc.offline.region} download ({relTime(fc.offline.asOf)})
+          </span>
+        ) : (
+          <>
+            <span>Updated {relTime(fc.generatedAt)}</span>
+            {ctl.dataAsOf && <RatingsAge asOf={ctl.dataAsOf} />}
+          </>
+        )}
         <Button variant="ghost" size="sm" onClick={() => ctl.load(true)} disabled={ctl.loading} className="ml-auto max-sm:h-11">
           <RefreshCw className={cn(ctl.loading && 'animate-spin motion-reduce:animate-none')} /> Refresh
         </Button>
@@ -196,7 +204,9 @@ function Body({ ctl }: { ctl: Ctl }) {
       <EmptyState
         icon={CloudOff}
         title="Couldn't load the forecast"
-        description={fcError.message}
+        description={fcError.status === 0 && typeof navigator !== 'undefined' && navigator.onLine === false
+          ? 'You\'re offline. Download your region in Settings → Offline data to see odds without a connection.'
+          : fcError.message}
         action={<Button variant="outline" onClick={() => ctl.load(true)}><RefreshCw /> Try again</Button>}
       />
     );

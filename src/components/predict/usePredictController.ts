@@ -118,13 +118,16 @@ export function usePredictController() {
   // Every request (initial, Refresh, Try again) gets an id and only the latest
   // may update state, so a slow answer for an old selection can't overwrite it.
   const reqId = useRef(0);
+  // For an offline forecast (worked out on this device), which needs our team.
+  const myTeamRef = useRef(myTeam);
+  myTeamRef.current = myTeam;
   const load = useCallback((force?: boolean) => {
     const id = ++reqId.current;
     if (!code) return;
     const latest = () => id === reqId.current;
     setLoading(true); setFcError(null);
     if (force) { setRefreshKey((k) => k + 1); loadStatus(); } // re-runs the Alliance scenarios too, and re-checks the ratings' age
-    fetchForecast(season, code, { force }).then((f) => { if (latest()) setFc(f); })
+    fetchForecast(season, code, { force, myTeam: myTeamRef.current }).then((f) => { if (latest()) setFc(f); })
       .catch((e) => { if (latest()) { setFc(null); setFcError(e instanceof PredictError ? e : new PredictError(String(e?.message ?? e), 0)); } })
       .finally(() => { if (latest()) setLoading(false); });
     // Team names for the event (shared client cache with Team Stats).
@@ -134,6 +137,12 @@ export function usePredictController() {
     load();
     return () => { reqId.current++; };
   }, [load]);
+
+  // An offline forecast made before our team was known: redo it for our team
+  // (offline answers aren't cached, so this works it out again).
+  useEffect(() => {
+    if (fc?.offline && myTeam && fc.myTeam !== myTeam) load();
+  }, [fc, myTeam, load]);
 
   // Bruno sees the forecast on screen.
   useEffect(() => {
@@ -165,7 +174,7 @@ export function usePredictController() {
  * Refresh made while the tab exists, not on every later mount (switching tabs
  * keeps using fresh cached choices).
  */
-export function usePartners(season: number, code: string, refreshKey: number) {
+export function usePartners(season: number, code: string, refreshKey: number, myTeam: number | null = null) {
   const [data, setData] = useState<Partners | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const seenRefresh = useRef(refreshKey);
@@ -174,8 +183,8 @@ export function usePartners(season: number, code: string, refreshKey: number) {
     setData(null); setErr(null);
     const force = refreshKey !== seenRefresh.current;
     seenRefresh.current = refreshKey;
-    fetchPartners(season, code, { force }).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
+    fetchPartners(season, code, { force, myTeam }).then((d) => { if (alive) setData(d); }).catch((e) => { if (alive) setErr(e?.message ?? 'Could not load alliance options'); });
     return () => { alive = false; };
-  }, [season, code, refreshKey]);
+  }, [season, code, refreshKey, myTeam]);
   return { data, err };
 }

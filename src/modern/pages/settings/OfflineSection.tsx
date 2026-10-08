@@ -59,7 +59,7 @@ export function OfflineSection() {
 
   return (
     <>
-      <SettingsGroup title="On this device" description="Team search, team pages and events fall back to this copy when there's no connection.">
+      <SettingsGroup title="On this device" description="Team search, team and event pages, and Predict odds fall back to this copy when there's no connection.">
         {saved ? (
           <>
             <SettingsRow
@@ -88,7 +88,7 @@ export function OfflineSection() {
         )}
       </SettingsGroup>
 
-      <SettingsGroup title="Download" description={regions ? `FTC teams, events and match results for the ${regions.season}–${String((regions.season + 1) % 100).padStart(2, '0')} season.` : undefined}>
+      <SettingsGroup title="Download" description={regions ? `FTC teams, events, match results and Predict ratings for the ${regions.season}–${String((regions.season + 1) % 100).padStart(2, '0')} season.` : undefined}>
         {regionsError && <p role="alert" className="px-4 py-4 text-sm text-muted-foreground">{regionsError}</p>}
         {!regions && !regionsError && <p className="px-4 py-4 text-sm text-muted-foreground">Loading regions…</p>}
         {regions && (

@@ -2,12 +2,19 @@
 // in-flight de-duplication; the server caches too (2 min while an event is
 // live, 10 min otherwise).
 import { apiFetch } from './api';
-import { createTtlCache } from './ftcScoutApi';
+import { createTtlCache, isOfflineFailure, markTransient } from './ftcScoutApi';
+import { getOfflinePack } from './offlinePack';
+import { packEvent } from '../utils/offlinePack';
+import type { OfflineForecaster } from '../utils/offlineForecast';
 import type { Forecast, Partners } from '../../server/predict/engine';
 import type { LiveAccuracy } from '../../server/predict/monitor';
 
 export type { Forecast, Partners, LiveAccuracy };
-export type ForecastView = Forecast & { eventName: string; eventStart: string | null; eventEnd: string | null; myTeam: number | null };
+export type ForecastView = Forecast & {
+  eventName: string; eventStart: string | null; eventEnd: string | null; myTeam: number | null;
+  /** Worked out on this device from the offline pack (no connection): when its data is from. */
+  offline?: { asOf: string; region: string };
+};
 
 export interface PredictAccuracy {
   testSeason: string;
@@ -45,12 +52,39 @@ async function getJson<T>(url: string): Promise<T> {
 
 export const fetchPredictStatus = () => getJson<PredictStatus>('/api/predict/status');
 
-export function fetchForecast(season: number, code: string, opts?: { force?: boolean }): Promise<ForecastView> {
-  return forecastCache.get(`${season}:${code}`, () => getJson<ForecastView>(`/api/predict/event?season=${season}&code=${encodeURIComponent(code)}`), opts);
+/**
+ * No connection: forecast on this device from the offline pack, when it has
+ * the event and ratings. Answers aren't cached, so the next try goes back to
+ * the server. A real answer from the server (422, 404) is never replaced.
+ */
+async function offlinePredict<T extends object>(err: unknown, season: number, code: string, run: (f: OfflineForecaster, ev: NonNullable<ReturnType<typeof packEvent>>, asOf: string, region: string, runs: number) => Promise<T | null> | T | null): Promise<T> {
+  // PredictError 503 = the server is up but warming up: no offline answer for that.
+  const offline = err instanceof PredictError ? err.status >= 502 && err.status !== 503 : isOfflineFailure(err);
+  if (!offline) throw err;
+  const saved = await getOfflinePack();
+  const ev = saved?.pack.predict ? packEvent(saved.pack, season, code) : null;
+  if (!saved || !ev) throw err;
+  // Loaded only when needed: the simulator stays out of the main bundle.
+  const { offlineForecaster, OFFLINE_RUNS } = await import('../utils/offlineForecast');
+  const f = offlineForecaster(saved.pack);
+  if (!f) throw err;
+  const out = await run(f, ev, saved.pack.dataAsOf || saved.pack.builtAt, saved.pack.regionName, OFFLINE_RUNS);
+  if (!out) throw err;
+  return markTransient(out);
 }
 
-export function fetchPartners(season: number, code: string, opts?: { force?: boolean }): Promise<Partners> {
-  return partnersCache.get(`${season}:${code}`, () => getJson<Partners>(`/api/predict/partners?season=${season}&code=${encodeURIComponent(code)}`), opts);
+export function fetchForecast(season: number, code: string, opts?: { force?: boolean; myTeam?: number | null }): Promise<ForecastView> {
+  return forecastCache.get(`${season}:${code}`, () => getJson<ForecastView>(`/api/predict/event?season=${season}&code=${encodeURIComponent(code)}`)
+    .catch((e) => offlinePredict<ForecastView>(e, season, code, (f, ev, asOf, region, runs) => {
+      const myTeam = opts?.myTeam ?? null;
+      const fc = f.forecast(ev, myTeam, runs);
+      return fc && { ...fc, eventName: ev.name, eventStart: ev.start, eventEnd: ev.end, myTeam, offline: { asOf, region } };
+    })), opts);
+}
+
+export function fetchPartners(season: number, code: string, opts?: { force?: boolean; myTeam?: number | null }): Promise<Partners> {
+  return partnersCache.get(`${season}:${code}`, () => getJson<Partners>(`/api/predict/partners?season=${season}&code=${encodeURIComponent(code)}`)
+    .catch((e) => offlinePredict<Partners>(e, season, code, (f, ev) => (opts?.myTeam ? f.partners(ev, opts.myTeam) : null))), opts);
 }
 
 /** Workspace switch / logout. */

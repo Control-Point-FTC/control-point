@@ -23,6 +23,7 @@ interface Entry<T> { expiresAt: number; data: T }
 
 /** Answers from the offline pack: returned, but never cached (the next try goes back to the network). */
 const transient = new WeakSet<object>();
+export const markTransient = <T extends object>(v: T): T => { transient.add(v); return v; };
 
 /** A keyed TTL cache with in-flight de-duplication. Exported for tests. */
 export function createTtlCache<T>(ttlMs: number, now: () => number = Date.now) {

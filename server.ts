@@ -5975,10 +5975,14 @@ async function startServer() {
     if (!got) return res.status(503).json({ error: "Offline data isn't ready yet — check back in a few minutes." });
     if (region !== "ALL" && !got.events.some((e) => e.event.region === region)) return res.status(404).json({ error: "No events in that region this season" });
     const dataAsOf = predictStore.lastSync(got.season);
-    const key = `${got.season}:${region}:${dataAsOf}`;
+    // Ratings change with each rebuild, so they're part of the key.
+    const key = `${got.season}:${region}:${dataAsOf}:${predictEngine.readyAt}`;
     let built = offlinePacks.get(key);
     if (!built) {
-      const json = JSON.stringify(buildPack(got.events, got.season, region, dataAsOf));
+      const pack = buildPack(got.events, got.season, region, dataAsOf);
+      // Ratings for offline Predict, once the engine has them.
+      if (predictEngine.ready) pack.predict = predictEngine.offlineData(got.season, new Set(pack.teams.map((t) => t[0])), pack.events.map((e) => e.type)) ?? undefined;
+      const json = JSON.stringify(pack);
       built = { json, gz: await gzipAsync(json) };
       offlinePacks.set(key, built);
       // Keep a handful (the full pack is a few MB).

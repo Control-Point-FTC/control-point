@@ -139,10 +139,10 @@ describe('Modern Predict', () => {
     expect(screen.getByText('Best fit')).toBeInTheDocument();
     expect(screen.getByText('+15 pts')).toBeInTheDocument();
     expect(screen.getByText('-5 pts')).toBeInTheDocument();
-    expect(predict.fetchPartners).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', { force: false });
+    expect(predict.fetchPartners).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', { force: false, myTeam: 4215 });
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
-    await waitFor(() => expect(predict.fetchPartners).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', { force: true }));
-    expect(predict.fetchForecast).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', { force: true });
+    await waitFor(() => expect(predict.fetchPartners).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', { force: true, myTeam: 4215 }));
+    expect(predict.fetchForecast).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', { force: true, myTeam: 4215 });
   });
 
   it('accuracy sheet: live scores next to the back-test, refetched on open', async () => {
@@ -175,6 +175,17 @@ describe('Modern Predict', () => {
     predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date(Date.now() - 3 * 864e5).toISOString() });
     fireEvent.click(screen.getByRole('button', { name: /Refresh/ }));
     expect(await screen.findByText(/odds may be out of date/)).toBeInTheDocument();
+  });
+
+  it('labels a forecast worked out offline from the download', async () => {
+    scout.fetchScoutTeam.mockResolvedValue(profile([ev('USNJCMPPKWY', 'Championship', '2099-03-15')]));
+    // Worked out before our team was known: done again once it is.
+    predict.fetchForecast.mockImplementation(async (season: number, event: string, opts: any) => ({ ...forecast, season, event, myTeam: opts?.myTeam ?? null, offline: { asOf: new Date(Date.now() - 2 * 3600_000).toISOString(), region: 'New Jersey' } }));
+    predict.fetchPredictStatus.mockResolvedValue({ ...status(0), dataAsOf: new Date().toISOString() });
+    renderPage('/predict?season=2025&event=USNJCMPPKWY');
+    expect(await screen.findByText(/Offline forecast from your New Jersey download \(2 h ago\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Ratings synced/)).not.toBeInTheDocument();
+    await waitFor(() => expect(predict.fetchForecast).toHaveBeenLastCalledWith(2025, 'USNJCMPPKWY', expect.objectContaining({ myTeam: 4215 })));
   });
 
   it('a page left open flips to the warning as the ratings age, and re-checks the status', async () => {

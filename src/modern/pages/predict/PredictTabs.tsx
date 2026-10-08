@@ -135,7 +135,7 @@ export function OutlookTab({ fc, myTeam }: FcProps) {
 // ---------------------------------------------------------------------------
 
 export function AllianceTab({ season, code, fc, nameOf, myTeam, refreshKey }: FcProps & { season: number; code: string; nameOf: (t: number) => string; refreshKey: number }) {
-  const { data, err } = usePartners(season, code, refreshKey);
+  const { data, err } = usePartners(season, code, refreshKey, myTeam);
   if (!myTeam) return <EmptyState icon={Users} title="Connect your FTC team" description="Alliance scenarios are worked out for your team." />;
   if (err) return <EmptyState title="Couldn't load alliance options" description={err} />;
   if (!data) return (

@@ -17,6 +17,8 @@ export const OFFLINE_PAGES = [
   "src/modern/pages/predict/PredictPage.tsx",
   "src/modern/pages/tasks/TasksPage.tsx",
   "src/modern/pages/calendar/CalendarPage.tsx",
+  // Loaded on demand for offline Predict (the forecast runs on the device).
+  "src/utils/offlineForecast.ts",
 ];
 
 /** Every file a manifest entry needs (static imports followed transitively). */
