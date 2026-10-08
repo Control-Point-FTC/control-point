@@ -46,3 +46,9 @@ export async function dbExec(sql: string): Promise<void> {
 export async function dbBatch(stmts: { sql: string; args?: Args }[]): Promise<void> {
   await dbClient.batch(stmts.map((s) => ({ sql: s.sql, args: norm(s.args ?? []) })));
 }
+
+/** One write transaction (lock taken up front); each statement's insert id and change count. */
+export async function dbBatchResults(stmts: { sql: string; args?: Args }[]): Promise<{ lastInsertRowid: number; changes: number }[]> {
+  const rs = await dbClient.batch(stmts.map((s) => ({ sql: s.sql, args: norm(s.args ?? []) })), "write");
+  return rs.map((r) => ({ lastInsertRowid: Number(r.lastInsertRowid), changes: r.rowsAffected }));
+}

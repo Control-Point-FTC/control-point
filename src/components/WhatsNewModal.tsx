@@ -4,13 +4,15 @@
 
 import { useEffect, useState } from 'react';
 import { X, Sparkles, Wrench, Bug } from 'lucide-react';
-import { CHANGELOG, CURRENT_VERSION, type ChangelogEntry } from '../utils/changelog';
+import { type ChangelogEntry } from '../utils/changelog';
+import { latestVersion, loadChangelog, useChangelog } from '../utils/changelogStore';
 
 const SEEN_KEY = 'controlpoint-seen-version';
 
 export function hasUnseenUpdate(): boolean {
   try {
-    return localStorage.getItem(SEEN_KEY) !== CURRENT_VERSION;
+    const v = latestVersion();
+    return !!v && localStorage.getItem(SEEN_KEY) !== v;
   } catch {
     return false;
   }
@@ -18,7 +20,7 @@ export function hasUnseenUpdate(): boolean {
 
 export function markVersionSeen() {
   try {
-    localStorage.setItem(SEEN_KEY, CURRENT_VERSION);
+    localStorage.setItem(SEEN_KEY, latestVersion());
   } catch {}
 }
 
@@ -66,6 +68,8 @@ function ChangelogCard({ entry, latest }: { entry: ChangelogEntry; latest?: bool
 }
 
 export function WhatsNewModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const CHANGELOG = useChangelog();
+  const CURRENT_VERSION = CHANGELOG[0]?.version || '';
   useEffect(() => {
     if (open) markVersionSeen();
   }, [open ]);
@@ -105,10 +109,12 @@ export function useWhatsNewAutoOpen() {
 
   useEffect(() => {
     // Small delay so it doesn't fight the onboarding/login flow
+    // The owner's latest release may only be known once /api/changelog answers.
+    let live = true;
     const t = setTimeout(() => {
-      if (hasUnseenUpdate()) setOpen(true);
+      void loadChangelog().then(() => { if (live && hasUnseenUpdate()) setOpen(true); });
     }, 2500);
-    return () => clearTimeout(t);
+    return () => { live = false; clearTimeout(t); };
   }, []);
 
   return [open, setOpen] as const;

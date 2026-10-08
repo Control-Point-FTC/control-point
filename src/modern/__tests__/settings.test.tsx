@@ -503,3 +503,16 @@ describe('Modern Settings — background grid', () => {
     expect(screen.getByRole('switch', { name: 'Cursor glow' })).toBeDisabled();
   });
 });
+
+describe('Modern Settings — What’s new', () => {
+  it('opens the changelog from Settings, for everyone, and clears the new-updates dot', async () => {
+    setup({ admin: false });
+    const btn = screen.getByRole('button', { name: /What’s new/ });
+    expect(within(btn).getByLabelText('New updates')).toBeInTheDocument();
+    fireEvent.click(btn);
+    const dlg = await screen.findByRole('dialog');
+    expect(within(dlg).getByRole('heading', { name: 'Repeating events, reviews and bulk select' })).toBeInTheDocument();
+    expect(within(dlg).getByRole('button', { name: 'v3.0.0' })).toBeInTheDocument();
+    expect(within(btn).queryByLabelText('New updates')).not.toBeInTheDocument();
+  });
+});

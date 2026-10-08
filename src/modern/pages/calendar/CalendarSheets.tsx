@@ -2,15 +2,16 @@
 // create/edit form (Bruno quick-add first) for calendar managers. Open state
 // and form values live in the shared draft store via useCalendarController.
 import { useEffect, useState } from 'react';
-import { CalendarDays, Clock, Loader2, MapPin, Pencil, Sparkles, Trash2, Users, Wand2, X } from 'lucide-react';
+import { Bell, CalendarDays, Clock, Loader2, MapPin, Pencil, Repeat, Sparkles, Trash2, Users, Wand2, X } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
-  Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Textarea,
+  Badge, Button, Input, Label, Popover, PopoverContent, PopoverTrigger, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Textarea,
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Switch, ToggleGroup, ToggleGroupItem,
 } from '../../../components/ui-kit';
 import { useIsNarrow } from '../../../components/scout/ScoutUi';
-import { EVENT_TYPES, type useCalendarController } from '../../../components/calendar/useCalendarController';
+import { EVENT_TYPES, repeatError, type useCalendarController } from '../../../components/calendar/useCalendarController';
 import { eventTimeError } from '../../../utils/validation';
+import { everyLabel, readEventRepeat, repeatLabel, reminderLabel, REMINDER_CHOICES } from '../../../utils/eventSeries';
 
 type Ctl = ReturnType<typeof useCalendarController>;
 
@@ -77,6 +78,14 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
                 <dd>{event.location || <span className="text-muted-foreground">No location</span>}</dd>
                 <dt className="flex items-center gap-2 text-muted-foreground"><Users className="size-4" /> Team</dt>
                 <dd>{team ? `${team.name}${team.number ? ` #${team.number}` : ''}` : 'All teams'}</dd>
+                {readEventRepeat(event.recurrence) && (<>
+                  <dt className="flex items-center gap-2 text-muted-foreground"><Repeat className="size-4" /> Repeats</dt>
+                  <dd>{repeatLabel(readEventRepeat(event.recurrence))}</dd>
+                </>)}
+                {reminderLabel(event.reminder_minutes) && (<>
+                  <dt className="flex items-center gap-2 text-muted-foreground"><Bell className="size-4" /> Reminder</dt>
+                  <dd>{reminderLabel(event.reminder_minutes)}{!event.start_time && Number(event.reminder_minutes) < 1440 ? ' 9 AM' : ''}</dd>
+                </>)}
               </dl>
               <Separator />
               <div>
@@ -89,13 +98,31 @@ export function EventViewSheet({ event, onOpenChange, ctl, teams }: {
             {ctl.canManageCalendar && typeof event.id === 'number' && (
               <div className="flex items-center gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
                 <Button variant="outline" onClick={() => { onOpenChange(false); ctl.openEdit(event); }}><Pencil /> Edit</Button>
-                <Button
-                  variant="ghost"
-                  className="ml-auto text-destructive hover:text-destructive"
-                  onClick={() => { void ctl.deleteEvent(event.id, event.title, () => onOpenChange(false)); }}
-                >
-                  <Trash2 /> Delete
-                </Button>
+                {event.series_id ? (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="ghost" className="ml-auto text-destructive hover:text-destructive"><Trash2 /> Delete…</Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-56 p-1.5">
+                      {([['one', 'This event'], ['following', 'This and following'], ['all', 'All events in the series']] as const).map(([scope, label]) => (
+                        <Button
+                          key={scope} variant="ghost" className="w-full justify-start text-destructive hover:text-destructive"
+                          onClick={() => { void ctl.deleteEvent(event.id, event.title, () => onOpenChange(false), scope); }}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </PopoverContent>
+                  </Popover>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    className="ml-auto text-destructive hover:text-destructive"
+                    onClick={() => { void ctl.deleteEvent(event.id, event.title, () => onOpenChange(false)); }}
+                  >
+                    <Trash2 /> Delete
+                  </Button>
+                )}
               </div>
             )}
           </>
@@ -112,6 +139,11 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
   // Re-validated on every change, so fixing a time immediately unblocks Save.
   const timeError = eventTimeError(f.start_time, f.end_time);
   const editing = !!ctl.editingId;
+  const editingEvent = editing ? ctl.events.find((e: any) => e.id === ctl.editingId) : null;
+  const repError = repeatError(f, editingEvent);
+  const inSeries = !!editingEvent?.series_id;
+  // A series' repeat rule changes from this occurrence on, never for just one.
+  const canEditRepeat = !inSeries || f.scope === 'following';
   // All day = no times. Starts on for an existing event saved without times.
   const [allDay, setAllDay] = useState(false);
   useEffect(() => {
@@ -226,6 +258,64 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
                 </Select>
               </div>
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="event-repeat"><Repeat className="size-3.5" /> Repeats</Label>
+                <Select value={f.repeat || 'none'} disabled={!canEditRepeat} onValueChange={(v) => set({ repeat: (v === 'none' ? '' : v) as typeof f.repeat })}>
+                  <SelectTrigger id="event-repeat"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Doesn’t repeat</SelectItem>
+                    <SelectItem value="daily">Every day</SelectItem>
+                    <SelectItem value="weekly">Every week</SelectItem>
+                    <SelectItem value="biweekly">Every 2 weeks</SelectItem>
+                    <SelectItem value="monthly">Every month</SelectItem>
+                    {f.repeat === 'custom' && f.repeat_rule && <SelectItem value="custom">{everyLabel(f.repeat_rule)}</SelectItem>}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="event-reminder"><Bell className="size-3.5" /> Reminder</Label>
+                <Select value={f.reminder || 'none'} onValueChange={(v) => set({ reminder: v === 'none' ? '' : v })}>
+                  <SelectTrigger id="event-reminder"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No reminder</SelectItem>
+                    {REMINDER_CHOICES.map((c) => <SelectItem key={c.value} value={String(c.value)}>{c.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {f.repeat && canEditRepeat && (
+                <div className="grid gap-2 sm:col-span-2">
+                  <Label>Ends</Label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ToggleGroup type="single" value={f.repeat_end} onValueChange={(v) => { if (v) set({ repeat_end: v as 'count' | 'until' }); }} aria-label="When the repeat ends">
+                      <ToggleGroupItem value="count">After</ToggleGroupItem>
+                      <ToggleGroupItem value="until">On date</ToggleGroupItem>
+                    </ToggleGroup>
+                    {f.repeat_end === 'count' ? (
+                      <span className="flex items-center gap-2 text-sm">
+                        <Input
+                          id="event-repeat-count" type="number" inputMode="numeric" min={2} max={100} className="w-20"
+                          value={f.repeat_count} onChange={(e) => set({ repeat_count: e.target.value })} aria-label="Number of times"
+                          aria-invalid={repError ? true : undefined}
+                        /> times
+                      </span>
+                    ) : (
+                      <Input
+                        id="event-repeat-until" type="date" className="w-auto" min={f.date || undefined}
+                        value={f.repeat_until} onChange={(e) => set({ repeat_until: e.target.value })} aria-label="Last date"
+                        aria-invalid={repError ? true : undefined}
+                      />
+                    )}
+                  </div>
+                  {repError && <p role="alert" className="text-sm text-destructive">{repError}</p>}
+                </div>
+              )}
+              {f.reminder && (
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  Everyone on the team gets an inbox notification{f.start_time ? '' : ' (all-day events count from 9 AM)'}.
+                </p>
+              )}
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="event-location">Location</Label>
               <Input id="event-location" value={f.location} onChange={(e) => set({ location: e.target.value })} placeholder="Where?" />
@@ -235,15 +325,24 @@ export function EventEditorSheet({ ctl, teams }: { ctl: Ctl; teams: any[] }) {
               <Textarea id="event-desc" value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder="Agenda, what to bring…" className="min-h-24" />
             </div>
           </div>
+          {inSeries && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-6 py-3">
+              <span className="text-sm text-muted-foreground">This event repeats. Apply to</span>
+              <ToggleGroup type="single" value={f.scope} onValueChange={(v) => { if (v) set({ scope: v as 'one' | 'following' }); }} aria-label="Apply changes to">
+                <ToggleGroupItem value="one" size="sm">This event</ToggleGroupItem>
+                <ToggleGroupItem value="following" size="sm">This and following</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          )}
           <div className="flex items-center gap-2 border-t border-border px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             {editing && (
               <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => void ctl.handleDelete()}>
-                <Trash2 /> Delete
+                <Trash2 /> {inSeries && f.scope === 'following' ? 'Delete these' : 'Delete'}
               </Button>
             )}
             <div className="ml-auto flex gap-2">
               <Button type="button" variant="outline" onClick={ctl.closeEditor}>Cancel</Button>
-              <Button type="submit" disabled={!f.title.trim() || !f.date || !!timeError}>{editing ? 'Save changes' : 'Create event'}</Button>
+              <Button type="submit" disabled={!f.title.trim() || !f.date || !!timeError || !!repError}>{editing ? 'Save changes' : 'Create event'}</Button>
             </div>
           </div>
         </form>
