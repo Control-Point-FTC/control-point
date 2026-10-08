@@ -2518,13 +2518,30 @@ async function startServer() {
   // Close every live socket of one membership (removed member): the socket
   // was authorised once at `hello`, so it must not outlive the membership.
   const disconnectMember = (teamId: number | null | undefined, memberId: number) => {
+    const dropped: [number, number][] = [];
     clients.forEach(client => {
       if ((client as any).teamId === teamId && (client as any).memberId === memberId) {
+        dropped.push([teamId as number, memberId]);
         (client as any).teamId = null;
         (client as any).memberId = null;
         try { client.close(4001, "membership ended"); } catch {}
       }
     });
+    afterSocketsDropped(dropped);
+  };
+
+  // Sockets closed above have their identity cleared first, so the close
+  // handler can't do its voice cleanup: do it here. A member left with no
+  // open socket in that workspace is dropped from live calls after the usual
+  // reconnect grace window.
+  const afterSocketsDropped = (dropped: [number, number][]) => {
+    const seen = new Set<string>();
+    for (const [teamId, memberId] of dropped) {
+      const key = `${teamId}:${memberId}`;
+      if (teamId == null || seen.has(key)) continue;
+      seen.add(key);
+      if (memberSocketCount(teamId, memberId) === 0) scheduleVoiceDisconnectCleanup(voiceDeps, teamId, memberId);
+    }
   };
 
   // Close the live sockets of an account's other sign-ins (sign out other
@@ -2532,14 +2549,17 @@ async function startServer() {
   // authorised by them. Sockets on `keepKey` (this device) stay open.
   const disconnectOtherSessions = (memberIds: number[], keepKey: string | null) => {
     const ids = new Set(memberIds);
+    const dropped: [number, number][] = [];
     clients.forEach(client => {
       const c = client as any;
       if (c.memberId != null && ids.has(c.memberId) && (!keepKey || c.sessionKey !== keepKey)) {
+        dropped.push([c.teamId, c.memberId]);
         c.teamId = null;
         c.memberId = null;
         try { client.close(4001, "signed out"); } catch {}
       }
     });
+    afterSocketsDropped(dropped);
   };
 
   const memberSocketCount = (teamId: number | null | undefined, memberId: number): number => {
