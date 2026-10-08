@@ -137,7 +137,7 @@ afterAll(async () => {
       }
     }
   } catch {}
-  if (proc) { killServerProcess(proc, "SIGKILL"); proc = null; }
+  if (proc) { await killServerProcess(proc, "SIGKILL"); proc = null; }
   await new Promise((r) => setTimeout(r, 500));
   try { (globalThis as any).__db?.close(); } catch {}
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}

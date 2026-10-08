@@ -79,7 +79,7 @@ async function bootServer(): Promise<void> {
 
 async function killServer(): Promise<void> {
   if (proc) {
-    killServerProcess(proc, "SIGKILL");
+    await killServerProcess(proc, "SIGKILL");
     proc = null;
   }
   await new Promise((r) => setTimeout(r, 800));

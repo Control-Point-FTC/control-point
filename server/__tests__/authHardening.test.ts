@@ -126,7 +126,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   try { db?.close(); } catch { /* ignore */ }
-  killServerProcess(proc);
+  await killServerProcess(proc);
   await new Promise((r) => setTimeout(r, 500));
   try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
 });

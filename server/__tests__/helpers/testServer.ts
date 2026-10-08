@@ -29,7 +29,14 @@ const liveGroups = new Set<number>();
 const killGroup = (pid: number, signal: NodeJS.Signals) => {
   try { process.kill(-pid, signal); } catch { /* already gone */ }
 };
-process.once("exit", () => { for (const pid of liveGroups) killGroup(pid, "SIGKILL"); });
+const killAllGroups = () => { for (const pid of liveGroups) killGroup(pid, "SIGKILL"); };
+process.once("exit", killAllGroups);
+// Ctrl-C / a killed run doesn't emit "exit": clean up, then end the way Node
+// would have (re-raise the signal with our listener gone).
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  const onSignal = () => { killAllGroups(); process.removeListener(sig, onSignal); process.kill(process.pid, sig); };
+  process.once(sig, onSignal);
+}
 
 /** Start `npx tsx server.ts` in its own process group (POSIX). */
 export function spawnServerProcess(env: Record<string, string | undefined>, stdio: any = "ignore"): ChildProcess {
@@ -42,14 +49,23 @@ export function spawnServerProcess(env: Record<string, string | undefined>, stdi
   return proc;
 }
 
-/** Stop a server started by spawnServerProcess: the whole tree, not just npx. */
-export function killServerProcess(proc: ChildProcess | null | undefined, signal: NodeJS.Signals = "SIGTERM"): void {
-  if (!proc?.pid) return;
+/** Stop a server started by spawnServerProcess: the whole tree, not just npx.
+ *  On Windows it resolves once taskkill has finished, so a restart on the same
+ *  port never reaches the old server. */
+export function killServerProcess(proc: ChildProcess | null | undefined, signal: NodeJS.Signals = "SIGTERM"): Promise<void> {
+  if (!proc?.pid) return Promise.resolve();
   const pid = proc.pid;
-  if (process.platform === "win32") { spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" }); return; }
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const tk = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+      tk.once("exit", () => resolve());
+      tk.once("error", () => resolve());
+    });
+  }
   killGroup(pid, signal);
   // Anything that ignores SIGTERM is force-killed shortly after.
   setTimeout(() => { killGroup(pid, "SIGKILL"); liveGroups.delete(pid); }, 2000).unref();
+  return Promise.resolve();
 }
 
 export interface TestServer {
@@ -84,7 +100,7 @@ export async function startTestServer(prefix = "cp-test-", extraEnv: Record<stri
     if (logFd != null) closeSync(logFd);
   }
   const kill = async () => {
-    killServerProcess(proc);
+    await killServerProcess(proc);
     await new Promise((r) => setTimeout(r, 500));
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* Windows may hold the file briefly */ }
   };
