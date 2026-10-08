@@ -11775,24 +11775,30 @@ Rules:
       // for team data. Run it for this team and let Bruno answer from the rows
       // in a second pass; the block itself is never shown or saved.
       const lookupTz = await teamTimeZone(auth.teamId, req.body?.tz);
-      const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; onUsage: (u: any) => void }) => {
+      const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
         const rows = await runLookups(dbAll as any, auth.teamId, lookupTz, queries);
         if (opts.signal.aborted) return null;
+        const secondMessages = [
+          ...messages,
+          { role: "model", text: firstText },
+          { role: "user", text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. If a search failed or more rows matched than are listed, say that too. Don't ask for another lookup.` },
+        ];
+        let secondUsage: any = null;
         const second = await aiChat({
           extraSystem: systemExtra,
-          messages: [
-            ...messages,
-            { role: "model", text: firstText },
-            { role: "user", text: `[Lookup results from the team's own data, not written by the user]\n${rows}\n\nNow answer my last question from these results. Quote names, dates and wording exactly as they appear. If nothing was found, say so plainly and suggest a different search. Don't ask for another lookup.` },
-          ],
+          messages: secondMessages,
           maxTokens,
           stream: opts.stream,
           onChunk: opts.onChunk,
-          onUsage: opts.onUsage,
+          onUsage: (u) => { secondUsage = u; },
           signal: opts.signal,
         });
+        // The second call is its own AI request: log it on its own row (with
+        // its own provider) so daily limits count both calls.
+        const secondPromptChars = secondMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+        logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
         return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider };
       };
       if (stream) {
@@ -11823,13 +11829,15 @@ Rules:
           const tail = hold.end();
           if (tail) res.write(tail);
           let fullText = aiReply.text;
+          // The first call's own counts, logged before any lookup pass (which logs itself).
+          const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+          logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
           if (hold.blocked && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
             const looked = await followUpWithLookups(fullText, {
               stream: true,
               onChunk: (chunk) => { const out = hold2.push(chunk); if (out) res.write(out); },
               signal: streamAbort.signal,
-              onUsage: (u) => { usage = { ...(usage || {}), ...u }; },
             }).catch((e) => { console.error("Bruno lookup pass failed:", e?.message); return null; });
             if (streamAbort.signal.aborted) { res.end(); return; }
             const tail2 = hold2.end();
@@ -11842,8 +11850,6 @@ Rules:
               fullText = extractLookupBlocks(fullText).text + sorry;
             }
           }
-          const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
-          logAiUsage(auth.memberId, auth.teamId, usage, promptChars, String(fullText || "").length, "ok", aiReply.provider);
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
@@ -11883,15 +11889,17 @@ Rules:
         signal: nonStreamAbort.signal,
       });
       let result = aiReply.text;
-      if (extractLookupBlocks(String(result || "")).queries.length) {
-        const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, onUsage: () => {} }).catch(() => null);
+      const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, firstPromptChars, String(result || "").length, "ok", aiReply.provider);
+      // Same rule as the stream: any ```lookup block (even an unfinished or
+      // unreadable one) is never shown or saved; if it can't run, say so.
+      if (String(result || "").includes("```lookup")) {
+        const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal }).catch(() => null);
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
       }
       let finalResult = stripActionBlocks(String(result || ""));
       finalResult += await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
-      const promptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
-      logAiUsage(auth.memberId, auth.teamId, nonStreamUsage, promptChars, String(finalResult || "").length, "ok", aiReply.provider);
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
