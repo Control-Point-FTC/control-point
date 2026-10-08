@@ -110,6 +110,16 @@ describe('scouting API offline fallback', () => {
     await expect(fetchScoutTeam(2025)).rejects.toThrow('Failed to fetch');
   });
 
+  it("an answer that lands after a workspace switch doesn't save the old team", async () => {
+    let answer!: (v: unknown) => void;
+    api.apiFetch.mockImplementation(() => new Promise((r) => { answer = r; }));
+    const pending = fetchScoutTeam(2025);
+    clearScoutCache(); // switched workspace while it was in flight
+    answer({ ok: true, status: 200, json: async () => ({ number: 4215, name: 'Old team', events: [] }) });
+    await pending;
+    expect(localStorage.getItem('cp-own-ftc-team')).toBeNull();
+  });
+
   it('without a pack, fails as before', async () => {
     offline.getOfflinePack.mockResolvedValue(null);
     api.apiFetch.mockRejectedValue(new TypeError('Failed to fetch'));

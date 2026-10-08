@@ -104,8 +104,11 @@ async function orOffline<T>(live: () => Promise<T>, offline: (pack: NonNullable<
 // so its pages open offline from the pack. Forgotten on workspace switch and
 // sign-out (clearScoutCache).
 const OWN_TEAM_KEY = 'cp-own-ftc-team';
+// Bumped by clearScoutCache (workspace switch / sign-out): an answer that
+// started before must not save the previous workspace's team afterwards.
+let ownTeamGen = 0;
 function rememberOwnTeam(n: number): void { try { localStorage.setItem(OWN_TEAM_KEY, String(n)); } catch { /* storage unavailable */ } }
-function forgetOwnTeam(): void { try { localStorage.removeItem(OWN_TEAM_KEY); } catch { /* storage unavailable */ } }
+function forgetOwnTeam(): void { ownTeamGen++; try { localStorage.removeItem(OWN_TEAM_KEY); } catch { /* storage unavailable */ } }
 function ownTeam(): number | null { try { return parseInt(localStorage.getItem(OWN_TEAM_KEY) || '', 10) || null; } catch { return null; } }
 
 /** A team's season profile. `number` omitted = the workspace's own team. */
@@ -115,8 +118,9 @@ export function fetchScoutTeam(season: number, number?: number | null, opts?: { 
   if (number) q.set('number', String(number));
   return teamCache.get(key, () => orOffline(
     async () => {
+      const gen = ownTeamGen;
       const p = await getJson<FtcTeamProfile>(`/api/ftc/scout/team?${q}`);
-      if (!number && p?.number) rememberOwnTeam(p.number);
+      if (!number && p?.number && gen === ownTeamGen) rememberOwnTeam(p.number);
       return p;
     },
     (pack) => { const n = number || ownTeam(); return n ? packTeamProfile(pack, season, n) : null; },

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { fetchScoutEvent, fetchScoutTeam } from '../../services/ftcScoutApi';
+import { warmOfflineForecast } from '../../services/offlinePack';
 import { fetchForecast, fetchPartners, fetchPredictStatus, PredictError, type ForecastView, type Partners, type PredictAccuracy, type LiveAccuracy } from '../../services/predictApi';
 import { setScreenEntity } from '../../services/brunoContext';
 import { currentFtcSeason } from '../FtcStats';
@@ -107,6 +108,9 @@ export function usePredictController() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [season, teamReload]);
+
+  // Keep the offline simulator cached on devices with a downloaded pack.
+  useEffect(() => { void warmOfflineForecast(); }, []);
 
   // Again every 10 minutes, so a page left open picks up the next sync's age.
   useEffect(() => {
