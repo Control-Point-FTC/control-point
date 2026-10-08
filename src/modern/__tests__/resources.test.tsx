@@ -64,6 +64,101 @@ describe('Modern Resources', () => {
     expect(screen.getByLabelText('Text with links')).toHaveValue('');
   });
 
+  it('leaves out links the library already has and lists them', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') return { items: [
+        { url: 'https://gm0.org', title: 'Game Manual 0', description: '', category: 'Community' },
+        // Flagged by the server.
+        { url: 'https://ftc-docs.firstinspires.org/', title: 'FTC Docs again', description: '', category: 'Other', duplicate: 'saved' },
+        // Same page as a saved link (no www, no slash, a tracking parameter): caught here.
+        { url: 'http://revrobotics.com/rev-41-1300?utm_source=discord', title: 'Core Hex', description: '', category: 'Other' },
+      ], count: 3 };
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Left out 2 already in your library: FTC Docs again, Core Hex/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save all 1' })).toBeInTheDocument();
+  });
+
+  it('a link repeated in the paste is not called saved; one deleted meanwhile counts as new', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') return { items: [
+        { url: 'https://gm0.org', title: 'Game Manual 0', description: '', category: 'Community' },
+        { url: 'https://www.gm0.org/', title: 'gm0 again', description: '', category: 'Community', duplicate: 'repeat' },
+        // The server still had it when it read the library; this page's list doesn't any more.
+        { url: 'https://old.example/', title: 'Old link', description: '', category: 'Other', duplicate: 'saved' },
+      ], count: 3 };
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(2\)/)).toBeInTheDocument();
+    expect(screen.getByText('Left out 1 repeated in this paste: gm0 again.')).toBeInTheDocument();
+    expect(screen.queryByText(/already in your library/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Title for https://old.example/')).toHaveValue('Old link');
+  });
+
+  it('judges links against the library as it is when Bruno answers', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') {
+        // A teammate saves gm0 while Bruno is reading.
+        list = [...LIST, { id: 9, url: 'https://gm0.org/', title: 'gm0', description: '', category: 'Community', created_by: 8, created_by_name: 'Lin', created_at: null }];
+        return { items: [{ url: 'https://gm0.org', title: 'Game Manual 0', description: '', category: 'Community' }, { url: 'https://new.example/', title: 'New', description: '', category: 'Other' }], count: 2 };
+      }
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText('Left out 1 already in your library: Game Manual 0.')).toBeInTheDocument();
+    // The page shows the fresh library too.
+    expect(screen.getByText('4 saved links')).toBeInTheDocument();
+  });
+
+  it('the fresh library read also clears an earlier load error', async () => {
+    let first = true;
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) {
+        if (first) { first = false; throw new Error('offline'); }
+        return list;
+      }
+      if (url === '/api/resources/parse') return { items: [{ url: 'https://new.example/', title: 'New', description: '', category: 'Other' }], count: 1 };
+      return {};
+    });
+    setup();
+    expect(await screen.findByText("Couldn't load resources")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByText(/Preview — edit before saving \(1\)/)).toBeInTheDocument();
+    expect(await screen.findByText('Core Hex Motor')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load resources")).not.toBeInTheDocument();
+  });
+
+  it('says so when every link is already saved', async () => {
+    api.apiJson.mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/resources' && !init?.method) return list;
+      if (url === '/api/resources/parse') return { items: [{ url: 'https://youtu.be/x', title: 'Reveal', description: '', category: 'Videos' }], count: 1 };
+      return {};
+    });
+    setup();
+    await screen.findByText('Core Hex Motor');
+    fireEvent.change(screen.getByLabelText('Text with links'), { target: { value: 'links' } });
+    fireEvent.click(screen.getByRole('button', { name: /Extract links with Bruno/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('That link is already in your library.');
+    expect(screen.queryByText(/Preview — edit before saving/)).not.toBeInTheDocument();
+  });
+
   it('shows the parse error from the server', async () => {
     api.apiJson.mockImplementation(async (url: string, init?: any) => {
       if (url === '/api/resources/parse') throw Object.assign(new Error('x'), { body: { error: 'No links found in that text.' } });

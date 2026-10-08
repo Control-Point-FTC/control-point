@@ -187,6 +187,8 @@ function Composer({ ctl }: { ctl: Ctl }) {
               ))}
             </ul>
           </fieldset>
+          <SkippedNote items={ctl.skipped.filter((r) => r.duplicate !== 'repeat')} lead="already in your library" />
+          <SkippedNote items={ctl.skipped.filter((r) => r.duplicate === 'repeat')} lead="repeated in this paste" />
           {ctl.saveError && <p role="alert" className="mt-3 text-sm text-destructive">{ctl.saveError}</p>}
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={ctl.discardPreview} disabled={ctl.saving}>Discard</Button>
@@ -198,4 +200,11 @@ function Composer({ ctl }: { ctl: Ctl }) {
       )}
     </Reveal>
   );
+}
+
+/** "Left out 2 already in your library: FTC Docs, Core Hex." */
+function SkippedNote({ items, lead }: { items: { url: string; title: string }[]; lead: string }) {
+  if (!items.length) return null;
+  const names = items.slice(0, 3).map((r) => r.title || r.url).join(', ');
+  return <p className="mt-3 text-sm text-muted-foreground">Left out {items.length} {lead}: {names}{items.length > 3 ? ` and ${items.length - 3} more` : ''}.</p>;
 }
