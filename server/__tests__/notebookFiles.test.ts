@@ -1,6 +1,10 @@
+// @vitest-environment node
 import { afterAll,beforeAll,describe,expect,it } from 'vitest';
 import { NotebookStore } from '../notebook';
 import { startTestServer,seedTeam,seedMember,type TestServer } from './helpers/testServer';
+import { withSession } from './helpers/session';
+import express from 'express';
+import { registerNotebookFileRoutes, notebookUploadMetadata } from '../notebookFiles';
 import { notebookAttachmentIds } from '../../src/notebook/attachmentReferences';
 let t:TestServer,store:NotebookStore,team:number,other:number,admin:number,reader:number,section:number;
 const ctx = (memberId=admin,source:'human'|'bruno'='human')=>({memberId,teamId:team,source});
@@ -18,6 +22,47 @@ beforeAll(async()=>{
 },120000);
 afterAll(async()=>{await t?.stop();});
 describe('notebook file reference boundary',()=>{
+  it('uploads and serves only through page-scoped authenticated routes',async()=>{
+    const p=await page(),session=await t.session(admin),peerSession=await t.session(reader);
+    const form=new FormData();form.append('file',new Blob(['%PDF-1.7\n'],{type:'text/html'}),'../../source.pdf');
+    const response=await fetch(`${t.base}/api/notebook/pages/${p.id}/files`,{method:'POST',headers:withSession(new Headers({'X-CP-Notebook-Team':String(team)}),session),body:form});
+    const f=await response.json();expect(response.status,JSON.stringify(f)).toBe(200);
+    expect(f).toMatchObject({name:'source.pdf',mimeType:'application/pdf'});
+    expect((await t.api(`/api/files/${f.id}`,{session})).status).toBe(404);
+    expect((await t.api(`/api/notebook/pages/${p.id}/files/${f.id}`,{session:peerSession})).status).toBe(404);
+    await store.save(ctx(),p.id,{baseRevision:1,content:content(f.id)});
+    const allowed=await fetch(`${t.base}/api/notebook/pages/${p.id}/files/${f.id}`,{headers:withSession(new Headers(),peerSession)});
+    expect(allowed.status).toBe(200);expect(allowed.headers.get('cache-control')).toBe('no-store');
+    expect(await allowed.text()).toBe('%PDF-1.7\n');
+    await store.protect(ctx(),'page',p.id,true);
+    expect((await t.api(`/api/notebook/pages/${p.id}/files/${f.id}`,{session:peerSession})).status).toBe(404);
+  });
+  it('rejects files over 25 MB without storing a row',async()=>{
+    const p=await page(),session=await t.session(admin),form=new FormData();
+    form.append('file',new Blob([new Uint8Array(25*1024*1024+1)]),'too-large.bin');
+    const before=Number((await t.db.execute('SELECT COUNT(*) AS n FROM stored_files')).rows[0].n);
+    const response=await fetch(`${t.base}/api/notebook/pages/${p.id}/files`,{method:'POST',headers:withSession(new Headers(),session),body:form});
+    expect(response.status).toBe(413);expect((await response.json()).error).toContain('25 MB');
+    expect(Number((await t.db.execute('SELECT COUNT(*) AS n FROM stored_files')).rows[0].n)).toBe(before);
+  });
+  it('rechecks page permission after an asynchronous storage read',async()=>{
+    const p=await page(),f=await upload(p.id);await store.save(ctx(),p.id,{baseRevision:1,content:content(f)});
+    const app=express();let reads=0;
+    registerNotebookFileRoutes(app,{
+      requireAuth:async()=>({memberId:reader,teamId:team}),ensureRolesSeeded:async()=>{},
+      storeFile:async()=>{throw new Error('not used');},deleteStoredRow:async()=>{},
+      readStoredBytes:async()=>{reads++;await store.protect(ctx(),'page',p.id,true);return Buffer.from('protected bytes');}
+    },store);
+    const server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));
+    try {
+      const address=server.address() as {port:number};
+      const response=await fetch(`http://127.0.0.1:${address.port}/api/notebook/pages/${p.id}/files/${f}`);
+      expect(reads).toBe(1);expect(response.status).toBe(404);expect(await response.text()).not.toContain('protected bytes');
+    }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+  });
+  it('never trusts supplied MIME and removes filename path/control characters',()=>{
+    expect(notebookUploadMetadata('..\\folder\\bad\r\n.html',Buffer.from('<script>'))).toEqual({name:'bad.html',mimeType:'application/octet-stream'});
+  });
   it('reads only authored attachment references and rejects invalid IDs',()=>{
     expect(notebookAttachmentIds({url:'/api/files/99',metadata:{type:'notebookFile',attrs:{fileId:99}},content:[{type:'notebookFile',attrs:{fileId:3}}]})).toEqual([3]);
     expect(()=>notebookAttachmentIds(content(-1))).toThrow();

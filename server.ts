@@ -75,7 +75,8 @@ import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
-import { registerNotebookRoutes } from "./server/notebook.js";
+import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
+import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { buildArticleCsp, buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
@@ -7565,6 +7566,8 @@ async function startServer() {
     return Buffer.from(row.data as ArrayBuffer);
   }
 
+  registerNotebookFileRoutes(app,{requireAuth,ensureRolesSeeded,storeFile,deleteStoredRow,readStoredBytes},new NotebookStore());
+
   // Copy existing files into R2 in the background (the owner asked for every
   // existing image and file to move). Each copy is verified by size before
   // the row points at R2. The database copy is cleared only when
@@ -7704,7 +7707,7 @@ async function startServer() {
       const f = (await dbGet(
         `SELECT id, team_id, kind, filename, mime_type, r2_key, length(data) AS blob_len FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
       )) as any;
-      if (!f) return res.status(404).end();
+      if (!f || f.kind === "notebook") return res.status(404).end();
       let email = String((auth as any).email || "");
       if (!email) {
         const me = (await dbGet(`SELECT email FROM members WHERE id = ?`, auth.memberId)) as any;
