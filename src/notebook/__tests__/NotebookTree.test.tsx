@@ -20,6 +20,19 @@ function mount(path = '/notebook', emptySection = false) {
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('expands writing space by hiding notebook panes without toggling the app sidebar',async()=>{
+    mount();await screen.findByRole('button',{name:'Build'});
+    const appToggle=vi.fn();window.addEventListener('cp:notebook-navigation',appToggle);
+    try{
+      fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));
+      expect(screen.queryByRole('complementary',{name:'Notebook explorer'})).toBeNull();
+      expect(screen.queryByRole('complementary',{name:'Pages in selected section'})).toBeNull();
+      const restore=screen.getByRole('button',{name:'Show sections and pages'});expect(document.activeElement).toBe(restore);
+      expect(appToggle).not.toHaveBeenCalled();fireEvent.click(restore);
+      expect(screen.getByRole('complementary',{name:'Notebook explorer'})).toBeTruthy();
+      expect(screen.getByRole('complementary',{name:'Pages in selected section'})).toBeTruthy();
+    }finally{window.removeEventListener('cp:notebook-navigation',appToggle);}
+  });
   it('keeps existing notebook and section creation available while new notebooks are hidden',async()=>{
     mount();expect(await screen.findByRole('button',{name:'Robot notes'})).toBeTruthy();
     expect(screen.queryByRole('button',{name:'New notebook'})).toBeNull();

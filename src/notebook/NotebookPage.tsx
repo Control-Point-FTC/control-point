@@ -51,6 +51,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [drop, setDrop] = useState<{ kind: Kind; id: number; zone: 'before' | 'inside' | 'after' } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [drawer, setDrawer] = useState(false);
+  const [writingFocus,setWritingFocus]=useState(false);
+  const focusExit=useRef<HTMLButtonElement|null>(null);
+  useEffect(()=>{if(writingFocus&&!mobile)focusExit.current?.focus();},[writingFocus,mobile]);
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
@@ -285,7 +288,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (first) await pick(first.id); else navigate('/notebook');
   };
   const explorer = <div className="nb-explorer-inner">
-    {!mobile && <div className="nb-navigation-row"><button aria-label="Toggle Control Point navigation" onClick={() => window.dispatchEvent(new Event('cp:notebook-navigation'))}><PanelLeft size={18} /></button><span>Notebooks</span><NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></div>}
+    {!mobile && <div className="nb-navigation-row"><button aria-label="Expand writing space" title="Hide sections and pages" aria-expanded={!writingFocus} onClick={() => setWritingFocus(true)}><PanelLeft size={18} /></button><span>Notebooks</span><NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></div>}
     <div className="nb-search"><Search size={16} /><input aria-label="Search notebook titles and typed text" placeholder="Search notes…" value={query} onChange={e => setQuery(e.target.value)} /></div>
     <div className="nb-filters" role="group" aria-label="Notebook page filter">{[['all','Notebooks'],['recent','Recent'],['starred','Pinned']].map(([id,label]) => <button key={id} aria-pressed={filter === id} onClick={() => { setFilter(id); setQuery(''); }}>{label}</button>)}</div>
     {tree && <div className="nb-filters"><button onClick={() => { setCollapsed([]); savePreference(collapsedKey, []); }}>Expand all</button><button onClick={() => { const keys = [...tree.notebooks.map(n => `notebook:${n.id}`), ...tree.sections.map(n => `section:${n.id}`), ...tree.pages.filter(p => tree.pages.some(child => child.parentId === p.id)).map(n => `page:${n.id}`)]; setCollapsed(keys); savePreference(collapsedKey, keys); }}>Collapse all</button></div>}
@@ -304,7 +307,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {SHOW_NOTEBOOK_CREATION && tree?.permissions.organize && <Button variant="outline" onClick={() => open({ action: 'create', kind: 'notebook' })}><Plus /> New notebook</Button>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  return <div className="nb-shell">
+  return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
@@ -313,7 +316,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
-    <div className="nb-body"><aside className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+    <div className="nb-body"><aside hidden={!mobile&&writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={!mobile&&writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+      {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
       {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
