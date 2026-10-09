@@ -23,6 +23,8 @@ describe('local notebook PDF printout',()=>{
     expect(screen.queryByTestId('canvas-block-pdf-2')).toBeNull();
     view.rerender(<NotebookPdf sync={sync} fileId={4} blockId="block" context={{...context,drawingScope:null}}/>);
     await waitFor(()=>expect(screen.queryByTestId('canvas-block-pdf-1')).toBeNull());
+    view.rerender(<NotebookPdf sync={sync} fileId={4} blockId="block" context={context}/>);
+    view.unmount();expect(context.setDrawingScope).toHaveBeenCalledWith(null);
   });
   it('renders only nearby pages and cancels/destroys resources on removal',async()=>{
     vi.stubGlobal('IntersectionObserver',Observer);

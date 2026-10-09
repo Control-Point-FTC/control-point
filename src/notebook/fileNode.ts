@@ -1,7 +1,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 export const NotebookFile = Node.create({
   name:'notebookFile',group:'block',atom:true,selectable:true,draggable:true,
-  addAttributes(){return {fileId:{default:null},name:{default:'Attachment'},mimeType:{default:'application/octet-stream'},size:{default:0},display:{default:'chip'},width:{default:640}};},
+  addAttributes(){return {fileId:{default:null,parseHTML:element=>element.hasAttribute('fileId')?Number(element.getAttribute('fileId')):null},name:{default:'Attachment'},mimeType:{default:'application/octet-stream'},size:{default:0,parseHTML:element=>element.hasAttribute('size')?Number(element.getAttribute('size')):0},display:{default:'chip'},width:{default:640,parseHTML:element=>element.hasAttribute('width')?Number(element.getAttribute('width')):640}};},
   parseHTML(){return [{tag:'figure[data-notebook-file]'}];},
   renderHTML({HTMLAttributes}){return ['figure',mergeAttributes(HTMLAttributes,{'data-notebook-file':'','contenteditable':'false'}),String(HTMLAttributes.name||'Attachment')];}
 });

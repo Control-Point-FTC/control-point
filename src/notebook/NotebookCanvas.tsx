@@ -212,7 +212,8 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         }
         const p = point(e), target = (e.target as Element).closest('[data-canvas-id]')?.getAttribute('data-canvas-id');
         if (tool === 'type') {
-            if ((e.target as Element).closest('.nb-flow,.nb-canvas-text'))
+            const within=(e.target as Element).closest('.nb-flow,.nb-canvas-text');
+            if (within?.closest('.nb-canvas-stage')===stage.current && (within.classList.contains('nb-canvas-text') || !scopeId))
                 return;
             const item: TextBox = { ...scopedBase(Math.max(0, p[0]), Math.max(0, p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'text', content: emptyText as TextBox['content'] };
             transact(() => insertCanvasItem(sync.doc, item));

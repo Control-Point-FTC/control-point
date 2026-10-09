@@ -3,6 +3,9 @@ import { afterEach,describe,expect,it,vi } from 'vitest';
 import { fireEvent,render,screen,act,cleanup } from '@testing-library/react';
 import { useNotebookUpload } from '../NotebookAttachments';
 import { validatedNotebookDocument } from '../editorSchema';
+import { notebookSchema } from '../editorSchema';
+import {DOMParser,DOMSerializer} from '@tiptap/pm/model';
+import {notebookAttachmentIds} from '../attachmentReferences';
 let last:any;
 class Upload {
   upload:any={};headers:any={};status=200;responseText='';onload:any;onerror:any;onabort:any;
@@ -13,6 +16,22 @@ const sync:any={pageId:9,scope:{teamId:3},data:{editable:true},status:'saved'};
 function Harness({editor}:any){const upload=useNotebookUpload(sync,editor);return <>{upload.controls}</>;}
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('notebook attachment upload',()=>{
+  it('retains a successful upload and retries insertion without another upload',()=>{
+    vi.stubGlobal('XMLHttpRequest',Upload);const run=vi.fn(()=>false),chain:any={focus:()=>chain,insertContent:()=>chain,run};
+    render(<Harness editor={{chain:()=>chain,isDestroyed:false}}/>);
+    fireEvent.change(document.querySelector('input[type=file]')!,{target:{files:[new File(['abc'],'part.pdf')]}});
+    const request=last;request.responseText=JSON.stringify({id:17,name:'part.pdf',mimeType:'application/pdf',size:3});act(()=>request.onload());
+    run.mockReturnValue(true);fireEvent.click(screen.getByText('Retry upload'));
+    expect(last).toBe(request);expect(request.send).toHaveBeenCalledOnce();expect(run).toHaveBeenCalledTimes(2);expect(screen.queryByText('Retry upload')).toBeNull();
+  });
+  it('round-trips attachment numeric attributes through clipboard HTML and indexes deeply nested attachments',()=>{
+    const json={type:'doc',content:[{type:'notebookFile',attrs:{fileId:17,name:'Part.pdf',mimeType:'application/pdf',size:3,display:'pdf',width:640}}]};
+    const host=document.createElement('div');host.append(DOMSerializer.fromSchema(notebookSchema).serializeFragment(notebookSchema.nodeFromJSON(json).content));
+    const parsed=DOMParser.fromSchema(notebookSchema).parse(host).toJSON();expect(()=>validatedNotebookDocument(parsed)).not.toThrow();
+    expect(parsed.content[0].attrs).toMatchObject({fileId:17,size:3,width:640});
+    let nested:any=json.content[0];for(let i=0;i<80;i++)nested={type:'blockquote',content:[nested]};
+    const deeplyNested={type:'doc',content:[nested]};expect(()=>validatedNotebookDocument(deeplyNested)).not.toThrow();expect(notebookAttachmentIds(deeplyNested)).toEqual([17]);
+  });
   it('shows progress, cancels and retries, and inserts only the authenticated response',()=>{
     vi.stubGlobal('XMLHttpRequest',Upload);const insert=vi.fn();const chain:any={focus:()=>chain,insertContent:(value:any)=>{insert(value);return chain;},run:()=>true};
     render(<Harness editor={{chain:()=>chain,isDestroyed:false}}/>);

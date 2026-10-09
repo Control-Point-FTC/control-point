@@ -1,6 +1,6 @@
 import React,{createContext,useContext,useEffect,useRef,useState,lazy,Suspense} from 'react';
 import { NodeViewWrapper,ReactNodeViewRenderer,type NodeViewProps,type Editor } from '@tiptap/react';
-import { NotebookFile } from './fileNode';
+import { NotebookFile,validNotebookFile } from './fileNode';
 import type { NotebookSync } from './NotebookSync';
 import { apiFetch } from '../services/api';
 import { notebookCommandGlyph } from './NotebookIcons';
@@ -37,22 +37,30 @@ export const NotebookFileView=NotebookFile.extend({addNodeView(){return ReactNod
 export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
   const [file,setFile]=useState<File|null>(null),[status,setStatus]=useState(''),[progress,setProgress]=useState(0),[busy,setBusy]=useState(false);
   const request=useRef<XMLHttpRequest|null>(null),mounted=useRef(true);
+  const retained=useRef<{file:File;metadata:any}|null>(null),latestEditor=useRef(editor);latestEditor.current=editor;
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;request.current?.abort();};},[sync]);
   const upload=(chosen:File)=>{
     if(busy)return;setFile(chosen);setProgress(0);
     if(chosen.size>25*1024*1024){setStatus('Files must be 25 MB or smaller.');return;}
     if(!chosen.size){setStatus('Choose a nonempty file.');return;}
     if(!editor || editor.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status)){setStatus('Editing is unavailable.');return;}
+    const insert=(uploaded:any)=>{
+      const target=latestEditor.current;
+      if(!target || target.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status))throw new Error('The file uploaded, but editing permission changed. Reopen the page before inserting it.');
+      const inserted=target.chain().focus().insertContent({type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}}).run();
+      if(!inserted)throw new Error('The file uploaded, but could not be inserted here. Choose a text position and retry.');
+      setStatus(`${uploaded.name} inserted.`);setFile(null);retained.current=null;
+    };
+    if(retained.current?.file===chosen){try{insert(retained.current.metadata);}catch(e){setStatus((e as Error).message);}return;}
+    retained.current=null;
     const xhr=new XMLHttpRequest();request.current=xhr;setBusy(true);setStatus(`Uploading ${chosen.name}…`);
     xhr.open('POST',`/api/notebook/pages/${sync.pageId}/files`);xhr.withCredentials=true;xhr.setRequestHeader('X-CP-Client','1');
     if(sync.scope)xhr.setRequestHeader('X-CP-Notebook-Team',String(sync.scope.teamId));
     xhr.upload.onprogress=e=>{if(mounted.current && e.lengthComputable)setProgress(Math.round(e.loaded/e.total*100));};
     xhr.onload=()=>{if(!mounted.current)return;setBusy(false);request.current=null;try{
       const uploaded=JSON.parse(xhr.responseText);if(xhr.status<200 || xhr.status>=300)throw new Error(uploaded.error||'Upload failed. Retry this file.');
-      if(editor.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status))throw new Error('The file uploaded, but editing permission changed. Reopen the page before inserting it.');
-      const inserted=editor.chain().focus().insertContent({type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}}).run();
-      if(!inserted)throw new Error('The file uploaded, but could not be inserted here. Choose a text position and retry.');
-      setStatus(`${uploaded.name} inserted.`);setFile(null);
+      if(!validNotebookFile({fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:'chip',width:640}))throw new Error('Invalid upload response. Retry this file.');
+      retained.current={file:chosen,metadata:uploaded};insert(uploaded);
     }catch(e){setStatus((e as Error).message);}};
     xhr.onerror=()=>{if(mounted.current){setBusy(false);setStatus('Upload failed. Check your connection and retry.');}};
     xhr.onabort=()=>{if(mounted.current){setBusy(false);setStatus('Upload cancelled.');}};

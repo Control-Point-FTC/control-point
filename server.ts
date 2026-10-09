@@ -4688,6 +4688,7 @@ async function startServer() {
    */
   async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
+    const notebookFileIds=((await dbAll("SELECT id FROM stored_files WHERE team_id = ? AND kind = 'notebook'",teamId)) as any[]).map(row=>Number(row.id));
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
@@ -4716,6 +4717,7 @@ async function startServer() {
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_file_refs WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_files WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM stored_files WHERE team_id = ? AND kind = 'notebook'", args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
@@ -4768,6 +4770,8 @@ async function startServer() {
       { sql: "DELETE FROM teams WHERE id = ?", args: [teamId] },
     ];
     await dbBatch(stmts);
+    // Remove the private object copies only after the database deletion commits.
+    for(const fileId of notebookFileIds)await deleteStoredRow(fileId);
     for (const id of memberIds) if (id !== keepMemberId) disconnectMember(teamId, id);
   }
 

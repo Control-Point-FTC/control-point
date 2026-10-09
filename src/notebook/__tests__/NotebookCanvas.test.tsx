@@ -22,6 +22,12 @@ function mount(editable = true, mobile = false, strokes = 0, scoped = false, sco
 }
 function pointer(surface: HTMLElement, type: string, x: number, y: number, id = 1, source = 'mouse') { const event = new Event(type, { bubbles: true }); Object.assign(event, { pointerId: id, button: 0, clientX: x, clientY: y, pressure: .5, pointerType: source }); fireEvent(surface, event); }
 describe('desktop shared drawing surface', () => {
+    it('starts PDF text boxes inside a nested flow without treating the outer flow as its text editor',()=>{
+        const {sync,surface}=mount(true,false,0,false,'block-pdf-1');
+        fireEvent.click(screen.getByRole('button',{name:'Drawing type'}));
+        pointer(screen.getByText('Flow text remains here'),'pointerdown',100,100);
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({type:'text',pdfScope:'block-pdf-1'});
+    });
     it('anchors PDF ink to its page without selecting or erasing another surface',()=>{
         const {sync,surface}=mount(true,false,1,false,'pdf-block-pdf-2');
         expect(surface.querySelectorAll('.nb-canvas-ink path')).toHaveLength(0);

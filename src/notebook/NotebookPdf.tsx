@@ -9,6 +9,8 @@ const NotebookCanvas=lazy(()=>import('./NotebookCanvas'));
 /** Rendering is requested by the author. No OCR, text extraction, indexing or AI ingestion. */
 export default function NotebookPdf({sync,fileId,width=640,blockId,context}:{sync:NotebookSync;fileId:number;width?:number;blockId?:string;context?:React.ContextType<typeof NotebookFileContext>}){
   const printout=useRef<HTMLDivElement|null>(null),[displayWidth,setDisplayWidth]=useState(Math.min(width,640));
+  const latestContext=useRef(context);latestContext.current=context;
+  useEffect(()=>()=>{const current=latestContext.current;if(blockId && current?.drawingScope?.startsWith(`${blockId}-pdf-`))current.setDrawingScope(null);},[blockId,sync,fileId]);
   useEffect(()=>{if(!printout.current)return;const resize=()=>setDisplayWidth(printout.current?.clientWidth||Math.min(width,640));resize();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(resize);observer.observe(printout.current);return()=>observer.disconnect();},[width]);
   const [document,setDocument]=useState<PDFDocumentProxy|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
   const [first,setFirst]=useState(1),[last,setLast]=useState(1),[printStatus,setPrintStatus]=useState(''),[printing,setPrinting]=useState(false),printAbort=useRef<AbortController|null>(null);

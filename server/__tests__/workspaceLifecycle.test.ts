@@ -33,6 +33,7 @@ describe("delete a workspace", () => {
     const adminDoomed = await seedMember(t.db, doomed, "Ada", "ada@ws.test", "admin");
     const member = await seedMember(t.db, doomed, "Grace", "grace@ws.test");
     await fillWorkspace(doomed, adminDoomed, member);
+    for(const [team,owner] of [[doomed,adminDoomed],[keep,adminKeep]])await t.db.execute({sql:"INSERT INTO stored_files(team_id,member_id,kind,filename,mime_type,size,data) VALUES(?,?,'notebook','pending.pdf','application/pdf',4,?)",args:[team,owner,new Uint8Array([37,80,68,70])]});
     const s = await t.session(adminDoomed);
 
     const r = await t.api(`/api/teams/${doomed}`, { method: "DELETE", session: s });
@@ -44,6 +45,8 @@ describe("delete a workspace", () => {
       expect(Number(n.n), table).toBe(0);
     }
     // The other workspace is untouched.
+    expect(Number((await t.db.execute({sql:"SELECT COUNT(*) AS n FROM stored_files WHERE team_id=? AND kind='notebook'",args:[doomed]})).rows[0].n)).toBe(0);
+    expect(Number((await t.db.execute({sql:"SELECT COUNT(*) AS n FROM stored_files WHERE team_id=? AND kind='notebook'",args:[keep]})).rows[0].n)).toBe(1);
     expect(((await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM members WHERE id = ? AND is_active = 1", args: [adminKeep] })).rows[0] as any).n).toBe(1);
   });
 
