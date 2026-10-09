@@ -13,6 +13,16 @@ function setup(){
 }
 afterEach(()=>{vi.restoreAllMocks();vi.clearAllMocks();});
 describe('complete notebook page preparation',()=>{
+  it('preserves measured image and following text coordinates beneath ordinary saved marks',async()=>{
+    setup();const page:any={title:'Aligned',revision:1,updatedAt:'now',content:{type:'doc',content:[file(1,'image','image/png'),{type:'paragraph',content:[{type:'text',text:'Text below attachment'}]}]},canvas:{version:1,objects:[stroke('image-mark'),{...stroke('below-mark'),y:650}]}};
+    const layout={blocks:[{x:0,y:40,width:800,height:570},{x:0,y:630,width:800,height:40}],attachments:{'file-1':{rect:{x:0,y:40,width:800,height:570},image:{x:13,y:96,width:640,height:426},pages:[]}}};
+    const html=await prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn(),{width:800,height:800},layout);
+    const host=document.createElement('div');host.innerHTML=html;
+    expect(host.querySelector('figure')!.style.top).toBe('40px');expect(host.querySelector('figure')!.style.minHeight).toBe('570px');
+    expect(host.querySelector('img')!.style.top).toBe('96px');expect(host.querySelector('img')!.style.left).toBe('13px');
+    expect(host.querySelector<HTMLElement>('.notebook-print-flow > p')!.style.top).toBe('630px');
+    expect([...host.querySelectorAll('svg g')].some(group=>group.getAttribute('transform')!.includes('translate(10 650)'))).toBe(true);
+  });
   it('includes typed content, images, offscreen PDF pages, scoped ink and ordinary drawing while chips stay chips',async()=>{
     setup();const page:any={title:'<script>Title</script>',revision:4,updatedAt:'now',content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Build notes'}]},file(1,'image','image/png'),file(2,'pdf','application/pdf'),file(3,'chip','application/pdf')]},canvas:{version:1,objects:[stroke('ordinary'),stroke('annotation','file-2-pdf-1')]}};
     const html=await prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn());
