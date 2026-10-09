@@ -21,6 +21,8 @@ type Item = { id: number; title: string; color?: string | null; protected?: bool
 type EditDialog = { action: 'create' | 'rename' | 'delete' | 'move'; kind: Kind; item?: Item; sectionId?: number; parentId?: number; notebookId?: number };
 const plural = { notebook: 'notebooks', section: 'sections', page: 'pages' };
 const emptyDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
+// One notebook per season for now. Keep creation and its API intact for re-enabling.
+const SHOW_NOTEBOOK_CREATION = false;
 function readPreference(key: string): number[] { try { const v = JSON.parse(localStorage.getItem(key) ?? '[]'); return Array.isArray(v) ? v.filter(Number.isSafeInteger) : []; } catch { return []; } }
 function savePreference(key: string, value: number[] | string[]) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage optional */ } }
 function readCollapsed(key: string): string[] {
@@ -49,6 +51,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [drop, setDrop] = useState<{ kind: Kind; id: number; zone: 'before' | 'inside' | 'after' } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [drawer, setDrawer] = useState(false);
+  const [writingFocus,setWritingFocus]=useState(false);
+  const focusExit=useRef<HTMLButtonElement|null>(null);
+  useEffect(()=>{if(writingFocus&&!mobile)focusExit.current?.focus();},[writingFocus,mobile]);
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
@@ -265,14 +270,14 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree?.permissions.protect && kind !== 'notebook' && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson(`/api/notebook/${plural[kind]}/${item.id}/protection`, { method: 'PUT', body: JSON.stringify({ protected: !(kind === 'page' ? item.ownProtected : item.protected) }) })); })(); }}>{(kind === 'page' ? item.ownProtected : item.protected) ? 'Remove direct admin protection' : 'Protect for admins'}</DropdownMenuItem>}
       {tree?.permissions.delete && <><DropdownMenuSeparator /><DropdownMenuItem className="text-rose-500" onClick={() => open({ action: 'delete', kind, item })}>Move to trash</DropdownMenuItem></>}
     </DropdownMenuContent></DropdownMenu>;
-  const pageRows = (sectionId: number, parentId: number | null = null, depth = 0): React.ReactNode => {
+  const pageRows = (sectionId: number, parentId: number | null = null, depth = 0, baseIndent = 8): React.ReactNode => {
     if (depth >= 6) return null;
     return tree?.pages.filter(p => p.sectionId === sectionId && p.parentId === parentId).map(p => <div key={p.id}>
-      <div {...rowEvents('page', p)} className={`nb-tree-row ${selected === p.id ? 'is-selected' : ''} ${dropClass('page', p.id)}`} style={{ paddingInlineStart: `${depth * 14 + 8}px` }}>
+      <div {...rowEvents('page', p)} className={`nb-tree-row ${selected === p.id ? 'is-selected' : ''} ${dropClass('page', p.id)}`} style={{ paddingInlineStart: `${depth * 14 + baseIndent}px` }}>
         {tree.pages.some(child => child.parentId === p.id) && <button className="nb-star" aria-label={`${isCollapsed('page', p.id) ? 'Expand' : 'Collapse'} ${p.title}`} onClick={() => toggleCollapse('page', p.id)}>{isCollapsed('page', p.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</button>}
         {renameInput('page', p) ?? <button data-nb-focus data-nb-kind="page" data-nb-id={p.id} className="nb-tree-label" onClick={() => { void pick(p.id); }} aria-current={selected === p.id ? 'page' : undefined}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} aria-label="Admin only" />}</button>}
         <button className="nb-star" aria-label={`${stars.includes(p.id) ? 'Unpin' : 'Pin'} ${p.title}`} aria-pressed={stars.includes(p.id)} onClick={() => toggleStar(p.id)}><Star size={14} fill={stars.includes(p.id) ? 'currentColor' : 'none'} /></button>{options('page', p)}
-      </div>{!isCollapsed('page', p.id) && pageRows(sectionId, p.id, depth + 1)}
+      </div>{!isCollapsed('page', p.id) && pageRows(sectionId, p.id, depth + 1, baseIndent)}
     </div>);
   };
   const sectionId = tree?.pages.find(p => p.id === selected)?.sectionId ?? activeSection ?? tree?.sections[0]?.id;
@@ -283,7 +288,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (first) await pick(first.id); else navigate('/notebook');
   };
   const explorer = <div className="nb-explorer-inner">
-    {!mobile && <div className="nb-navigation-row"><button aria-label="Toggle Control Point navigation" onClick={() => window.dispatchEvent(new Event('cp:notebook-navigation'))}><PanelLeft size={18} /></button><span>Notebooks</span><NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></div>}
+    {!mobile && <div className="nb-navigation-row"><button aria-label="Expand writing space" title="Hide sections and pages" aria-expanded={!writingFocus} onClick={() => setWritingFocus(true)}><PanelLeft size={18} /></button><span>Notebooks</span><NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></div>}
     <div className="nb-search"><Search size={16} /><input aria-label="Search notebook titles and typed text" placeholder="Search notes…" value={query} onChange={e => setQuery(e.target.value)} /></div>
     <div className="nb-filters" role="group" aria-label="Notebook page filter">{[['all','Notebooks'],['recent','Recent'],['starred','Pinned']].map(([id,label]) => <button key={id} aria-pressed={filter === id} onClick={() => { setFilter(id); setQuery(''); }}>{label}</button>)}</div>
     {tree && <div className="nb-filters"><button onClick={() => { setCollapsed([]); savePreference(collapsedKey, []); }}>Expand all</button><button onClick={() => { const keys = [...tree.notebooks.map(n => `notebook:${n.id}`), ...tree.sections.map(n => `section:${n.id}`), ...tree.pages.filter(p => tree.pages.some(child => child.parentId === p.id)).map(n => `page:${n.id}`)]; setCollapsed(keys); savePreference(collapsedKey, keys); }}>Collapse all</button></div>}
@@ -292,17 +297,17 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}>{renameInput('notebook', book) ?? <button data-nb-focus data-nb-kind="notebook" data-nb-id={book.id} className="nb-tree-label" aria-expanded={!isCollapsed('notebook', book.id)} onClick={() => toggleCollapse('notebook', book.id)}>{isCollapsed('notebook', book.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<NotebookGlyph color={book.color ?? '#88c900'} /><strong>{book.title}</strong></button>}{options('notebook', book)}</div>
         {!isCollapsed('notebook', book.id) && tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
           <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{renameInput('section', section) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span>{section.title}</span>{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
-          {mobile && !isCollapsed('section', section.id) && <>{pageRows(section.id)}{tree.permissions.edit && <button className="nb-add" onClick={() => open({ action: 'create', kind: 'page', sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
+          {mobile && !isCollapsed('section', section.id) && <>{pageRows(section.id,null,0,72)}{tree.permissions.edit && <button className="nb-add nb-add-page" onClick={() => open({ action: 'create', kind: 'page', sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
         </div>)}
-        {tree.permissions.organize && <button className="nb-add" onClick={() => open({ action: 'create', kind: 'section', notebookId: book.id })}><Plus size={14} /> New section</button>}
+        {tree.permissions.organize && <button className="nb-add nb-add-section" onClick={() => open({ action: 'create', kind: 'section', notebookId: book.id })}><Plus size={14} /> New section</button>}
       </div>)}
       {!tree && <p className="nb-small">Loading notebooks…</p>}
       {tree && !tree.notebooks.length && <p className="nb-small">No notebooks yet.</p>}
     </div>
-    {tree?.permissions.organize && <Button variant="outline" onClick={() => open({ action: 'create', kind: 'notebook' })}><Plus /> New notebook</Button>}
+    {SHOW_NOTEBOOK_CREATION && tree?.permissions.organize && <Button variant="outline" onClick={() => open({ action: 'create', kind: 'notebook' })}><Plus /> New notebook</Button>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  return <div className="nb-shell">
+  return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
@@ -311,7 +316,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
-    <div className="nb-body"><aside className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+    <div className="nb-body"><aside hidden={!mobile&&writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={!mobile&&writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+      {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
       {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
