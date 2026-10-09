@@ -7,7 +7,7 @@ import { dbClient } from "../db.js";
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
-import { seedCanvas } from '../src/notebook/canvasModel.js';
+import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 
@@ -175,12 +175,15 @@ export class Session {
     const textBoxes = (canvas as any)?.version === 1 && Array.isArray((canvas as any).objects) ? (canvas as any).objects.filter((item: any) => item.type === 'text').map((item: any) => item.content) : [];
     for (const link of notebookPageReferences([content, ...textBoxes])) await this.run('INSERT INTO notebook_links(team_id,source_page_id,target_page_id,target_block_id) VALUES(?,?,?,?)', this.ctx.teamId, pageId, link.pageId, link.blockId);
   }
-  async save(pageId: number, body: Row) {
+  async save(pageId: number, body: Row, trustedHistory = false) {
     this.require("edit_notebook");
     const row = await this.item("page", pageId);
     if (!Number.isSafeInteger(body.baseRevision) || body.baseRevision !== row.revision) throw new NotebookError("Page changed; review the latest revision", 409, { page: await this.page(row) });
     const nextTitle = body.title === undefined ? row.title : title(body.title);
     const content = body.content === undefined ? row.content : document(body.content, [], 2_000_000);
+    if (body.canvas !== undefined && !trustedHistory) {
+      try { validatedCanvas(body.canvas); } catch (e) { throw new NotebookError((e as Error).message,422); }
+    }
     const canvas = body.canvas === undefined ? row.canvas : document(body.canvas, {}, 4_000_000);
     await this.snapshot(row);
     await this.run("UPDATE notebook_pages SET title=?,content=?,canvas=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=? AND revision=?",
@@ -268,17 +271,23 @@ export class NotebookStore {
     if (update && body.epoch === undefined) throw new NotebookError('Join the document before sending changes', 409);
     if (update && !s.can('edit_notebook')) throw new NotebookError('Editing permission changed; your unsaved changes need recovery', 403, { readable: true });
     let doc: Y.Doc | undefined;
+    const storedCanvas = JSON.parse(row.canvas);
+    let legacyCanvas = false;
+    try { validatedCanvas(storedCanvas); } catch { legacyCanvas = true; }
+    const seed = legacyCanvas ? {} : storedCanvas;
+    let seededCanvas = false;
     try {
       if (row.crdt_state) {
         doc = new Y.Doc();
         Y.applyUpdate(doc, new Uint8Array(row.crdt_state));
-        if (!doc.share.has('canvas')) seedCanvas(doc, JSON.parse(row.canvas));
-      } else doc = seedNotebookDocument(JSON.parse(row.content), row.title, JSON.parse(row.canvas));
+        if (!doc.share.has('canvas')) { seedCanvas(doc, seed); seededCanvas = true; }
+      } else doc = seedNotebookDocument(JSON.parse(row.content), row.title, seed);
       const before = Y.encodeStateAsUpdate(doc);
       if (update) Y.applyUpdate(doc, update);
       const json = notebookDocumentJSON(doc);
       const content = document(json.content, [], 2_000_000);
-      const canvas = document(json.canvas, {}, 4_000_000);
+      if (legacyCanvas && json.canvas.objects.length) throw new NotebookError('Export the retained legacy canvas before replacing its drawing format.',422);
+      const canvas = legacyCanvas ? row.canvas : document(json.canvas, {}, 4_000_000);
       const nextTitle = title(json.title);
       const state = Y.encodeStateAsUpdate(doc);
       if (state.length > 6_000_000) throw new NotebookError('Shared document too large; copy it into a new page', 413);
@@ -288,7 +297,7 @@ export class NotebookStore {
         await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(json.canvas), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
         await s.indexLinks(row.id, json.content, json.canvas);
       }
-      if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
+      if (!row.crdt_state || seededCanvas || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
       if (!row.crdt_state && !changed) {
         // The one-time seed supplies stable IDs before any editor joins. These
         // representation fields are not an authored text change/revision.
@@ -343,7 +352,7 @@ export class NotebookStore {
           peers.push({ clientId, memberId: member.id, name: String(member.name).slice(0, 80), color: ['#3b82f6','#8b5cf6','#ec4899','#06b6d4','#22c55e','#f97316'][member.id % 6], cursor: peer.cursor, clock: peer.seen });
         }
       }
-      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: protectedPage, editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at, createdAt: current.created_at, peers };
+      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: protectedPage, editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at, createdAt: current.created_at, legacyCanvas: legacyCanvas ? storedCanvas : undefined, peers };
     } catch (e) {
       if (e instanceof NotebookError) throw e;
       throw new NotebookError(e instanceof Error ? e.message : 'Invalid collaboration document', 422);
@@ -375,6 +384,7 @@ export class NotebookStore {
       }
       if (body.protected && !s.access.admin) throw new NotebookError("Team admin required", 403);
       if (await s.activePageCount() >= MAX_PAGES) throw new NotebookError("Page limit reached");
+      try { validatedCanvas(body.canvas ?? {}); } catch (e) { throw new NotebookError((e as Error).message,422); }
       const content = document(body.content, [], 2_000_000), canvas = document(body.canvas, {}, 4_000_000);
       result = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)", ctx.teamId, section.id, parentId, name, body.protected ? 1 : 0, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), section.id, parentId, ctx.memberId, ctx.memberId, now, now);
     }
@@ -445,7 +455,7 @@ export class NotebookStore {
     await s.item("page", pageId);
     const version = await s.one("SELECT * FROM notebook_versions WHERE id=? AND page_id=? AND team_id=?", id(versionId), pageId, ctx.teamId);
     if (!version) throw notFound();
-    return s.save(pageId, { baseRevision, title: version.title, content: JSON.parse(version.content), canvas: JSON.parse(version.canvas) });
+    return s.save(pageId, { baseRevision, title: version.title, content: JSON.parse(version.content), canvas: JSON.parse(version.canvas) }, true);
   }); }
   duplicate(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
     s.require("edit_notebook");

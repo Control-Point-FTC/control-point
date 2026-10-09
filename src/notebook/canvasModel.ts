@@ -120,6 +120,24 @@ export function insertCanvasItems(doc: Y.Doc, values: CanvasItem[], origin: unkn
     validatedCanvas({ version: 1, objects: [...canvasJSON(doc).objects, ...values] });
     doc.transact(() => { for (const value of values) insertValidatedItem(doc, value, origin); }, origin);
 }
+/** Validate the complete replacement before mutating: Yjs transactions do not roll back. */
+export function replaceCanvasItems(doc: Y.Doc, removed: string[], values: CanvasItem[], origin: unknown = CANVAS_ORIGIN) {
+    const ids = new Set(removed);
+    validatedCanvas({ version: 1, objects: [...canvasJSON(doc).objects.filter(item => !ids.has(item.id)), ...values] });
+    doc.transact(() => {
+        const root = doc.getMap('canvas');
+        for (const id of ids) root.delete(id);
+        for (const value of values) insertValidatedItem(doc,value,origin);
+    },origin);
+}
+export function copiedTextBoxContent(content: TextBox['content']): TextBox['content'] {
+    const copy = structuredClone(content);
+    const walk = (node: any) => {
+        if (node.attrs?.id != null) node.attrs.id = crypto.randomUUID();
+        for (const child of node.content ?? []) walk(child);
+    };
+    walk(copy); return copy;
+}
 function insertValidatedItem(doc: Y.Doc, value: CanvasItem, origin: unknown) {
     const root = doc.getMap<Y.Map<unknown>>('canvas');
     if (root.has(value.id))

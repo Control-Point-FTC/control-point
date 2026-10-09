@@ -1,9 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { canvasJSON, insertCanvasItem, insertCanvasItems, seedCanvas, validatedCanvas, type Ink } from '../canvasModel';
+import { canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, seedCanvas, validatedCanvas, type Ink } from '../canvasModel';
 import { directedLine, inkHit, lassoHit, splitInk } from '../canvasGeometry';
 const stroke = (id: string): Ink => ({ id, type: 'stroke', tool: 'pen', x: 0, y: 0, width: 100, height: 20, z: 1, rotation: 0, locked: false, groupId: null, color: '#111111', strokeWidth: 2, opacity: 1, points: [[0, 10, .5], [100, 10, .5]] });
 describe('shared notebook canvas', () => {
+    it('keeps all untouched ink when an eraser split exceeds object capacity', () => {
+        const doc = new Y.Doc();
+        try {
+            seedCanvas(doc,{version:1,objects:Array.from({length:5000},(_,i)=>stroke(`ink-${i}`))});
+            const before = Y.encodeStateAsUpdate(doc);
+            expect(() => replaceCanvasItems(doc,['ink-0'],[stroke('part-a'),stroke('part-b')])).toThrow();
+            expect(Y.encodeStateAsUpdate(doc)).toEqual(before);
+            replaceCanvasItems(doc,['ink-0'],[stroke('replacement')]);
+            expect(doc.getMap('canvas').size).toBe(5000);
+        } finally { doc.destroy(); }
+    },20000);
+    it('gives copied rich-text discussion targets fresh nested IDs', () => {
+        const original:any = {type:'doc',content:[{type:'blockquote',attrs:{id:'quote'},content:[{type:'paragraph',attrs:{id:'paragraph'},content:[{type:'text',text:'Same words'}]}]}]};
+        const copy:any = copiedTextBoxContent(original);
+        expect(copy.content[0].attrs.id).not.toBe('quote');
+        expect(copy.content[0].content[0].attrs.id).not.toBe('paragraph');
+        expect(original.content[0].attrs.id).toBe('quote');
+        expect(copy.content[0].content[0].content[0].text).toBe('Same words');
+    });
     it('preserves leftward line direction and snaps angles only on request', () => {
         const line = directedLine([300,100,.5],[100,200,.5],false);
         const radians = line.rotation * Math.PI / 180;

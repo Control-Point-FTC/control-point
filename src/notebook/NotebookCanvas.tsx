@@ -4,7 +4,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import Collaboration from '@tiptap/extension-collaboration';
 import { notebookExtensions } from './editorSchema';
 import type { NotebookSync } from './NotebookSync';
-import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, insertCanvasItems, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
+import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
 import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk } from './canvasGeometry';
 import { notebookCommandGlyph } from './NotebookIcons';
 import './canvas.css';
@@ -138,6 +138,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         for (const item of source) {
             const copy = structuredClone(item);
             copy.id = crypto.randomUUID();
+            if (copy.type === 'text') copy.content = copiedTextBoxContent(copy.content);
             copy.x = Math.min(50000, copy.x + 24);
             copy.y = Math.min(50000, copy.y + 24);
             copy.z = Math.min(1000000, Math.max(0, ...items.map(o => o.z)) + 1);
@@ -163,14 +164,17 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         const p: Point = [roundCanvas((e.clientX - rect.left) * el.offsetWidth / rect.width), roundCanvas((e.clientY - rect.top) * el.offsetHeight / rect.height), roundCanvas(e.pointerType === 'pen' ? Math.max(.05, e.pressure) : .5)];
         return rulerVisible && (tool === 'pen' || tool === 'highlighter') ? snapToRuler(p, ruler) : p;
     };
-    const erase = (p: Point) => { sync.doc.transact(() => { for (const item of items) {
-        if (item.type !== 'stroke' || item.locked || !inkHit(item, [p[0], p[1]], eraserSize))
-            continue;
-        root.delete(item.id);
-        if (eraserMode === 'point')
-            for (const points of splitInk(item, [p[0], p[1]], eraserSize))
-                insertCanvasItem(sync.doc, { ...item, id: crypto.randomUUID(), points });
-    } }, CANVAS_ORIGIN); };
+    const erase = (p: Point) => {
+        const removed: string[] = [], replacements: CanvasItem[] = [];
+        for (const item of canvasJSON(sync.doc).objects) {
+            if (item.type !== 'stroke' || item.locked || !inkHit(item,[p[0],p[1]],eraserSize)) continue;
+            removed.push(item.id);
+            if (eraserMode === 'point') for (const points of splitInk(item,[p[0],p[1]],eraserSize))
+                replacements.push({ ...item,id:crypto.randomUUID(),points });
+        }
+        try { replaceCanvasItems(sync.doc,removed,replacements); }
+        catch (e) { setNotice(e instanceof Error ? e.message : 'Cannot erase: canvas is full.'); }
+    };
     const begin = (e: React.PointerEvent) => {
         if (!mobile && e.pointerType === 'touch') {
             if (gesture.current?.pointerType === 'pen') return;

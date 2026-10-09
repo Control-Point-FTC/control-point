@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NotebookStore, type NotebookContext } from "../notebook";
 import { seedMember, seedTeam, startTestServer, type TestServer } from "./helpers/testServer";
 import * as Y from 'yjs';
+import { insertCanvasItem, canvasJSON } from '../../src/notebook/canvasModel';
 import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
 
 vi.setConfig({ testTimeout: 30_000 });
@@ -11,6 +12,7 @@ let userSession: string, adminSession: string, peerSession: string, otherSession
 let section: number, book: number;
 const ctx = (memberId: number, source: "human" | "bruno" = "human"): NotebookContext => ({ memberId, teamId: team, source });
 const doc = (text: string) => [{ id: "block", type: "paragraph", content: [{ type: "text", text }] }];
+const textCanvas = (text: string) => ({version:1,objects:[0,1].map(i=>({id:`box-${i}`,type:'text',x:0,y:i*200,width:400,height:200,z:i,rotation:0,locked:false,groupId:null,content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:text.slice(i* Math.ceil(text.length/2),(i+1)*Math.ceil(text.length/2))}]}]}}))});
 const get = (path: string, session = userSession) => t.api(`/api/notebook${path}`, { session });
 const post = (path: string, body: any, session = userSession) => t.post(`/api/notebook${path}`, body, session);
 const put = (path: string, body: any, session = userSession) => t.api(`/api/notebook${path}`, { method: "PUT", body: JSON.stringify(body), session });
@@ -40,6 +42,34 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('retains older canvas bytes while opening and editing text, and rejects unsupported new writes', async () => {
+    const p = await page({content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Older text'}]}]}}); const legacy = {items:[{text:'Linear slides'}]};
+    await t.db.execute({sql:'UPDATE notebook_pages SET canvas=? WHERE id=?',args:[JSON.stringify(legacy),p.id]});
+    const join:any = await store.sync(ctx(member),p.id,{});
+    expect(join.legacyCanvas).toEqual(legacy);
+    const client = new Y.Doc();
+    try {
+      Y.applyUpdate(client,Buffer.from(join.update,'base64'));
+      const vector = Y.encodeStateVector(client); client.getMap('meta').set('title','Edited older page');
+      await store.sync(ctx(member),p.id,{epoch:join.epoch,update:Buffer.from(Y.encodeStateAsUpdate(client,vector)).toString('base64')});
+      expect((await store.page(ctx(member),p.id)).canvas).toEqual(legacy);
+      expect((await put(`/pages/${p.id}`,{baseRevision:2,canvas:legacy})).status).toBe(422);
+      expect((await post('/pages',{sectionId:section,title:'Invalid',canvas:legacy})).status).toBe(422);
+    } finally { client.destroy(); }
+  });
+  it('persists canvas seed identities on an older shared page before the first editor changes them', async () => {
+    const p = await page({content:{type:'doc',content:[{type:'paragraph'}]}}); const join:any = await store.sync(ctx(member),p.id,{});
+    const old = new Y.Doc(); Y.applyUpdate(old,Buffer.from(join.update,'base64'));
+    // Empty canvas roots are not encoded by Yjs, as on pre-drawing shared pages.
+    await t.db.execute({sql:'UPDATE notebook_pages SET canvas=?,crdt_state=? WHERE id=?',args:[JSON.stringify(textCanvas('Existing drawing')),Y.encodeStateAsUpdate(old),p.id]}); old.destroy();
+    const seeded:any = await store.sync(ctx(member),p.id,{}); const client = new Y.Doc();
+    try {
+      Y.applyUpdate(client,Buffer.from(seeded.update,'base64')); const vector = Y.encodeStateVector(client);
+      const map = client.getMap<Y.Map<unknown>>('canvas').get('box-0')!; map.set('x',120);
+      await store.sync(ctx(member),p.id,{epoch:join.epoch,update:Buffer.from(Y.encodeStateAsUpdate(client,vector)).toString('base64')});
+      expect((await store.page(ctx(member),p.id)).canvas.objects.find((x:any)=>x.id==='box-0').x).toBe(120);
+    } finally { client.destroy(); }
+  });
   it('bounds initial reply payloads and pages older comments without duplicates or foreign access', async () => {
     const p = await page(), created = await post(`/pages/${p.id}/comments`, { body: 'First comment' });
     const threadId = created.body.threadId;
@@ -274,7 +304,7 @@ describe("team notebook", () => {
   });
   it("persists authored text and canvas and shares saves with another member", async () => {
     const p = await page();
-    const saved = await put(`/pages/${p.id}`, { content: doc("Odometry calibration"), canvas: { items: [{ text: "Linear slides" }] }, baseRevision: p.revision });
+    const saved = await put(`/pages/${p.id}`, { content: doc("Odometry calibration"), canvas: textCanvas("Linear slides"), baseRevision: p.revision });
     expect(saved.status).toBe(200);
     expect(saved.body.revision).toBe(2);
     expect((await get(`/pages/${p.id}`, peerSession)).body.content).toEqual(doc("Odometry calibration"));
@@ -432,7 +462,7 @@ describe("team notebook", () => {
     const person = await seedMember(t.db, fresh, "Boss", "exportlimit@notebook.test", "admin");
     const context = { memberId: person, teamId: fresh };
     const tr = await store.tree(context);
-    for (let i = 0; i < 2; i++) await store.create(context, "page", { sectionId: tr.sections[0].id, title: "Large", content: doc("x".repeat(1_800_000)), canvas: { text: "x".repeat(3_600_000) } });
+    for (let i = 0; i < 2; i++) await store.create(context, "page", { sectionId: tr.sections[0].id, title: "Large", content: doc("x".repeat(1_800_000)), canvas: textCanvas("x".repeat(3_600_000)) });
     await expect(store.export(context)).rejects.toMatchObject({ status: 413 });
     expect((await store.tree(context)).pages).toHaveLength(2);
   });
@@ -522,7 +552,7 @@ describe("team notebook", () => {
     const person = await seedMember(t.db, fresh, "Boss", "largehttp@notebook.test", "admin");
     const session = await t.session(person);
     const sectionId = (await get("/tree", session)).body.sections[0].id;
-    const content = doc("x".repeat(1_800_000)), canvas = { text: "x".repeat(3_600_000) };
+    const content = doc("x".repeat(1_800_000)), canvas = textCanvas("x".repeat(3_600_000));
     const created = await post("/pages", { sectionId, title: "Within field limits", content, canvas }, session);
     expect(created.status, JSON.stringify(created.body?.error)).toBe(200);
     const saved = await put(`/pages/${created.body.id}`, { content, canvas, baseRevision: 1 }, session);
