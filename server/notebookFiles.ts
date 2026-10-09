@@ -16,7 +16,8 @@ export async function registerNotebookFile(s: Session, pageId: number, fileId: n
 export async function indexNotebookFiles(s: Session, pageId: number, content: unknown, canvas: unknown, revision = 0, trustedCopy = false) {
   let ids: number[];
   try { ids = notebookAttachmentIds(content,canvas); } catch (e) { throw new NotebookError((e as Error).message); }
-  let visible: Set<number> | undefined;
+  let visible: Map<number, boolean> | undefined;
+  const destinationProtected = await s.isProtected(await s.item('page',pageId));
   for (const fileId of ids) {
     const file = await s.one("SELECT n.*,f.kind FROM notebook_files n JOIN stored_files f ON f.id=n.file_id AND f.team_id=n.team_id WHERE n.team_id=? AND n.file_id=?",s.ctx.teamId,fileId);
     if (!file || file.kind !== 'notebook') throw new NotebookError('Notebook file unavailable',404);
@@ -24,9 +25,9 @@ export async function indexNotebookFiles(s: Session, pageId: number, content: un
     const existing = await s.one('SELECT 1 FROM notebook_file_refs WHERE team_id=? AND page_id=? AND file_id=? LIMIT 1',s.ctx.teamId,pageId,fileId);
     if (existing) continue;
     if (file.uploaded_page_id === pageId && file.uploaded_by === s.ctx.memberId && s.access.human) continue;
-    visible ??= new Set((await s.tree()).pages.map((page: any)=>page.id));
+    visible ??= new Map((await s.tree()).pages.map((page: any)=>[page.id,!!page.protected]));
     const refs = await s.all('SELECT DISTINCT page_id FROM notebook_file_refs WHERE team_id=? AND file_id=?',s.ctx.teamId,fileId);
-    if (!refs.some(ref=>visible!.has(ref.page_id))) throw new NotebookError('Notebook file unavailable',404);
+    if (!refs.some(ref=>visible!.has(ref.page_id) && (destinationProtected || !visible!.get(ref.page_id)))) throw new NotebookError('Notebook file unavailable',404);
   }
   await s.run('DELETE FROM notebook_file_refs WHERE team_id=? AND page_id=? AND revision=?',s.ctx.teamId,pageId,revision);
   for (const fileId of ids) await s.run('INSERT INTO notebook_file_refs(team_id,page_id,file_id,revision) VALUES(?,?,?,?)',s.ctx.teamId,pageId,fileId,revision);
