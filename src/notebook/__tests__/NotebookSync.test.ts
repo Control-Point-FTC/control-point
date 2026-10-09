@@ -18,6 +18,20 @@ function setup() {
   return { provider, server, response };
 }
 describe('notebook CRDT transport', () => {
+  it('preserves input entered while a protected replacement removes its journal', async () => {
+    const { provider, response } = setup(); await provider.start();
+    let finish!: () => void;
+    const purge = vi.spyOn(provider as any, 'purgeJournal').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    vi.mocked(apiJson).mockResolvedValueOnce({ ...response(), protected: true, epoch: 'replacement' });
+    const reconnecting = provider.flush();
+    await vi.waitFor(() => expect(purge).toHaveBeenCalled());
+    provider.doc.getMap('meta').set('title', 'New input during reconnect');
+    finish();
+    expect(await reconnecting).toBe(false);
+    expect(provider.status).toBe('conflict');
+    expect(provider.pending).toBe(true);
+    expect(provider.doc.getMap('meta').get('title')).toBe('New input during reconnect');
+  });
   it('joins once, sends deltas, acknowledges only durable changes and reloads another client', async () => {
     const { provider, server } = setup();
     await provider.start();

@@ -135,8 +135,11 @@ export class NotebookSync {
         } finally { clearTimeout(timeout); this.abort.signal.removeEventListener('abort', abort); }
         if (this.stopped) return;
         const oldEpoch = this.data?.epoch ?? this.cached?.epoch;
-        const hasRecovery = this.pending || this.cached?.pending;
         if (res.protected) await this.purgeJournal();
+        if (this.stopped) return;
+        // Journal removal can yield while the editor accepts new input.
+        // Decide whether replacement is safe only after that await.
+        const hasRecovery = this.pending || this.cached?.pending;
         if (hasRecovery && oldEpoch && oldEpoch !== res.epoch) {
           if (this.cached && !this.data) { Y.applyUpdate(this.doc, decodeBytes(this.cached.state), this); if (this.cached.pending) this.generation++; this.durableGeneration = this.generation; }
           this.data = res; this.cached = undefined; this.status = 'conflict';
