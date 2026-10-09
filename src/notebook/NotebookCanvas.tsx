@@ -65,7 +65,8 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     const preferences = useMemo(() => readDrawingPreferences(preferenceKey), [preferenceKey]);
     const [ruler, setRuler] = useState<Ruler>({ x: 60, y: 180, angle: 0 });
     const [rulerVisible, setRulerVisible] = useState(preferences.tool === 'ruler');
-    const [tool, setTool] = useState<Tool>(preferences.tool), [color, setColor] = useState(preferences.color), [size, setSize] = useState(preferences.size);
+    const [selectedTool, setTool] = useState<Tool>(preferences.tool), [color, setColor] = useState(preferences.color), [size, setSize] = useState(preferences.size);
+    const tool: Tool = editable ? selectedTool : 'type';
     const [shape, setShape] = useState<Shape['shape']>('rectangle'), [eraserMode, setEraserMode] = useState('stroke'), [eraserSize, setEraserSize] = useState(12);
     const [selection, setSelection] = useState<string[]>([]), [draft, setDraft] = useState<Point[]>([]), [notice, setNotice] = useState('');
     const [hasClipboard, setHasClipboard] = useState(false);

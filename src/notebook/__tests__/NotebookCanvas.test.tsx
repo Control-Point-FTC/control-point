@@ -7,8 +7,8 @@ import { canvasJSON, seedCanvas, type Ink } from '../canvasModel';
 import * as geometry from '../canvasGeometry';
 const providers: NotebookSync[] = [];
 afterEach(() => { cleanup(); providers.splice(0).forEach(p => p.destroy()); vi.restoreAllMocks(); });
-function mount(editable = true, mobile = false, strokes = 0) {
-    const sync = new NotebookSync(1);
+function mount(editable = true, mobile = false, strokes = 0, scoped = false) {
+    const sync = new NotebookSync(1,scoped?{memberId:123,teamId:456}:undefined);
     const zoom = vi.fn();
     providers.push(sync);
     if (strokes) seedCanvas(sync.doc, { version: 1, objects: Array.from({length:strokes},(_,i): Ink => ({ id:`stroke-${i}`, type:'stroke',tool:'pen',x:i%100,y:Math.floor(i/100),width:10,height:10,z:i,rotation:0,locked:false,groupId:null,color:'#111111',strokeWidth:2,opacity:1,points:[[0,0,.5],[10,10,.5]] })) });
@@ -22,6 +22,11 @@ function mount(editable = true, mobile = false, strokes = 0) {
 }
 function pointer(surface: HTMLElement, type: string, x: number, y: number, id = 1, source = 'mouse') { const event = new Event(type, { bubbles: true }); Object.assign(event, { pointerId: id, button: 0, clientX: x, clientY: y, pressure: .5, pointerType: source }); fireEvent(surface, event); }
 describe('desktop shared drawing surface', () => {
+    it('keeps flow text clickable when drawing is disabled with a remembered pen',()=>{
+        const key='cp:notebook:drawing:123:456';localStorage.setItem(key,JSON.stringify({tool:'pen',color:'#111111',size:3}));
+        try{const {surface}=mount(false,false,0,true);expect(surface).toHaveAttribute('data-tool','type');expect(screen.getByText('Flow text remains here')).toBeVisible();}
+        finally{localStorage.removeItem(key);}
+    });
     it('saves the largest highlighter size within the shared stroke budget', () => {
         const { sync, surface } = mount();
         fireEvent.click(screen.getByRole('button',{name:'Drawing highlighter'}));
