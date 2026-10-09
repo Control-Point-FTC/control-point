@@ -1,7 +1,10 @@
 import React from 'react';
-import { act,cleanup,render,screen,waitFor } from '@testing-library/react';
+import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
+import * as Y from 'yjs';
 import { afterEach,describe,expect,it,vi } from 'vitest';
-const mock=vi.hoisted(()=>({getPage:vi.fn(),destroy:vi.fn(),render:vi.fn(),loadingDestroy:vi.fn()}));
+const mock=vi.hoisted(()=>({getPage:vi.fn(),destroy:vi.fn(),render:vi.fn(),loadingDestroy:vi.fn(),closePreview:vi.fn(),showPreview:vi.fn(),access:vi.fn()}));
+vi.mock('../../services/api',()=>({apiJson:mock.access}));
+vi.mock('../pdfPrint',()=>({prepareAnnotatedPdf:async()=>'<main>Prepared pages</main>',showAnnotatedPdfPrint:()=>{mock.showPreview();return mock.closePreview;}}));
 vi.mock('../NotebookAttachments',()=>({fileBlob:async()=>({arrayBuffer:async()=>new ArrayBuffer(5)})}));
 vi.mock('../NotebookCanvas',()=>({default:({scopeId,children}:any)=><div data-testid={`canvas-${scopeId}`}>{children}</div>}));
 vi.mock('pdfjs-dist',()=>({GlobalWorkerOptions:{},getDocument:()=>({promise:Promise.resolve({numPages:3,getPage:mock.getPage,destroy:mock.destroy}),destroy:mock.loadingDestroy})}));
@@ -10,6 +13,15 @@ let observers:{callback:any;element?:Element}[]=[];
 class Observer {entry:any;constructor(callback:any){this.entry={callback};observers.push(this.entry);}observe(element:Element){this.entry.element=element;}disconnect(){} }
 afterEach(()=>{cleanup();vi.unstubAllGlobals();vi.restoreAllMocks();observers=[];});
 describe('local notebook PDF printout',()=>{
+  it('rechecks access before showing an export and removes its preview when the PDF is removed',async()=>{
+    vi.stubGlobal('IntersectionObserver',Observer);mock.access.mockResolvedValue({id:1});
+    const sync={pageId:1,doc:new Y.Doc(),status:'saved',pending:false} as any;
+    const context={sync,mobile:false,editable:true,drawingScope:null,setDrawingScope:vi.fn()} as any;
+    const view=render(<NotebookPdf sync={sync} fileId={4} blockId="block" context={context}/>);
+    await screen.findByText('3 PDF pages');fireEvent.click(screen.getByText('Print annotated PDF'));
+    await waitFor(()=>expect(mock.showPreview).toHaveBeenCalledOnce());expect(mock.access).toHaveBeenCalledWith('/api/notebook/pages/1',expect.objectContaining({cache:'no-store'}));
+    view.unmount();expect(mock.closePreview).toHaveBeenCalledOnce();sync.doc.destroy();
+  });
   it('keeps the selected annotation canvas alive outside the viewport and releases it after finishing',async()=>{
     vi.stubGlobal('IntersectionObserver',Observer);
     mock.render.mockReturnValue({promise:Promise.resolve(),cancel:vi.fn()});
