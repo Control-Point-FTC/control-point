@@ -54,7 +54,10 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [ruled, setRuled] = useState(false);
   const [viewError, setViewError] = useState('');
   const [drawPanel, setDrawPanel] = useState<React.ReactNode>(null);
-  const [drawingScope,setDrawingScope]=useState<string|null>(null);
+  const [drawingScope,setDrawingScopeState]=useState<string|null>(null);
+  const [requestedGroup,setRequestedGroup]=useState<{group:string;key:number}>();
+  const drawingScopeRef=React.useRef<string|null>(null);
+  const setDrawingScope=useCallback((id:string|null)=>{if(id && drawingScopeRef.current!==id)setRequestedGroup(previous=>({group:'draw',key:(previous?.key||0)+1}));drawingScopeRef.current=id;setDrawingScopeState(id);},[]);
   const [canvasTarget, setCanvasTarget] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
   const [printing,setPrinting]=useState(false),[printProgress,setPrintProgress]=useState('');
@@ -156,7 +159,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
         history: <NotebookHistory sync={sync} />,
         view: <><label>Zoom <select aria-label="Page zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[...new Set([50,75,90,100,110,125,150,175,200,250,300,zoom])].sort((a,b)=>a-b).map(n => <option key={n} value={n}>{n}%</option>)}</select></label><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
-      const toolbar = <NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} />;
+      const toolbar = <NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup} />;
       return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}
