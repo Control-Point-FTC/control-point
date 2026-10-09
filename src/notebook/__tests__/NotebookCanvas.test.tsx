@@ -31,7 +31,7 @@ describe('desktop shared drawing surface', () => {
     });
     it('keeps flow text clickable when drawing is disabled with a remembered pen',()=>{
         const key='cp:notebook:drawing:123:456';localStorage.setItem(key,JSON.stringify({tool:'pen',color:'#111111',size:3}));
-        try{const {surface}=mount(false,false,0,true);expect(surface).toHaveAttribute('data-tool','type');expect(screen.getByText('Flow text remains here')).toBeVisible();}
+        try{const {surface}=mount(false,false,0,true);expect(surface).toHaveAttribute('data-tool','type');expect(screen.getByText('Flow text remains here')).toBeVisible();expect(JSON.parse(localStorage.getItem(key)!).tool).toBe('pen');}
         finally{localStorage.removeItem(key);}
     });
     it('saves the largest highlighter size within the shared stroke budget', () => {

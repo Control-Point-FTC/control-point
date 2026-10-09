@@ -110,8 +110,8 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     useEffect(() => { if (active) onSelectionChange?.(selected.length === 1 ? selected[0].id : null); }, [selection, items, onSelectionChange, active]);
     useEffect(() => {
         if (!preferenceKey || mobile) return;
-        try { localStorage.setItem(preferenceKey, JSON.stringify({ tool, color, size })); } catch { /* Optional device preference. */ }
-    }, [preferenceKey, mobile, tool, color, size]);
+        try { localStorage.setItem(preferenceKey, JSON.stringify({ tool:selectedTool, color, size })); } catch { /* Optional device preference. */ }
+    }, [preferenceKey, mobile, selectedTool, color, size]);
     useEffect(() => {
         const reset = () => { undo.clear(); clearGesture(); setSelection([]); };
         sync.on('reset', reset);
