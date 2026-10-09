@@ -27,26 +27,26 @@ export default function NotebookPdf({sync,fileId,width=640,blockId,context}:{syn
   </div>;
 }
 function PdfPage({document,number,width,scopeId,context}:{document:PDFDocumentProxy;number:number;width:number;scopeId?:string;context?:React.ContextType<typeof NotebookFileContext>}){
-  const host=useRef<HTMLElement|null>(null),canvas=useRef<HTMLCanvasElement|null>(null),[visible,setVisible]=useState(false),[ratio,setRatio]=useState(1.414),[error,setError]=useState(''),[ready,setReady]=useState(false);
+  const host=useRef<HTMLElement|null>(null),[canvasElement,setCanvasElement]=useState<HTMLCanvasElement|null>(null),[visible,setVisible]=useState(false),[ratio,setRatio]=useState(1.414),[error,setError]=useState(''),[ready,setReady]=useState(false);
   useEffect(()=>{
     if(!host.current)return;
     if(typeof IntersectionObserver==='undefined'){setVisible(true);return;}
     const observer=new IntersectionObserver(entries=>setVisible(entries.some(entry=>entry.isIntersecting)),{rootMargin:'900px'});observer.observe(host.current);return()=>observer.disconnect();
   },[]);
   useEffect(()=>{
-    if(!visible || !canvas.current)return;let stopped=false,task:RenderTask|undefined,page:PDFPageProxy|undefined;
+    if(!visible || !canvasElement)return;let stopped=false,task:RenderTask|undefined,page:PDFPageProxy|undefined;
     setReady(false);setError('');
     void(async()=>{try{
       page=await document.getPage(number);if(stopped)return;
       const base=page.getViewport({scale:1});setRatio(base.height/base.width);
       const pixelRatio=Math.min(2,window.devicePixelRatio||1),viewport=page.getViewport({scale:800/base.width*pixelRatio});
-      const target=canvas.current!;target.width=Math.ceil(viewport.width);target.height=Math.ceil(viewport.height);
+      const target=canvasElement;target.width=Math.ceil(viewport.width);target.height=Math.ceil(viewport.height);
       const context=target.getContext('2d');if(!context)throw new Error('PDF rendering is unavailable in this browser.');
       task=page.render({canvas:target,canvasContext:context,viewport});await task.promise;if(!stopped)setReady(true);
     }catch(e){if(!stopped)setError((e as Error).message||'This PDF page could not be rendered.');}})();
     return()=>{stopped=true;task?.cancel();void task?.promise.catch(()=>undefined).then(()=>page?.cleanup());};
-  },[visible,document,number]);
-  const rendered=<><canvas ref={canvas} style={{width:'100%',height:'100%',display:visible?'block':'none'}} aria-label={`Rendered PDF page ${number}`}/>{!ready && !error && <span role="status">{visible?'Rendering page…':'Page loads as you scroll'}</span>}{error && <p role="alert">{error}</p>}</>;
+  },[visible,document,number,canvasElement]);
+  const rendered=<><canvas ref={setCanvasElement} style={{width:'100%',height:'100%',display:visible?'block':'none'}} aria-label={`Rendered PDF page ${number}`}/>{!ready && !error && <span role="status">{visible?'Rendering page…':'Page loads as you scroll'}</span>}{error && <p role="alert">{error}</p>}</>;
   const selected=!!scopeId && context?.drawingScope===scopeId;
   return <section ref={host} className={`nb-pdf-page ${selected?'is-annotating':''}`} aria-label={`PDF page ${number}`}><header>Page {number}{scopeId && context && !context.mobile && context.editable && <button onClick={()=>context.setDrawingScope(selected?null:scopeId)}>{selected?'Finish annotation':'Annotate page'}</button>}</header><div style={{aspectRatio:`1 / ${ratio}`,overflow:'hidden'}}>
     {visible && scopeId && context?<div style={{width:800,zoom:Math.min(1600,width)/800}}><Suspense fallback={rendered}><NotebookCanvas sync={context.sync} scopeId={scopeId} active={selected} editable={selected && context.editable} mobile={context.mobile} onActivate={()=>{if(context.editable && !context.mobile)context.setDrawingScope(scopeId);}} onRibbon={context.onRibbon} onEditorFocus={context.onEditorFocus} onEditorRemoved={context.onEditorRemoved} onSelectionChange={context.onSelectionChange}><div style={{width:800,height:800*ratio}}>{rendered}</div></NotebookCanvas></Suspense></div>:rendered}
