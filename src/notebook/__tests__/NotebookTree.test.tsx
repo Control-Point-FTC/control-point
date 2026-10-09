@@ -6,7 +6,10 @@ import { NotebookPage } from '../NotebookPage';
 import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 vi.mock('../NotebookEditor', () => ({ NotebookEditor: () => null, downloadNotebookJSON: vi.fn() }));
-afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear(); });
+const viewport=vi.hoisted(()=>({mobile:false}));
+vi.mock('../useNotebookMobile',()=>({useNotebookMobile:()=>viewport.mobile}));
+let view:ReturnType<typeof render>;
+afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear();viewport.mobile=false; });
 function mount(path = '/notebook', emptySection = false) {
   const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false }], pages: [{ id: 2, sectionId: 1, parentId: null, title: 'Drive', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }, { id: 3, sectionId: 1, parentId: 2, title: 'Motor tests', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
   if (emptySection) tree.sections.push({id:4,notebookId:1,title:'Empty section',color:'#111111',sort:1,protected:false});
@@ -16,10 +19,17 @@ function mount(path = '/notebook', emptySection = false) {
     if (path === '/api/notebook/sections/1' && options?.method === 'PATCH') { tree.sections[0].title = JSON.parse(String(options.body)).title; return {} as any; }
     throw new Error(`Unexpected request ${path}`);
   });
-  render(<MemoryRouter initialEntries={[path]}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
+  view=render(<MemoryRouter initialEntries={[path]}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('moves focus to mobile notebook navigation when the focused return control disappears on resize',async()=>{
+    mount();await screen.findByRole('button',{name:'Build'});fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));
+    expect(document.activeElement).toBe(screen.getByRole('button',{name:'Show sections and pages'}));
+    viewport.mobile=true;view.rerender(<MemoryRouter><NotebookPage activeTeamId={20} currentUserId={10}/></MemoryRouter>);
+    expect(screen.queryByRole('button',{name:'Show sections and pages'})).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button',{name:'Open notebooks'}));
+  });
   it('expands writing space by hiding notebook panes without toggling the app sidebar',async()=>{
     mount();await screen.findByRole('button',{name:'Build'});
     const appToggle=vi.fn();window.addEventListener('cp:notebook-navigation',appToggle);

@@ -52,8 +52,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [announcement, setAnnouncement] = useState('');
   const [drawer, setDrawer] = useState(false);
   const [writingFocus,setWritingFocus]=useState(false);
-  const focusExit=useRef<HTMLButtonElement|null>(null),focusEntry=useRef<HTMLButtonElement|null>(null),wasWritingFocus=useRef(false);
-  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else if(wasWritingFocus.current)focusEntry.current?.focus();}wasWritingFocus.current=writingFocus;},[writingFocus,mobile]);
+  const focusExit=useRef<HTMLButtonElement|null>(null),focusEntry=useRef<HTMLButtonElement|null>(null),mobileOpen=useRef<HTMLButtonElement|null>(null),exitFocused=useRef(false),wasWritingFocus=useRef(false);
+  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else if(wasWritingFocus.current)focusEntry.current?.focus();}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}wasWritingFocus.current=writingFocus;},[writingFocus,mobile]);
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
@@ -309,7 +309,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
   return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
-    <header className="nb-header"><Button variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
+    <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
       <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
@@ -317,7 +317,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     <div className="nb-ribbon-host" ref={setToolbarHost} />
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
     <div className="nb-body"><aside hidden={!mobile&&writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={!mobile&&writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
-      {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
+      {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onFocus={()=>{exitFocused.current=true;}} onBlur={()=>{exitFocused.current=false;}} onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
       {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
