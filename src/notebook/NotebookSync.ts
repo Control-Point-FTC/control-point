@@ -8,7 +8,7 @@ import { registerNotebookSession } from './notebookRuntime';
 export type SyncStatus = 'joining' | 'saved' | 'saving' | 'offline' | 'conflict' | 'unavailable' | 'error';
 export interface SyncResponse {
   epoch: string; update: string; vector: string; revision: number; title: string;
-  protected: boolean; editable: boolean; updatedBy: number | null; updatedAt: string;
+  protected: boolean; editable: boolean; updatedBy: number | null; updatedAt: string; createdAt?: string;
   peers?: { clientId: number; memberId: number; name: string; color: string; cursor: unknown; clock: number }[];
 }
 export function encodeBytes(bytes: Uint8Array): string {

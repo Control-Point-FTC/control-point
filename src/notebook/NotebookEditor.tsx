@@ -17,6 +17,7 @@ import { NotebookDiscussions } from './NotebookDiscussions';
 import { useNotebookMobile } from './useNotebookMobile';
 import { pasteNotebookText } from './NotebookMobileToolbar';
 import { createPortal } from 'react-dom';
+import { NotebookHistory } from './NotebookHistory';
 
 const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Local changes need recovery', unavailable: 'Page unavailable', error: 'Save needs attention' };
 export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json') {
@@ -47,6 +48,9 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const blocked = !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
+  const [zoom, setZoom] = useState(100);
+  const [ruled, setRuled] = useState(false);
+  const [viewError, setViewError] = useState('');
   const editor = useEditor({
     extensions: [...notebookExtensions(true, !!sync.data?.editable), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
@@ -112,9 +116,19 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
         await sync.discardRecovery(); onRejoin();
       }}>Open current shared page</Button>}
     </div>}
-    {toolbarHost ? createPortal(<NotebookToolbar editor={editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} />, toolbarHost) : <NotebookToolbar editor={editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} />}
-    <div className="nb-paper-scroll"><article className="nb-paper">
+    {(() => {
+      const panels = {
+        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" onClick={() => window.print()}>Print page</button></>,
+        history: <NotebookHistory sync={sync} />,
+        view: <><label>Zoom <select aria-label="Page zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[75,90,100,110,125,150,175,200].map(n => <option key={n} value={n}>{n}%</option>)}</select></label><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
+      };
+      const toolbar = <NotebookToolbar editor={editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} />;
+      return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
+    })()}
+    {viewError && <div className="nb-alert" role="alert">{viewError}<button aria-label="Dismiss view error" onClick={() => setViewError('')}>×</button></div>}
+    <div className="nb-paper-scroll"><article className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
+      {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <EditorContent editor={editor} />
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
       {!mobile && <NotebookDiscussions sync={sync} editor={editor} />}

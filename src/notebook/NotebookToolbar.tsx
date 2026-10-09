@@ -9,11 +9,13 @@ import { notebookIndent } from './editorActions';
 import { NotebookFind } from './NotebookFind';
 import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookMobileToolbar } from './NotebookMobileToolbar';
+import { notebookCommandGlyph } from './NotebookIcons';
 
 const icons: Record<string, React.ComponentType<{ size?: number }>> = { Bold, Italic, Underline, Undo: Undo2, Redo: Redo2, Highlight: Highlighter, Checklist: ListTodo, Bullets: List, Numbered: ListOrdered, Link: Link2, Table: Table2, Quote, Code: Code2, Divider: Minus };
 const insertCommands = new Set(['Link', 'Table', 'Quote', 'Code', 'Divider', 'Add row', 'Row above', 'Add column', 'Column left', 'Delete row', 'Delete column', 'Merge cells', 'Split cell', 'Header row', 'Delete table', 'Reset cell fill']);
 
-export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string }) {
+const ribbonTabs = [['file','File'],['home','Home'],['insert','Insert'],['draw','Draw'],['history','History'],['review','Review'],['view','View'],['help','Help']];
+export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {} }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode> }) {
   const mobile = useNotebookMobile();
   const [group, setGroup] = useState(() => { try { const saved = preferenceKey && localStorage.getItem(preferenceKey); return saved && ['home','insert','review','help'].includes(saved) ? saved : 'home'; } catch { return 'home'; } });
   const [expanded, setExpanded] = useState(false);
@@ -31,7 +33,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   if (!editor) return null;
   if (mobile) return <NotebookMobileToolbar editor={editor} disabled={disabled} />;
   const action = (label: string, run: () => void, active = false, desktop = false) => {
-    const Icon = icons[label], commandGroup = insertCommands.has(label) ? 'insert' : label === 'Copy block link' ? 'review' : 'home';
+    const Icon = notebookCommandGlyph(label) ?? icons[label], commandGroup = insertCommands.has(label) ? 'insert' : label === 'Copy block link' ? 'review' : 'home';
     return <button
     type="button" title={label} aria-label={label} aria-pressed={active}
     data-command-group={commandGroup} className={`nb-tool ${Icon ? 'nb-icon-tool' : ''} ${active ? 'is-active' : ''} ${desktop && commandGroup === 'home' ? 'nb-advanced' : ''}`}
@@ -43,10 +45,11 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     chain().updateAttributes(type, { nbTag: value === '__clear' ? null : value || null }).run();
   };
   return <div className="nb-command-bar">
-    <div className="nb-command-tabs" role="tablist" aria-label="Notebook commands">{[['home','Home'],['insert','Insert'],['review','Review'],['help','Help']].map(([id,label]) => <button key={id} role="tab" aria-selected={group === id} onClick={() => { setGroup(id); setExpanded(false); if (preferenceKey) try { localStorage.setItem(preferenceKey, id); } catch { /* optional device preference */ } }} onKeyDown={e => {
-      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return; e.preventDefault(); const tabs = ['home','insert','review','help']; const next = (tabs.indexOf(id) + (e.key === 'ArrowRight' ? 1 : 3)) % 4; setGroup(tabs[next]); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus();
+    <div className="nb-command-tabs" role="tablist" aria-label="Notebook commands">{ribbonTabs.filter(([id]) => ['home','insert','review','help'].includes(id) || panels[id]).map(([id,label]) => <button key={id} role="tab" aria-selected={group === id} onClick={() => { setGroup(id); setExpanded(false); if (preferenceKey) try { localStorage.setItem(preferenceKey, id); } catch { /* optional device preference */ } }} onKeyDown={e => {
+      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return; e.preventDefault(); const tabs = ribbonTabs.filter(([key]) => ['home','insert','review','help'].includes(key) || panels[key]).map(([key]) => key); const next = (tabs.indexOf(id) + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length; setGroup(tabs[next]); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus();
     }}>{label}</button>)}</div>
     <div className="nb-toolbar" role="toolbar" aria-label="Note formatting" data-nb-group={group} data-expanded={expanded}>
+    {panels[group] && <div className="nb-ribbon-panel" data-command-group={group}>{panels[group]}</div>}
     <select aria-label="Font" className="nb-desktop" disabled={disabled} value={editor.getAttributes('textStyle').fontFamily ?? ''} onChange={e => e.target.value ? chain().setFontFamily(e.target.value).run() : chain().unsetFontFamily().run()}>
       <option value="">Default font</option>{NOTEBOOK_FONTS.map(f => <option key={f.value} value={f.value} style={{ fontFamily: f.value }}>{f.label}</option>)}
     </select>

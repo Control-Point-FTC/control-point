@@ -12,7 +12,7 @@ vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal
 const providers: NotebookSync[] = [], docs: Y.Doc[] = [];
 afterEach(() => { cleanup(); providers.splice(0).forEach(p => p.destroy()); docs.splice(0).forEach(d => d.destroy()); vi.resetAllMocks(); });
 async function mount(editable = true) {
-  const server = prosemirrorJSONToYDoc(notebookSchema, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Team discoveries' }] }] });
+  const server = prosemirrorJSONToYDoc(notebookSchema, { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'discovery-block' }, content: [{ type: 'text', text: 'Team discoveries' }] }] });
   server.getMap('meta').set('title', 'Journal'); docs.push(server);
   vi.mocked(apiJson).mockImplementation(async (url, init) => {
     if (url.endsWith('/backlinks')) return [] as any;
@@ -53,5 +53,23 @@ describe('mounted collaborative notebook editor', () => {
     expect(screen.queryByRole('textbox', { name: 'Page content' })).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Page title' })).toBeNull();
     expect(screen.getByRole('alert').textContent).toContain('cannot be opened');
+  });
+  it('changes desktop viewing controls without changing the saved document', async () => {
+    const { sync, server } = await mount(); const before = yDocToProsemirrorJSON(server);
+    fireEvent.click(screen.getByRole('tab', { name: 'View' }));
+    fireEvent.change(screen.getByLabelText('Page zoom'), { target: { value: '150' } });
+    expect(document.querySelector<HTMLElement>('.nb-paper')!.style.zoom).toBe('1.5');
+    fireEvent.click(screen.getByRole('button', { name: 'Rule lines' }));
+    expect(document.querySelector('.nb-paper.nb-ruled')).toBeTruthy();
+    await act(async () => { await sync.flush(); });
+    expect(yDocToProsemirrorJSON(server)).toEqual(before);
+  });
+  it('loads history only when requested and renders saved revision dates', async () => {
+    await mount(); const original = vi.mocked(apiJson).getMockImplementation()!;
+    vi.mocked(apiJson).mockImplementation(async (url, options) => url.endsWith('/versions') ? [{ id: 3, revision: 2, authorId: 1, savedAt: '2026-10-08T18:00:00Z' }] as any : original(url, options));
+    expect(vi.mocked(apiJson).mock.calls.some(([url]) => url.endsWith('/versions'))).toBe(false);
+    fireEvent.click(screen.getByRole('tab', { name: 'History' }));
+    expect(await screen.findByText('Revision 2')).toBeTruthy();
+    expect(document.querySelector('time[datetime="2026-10-08T18:00:00Z"]')).toBeTruthy();
   });
 });

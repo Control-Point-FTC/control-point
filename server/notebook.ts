@@ -339,7 +339,7 @@ export class NotebookStore {
           peers.push({ clientId, memberId: member.id, name: String(member.name).slice(0, 80), color: ['#3b82f6','#8b5cf6','#ec4899','#06b6d4','#22c55e','#f97316'][member.id % 6], cursor: peer.cursor, clock: peer.seen });
         }
       }
-      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: protectedPage, editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at, peers };
+      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: protectedPage, editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at, createdAt: current.created_at, peers };
     } catch (e) {
       if (e instanceof NotebookError) throw e;
       throw new NotebookError(e instanceof Error ? e.message : 'Invalid collaboration document', 422);
