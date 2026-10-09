@@ -39,6 +39,7 @@ function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
 }
 import { setProposalContext } from './services/proposalContext';
 import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
+import { prepareNotebookExit, clearNotebookData } from './notebook/notebookRuntime';
 import { SetupChecklist, fetchOnboardingState, saveOnboardingState, defaultOnboardingState, shouldShowWelcome, shouldShowChecklist, firstIncompleteWizardStep, resolveTourSteps, type OnboardingState } from './components/onboarding';
 import { clearFtcCache } from './components/ftcCache';
 import { clearScoutCache } from './services/ftcScoutApi';
@@ -1446,6 +1447,7 @@ export default function App() {
 
   const handleSwitchTeam = async (teamId: number) => {
     if (teamId === currentUser?.team_id) return;
+    if (!await prepareNotebookExit()) { notify('Save or recover your notebook changes before switching workspaces.', 'error'); return; }
     // End any active call cleanly before switching teams — no ghost
     // participants on the old team's sessions.
     try { await voiceApiRef.current?.leave(); } catch { /* best effort — the switch must proceed */ }
@@ -1603,7 +1605,9 @@ export default function App() {
   // Bruno screen context: the page the user is on (same title as the header).
   const pageTitle = activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : ROUTE_TITLE_KEYS[activeTab] ? t(ROUTE_TITLE_KEYS[activeTab]) : t('nav.dashboard');
   useEffect(() => {
-    setScreenRoute(`${location.pathname}${location.search}`, pageTitle);
+    // Page IDs/anchors may identify protected notes. Notebook context is
+    // deliberately generic until an explicit permitted Bruno action is added.
+    setScreenRoute(activeTab === 'notebook' ? '/notebook' : `${location.pathname}${location.search}`, pageTitle);
   }, [location.pathname, location.search, pageTitle]);
   useEffect(() => {
     setScreenEntity('channelId', isChatRoute ? activeChannelId : null);
@@ -1683,6 +1687,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    if (!await prepareNotebookExit('logout')) { notify('Save or download and recover your notebook changes before signing out.', 'error'); return; }
+    try { await clearNotebookData(); } catch { notify('Notebook offline storage could not be cleared on this device.', 'error'); }
     // End any active call cleanly — the server's reconnect grace covers
     // blips, but an explicit logout must not leave a ghost participant.
     try { await voiceApiRef.current?.leave(); } catch { /* best effort — still sign out locally */ }
@@ -2169,7 +2175,7 @@ export default function App() {
         <Route path="/inventory" element={<InventoryPage {...viewProps} />} />
         <Route path="/outreach" element={<OutreachPage {...viewProps} />} />
         <Route path="/code" element={<CodePage {...viewProps} />} />
-        <Route path="/notebook" element={<NotebookPage activeTeamId={currentTeamId} />} />
+        <Route path="/notebook/*" element={<NotebookPage activeTeamId={currentTeamId} currentUserId={currentUser?.id} />} />
         <Route path="/cad" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-docs" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-reviews" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />

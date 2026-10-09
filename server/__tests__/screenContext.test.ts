@@ -2,6 +2,13 @@ import { describe, it, expect } from "vitest";
 import { formatScreenContext, parseScreenRequest } from "../screenContext";
 
 describe("parseScreenRequest", () => {
+  it('keeps notebook screen context generic even when an admin submits a page title or anchor', () => {
+    for (const route of ['/notebook?page=31&block=secret', '/notebook/p/31']) {
+      const context = parseScreenRequest({ route, view: 'Secret section title', taskId: 31, codeFileId: 41 });
+      expect(context).toEqual({ route: '/notebook', view: 'Team notebook' });
+      expect(formatScreenContext(context!, {})).not.toContain('Secret');
+    }
+  });
   it("rejects missing or non-path routes", () => {
     expect(parseScreenRequest(null)).toBeNull();
     expect(parseScreenRequest({ route: "https://evil.example/x", view: "X" })).toBeNull();

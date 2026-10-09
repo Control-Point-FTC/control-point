@@ -255,7 +255,7 @@ export class NotebookStore {
     const epoch = row.crdt_epoch ?? randomUUID();
     if (body.epoch !== undefined && body.epoch !== epoch) throw new NotebookError('This page was restored or replaced. Recover your unsaved changes before rejoining.', 409, { epoch });
     if (update && body.epoch === undefined) throw new NotebookError('Join the document before sending changes', 409);
-    if (update) s.require('edit_notebook');
+    if (update && !s.can('edit_notebook')) throw new NotebookError('Editing permission changed; your unsaved changes need recovery', 403, { readable: true });
     let doc: Y.Doc | undefined;
     try {
       if (row.crdt_state) {
@@ -276,7 +276,12 @@ export class NotebookStore {
         await s.indexLinks(row.id, json.content);
       }
       if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
-      if (!row.crdt_state && !changed) await s.indexLinks(row.id, json.content);
+      if (!row.crdt_state && !changed) {
+        // The one-time seed supplies stable IDs before any editor joins. These
+        // representation fields are not an authored text change/revision.
+        await s.run('UPDATE notebook_pages SET content=? WHERE id=? AND team_id=?', content, row.id, ctx.teamId);
+        await s.indexLinks(row.id, json.content);
+      }
       const current = changed ? await s.item('page', pageId) : row;
       const protectedPage = await s.isProtected(row);
       const peers: Row[] = [];
@@ -525,6 +530,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
     try {
+      if (req.headers['x-cp-notebook-team'] !== undefined && Number(req.headers['x-cp-notebook-team']) !== auth.teamId) throw new NotebookError('Workspace changed; reopen this notebook in its workspace', 409, { workspaceChanged: true });
       await initializeRoles(auth.teamId);
       // Client input can never select a principal or grant admin access.
       const result = await fn({ memberId: auth.memberId, teamId: auth.teamId, source: "human" }, req);

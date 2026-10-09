@@ -1,9 +1,16 @@
 import * as Y from 'yjs';
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { notebookSchema, validatedNotebookDocument } from '../src/notebook/editorSchema.js';
+import { BLOCK_TYPES, notebookSchema, validatedNotebookDocument } from '../src/notebook/editorSchema.js';
+import { randomUUID } from 'node:crypto';
 
 export function seedNotebookDocument(content: unknown, title: string): Y.Doc {
-  const doc = prosemirrorJSONToYDoc(notebookSchema, validatedNotebookDocument(content), 'prosemirror');
+  const json = structuredClone(validatedNotebookDocument(content));
+  const identify = (node: any) => {
+    if (BLOCK_TYPES.includes(node.type) && node.attrs?.id == null) node.attrs = { ...node.attrs, id: randomUUID() };
+    for (const child of node.content ?? []) identify(child);
+  };
+  identify(json);
+  const doc = prosemirrorJSONToYDoc(notebookSchema, json, 'prosemirror');
   doc.getMap('meta').set('title', title);
   return doc;
 }

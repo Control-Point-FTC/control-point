@@ -67,17 +67,18 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate }: EditorProps) {
     return () => { sync.doc.getMap('meta').unobserve(update); };
   }, [sync, onChanged]);
   useEffect(() => {
-    const unload = (e: BeforeUnloadEvent) => { if (sync.pending) { e.preventDefault(); e.returnValue = ''; } };
+    const unload = (e: BeforeUnloadEvent) => { if (sync.pending && !sync.locallyDurable) { e.preventDefault(); e.returnValue = ''; } };
     window.addEventListener('beforeunload', unload);
     return () => window.removeEventListener('beforeunload', unload);
   }, [sync]);
   return <div className="nb-document">
-    <div className="nb-doc-status"><span role="status" aria-live="polite">{labels[sync.status]}</span>
+    <div className="nb-doc-status"><span role="status" aria-live="polite">{sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
       {sync.data?.protected && <span>Admin-only · Bruno excluded</span>}
       {!sync.data?.editable && <span>Read only</span>}
       <span>Revision {sync.data?.revision}</span>
       <span aria-label="People on this page">{sync.data?.peers?.map(p => p.name).join(', ')}</span>
     </div>
+    {sync.storageError && <div className="nb-alert" role="alert">Offline recovery is unavailable: {sync.storageError}. Keep this page open until it saves, or download your changes.</div>}
     {sync.error && <div role="alert" className="nb-alert"><p>{sync.error}</p>
       {sync.status === 'offline' && <Button variant="outline" onClick={() => sync.retry()}>Reconnect</Button>}
       {['conflict', 'error'].includes(sync.status) && <Button variant="outline" onClick={() => downloadNotebookJSON({ title, content: yDocToProsemirrorJSON(sync.doc) }, 'notebook-unsaved-recovery.json')}>Download unsaved changes</Button>}

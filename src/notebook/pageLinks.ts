@@ -1,11 +1,12 @@
 export function notebookPageLink(pageId: number, blockId?: string | null) {
-  return `/notebook?page=${pageId}${blockId ? `&block=${encodeURIComponent(blockId)}` : ''}`;
+  return `/notebook/p/${pageId}${blockId ? `?block=${encodeURIComponent(blockId)}` : ''}`;
 }
 export function parseNotebookPageLink(value: unknown): { pageId: number; blockId: string } | null {
-  if (typeof value !== 'string' || !value.startsWith('/notebook?')) return null;
+  if (typeof value !== 'string' || !/^\/notebook(?:\?|\/p\/)/.test(value)) return null;
   try {
     const url = new URL(value, 'https://control-point.invalid');
-    const pageId = Number(url.searchParams.get('page'));
+    const pathId = /^\/notebook\/p\/(\d+)$/.exec(url.pathname)?.[1];
+    const pageId = Number(pathId ?? url.searchParams.get('page'));
     const blockId = url.searchParams.get('block') ?? '';
     return Number.isSafeInteger(pageId) && pageId > 0 && blockId.length <= 100 && /^[\w-]*$/.test(blockId) ? { pageId, blockId } : null;
   } catch { return null; }
