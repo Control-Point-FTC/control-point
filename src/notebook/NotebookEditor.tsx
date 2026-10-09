@@ -65,6 +65,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   useEffect(()=>()=>{printAbort.current?.abort();closePrintPreview.current?.();},[sync]);
   const printPage=async()=>{
     if(printing)return;
+    if(fileUpload.busy){setViewError('Wait for the attachment upload to finish before printing.');return;}
     const abort=new AbortController();printAbort.current=abort;setPrinting(true);setPrintProgress('Preparing notebook page…');
     try{
       if(sync.pending && !await sync.flush())throw new Error('Save your changes before printing.');
@@ -134,7 +135,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   }, [sync]);
   const fileUpload=useNotebookUpload(sync,activeEditor ?? editor);
   return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked,drawingScope,setDrawingScope,onRibbon:setDrawPanel,onEditorFocus:focusEditor,onEditorRemoved:removeEditor,onSelectionChange:setCanvasTarget}}><div className="nb-document">
-    <div className="nb-doc-status"><span role="status" aria-live="polite">{sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
+    <div className="nb-doc-status"><span role="status" aria-live="polite">{fileUpload.busy ? 'Uploading attachment · not saved yet' : sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
       {sync.data?.protected && <span>Admin-only · Bruno excluded</span>}
       {!sync.data?.editable && <span>Read only</span>}
       <span>Revision {sync.data?.revision}</span>
