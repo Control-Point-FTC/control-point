@@ -83,7 +83,7 @@ describe('mounted collaborative notebook editor', () => {
     vi.mocked(apiJson).mockImplementation(async (url, options) => url.endsWith('/versions') ? [{ id: 3, revision: 2, authorId: 1, savedAt: '2026-10-08T18:00:00Z' }] as any : original(url, options));
     expect(vi.mocked(apiJson).mock.calls.some(([url]) => url.endsWith('/versions'))).toBe(false);
     fireEvent.click(screen.getByRole('tab', { name: 'History' }));
-    expect(await screen.findByText('Revision 2')).toBeTruthy();
+    expect(await screen.findByRole('option',{name:'Revision 2 · Team member'})).toBeTruthy();
     expect(document.querySelector('time[datetime="2026-10-08T18:00:00Z"]')).toBeTruthy();
   });
 });

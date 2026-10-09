@@ -460,11 +460,11 @@ export class NotebookStore {
   versions(ctx: NotebookContext, pageId: number, versionId?: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
     if (versionId !== undefined) {
-      const row = await s.one("SELECT * FROM notebook_versions WHERE id=? AND page_id=? AND team_id=?", id(versionId), pageId, ctx.teamId);
+      const row = await s.one("SELECT v.*,m.name AS author_name FROM notebook_versions v LEFT JOIN members m ON m.id=v.author_id AND m.team_id=v.team_id WHERE v.id=? AND v.page_id=? AND v.team_id=?", id(versionId), pageId, ctx.teamId);
       if (!row) throw notFound();
-      return { id: row.id, title: row.title, content: JSON.parse(row.content), canvas: JSON.parse(row.canvas), revision: row.revision, authorId: row.author_id, savedAt: row.saved_at };
+      return { id: row.id, title: row.title, content: JSON.parse(row.content), canvas: JSON.parse(row.canvas), revision: row.revision, authorId: row.author_id, authorName: row.author_name ? String(row.author_name).slice(0,80) : 'Former team member', savedAt: row.saved_at };
     }
-    return (await s.all("SELECT id,revision,author_id,saved_at FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC", pageId, ctx.teamId)).map(v => ({ id: v.id, revision: v.revision, authorId: v.author_id, savedAt: v.saved_at }));
+    return (await s.all("SELECT v.id,v.revision,v.author_id,v.saved_at,m.name AS author_name FROM notebook_versions v LEFT JOIN members m ON m.id=v.author_id AND m.team_id=v.team_id WHERE v.page_id=? AND v.team_id=? ORDER BY v.revision DESC", pageId, ctx.teamId)).map(v => ({ id: v.id, revision: v.revision, authorId: v.author_id, authorName: v.author_name ? String(v.author_name).slice(0,80) : 'Former team member', savedAt: v.saved_at }));
   }); }
   restoreVersion(ctx: NotebookContext, pageId: number, versionId: number, baseRevision: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
