@@ -53,6 +53,7 @@ describe("team notebook", () => {
       const vector = Y.encodeStateVector(client); client.getMap('meta').set('title','Edited older page');
       await store.sync(ctx(member),p.id,{epoch:join.epoch,update:Buffer.from(Y.encodeStateAsUpdate(client,vector)).toString('base64')});
       expect((await store.page(ctx(member),p.id)).canvas).toEqual(legacy);
+      expect((await get('/search?q=slides')).body.map((item:any)=>item.id)).toContain(p.id);
       expect((await put(`/pages/${p.id}`,{baseRevision:2,canvas:legacy})).status).toBe(422);
       expect((await post('/pages',{sectionId:section,title:'Invalid',canvas:legacy})).status).toBe(422);
     } finally { client.destroy(); }

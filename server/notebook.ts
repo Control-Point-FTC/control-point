@@ -294,7 +294,7 @@ export class NotebookStore {
       const changed = !Buffer.from(before).equals(Buffer.from(state));
       if (changed) {
         await s.snapshot(row);
-        await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(json.canvas), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
+        await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
         await s.indexLinks(row.id, json.content, json.canvas);
       }
       if (!row.crdt_state || seededCanvas || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
