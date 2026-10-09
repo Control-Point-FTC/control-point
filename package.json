@@ -83,6 +83,7 @@
     "multer": "^2.0.2",
     "occt-import-js": "^0.0.23",
     "pdf-parse": "^2.4.5",
+    "pdfjs-dist": "6.4.299",
     "qrcode.react": "^4.2.0",
     "radix-ui": "^1.7.0",
     "react": "^19.0.0",

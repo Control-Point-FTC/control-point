@@ -4713,6 +4713,8 @@ async function startServer() {
       { sql: "DELETE FROM notebook_threads WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_links WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_file_refs WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_files WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
