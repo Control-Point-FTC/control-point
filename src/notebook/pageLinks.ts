@@ -1,0 +1,31 @@
+export function notebookPageLink(pageId: number, blockId?: string | null) {
+  return `/notebook/p/${pageId}${blockId ? `?block=${encodeURIComponent(blockId)}` : ''}`;
+}
+export function normalizeNotebookLink(value: string, origin?: string): string {
+  if (!origin) return value;
+  try { const url = new URL(value, origin); const relative = url.pathname + url.search; return url.origin === origin && parseNotebookPageLink(relative) ? relative : value; } catch { return value; }
+}
+export function parseNotebookPageLink(value: unknown): { pageId: number; blockId: string } | null {
+  if (typeof value !== 'string' || !/^\/notebook(?:\?|\/p\/)/.test(value)) return null;
+  try {
+    const url = new URL(value, 'https://control-point.invalid');
+    const pathId = /^\/notebook\/p\/(\d+)$/.exec(url.pathname)?.[1];
+    const pageId = Number(pathId ?? url.searchParams.get('page'));
+    const blockId = url.searchParams.get('block') ?? '';
+    return Number.isSafeInteger(pageId) && pageId > 0 && blockId.length <= 100 && /^[\w-]*$/.test(blockId) ? { pageId, blockId } : null;
+  } catch { return null; }
+}
+/** Only explicitly authored internal link marks become graph edges. */
+export function notebookPageReferences(content: unknown) {
+  const links = new Map<string, { pageId: number; blockId: string }>();
+  const walk = (node: any, depth: number) => {
+    if (!node || typeof node !== 'object' || depth > 60 || links.size >= 500) return;
+    if (Array.isArray(node)) { node.forEach(n => walk(n, depth + 1)); return; }
+    for (const mark of Array.isArray(node.marks) ? node.marks : []) {
+      const link = mark.type === 'link' ? parseNotebookPageLink(mark.attrs?.href) : null;
+      if (link) links.set(`${link.pageId}:${link.blockId}`, link);
+    }
+    if (Array.isArray(node.content)) node.content.forEach((n: unknown) => walk(n, depth + 1));
+  };
+  walk(content, 0); return [...links.values()];
+}

@@ -4,6 +4,11 @@
  */
 import type { Client, Transaction } from "@libsql/client";
 import { dbClient } from "../db.js";
+import { randomUUID } from 'node:crypto';
+import * as Y from 'yjs';
+import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
+import { notebookPageReferences } from '../src/notebook/pageLinks.js';
+import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -19,6 +24,8 @@ const MAX_DEPTH = 6;
 // operations per client so a second BEGIN cannot block the first one's commit
 // on the same JS event loop. Other server processes still need bounded retries.
 const queues = new WeakMap<Client, Promise<void>>();
+type Presence = { memberId: number; clientId: number; cursor: unknown; seen: number; epoch: string };
+const presence = new WeakMap<Client, Map<string, Map<number, Presence>>>();
 const notFound = () => new NotebookError("Notebook item unavailable", 404);
 function id(value: unknown): number {
   const n = Number(value);
@@ -54,7 +61,7 @@ export function notebookText(value: unknown): string {
   walk(value, 0);
   return texts.join(" ").slice(0, 200_000);
 }
-class Session {
+export class Session {
   constructor(readonly tx: Transaction, readonly ctx: NotebookContext, readonly access: Access) {}
   async all(sql: string, ...args: any[]): Promise<Row[]> { return (await this.tx.execute({ sql, args })).rows as Row[]; }
   async one(sql: string, ...args: any[]): Promise<Row | undefined> { return (await this.all(sql, ...args))[0]; }
@@ -162,6 +169,10 @@ class Session {
       SELECT team_id,id,title,content,canvas,revision,updated_by,updated_at FROM notebook_pages WHERE id=? AND team_id=?`, row.id, this.ctx.teamId);
     await this.run("DELETE FROM notebook_versions WHERE page_id=? AND team_id=? AND id NOT IN (SELECT id FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC LIMIT 50)", row.id, this.ctx.teamId, row.id, this.ctx.teamId);
   }
+  async indexLinks(pageId: number, content: unknown) {
+    await this.run('DELETE FROM notebook_links WHERE team_id=? AND source_page_id=?', this.ctx.teamId, pageId);
+    for (const link of notebookPageReferences(content)) await this.run('INSERT INTO notebook_links(team_id,source_page_id,target_page_id,target_block_id) VALUES(?,?,?,?)', this.ctx.teamId, pageId, link.pageId, link.blockId);
+  }
   async save(pageId: number, body: Row) {
     this.require("edit_notebook");
     const row = await this.item("page", pageId);
@@ -172,6 +183,17 @@ class Session {
     await this.snapshot(row);
     await this.run("UPDATE notebook_pages SET title=?,content=?,canvas=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=? AND revision=?",
       nextTitle, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), this.ctx.memberId, new Date().toISOString(), row.id, this.ctx.teamId, row.revision);
+    // The revision API replaces content instead of merging CRDT updates. Force
+    // connected clients to recover before sending their former generation.
+    if (body.content === undefined && row.crdt_state) {
+      const shared = new Y.Doc();
+      try {
+        Y.applyUpdate(shared, new Uint8Array(row.crdt_state));
+        shared.getMap('meta').set('title', nextTitle);
+        await this.run('UPDATE notebook_pages SET crdt_state=? WHERE id=? AND team_id=?', Y.encodeStateAsUpdate(shared), row.id, this.ctx.teamId);
+      } finally { shared.destroy(); }
+    } else await this.run('UPDATE notebook_pages SET crdt_state=NULL,crdt_epoch=? WHERE id=? AND team_id=?', randomUUID(), row.id, this.ctx.teamId);
+    if (body.content !== undefined) await this.indexLinks(row.id, JSON.parse(content));
     return this.page(await this.item("page", row.id));
   }
 }
@@ -220,6 +242,109 @@ export class NotebookStore {
     return s.tree();
   }); }
   page(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => s.page(await s.item("page", pageId))); }
+  threads(ctx: NotebookContext, pageId: number, before?: unknown, focus?: unknown) { return this.session(ctx, s => notebookThreads(s, pageId, before, focus)); }
+  threadComments(ctx: NotebookContext, pageId: number, threadId: number, before?: unknown, limit?: unknown) { return this.session(ctx, s => notebookThreadComments(s, pageId, threadId, before, limit)); }
+  comment(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => notebookComment(s, pageId, body)); }
+  editComment(ctx: NotebookContext, pageId: number, commentId: number, body: Row, remove = false) { return this.session(ctx, s => notebookEditComment(s, pageId, commentId, body, remove)); }
+  resolveThread(ctx: NotebookContext, pageId: number, threadId: number, resolved: unknown) { return this.session(ctx, s => notebookResolveThread(s, pageId, threadId, resolved)); }
+  mentionMembers(ctx: NotebookContext, pageId: number) { return this.session(ctx, s => notebookMentionMembers(s, pageId)); }
+  mentionInbox(ctx: NotebookContext) { return this.session(ctx, s => notebookMentionInbox(s)); }
+  readMention(ctx: NotebookContext, commentId: number) { return this.session(ctx, s => notebookReadMention(s, commentId)); }
+  sync(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, async s => {
+    if (!s.access.human) throw new NotebookError('Collaboration is available to team members only', 403);
+    const row = await s.item('page', pageId);
+    const decode = (value: unknown, limit: number) => {
+      if (typeof value !== 'string' || value.length > Math.ceil(limit / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new NotebookError('Invalid collaboration data');
+      const bytes = Buffer.from(value, 'base64');
+      if (bytes.length > limit) throw new NotebookError('Collaboration update too large', 413);
+      return bytes;
+    };
+    const vector = body.vector === undefined ? undefined : decode(body.vector, 100_000);
+    const update = body.update === undefined ? undefined : decode(body.update, 1_000_000);
+    const epoch = row.crdt_epoch ?? randomUUID();
+    if (body.epoch !== undefined && body.epoch !== epoch) throw new NotebookError('This page was restored or replaced. Recover your unsaved changes before rejoining.', 409, { epoch });
+    if (update && body.epoch === undefined) throw new NotebookError('Join the document before sending changes', 409);
+    if (update && !s.can('edit_notebook')) throw new NotebookError('Editing permission changed; your unsaved changes need recovery', 403, { readable: true });
+    let doc: Y.Doc | undefined;
+    try {
+      if (row.crdt_state) {
+        doc = new Y.Doc();
+        Y.applyUpdate(doc, new Uint8Array(row.crdt_state));
+      } else doc = seedNotebookDocument(JSON.parse(row.content), row.title);
+      const before = Y.encodeStateAsUpdate(doc);
+      if (update) Y.applyUpdate(doc, update);
+      const json = notebookDocumentJSON(doc);
+      const content = document(json.content, [], 2_000_000);
+      const nextTitle = title(json.title);
+      const state = Y.encodeStateAsUpdate(doc);
+      if (state.length > 6_000_000) throw new NotebookError('Shared document too large; copy it into a new page', 413);
+      const changed = !Buffer.from(before).equals(Buffer.from(state));
+      if (changed) {
+        await s.snapshot(row);
+        await s.run('UPDATE notebook_pages SET content=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(row.canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
+        await s.indexLinks(row.id, json.content);
+      }
+      if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
+      if (!row.crdt_state && !changed) {
+        // The one-time seed supplies stable IDs before any editor joins. These
+        // representation fields are not an authored text change/revision.
+        await s.run('UPDATE notebook_pages SET content=? WHERE id=? AND team_id=?', content, row.id, ctx.teamId);
+        await s.indexLinks(row.id, json.content);
+      }
+      const current = changed ? await s.item('page', pageId) : row;
+      const protectedPage = await s.isProtected(row);
+      const peers: Row[] = [];
+      if (body.clientId !== undefined) {
+        if (!Number.isInteger(body.clientId) || body.clientId < 0 || body.clientId > 0xffffffff) throw new NotebookError('Invalid collaborator identity');
+        let cursor: unknown = null;
+        if (body.cursor != null) {
+          if (typeof body.cursor !== 'object' || JSON.stringify(body.cursor).length > 2000) throw new NotebookError('Invalid collaborator cursor');
+          const parse = (p: any) => {
+            if (!p || typeof p !== 'object' || Array.isArray(p) || Object.keys(p).some(k => !['type','tname','item','assoc'].includes(k))) throw new NotebookError('Invalid collaborator cursor');
+            for (const key of ['type', 'item']) if (p[key] != null) {
+              const value = p[key];
+              if (typeof value !== 'object' || Object.keys(value).some(k => !['client','clock'].includes(k)) || !Number.isInteger(value.client) || value.client < 0 || value.client > 0xffffffff || !Number.isSafeInteger(value.clock) || value.clock < 0) throw new NotebookError('Invalid collaborator cursor');
+            }
+            if ((p.tname != null && p.tname !== 'prosemirror') || (p.assoc != null && ![-1,0,1].includes(p.assoc))) throw new NotebookError('Invalid collaborator cursor');
+            return Y.relativePositionToJSON(Y.createRelativePositionFromJSON(p));
+          };
+          cursor = { anchor: parse(body.cursor.anchor), head: parse(body.cursor.head) };
+        }
+        const rooms = presence.get(this.client) ?? new Map<string, Map<number, Presence>>();
+        presence.set(this.client, rooms);
+        const now = Date.now();
+        for (const [key, room] of rooms) {
+          for (const [clientId, peer] of room) if (now - peer.seen > 20_000) room.delete(clientId);
+          if (!room.size) rooms.delete(key);
+        }
+        const key = `${ctx.teamId}:${pageId}`;
+        const room = rooms.get(key) ?? new Map<number, Presence>();
+        if (!rooms.has(key) && rooms.size >= 200) throw new NotebookError('Too many active collaboration rooms', 429);
+        const prior = room.get(body.clientId);
+        if (prior && prior.memberId !== ctx.memberId) throw new NotebookError('Collaborator identity collision; reopen this page', 409);
+        if (!prior && room.size >= 64) throw new NotebookError('This page has reached its collaborator limit', 429);
+        room.set(body.clientId, { memberId: ctx.memberId, clientId: body.clientId, cursor, seen: now, epoch });
+        rooms.set(key, room);
+        // Names and permissions come from current membership, never client
+        // awareness payloads. A revoked admin must disappear from a protected
+        // page before any viewer receives another cursor/presence response.
+        const ids = [...new Set([...room.values()].map(p => p.memberId))];
+        const members = await s.all(`SELECT id,name,account_type FROM members WHERE team_id=? AND COALESCE(is_active,1)=1 AND id IN (${ids.map(() => '?').join(',')})`, ctx.teamId, ...ids);
+        const roles = protectedPage ? await s.all(`SELECT mr.member_id,r.permissions FROM roles r JOIN member_roles mr ON r.id=mr.role_id WHERE r.team_id=? AND mr.member_id IN (${ids.map(() => '?').join(',')})`, ctx.teamId, ...ids) : [];
+        const admins = new Set(members.filter(m => m.account_type === 'admin').map(m => m.id));
+        for (const role of roles) { try { const keys = JSON.parse(role.permissions); if (Array.isArray(keys) && (keys.includes('*') || keys.includes('manage_members'))) admins.add(role.member_id); } catch { /* malformed grants nothing */ } }
+        for (const [clientId, peer] of room) {
+          const member = members.find(m => m.id === peer.memberId);
+          if (!member || peer.epoch !== epoch || (protectedPage && !admins.has(peer.memberId))) { room.delete(clientId); continue; }
+          peers.push({ clientId, memberId: member.id, name: String(member.name).slice(0, 80), color: ['#3b82f6','#8b5cf6','#ec4899','#06b6d4','#22c55e','#f97316'][member.id % 6], cursor: peer.cursor, clock: peer.seen });
+        }
+      }
+      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: protectedPage, editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at, createdAt: current.created_at, peers };
+    } catch (e) {
+      if (e instanceof NotebookError) throw e;
+      throw new NotebookError(e instanceof Error ? e.message : 'Invalid collaboration document', 422);
+    } finally { doc?.destroy(); }
+  }); }
   create(ctx: NotebookContext, kind: Kind, body: Row) { return this.session(ctx, async s => {
     s.require(kind === "page" ? "edit_notebook" : "organize_notebook");
     const name = title(body.title);
@@ -250,6 +375,7 @@ export class NotebookStore {
       result = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)", ctx.teamId, section.id, parentId, name, body.protected ? 1 : 0, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), section.id, parentId, ctx.memberId, ctx.memberId, now, now);
     }
     const row = await s.item(kind, Number(result.lastInsertRowid));
+    if (kind === 'page') await s.indexLinks(row.id, JSON.parse(row.content));
     return kind === "page" ? s.page(row) : { id: row.id, title: row.title, color: row.color, notebookId: row.notebook_id, protected: !!row.protected };
   }); }
   update(ctx: NotebookContext, kind: "notebook" | "section", itemId: number, body: Row) { return this.session(ctx, async s => {
@@ -324,7 +450,15 @@ export class NotebookStore {
     const now = new Date().toISOString();
     const copy = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)",
       ctx.teamId, row.section_id, row.parent_id, row.title.slice(0, 193) + " (copy)", await s.isProtected(row) ? 1 : 0, row.content, row.canvas, row.plain, row.section_id, row.parent_id, ctx.memberId, ctx.memberId, now, now);
+    await s.indexLinks(Number(copy.lastInsertRowid), JSON.parse(row.content));
     return s.page(await s.item("page", Number(copy.lastInsertRowid)));
+  }); }
+  backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
+    await s.item('page', pageId);
+    const tree = await s.tree();
+    const references = await s.all('SELECT source_page_id,target_block_id FROM notebook_links WHERE team_id=? AND target_page_id=?', ctx.teamId, pageId);
+    const visible = new Map(tree.pages.map(p => [p.id, p]));
+    return references.filter(r => visible.has(r.source_page_id)).slice(0, 200).map(r => ({ ...visible.get(r.source_page_id), targetBlockId: r.target_block_id }));
   }); }
   move(ctx: NotebookContext, kind: Kind, itemId: number, to: Row, index: unknown) { return this.session(ctx, async s => {
     s.require("organize_notebook");
@@ -405,6 +539,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
     try {
+      if (req.headers['x-cp-notebook-team'] !== undefined && Number(req.headers['x-cp-notebook-team']) !== auth.teamId) throw new NotebookError('Workspace changed; reopen this notebook in its workspace', 409, { workspaceChanged: true });
       await initializeRoles(auth.teamId);
       // Client input can never select a principal or grant admin access.
       const result = await fn({ memberId: auth.memberId, teamId: auth.teamId, source: "human" }, req);
@@ -418,6 +553,8 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.get("/api/notebook/tree", handle(ctx => store.tree(ctx)));
   app.get("/api/notebook/search", handle((ctx, req) => store.search(ctx, String(req.query.q ?? ""), Number(req.query.limit ?? 30))));
   app.get("/api/notebook/export", handle(ctx => store.export(ctx)));
+  app.get('/api/notebook/mentions', handle(ctx => store.mentionInbox(ctx)));
+  app.put('/api/notebook/mentions/:id/read', handle((ctx, req) => store.readMention(ctx, id(req.params.id))));
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));
     app.delete(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.remove(ctx, kind, id(req.params.id))));
@@ -425,6 +562,15 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     if (kind !== "notebook") app.put(`/api/notebook/${plural}/:id/protection`, handle((ctx, req) => store.protect(ctx, kind, id(req.params.id), req.body?.protected)));
   }
   app.get("/api/notebook/pages/:id", handle((ctx, req) => store.page(ctx, id(req.params.id))));
+  app.post('/api/notebook/pages/:id/sync', handle((ctx, req) => store.sync(ctx, id(req.params.id), req.body ?? {})));
+  app.get('/api/notebook/pages/:id/backlinks', handle((ctx, req) => store.backlinks(ctx, id(req.params.id))));
+  app.get('/api/notebook/pages/:id/threads', handle((ctx, req) => store.threads(ctx, id(req.params.id), req.query.before, req.query.thread)));
+  app.get('/api/notebook/pages/:id/threads/:tid/comments', handle((ctx, req) => store.threadComments(ctx, id(req.params.id), id(req.params.tid), req.query.before, req.query.limit)));
+  app.post('/api/notebook/pages/:id/comments', handle((ctx, req) => store.comment(ctx, id(req.params.id), req.body ?? {})));
+  app.patch('/api/notebook/pages/:id/comments/:cid', handle((ctx, req) => store.editComment(ctx, id(req.params.id), id(req.params.cid), req.body ?? {})));
+  app.delete('/api/notebook/pages/:id/comments/:cid', handle((ctx, req) => store.editComment(ctx, id(req.params.id), id(req.params.cid), {}, true)));
+  app.put('/api/notebook/pages/:id/threads/:tid/resolved', handle((ctx, req) => store.resolveThread(ctx, id(req.params.id), id(req.params.tid), req.body?.resolved)));
+  app.get('/api/notebook/pages/:id/mention-members', handle((ctx, req) => store.mentionMembers(ctx, id(req.params.id))));
   app.put("/api/notebook/pages/:id", handle((ctx, req) => store.save(ctx, id(req.params.id), req.body ?? {})));
   app.post("/api/notebook/pages/:id/duplicate", handle((ctx, req) => store.duplicate(ctx, id(req.params.id))));
   app.post("/api/notebook/move", handle((ctx, req) => {

@@ -4,6 +4,17 @@ import { createClient } from "@libsql/client";
 import { describe, expect, it } from "vitest";
 
 describe("team notebook migration", () => {
+  it("rolls back an interrupted collaboration upgrade so both columns can be retried", async () => {
+    const db = createClient({url:'file::memory:'});
+    try {
+      await db.execute('CREATE TABLE notebook_pages(id INTEGER PRIMARY KEY)');
+      const sql = readFileSync(new URL('../versions/112-notebook-collaboration.sql',import.meta.url),'utf8');
+      await expect(db.executeMultiple(sql.slice(0,sql.indexOf('ALTER TABLE notebook_pages ADD COLUMN crdt_epoch')) + 'SELECT * FROM interrupted_migration;')).rejects.toThrow();
+      expect((await db.execute('PRAGMA table_info(notebook_pages)')).rows.map(r=>r.name)).toEqual(['id']);
+      await db.executeMultiple(sql);
+      expect((await db.execute('PRAGMA table_info(notebook_pages)')).rows.map(r=>r.name)).toEqual(['id','crdt_state','crdt_epoch']);
+    } finally { db.close(); }
+  });
   it("upgrades default member roles without touching private notebooks or custom permissions", async () => {
     const db = createClient({ url: "file::memory:" });
     try {

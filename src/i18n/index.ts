@@ -16,6 +16,7 @@ const resources = {
         roles: 'Roles',
         attendance: 'Attendance',
         calendar: 'Calendar',
+        notebook: 'Notebook',
         communication: 'Communication',
         tasks: 'Tasks',
         inventory: 'Inventory',

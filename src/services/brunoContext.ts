@@ -71,6 +71,7 @@ export function setScreenEntity<K extends keyof ScreenEntities>(key: K, value: S
 }
 
 export function getScreenContext(): ScreenContextRequest | null {
+  if (page?.route === '/notebook') return { route: '/notebook', view: 'Team notebook' };
   return page ? { ...page, ...entities } : null;
 }
 

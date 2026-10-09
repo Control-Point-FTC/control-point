@@ -7,6 +7,7 @@ import { motion } from 'motion/react';
 // Monaco (via CodeView), and three.js (via CadModelViewer, already lazy).
 const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
 const CodePage = React.lazy(() => import('./modern/pages/code/CodePage').then(m => ({ default: m.CodePage })));
+const NotebookPage = React.lazy(() => import('./notebook/NotebookPage').then(m => ({ default: m.NotebookPage })));
 // Route-level code splitting: each page downloads when first opened (the
 // dashboard stays in the main bundle so the first screen paints at once).
 const OwnerPage = React.lazy(() => import('./modern/pages/owner/OwnerPage').then((m) => ({ default: m.OwnerPage })));
@@ -38,6 +39,7 @@ function ChartLoadingFallback({ label = 'Loading…' }: { label?: string }) {
 }
 import { setProposalContext } from './services/proposalContext';
 import { BRUNO_OPEN_EVENT, clearScreenContext, setScreenEntity, setScreenRoute } from './services/brunoContext';
+import { prepareNotebookExit, clearNotebookData } from './notebook/notebookRuntime';
 import { SetupChecklist, fetchOnboardingState, saveOnboardingState, defaultOnboardingState, shouldShowWelcome, shouldShowChecklist, firstIncompleteWizardStep, resolveTourSteps, type OnboardingState } from './components/onboarding';
 import { clearFtcCache } from './components/ftcCache';
 import { clearScoutCache } from './services/ftcScoutApi';
@@ -69,6 +71,7 @@ import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController } from './components/tasks/useTasksController';
 import { parseOutreachRows } from './components/outreach/parseOutreachRows';
 import type { CommandAction } from './modern/CommandMenu';
+import { BookOpen } from 'lucide-react';
 import type { NotificationActions } from './modern/notifications';
 import { clearDrafts, setDraft } from './modern/drafts';
 
@@ -283,6 +286,7 @@ const navItems = [
   },
   { id: 'attendance', path: 'attendance', labelKey: 'nav.attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
   { id: 'calendar', path: 'calendar', labelKey: 'nav.calendar', icon: Calendar, group: 'Team' },
+  { id: 'notebook', path: 'notebook', labelKey: 'nav.notebook', icon: BookOpen, group: 'Team' },
   { id: 'comm', path: 'comm', labelKey: 'nav.communication', icon: Mail, group: 'Team' },
   { id: 'tasks', path: 'tasks', labelKey: 'nav.tasks', icon: CheckSquare, group: 'Engineering' },
   { id: 'inventory', path: 'inventory', labelKey: 'nav.inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
@@ -407,7 +411,7 @@ export default function App() {
   // header/footer, no outer scroll — the conversation fills the viewport.
   const isBrunoRoute = activeTab === 'bruno';
   // Code is an IDE: toolbar, explorer, editor and status bar fill the screen.
-  const isImmersiveRoute = isChatRoute || isBrunoRoute || activeTab === 'code';
+  const isImmersiveRoute = isChatRoute || isBrunoRoute || activeTab === 'code' || activeTab === 'notebook';
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const isMobile = useIsMobile();
   // Teams & Members submenu (Members / Roles), Discord-style settings popup,
@@ -849,6 +853,7 @@ export default function App() {
     const onUnauthorized = () => {
       clearDrafts(); // a half-written form never follows a session to the next user
       clearOfflineData();
+      void clearNotebookData().catch(() => { /* Storage failure must not keep a revoked session signed in. */ });
       setIsLoggedIn(false);
       setCurrentUser(null);
       setSessionId(null);
@@ -1444,6 +1449,7 @@ export default function App() {
 
   const handleSwitchTeam = async (teamId: number) => {
     if (teamId === currentUser?.team_id) return;
+    if (!await prepareNotebookExit()) { notify('Save or recover your notebook changes before switching workspaces.', 'error'); return; }
     // End any active call cleanly before switching teams — no ghost
     // participants on the old team's sessions.
     try { await voiceApiRef.current?.leave(); } catch { /* best effort — the switch must proceed */ }
@@ -1601,7 +1607,9 @@ export default function App() {
   // Bruno screen context: the page the user is on (same title as the header).
   const pageTitle = activeTab === 'bruno' ? botName : activeNav ? t(activeNav.labelKey) : ROUTE_TITLE_KEYS[activeTab] ? t(ROUTE_TITLE_KEYS[activeTab]) : t('nav.dashboard');
   useEffect(() => {
-    setScreenRoute(`${location.pathname}${location.search}`, pageTitle);
+    // Page IDs/anchors may identify protected notes. Notebook context is
+    // deliberately generic until an explicit permitted Bruno action is added.
+    setScreenRoute(activeTab === 'notebook' ? '/notebook' : `${location.pathname}${location.search}`, pageTitle);
   }, [location.pathname, location.search, pageTitle]);
   useEffect(() => {
     setScreenEntity('channelId', isChatRoute ? activeChannelId : null);
@@ -1681,6 +1689,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    if (!await prepareNotebookExit('logout')) { notify('Save or download and recover your notebook changes before signing out.', 'error'); return; }
+    try { await clearNotebookData(); } catch { notify('Notebook offline storage could not be cleared on this device.', 'error'); }
     // End any active call cleanly — the server's reconnect grace covers
     // blips, but an explicit logout must not leave a ghost participant.
     try { await voiceApiRef.current?.leave(); } catch { /* best effort — still sign out locally */ }
@@ -1775,7 +1785,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'notebook', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);
@@ -2167,6 +2177,7 @@ export default function App() {
         <Route path="/inventory" element={<InventoryPage {...viewProps} />} />
         <Route path="/outreach" element={<OutreachPage {...viewProps} />} />
         <Route path="/code" element={<CodePage {...viewProps} />} />
+        <Route path="/notebook/*" element={<NotebookPage activeTeamId={currentTeamId} currentUserId={currentUser?.id} />} />
         <Route path="/cad" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-docs" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-reviews" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
@@ -2366,6 +2377,11 @@ export default function App() {
 
   // Command-menu actions (Modern). Only actions the user can already take.
   const commandActions: CommandAction[] = [
+    ...(visibleTabs.some(t => t.id === 'notebook') ? [
+      { id: 'open-notebook', label: 'Open notebook', group: 'Actions' as const, icon: BookOpen, keywords: ['notes', 'pages', 'team'], run: () => navigate('/notebook') },
+      { id: 'search-notebook', label: 'Search notebook', group: 'Actions' as const, icon: BookOpen, keywords: ['find', 'notes'], run: () => navigate('/notebook?action=search') },
+      ...(hasPerm('edit_notebook') || isAdmin || hasPerm('manage_members') ? [{ id: 'new-notebook-page', label: 'New notebook page', group: 'Create' as const, icon: Pencil, keywords: ['note', 'write'], run: () => navigate('/notebook?action=new-page') }] : []),
+    ] : []),
     ...(visibleTabs.some((t) => t.id === 'attendance') ? [{ id: 'checkin', label: 'Check in', group: 'Actions' as const, icon: CalendarCheck, keywords: ['attendance', 'qr', 'here'], run: () => navigate('/attendance') }] : []),
     { id: 'whats-new', label: "What's new", group: 'Actions', icon: Sparkles, run: () => setWhatsNewOpen(true) },
     { id: 'feedback', label: 'Send feedback', group: 'Actions', icon: MessageSquare, run: () => setShowFeedback(true) },

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { LayoutDashboard } from 'lucide-react';
 
@@ -56,6 +56,21 @@ describe('Settings on phones', () => {
     const gear = screen.getAllByRole('button', { name: 'Settings' })[0];
     fireEvent.click(gear);
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('immersive notebook navigation', () => {
+  it('hides the app sidebar on entry, reopens it on request, and preserves the other pages preference', () => {
+    localStorage.setItem('cp-modern-sidebar-collapsed', 'false');
+    shell({ activeTab: 'notebook', immersive: true });
+    expect(screen.queryByRole('button', { name: 'Account menu' })).toBeNull();
+    act(() => window.dispatchEvent(new Event('cp:notebook-navigation')));
+    expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument();
+    act(() => window.dispatchEvent(new Event('cp:notebook-navigation')));
+    expect(screen.queryByRole('button', { name: 'Account menu' })).toBeNull();
+    expect(localStorage.getItem('cp-modern-sidebar-collapsed')).toBe('false');
+    cleanup(); shell();
+    expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument();
   });
 });
 

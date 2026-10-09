@@ -19,6 +19,7 @@ export function parseScreenRequest(raw: unknown): ScreenContextRequest | null {
   const r = raw as Record<string, unknown>;
   const route = typeof r.route === "string" ? r.route.trim() : "";
   if (!route.startsWith("/")) return null;
+  if (/^\/notebook(?:\/|\?|$)/.test(route)) return { route: '/notebook', view: 'Team notebook' };
   const out: ScreenContextRequest = {
     // Paths only: keep URL-ish characters, cap the length.
     route: route.replace(/[^\w\-/?=&.%]/g, "").slice(0, 120),

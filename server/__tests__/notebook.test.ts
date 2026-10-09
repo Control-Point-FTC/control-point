@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NotebookStore, type NotebookContext } from "../notebook";
 import { seedMember, seedTeam, startTestServer, type TestServer } from "./helpers/testServer";
+import * as Y from 'yjs';
+import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
 
 vi.setConfig({ testTimeout: 30_000 });
 let t: TestServer, store: NotebookStore;
@@ -38,6 +40,198 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('bounds initial reply payloads and pages older comments without duplicates or foreign access', async () => {
+    const p = await page(), created = await post(`/pages/${p.id}/comments`, { body: 'First comment' });
+    const threadId = created.body.threadId;
+    await t.db.batch(Array.from({ length: 22 }, (_, i) => ({ sql: 'INSERT INTO notebook_comments(team_id,thread_id,author_id,body,created_at) VALUES(?,?,?,?,?)', args: [team, threadId, member, `Reply ${i + 1}`, new Date().toISOString()] })), 'write');
+    const root = (await get(`/pages/${p.id}/threads`)).body.items[0]; expect(root.comments).toHaveLength(10); expect(root.commentsBefore).toBeTruthy();
+    const all = [...root.comments]; let cursor = root.commentsBefore;
+    while (cursor) { const more = await get(`/pages/${p.id}/threads/${threadId}/comments?before=${cursor}`); expect(more.status).toBe(200); all.unshift(...more.body.items); cursor = more.body.next; }
+    expect(all).toHaveLength(23); expect(new Set(all.map(c => c.id)).size).toBe(23); expect(all[0].body).toBe('First comment');
+    expect((await get(`/pages/${p.id}/threads/${threadId}/comments`, otherSession)).status).toBe(404);
+    expect((await get(`/pages/${p.id}/threads?thread=${threadId}`)).body.items[0].id).toBe(threadId);
+  });
+  it('supports anchored discussions, replies, edits, moderation and resolve/reopen', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'drive-block' }, content: [{ type: 'text', text: 'Drive tuning' }] }] } });
+    const created = await post(`/pages/${p.id}/comments`, { body: 'Check the gearing', anchor: { kind: 'text', targetId: 'drive-block', start: 0, end: 5, quote: 'Drive' }, mentions: [peer] });
+    expect(created.status).toBe(200); const cid = created.body.id, tid = created.body.threadId;
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Looks good', threadId: tid }, peerSession)).status).toBe(200);
+    let discussions = (await get(`/pages/${p.id}/threads`)).body;
+    expect(discussions.items[0]).toMatchObject({ id: tid, orphaned: false, resolved: false });
+    expect(discussions.items[0].comments.map((c: any) => c.author)).toEqual(['Ana', 'Lee']);
+    expect((await t.patch(`/api/notebook/pages/${p.id}/comments/${cid}`, { body: 'Impersonated' }, peerSession)).status).toBe(403);
+    expect((await t.patch(`/api/notebook/pages/${p.id}/comments/${cid}`, { body: 'Check the revised gearing' }, userSession)).status).toBe(200);
+    expect((await put(`/pages/${p.id}/threads/${tid}/resolved`, { resolved: true })).status).toBe(200);
+    expect((await post(`/pages/${p.id}/comments`, { threadId: tid, body: 'Cannot reply while resolved' })).status).toBe(409);
+    await put(`/pages/${p.id}/threads/${tid}/resolved`, { resolved: false });
+    expect((await del(`/pages/${p.id}/comments/${cid}`, peerSession)).status).toBe(403);
+    expect((await del(`/pages/${p.id}/comments/${cid}`, adminSession)).status).toBe(200);
+    discussions = (await get(`/pages/${p.id}/threads`)).body;
+    expect(discussions.items[0].comments[0]).toMatchObject({ deleted: true, body: '' });
+    expect(discussions.items[0].comments[1].body).toBe('Looks good');
+    await put(`/pages/${p.id}`, { baseRevision: 1, content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    expect((await get(`/pages/${p.id}/threads`)).body.items[0].orphaned).toBe(true);
+  });
+  it('filters protected mention recipients and removes notification snippets after protection changes', async () => {
+    const p = await page();
+    const created = await post(`/pages/${p.id}/comments`, { body: 'Please inspect', mentions: [peer] }); expect(created.status).toBe(200);
+    expect((await get('/mentions', peerSession)).body).toEqual(expect.arrayContaining([expect.objectContaining({ commentId: created.body.id, title: p.title, read: false })]));
+    await put(`/mentions/${created.body.id}/read`, {}, peerSession);
+    expect((await get('/mentions', peerSession)).body.find((m: any) => m.commentId === created.body.id).read).toBe(true);
+    await put(`/pages/${p.id}/protection`, { protected: true }, adminSession);
+    expect((await get('/mentions', peerSession)).body.some((m: any) => m.commentId === created.body.id)).toBe(false);
+    expect((await get(`/pages/${p.id}/threads`, peerSession)).status).toBe(404);
+    expect((await get(`/pages/${p.id}/mention-members`, adminSession)).body.every((m: any) => m.id !== peer)).toBe(true);
+    const before = (await get(`/pages/${p.id}/threads`, adminSession)).body.items.length;
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Do not leak', mentions: [peer] }, adminSession)).status).toBe(400);
+    expect((await get(`/pages/${p.id}/threads`, adminSession)).body.items.length).toBe(before);
+    await expect(store.threads(ctx(admin, 'bruno'), p.id)).rejects.toMatchObject({ status: 403 });
+    expect((await get(`/pages/${p.id}/threads`, otherSession)).status).toBe(404);
+    expect((await put(`/mentions/${created.body.id}/read`, {}, peerSession)).status).toBe(404);
+  });
+  it('rejects missing anchors, foreign threads, malformed mentions and stale workspace requests atomically', async () => {
+    const p = await page(), other = await page();
+    const created = await post(`/pages/${p.id}/comments`, { body: 'Original' });
+    expect((await post(`/pages/${other.id}/comments`, { body: 'Wrong page', threadId: created.body.threadId })).status).toBe(404);
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Missing target', anchor: { kind: 'block', targetId: 'gone' } })).status).toBe(409);
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Invalid', mentions: 'all' })).status).toBe(400);
+    expect((await get(`/pages/${p.id}/threads`)).body.items).toHaveLength(1);
+    expect((await t.api(`/api/notebook/pages/${p.id}/sync`, { method: 'POST', body: '{}', session: userSession, headers: { 'X-CP-Notebook-Team': String(otherTeam) } })).body).toMatchObject({ workspaceChanged: true });
+  });
+  it('indexes stable page/block links and filters backlinks by inherited access', async () => {
+    const target = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const linked = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'See drive note', marks: [{ type: 'link', attrs: { href: `/notebook?page=${target.id}&block=stable-block` } }] }] }] };
+    const visible = await page({ title: 'Public source', content: linked });
+    const secret = await page({ title: 'Secret source', content: linked, protected: true }, adminSession);
+    expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).toEqual([visible.id]);
+    expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).toEqual([visible.id, secret.id]);
+    expect((await store.backlinks(ctx(admin, 'bruno'), target.id)).map(p => p.id)).toEqual([visible.id]);
+    expect((await get(`/pages/${target.id}/backlinks`, otherSession)).status).toBe(404);
+    await put(`/pages/${visible.id}`, { title: 'Renamed source', baseRevision: 1 });
+    expect((await get(`/pages/${target.id}/backlinks`)).body[0]).toMatchObject({ title: 'Renamed source', targetBlockId: 'stable-block' });
+    await put(`/pages/${visible.id}`, { content: { type: 'doc', content: [{ type: 'paragraph' }] }, baseRevision: 2 });
+    expect((await get(`/pages/${target.id}/backlinks`)).body).toEqual([]);
+    const copy = (await post(`/pages/${secret.id}/duplicate`, {}, adminSession)).body;
+    expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).toContain(copy.id);
+    await del(`/pages/${secret.id}`);
+    expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).not.toContain(secret.id);
+  });
+  it('updates backlinks from durable collaboration edits', async () => {
+    const target = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const source = await page({ content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Reference' }] }] } });
+    const joined = (await post(`/pages/${source.id}/sync`, {})).body;
+    const d = new Y.Doc();
+    try {
+      Y.applyUpdate(d, Buffer.from(joined.update, 'base64'));
+      const text = (d.getXmlFragment('prosemirror').get(0) as Y.XmlElement).get(0) as Y.XmlText;
+      text.format(0, 9, { link: { href: `/notebook?page=${target.id}` } });
+      expect((await post(`/pages/${source.id}/sync`, { epoch: joined.epoch, update: Buffer.from(Y.encodeStateAsUpdate(d)).toString('base64') })).status).toBe(200);
+      expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).toContain(source.id);
+    } finally { d.destroy(); }
+  });
+  it('uses verified teammate identities for presence and removes revoked protected viewers', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] }, protected: true }, adminSession);
+    const joined = await post(`/pages/${p.id}/sync`, { clientId: 123, name: 'Impersonation' }, adminSession);
+    expect(joined.body.peers).toEqual([expect.objectContaining({ clientId: 123, memberId: admin, name: 'Admin' })]);
+    expect((await post(`/pages/${p.id}/sync`, { clientId: 124 }, userSession)).status).toBe(404);
+    const secondAdmin = await seedMember(t.db, team, 'Second admin', 'second-admin@notebook.test', 'admin');
+    const session = await t.session(secondAdmin);
+    expect((await post(`/pages/${p.id}/sync`, { clientId: 124 }, session)).body.peers).toHaveLength(2);
+    expect((await post(`/pages/${p.id}/sync`, { clientId: 123 }, session)).status).toBe(409);
+    await t.db.execute({ sql: "UPDATE members SET account_type='student' WHERE id=?", args: [secondAdmin] });
+    const current = await post(`/pages/${p.id}/sync`, { clientId: 123 }, adminSession);
+    expect(current.body.peers.map((p: any) => p.memberId)).toEqual([admin]);
+  });
+  it('rejects malformed cursors without applying the accompanying text update', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, { clientId: 234 })).body;
+    const d = new Y.Doc();
+    try {
+      Y.applyUpdate(d, Buffer.from(joined.update, 'base64'));
+      d.getMap('meta').set('title', 'Must not commit');
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, clientId: -1, update: Buffer.from(Y.encodeStateAsUpdate(d)).toString('base64') })).status).toBe(400);
+      expect((await get(`/pages/${p.id}`)).body.title).toBe(p.title);
+      expect((await post(`/pages/${p.id}/sync`, { clientId: 234, cursor: { anchor: null, head: null } })).status).toBe(400);
+    } finally { d.destroy(); }
+  });
+  it('merges concurrent rich-text edits and survives a new store instance without duplicating initial text', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Drive' }] }] } });
+    const joined = await post(`/pages/${p.id}/sync`, {});
+    expect(joined.status, JSON.stringify(joined.body)).toBe(200);
+    const a = new Y.Doc(), b = new Y.Doc();
+    try {
+      Y.applyUpdate(a, Buffer.from(joined.body.update, 'base64'));
+      Y.applyUpdate(b, Buffer.from(joined.body.update, 'base64'));
+      const textA = a.getXmlFragment('prosemirror').get(0) as Y.XmlElement;
+      const textB = b.getXmlFragment('prosemirror').get(0) as Y.XmlElement;
+      (textA.get(0) as Y.XmlText).insert(5, ' A');
+      (textB.get(0) as Y.XmlText).insert(5, ' B');
+      const results = await Promise.all([a, b].map((d, i) => post(`/pages/${p.id}/sync`, { epoch: joined.body.epoch, vector: joined.body.vector, update: Buffer.from(Y.encodeStateAsUpdate(d, Buffer.from(joined.body.vector, 'base64'))).toString('base64') }, i ? peerSession : userSession)));
+      expect(results.map(r => r.status)).toEqual([200, 200]);
+      const reopened = await new NotebookStore(t.db).sync(ctx(member), p.id, {});
+      Y.applyUpdate(a, Buffer.from(reopened.update, 'base64'));
+      Y.applyUpdate(b, Buffer.from(reopened.update, 'base64'));
+      expect(yDocToProsemirrorJSON(a)).toEqual(yDocToProsemirrorJSON(b));
+      const text = JSON.stringify(yDocToProsemirrorJSON(a));
+      expect(text).toContain(' A'); expect(text).toContain(' B');
+      expect(text.match(/Drive/g)).toHaveLength(1);
+      expect((await get(`/pages/${p.id}`)).body.content).toEqual(yDocToProsemirrorJSON(a));
+      expect((await get('/search?q=Drive')).body.map((h: any) => h.id)).toContain(p.id);
+      const replay = await post(`/pages/${p.id}/sync`, { epoch: joined.body.epoch, update: Buffer.from(Y.encodeStateAsUpdate(a)).toString('base64') });
+      expect(replay.body.revision).toBe(reopened.revision);
+    } finally { a.destroy(); b.destroy(); }
+  });
+  it('invalidates stale collaboration clients after a revision restoration', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, {})).body;
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Buffer.from(joined.update, 'base64'));
+      doc.getMap('meta').set('title', 'Offline edit');
+      await put(`/pages/${p.id}`, { baseRevision: 1, title: 'Replacement' });
+      const versions = (await get(`/pages/${p.id}/versions`)).body;
+      await post(`/pages/${p.id}/versions/${versions[0].id}/restore`, { baseRevision: 2 });
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') })).status).toBe(409);
+      expect((await get(`/pages/${p.id}`)).body.title).toBe(p.title);
+    } finally { doc.destroy(); }
+  });
+  it('rechecks inherited protection, membership and edit access for collaboration', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, {})).body;
+    expect((await post(`/pages/${p.id}/sync`, {}, otherSession)).status).toBe(404);
+    await expect(store.sync(ctx(admin, 'bruno'), p.id, {})).rejects.toMatchObject({ status: 403 });
+    await put(`/pages/${p.id}/protection`, { protected: true }, adminSession);
+    expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch })).status).toBe(404);
+    expect((await post(`/pages/${p.id}/sync`, {}, adminSession)).status).toBe(200);
+    const reader = await seedMember(t.db, team, 'Read only', 'reader-sync@notebook.test');
+    await expect(store.sync(ctx(reader), p.id, {})).rejects.toMatchObject({ status: 404 });
+    await put(`/pages/${p.id}/protection`, { protected: false }, adminSession);
+    expect((await store.sync(ctx(reader), p.id, {})).editable).toBe(false);
+    await expect(store.sync(ctx(reader), p.id, { epoch: joined.epoch, update: 'AAA=' })).rejects.toMatchObject({ status: 403 });
+    await t.db.execute({ sql: 'UPDATE members SET is_active=0 WHERE id=?', args: [reader] });
+    await expect(store.sync(ctx(reader), p.id, {})).rejects.toMatchObject({ status: 403 });
+  });
+  it('rejects unsupported collaboration documents and malformed updates atomically', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, {})).body;
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Buffer.from(joined.update, 'base64'));
+      doc.getMap('unsupported').set('secret', 'Must not persist');
+      const response = await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') });
+      expect(response.status).toBe(422);
+      expect((await get(`/pages/${p.id}`)).body.revision).toBe(1);
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: 'garbage' })).status).toBe(400);
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: '/w==' })).status).toBe(422);
+      expect((await post(`/pages/${p.id}/sync`, { vector: '/w==' })).status).toBe(422);
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: Buffer.from(new Uint8Array(1_000_001)).toString('base64') })).status).toBe(413);
+    } finally { doc.destroy(); }
+  });
+  it('preserves incompatible source instead of blanking it when collaboration is opened', async () => {
+    const p = await page();
+    expect((await post(`/pages/${p.id}/sync`, {})).status).toBe(422);
+    expect((await get(`/pages/${p.id}`)).body.content).toEqual(doc('Drive tuning'));
+  });
   it("requires sign-in", async () => { expect((await t.api("/api/notebook/tree")).status).toBe(401); });
   it("shares notebooks between members and admins but isolates the same email in another team", async () => {
     const ours = (await get("/tree")).body;
