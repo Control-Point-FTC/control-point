@@ -18,6 +18,20 @@ function mount(canComment = true, request?: (url: string) => Promise<any>) {
   return { sync, editor };
 }
 describe('notebook discussions in the mounted editor', () => {
+  it('coalesces slow polls so repeated timer ticks cannot starve successful results', async () => {
+    let poll!: () => void, finishPeople!: (value: any) => void, peopleCalls = 0;
+    const interval = globalThis.setInterval;
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms: number, ...args: unknown[]) => { if (ms === 5000) poll = fn; return interval(fn, ms, ...args); }) as typeof setInterval);
+    mount(true, async url => {
+      if (url.endsWith('/mention-members')) { peopleCalls++; return await new Promise(resolve => { finishPeople = resolve; }); }
+      return { items: [{ id: 1, anchor: { kind: 'page' }, orphaned: false, resolved: false, commentsBefore: null, comments: [{ id: 1, author: 'Lee', body: 'Slow successful discussion', deleted: false, createdAt: '2026-10-08T00:00:00Z', editedAt: null, canEdit: false, canDelete: false, mentions: [] }] }], next: null, canComment: true };
+    });
+    await waitFor(() => expect(finishPeople).toBeTypeOf('function'));
+    act(() => { poll(); poll(); poll(); });
+    expect(peopleCalls).toBe(1);
+    await act(async () => { finishPeople([]); await Promise.resolve(); });
+    expect(await screen.findByText('Slow successful discussion')).toBeTruthy();
+  });
   it('does not let a slow poll hide discussions loaded while teammates are pending', async () => {
     let poll!: () => void, finishPeople!: (value: any) => void, peopleCalls = 0;
     const interval = globalThis.setInterval;

@@ -51,7 +51,10 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
   };
   useEffect(() => {
     const abort = new AbortController();
+    let loading = false;
     const load = async () => {
+      if (loading || abort.signal.aborted) return;
+      loading = true;
       const version = ++loadVersion.current;
       try {
         const [value, people] = await Promise.all([loadedRange(threadPath, abort.signal), request<typeof members>('/mention-members', { signal: abort.signal })]);
@@ -59,6 +62,7 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
         for (const id of expandedThreads.current) expanded[id] = await request(`/threads/${id}/comments?limit=100`, { signal: abort.signal });
         if (!abort.signal.aborted && version === loadVersion.current) { setThreads(value); setMembers(people); setOlderComments(expanded); }
       } catch (e) { if (!abort.signal.aborted && version === loadVersion.current) { setThreads({ items: [], next: null, canComment: false }); setMembers([]); setOlderComments({}); expandedThreads.current.clear(); setError(e instanceof Error ? e.message : 'Cannot load comments'); } }
+      finally { loading = false; }
     };
     void load(); const timer = setInterval(() => { if (!document.querySelector('.nb-discussions textarea:focus')) void load(); }, 5000);
     return () => { abort.abort(); clearInterval(timer); };
