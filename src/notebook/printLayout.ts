@@ -7,7 +7,11 @@ export function captureNotebookPrintLayout(stage:HTMLElement,content:HTMLElement
   const rect=(element:Element,relative:DOMRect=origin):PrintRect=>{
     const bounds=element.getBoundingClientRect();return {x:(bounds.left-relative.left)/scale,y:(bounds.top-relative.top)/scale,width:bounds.width/scale,height:bounds.height/scale};
   };
-  const blocks=Array.from(content.children).map(element=>rect(element.querySelector('figure.nb-attachment,table')||element));
+  const blocks=Array.from(content.children).map(element=>{
+    // Only editor-owned wrappers stand in for their direct document node.
+    const wrapper=element.matches('[data-node-view-wrapper],.tableWrapper');
+    return rect(wrapper?element.querySelector(':scope > figure.nb-attachment,:scope > table')||element:element);
+  });
   const attachments:Record<string,AttachmentPrintLayout>={};
   for(const figure of stage.querySelectorAll<HTMLElement>('figure.nb-attachment[data-id]')){
     const id=figure.dataset.id;if(!id)continue;const bounds=figure.getBoundingClientRect();

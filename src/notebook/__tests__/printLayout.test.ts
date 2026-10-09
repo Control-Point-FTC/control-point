@@ -1,6 +1,16 @@
 import {describe,expect,it,vi} from 'vitest';
 import {captureNotebookPrintLayout} from '../printLayout';
 describe('print layout capture',()=>{
+  it('measures an enclosing quote rather than its nested attachment or table',()=>{
+    const stage=document.createElement('div'),content=document.createElement('div');stage.append(content);
+    content.innerHTML='<blockquote><p>Before attachment</p><figure class="nb-attachment" data-id="nested"><table></table></figure></blockquote>';
+    const bounds=(left:number,top:number,width:number,height:number)=>({left,top,width,height} as DOMRect);
+    Object.defineProperty(stage,'offsetWidth',{value:800});
+    vi.spyOn(stage,'getBoundingClientRect').mockReturnValue(bounds(0,0,800,900));
+    vi.spyOn(content.children[0],'getBoundingClientRect').mockReturnValue(bounds(20,40,760,500));
+    vi.spyOn(content.querySelector('figure')!,'getBoundingClientRect').mockReturnValue(bounds(50,140,600,300));
+    expect(captureNotebookPrintLayout(stage,content).blocks[0]).toEqual({x:20,y:40,width:760,height:500});
+  });
   it('uses logical page coordinates through display zoom and includes attachment controls spacing',()=>{
     const stage=document.createElement('div'),content=document.createElement('div');stage.append(content);
     content.innerHTML='<figure class="nb-attachment" data-id="image"><div>File controls</div><img alt="Robot"></figure><p>Following text</p>';
