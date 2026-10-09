@@ -27,6 +27,7 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
   const [threads, setThreads] = useState<Threads>({ items: [], next: null, canComment: false });
   const [olderComments, setOlderComments] = useState<Record<number, { items: Comment[]; next: number | null }>>({});
   const expandedThreads = useRef(new Set<number>());
+  const loadedThrough = useRef<number | null>(null);
   const [members, setMembers] = useState<{ id: number; name: string }[]>([]);
   const [body, setBody] = useState(''), [reply, setReply] = useState<number | null>(null), [editing, setEditing] = useState<Comment | null>(null);
   const [anchor, setAnchor] = useState<CommentAnchor>({ kind: 'page' });
@@ -36,23 +37,34 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
   const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined;
   const request = <T,>(path: string, options: RequestInit = {}) => apiJson<T>(`${base}${path}`, { ...options, headers, cache: 'no-store' });
   const threadPath = Number.isSafeInteger(highlightedThread) && highlightedThread > 0 ? `/threads?thread=${highlightedThread}` : '/threads';
+  const loadedRange = async (path: string, signal?: AbortSignal) => {
+    const first = await request<Threads>(path, { signal });
+    const byId = new Map(first.items.map(t => [t.id, t])); let next = first.next;
+    // Refresh every explicitly loaded page, including older roots and replies.
+    // Responses stay bounded to the server's 30-thread pages.
+    for (let page = 0; page < 34 && loadedThrough.current && next && next >= loadedThrough.current; page++) {
+      const more = await request<Threads>(`/threads?before=${next}`, { signal });
+      more.items.forEach(t => byId.set(t.id, t)); next = more.next;
+    }
+    return { ...first, items: [...byId.values()].sort((a,b) => b.id-a.id), next };
+  };
   useEffect(() => {
     const abort = new AbortController();
     const load = async () => {
       try {
-        const [value, people] = await Promise.all([request<Threads>(threadPath, { signal: abort.signal }), request<typeof members>('/mention-members', { signal: abort.signal })]);
+        const [value, people] = await Promise.all([loadedRange(threadPath, abort.signal), request<typeof members>('/mention-members', { signal: abort.signal })]);
         const expanded: Record<number, { items: Comment[]; next: number | null }> = {};
         for (const id of expandedThreads.current) expanded[id] = await request(`/threads/${id}/comments?limit=100`, { signal: abort.signal });
-        if (!abort.signal.aborted) { setThreads(previous => ({ ...value, items: [...value.items, ...previous.items.filter(t => !value.items.some(n => n.id === t.id))], next: previous.items.length > 30 ? previous.next : value.next })); setMembers(people); setOlderComments(expanded); }
+        if (!abort.signal.aborted) { setThreads(value); setMembers(people); setOlderComments(expanded); }
       } catch (e) { if (!abort.signal.aborted) { setThreads({ items: [], next: null, canComment: false }); setMembers([]); setOlderComments({}); expandedThreads.current.clear(); setError(e instanceof Error ? e.message : 'Cannot load comments'); } }
     };
     void load(); const timer = setInterval(() => { if (!document.querySelector('.nb-discussions textarea:focus')) void load(); }, 5000);
     return () => { abort.abort(); clearInterval(timer); };
   }, [sync, threadPath]);
   const refresh = async (focus?: number) => {
-    const value = await request<Threads>(focus ? `/threads?thread=${focus}` : threadPath);
+    const value = await loadedRange(focus ? `/threads?thread=${focus}` : threadPath);
     if (focus && expandedThreads.current.has(focus)) { const expanded = await request<{ items: Comment[]; next: number | null }>(`/threads/${focus}/comments?limit=100`); setOlderComments(previous => ({ ...previous, [focus]: expanded })); }
-    setThreads(previous => ({ ...value, items: [...value.items, ...previous.items.filter(t => !value.items.some(n => n.id === t.id))], next: previous.items.length > 30 ? previous.next : value.next }));
+    setThreads(value);
   };
   const mutate = async (work: () => Promise<void>, focus?: number) => {
     setBusy(true); setError(''); try { await work(); await refresh(focus); } catch (e) { setError(e instanceof Error ? e.message : 'Cannot update discussion'); } finally { setBusy(false); }
@@ -95,7 +107,7 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
       {canWrite && !t.resolved && <Button size="sm" variant="outline" onClick={() => { reset(); setReply(t.id); document.getElementById(`nb-comment-input-${sync.pageId}`)?.focus(); }}>Reply</Button>}
     </article>)}
     {threads.next && <Button variant="outline" disabled={busy} onClick={async () => {
-      setBusy(true); try { const more = await request<Threads>(`/threads?before=${threads.next}`); setThreads(value => ({ ...more, items: [...value.items, ...more.items] })); }
+      setBusy(true); try { const more = await request<Threads>(`/threads?before=${threads.next}`); if (more.items.length) loadedThrough.current = Math.min(...more.items.map(t => t.id)); setThreads(value => ({ ...more, items: [...new Map([...value.items, ...more.items].map(t => [t.id,t])).values()].sort((a,b)=>b.id-a.id) })); }
       catch (e) { setError(e instanceof Error ? e.message : 'Cannot load older discussions'); } finally { setBusy(false); }
     }}>Older discussions</Button>}
     {canWrite ? <form onSubmit={e => { e.preventDefault(); void submit(); }}>

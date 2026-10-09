@@ -1,8 +1,13 @@
 import { Editor, type JSONContent } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 import { NOTEBOOK_FONTS, notebookExtensions, validatedNotebookDocument } from '../editorSchema';
+import { notebookPageReferences } from '../pageLinks';
 
 describe('real notebook editor schema', () => {
+  it('normalizes pasted same-site notebook links so copied URLs produce backlinks', () => {
+    const editor = new Editor({ extensions: notebookExtensions(), content: '<p>Link here</p>' });
+    try { editor.commands.selectAll(); editor.commands.setLink({ href: `${window.location.origin}/notebook/p/42?block=block-1` }); expect(notebookPageReferences(editor.getJSON())).toEqual([{pageId:42,blockId:'block-1'}]); editor.commands.setLink({href:'https://another-site.test/notebook/p/42'}); expect(notebookPageReferences(editor.getJSON())).toEqual([]); } finally { editor.destroy(); }
+  });
   it('persists every font choice with formatting through serialize and reload', () => {
     for (const font of NOTEBOOK_FONTS) {
       const editor = new Editor({ extensions: notebookExtensions(), content: '<p>Robotics notes</p>' });

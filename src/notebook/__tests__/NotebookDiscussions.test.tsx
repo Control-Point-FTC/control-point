@@ -1,6 +1,6 @@
 import React from 'react';
 import { Editor } from '@tiptap/core';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { notebookExtensions } from '../editorSchema';
@@ -10,14 +10,35 @@ import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 const editors: Editor[] = [], providers: NotebookSync[] = [];
 afterEach(() => { cleanup(); editors.splice(0).forEach(e => e.destroy()); providers.splice(0).forEach(p => p.destroy()); vi.restoreAllMocks(); vi.resetAllMocks(); });
-function mount(canComment = true) {
+function mount(canComment = true, request?: (url: string) => Promise<any>) {
   const editor = new Editor({ extensions: notebookExtensions(), content: { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'saved-drive-block' }, content: [{ type: 'text', text: 'Drive testing' }] }] } }); editors.push(editor);
   const sync = new NotebookSync(7); providers.push(sync); sync.status = 'saved';
-  vi.mocked(apiJson).mockImplementation(async url => url.endsWith('/mention-members') ? [{ id: 4, name: 'Lee' }] as any : { items: [], next: null, canComment } as any);
+  vi.mocked(apiJson).mockImplementation(request ?? (async url => url.endsWith('/mention-members') ? [{ id: 4, name: 'Lee' }] as any : { items: [], next: null, canComment } as any));
   render(<MemoryRouter><NotebookDiscussions sync={sync} editor={editor} /></MemoryRouter>);
   return { sync, editor };
 }
 describe('notebook discussions in the mounted editor', () => {
+  it('refreshes older loaded discussions and merges inserted threads without duplicates', async () => {
+    let poll!: () => void, changed = false;
+    const interval = globalThis.setInterval;
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms: number, ...args: unknown[]) => { if (ms === 5000) poll = fn; return interval(fn, ms, ...args); }) as typeof setInterval);
+    const thread = (id: number) => ({ id, anchor: {kind:'page'}, orphaned:false, resolved:changed && id===20, commentsBefore:null, comments:[{id,author:'Lee',body:changed&&id===20?'Fresh older discussion':`Discussion ${id}`,deleted:false,createdAt:'2026-10-08T00:00:00Z',editedAt:null,canEdit:false,canDelete:false,mentions:[]}] });
+    mount(true, async url => {
+      if (url.endsWith('/mention-members')) return [];
+      const before = Number(new URL(url,'https://test.invalid').searchParams.get('before')) || (changed ? 72 : 71);
+      const ids = Array.from({length:before-1},(_,i)=>before-1-i).slice(0,30);
+      return {items:ids.map(thread),next:ids.at(-1)!>1?ids.at(-1):null,canComment:true};
+    });
+    await screen.findByText('Discussion 70');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show resolved' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Older discussions' }));
+    await screen.findByText('Discussion 20'); changed = true;
+    act(() => poll());
+    await screen.findByText('Fresh older discussion');
+    expect(screen.queryByText('Discussion 20')).toBeNull();
+    expect(screen.getAllByText('Discussion 41')).toHaveLength(1);
+    expect(screen.getByText('Discussion 71')).toBeTruthy();
+  });
   it('anchors selected text to a persisted block ID rather than an absolute page offset', () => {
     const { editor } = mount(); editor.commands.setTextSelection({ from: 1, to: 6 });
     expect(selectionCommentAnchor(editor)).toMatchObject({ kind: 'text', targetId: editor.getJSON().content![0].attrs!.id, start: 0, end: 5, quote: 'Drive' });

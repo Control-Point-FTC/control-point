@@ -3,7 +3,7 @@ import { Bold, Italic, Underline, Undo2, Redo2, Highlighter, ListTodo, List, Lis
 import type { Editor } from '@tiptap/react';
 import { NOTEBOOK_FONTS, NOTEBOOK_TAGS } from './editorSchema';
 import type { NotebookPageItem } from './types';
-import { notebookPageLink } from './pageLinks';
+import { notebookPageLink, normalizeNotebookLink } from './pageLinks';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../components/ui-kit';
 import { notebookIndent } from './editorActions';
 import { NotebookFind } from './NotebookFind';
@@ -125,8 +125,9 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {
         e.preventDefault();
-        if (editor.state.selection.empty) chain().insertContent({ type: 'text', text: label || href, marks: [{ type: 'link', attrs: { href } }] }).run();
-        else chain().extendMarkRange('link').setLink({ href }).run();
+        const address = normalizeNotebookLink(href, window.location.origin);
+        if (editor.state.selection.empty) chain().insertContent({ type: 'text', text: label || href, marks: [{ type: 'link', attrs: { href: address } }] }).run();
+        else chain().extendMarkRange('link').setLink({ href: address }).run();
         setLinkOpen(false);
       }}>
         <Label htmlFor="nb-link-page">Notebook page</Label><select id="nb-link-page" value="" onChange={e => { const p = pages.find(p => p.id === Number(e.target.value)); if (p) { setHref(notebookPageLink(p.id)); setLabel(p.title); } }}><option value="">Choose a page…</option>{pages.map(p => <option key={p.id} value={p.id}>{p.title}{p.protected ? ' · Admin only' : ''}</option>)}</select>

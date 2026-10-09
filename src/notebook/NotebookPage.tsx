@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useContext } from 'react';
-import { useSearchParams, useMatch, UNSAFE_NavigationContext } from 'react-router-dom';
+import { useSearchParams, useMatch, useNavigate, UNSAFE_NavigationContext } from 'react-router-dom';
 import { BookOpen, ChevronDown, ChevronRight, FileText, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui-kit';
 import { apiJson as requestNotebookAPI } from '../services/api';
@@ -39,6 +39,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     return requestNotebookAPI<T>(path, { ...options, headers });
   };
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const pageRoute = useMatch('/notebook/p/:pageId');
   const selected = Number(params.get('page') ?? pageRoute?.params.pageId) || null;
   const [tree, setTree] = useState<NotebookTree | null>(null);
@@ -279,7 +280,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (!await leave()) return;
     setActiveSection(id);
     const first = tree?.pages.find(p => p.sectionId === id && !p.parentId);
-    if (first) await pick(first.id); else setParams({});
+    if (first) await pick(first.id); else navigate('/notebook');
   };
   const explorer = <div className="nb-explorer-inner">
     {!mobile && <div className="nb-navigation-row"><button aria-label="Toggle Control Point navigation" onClick={() => window.dispatchEvent(new Event('cp:notebook-navigation'))}><PanelLeft size={18} /></button><span>Notebooks</span><NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></div>}

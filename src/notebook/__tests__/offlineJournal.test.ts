@@ -5,6 +5,7 @@ import { ApiError, apiJson } from '../../services/api';
 import { NotebookSync, decodeBytes, encodeBytes } from '../NotebookSync';
 import { clearNotebookJournals, readNotebookJournal, pendingNotebookJournals } from '../offlineJournal';
 import { prepareNotebookExit, findNotebookSession } from '../notebookRuntime';
+import * as journal from '../offlineJournal';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 const providers: NotebookSync[] = [], docs: Y.Doc[] = [];
 beforeEach(async () => { await clearNotebookJournals(); });
@@ -23,6 +24,31 @@ function server() {
   return { doc, request, protect: () => { protectedPage = true; }, restore: () => { epoch = 'restored'; doc.getMap('meta').set('title', 'Restored title'); } };
 }
 describe('ordinary-page durable offline journal', () => {
+  it('allows sign-out when storage is unavailable and there is no known pending work', async () => {
+    vi.spyOn(journal, 'pendingNotebookJournals').mockRejectedValueOnce(new Error('IndexedDB unavailable'));
+    expect(await prepareNotebookExit('logout')).toBe(true);
+  });
+  it('does not let an older release destroy a provider that has already resumed', async () => {
+    const remote = server(), current = provider(); await current.start();
+    current.doc.getMap('meta').set('title', 'Leaving then returning'); await current.persist();
+    let finish!: (value: boolean) => void;
+    vi.spyOn(current, 'persist').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const leaving = current.release(); current.resume(); finish(true); await leaving;
+    expect(findNotebookSession(15, scope)).toBe(current);
+    current.doc.getMap('meta').set('title', 'Still saving'); expect(await current.flush()).toBe(true);
+    expect(remote.doc.getMap('meta').get('title')).toBe('Still saving');
+  });
+  it('replaces a clean offline cache after an epoch change without resurrecting old text', async () => {
+    const remote = server(); const old = new Y.XmlText(); old.insert(0, 'Removed old text'); remote.doc.getXmlFragment('prosemirror').insert(0, [old]);
+    const first = provider(); await first.start(); await first.persist(); first.destroy();
+    vi.mocked(apiJson).mockRejectedValueOnce(new TypeError('Offline'));
+    const current = provider(); await current.start(); expect(current.pending).toBe(false);
+    const replacement = new Y.Doc(); docs.push(replacement); replacement.getMap('meta').set('title', 'New version'); const text = new Y.XmlText(); text.insert(0, 'Restored text'); replacement.getXmlFragment('prosemirror').insert(0, [text]);
+    vi.mocked(apiJson).mockImplementation(async (_url, init) => { const body = JSON.parse(String(init?.body)); if (body.update) Y.applyUpdate(replacement, decodeBytes(body.update)); return { epoch: 'new-generation', protected: false, editable: true, revision: 2, title: 'New version', updatedBy: 41, updatedAt: 'now', peers: [], vector: encodeBytes(Y.encodeStateVector(replacement)), update: encodeBytes(Y.encodeStateAsUpdate(replacement)) } as any; });
+    expect(await current.flush()).toBe(true); expect(current.doc.getXmlFragment('prosemirror').toString()).toBe('Restored text');
+    current.doc.getMap('meta').set('title', 'New edit'); expect(await current.flush()).toBe(true);
+    expect(replacement.getXmlFragment('prosemirror').toString()).toBe('Restored text');
+  });
   it('refuses logout when a pending journal survives without a mounted editor', async () => {
     server(); const current = provider(); await current.start();
     current.doc.getMap('meta').set('title', 'Must survive logout'); await current.persist(); current.destroy();

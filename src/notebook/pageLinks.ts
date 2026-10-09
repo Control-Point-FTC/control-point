@@ -1,6 +1,10 @@
 export function notebookPageLink(pageId: number, blockId?: string | null) {
   return `/notebook/p/${pageId}${blockId ? `?block=${encodeURIComponent(blockId)}` : ''}`;
 }
+export function normalizeNotebookLink(value: string, origin?: string): string {
+  if (!origin) return value;
+  try { const url = new URL(value, origin); const relative = url.pathname + url.search; return url.origin === origin && parseNotebookPageLink(relative) ? relative : value; } catch { return value; }
+}
 export function parseNotebookPageLink(value: unknown): { pageId: number; blockId: string } | null {
   if (typeof value !== 'string' || !/^\/notebook(?:\?|\/p\/)/.test(value)) return null;
   try {

@@ -143,6 +143,18 @@ export class NotebookSync {
           this.error = 'This page was restored or replaced. Download your unsaved changes before rejoining.';
           return;
         }
+        if (oldEpoch && oldEpoch !== res.epoch) {
+          // A clean cached generation still belongs to its old Yjs document.
+          // Remove it before applying the replacement, rather than merging two
+          // independent histories and resurrecting text after a restore.
+          this.doc.transact(() => {
+            const fragment = this.doc.getXmlFragment('prosemirror'); fragment.delete(0, fragment.length);
+            this.doc.getMap('meta').clear();
+            if (this.doc.share.has('canvas')) this.doc.getMap('canvas').clear();
+          }, this);
+          this.awareness.setLocalStateField('cursor', null);
+          this.events.get('reset')?.forEach(fn => fn());
+        }
         Y.applyUpdate(this.doc, decodeBytes(res.update), this);
         if (this.cached?.pending && this.cached.epoch === res.epoch) { Y.applyUpdate(this.doc, decodeBytes(this.cached.state), this); this.generation++; }
         this.cached = undefined;
@@ -185,7 +197,12 @@ export class NotebookSync {
             this.doc.getMap('meta').clear();
           }, this);
           this.doc.destroy();
-        } else if (e instanceof ApiError && e.status === 409) { this.status = 'conflict'; this.workspaceChanged = !!e.body?.workspaceChanged; if (this.data?.protected) await this.purgeJournal(); }
+        } else if (e instanceof ApiError && e.status === 409) {
+          this.workspaceChanged = !!e.body?.workspaceChanged;
+          if (e.body?.epoch && !this.pending && !this.workspaceChanged) { this.revalidate = true; this.status = 'offline'; this.error = ''; this.schedule(0); }
+          else this.status = 'conflict';
+          if (this.data?.protected) await this.purgeJournal();
+        }
         else if (e instanceof ApiError && e.status < 500) this.status = 'error';
         else { this.restoreCached(); this.revalidate = true; this.status = 'offline'; this.schedule(5_000); }
       } finally { this.running = undefined; this.emit(); if (this.detached && this.status === 'saved' && !this.pending) this.destroy(); }
@@ -205,7 +222,7 @@ export class NotebookSync {
     if (!this.pending) { this.destroy(); return; }
     // Route teardown must not abort the last debounced save. Ordinary changes
     // are journaled first; protected changes remain memory-only until sent.
-    await this.persist(); this.detached = true;
+    this.detached = true; await this.persist();
     await this.flush();
   }
   destroy() { if (this.stopped) return; this.stopped = true; this.unregister(); if (typeof window !== 'undefined') window.removeEventListener('beforeunload', this.unload); clearTimeout(this.timer); this.abort.abort(); this.listeners.clear(); this.events.clear(); this.awareness.destroy(); this.doc.destroy(); }

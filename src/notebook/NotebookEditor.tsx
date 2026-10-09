@@ -3,7 +3,7 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import Placeholder from '@tiptap/extension-placeholder';
-import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yDocToProsemirrorJSON, yUndoPluginKey } from '@tiptap/y-tiptap';
 import { notebookExtensions, safeNotebookLink } from './editorSchema';
 import { NotebookSync, type SyncStatus } from './NotebookSync';
 import { NotebookToolbar } from './NotebookToolbar';
@@ -88,6 +88,10 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     return () => { clearInterval(timer); abort.abort(); };
   }, [sync]);
   useEffect(() => { editor?.setEditable(!blocked); }, [editor, blocked]);
+  useEffect(() => {
+    const reset = () => { if (editor) yUndoPluginKey.getState(editor.state)?.undoManager.clear(); };
+    sync.on('reset', reset); return () => { sync.off('reset', reset); };
+  }, [sync, editor]);
   useEffect(() => {
     const update = () => { redraw(v => v + 1); onChanged(String(sync.doc.getMap('meta').get('title') ?? '')); };
     sync.doc.getMap('meta').observe(update);

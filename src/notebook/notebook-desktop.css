@@ -60,7 +60,7 @@
   .nb-paper {padding-inline:28px}
 }
 @media print {
-  body * {visibility:hidden}
+  body:has(.nb-shell) * {visibility:hidden}
   .nb-paper,.nb-paper * {visibility:visible}
   .nb-paper {position:absolute;inset:0;zoom:1!important;padding:20px!important;color:#111!important;background:#fff!important;max-width:none!important}
   .nb-paper-scroll,.nb-document,.nb-main,.nb-body,.nb-shell {overflow:visible!important;height:auto!important;display:block!important}

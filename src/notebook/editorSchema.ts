@@ -8,6 +8,8 @@ import Superscript from '@tiptap/extension-superscript';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import UniqueID from '@tiptap/extension-unique-id';
+import { Plugin } from '@tiptap/pm/state';
+import { normalizeNotebookLink } from './pageLinks';
 
 // System fonts require no CDN or redistribution. Every choice has a portable
 // fallback so a note remains readable on a device without that particular face.
@@ -84,6 +86,22 @@ const shading = {
 };
 const ShadedCell = TableCell.extend({ addAttributes() { return { ...this.parent?.(), ...shading }; } });
 const ShadedHeader = TableHeader.extend({ addAttributes() { return { ...this.parent?.(), ...shading }; } });
+const InternalLinks = Extension.create({
+  name: 'notebookInternalLinks',
+  addProseMirrorPlugins() { return [new Plugin({ appendTransaction(transactions, _old, state) {
+    if (!transactions.some(t => t.docChanged) || typeof window === 'undefined') return null;
+    const tr = state.tr;
+    state.doc.descendants((node, pos) => {
+      if (!node.isText) return;
+      for (const mark of node.marks) {
+        if (mark.type.name !== 'link' || typeof mark.attrs.href !== 'string') continue;
+        const href = normalizeNotebookLink(mark.attrs.href, window.location.origin);
+        if (href !== mark.attrs.href) tr.removeMark(pos, pos + node.nodeSize, mark).addMark(pos, pos + node.nodeSize, mark.type.create({ ...mark.attrs, href }));
+      }
+    });
+    return tr.docChanged ? tr : null;
+  } })]; },
+});
 
 /** Shared by the real editor and server conversion: schema drift loses data. */
 export function notebookExtensions(collaborative = false, updateDocument = true) {
@@ -95,7 +113,7 @@ export function notebookExtensions(collaborative = false, updateDocument = true)
     Highlight.configure({ multicolor: true }), Subscript, Superscript,
     TaskList, TaskItem.configure({ nested: true }),
     Table.configure({ resizable: true }), TableRow, ShadedCell, ShadedHeader,
-    UniqueID.configure({ types: BLOCK_TYPES, updateDocument }), Blocks,
+    UniqueID.configure({ types: BLOCK_TYPES, updateDocument }), Blocks, InternalLinks,
   ];
 }
 export const notebookSchema = getSchema(notebookExtensions(true));

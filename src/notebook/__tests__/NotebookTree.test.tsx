@@ -7,18 +7,26 @@ import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 vi.mock('../NotebookEditor', () => ({ NotebookEditor: () => null, downloadNotebookJSON: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear(); });
-function mount() {
+function mount(path = '/notebook', emptySection = false) {
   const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false }], pages: [{ id: 2, sectionId: 1, parentId: null, title: 'Drive', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }, { id: 3, sectionId: 1, parentId: 2, title: 'Motor tests', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
+  if (emptySection) tree.sections.push({id:4,notebookId:1,title:'Empty section',color:'#111111',sort:1,protected:false});
   vi.mocked(apiJson).mockImplementation(async (path, options) => {
     if (path === '/api/notebook/tree') return structuredClone(tree) as any;
     if (path === '/api/notebook/mentions') return [] as any;
     if (path === '/api/notebook/sections/1' && options?.method === 'PATCH') { tree.sections[0].title = JSON.parse(String(options.body)).title; return {} as any; }
     throw new Error(`Unexpected request ${path}`);
   });
-  render(<MemoryRouter><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
+  render(<MemoryRouter initialEntries={[path]}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('clears a copied path selection when opening an empty section and creates pages there', async () => {
+    mount('/notebook/p/2',true);
+    fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Drive' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Add Page' }));
+    expect((screen.getByLabelText('Section') as HTMLSelectElement).value).toBe('4');
+  });
   it('remembers independent collapse keys even when a book and section share an ID', async () => {
     mount(); const section = await screen.findByRole('button', { name: 'Build' });
     fireEvent.keyDown(section, { key: 'ArrowLeft' });

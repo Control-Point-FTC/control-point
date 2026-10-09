@@ -18,7 +18,8 @@ export async function prepareNotebookExit(mode: 'switch' | 'logout' = 'switch'):
     // edits merely because this tab has not reopened their pages yet.
     const { pendingNotebookJournals } = await import('./offlineJournal');
     try { if ((await pendingNotebookJournals()).length) return false; }
-    catch { return false; }
+    catch { /* Unavailable storage is not evidence of unsaved work. Active
+      * pending sessions have already been checked above. */ }
   }
   return true;
 }
