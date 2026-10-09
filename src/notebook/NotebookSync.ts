@@ -200,7 +200,7 @@ export class NotebookSync {
   }
   retry() { if (this.status === 'offline') { this.schedule(0); } }
   resume() { this.detached = false; if (this.workspaceChanged) { this.workspaceChanged = false; this.revalidate = true; this.status = 'offline'; } if (!['conflict','error','unavailable'].includes(this.status)) this.schedule(0); }
-  async discardRecovery() { await this.purgeJournal(); this.acknowledged = this.generation; this.destroy(); }
+  async discardRecovery() { this.acknowledged = this.generation; this.destroy(); await this.purgeJournal(); }
   async release() {
     if (!this.pending) { this.destroy(); return; }
     // Route teardown must not abort the last debounced save. Ordinary changes

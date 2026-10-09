@@ -40,6 +40,53 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('supports anchored discussions, replies, edits, moderation and resolve/reopen', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'drive-block' }, content: [{ type: 'text', text: 'Drive tuning' }] }] } });
+    const created = await post(`/pages/${p.id}/comments`, { body: 'Check the gearing', anchor: { kind: 'text', targetId: 'drive-block', start: 0, end: 5, quote: 'Drive' }, mentions: [peer] });
+    expect(created.status).toBe(200); const cid = created.body.id, tid = created.body.threadId;
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Looks good', threadId: tid }, peerSession)).status).toBe(200);
+    let discussions = (await get(`/pages/${p.id}/threads`)).body;
+    expect(discussions.items[0]).toMatchObject({ id: tid, orphaned: false, resolved: false });
+    expect(discussions.items[0].comments.map((c: any) => c.author)).toEqual(['Ana', 'Lee']);
+    expect((await t.patch(`/api/notebook/pages/${p.id}/comments/${cid}`, { body: 'Impersonated' }, peerSession)).status).toBe(403);
+    expect((await t.patch(`/api/notebook/pages/${p.id}/comments/${cid}`, { body: 'Check the revised gearing' }, userSession)).status).toBe(200);
+    expect((await put(`/pages/${p.id}/threads/${tid}/resolved`, { resolved: true })).status).toBe(200);
+    expect((await post(`/pages/${p.id}/comments`, { threadId: tid, body: 'Cannot reply while resolved' })).status).toBe(409);
+    await put(`/pages/${p.id}/threads/${tid}/resolved`, { resolved: false });
+    expect((await del(`/pages/${p.id}/comments/${cid}`, peerSession)).status).toBe(403);
+    expect((await del(`/pages/${p.id}/comments/${cid}`, adminSession)).status).toBe(200);
+    discussions = (await get(`/pages/${p.id}/threads`)).body;
+    expect(discussions.items[0].comments[0]).toMatchObject({ deleted: true, body: '' });
+    expect(discussions.items[0].comments[1].body).toBe('Looks good');
+    await put(`/pages/${p.id}`, { baseRevision: 1, content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    expect((await get(`/pages/${p.id}/threads`)).body.items[0].orphaned).toBe(true);
+  });
+  it('filters protected mention recipients and removes notification snippets after protection changes', async () => {
+    const p = await page();
+    const created = await post(`/pages/${p.id}/comments`, { body: 'Please inspect', mentions: [peer] }); expect(created.status).toBe(200);
+    expect((await get('/mentions', peerSession)).body).toEqual(expect.arrayContaining([expect.objectContaining({ commentId: created.body.id, title: p.title, read: false })]));
+    await put(`/mentions/${created.body.id}/read`, {}, peerSession);
+    expect((await get('/mentions', peerSession)).body.find((m: any) => m.commentId === created.body.id).read).toBe(true);
+    await put(`/pages/${p.id}/protection`, { protected: true }, adminSession);
+    expect((await get('/mentions', peerSession)).body.some((m: any) => m.commentId === created.body.id)).toBe(false);
+    expect((await get(`/pages/${p.id}/threads`, peerSession)).status).toBe(404);
+    expect((await get(`/pages/${p.id}/mention-members`, adminSession)).body.every((m: any) => m.id !== peer)).toBe(true);
+    const before = (await get(`/pages/${p.id}/threads`, adminSession)).body.items.length;
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Do not leak', mentions: [peer] }, adminSession)).status).toBe(400);
+    expect((await get(`/pages/${p.id}/threads`, adminSession)).body.items.length).toBe(before);
+    await expect(store.threads(ctx(admin, 'bruno'), p.id)).rejects.toMatchObject({ status: 403 });
+    expect((await get(`/pages/${p.id}/threads`, otherSession)).status).toBe(404);
+    expect((await put(`/mentions/${created.body.id}/read`, {}, peerSession)).status).toBe(404);
+  });
+  it('rejects missing anchors, foreign threads, malformed mentions and stale workspace requests atomically', async () => {
+    const p = await page(), other = await page();
+    const created = await post(`/pages/${p.id}/comments`, { body: 'Original' });
+    expect((await post(`/pages/${other.id}/comments`, { body: 'Wrong page', threadId: created.body.threadId })).status).toBe(404);
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Missing target', anchor: { kind: 'block', targetId: 'gone' } })).status).toBe(409);
+    expect((await post(`/pages/${p.id}/comments`, { body: 'Invalid', mentions: 'all' })).status).toBe(400);
+    expect((await get(`/pages/${p.id}/threads`)).body.items).toHaveLength(1);
+    expect((await t.api(`/api/notebook/pages/${p.id}/sync`, { method: 'POST', body: '{}', session: userSession, headers: { 'X-CP-Notebook-Team': String(otherTeam) } })).body).toMatchObject({ workspaceChanged: true });
+  });
   it('indexes stable page/block links and filters backlinks by inherited access', async () => {
     const target = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
     const linked = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'See drive note', marks: [{ type: 'link', attrs: { href: `/notebook?page=${target.id}&block=stable-block` } }] }] }] };

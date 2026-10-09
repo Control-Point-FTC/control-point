@@ -16,6 +16,8 @@ async function mount(editable = true) {
   server.getMap('meta').set('title', 'Journal'); docs.push(server);
   vi.mocked(apiJson).mockImplementation(async (url, init) => {
     if (url.endsWith('/backlinks')) return [] as any;
+    if (url.endsWith('/threads')) return { items: [], next: null, canComment: editable } as any;
+    if (url.endsWith('/mention-members')) return [] as any;
     const body = JSON.parse(String(init?.body ?? '{}'));
     if (body.update) Y.applyUpdate(server, decodeBytes(body.update));
     return { epoch: 'one', update: encodeBytes(Y.encodeStateAsUpdate(server, body.vector ? decodeBytes(body.vector) : undefined)), vector: encodeBytes(Y.encodeStateVector(server)), title: server.getMap('meta').get('title'), revision: 1, protected: false, editable, updatedBy: 1, updatedAt: 'now', peers: [{ clientId: body.clientId, memberId: 1, name: 'Teammate', color: '#3b82f6', cursor: null, clock: Date.now() }] } as any;

@@ -24,6 +24,11 @@ describe('real notebook editing actions', () => {
       expect(editor.getText()).toBe('Drive test. Drive again.');
     } finally { editor.destroy(); }
   });
+  it('does not find a continuous phrase across a manual line break', () => {
+    const editor = new Editor({ extensions: notebookExtensions(), content: '<p>Drive<br>train</p>' });
+    try { expect(notebookMatches(editor, 'Drivetrain')).toHaveLength(0); expect(notebookMatches(editor, 'train')).toHaveLength(1); }
+    finally { editor.destroy(); }
+  });
   it('bounds paragraph indentation and persists it through serialization', () => {
     const editor = new Editor({ extensions: notebookExtensions(), content: '<p>Team</p>' });
     try {

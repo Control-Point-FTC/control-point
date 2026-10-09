@@ -11,6 +11,7 @@ import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
 import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
 import { findNotebookSession } from './notebookRuntime';
+import { NotebookMentions } from './NotebookMentions';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -76,7 +77,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       setTree(value);
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
-        current.destroy(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
+        void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
       }
     } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'Cannot load notebooks'); }
   }, []);
@@ -111,7 +112,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (current?.pending && !await current.flush()) { setError('Your changes have not reached the server. Reconnect or download recovery changes before leaving this page.'); return false; }
     return true;
   };
-  const pick = async (id: number, blockId?: string) => { if (!await leave()) return; setParams({ page: String(id), ...(blockId ? { block: blockId } : {}) }); setDrawer(false); setError(''); };
+  const pick = async (id: number, blockId?: string, threadId?: number) => { if (!await leave()) return false; setParams({ page: String(id), ...(blockId ? { block: blockId } : {}), ...(threadId ? { thread: String(threadId) } : {}) }); setDrawer(false); setError(''); return true; };
   const onTitle = useCallback((title: string) => { const id = syncRef.current?.pageId; setTree(t => t ? { ...t, pages: t.pages.map(p => p.id === id ? { ...p, title } : p) } : t); }, []);
   const open = (value: EditDialog) => {
     setName(value.action === 'create' ? '' : value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
@@ -233,6 +234,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
+      <NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} />
       <Button variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}

@@ -21,7 +21,7 @@ export const NOTEBOOK_FONTS = [
 ] as const;
 export const NOTEBOOK_COLORS = ['#171717', '#ffffff', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 export const NOTEBOOK_TAGS = ['todo', 'important', 'question', 'remember'] as const;
-export const BLOCK_TYPES = ['paragraph', 'heading', 'blockquote', 'codeBlock', 'bulletList', 'orderedList', 'taskList', 'taskItem', 'table', 'tableRow', 'tableCell', 'tableHeader'];
+export const BLOCK_TYPES = ['paragraph', 'heading', 'blockquote', 'codeBlock', 'horizontalRule', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'table', 'tableRow', 'tableCell', 'tableHeader'];
 export const DOCUMENT_SCHEMA_VERSION = 1;
 
 export function safeNotebookColor(value: unknown): string | null {

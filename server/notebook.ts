@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
+import { notebookThreads, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -60,7 +61,7 @@ export function notebookText(value: unknown): string {
   walk(value, 0);
   return texts.join(" ").slice(0, 200_000);
 }
-class Session {
+export class Session {
   constructor(readonly tx: Transaction, readonly ctx: NotebookContext, readonly access: Access) {}
   async all(sql: string, ...args: any[]): Promise<Row[]> { return (await this.tx.execute({ sql, args })).rows as Row[]; }
   async one(sql: string, ...args: any[]): Promise<Row | undefined> { return (await this.all(sql, ...args))[0]; }
@@ -241,6 +242,13 @@ export class NotebookStore {
     return s.tree();
   }); }
   page(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => s.page(await s.item("page", pageId))); }
+  threads(ctx: NotebookContext, pageId: number, before?: unknown, focus?: unknown) { return this.session(ctx, s => notebookThreads(s, pageId, before, focus)); }
+  comment(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => notebookComment(s, pageId, body)); }
+  editComment(ctx: NotebookContext, pageId: number, commentId: number, body: Row, remove = false) { return this.session(ctx, s => notebookEditComment(s, pageId, commentId, body, remove)); }
+  resolveThread(ctx: NotebookContext, pageId: number, threadId: number, resolved: unknown) { return this.session(ctx, s => notebookResolveThread(s, pageId, threadId, resolved)); }
+  mentionMembers(ctx: NotebookContext, pageId: number) { return this.session(ctx, s => notebookMentionMembers(s, pageId)); }
+  mentionInbox(ctx: NotebookContext) { return this.session(ctx, s => notebookMentionInbox(s)); }
+  readMention(ctx: NotebookContext, commentId: number) { return this.session(ctx, s => notebookReadMention(s, commentId)); }
   sync(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, async s => {
     if (!s.access.human) throw new NotebookError('Collaboration is available to team members only', 403);
     const row = await s.item('page', pageId);
@@ -544,6 +552,8 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.get("/api/notebook/tree", handle(ctx => store.tree(ctx)));
   app.get("/api/notebook/search", handle((ctx, req) => store.search(ctx, String(req.query.q ?? ""), Number(req.query.limit ?? 30))));
   app.get("/api/notebook/export", handle(ctx => store.export(ctx)));
+  app.get('/api/notebook/mentions', handle(ctx => store.mentionInbox(ctx)));
+  app.put('/api/notebook/mentions/:id/read', handle((ctx, req) => store.readMention(ctx, id(req.params.id))));
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));
     app.delete(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.remove(ctx, kind, id(req.params.id))));
@@ -553,6 +563,12 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.get("/api/notebook/pages/:id", handle((ctx, req) => store.page(ctx, id(req.params.id))));
   app.post('/api/notebook/pages/:id/sync', handle((ctx, req) => store.sync(ctx, id(req.params.id), req.body ?? {})));
   app.get('/api/notebook/pages/:id/backlinks', handle((ctx, req) => store.backlinks(ctx, id(req.params.id))));
+  app.get('/api/notebook/pages/:id/threads', handle((ctx, req) => store.threads(ctx, id(req.params.id), req.query.before, req.query.thread)));
+  app.post('/api/notebook/pages/:id/comments', handle((ctx, req) => store.comment(ctx, id(req.params.id), req.body ?? {})));
+  app.patch('/api/notebook/pages/:id/comments/:cid', handle((ctx, req) => store.editComment(ctx, id(req.params.id), id(req.params.cid), req.body ?? {})));
+  app.delete('/api/notebook/pages/:id/comments/:cid', handle((ctx, req) => store.editComment(ctx, id(req.params.id), id(req.params.cid), {}, true)));
+  app.put('/api/notebook/pages/:id/threads/:tid/resolved', handle((ctx, req) => store.resolveThread(ctx, id(req.params.id), id(req.params.tid), req.body?.resolved)));
+  app.get('/api/notebook/pages/:id/mention-members', handle((ctx, req) => store.mentionMembers(ctx, id(req.params.id))));
   app.put("/api/notebook/pages/:id", handle((ctx, req) => store.save(ctx, id(req.params.id), req.body ?? {})));
   app.post("/api/notebook/pages/:id/duplicate", handle((ctx, req) => store.duplicate(ctx, id(req.params.id))));
   app.post("/api/notebook/move", handle((ctx, req) => {

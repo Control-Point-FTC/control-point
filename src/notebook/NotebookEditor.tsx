@@ -4,7 +4,7 @@ import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import Placeholder from '@tiptap/extension-placeholder';
 import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { notebookExtensions } from './editorSchema';
+import { notebookExtensions, safeNotebookLink } from './editorSchema';
 import { NotebookSync, type SyncStatus } from './NotebookSync';
 import { NotebookToolbar } from './NotebookToolbar';
 import { Button } from '../components/ui-kit';
@@ -13,6 +13,7 @@ import type { NotebookPageItem, NotebookPageData } from './types';
 import { confirmDialog } from '../components/dialog';
 import { parseNotebookPageLink } from './pageLinks';
 import { useSearchParams } from 'react-router-dom';
+import { NotebookDiscussions } from './NotebookDiscussions';
 
 const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Page restored · recovery needed', unavailable: 'Page unavailable', error: 'Save needs attention' };
 export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json') {
@@ -45,8 +46,11 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin }: Edito
     extensions: [...notebookExtensions(true, !!sync.data?.editable), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handleClick: (_view, _pos, event) => {
-      const link = parseNotebookPageLink((event.target as Element).closest('a')?.getAttribute('href'));
-      if (!link) return false;
+      const href = (event.target as Element).closest('a')?.getAttribute('href');
+      let internal = href;
+      try { if (href && new URL(href, window.location.origin).origin === window.location.origin) internal = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search; } catch { return false; }
+      const link = parseNotebookPageLink(internal);
+      if (!link) { if (href && safeNotebookLink(href)) { event.preventDefault(); window.open(href, '_blank', 'noopener,noreferrer'); return true; } return false; }
       event.preventDefault(); onNavigate(link.pageId, link.blockId); return true;
     } },
     onSelectionUpdate: () => redraw(v => v + 1), onTransaction: () => redraw(v => v + 1),
@@ -101,6 +105,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin }: Edito
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       <EditorContent editor={editor} />
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
+      <NotebookDiscussions sync={sync} editor={editor} />
     </article></div>
   </div>;
 }

@@ -8,6 +8,7 @@ export function notebookMatches(editor: Editor, query: string, caseSensitive = f
     if (!node.isTextblock) return true;
     const positions: number[] = [], parts: string[] = [];
     node.descendants((child, offset) => {
+      if (child.type.name === 'hardBreak') { parts.push('\n'); positions.push(position + 1 + offset); return; }
       if (!child.isText || !child.text) return;
       parts.push(child.text);
       for (let i = 0; i < child.text.length; i++) positions.push(position + 1 + offset + i);
