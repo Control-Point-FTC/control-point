@@ -167,6 +167,9 @@ export class Session {
     };
   }
   async snapshot(row: Row) {
+    // Tree operations pass structural rows without the authored document.
+    // Load the complete revision inside the same transaction before indexing it.
+    row = await this.one('SELECT * FROM notebook_pages WHERE id=? AND team_id=?', row.id, this.ctx.teamId);
     await this.run(`INSERT OR IGNORE INTO notebook_versions(team_id,page_id,title,content,canvas,revision,author_id,saved_at)
       SELECT team_id,id,title,content,canvas,revision,updated_by,updated_at FROM notebook_pages WHERE id=? AND team_id=?`, row.id, this.ctx.teamId);
     await this.run("DELETE FROM notebook_versions WHERE page_id=? AND team_id=? AND id NOT IN (SELECT id FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC LIMIT 50)", row.id, this.ctx.teamId, row.id, this.ctx.teamId);

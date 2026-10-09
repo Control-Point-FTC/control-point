@@ -24,6 +24,16 @@ beforeAll(async()=>{
 },120000);
 afterAll(async()=>{await t?.stop();});
 describe('notebook file reference boundary',()=>{
+  it('snapshots attachment references when moving a subtree using structural rows',async()=>{
+    const parent=await page(),child=await store.create(ctx(),'page',{sectionId:section,parentId:parent.id,title:'Child file'}),f=await upload(child.id);
+    await store.save(ctx(),child.id,{baseRevision:1,content:content(f)});
+    const target=await store.create(ctx(),'section',{notebookId:(await store.tree(ctx())).notebooks[0].id,title:'Moved files'});
+    await store.move(ctx(),'page',parent.id,{sectionId:target.id},0);
+    expect((await store.page(ctx(reader),child.id)).sectionId).toBe(target.id);
+    const refs=await t.db.execute({sql:'SELECT revision FROM notebook_file_refs WHERE page_id=? AND file_id=? ORDER BY revision',args:[child.id,f]});
+    expect(refs.rows.map(row=>Number(row.revision))).toEqual([0,2]);
+    expect((await store.fileForPage(ctx(reader),child.id,f)).id).toBe(f);
+  });
   it('uploads and serves only through page-scoped authenticated routes',async()=>{
     const p=await page(),session=await t.session(admin),peerSession=await t.session(reader);
     const form=new FormData();form.append('file',new Blob(['%PDF-1.7\n'],{type:'text/html'}),'../../source.pdf');

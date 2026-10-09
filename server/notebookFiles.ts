@@ -18,7 +18,9 @@ export async function indexNotebookFiles(s: Session, pageId: number, content: un
   let ids: number[];
   try { ids = notebookAttachmentIds(content,canvas); } catch (e) { throw new NotebookError((e as Error).message); }
   let visible: Map<number, boolean> | undefined;
-  const destinationProtected = await s.isProtected(await s.item('page',pageId));
+  // Trusted history/copy indexing is called after the enclosing operation's
+  // authorization, including while a subtree is between structural updates.
+  const destinationProtected = trustedCopy ? false : await s.isProtected(await s.item('page',pageId));
   for (const fileId of ids) {
     const file = await s.one("SELECT n.*,f.kind FROM notebook_files n JOIN stored_files f ON f.id=n.file_id AND f.team_id=n.team_id WHERE n.team_id=? AND n.file_id=?",s.ctx.teamId,fileId);
     if (!file || file.kind !== 'notebook') throw new NotebookError('Notebook file unavailable',404);
