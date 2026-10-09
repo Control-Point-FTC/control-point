@@ -1,6 +1,17 @@
 import {describe,expect,it,vi} from 'vitest';
 import {captureNotebookPrintLayout} from '../printLayout';
 describe('print layout capture',()=>{
+  it('captures unrotated image geometry inside a rotated canvas text box',()=>{
+    const stage=document.createElement('div'),content=document.createElement('div');stage.append(content);
+    stage.insertAdjacentHTML('beforeend','<div class="nb-canvas-text" style="transform:rotate(45deg)"><figure class="nb-attachment" data-id="rotated"><img></figure></div>');
+    const box=stage.querySelector<HTMLElement>('.nb-canvas-text')!,figure=stage.querySelector<HTMLElement>('figure')!,image=stage.querySelector<HTMLElement>('img')!;
+    const geometry=(node:HTMLElement,parent:HTMLElement|null,left:number,top:number,width:number,height:number)=>Object.defineProperties(node,{offsetParent:{value:parent},offsetLeft:{value:left},offsetTop:{value:top},offsetWidth:{value:width},offsetHeight:{value:height}});
+    geometry(box,null,100,200,500,700);geometry(figure,box,10,20,400,600);geometry(image,figure,13,96,360,480);
+    vi.spyOn(image,'getBoundingClientRect').mockReturnValue({left:200,top:300,width:594,height:594} as DOMRect);
+    const measured=captureNotebookPrintLayout(stage,content).attachments.rotated;
+    expect(measured.rect).toEqual({x:10,y:20,width:400,height:600});
+    expect(measured.image).toEqual({x:13,y:96,width:360,height:480});
+  });
   it('measures an enclosing quote rather than its nested attachment or table',()=>{
     const stage=document.createElement('div'),content=document.createElement('div');stage.append(content);
     content.innerHTML='<blockquote><p>Before attachment</p><figure class="nb-attachment" data-id="nested"><table></table></figure></blockquote>';

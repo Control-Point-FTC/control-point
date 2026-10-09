@@ -13,10 +13,16 @@ export function captureNotebookPrintLayout(stage:HTMLElement,content:HTMLElement
     return rect(wrapper?element.querySelector(':scope > figure.nb-attachment,:scope > table')||element:element);
   });
   const attachments:Record<string,AttachmentPrintLayout>={};
+  const localRect=(element:HTMLElement,relative:HTMLElement):PrintRect=>{
+    const offset=(node:HTMLElement)=>{let x=0,y=0;for(let current:HTMLElement|null=node;current;current=current.offsetParent as HTMLElement|null){x+=current.offsetLeft;y+=current.offsetTop;}return {x,y};};
+    const point=offset(element),origin=offset(relative);
+    return {x:point.x-origin.x-relative.clientLeft,y:point.y-origin.y-relative.clientTop,width:element.offsetWidth,height:element.offsetHeight};
+  };
   for(const figure of stage.querySelectorAll<HTMLElement>('figure.nb-attachment[data-id]')){
     const id=figure.dataset.id;if(!id)continue;const bounds=figure.getBoundingClientRect();
-    const image=figure.querySelector(':scope > img');
-    attachments[id]={rect:rect(figure),image:image?rect(image,bounds):undefined,pages:Array.from(figure.querySelectorAll(':scope > .nb-pdf-printout > .nb-pdf-page > div')).map(element=>rect(element,bounds))};
+    const image=figure.querySelector<HTMLElement>(':scope > img'),textBox=figure.closest<HTMLElement>('.nb-canvas-text');
+    const relativeRect=(element:HTMLElement)=>textBox?localRect(element,figure):rect(element,bounds);
+    attachments[id]={rect:textBox?localRect(figure,textBox):rect(figure),image:image?relativeRect(image):undefined,pages:Array.from(figure.querySelectorAll<HTMLElement>(':scope > .nb-pdf-printout > .nb-pdf-page > div')).map(relativeRect)};
   }
   return {blocks,attachments};
 }
