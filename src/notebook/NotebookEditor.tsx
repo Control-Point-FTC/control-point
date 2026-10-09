@@ -14,16 +14,19 @@ import { confirmDialog } from '../components/dialog';
 import { parseNotebookPageLink } from './pageLinks';
 import { useSearchParams } from 'react-router-dom';
 import { NotebookDiscussions } from './NotebookDiscussions';
+import { useNotebookMobile } from './useNotebookMobile';
+import { pasteNotebookText } from './NotebookMobileToolbar';
+import { createPortal } from 'react-dom';
 
-const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Page restored · recovery needed', unavailable: 'Page unavailable', error: 'Save needs attention' };
+const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Local changes need recovery', unavailable: 'Page unavailable', error: 'Save needs attention' };
 export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json') {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void };
-export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin }: EditorProps) {
+type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null };
+export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost }: EditorProps) {
   const [, redraw] = useState(0);
   const [downloadError, setDownloadError] = useState('');
   useEffect(() => sync.subscribe(() => redraw(v => v + 1)), [sync]);
@@ -35,17 +38,26 @@ export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin }:
     }}>Download original page</Button>}
     {downloadError && <p role="alert">{downloadError}</p>}
   </div>;
-  return <ConnectedEditor sync={sync} onChanged={onChanged} pages={pages} onNavigate={onNavigate} onRejoin={onRejoin} />;
+  return <ConnectedEditor sync={sync} onChanged={onChanged} pages={pages} onNavigate={onNavigate} onRejoin={onRejoin} toolbarHost={toolbarHost} />;
 }
-function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin }: EditorProps) {
+function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost }: EditorProps) {
   const [, redraw] = useState(0);
+  const mobile = useNotebookMobile();
+  const mobileRef = React.useRef(mobile); mobileRef.current = mobile;
   const blocked = !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
   const editor = useEditor({
     extensions: [...notebookExtensions(true, !!sync.data?.editable), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
-    editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handleClick: (_view, _pos, event) => {
+    editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
+      if (!mobileRef.current || !view.editable) return false;
+      const text = event.clipboardData?.getData('text/plain'); if (text === undefined) return true;
+      event.preventDefault(); if (editor) pasteNotebookText(editor, text); return true;
+    }, handleKeyDown: (_view, event) => {
+      if (mobileRef.current && (event.ctrlKey || event.metaKey) && ['b','i','u'].includes(event.key.toLowerCase())) { event.preventDefault(); return true; }
+      return false;
+    }, handleClick: (_view, _pos, event) => {
       const href = (event.target as Element).closest('a')?.getAttribute('href');
       let internal = href;
       try { if (href && new URL(href, window.location.origin).origin === window.location.origin) internal = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search; } catch { return false; }
@@ -100,12 +112,12 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin }: Edito
         await sync.discardRecovery(); onRejoin();
       }}>Open current shared page</Button>}
     </div>}
-    <NotebookToolbar editor={editor} disabled={blocked} pages={pages} pageId={sync.pageId} />
+    {toolbarHost ? createPortal(<NotebookToolbar editor={editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} />, toolbarHost) : <NotebookToolbar editor={editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} />}
     <div className="nb-paper-scroll"><article className="nb-paper">
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       <EditorContent editor={editor} />
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
-      <NotebookDiscussions sync={sync} editor={editor} />
+      {!mobile && <NotebookDiscussions sync={sync} editor={editor} />}
     </article></div>
   </div>;
 }

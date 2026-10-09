@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Bold, Italic, Underline, Undo2, Redo2, Highlighter, ListTodo, List, ListOrdered, Link2, Table2, Quote, Code2, Minus, Search, MessageSquare, Ellipsis } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import { NOTEBOOK_FONTS, NOTEBOOK_TAGS } from './editorSchema';
 import type { NotebookPageItem } from './types';
@@ -6,32 +7,53 @@ import { notebookPageLink } from './pageLinks';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../components/ui-kit';
 import { notebookIndent } from './editorActions';
 import { NotebookFind } from './NotebookFind';
+import { useNotebookMobile } from './useNotebookMobile';
+import { NotebookMobileToolbar } from './NotebookMobileToolbar';
 
-export function NotebookToolbar({ editor, disabled, pages, pageId }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number }) {
+const icons: Record<string, React.ComponentType<{ size?: number }>> = { Bold, Italic, Underline, Undo: Undo2, Redo: Redo2, Highlight: Highlighter, Checklist: ListTodo, Bullets: List, Numbered: ListOrdered, Link: Link2, Table: Table2, Quote, Code: Code2, Divider: Minus };
+const insertCommands = new Set(['Link', 'Table', 'Quote', 'Code', 'Divider', 'Add row', 'Row above', 'Add column', 'Column left', 'Delete row', 'Delete column', 'Merge cells', 'Split cell', 'Header row', 'Delete table', 'Reset cell fill']);
+
+export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string }) {
+  const mobile = useNotebookMobile();
+  const [group, setGroup] = useState(() => { try { const saved = preferenceKey && localStorage.getItem(preferenceKey); return saved && ['home','insert','review','help'].includes(saved) ? saved : 'home'; } catch { return 'home'; } });
+  const [expanded, setExpanded] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [href, setHref] = useState('');
   const [label, setLabel] = useState('');
   const [notice, setNotice] = useState('');
   const [finding, setFinding] = useState(false);
   const [format, setFormat] = useState<{ marks: { type: string; attrs: Record<string, any> }[] } | null>(null);
+  useEffect(() => {
+    if (!editor) return;
+    const find = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && (event.target as Element)?.closest('.nb-document')) { event.preventDefault(); setFinding(true); setGroup('review'); } };
+    window.addEventListener('keydown', find); return () => window.removeEventListener('keydown', find);
+  }, [editor]);
   if (!editor) return null;
-  const action = (label: string, run: () => void, active = false, desktop = false) => <button
+  if (mobile) return <NotebookMobileToolbar editor={editor} disabled={disabled} />;
+  const action = (label: string, run: () => void, active = false, desktop = false) => {
+    const Icon = icons[label], commandGroup = insertCommands.has(label) ? 'insert' : label === 'Copy block link' ? 'review' : 'home';
+    return <button
     type="button" title={label} aria-label={label} aria-pressed={active}
-    className={`nb-tool ${active ? 'is-active' : ''} ${desktop ? 'nb-desktop' : ''}`}
-    disabled={disabled} onMouseDown={e => e.preventDefault()} onClick={run}>{label}</button>;
+    data-command-group={commandGroup} className={`nb-tool ${Icon ? 'nb-icon-tool' : ''} ${active ? 'is-active' : ''} ${desktop && commandGroup === 'home' ? 'nb-advanced' : ''}`}
+    disabled={disabled} onMouseDown={e => e.preventDefault()} onClick={run}>{Icon ? <Icon size={17} /> : label}</button>;
+  };
   const chain = () => editor.chain().focus();
   const tag = (value: string) => {
     const type = ['heading', 'paragraph', 'taskItem', 'blockquote', 'codeBlock'].find(t => editor.isActive(t)) ?? 'paragraph';
     chain().updateAttributes(type, { nbTag: value === '__clear' ? null : value || null }).run();
   };
-  return <div className="nb-toolbar" role="toolbar" aria-label="Note formatting">
+  return <div className="nb-command-bar">
+    <div className="nb-command-tabs" role="tablist" aria-label="Notebook commands">{[['home','Home'],['insert','Insert'],['review','Review'],['help','Help']].map(([id,label]) => <button key={id} role="tab" aria-selected={group === id} onClick={() => { setGroup(id); setExpanded(false); if (preferenceKey) try { localStorage.setItem(preferenceKey, id); } catch { /* optional device preference */ } }} onKeyDown={e => {
+      if (!['ArrowLeft','ArrowRight'].includes(e.key)) return; e.preventDefault(); const tabs = ['home','insert','review','help']; const next = (tabs.indexOf(id) + (e.key === 'ArrowRight' ? 1 : 3)) % 4; setGroup(tabs[next]); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus();
+    }}>{label}</button>)}</div>
+    <div className="nb-toolbar" role="toolbar" aria-label="Note formatting" data-nb-group={group} data-expanded={expanded}>
     <select aria-label="Font" className="nb-desktop" disabled={disabled} value={editor.getAttributes('textStyle').fontFamily ?? ''} onChange={e => e.target.value ? chain().setFontFamily(e.target.value).run() : chain().unsetFontFamily().run()}>
-      <option value="">Default font</option>{NOTEBOOK_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+      <option value="">Default font</option>{NOTEBOOK_FONTS.map(f => <option key={f.value} value={f.value} style={{ fontFamily: f.value }}>{f.label}</option>)}
     </select>
     <select aria-label="Font size" className="nb-desktop" disabled={disabled} value={editor.getAttributes('textStyle').fontSize ?? ''} onChange={e => e.target.value ? chain().setFontSize(e.target.value).run() : chain().unsetFontSize().run()}>
       <option value="">Default size</option>{[10,12,14,16,18,20,24,28,32,40,48,64,96].map(n => <option key={n} value={`${n}px`}>{n}</option>)}
     </select>
-    <input aria-label="Custom font size" className="nb-desktop nb-font-size" type="number" min={8} max={96} placeholder="px" disabled={disabled} onChange={e => { const n = Number(e.target.value); if (n >= 8 && n <= 96) chain().setFontSize(`${n}px`).run(); }} />
+    <input aria-label="Custom font size" className="nb-advanced nb-font-size" type="number" min={8} max={96} placeholder="px" disabled={disabled} onChange={e => { const n = Number(e.target.value); if (n >= 8 && n <= 96) chain().setFontSize(`${n}px`).run(); }} />
     {action('Undo', () => chain().undo().run())}{action('Redo', () => chain().redo().run())}
     {action('Bold', () => chain().toggleBold().run(), editor.isActive('bold'))}
     {action('Italic', () => chain().toggleItalic().run(), editor.isActive('italic'))}
@@ -68,9 +90,11 @@ export function NotebookToolbar({ editor, disabled, pages, pageId }: { editor: E
       else { tr = tr.removeMark(from, to); for (const mark of format.marks) tr = tr.addMark(from, to, editor.schema.marks[mark.type].create(mark.attrs)); }
       editor.view.dispatch(tr); editor.commands.focus();
     }, false, true)}
-    <select aria-label="Block tag" className="nb-desktop" disabled={disabled} value="" onChange={e => tag(e.target.value)}><option value="">Tag…</option>{NOTEBOOK_TAGS.map(t => <option key={t} value={t}>{t}</option>)}<option value="__clear">Clear tag</option></select>
-    {editor.isActive('codeBlock') && <select aria-label="Code language" className="nb-desktop" disabled={disabled} value={editor.getAttributes('codeBlock').language ?? ''} onChange={e => chain().updateAttributes('codeBlock', { language: e.target.value || null }).run()}><option value="">Plain text</option>{['javascript','typescript','python','java','cpp','json','bash','html','css'].map(l => <option key={l} value={l}>{l}</option>)}</select>}
-    <button type="button" className="nb-tool" onMouseDown={e => e.preventDefault()} onClick={() => setFinding(v => !v)}>Find</button>
+    <select aria-label="Block tag" data-command-group="review" disabled={disabled} value="" onChange={e => tag(e.target.value)}><option value="">Tag…</option>{NOTEBOOK_TAGS.map(t => <option key={t} value={t}>{t}</option>)}<option value="__clear">Clear tag</option></select>
+    {editor.isActive('codeBlock') && <select aria-label="Code language" data-command-group="insert" disabled={disabled} value={editor.getAttributes('codeBlock').language ?? ''} onChange={e => chain().updateAttributes('codeBlock', { language: e.target.value || null }).run()}><option value="">Plain text</option>{['javascript','typescript','python','java','cpp','json','bash','html','css'].map(l => <option key={l} value={l}>{l}</option>)}</select>}
+    <button type="button" className="nb-tool" data-command-group="review" onMouseDown={e => e.preventDefault()} onClick={() => setFinding(v => !v)}><Search size={16} /> Find in page</button>
+    <button type="button" className="nb-tool" data-command-group="review" onClick={() => { const input = document.getElementById(`nb-comment-input-${pageId}`); input?.scrollIntoView({ block: 'center', behavior: 'smooth' }); input?.focus(); }}><MessageSquare size={16} /> Discussions</button>
+    <button type="button" className="nb-tool nb-more-formatting" data-command-group="home" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}><Ellipsis size={17} />{expanded ? 'Less' : 'More formatting'}</button>
     {action('Table', () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(), false, true)}
     {action('Copy block link', () => {
       let blockId: string | null = null;
@@ -89,11 +113,12 @@ export function NotebookToolbar({ editor, disabled, pages, pageId }: { editor: E
       {action('Split cell', () => chain().splitCell().run(), false, true)}
       {action('Header row', () => chain().toggleHeaderRow().run(), false, true)}
       {action('Delete table', () => chain().deleteTable().run(), false, true)}
-      <label className="nb-desktop">Cell fill <input aria-label="Cell shading" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setCellAttribute('backgroundColor', e.target.value).run()} /></label>
+      <label data-command-group="insert">Cell fill <input aria-label="Cell shading" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setCellAttribute('backgroundColor', e.target.value).run()} /></label>
       {action('Reset cell fill', () => chain().setCellAttribute('backgroundColor', null).run(), false, true)}
     </>}
-    {notice && <span role="status" className="nb-small">{notice}</span>}
-    {finding && <NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} />}
+    <div className="nb-notebook-help" data-command-group="help"><strong>Make this space yours.</strong><span>Select text to format it. Use Insert for links, tables and code; Review for search and discussions.</span><span>Ctrl/⌘ B · bold &nbsp; Ctrl/⌘ I · italic &nbsp; Ctrl/⌘ U · underline &nbsp; Ctrl/⌘ F · find</span><span>In the sidebar: F2 · rename &nbsp; Delete · trash &nbsp; Alt + Shift + ↑/↓ · reorder</span></div>
+    {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
+    {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {
         e.preventDefault();
@@ -107,5 +132,6 @@ export function NotebookToolbar({ editor, disabled, pages, pageId }: { editor: E
         <DialogFooter><Button type="button" variant="ghost" onClick={() => { chain().unsetLink().run(); setLinkOpen(false); }}>Remove link</Button><Button type="submit" disabled={!href.trim()}>Insert link</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>
+    </div>
   </div>;
 }

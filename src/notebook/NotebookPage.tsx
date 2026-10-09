@@ -1,17 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState, useContext } from 'react';
 import { useSearchParams, useMatch, UNSAFE_NavigationContext } from 'react-router-dom';
-import { BookOpen, ChevronDown, ChevronRight, FileText, Folder, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, FileText, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui-kit';
-import { apiJson } from '../services/api';
+import { apiJson as requestNotebookAPI } from '../services/api';
 import { NotebookEditor, downloadNotebookJSON } from './NotebookEditor';
 import { NotebookSync } from './NotebookSync';
 import type { NotebookTree, NotebookPageItem } from './types';
 import './notebook.css';
+import './notebook-desktop.css';
 import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
 import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
 import { findNotebookSession } from './notebookRuntime';
 import { NotebookMentions } from './NotebookMentions';
+import { useNotebookMobile } from './useNotebookMobile';
+import { NotebookGlyph, SectionGlyph } from './NotebookIcons';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -19,13 +22,22 @@ type EditDialog = { action: 'create' | 'rename' | 'delete' | 'move'; kind: Kind;
 const plural = { notebook: 'notebooks', section: 'sections', page: 'pages' };
 const emptyDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 function readPreference(key: string): number[] { try { const v = JSON.parse(localStorage.getItem(key) ?? '[]'); return Array.isArray(v) ? v.filter(Number.isSafeInteger) : []; } catch { return []; } }
-function savePreference(key: string, value: number[]) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage optional */ } }
+function savePreference(key: string, value: number[] | string[]) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage optional */ } }
+function readCollapsed(key: string): string[] {
+  try { const v = JSON.parse(localStorage.getItem(key) ?? '[]'); return Array.isArray(v) ? v.map(n => Number.isSafeInteger(n) ? `section:${n}` : n).filter(n => typeof n === 'string' && /^(notebook|section|page):[1-9]\d*$/.test(n)) : []; } catch { return []; }
+}
 
 export function NotebookPage({ activeTeamId, currentUserId }: { activeTeamId?: number | null; currentUserId?: number }) {
   // A team change unmounts every document/pending request before the new tree.
   return <TeamNotebook key={`${currentUserId}:${activeTeamId ?? 'none'}`} teamId={activeTeamId} memberId={currentUserId} />;
 }
 function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?: number }) {
+  const mobile = useNotebookMobile();
+  const [activeSection, setActiveSection] = useState<number | null>(null);
+  const apiJson = <T = any,>(path: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers); if (teamId) headers.set('X-CP-Notebook-Team', String(teamId));
+    return requestNotebookAPI<T>(path, { ...options, headers });
+  };
   const [params, setParams] = useSearchParams();
   const pageRoute = useMatch('/notebook/p/:pageId');
   const selected = Number(params.get('page') ?? pageRoute?.params.pageId) || null;
@@ -50,8 +62,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const starKey = `cp-notebook-stars:${memberId}:${teamId}`;
   const collapsedKey = `cp-notebook-open:${memberId}:${teamId}`;
   const [stars, setStars] = useState(() => readPreference(starKey));
-  const [collapsed, setCollapsed] = useState(() => readPreference(collapsedKey));
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(collapsedKey));
+  const [renaming, setRenaming] = useState<{ kind: Kind; item: Item; title: string } | null>(null);
+  const renameSaving = useRef(false);
   const [sync, setSync] = useState<NotebookSync | null>(null);
+  const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
   const syncRef = useRef<NotebookSync | null>(null);
   const { navigator } = useContext(UNSAFE_NavigationContext);
   useEffect(() => {
@@ -109,10 +124,18 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   }, [query]);
   const leave = async () => {
     const current = syncRef.current;
-    if (current?.pending && !await current.flush()) { setError('Your changes have not reached the server. Reconnect or download recovery changes before leaving this page.'); return false; }
+    if (current?.pending && !await current.flush() && !await current.persist()) { setError('Your changes have not reached the server. Reconnect or download recovery changes before leaving this page.'); return false; }
     return true;
   };
-  const pick = async (id: number, blockId?: string, threadId?: number) => { if (!await leave()) return false; setParams({ page: String(id), ...(blockId ? { block: blockId } : {}), ...(threadId ? { thread: String(threadId) } : {}) }); setDrawer(false); setError(''); return true; };
+  const pick = async (id: number, blockId?: string, threadId?: number) => {
+    if (!await leave()) return false;
+    const page = tree?.pages.find(p => p.id === id), section = tree?.sections.find(s => s.id === page?.sectionId);
+    const openKeys = new Set([`section:${section?.id}`, `notebook:${section?.notebookId}`]);
+    let parent = page?.parentId;
+    for (let depth = 0; parent && depth < 6; depth++) { openKeys.add(`page:${parent}`); parent = tree?.pages.find(p => p.id === parent)?.parentId; }
+    const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
+    setParams({ page: String(id), ...(blockId ? { block: blockId } : {}), ...(threadId ? { thread: String(threadId) } : {}) }); setDrawer(false); setError(''); return true;
+  };
   const onTitle = useCallback((title: string) => { const id = syncRef.current?.pageId; setTree(t => t ? { ...t, pages: t.pages.map(p => p.id === id ? { ...p, title } : p) } : t); }, []);
   const open = (value: EditDialog) => {
     setName(value.action === 'create' ? '' : value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
@@ -128,6 +151,16 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'Notebook action failed'); }
     finally { if (mounted.current) setBusy(false); }
   };
+  useEffect(() => {
+    const action = params.get('action'); if (!tree || !action) return;
+    const next = new URLSearchParams(params); next.delete('action'); setParams(next, { replace: true });
+    if (action === 'search') { setDrawer(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.nb-search input')?.focus()); }
+    if (action === 'new-page') {
+      if (!tree.permissions.edit) setError('Notebook editing permission is required.');
+      else if (!tree.sections.length) setError('Create a notebook section before adding a page.');
+      else open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id });
+    }
+  }, [params, tree]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!dialog || !await leave()) return;
     const { action, kind, item } = dialog;
@@ -147,7 +180,27 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     });
   };
   const toggleStar = (id: number) => { const value = stars.includes(id) ? stars.filter(n => n !== id) : [...stars, id]; setStars(value); savePreference(starKey, value); };
-  const toggleCollapse = (id: number) => { const value = collapsed.includes(id) ? collapsed.filter(n => n !== id) : [...collapsed, id]; setCollapsed(value); savePreference(collapsedKey, value); };
+  const isCollapsed = (kind: Kind, id: number) => collapsed.includes(`${kind}:${id}`);
+  const toggleCollapse = (kind: Kind, id: number) => { const key = `${kind}:${id}`; const value = collapsed.includes(key) ? collapsed.filter(n => n !== key) : [...collapsed, key]; setCollapsed(value); savePreference(collapsedKey, value); };
+  const renameInput = (kind: Kind, item: Item) => renaming?.kind === kind && renaming.item.id === item.id ? <Input autoFocus aria-label={`Rename ${kind}`} className="nb-inline-rename" maxLength={200} value={renaming.title} onChange={e => setRenaming({ ...renaming, title: e.target.value })} onBlur={() => { void finishRename(); }} onKeyDown={e => {
+    e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); setRenaming(null); } if (e.key === 'Enter') { e.preventDefault(); void finishRename(); }
+  }} /> : null;
+  const finishRename = async () => {
+    if (!renaming || renameSaving.current) return;
+    const { kind, item, title } = renaming, value = title.trim();
+    if (!value) { setError('A title is required.'); return; } if (value === item.title) { setRenaming(null); return; }
+    renameSaving.current = true;
+    try {
+      if (!await leave()) return;
+      await mutate(async () => {
+        const base = `/api/notebook/${plural[kind]}/${item.id}`;
+        if (kind === 'page' && syncRef.current?.pageId === item.id) { syncRef.current.doc.getMap('meta').set('title', value); if (!await syncRef.current.flush()) throw new Error('Title has not reached the server.'); }
+        else if (kind === 'page') { const current = await apiJson(base, { cache: 'no-store' }); await apiJson(base, { method: 'PUT', body: JSON.stringify({ title: value, baseRevision: current.revision }) }); }
+        else await apiJson(base, { method: 'PATCH', body: JSON.stringify({ title: value }) });
+        setRenaming(null);
+      });
+    } finally { renameSaving.current = false; }
+  };
   const reorder = async (kind: Kind, item: Item, direction: -1 | 1) => {
     if (!tree || !await leave()) return;
     const siblings = notebookSiblings(tree, { kind, id: item.id }); const index = siblings.indexOf(item.id) + direction;
@@ -178,9 +231,17 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     onKeyDown: e => {
       if ((e.target as HTMLElement).closest('button[data-nb-focus]') == null) return;
       if (e.altKey && e.shiftKey && ['ArrowUp','ArrowDown'].includes(e.key) && tree?.permissions.organize) { e.preventDefault(); void reorder(kind, item, e.key === 'ArrowUp' ? -1 : 1); return; }
-      if (e.key === 'F2' && (kind === 'page' ? tree?.permissions.edit : tree?.permissions.organize)) { e.preventDefault(); open({ action: 'rename', kind, item }); return; }
+      if (e.key === 'F2' && (kind === 'page' ? tree?.permissions.edit : tree?.permissions.organize)) { e.preventDefault(); setRenaming({ kind, item, title: item.title }); return; }
       if (e.key === 'Delete' && tree?.permissions.delete) { e.preventDefault(); open({ action: 'delete', kind, item }); return; }
-      if (kind === 'section' && ['ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); if (collapsed.includes(item.id) !== (e.key === 'ArrowLeft')) toggleCollapse(item.id); return; }
+      if (['ArrowLeft','ArrowRight'].includes(e.key)) {
+        e.preventDefault(); const closing = e.key === 'ArrowLeft';
+        const hasChildren = kind === 'page' ? tree?.pages.some(p => p.parentId === item.id) : kind === 'section' ? tree?.pages.some(p => p.sectionId === item.id) : tree?.sections.some(s => s.notebookId === item.id);
+        if (hasChildren && isCollapsed(kind, item.id) !== closing) toggleCollapse(kind, item.id);
+        else {
+          const destination = closing ? kind === 'page' ? (item.parentId ? { kind: 'page', id: item.parentId } : { kind: 'section', id: item.sectionId }) : kind === 'section' ? { kind: 'notebook', id: item.notebookId } : null : kind === 'notebook' ? { kind: 'section', id: tree?.sections.find(s => s.notebookId === item.id)?.id } : kind === 'section' ? { kind: 'page', id: tree?.pages.find(p => p.sectionId === item.id && !p.parentId)?.id } : { kind: 'page', id: tree?.pages.find(p => p.parentId === item.id)?.id };
+          if (destination?.id) e.currentTarget.closest('.nb-tree-scroll')?.querySelector<HTMLButtonElement>(`button[data-nb-kind="${destination.kind}"][data-nb-id="${destination.id}"]`)?.focus();
+        } return;
+      }
       if (['ArrowUp','ArrowDown','Home','End'].includes(e.key)) {
         e.preventDefault();
         const root = e.currentTarget.closest('.nb-tree-scroll'); const nodes = Array.from(root?.querySelectorAll<HTMLButtonElement>('button[data-nb-focus]') ?? []);
@@ -193,7 +254,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const options = (kind: Kind, item: Item) => <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end">
       {kind === 'page' && <DropdownMenuItem onClick={() => { void window.navigator.clipboard.writeText(new URL(notebookPageLink(item.id), window.location.origin).href).then(() => setAnnouncement('Page link copied')).catch(() => setError('Clipboard unavailable')); }}>Copy page link</DropdownMenuItem>}
-      {tree?.permissions.edit && kind === 'page' && <DropdownMenuItem onClick={() => open({ action: 'rename', kind, item })}>Rename page</DropdownMenuItem>}
+      {(kind === 'page' ? tree?.permissions.edit : tree?.permissions.organize) && <DropdownMenuItem onClick={() => setRenaming({ kind, item, title: item.title })}>Rename inline</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'page' && <DropdownMenuItem onClick={() => open({ action: 'rename', kind, item })}>Rename / color</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'move', kind, item })}>Move…</DropdownMenuItem>}
       {tree?.permissions.organize && <><DropdownMenuItem onClick={() => { void reorder(kind, item, -1); }}>Move up</DropdownMenuItem><DropdownMenuItem onClick={() => { void reorder(kind, item, 1); }}>Move down</DropdownMenuItem></>}
@@ -207,20 +268,30 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (depth >= 6) return null;
     return tree?.pages.filter(p => p.sectionId === sectionId && p.parentId === parentId).map(p => <div key={p.id}>
       <div {...rowEvents('page', p)} className={`nb-tree-row ${selected === p.id ? 'is-selected' : ''} ${dropClass('page', p.id)}`} style={{ paddingInlineStart: `${depth * 14 + 8}px` }}>
-        <button data-nb-focus className="nb-tree-label" onClick={() => { void pick(p.id); }} aria-current={selected === p.id ? 'page' : undefined}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} aria-label="Admin only" />}</button>
+        {tree.pages.some(child => child.parentId === p.id) && <button className="nb-star" aria-label={`${isCollapsed('page', p.id) ? 'Expand' : 'Collapse'} ${p.title}`} onClick={() => toggleCollapse('page', p.id)}>{isCollapsed('page', p.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</button>}
+        {renameInput('page', p) ?? <button data-nb-focus data-nb-kind="page" data-nb-id={p.id} className="nb-tree-label" onClick={() => { void pick(p.id); }} aria-current={selected === p.id ? 'page' : undefined}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} aria-label="Admin only" />}</button>}
         <button className="nb-star" aria-label={`${stars.includes(p.id) ? 'Unpin' : 'Pin'} ${p.title}`} aria-pressed={stars.includes(p.id)} onClick={() => toggleStar(p.id)}><Star size={14} fill={stars.includes(p.id) ? 'currentColor' : 'none'} /></button>{options('page', p)}
-      </div>{pageRows(sectionId, p.id, depth + 1)}
+      </div>{!isCollapsed('page', p.id) && pageRows(sectionId, p.id, depth + 1)}
     </div>);
   };
+  const sectionId = tree?.pages.find(p => p.id === selected)?.sectionId ?? activeSection ?? tree?.sections[0]?.id;
+  const chooseSection = async (id: number) => {
+    if (!await leave()) return;
+    setActiveSection(id);
+    const first = tree?.pages.find(p => p.sectionId === id && !p.parentId);
+    if (first) await pick(first.id); else setParams({});
+  };
   const explorer = <div className="nb-explorer-inner">
+    {!mobile && <div className="nb-navigation-row"><button aria-label="Toggle Control Point navigation" onClick={() => window.dispatchEvent(new Event('cp:notebook-navigation'))}><PanelLeft size={18} /></button><span>Notebooks</span><NotebookMentions teamId={teamId!} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></div>}
     <div className="nb-search"><Search size={16} /><input aria-label="Search notebook titles and typed text" placeholder="Search notes…" value={query} onChange={e => setQuery(e.target.value)} /></div>
     <div className="nb-filters" role="group" aria-label="Notebook page filter">{[['all','Notebooks'],['recent','Recent'],['starred','Pinned']].map(([id,label]) => <button key={id} aria-pressed={filter === id} onClick={() => { setFilter(id); setQuery(''); }}>{label}</button>)}</div>
+    {tree && <div className="nb-filters"><button onClick={() => { setCollapsed([]); savePreference(collapsedKey, []); }}>Expand all</button><button onClick={() => { const keys = [...tree.notebooks.map(n => `notebook:${n.id}`), ...tree.sections.map(n => `section:${n.id}`), ...tree.pages.filter(p => tree.pages.some(child => child.parentId === p.id)).map(n => `page:${n.id}`)]; setCollapsed(keys); savePreference(collapsedKey, keys); }}>Collapse all</button></div>}
     <div className="nb-tree-scroll">
       {query.trim() ? <><p className="nb-small">{searching ? 'Searching typed notes…' : `${hits.length} results`}</p>{hits.map(h => <button key={h.id} className="nb-search-hit" onClick={() => { void pick(h.id); }}><strong>{h.title}</strong><span>{h.snippet}</span></button>)}</> : filter !== 'all' ? <>{(filter === 'starred' ? tree?.pages.filter(p => stars.includes(p.id)) : [...(tree?.pages ?? [])].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30))?.map(p => <div key={p.id} className="nb-tree-row"><button className="nb-tree-label" onClick={() => { void pick(p.id); }}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} />}</button>{options('page', p)}</div>)}</> : tree?.notebooks.map(book => <div key={book.id} className="nb-book">
-        <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}><button data-nb-focus className="nb-tree-label" onClick={() => { if (tree.permissions.organize) open({ action: 'rename', kind: 'notebook', item: book }); }}><BookOpen size={17} style={{ color: book.color ?? undefined }} /><strong>{book.title}</strong></button>{options('notebook', book)}</div>
-        {tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
-          <div {...rowEvents('section', section)} className={`nb-tree-row ${dropClass('section', section.id)}`}><button data-nb-focus className="nb-tree-label" aria-expanded={!collapsed.includes(section.id)} onClick={() => toggleCollapse(section.id)}>{collapsed.includes(section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<Folder size={16} style={{ color: section.color ?? undefined }} /><span>{section.title}</span>{section.protected && <Lock size={13} aria-label="Admin only" />}</button>{options('section', section)}</div>
-          {!collapsed.includes(section.id) && <>{pageRows(section.id)}{tree.permissions.edit && <button className="nb-add" onClick={() => open({ action: 'create', kind: 'page', sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
+        <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}>{renameInput('notebook', book) ?? <button data-nb-focus data-nb-kind="notebook" data-nb-id={book.id} className="nb-tree-label" aria-expanded={!isCollapsed('notebook', book.id)} onClick={() => toggleCollapse('notebook', book.id)}>{isCollapsed('notebook', book.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<NotebookGlyph color={book.color ?? '#88c900'} /><strong>{book.title}</strong></button>}{options('notebook', book)}</div>
+        {!isCollapsed('notebook', book.id) && tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
+          <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{renameInput('section', section) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span>{section.title}</span>{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
+          {mobile && !isCollapsed('section', section.id) && <>{pageRows(section.id)}{tree.permissions.edit && <button className="nb-add" onClick={() => open({ action: 'create', kind: 'page', sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
         </div>)}
         {tree.permissions.organize && <button className="nb-add" onClick={() => open({ action: 'create', kind: 'section', notebookId: book.id })}><Plus size={14} /> New section</button>}
       </div>)}
@@ -234,12 +305,13 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
-      <NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} />
-      <Button variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
+      <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
+      <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
+    <div className="nb-ribbon-host" ref={setToolbarHost} />
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
-    <div className="nb-body"><aside className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><main className="nb-main">
-      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} onRejoin={() => {
+    <div className="nb-body"><aside className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
       }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}

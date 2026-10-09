@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
-import { notebookThreads, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
+import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -243,6 +243,7 @@ export class NotebookStore {
   }); }
   page(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => s.page(await s.item("page", pageId))); }
   threads(ctx: NotebookContext, pageId: number, before?: unknown, focus?: unknown) { return this.session(ctx, s => notebookThreads(s, pageId, before, focus)); }
+  threadComments(ctx: NotebookContext, pageId: number, threadId: number, before?: unknown, limit?: unknown) { return this.session(ctx, s => notebookThreadComments(s, pageId, threadId, before, limit)); }
   comment(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => notebookComment(s, pageId, body)); }
   editComment(ctx: NotebookContext, pageId: number, commentId: number, body: Row, remove = false) { return this.session(ctx, s => notebookEditComment(s, pageId, commentId, body, remove)); }
   resolveThread(ctx: NotebookContext, pageId: number, threadId: number, resolved: unknown) { return this.session(ctx, s => notebookResolveThread(s, pageId, threadId, resolved)); }
@@ -564,6 +565,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.post('/api/notebook/pages/:id/sync', handle((ctx, req) => store.sync(ctx, id(req.params.id), req.body ?? {})));
   app.get('/api/notebook/pages/:id/backlinks', handle((ctx, req) => store.backlinks(ctx, id(req.params.id))));
   app.get('/api/notebook/pages/:id/threads', handle((ctx, req) => store.threads(ctx, id(req.params.id), req.query.before, req.query.thread)));
+  app.get('/api/notebook/pages/:id/threads/:tid/comments', handle((ctx, req) => store.threadComments(ctx, id(req.params.id), id(req.params.tid), req.query.before, req.query.limit)));
   app.post('/api/notebook/pages/:id/comments', handle((ctx, req) => store.comment(ctx, id(req.params.id), req.body ?? {})));
   app.patch('/api/notebook/pages/:id/comments/:cid', handle((ctx, req) => store.editComment(ctx, id(req.params.id), id(req.params.cid), req.body ?? {})));
   app.delete('/api/notebook/pages/:id/comments/:cid', handle((ctx, req) => store.editComment(ctx, id(req.params.id), id(req.params.cid), {}, true)));

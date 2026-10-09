@@ -1,0 +1,54 @@
+/* Immersive desktop notebook: ribbon, sections, pages, and uninterrupted paper. */
+@media (min-width:768px) {
+  .nb-shell {background:#0b0b0b;color:#eee;--color-text-base:#eee;--color-text-muted:#aaa;--color-primary:#0b0b0b;--color-elevated:#272727;--color-line:#444;--color-accent:#cfb9ef}
+  .nb-header {display:none}
+  .nb-command-tabs {padding:0 12px;gap:6px;background:#0b0b0b;border:0;min-height:40px;align-items:center}
+  .nb-command-tabs button {padding:8px 12px 5px;font-size:15px;color:#eee}
+  .nb-command-tabs button[aria-selected=true] {border-color:#d8c4f2}
+  .nb-command-bar {border:0;background:#0b0b0b;padding:0 6px 10px}
+  .nb-command-bar .nb-toolbar {min-height:62px;padding:10px 16px;border-radius:10px;background:#272727;gap:9px}
+  .nb-command-bar select {height:39px;font-size:15px;background:#272727;border-color:#777;border-radius:4px}
+  .nb-command-bar .nb-icon-tool {height:38px;width:36px;border-radius:4px}
+  .nb-command-bar .nb-icon-tool svg {width:21px;height:21px}
+  .nb-body {gap:0}
+  .nb-explorer {width:clamp(220px,14.7vw,282px);background:#0b0b0b;border:0}
+  .nb-explorer-inner {padding:0 8px 12px 0;gap:8px}
+  .nb-navigation-row {display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;font-size:12px;color:#bbb}
+  .nb-navigation-row>button {display:grid;place-items:center;width:28px;height:28px}
+  .nb-navigation-row>span {flex:1}
+  .nb-navigation-row>button:last-child {width:auto}
+  .nb-search {border:0;border-radius:4px;padding:8px;background:#181818;margin:0 4px}
+  .nb-filters {border-radius:4px;background:transparent}
+  .nb-filters button {padding:5px 2px;font-size:11px}
+  .nb-tree-row {border-radius:4px;min-height:42px;gap:0}
+  .nb-book-label {padding:0;background:#191919;margin-top:8px}
+  .nb-book-label strong {font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nb-section-row .nb-tree-label {padding-inline-start:26px}
+  .nb-tree-row.is-selected {background:#1c1c1c}
+  .nb-tree-label:hover {color:#fff}
+  .nb-tree-row>button:not(.nb-tree-label),.nb-tree-row>[data-state] {opacity:0}
+  .nb-tree-row:hover>button,.nb-tree-row:focus-within>button,.nb-tree-row:hover>[data-state],.nb-tree-row:focus-within>[data-state] {opacity:1}
+  .nb-pages-pane {display:flex;flex-direction:column;width:clamp(230px,27.2vw,522px);flex-shrink:0;padding:12px 12px 8px;background:#272727;border-radius:8px 0 0 0;border-right:4px solid #ddd}
+  .nb-pages-heading {display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .nb-pages-heading>button {height:30px;border:1px solid #555;border-radius:4px;background:#3b3b3b;color:#d3bdec;font-size:13px;padding:0 12px}
+  .nb-pages-heading>span {font-size:11px;color:#aaa;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-left:auto}
+  .nb-pages-pane .nb-tree-row {min-height:32px}
+  .nb-pages-pane .nb-tree-row.is-selected {background:#3a3a3a}
+  .nb-pages-pane .nb-tree-label {padding:6px 8px;font-weight:600}
+  .nb-pages-pane .nb-tree-label>svg:first-child {display:none}
+  .nb-export-link {padding:8px;text-align:left;color:#aaa;font-size:11px}
+  .nb-main {background:#fff;color:#151515;border-top:4px solid #ddd}
+  .nb-document {--color-text-base:#151515;--color-text-muted:#777;--color-primary:#f3f3f3;--color-elevated:#fff;--color-line:#ccc;--color-accent:#75549d;color:#151515}
+  .nb-doc-status {background:#fff;padding:5px 22px;border:0;font-size:10px;gap:10px}
+  .nb-paper-scroll {background:#fff}
+  .nb-paper {padding:18px clamp(30px,3.2vw,64px) 60px;background:#fff;max-width:none;min-height:100%}
+  .nb-title {display:block;font-size:29px;font-weight:400;color:#111;width:min(100%,360px);border-bottom:1px solid #999;padding:0 16px 5px;margin-bottom:12px}
+  .nb-prose {padding-top:38px;max-width:none;color:#111}
+  .nb-prose th,.nb-prose pre,.nb-prose code {background:#f3f3f3;color:#151515}
+  .nb-backlinks,.nb-discussions {max-width:none}
+}
+@media (min-width:768px) and (max-width:1100px) {
+  .nb-explorer {width:210px}
+  .nb-pages-pane {width:220px}
+  .nb-paper {padding-inline:28px}
+}

@@ -71,6 +71,7 @@ import { useMyWork } from './components/dashboard/useMyWork';
 import { useTasksController } from './components/tasks/useTasksController';
 import { parseOutreachRows } from './components/outreach/parseOutreachRows';
 import type { CommandAction } from './modern/CommandMenu';
+import { BookOpen } from 'lucide-react';
 import type { NotificationActions } from './modern/notifications';
 import { clearDrafts, setDraft } from './modern/drafts';
 
@@ -285,7 +286,7 @@ const navItems = [
   },
   { id: 'attendance', path: 'attendance', labelKey: 'nav.attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
   { id: 'calendar', path: 'calendar', labelKey: 'nav.calendar', icon: Calendar, group: 'Team' },
-  { id: 'notebook', path: 'notebook', labelKey: 'nav.notebook', icon: Newspaper, group: 'Team' },
+  { id: 'notebook', path: 'notebook', labelKey: 'nav.notebook', icon: BookOpen, group: 'Team' },
   { id: 'comm', path: 'comm', labelKey: 'nav.communication', icon: Mail, group: 'Team' },
   { id: 'tasks', path: 'tasks', labelKey: 'nav.tasks', icon: CheckSquare, group: 'Engineering' },
   { id: 'inventory', path: 'inventory', labelKey: 'nav.inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
@@ -2376,6 +2377,11 @@ export default function App() {
 
   // Command-menu actions (Modern). Only actions the user can already take.
   const commandActions: CommandAction[] = [
+    ...(visibleTabs.some(t => t.id === 'notebook') ? [
+      { id: 'open-notebook', label: 'Open notebook', group: 'Actions' as const, icon: BookOpen, keywords: ['notes', 'pages', 'team'], run: () => navigate('/notebook') },
+      { id: 'search-notebook', label: 'Search notebook', group: 'Actions' as const, icon: BookOpen, keywords: ['find', 'notes'], run: () => navigate('/notebook?action=search') },
+      ...(hasPerm('edit_notebook') || isAdmin || hasPerm('manage_members') ? [{ id: 'new-notebook-page', label: 'New notebook page', group: 'Create' as const, icon: Pencil, keywords: ['note', 'write'], run: () => navigate('/notebook?action=new-page') }] : []),
+    ] : []),
     ...(visibleTabs.some((t) => t.id === 'attendance') ? [{ id: 'checkin', label: 'Check in', group: 'Actions' as const, icon: CalendarCheck, keywords: ['attendance', 'qr', 'here'], run: () => navigate('/attendance') }] : []),
     { id: 'whats-new', label: "What's new", group: 'Actions', icon: Sparkles, run: () => setWhatsNewOpen(true) },
     { id: 'feedback', label: 'Send feedback', group: 'Actions', icon: MessageSquare, run: () => setShowFeedback(true) },

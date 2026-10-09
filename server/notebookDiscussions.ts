@@ -70,11 +70,17 @@ export async function notebookThreads(s: Session, pageId: number, before?: unkno
   const items = [];
   for (const row of selected) {
     const a = JSON.parse(row.anchor);
-    const comments = await s.all('SELECT c.*,m.name AS author_name,(SELECT json_group_array(n.member_id) FROM notebook_mentions n WHERE n.team_id=c.team_id AND n.comment_id=c.id) AS mention_ids FROM notebook_comments c LEFT JOIN members m ON m.id=c.author_id AND m.team_id=c.team_id WHERE c.team_id=? AND c.thread_id=? ORDER BY c.id LIMIT 101', s.ctx.teamId, row.id);
+    const comments = await notebookThreadComments(s, pageId, row.id);
     items.push({ id: row.id, anchor: a, orphaned: !targetExists(page, a), resolved: !!row.resolved_at, resolvedAt: row.resolved_at, resolvedBy: row.resolved_by,
-      comments: comments.map(c => commentView(s, c)) });
+      comments: comments.items, commentsBefore: comments.next });
   }
   return { items, next: rows.length > 30 ? rows[29].id : null, canComment: s.can('edit_notebook') };
+}
+export async function notebookThreadComments(s: Session, pageId: number, threadId: number, before?: unknown, requestedLimit?: unknown) {
+  human(s); await s.item('page', pageId); await thread(s, pageId, threadId);
+  const limit = requestedLimit === undefined ? 10 : integer(requestedLimit); if (limit > 100) throw new NotebookError('Load up to 100 replies at a time');
+  const rows = await s.all('SELECT c.*,m.name AS author_name,(SELECT json_group_array(n.member_id) FROM notebook_mentions n WHERE n.team_id=c.team_id AND n.comment_id=c.id) AS mention_ids FROM notebook_comments c LEFT JOIN members m ON m.id=c.author_id AND m.team_id=c.team_id WHERE c.team_id=? AND c.thread_id=? AND c.id<? ORDER BY c.id DESC LIMIT ?', s.ctx.teamId, threadId, before === undefined ? Number.MAX_SAFE_INTEGER : integer(before), limit + 1);
+  return { items: rows.slice(0, limit).reverse().map(c => commentView(s, c)), next: rows.length > limit ? rows[limit - 1].id : null };
 }
 export async function notebookComment(s: Session, pageId: number, body: Row) {
   human(s); s.require('edit_notebook'); const page = await s.item('page', pageId); const message = text(body.body);

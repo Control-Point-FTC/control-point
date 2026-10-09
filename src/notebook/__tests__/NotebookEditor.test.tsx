@@ -42,6 +42,7 @@ describe('mounted collaborative notebook editor', () => {
     await mount(false);
     expect(screen.getByRole('textbox', { name: 'Page title' }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('textbox', { name: 'Page content' }).getAttribute('contenteditable')).toBe('false');
+    fireEvent.click(screen.getByRole('tab', { name: 'Insert' }));
     expect(screen.getByRole('button', { name: /^Table$/ }).hasAttribute('disabled')).toBe(true);
     expect(providers[0].pending).toBe(false);
   });

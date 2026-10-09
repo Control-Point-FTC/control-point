@@ -40,6 +40,17 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('bounds initial reply payloads and pages older comments without duplicates or foreign access', async () => {
+    const p = await page(), created = await post(`/pages/${p.id}/comments`, { body: 'First comment' });
+    const threadId = created.body.threadId;
+    await t.db.batch(Array.from({ length: 22 }, (_, i) => ({ sql: 'INSERT INTO notebook_comments(team_id,thread_id,author_id,body,created_at) VALUES(?,?,?,?,?)', args: [team, threadId, member, `Reply ${i + 1}`, new Date().toISOString()] })), 'write');
+    const root = (await get(`/pages/${p.id}/threads`)).body.items[0]; expect(root.comments).toHaveLength(10); expect(root.commentsBefore).toBeTruthy();
+    const all = [...root.comments]; let cursor = root.commentsBefore;
+    while (cursor) { const more = await get(`/pages/${p.id}/threads/${threadId}/comments?before=${cursor}`); expect(more.status).toBe(200); all.unshift(...more.body.items); cursor = more.body.next; }
+    expect(all).toHaveLength(23); expect(new Set(all.map(c => c.id)).size).toBe(23); expect(all[0].body).toBe('First comment');
+    expect((await get(`/pages/${p.id}/threads/${threadId}/comments`, otherSession)).status).toBe(404);
+    expect((await get(`/pages/${p.id}/threads?thread=${threadId}`)).body.items[0].id).toBe(threadId);
+  });
   it('supports anchored discussions, replies, edits, moderation and resolve/reopen', async () => {
     const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'drive-block' }, content: [{ type: 'text', text: 'Drive tuning' }] }] } });
     const created = await post(`/pages/${p.id}/comments`, { body: 'Check the gearing', anchor: { kind: 'text', targetId: 'drive-block', start: 0, end: 5, quote: 'Drive' }, mentions: [peer] });

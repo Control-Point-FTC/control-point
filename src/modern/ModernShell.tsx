@@ -87,6 +87,16 @@ export function ModernShell(props: ModernShellProps) {
   const { isMobile, immersive, content } = props;
   const location = useLocation();
   const [collapsed, setCollapsed] = useState<boolean>(() => readJSON(COLLAPSE_KEY, false));
+  const notebookRoute = props.activeTab === 'notebook';
+  const [notebookExpanded, setNotebookExpanded] = useState(false);
+  const sidebarCollapsed = notebookRoute ? !notebookExpanded : collapsed;
+  useEffect(() => { setNotebookExpanded(false); }, [notebookRoute]);
+  useEffect(() => {
+    if (!notebookRoute) return;
+    const toggle = () => setNotebookExpanded(value => !value);
+    window.addEventListener('cp:notebook-navigation', toggle);
+    return () => window.removeEventListener('cp:notebook-navigation', toggle);
+  }, [notebookRoute]);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   // Phone tab bar: three chosen pages + Bruno + More (per device).
@@ -175,11 +185,11 @@ export function ModernShell(props: ModernShellProps) {
         onLogout={then(props.onLogout)}
         onSwitchTeam={then(props.onSwitchTeam)}
         onNavigate={then(props.onNavigate)}
-        collapsed={!isMobile && collapsed}
+        collapsed={!isMobile && sidebarCollapsed}
         unreadInbox={unreadInbox}
         onOpenSearch={then(() => setCmdOpen(true))}
         onOpenInbox={then(() => props.onNavigate('/inbox'))}
-        onToggleCollapsed={isMobile ? undefined : () => setCollapsed((c) => !c)}
+        onToggleCollapsed={isMobile ? undefined : () => notebookRoute ? setNotebookExpanded(value => !value) : setCollapsed((c) => !c)}
       />
     );
   };
@@ -189,13 +199,13 @@ export function ModernShell(props: ModernShellProps) {
     <MotionConfig reducedMotion="user">
     <TooltipProvider>
       <div className="modern-shell flex h-dvh w-full overflow-hidden bg-primary text-text-base" data-ui-shell="modern">
-        {!isMobile && (
+        {!isMobile && (!notebookRoute || notebookExpanded) && (
           <aside
             data-print-hide
             aria-label="Sidebar"
             className={cn(
               'hidden md:flex flex-col shrink-0 border-r border-line bg-secondary/60 transition-[width] duration-150 ease-out',
-              collapsed ? 'w-[60px]' : 'w-[248px]',
+              sidebarCollapsed ? 'w-[60px]' : 'w-[248px]',
             )}
           >
             {sidebar()}
@@ -203,7 +213,7 @@ export function ModernShell(props: ModernShellProps) {
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar
+          {(!notebookRoute || isMobile) && <><TopBar
             title={props.pageTitle}
             teamName={props.activeTeamName}
             isMobile={isMobile}
@@ -212,7 +222,7 @@ export function ModernShell(props: ModernShellProps) {
             onOpenSettings={props.onOpenSettings}
             workspaceId={props.activeTeam?.id}
           />
-          <TipsBar path={location.pathname} />
+          <TipsBar path={location.pathname} /></>}
           <main
             id="main"
             className={cn(
