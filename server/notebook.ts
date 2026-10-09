@@ -7,6 +7,7 @@ import { dbClient } from "../db.js";
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
+import { seedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 
@@ -185,7 +186,7 @@ export class Session {
       nextTitle, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), this.ctx.memberId, new Date().toISOString(), row.id, this.ctx.teamId, row.revision);
     // The revision API replaces content instead of merging CRDT updates. Force
     // connected clients to recover before sending their former generation.
-    if (body.content === undefined && row.crdt_state) {
+    if (body.content === undefined && body.canvas === undefined && row.crdt_state) {
       const shared = new Y.Doc();
       try {
         Y.applyUpdate(shared, new Uint8Array(row.crdt_state));
@@ -270,18 +271,20 @@ export class NotebookStore {
       if (row.crdt_state) {
         doc = new Y.Doc();
         Y.applyUpdate(doc, new Uint8Array(row.crdt_state));
-      } else doc = seedNotebookDocument(JSON.parse(row.content), row.title);
+        if (!doc.share.has('canvas')) seedCanvas(doc, JSON.parse(row.canvas));
+      } else doc = seedNotebookDocument(JSON.parse(row.content), row.title, JSON.parse(row.canvas));
       const before = Y.encodeStateAsUpdate(doc);
       if (update) Y.applyUpdate(doc, update);
       const json = notebookDocumentJSON(doc);
       const content = document(json.content, [], 2_000_000);
+      const canvas = document(json.canvas, {}, 4_000_000);
       const nextTitle = title(json.title);
       const state = Y.encodeStateAsUpdate(doc);
       if (state.length > 6_000_000) throw new NotebookError('Shared document too large; copy it into a new page', 413);
       const changed = !Buffer.from(before).equals(Buffer.from(state));
       if (changed) {
         await s.snapshot(row);
-        await s.run('UPDATE notebook_pages SET content=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(row.canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
+        await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(json.canvas), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
         await s.indexLinks(row.id, json.content);
       }
       if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
