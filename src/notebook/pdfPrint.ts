@@ -3,6 +3,7 @@ import { DOMSerializer } from '@tiptap/pm/model';
 import { notebookSchema, validatedNotebookDocument } from './editorSchema';
 import { inkPath } from './canvasGeometry';
 import type { CanvasItem } from './canvasModel';
+import proseCSS from './prose.css?raw';
 
 const SVG='http://www.w3.org/2000/svg';
 function svgNode(name:string,attrs:Record<string,string|number>){
@@ -15,7 +16,8 @@ function annotation(item:CanvasItem,height:number,index:number){
     const box=document.createElement('div');box.className='annotation-text';
     Object.assign(box.style,{left:`${item.x}px`,top:`${item.y}px`,width:`${item.width}px`,minHeight:`${item.height}px`,transform:`rotate(${item.rotation}deg)`,zIndex:String(index+2)});
     const content=notebookSchema.nodeFromJSON(validatedNotebookDocument(item.content));
-    box.append(DOMSerializer.fromSchema(notebookSchema).serializeFragment(content.content));
+    const prose=document.createElement('div');prose.className='nb-prose nb-canvas-text-prose';
+    prose.append(DOMSerializer.fromSchema(notebookSchema).serializeFragment(content.content));box.append(prose);
     return box;
   }
   const svg=svgNode('svg',{width:800,height,viewBox:`0 0 800 ${height}`});
@@ -76,7 +78,8 @@ export function showAnnotatedPdfPrint(markup:string){
   toolbar.append(print,close,status);
   const frame=document.createElement('iframe');frame.title='Annotated PDF pages';frame.setAttribute('sandbox','allow-same-origin allow-modals');
   frame.srcdoc=`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><style>
-    *{box-sizing:border-box}body{margin:0;background:#dce4e8;font-family:system-ui,sans-serif;color:#111}.pdf-sheet{position:relative;background:white;overflow:hidden;margin:20px auto;break-after:page;isolation:isolate}.pdf-sheet:last-child{break-after:auto}.pdf-sheet>img{position:absolute;inset:0;width:100%;height:100%;z-index:0}.annotation-text{position:absolute;padding:8px;font-size:16px;overflow-wrap:anywhere}.annotation-text p{margin:0 0 12px}.annotation-text table{border-collapse:collapse;width:100%}.annotation-text td,.annotation-text th{border:1px solid #888;padding:5px}.annotation-text pre{white-space:pre-wrap}a{color:inherit}input{appearance:none}input[type=checkbox]{width:12px;height:12px;border:1px solid #666}input:checked::after{content:'✓'}@page{margin:0;size:800px 1132px}@media print{body{background:white}.pdf-sheet{margin:0}}
+    ${proseCSS}
+    *{box-sizing:border-box}body{margin:0;background:#dce4e8;font-family:system-ui,sans-serif;color:#111;--color-accent:#0898b0;--color-line:#d7e1e6;--color-text-muted:#536871;--color-primary:#f3f3f3}.pdf-sheet{position:relative;background:white;overflow:hidden;margin:20px auto;break-after:page;isolation:isolate}.pdf-sheet:last-child{break-after:auto}.pdf-sheet>img{position:absolute;inset:0;width:100%;height:100%;z-index:0}.annotation-text{position:absolute;padding:8px;border:1px solid transparent;font-size:16px;overflow-wrap:anywhere}.nb-canvas-text-prose{padding:0!important;min-height:32px!important;font-size:16px!important}a{color:inherit}input{appearance:none}input[type=checkbox]{border:1px solid #666}input:checked::after{content:'✓'}@page{margin:0;size:800px 1132px}@media print{body{background:white}.pdf-sheet{margin:0}}
     </style></head><body>${markup}</body></html>`;
   host.append(toolbar,frame);document.body.append(host);
   const remove=()=>{if(host.open)host.close();host.remove();};close.onclick=remove;host.oncancel=event=>{event.preventDefault();remove();};
