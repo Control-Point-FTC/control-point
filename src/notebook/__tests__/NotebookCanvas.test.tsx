@@ -22,6 +22,13 @@ function mount(editable = true, mobile = false, strokes = 0) {
 }
 function pointer(surface: HTMLElement, type: string, x: number, y: number, id = 1, source = 'mouse') { const event = new Event(type, { bubbles: true }); Object.assign(event, { pointerId: id, button: 0, clientX: x, clientY: y, pressure: .5, pointerType: source }); fireEvent(surface, event); }
 describe('desktop shared drawing surface', () => {
+    it('saves the largest highlighter size within the shared stroke budget', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button',{name:'Drawing highlighter'}));
+        fireEvent.change(screen.getByRole('combobox',{name:'Stroke size'}),{target:{value:'12'}});
+        pointer(surface,'pointerdown',100,100); pointer(surface,'pointerup',200,120);
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({type:'stroke',tool:'highlighter',strokeWidth:64,opacity:.35});
+    });
     it('keeps 2,000 retained strokes from rebuilding during live pointer samples', async () => {
         const path = vi.spyOn(geometry,'inkPath');
         const { surface } = mount(true,false,2000);
