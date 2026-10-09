@@ -34,6 +34,8 @@ CREATE TABLE notebook_pages (
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
 );
 CREATE INDEX notebook_pages_team ON notebook_pages(team_id, section_id, parent_id);
+CREATE INDEX notebook_pages_parent ON notebook_pages(team_id, parent_id);
+CREATE INDEX notebook_pages_search ON notebook_pages(team_id, updated_at DESC, id DESC) WHERE deleted_at IS NULL;
 CREATE TABLE notebook_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,

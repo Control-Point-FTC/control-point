@@ -2301,6 +2301,9 @@ async function startServer() {
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
 
+  // A notebook save can contain 2 MB of text plus 4 MB of canvas JSON.
+  // Keep the larger reader scoped to notebook routes; other APIs retain 5 MiB.
+  app.use("/api/notebook", express.json({ limit: "7mb" }));
   app.use(express.json({ limit: "5mb" })); // bound JSON bodies (AI payloads, code saves) — uploads go through multer's own limits
 
   // ---- Auth rate limits (registered before the routes they guard) ----

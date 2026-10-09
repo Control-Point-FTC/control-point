@@ -191,6 +191,46 @@ describe("team notebook", () => {
     expect(copy).toMatchObject({ title: "Original to copy (copy)", content: original.content, parentId: null });
     expect((await get("/tree")).body.pages.filter((p: any) => p.parentId === copy.id)).toEqual([]);
   });
+  it("snapshots authored revisions before a move without attributing unchanged text to the organizer", async () => {
+    const original = await page({ title: "Ana authored" });
+    const child = await page({ parentId: original.id, title: "Ana child" });
+    expect((await post("/move", { kind: "page", id: original.id, to: {}, index: 0 }, peerSession)).status).toBe(200);
+    for (const p of [original, child]) {
+      expect((await get(`/pages/${p.id}`)).body.updatedBy).toBe(member);
+      expect((await get(`/pages/${p.id}/versions`)).body).toEqual([expect.objectContaining({ revision: 1, authorId: member })]);
+      await put(`/pages/${p.id}`, { title: "Admin's edit", baseRevision: 2 }, adminSession);
+      expect((await get(`/pages/${p.id}/versions`)).body).toEqual([
+        expect.objectContaining({ revision: 2, authorId: member }), expect.objectContaining({ revision: 1, authorId: member }),
+      ]);
+    }
+  });
+  it("frees active page capacity when a whole notebook is trashed", async () => {
+    const fresh = await seedTeam(t.db, "Notebook capacity");
+    const person = await seedMember(t.db, fresh, "Boss", "capacity@notebook.test", "admin");
+    const context = { memberId: person, teamId: fresh };
+    const initial = await store.tree(context);
+    const oldSection = initial.sections[0].id;
+    await t.db.execute({ sql: `WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n<20000)
+      INSERT INTO notebook_pages(team_id,section_id,title,created_at,updated_at)
+      SELECT ?,?,'Capacity page','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z' FROM seq`, args: [fresh, oldSection] });
+    await expect(store.create(context, "page", { sectionId: oldSection, title: "Full" })).rejects.toMatchObject({ message: "Page limit reached" });
+    const source = Number((await t.db.execute({ sql: "SELECT MIN(id) AS id FROM notebook_pages WHERE team_id=?", args: [fresh] })).rows[0].id);
+    await expect(store.duplicate(context, source)).rejects.toMatchObject({ message: "Page limit reached" });
+    await store.remove(context, "notebook", initial.notebooks[0].id);
+    const replacement = await store.create(context, "notebook", { title: "Replacement" });
+    const target = await store.create(context, "section", { notebookId: replacement.id, title: "Replacement section" });
+    const p = await store.create(context, "page", { sectionId: target.id, title: "Allowed again" });
+    expect((await store.duplicate(context, p.id)).title).toBe("Allowed again (copy)");
+  });
+  it("bounds the total export response rather than accumulating unlimited page bodies", async () => {
+    const fresh = await seedTeam(t.db, "Large export");
+    const person = await seedMember(t.db, fresh, "Boss", "exportlimit@notebook.test", "admin");
+    const context = { memberId: person, teamId: fresh };
+    const tr = await store.tree(context);
+    for (let i = 0; i < 2; i++) await store.create(context, "page", { sectionId: tr.sections[0].id, title: "Large", content: doc("x".repeat(1_800_000)), canvas: { text: "x".repeat(3_600_000) } });
+    await expect(store.export(context)).rejects.toMatchObject({ status: 413 });
+    expect((await store.tree(context)).pages).toHaveLength(2);
+  });
   it.each(["section", "page"] as const)("inherits %s protection for members and Bruno, while admitting the team's admin", async kind => {
     const s = kind === "section" ? (await post("/sections", { notebookId: book, title: "Secret section", protected: true }, adminSession)).body.id : section;
     const parent = await page({ sectionId: s, title: `protected-${kind}-unique`, protected: kind === "page" }, adminSession);
@@ -271,5 +311,17 @@ describe("team notebook", () => {
     const p = await page();
     expect((await put(`/pages/${p.id}`, { baseRevision: 1, content: doc("é".repeat(1_010_000)) })).status).toBe(413);
     expect((await get(`/pages/${p.id}`)).body.revision).toBe(1);
+  });
+  it("accepts text and canvas within both field limits over HTTP, even when their sum exceeds 5 MiB", async () => {
+    const fresh = await seedTeam(t.db, "Large HTTP document");
+    const person = await seedMember(t.db, fresh, "Boss", "largehttp@notebook.test", "admin");
+    const session = await t.session(person);
+    const sectionId = (await get("/tree", session)).body.sections[0].id;
+    const content = doc("x".repeat(1_800_000)), canvas = { text: "x".repeat(3_600_000) };
+    const created = await post("/pages", { sectionId, title: "Within field limits", content, canvas }, session);
+    expect(created.status, JSON.stringify(created.body?.error)).toBe(200);
+    const saved = await put(`/pages/${created.body.id}`, { content, canvas, baseRevision: 1 }, session);
+    expect(saved.status, JSON.stringify(saved.body?.error)).toBe(200);
+    expect(saved.body.revision).toBe(2);
   });
 });

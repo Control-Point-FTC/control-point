@@ -97,16 +97,28 @@ class Session {
   }
   async descendants(pageId: number): Promise<Row[]> {
     return this.all(`WITH RECURSIVE descendants AS (
-      SELECT * FROM notebook_pages WHERE id=? AND team_id=?
-      UNION ALL SELECT p.* FROM notebook_pages p JOIN descendants d ON p.parent_id=d.id WHERE p.team_id=?
+      SELECT id,parent_id,section_id,protected,deleted_at FROM notebook_pages WHERE id=? AND team_id=?
+      UNION ALL SELECT p.id,p.parent_id,p.section_id,p.protected,p.deleted_at FROM descendants d CROSS JOIN notebook_pages p ON p.parent_id=d.id WHERE p.team_id=?
     ) SELECT * FROM descendants`, pageId, this.ctx.teamId, this.ctx.teamId);
   }
+  async activePageCount(): Promise<number> {
+    const row = await this.one(`WITH RECURSIVE active AS (
+      SELECT p.id FROM notebook_pages p JOIN notebook_sections s ON s.id=p.section_id
+      JOIN notebook_books b ON b.id=s.notebook_id
+      WHERE p.team_id=? AND s.team_id=? AND b.team_id=? AND p.parent_id IS NULL
+        AND p.deleted_at IS NULL AND s.deleted_at IS NULL AND b.deleted_at IS NULL
+      UNION ALL SELECT p.id FROM active a CROSS JOIN notebook_pages p ON p.parent_id=a.id
+      WHERE p.team_id=? AND p.deleted_at IS NULL
+    ) SELECT COUNT(*) AS n FROM active`, this.ctx.teamId, this.ctx.teamId, this.ctx.teamId, this.ctx.teamId);
+    return Number(row?.n ?? 0);
+  }
   async checkChildren(kind: Kind, row: Row) {
+    if (this.access.human && this.access.admin) return;
     if (kind === "notebook") {
       const sections = await this.all("SELECT * FROM notebook_sections WHERE notebook_id=? AND team_id=?", row.id, this.ctx.teamId);
       for (const section of sections) { await this.item("section", section.id, true); await this.checkChildren("section", section); }
     } else {
-      const pages = kind === "page" ? await this.descendants(row.id) : await this.all("SELECT * FROM notebook_pages WHERE section_id=? AND team_id=?", row.id, this.ctx.teamId);
+      const pages = kind === "page" ? await this.descendants(row.id) : await this.all("SELECT id FROM notebook_pages WHERE section_id=? AND team_id=?", row.id, this.ctx.teamId);
       for (const page of pages) await this.item("page", page.id, true);
     }
   }
@@ -146,8 +158,8 @@ class Session {
     };
   }
   async snapshot(row: Row) {
-    await this.run("INSERT OR IGNORE INTO notebook_versions(team_id,page_id,title,content,canvas,revision,author_id,saved_at) VALUES(?,?,?,?,?,?,?,?)",
-      this.ctx.teamId, row.id, row.title, row.content, row.canvas, row.revision, row.updated_by, row.updated_at);
+    await this.run(`INSERT OR IGNORE INTO notebook_versions(team_id,page_id,title,content,canvas,revision,author_id,saved_at)
+      SELECT team_id,id,title,content,canvas,revision,updated_by,updated_at FROM notebook_pages WHERE id=? AND team_id=?`, row.id, this.ctx.teamId);
     await this.run("DELETE FROM notebook_versions WHERE page_id=? AND team_id=? AND id NOT IN (SELECT id FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC LIMIT 50)", row.id, this.ctx.teamId, row.id, this.ctx.teamId);
   }
   async save(pageId: number, body: Row) {
@@ -233,7 +245,7 @@ export class NotebookStore {
         if (depth >= MAX_DEPTH) throw new NotebookError("Maximum page depth is six");
       }
       if (body.protected && !s.access.admin) throw new NotebookError("Team admin required", 403);
-      if (Number((await s.one("SELECT COUNT(*) AS n FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL", ctx.teamId))?.n) >= MAX_PAGES) throw new NotebookError("Page limit reached");
+      if (await s.activePageCount() >= MAX_PAGES) throw new NotebookError("Page limit reached");
       const content = document(body.content, [], 2_000_000), canvas = document(body.canvas, {}, 4_000_000);
       result = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)", ctx.teamId, section.id, parentId, name, body.protected ? 1 : 0, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), section.id, parentId, ctx.memberId, ctx.memberId, now, now);
     }
@@ -270,14 +282,15 @@ export class NotebookStore {
     // Visibility filtering precedes the result limit: hidden matches never
     // displace permitted results or expose their titles/snippets.
     const permitted = new Set((await s.tree()).pages.map(p => p.id));
+    if (!permitted.size) return [];
     const hits = [];
     const count = Math.min(100, Math.max(1, Number.isFinite(limit) ? Math.floor(limit) : 30));
     let cursor: Row | undefined;
     while (hits.length < count) {
-      const rows = await s.all(`SELECT id,section_id,title,plain,updated_at FROM notebook_pages
+      const rows = await s.all(`SELECT id,section_id,title,plain,updated_at FROM notebook_pages INDEXED BY notebook_pages_search
         WHERE team_id=? AND deleted_at IS NULL AND (title LIKE ? ESCAPE '\\' OR plain LIKE ? ESCAPE '\\')
-        ${cursor ? "AND (updated_at < ? OR (updated_at = ? AND id < ?))" : ""}
-        ORDER BY updated_at DESC,id DESC LIMIT 50`, ctx.teamId, `%${escaped}%`, `%${escaped}%`, ...(cursor ? [cursor.updated_at, cursor.updated_at, cursor.id] : []));
+        ${cursor ? "AND (updated_at,id) < (?,?)" : ""}
+        ORDER BY updated_at DESC,id DESC LIMIT 50`, ctx.teamId, `%${escaped}%`, `%${escaped}%`, ...(cursor ? [cursor.updated_at, cursor.id] : []));
       if (!rows.length) break;
       for (const row of rows) {
         if (!permitted.has(row.id)) continue;
@@ -307,7 +320,7 @@ export class NotebookStore {
   duplicate(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
     s.require("edit_notebook");
     const row = await s.item("page", pageId);
-    if (Number((await s.one("SELECT COUNT(*) AS n FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL", ctx.teamId))?.n) >= MAX_PAGES) throw new NotebookError("Page limit reached");
+    if (await s.activePageCount() >= MAX_PAGES) throw new NotebookError("Page limit reached");
     const now = new Date().toISOString();
     const copy = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)",
       ctx.teamId, row.section_id, row.parent_id, row.title.slice(0, 193) + " (copy)", await s.isProtected(row) ? 1 : 0, row.content, row.canvas, row.plain, row.section_id, row.parent_id, ctx.memberId, ctx.memberId, now, now);
@@ -346,7 +359,11 @@ export class NotebookStore {
       for (const child of descendants) if (child.id !== row.id) depth.set(child.id, (depth.get(child.parent_id) ?? MAX_DEPTH) + 1);
       if (parentDepth + Math.max(...depth.values()) > MAX_DEPTH) throw new NotebookError("Maximum page depth is six");
       const keepProtected = await s.isProtected(row);
-      for (const child of descendants) await s.run("UPDATE notebook_pages SET section_id=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?", sectionId, ctx.memberId, new Date().toISOString(), child.id, ctx.teamId);
+      for (const child of descendants) {
+        await s.snapshot(child);
+        // Moving changes structure, not the author of the saved text/canvas.
+        await s.run("UPDATE notebook_pages SET section_id=?,revision=revision+1,updated_at=? WHERE id=? AND team_id=?", sectionId, new Date().toISOString(), child.id, ctx.teamId);
+      }
       await s.run("UPDATE notebook_pages SET parent_id=?,protected=? WHERE id=? AND team_id=?", parentId, keepProtected ? 1 : 0, row.id, ctx.teamId);
       siblingWhere += " AND section_id=? AND parent_id IS ?";
       siblingArgs.push(sectionId, parentId);
