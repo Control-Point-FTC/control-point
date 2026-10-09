@@ -116,6 +116,10 @@ export function insertCanvasItem(doc: Y.Doc, value: CanvasItem, origin: unknown 
     validatedCanvas({ version: 1, objects: [...canvasJSON(doc).objects, value] });
     return insertValidatedItem(doc, value, origin);
 }
+export function insertCanvasItems(doc: Y.Doc, values: CanvasItem[], origin: unknown = CANVAS_ORIGIN) {
+    validatedCanvas({ version: 1, objects: [...canvasJSON(doc).objects, ...values] });
+    doc.transact(() => { for (const value of values) insertValidatedItem(doc, value, origin); }, origin);
+}
 function insertValidatedItem(doc: Y.Doc, value: CanvasItem, origin: unknown) {
     const root = doc.getMap<Y.Map<unknown>>('canvas');
     if (root.has(value.id))
