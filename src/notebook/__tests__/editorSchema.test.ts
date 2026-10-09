@@ -1,4 +1,4 @@
-import { Editor } from '@tiptap/core';
+import { Editor, type JSONContent } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 import { NOTEBOOK_FONTS, notebookExtensions, validatedNotebookDocument } from '../editorSchema';
 
@@ -33,7 +33,8 @@ describe('real notebook editor schema', () => {
       expect(() => validatedNotebookDocument(before)).not.toThrow();
       editor.commands.setContent(before);
       expect(editor.getHTML()).toContain('background-color:');
-      expect(editor.getJSON().content?.find(n => n.type === 'table')?.content?.[0].content?.[0].attrs?.backgroundColor).toBe('#eab308');
+      const persisted: JSONContent = editor.getJSON();
+      expect(persisted.content?.find(n => n.type === 'table')?.content?.[0].content?.[0].attrs?.backgroundColor).toBe('#eab308');
       expect(editor.getHTML()).toContain('data-nb-tag="important"');
       expect(editor.getJSON()).toEqual(before);
     } finally { editor.destroy(); }
