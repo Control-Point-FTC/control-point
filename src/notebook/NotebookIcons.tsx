@@ -9,6 +9,13 @@ export function SectionGlyph({ color }: { color: string }) {
 }
 
 const commandPaths: Record<string, string> = {
+  type: 'M4 5h16M12 5v15M8 20h8',
+  select: 'm5 3 14 10-7 1-3 7-4-18Z',
+  pen: 'm5 16 11-12 4 4-12 11-5 2 2-5Zm10-11 4 4',
+  highlighter: 'm6 15 10-11 5 5-10 11-5-5Zm1 2-3 5h9',
+  eraser: 'm3 14 10-11 8 8-10 10H8l-5-7Zm5-5 8 8M10 21h12',
+  lasso: 'M8 19c-9-3-6-15 4-15s13 13 3 15C4 23 4 15 9 15c4 0 3 6 0 8',
+  shape: 'M3 3h10v10H3V3Zm8 14a5 5 0 1 0 10 0 5 5 0 0 0-10 0Z',
   Undo: 'M8 6 3 11l5 5M3 11h10a7 7 0 0 1 7 7',
   Redo: 'm16 6 5 5-5 5m5-5H11a7 7 0 0 0-7 7',
   Bold: 'M7 4h6a4 4 0 0 1 0 8H7V4Zm0 8h7a4 4 0 0 1 0 8H7v-8Z',

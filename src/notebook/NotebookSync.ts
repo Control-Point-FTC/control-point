@@ -198,6 +198,7 @@ export class NotebookSync {
           this.doc.transact(() => {
             this.doc.getXmlFragment('prosemirror').delete(0, this.doc.getXmlFragment('prosemirror').length);
             this.doc.getMap('meta').clear();
+            if (this.doc.share.has('canvas')) this.doc.getMap('canvas').clear();
           }, this);
           this.doc.destroy();
         } else if (e instanceof ApiError && e.status === 409) {

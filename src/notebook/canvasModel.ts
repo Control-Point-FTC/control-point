@@ -113,7 +113,10 @@ export function canvasJSON(doc: Y.Doc): NotebookCanvas {
     return validatedCanvas({ version: 1, objects });
 }
 export function insertCanvasItem(doc: Y.Doc, value: CanvasItem, origin: unknown = CANVAS_ORIGIN) {
-    validatedCanvas({ version: 1, objects: [value] });
+    validatedCanvas({ version: 1, objects: [...canvasJSON(doc).objects, value] });
+    return insertValidatedItem(doc, value, origin);
+}
+function insertValidatedItem(doc: Y.Doc, value: CanvasItem, origin: unknown) {
     const root = doc.getMap<Y.Map<unknown>>('canvas');
     if (root.has(value.id))
         throw new Error('Canvas item already exists');
@@ -135,6 +138,9 @@ export function insertCanvasItem(doc: Y.Doc, value: CanvasItem, origin: unknown 
     return map;
 }
 export function seedCanvas(doc: Y.Doc, value: unknown) {
-    for (const item of validatedCanvas(value).objects)
-        insertCanvasItem(doc, item, 'server-seed');
+    const objects = validatedCanvas(value).objects;
+    if (doc.getMap('canvas').size) throw new Error('Canvas seed requires an empty document');
+    doc.transact(() => {
+        for (const item of objects) insertValidatedItem(doc, item, 'server-seed');
+    }, 'server-seed');
 }

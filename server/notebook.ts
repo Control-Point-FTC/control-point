@@ -170,9 +170,10 @@ export class Session {
       SELECT team_id,id,title,content,canvas,revision,updated_by,updated_at FROM notebook_pages WHERE id=? AND team_id=?`, row.id, this.ctx.teamId);
     await this.run("DELETE FROM notebook_versions WHERE page_id=? AND team_id=? AND id NOT IN (SELECT id FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC LIMIT 50)", row.id, this.ctx.teamId, row.id, this.ctx.teamId);
   }
-  async indexLinks(pageId: number, content: unknown) {
+  async indexLinks(pageId: number, content: unknown, canvas: unknown = {}) {
     await this.run('DELETE FROM notebook_links WHERE team_id=? AND source_page_id=?', this.ctx.teamId, pageId);
-    for (const link of notebookPageReferences(content)) await this.run('INSERT INTO notebook_links(team_id,source_page_id,target_page_id,target_block_id) VALUES(?,?,?,?)', this.ctx.teamId, pageId, link.pageId, link.blockId);
+    const textBoxes = (canvas as any)?.version === 1 && Array.isArray((canvas as any).objects) ? (canvas as any).objects.filter((item: any) => item.type === 'text').map((item: any) => item.content) : [];
+    for (const link of notebookPageReferences([content, ...textBoxes])) await this.run('INSERT INTO notebook_links(team_id,source_page_id,target_page_id,target_block_id) VALUES(?,?,?,?)', this.ctx.teamId, pageId, link.pageId, link.blockId);
   }
   async save(pageId: number, body: Row) {
     this.require("edit_notebook");
@@ -194,7 +195,7 @@ export class Session {
         await this.run('UPDATE notebook_pages SET crdt_state=? WHERE id=? AND team_id=?', Y.encodeStateAsUpdate(shared), row.id, this.ctx.teamId);
       } finally { shared.destroy(); }
     } else await this.run('UPDATE notebook_pages SET crdt_state=NULL,crdt_epoch=? WHERE id=? AND team_id=?', randomUUID(), row.id, this.ctx.teamId);
-    if (body.content !== undefined) await this.indexLinks(row.id, JSON.parse(content));
+    if (body.content !== undefined || body.canvas !== undefined) await this.indexLinks(row.id, JSON.parse(content), JSON.parse(canvas));
     return this.page(await this.item("page", row.id));
   }
 }
@@ -285,14 +286,14 @@ export class NotebookStore {
       if (changed) {
         await s.snapshot(row);
         await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(json.canvas), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
-        await s.indexLinks(row.id, json.content);
+        await s.indexLinks(row.id, json.content, json.canvas);
       }
       if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
       if (!row.crdt_state && !changed) {
         // The one-time seed supplies stable IDs before any editor joins. These
         // representation fields are not an authored text change/revision.
         await s.run('UPDATE notebook_pages SET content=? WHERE id=? AND team_id=?', content, row.id, ctx.teamId);
-        await s.indexLinks(row.id, json.content);
+        await s.indexLinks(row.id, json.content, json.canvas);
       }
       const current = changed ? await s.item('page', pageId) : row;
       const protectedPage = await s.isProtected(row);
@@ -378,7 +379,7 @@ export class NotebookStore {
       result = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)", ctx.teamId, section.id, parentId, name, body.protected ? 1 : 0, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), section.id, parentId, ctx.memberId, ctx.memberId, now, now);
     }
     const row = await s.item(kind, Number(result.lastInsertRowid));
-    if (kind === 'page') await s.indexLinks(row.id, JSON.parse(row.content));
+    if (kind === 'page') await s.indexLinks(row.id, JSON.parse(row.content), JSON.parse(row.canvas));
     return kind === "page" ? s.page(row) : { id: row.id, title: row.title, color: row.color, notebookId: row.notebook_id, protected: !!row.protected };
   }); }
   update(ctx: NotebookContext, kind: "notebook" | "section", itemId: number, body: Row) { return this.session(ctx, async s => {
@@ -453,7 +454,7 @@ export class NotebookStore {
     const now = new Date().toISOString();
     const copy = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)",
       ctx.teamId, row.section_id, row.parent_id, row.title.slice(0, 193) + " (copy)", await s.isProtected(row) ? 1 : 0, row.content, row.canvas, row.plain, row.section_id, row.parent_id, ctx.memberId, ctx.memberId, now, now);
-    await s.indexLinks(Number(copy.lastInsertRowid), JSON.parse(row.content));
+    await s.indexLinks(Number(copy.lastInsertRowid), JSON.parse(row.content), JSON.parse(row.canvas));
     return s.page(await s.item("page", Number(copy.lastInsertRowid)));
   }); }
   backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {

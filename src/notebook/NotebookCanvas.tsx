@@ -5,7 +5,8 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { notebookExtensions } from './editorSchema';
 import type { NotebookSync } from './NotebookSync';
 import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
-import { inkHit, inkPath, roundCanvas, simplifyInk, splitInk } from './canvasGeometry';
+import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk } from './canvasGeometry';
+import { notebookCommandGlyph } from './NotebookIcons';
 import './canvas.css';
 type Tool = 'type' | 'select' | 'pen' | 'highlighter' | 'eraser' | 'lasso' | 'shape';
 const INK_COLORS = ['#111111', '#ffffff', '#e63946', '#f28c28', '#f5ce36', '#2caa65', '#2587db', '#9457c7'];
@@ -23,7 +24,7 @@ function ShapeView({ item }: {
 }) {
     const attrs = { stroke: item.color, strokeWidth: item.strokeWidth, fill: item.fill ?? 'none' };
     return <g data-canvas-id={item.id} transform={`translate(${item.x} ${item.y}) rotate(${item.rotation} ${item.width / 2} ${item.height / 2})`}>
-    {item.shape === 'rectangle' ? <rect width={item.width} height={item.height} {...attrs}/> : item.shape === 'ellipse' ? <ellipse cx={item.width / 2} cy={item.height / 2} rx={item.width / 2} ry={item.height / 2} {...attrs}/> : <><path d={`M0 0L${item.width} ${item.height}`} {...attrs}/>{item.shape === 'arrow' && <path d={`M${item.width - 14} ${item.height}L${item.width} ${item.height}L${item.width} ${item.height - 14}`} stroke={item.color} fill="none" strokeWidth={item.strokeWidth}/>}</>}
+    {item.shape === 'rectangle' ? <rect width={item.width} height={item.height} {...attrs}/> : item.shape === 'ellipse' ? <ellipse cx={item.width / 2} cy={item.height / 2} rx={item.width / 2} ry={item.height / 2} {...attrs}/> : <><path d={`M0 ${item.height / 2}L${item.width} ${item.height / 2}`} {...attrs}/>{item.shape === 'arrow' && <path d={`M${item.width - 12} ${item.height / 2 - 6}L${item.width} ${item.height / 2}L${item.width - 12} ${item.height / 2 + 6}`} stroke={item.color} fill="none" strokeWidth={item.strokeWidth}/>}</>}
   </g>;
 }
 function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
@@ -66,6 +67,11 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     const frame = useRef<number | null>(null), clipboard = useRef<CanvasItem[]>([]);
     const undo = useMemo(() => new Y.UndoManager(root, { trackedOrigins: new Set([CANVAS_ORIGIN]), captureTimeout: 500 }), [root]);
     const selected = items.filter(i => selection.includes(i.id));
+    useEffect(() => {
+        const reset = () => { undo.clear(); gesture.current = null; setDraft([]); setSelection([]); };
+        sync.on('reset', reset);
+        return () => { sync.off('reset', reset); };
+    }, [sync, undo]);
     useEffect(() => {
         const update = () => { try {
             setItems(canvasJSON(sync.doc).objects);
@@ -112,7 +118,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             onRibbon(null);
             return;
         }
-        onRibbon(<><div className="nb-draw-tools">{(['type', 'select', 'pen', 'highlighter', 'eraser', 'lasso', 'shape'] as Tool[]).map(t => <button key={t} className="nb-tool" disabled={!editable} aria-label={`Drawing ${t}`} aria-pressed={tool === t} onClick={() => { gesture.current = null; setDraft([]); setTool(t); }}>{t[0].toUpperCase() + t.slice(1)}</button>)}</div><label>Ink <input aria-label="Ink color" type="color" value={color} disabled={!editable} onChange={e => setColor(e.target.value)}/></label><select aria-label="Stroke size" value={size} disabled={!editable} onChange={e => setSize(Number(e.target.value))}>{[[2, 'S'], [3, 'M'], [6, 'L'], [12, 'XL']].map(([n, label]) => <option key={n} value={n}>{label}</option>)}</select><div className="nb-ink-colors">{(tool === 'highlighter' ? HIGHLIGHT_COLORS : INK_COLORS).map(c => <button key={c} aria-label={`Ink ${c}`} disabled={!editable} style={{ background: c }} onClick={() => setColor(c)}/>)}</div>{tool === 'shape' && <select aria-label="Shape" disabled={!editable} value={shape} onChange={e => setShape(e.target.value as Shape['shape'])}>{['line', 'arrow', 'rectangle', 'ellipse'].map(t => <option key={t}>{t}</option>)}</select>}{tool === 'eraser' && <><select aria-label="Eraser mode" value={eraserMode} onChange={e => setEraserMode(e.target.value)}><option value="stroke">Whole stroke</option><option value="point">Point eraser</option></select><select aria-label="Eraser size" value={eraserSize} onChange={e => setEraserSize(Number(e.target.value))}>{[6, 12, 24, 48].map(n => <option key={n}>{n}</option>)}</select></>}<button className="nb-tool" disabled={!editable} onClick={() => undo.undo()}>Undo ink</button><button className="nb-tool" disabled={!editable} onClick={() => undo.redo()}>Redo ink</button>{selection.length > 0 && <details className="nb-canvas-actions"><summary>Selection · {selection.length}</summary><div><button disabled={!editable} onClick={() => duplicate()}>Duplicate</button><button onClick={() => { clipboard.current = structuredClone(selected); setNotice('Canvas selection copied.'); }}>Copy</button><button disabled={!editable} onClick={() => duplicate(clipboard.current)}>Paste</button><button disabled={!editable} onClick={() => transact(() => selection.forEach(id => root.delete(id)))}>Delete</button><button disabled={!editable} onClick={() => patchSelection({ locked: !selected.every(i => i.locked) })}>Lock / unlock position</button><button disabled={!editable} onClick={() => patchSelection({ groupId: crypto.randomUUID() })}>Group</button><button disabled={!editable} onClick={() => patchSelection({ groupId: null })}>Ungroup</button><button disabled={!editable} onClick={() => patchSelection({ z: Math.min(1000000, Math.max(0, ...items.map(i => i.z)) + 1) })}>Bring to front</button><button disabled={!editable} onClick={() => patchSelection({ z: Math.max(-1000000, Math.min(0, ...items.map(i => i.z)) - 1) })}>Send to back</button><button disabled={!editable} onClick={() => patchSelection({ color })}>Recolor ink / shapes</button></div></details>}</>);
+        onRibbon(<><div className="nb-draw-tools">{(['type', 'select', 'pen', 'highlighter', 'eraser', 'lasso', 'shape'] as Tool[]).map(t => <button key={t} className="nb-tool" disabled={!editable} aria-label={`Drawing ${t}`} aria-pressed={tool === t} onClick={() => { gesture.current = null; setDraft([]); setTool(t); }}>{React.createElement(notebookCommandGlyph(t)!)}<span>{t[0].toUpperCase() + t.slice(1)}</span></button>)}</div><label>Ink <input aria-label="Ink color" type="color" value={color} disabled={!editable} onChange={e => setColor(e.target.value)}/></label><select aria-label="Stroke size" value={size} disabled={!editable} onChange={e => setSize(Number(e.target.value))}>{[[2, 'S'], [3, 'M'], [6, 'L'], [12, 'XL']].map(([n, label]) => <option key={n} value={n}>{label}</option>)}</select><div className="nb-ink-colors">{(tool === 'highlighter' ? HIGHLIGHT_COLORS : INK_COLORS).map(c => <button key={c} aria-label={`Ink ${c}`} disabled={!editable} style={{ background: c }} onClick={() => setColor(c)}/>)}</div>{tool === 'shape' && <select aria-label="Shape" disabled={!editable} value={shape} onChange={e => setShape(e.target.value as Shape['shape'])}>{['line', 'arrow', 'rectangle', 'ellipse'].map(t => <option key={t}>{t}</option>)}</select>}{tool === 'eraser' && <><select aria-label="Eraser mode" value={eraserMode} onChange={e => setEraserMode(e.target.value)}><option value="stroke">Whole stroke</option><option value="point">Point eraser</option></select><select aria-label="Eraser size" value={eraserSize} onChange={e => setEraserSize(Number(e.target.value))}>{[6, 12, 24, 48].map(n => <option key={n}>{n}</option>)}</select></>}<button className="nb-tool" disabled={!editable} onClick={() => undo.undo()}>Undo ink</button><button className="nb-tool" disabled={!editable} onClick={() => undo.redo()}>Redo ink</button>{selection.length > 0 && <details className="nb-canvas-actions"><summary>Selection · {selection.length}</summary><div><button disabled={!editable} onClick={() => duplicate()}>Duplicate</button><button onClick={() => { clipboard.current = structuredClone(selected); setNotice('Canvas selection copied.'); }}>Copy</button><button disabled={!editable} onClick={() => duplicate(clipboard.current)}>Paste</button><button disabled={!editable} onClick={() => transact(() => selection.forEach(id => root.delete(id)))}>Delete</button><button disabled={!editable} onClick={() => patchSelection({ locked: !selected.every(i => i.locked) })}>Lock / unlock position</button><button disabled={!editable} onClick={() => patchSelection({ groupId: crypto.randomUUID() })}>Group</button><button disabled={!editable} onClick={() => patchSelection({ groupId: null })}>Ungroup</button><button disabled={!editable} onClick={() => patchSelection({ z: Math.min(1000000, Math.max(0, ...items.map(i => i.z)) + 1) })}>Bring to front</button><button disabled={!editable} onClick={() => patchSelection({ z: Math.max(-1000000, Math.min(0, ...items.map(i => i.z)) - 1) })}>Send to back</button><button disabled={!editable} onClick={() => patchSelection({ color })}>Recolor ink / shapes</button></div></details>}</>);
     }, [tool, color, size, shape, eraserMode, eraserSize, selection, items, editable, mobile, undo, onRibbon]);
     const point = (e: React.PointerEvent | PointerEvent): Point => {
         const el = stage.current!, rect = el.getBoundingClientRect();
@@ -130,6 +136,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         if (!editable || mobile || e.button !== 0)
             return;
         if (gesture.current && gesture.current.pointer !== e.pointerId) {
+            if (e.pointerType === 'touch') return; // Reject palms during active ink.
             gesture.current = null;
             setDraft([]);
             return;
@@ -220,8 +227,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         g.points.push(p);
         try {
             if (g.tool === 'lasso') {
-                const x = Math.min(g.start[0], p[0]), y = Math.min(g.start[1], p[1]), w = Math.abs(p[0] - g.start[0]), h = Math.abs(p[1] - g.start[1]);
-                setSelection(items.filter(i => i.x <= x + w && i.x + i.width >= x && i.y <= y + h && i.y + i.height >= y).map(i => i.id));
+                setSelection(items.filter(i => lassoHit(i, g.points)).map(i => i.id));
                 setTool('select');
             }
             else if (g.tool === 'pen' || g.tool === 'highlighter') {
@@ -233,7 +239,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
                 let width = Math.max(1, Math.abs(p[0] - g.start[0])), height = Math.max(1, Math.abs(p[1] - g.start[1]));
                 if (e.shiftKey)
                     width = height = Math.max(width, height);
-                insertCanvasItem(sync.doc, { ...base(Math.min(g.start[0], p[0]), Math.min(g.start[1], p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'shape', shape, color, fill: null, strokeWidth: size, width, height });
+                insertCanvasItem(sync.doc, { ...base(Math.min(g.start[0], p[0]), Math.min(g.start[1], p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'shape', shape, color, fill: null, strokeWidth: size, width, height, ...((shape === 'line' || shape === 'arrow') ? directedLine(g.start, p, e.shiftKey) : {}) });
             }
         }
         catch (e) {

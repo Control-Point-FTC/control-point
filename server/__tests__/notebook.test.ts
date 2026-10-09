@@ -116,6 +116,17 @@ describe("team notebook", () => {
     await del(`/pages/${secret.id}`);
     expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).not.toContain(secret.id);
   });
+  it('indexes canvas text-box links and removes them after canvas replacement', async () => {
+    const target = await page();
+    const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Related design', marks: [{ type: 'link', attrs: { href: `/notebook/p/${target.id}` } }] }] }] };
+    const box = { id: 'linked-box', type: 'text', x: 10, y: 10, width: 240, height: 120, z: 1, rotation: 0, locked: false, groupId: null, content };
+    const source = await page({ canvas: { version: 1, objects: [box] } });
+    expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).toEqual([source.id]);
+    const copied = await post(`/pages/${source.id}/duplicate`, {});
+    expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).toContain(copied.body.id);
+    await put(`/pages/${source.id}`, { canvas: { version: 1, objects: [] }, baseRevision: 1 });
+    expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).not.toContain(source.id);
+  });
   it('updates backlinks from durable collaboration edits', async () => {
     const target = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
     const source = await page({ content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Reference' }] }] } });

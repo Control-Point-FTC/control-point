@@ -1,5 +1,40 @@
-import type { Ink, Point } from './canvasModel';
+import type { CanvasItem, Ink, Point } from './canvasModel';
+function localPoint(item: CanvasItem, point: [number, number]): [number, number] {
+    const angle = -item.rotation * Math.PI / 180;
+    const x = point[0] - item.x - item.width / 2, y = point[1] - item.y - item.height / 2;
+    return [x * Math.cos(angle) - y * Math.sin(angle) + item.width / 2, x * Math.sin(angle) + y * Math.cos(angle) + item.height / 2];
+}
+/** A freehand polygon selects objects it encloses or crosses. */
+export function lassoHit(item: CanvasItem, polygon: Point[]): boolean {
+    if (polygon.length < 3) return false;
+    const points = polygon.map(p => localPoint(item, [p[0], p[1]]));
+    const inside = (x: number, y: number) => {
+        let result = false;
+        for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+            const a = points[i], b = points[j];
+            if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) result = !result;
+        }
+        return result;
+    };
+    const intersects = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
+        const dx = b[0]-a[0], dy = b[1]-a[1], ex = d[0]-c[0], ey = d[1]-c[1], cross = dx*ey-dy*ex;
+        if (Math.abs(cross) < 1e-9) return false;
+        const t = ((c[0]-a[0])*ey-(c[1]-a[1])*ex)/cross, u = ((c[0]-a[0])*dy-(c[1]-a[1])*dx)/cross;
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+    };
+    const path: [number, number][] = item.type === 'stroke' ? item.points.map(p => [p[0],p[1]]) : [[0,0],[item.width,0],[item.width,item.height],[0,item.height],[0,0]];
+    if (path.some(p => inside(...p))) return true;
+    if (item.type !== 'stroke' && points.some(p => p[0]>=0 && p[0]<=item.width && p[1]>=0 && p[1]<=item.height)) return true;
+    for (let i=1;i<path.length;i++) for (let j=0;j<points.length;j++) if (intersects(path[i-1],path[i],points[j],points[(j+1)%points.length])) return true;
+    return false;
+}
 export const roundCanvas = (n: number) => Math.round(n * 100) / 100;
+export function directedLine(start: Point, end: Point, snap: boolean) {
+    const dx = end[0] - start[0], dy = end[1] - start[1];
+    const width = Math.max(.1, Math.hypot(dx, dy));
+    const angle = snap ? Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * Math.PI / 4 : Math.atan2(dy, dx);
+    return { x: roundCanvas(start[0] + Math.cos(angle) * width / 2 - width / 2), y: roundCanvas(start[1] + Math.sin(angle) * width / 2 - .05), width: roundCanvas(width), height: .1, rotation: roundCanvas(angle * 180 / Math.PI) };
+}
 export function simplifyInk(points: Point[], tolerance = .6): Point[] {
     if (points.length <= 2)
         return points;
@@ -47,7 +82,7 @@ export function inkHit(ink: Ink, point: [
     const local: [
         number,
         number
-    ] = [point[0] - ink.x, point[1] - ink.y];
+    ] = localPoint(ink, point);
     return ink.points.some((p, i) => segmentDistance(local, p, ink.points[Math.min(i + 1, ink.points.length - 1)]) <= radius + ink.strokeWidth / 2);
 }
 /** Clip each segment at the eraser circle, inserting boundary points instead of
@@ -56,7 +91,7 @@ export function splitInk(ink: Ink, point: [
     number,
     number
 ], radius: number): Point[][] {
-    const center = [point[0] - ink.x, point[1] - ink.y];
+    const center = localPoint(ink, point);
     const r = radius + ink.strokeWidth / 2;
     const parts: Point[][] = [];
     let current: Point[] = [];

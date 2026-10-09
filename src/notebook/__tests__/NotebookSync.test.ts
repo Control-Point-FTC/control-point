@@ -70,10 +70,13 @@ describe('notebook CRDT transport', () => {
   it('purges protected content after access revocation and stops retrying it', async () => {
     const { provider } = setup(); await provider.start();
     provider.doc.getMap('meta').set('title', 'Admin secret');
+    const drawing = new Y.Map(); drawing.set('secret', 'Protected drawing');
+    provider.doc.getMap('canvas').set('protected-item', drawing);
     vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(404, 'Unavailable'));
     expect(await provider.flush()).toBe(false);
     expect(provider.status).toBe('unavailable'); expect(provider.data).toBeNull();
     expect(provider.doc.getMap('meta').size).toBe(0);
+    expect(provider.doc.getMap('canvas').size).toBe(0);
     const count = vi.mocked(apiJson).mock.calls.length;
     await provider.flush(); expect(vi.mocked(apiJson).mock.calls.length).toBe(count);
   });
