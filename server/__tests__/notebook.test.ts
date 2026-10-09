@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { NotebookStore, type NotebookContext } from "../notebook";
 import { seedMember, seedTeam, startTestServer, type TestServer } from "./helpers/testServer";
+import * as Y from 'yjs';
+import { yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
 
 vi.setConfig({ testTimeout: 30_000 });
 let t: TestServer, store: NotebookStore;
@@ -38,6 +40,84 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('merges concurrent rich-text edits and survives a new store instance without duplicating initial text', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Drive' }] }] } });
+    const joined = await post(`/pages/${p.id}/sync`, {});
+    expect(joined.status, JSON.stringify(joined.body)).toBe(200);
+    const a = new Y.Doc(), b = new Y.Doc();
+    try {
+      Y.applyUpdate(a, Buffer.from(joined.body.update, 'base64'));
+      Y.applyUpdate(b, Buffer.from(joined.body.update, 'base64'));
+      const textA = a.getXmlFragment('prosemirror').get(0) as Y.XmlElement;
+      const textB = b.getXmlFragment('prosemirror').get(0) as Y.XmlElement;
+      (textA.get(0) as Y.XmlText).insert(5, ' A');
+      (textB.get(0) as Y.XmlText).insert(5, ' B');
+      const results = await Promise.all([a, b].map((d, i) => post(`/pages/${p.id}/sync`, { epoch: joined.body.epoch, vector: joined.body.vector, update: Buffer.from(Y.encodeStateAsUpdate(d, Buffer.from(joined.body.vector, 'base64'))).toString('base64') }, i ? peerSession : userSession)));
+      expect(results.map(r => r.status)).toEqual([200, 200]);
+      const reopened = await new NotebookStore(t.db).sync(ctx(member), p.id, {});
+      Y.applyUpdate(a, Buffer.from(reopened.update, 'base64'));
+      Y.applyUpdate(b, Buffer.from(reopened.update, 'base64'));
+      expect(yDocToProsemirrorJSON(a)).toEqual(yDocToProsemirrorJSON(b));
+      const text = JSON.stringify(yDocToProsemirrorJSON(a));
+      expect(text).toContain(' A'); expect(text).toContain(' B');
+      expect(text.match(/Drive/g)).toHaveLength(1);
+      expect((await get(`/pages/${p.id}`)).body.content).toEqual(yDocToProsemirrorJSON(a));
+      expect((await get('/search?q=Drive')).body.map((h: any) => h.id)).toContain(p.id);
+      const replay = await post(`/pages/${p.id}/sync`, { epoch: joined.body.epoch, update: Buffer.from(Y.encodeStateAsUpdate(a)).toString('base64') });
+      expect(replay.body.revision).toBe(reopened.revision);
+    } finally { a.destroy(); b.destroy(); }
+  });
+  it('invalidates stale collaboration clients after a revision restoration', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, {})).body;
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Buffer.from(joined.update, 'base64'));
+      doc.getMap('meta').set('title', 'Offline edit');
+      await put(`/pages/${p.id}`, { baseRevision: 1, title: 'Replacement' });
+      const versions = (await get(`/pages/${p.id}/versions`)).body;
+      await post(`/pages/${p.id}/versions/${versions[0].id}/restore`, { baseRevision: 2 });
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') })).status).toBe(409);
+      expect((await get(`/pages/${p.id}`)).body.title).toBe(p.title);
+    } finally { doc.destroy(); }
+  });
+  it('rechecks inherited protection, membership and edit access for collaboration', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, {})).body;
+    expect((await post(`/pages/${p.id}/sync`, {}, otherSession)).status).toBe(404);
+    await expect(store.sync(ctx(admin, 'bruno'), p.id, {})).rejects.toMatchObject({ status: 403 });
+    await put(`/pages/${p.id}/protection`, { protected: true }, adminSession);
+    expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch })).status).toBe(404);
+    expect((await post(`/pages/${p.id}/sync`, {}, adminSession)).status).toBe(200);
+    const reader = await seedMember(t.db, team, 'Read only', 'reader-sync@notebook.test');
+    await expect(store.sync(ctx(reader), p.id, {})).rejects.toMatchObject({ status: 404 });
+    await put(`/pages/${p.id}/protection`, { protected: false }, adminSession);
+    expect((await store.sync(ctx(reader), p.id, {})).editable).toBe(false);
+    await expect(store.sync(ctx(reader), p.id, { epoch: joined.epoch, update: 'AAA=' })).rejects.toMatchObject({ status: 403 });
+    await t.db.execute({ sql: 'UPDATE members SET is_active=0 WHERE id=?', args: [reader] });
+    await expect(store.sync(ctx(reader), p.id, {})).rejects.toMatchObject({ status: 403 });
+  });
+  it('rejects unsupported collaboration documents and malformed updates atomically', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, {})).body;
+    const doc = new Y.Doc();
+    try {
+      Y.applyUpdate(doc, Buffer.from(joined.update, 'base64'));
+      doc.getMap('unsupported').set('secret', 'Must not persist');
+      const response = await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') });
+      expect(response.status).toBe(422);
+      expect((await get(`/pages/${p.id}`)).body.revision).toBe(1);
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: 'garbage' })).status).toBe(400);
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: '/w==' })).status).toBe(422);
+      expect((await post(`/pages/${p.id}/sync`, { vector: '/w==' })).status).toBe(422);
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, update: Buffer.from(new Uint8Array(1_000_001)).toString('base64') })).status).toBe(413);
+    } finally { doc.destroy(); }
+  });
+  it('preserves incompatible source instead of blanking it when collaboration is opened', async () => {
+    const p = await page();
+    expect((await post(`/pages/${p.id}/sync`, {})).status).toBe(422);
+    expect((await get(`/pages/${p.id}`)).body.content).toEqual(doc('Drive tuning'));
+  });
   it("requires sign-in", async () => { expect((await t.api("/api/notebook/tree")).status).toBe(401); });
   it("shares notebooks between members and admins but isolates the same email in another team", async () => {
     const ours = (await get("/tree")).body;

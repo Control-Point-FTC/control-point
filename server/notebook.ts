@@ -4,6 +4,9 @@
  */
 import type { Client, Transaction } from "@libsql/client";
 import { dbClient } from "../db.js";
+import { randomUUID } from 'node:crypto';
+import * as Y from 'yjs';
+import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -172,6 +175,16 @@ class Session {
     await this.snapshot(row);
     await this.run("UPDATE notebook_pages SET title=?,content=?,canvas=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=? AND revision=?",
       nextTitle, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), this.ctx.memberId, new Date().toISOString(), row.id, this.ctx.teamId, row.revision);
+    // The revision API replaces content instead of merging CRDT updates. Force
+    // connected clients to recover before sending their former generation.
+    if (body.content === undefined && row.crdt_state) {
+      const shared = new Y.Doc();
+      try {
+        Y.applyUpdate(shared, new Uint8Array(row.crdt_state));
+        shared.getMap('meta').set('title', nextTitle);
+        await this.run('UPDATE notebook_pages SET crdt_state=? WHERE id=? AND team_id=?', Y.encodeStateAsUpdate(shared), row.id, this.ctx.teamId);
+      } finally { shared.destroy(); }
+    } else await this.run('UPDATE notebook_pages SET crdt_state=NULL,crdt_epoch=? WHERE id=? AND team_id=?', randomUUID(), row.id, this.ctx.teamId);
     return this.page(await this.item("page", row.id));
   }
 }
@@ -220,6 +233,47 @@ export class NotebookStore {
     return s.tree();
   }); }
   page(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => s.page(await s.item("page", pageId))); }
+  sync(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, async s => {
+    if (!s.access.human) throw new NotebookError('Collaboration is available to team members only', 403);
+    const row = await s.item('page', pageId);
+    const decode = (value: unknown, limit: number) => {
+      if (typeof value !== 'string' || value.length > Math.ceil(limit / 3) * 4 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) throw new NotebookError('Invalid collaboration data');
+      const bytes = Buffer.from(value, 'base64');
+      if (bytes.length > limit) throw new NotebookError('Collaboration update too large', 413);
+      return bytes;
+    };
+    const vector = body.vector === undefined ? undefined : decode(body.vector, 100_000);
+    const update = body.update === undefined ? undefined : decode(body.update, 1_000_000);
+    const epoch = row.crdt_epoch ?? randomUUID();
+    if (body.epoch !== undefined && body.epoch !== epoch) throw new NotebookError('This page was restored or replaced. Recover your unsaved changes before rejoining.', 409, { epoch });
+    if (update && body.epoch === undefined) throw new NotebookError('Join the document before sending changes', 409);
+    if (update) s.require('edit_notebook');
+    let doc: Y.Doc | undefined;
+    try {
+      if (row.crdt_state) {
+        doc = new Y.Doc();
+        Y.applyUpdate(doc, new Uint8Array(row.crdt_state));
+      } else doc = seedNotebookDocument(JSON.parse(row.content), row.title);
+      const before = Y.encodeStateAsUpdate(doc);
+      if (update) Y.applyUpdate(doc, update);
+      const json = notebookDocumentJSON(doc);
+      const content = document(json.content, [], 2_000_000);
+      const nextTitle = title(json.title);
+      const state = Y.encodeStateAsUpdate(doc);
+      if (state.length > 6_000_000) throw new NotebookError('Shared document too large; copy it into a new page', 413);
+      const changed = !Buffer.from(before).equals(Buffer.from(state));
+      if (changed) {
+        await s.snapshot(row);
+        await s.run('UPDATE notebook_pages SET content=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(row.canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
+      }
+      if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
+      const current = changed ? await s.item('page', pageId) : row;
+      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: await s.isProtected(row), editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at };
+    } catch (e) {
+      if (e instanceof NotebookError) throw e;
+      throw new NotebookError(e instanceof Error ? e.message : 'Invalid collaboration document', 422);
+    } finally { doc?.destroy(); }
+  }); }
   create(ctx: NotebookContext, kind: Kind, body: Row) { return this.session(ctx, async s => {
     s.require(kind === "page" ? "edit_notebook" : "organize_notebook");
     const name = title(body.title);
@@ -425,6 +479,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     if (kind !== "notebook") app.put(`/api/notebook/${plural}/:id/protection`, handle((ctx, req) => store.protect(ctx, kind, id(req.params.id), req.body?.protected)));
   }
   app.get("/api/notebook/pages/:id", handle((ctx, req) => store.page(ctx, id(req.params.id))));
+  app.post('/api/notebook/pages/:id/sync', handle((ctx, req) => store.sync(ctx, id(req.params.id), req.body ?? {})));
   app.put("/api/notebook/pages/:id", handle((ctx, req) => store.save(ctx, id(req.params.id), req.body ?? {})));
   app.post("/api/notebook/pages/:id/duplicate", handle((ctx, req) => store.duplicate(ctx, id(req.params.id))));
   app.post("/api/notebook/move", handle((ctx, req) => {

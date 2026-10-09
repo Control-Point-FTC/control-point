@@ -115,6 +115,7 @@ export function validatedNotebookDocument(value: unknown): JSONContent {
       if (!type) throw new Error('Unknown notebook block');
       for (const key of Object.keys(json.attrs ?? {})) if (!Object.hasOwn(type.spec.attrs ?? {}, key)) throw new Error('Unknown notebook attribute');
       for (const mark of json.marks ?? []) {
+        for (const key of Object.keys(mark)) if (!['type', 'attrs'].includes(key)) throw new Error('Unknown notebook format field');
         const markType = notebookSchema.marks[mark.type];
         if (!markType) throw new Error('Unknown notebook format');
         for (const key of Object.keys(mark.attrs ?? {})) if (!Object.hasOwn(markType.spec.attrs ?? {}, key)) throw new Error('Unknown notebook attribute');

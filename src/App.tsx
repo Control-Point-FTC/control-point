@@ -7,6 +7,7 @@ import { motion } from 'motion/react';
 // Monaco (via CodeView), and three.js (via CadModelViewer, already lazy).
 const TaskAnalytics = React.lazy(() => import('./components/TaskAnalytics'));
 const CodePage = React.lazy(() => import('./modern/pages/code/CodePage').then(m => ({ default: m.CodePage })));
+const NotebookPage = React.lazy(() => import('./notebook/NotebookPage').then(m => ({ default: m.NotebookPage })));
 // Route-level code splitting: each page downloads when first opened (the
 // dashboard stays in the main bundle so the first screen paints at once).
 const OwnerPage = React.lazy(() => import('./modern/pages/owner/OwnerPage').then((m) => ({ default: m.OwnerPage })));
@@ -283,6 +284,7 @@ const navItems = [
   },
   { id: 'attendance', path: 'attendance', labelKey: 'nav.attendance', icon: CalendarCheck, scope: 'attendance', group: 'Team' },
   { id: 'calendar', path: 'calendar', labelKey: 'nav.calendar', icon: Calendar, group: 'Team' },
+  { id: 'notebook', path: 'notebook', labelKey: 'nav.notebook', icon: Newspaper, group: 'Team' },
   { id: 'comm', path: 'comm', labelKey: 'nav.communication', icon: Mail, group: 'Team' },
   { id: 'tasks', path: 'tasks', labelKey: 'nav.tasks', icon: CheckSquare, group: 'Engineering' },
   { id: 'inventory', path: 'inventory', labelKey: 'nav.inventory', icon: Zap, scope: 'inventory', group: 'Engineering' },
@@ -407,7 +409,7 @@ export default function App() {
   // header/footer, no outer scroll — the conversation fills the viewport.
   const isBrunoRoute = activeTab === 'bruno';
   // Code is an IDE: toolbar, explorer, editor and status bar fill the screen.
-  const isImmersiveRoute = isChatRoute || isBrunoRoute || activeTab === 'code';
+  const isImmersiveRoute = isChatRoute || isBrunoRoute || activeTab === 'code' || activeTab === 'notebook';
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const isMobile = useIsMobile();
   // Teams & Members submenu (Members / Roles), Discord-style settings popup,
@@ -1775,7 +1777,7 @@ export default function App() {
   };
 
   // Students get a focused personal workspace; admins get everything
-  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
+  const studentTabIds = ['dashboard', 'teams', 'stats', 'predict', 'attendance', 'tasks', 'calendar', 'notebook', 'budget', 'inventory', 'outreach', 'comm', 'chat', 'cad', 'cad-docs', 'cad-reviews', 'cad-snapshots', 'cad-parts', 'resources'];
   const tabVisible = (t: any): boolean => {
     if (t.ownerOnly) return isOwner;
     if (t.perm) return hasPerm(t.perm);
@@ -2167,6 +2169,7 @@ export default function App() {
         <Route path="/inventory" element={<InventoryPage {...viewProps} />} />
         <Route path="/outreach" element={<OutreachPage {...viewProps} />} />
         <Route path="/code" element={<CodePage {...viewProps} />} />
+        <Route path="/notebook" element={<NotebookPage activeTeamId={currentTeamId} />} />
         <Route path="/cad" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-docs" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
         <Route path="/cad-reviews" element={<CadPage activeTab={activeTab} currentUser={currentUser} isAdmin={isAdmin} />} />
