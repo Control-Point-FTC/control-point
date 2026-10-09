@@ -11,7 +11,7 @@ function svgNode(name:string,attrs:Record<string,string|number>){
   for(const [key,value] of Object.entries(attrs))node.setAttribute(key,String(value));
   return node;
 }
-function annotation(item:CanvasItem,height:number,index:number){
+export function printAnnotation(item:CanvasItem,height:number,index:number,width=800){
   if(item.type==='text'){
     const box=document.createElement('div');box.className='annotation-text';
     Object.assign(box.style,{left:`${item.x}px`,top:`${item.y}px`,width:`${item.width}px`,minHeight:`${item.height}px`,transform:`rotate(${item.rotation}deg)`,zIndex:String(index+2)});
@@ -20,7 +20,7 @@ function annotation(item:CanvasItem,height:number,index:number){
     prose.append(DOMSerializer.fromSchema(notebookSchema).serializeFragment(content.content));box.append(prose);
     return box;
   }
-  const svg=svgNode('svg',{width:800,height,viewBox:`0 0 800 ${height}`});
+  const svg=svgNode('svg',{width,height,viewBox:`0 0 ${width} ${height}`});
   Object.assign(svg.style,{position:'absolute',inset:'0',zIndex:String(item.type==='stroke' && item.tool==='highlighter'?1:index+2)});
   const group=svgNode('g',{transform:`translate(${item.x} ${item.y}) rotate(${item.rotation} ${item.width/2} ${item.height/2})`});svg.append(group);
   if(item.type==='stroke'){
@@ -39,17 +39,20 @@ function annotation(item:CanvasItem,height:number,index:number){
 }
 
 /** Explicit, sequential preparation; viewport state never determines what prints. */
-export async function prepareAnnotatedPdf(pdf:PDFDocumentProxy,blockId:string|undefined,items:CanvasItem[],first:number,last:number,signal:AbortSignal,onProgress:(page:number)=>void){
+export type PrintBudget={pages:number;pixels:number;sequence:number};
+export async function prepareAnnotatedPdf(pdf:PDFDocumentProxy,blockId:string|undefined,items:CanvasItem[],first:number,last:number,signal:AbortSignal,onProgress:(page:number)=>void,budget:PrintBudget={pages:0,pixels:0,sequence:0}){
   if(!Number.isInteger(first)||!Number.isInteger(last)||first<1||last<first||last>pdf.numPages)throw new Error('Choose a valid PDF page range.');
   if(last-first+1>50)throw new Error('Print up to 50 PDF pages at a time. Choose a smaller range.');
-  const body=document.createElement('main');let pixels=0;
+  if(budget.pages+last-first+1>50)throw new Error('This notebook has too many PDF pages for one printout. Print its PDFs in smaller ranges.');
+  budget.pages+=last-first+1;
+  const body=document.createElement('main'),sequence=++budget.sequence;
   for(let number=first;number<=last;number++){
     signal.throwIfAborted();const page=await pdf.getPage(number);
     try{
       const base=page.getViewport({scale:1}),viewport=page.getViewport({scale:1200/base.width});
       const width=Math.ceil(viewport.width),height=Math.ceil(viewport.height);
-      pixels+=width*height;
-      if(pixels>80_000_000||height>16000)throw new Error('This printout is too large. Choose a smaller page range.');
+      budget.pixels+=width*height;
+      if(budget.pixels>80_000_000||height>16000)throw new Error('This printout is too large. Choose a smaller page range.');
       const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
       const context=canvas.getContext('2d');if(!context)throw new Error('PDF printing is unavailable in this browser.');
       const task=page.render({canvas,canvasContext:context,viewport});
@@ -57,12 +60,12 @@ export async function prepareAnnotatedPdf(pdf:PDFDocumentProxy,blockId:string|un
       try{await task.promise;signal.throwIfAborted();}finally{signal.removeEventListener('abort',cancel);}
       const section=document.createElement('section');section.className='pdf-sheet';section.setAttribute('aria-label',`PDF page ${number}`);
       const logicalHeight=800*base.height/base.width;
-      const pageName=`nbpdf${number}`;
+      const pageName=`nbpdf${number}_${sequence}`;
       Object.assign(section.style,{width:'800px',height:`${logicalHeight}px`,page:pageName});
       const pageStyle=document.createElement('style');pageStyle.textContent=`@page ${pageName}{size:800px ${logicalHeight}px;margin:0}`;section.append(pageStyle);
       const image=document.createElement('img');image.src=canvas.toDataURL('image/png');image.alt=`PDF page ${number}`;section.append(image);
       canvas.width=0;canvas.height=0;
-      items.filter(item=>blockId && item.pdfScope===`${blockId}-pdf-${number}`).forEach((item,index)=>section.append(annotation(item,logicalHeight,index)));
+      items.filter(item=>blockId && item.pdfScope===`${blockId}-pdf-${number}`).forEach((item,index)=>section.append(printAnnotation(item,logicalHeight,index)));
       body.append(section);onProgress(number);
     }finally{page.cleanup();}
   }

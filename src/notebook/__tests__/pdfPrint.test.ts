@@ -38,12 +38,19 @@ describe('annotated PDF print preparation',()=>{
     expect(host.querySelectorAll('.pdf-sheet')).toHaveLength(3);expect(getPage.mock.calls.map(call=>call[0])).toEqual([1,2,3]);
     expect(render).toHaveBeenCalledTimes(3);expect(cleanup).toHaveBeenCalledTimes(3);expect(progress.mock.calls.map(call=>call[0])).toEqual([1,2,3]);
     expect(host.querySelectorAll('svg')).toHaveLength(1);expect(host.querySelector('script')).toBeNull();expect(host.textContent).toContain('<script>alert(1)</script> ✓');
-    expect(host.querySelectorAll('section')[1].style.height).toBe('800px');expect(html).toContain('@page nbpdf2{size:800px 800px;');
+    expect(host.querySelectorAll('section')[1].style.height).toBe('800px');expect(html).toContain('@page nbpdf2_1{size:800px 800px;');
   });
   it('rejects oversized ranges before fetching pages and releases a rendered page on cancellation',async()=>{
     const {pdf,getPage,render,cleanup}=fixture();pdf.numPages=100;
     await expect(prepareAnnotatedPdf(pdf,undefined,[],1,51,new AbortController().signal,vi.fn())).rejects.toThrow('50 PDF pages');expect(getPage).not.toHaveBeenCalled();
     const abort=new AbortController();render.mockImplementation(()=>{abort.abort();return{promise:Promise.resolve(),cancel:vi.fn()};});
     await expect(prepareAnnotatedPdf(pdf,undefined,[],1,2,abort.signal,vi.fn())).rejects.toThrow();expect(cleanup).toHaveBeenCalledOnce();expect(getPage).toHaveBeenCalledTimes(1);
+  });
+  it('enforces a shared budget across PDFs and gives their sheets separate page rules',async()=>{
+    const {pdf}=fixture(),budget={pages:0,pixels:0,sequence:0};
+    const first=await prepareAnnotatedPdf(pdf,undefined,[],1,1,new AbortController().signal,vi.fn(),budget);
+    const second=await prepareAnnotatedPdf(pdf,undefined,[],1,1,new AbortController().signal,vi.fn(),budget);
+    expect(first).toContain('@page nbpdf1_1');expect(second).toContain('@page nbpdf1_2');expect(budget.pages).toBe(2);
+    budget.pages=50;await expect(prepareAnnotatedPdf(pdf,undefined,[],1,1,new AbortController().signal,vi.fn(),budget)).rejects.toThrow('too many PDF pages');
   });
 });
