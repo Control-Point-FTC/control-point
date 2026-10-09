@@ -20,6 +20,13 @@ function mount(path = '/notebook', emptySection = false) {
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('keeps existing notebook and section creation available while new notebooks are hidden',async()=>{
+    mount();expect(await screen.findByRole('button',{name:'Robot notes'})).toBeTruthy();
+    expect(screen.queryByRole('button',{name:'New notebook'})).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'New section'}));
+    expect(screen.getByRole('dialog').textContent).toContain('New section');
+    expect(vi.mocked(apiJson).mock.calls.some(([path,options])=>path==='/api/notebook/notebooks'&&options?.method==='POST')).toBe(false);
+  });
   it('clears a copied path selection when opening an empty section and creates pages there', async () => {
     mount('/notebook/p/2',true);
     fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));
