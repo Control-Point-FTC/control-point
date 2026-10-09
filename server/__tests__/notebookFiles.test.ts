@@ -4,11 +4,13 @@ import { NotebookStore } from '../notebook';
 import { startTestServer,seedTeam,seedMember,type TestServer } from './helpers/testServer';
 import { withSession } from './helpers/session';
 import express from 'express';
+import * as Y from 'yjs';
+import { insertCanvasItem } from '../../src/notebook/canvasModel';
 import { registerNotebookFileRoutes, notebookUploadMetadata } from '../notebookFiles';
 import { notebookAttachmentIds } from '../../src/notebook/attachmentReferences';
 let t:TestServer,store:NotebookStore,team:number,other:number,admin:number,reader:number,section:number;
 const ctx = (memberId=admin,source:'human'|'bruno'='human')=>({memberId,teamId:team,source});
-const content = (fileId:number)=>({type:'doc',content:[{type:'notebookFile',attrs:{fileId}}]});
+const content = (fileId:number)=>({type:'doc',content:[{type:'notebookFile',attrs:{fileId,id:'file-block',name:'drawing.pdf',mimeType:'application/pdf',size:4,display:'pdf',width:640}}]});
 const page = ()=>store.create(ctx(),'page',{sectionId:section,title:'File page'});
 const upload = async (pageId:number)=>{
   const r=await t.db.execute({sql:"INSERT INTO stored_files(team_id,member_id,kind,filename,mime_type,size,data) VALUES(?,?,'notebook','drawing.pdf','application/pdf',4,?)",args:[team,admin,new Uint8Array([37,80,68,70])]});
@@ -59,6 +61,20 @@ describe('notebook file reference boundary',()=>{
       const response=await fetch(`http://127.0.0.1:${address.port}/api/notebook/pages/${p.id}/files/${f}`);
       expect(reads).toBe(1);expect(response.status).toBe(404);expect(await response.text()).not.toContain('protected bytes');
     }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+  });
+  it('merges independent PDF annotations and retains their page anchors on reload',async()=>{
+    const p=await page(),f=await upload(p.id);await store.save(ctx(),p.id,{baseRevision:1,content:content(f)});
+    const join:any=await store.sync(ctx(),p.id,{}),a=new Y.Doc(),b=new Y.Doc();
+    try{
+      for(const [doc,id] of [[a,'first'],[b,'second']] as const){
+        Y.applyUpdate(doc,Buffer.from(join.update,'base64'));const vector=Y.encodeStateVector(doc);
+        insertCanvasItem(doc,{id,type:'stroke',tool:'pen',pdfScope:'file-block-pdf-1',x:20,y:30,width:100,height:20,z:1,rotation:0,locked:false,groupId:null,color:'#111111',strokeWidth:2,opacity:1,points:[[0,0,.5],[100,20,.5]]});
+        await store.sync(ctx(),p.id,{epoch:join.epoch,update:Buffer.from(Y.encodeStateAsUpdate(doc,vector)).toString('base64')});
+      }
+      const saved=await store.page(ctx(),p.id);expect(saved.canvas.objects.map((item:any)=>item.id).sort()).toEqual(['first','second']);
+      expect(saved.canvas.objects.every((item:any)=>item.pdfScope==='file-block-pdf-1')).toBe(true);
+      expect((await store.fileForPage(ctx(reader),p.id,f)).id).toBe(f);
+    }finally{a.destroy();b.destroy();}
   });
   it('never trusts supplied MIME and removes filename path/control characters',()=>{
     expect(notebookUploadMetadata('..\\folder\\bad\r\n.html',Buffer.from('<script>'))).toEqual({name:'bad.html',mimeType:'application/octet-stream'});

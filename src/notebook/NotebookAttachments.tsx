@@ -6,7 +6,7 @@ import { apiFetch } from '../services/api';
 import { notebookCommandGlyph } from './NotebookIcons';
 import './attachments.css';
 const NotebookPdf=lazy(()=>import('./NotebookPdf'));
-export const NotebookFileContext=createContext<{sync:NotebookSync;mobile:boolean;editable:boolean}|null>(null);
+export const NotebookFileContext=createContext<{sync:NotebookSync;mobile:boolean;editable:boolean;drawingScope:string|null;setDrawingScope:(id:string|null)=>void;onRibbon:(panel:React.ReactNode)=>void;onEditorFocus:(editor:Editor)=>void;onEditorRemoved:(editor:Editor)=>void;onSelectionChange:(id:string|null)=>void}|null>(null);
 export const notebookFileURL=(pageId:number,fileId:number)=>`/api/notebook/pages/${pageId}/files/${fileId}`;
 export async function fileBlob(sync:NotebookSync,fileId:number,signal?:AbortSignal){
   const response=await apiFetch(notebookFileURL(sync.pageId,fileId),{cache:'no-store',signal,headers:sync.scope?{'X-CP-Notebook-Team':String(sync.scope.teamId)}:undefined});
@@ -26,7 +26,7 @@ export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
   const open=()=>{if(!context)return;const link=document.createElement('a');link.href=notebookFileURL(context.sync.pageId,fileId);link.target='_blank';link.rel='noopener noreferrer';link.click();};
   return <NodeViewWrapper as="figure" className="nb-attachment" contentEditable={false} data-file-id={fileId}>
     <div className="nb-file-chip"><svg aria-hidden="true" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"><path d="M5 3h9l5 5v13H5V3Zm9 0v5h5M8 13h8m-8 4h6"/></svg><span><strong>{name}</strong><small>{Math.max(1,Math.ceil(size/1024)).toLocaleString()} KB</small></span><button onClick={open}>Open</button><button onClick={download}>Download original</button></div>
-    {display==='pdf' && context && <Suspense fallback={<p role="status">Loading PDF tools…</p>}><NotebookPdf sync={context.sync} fileId={fileId} width={width}/></Suspense>}
+    {display==='pdf' && context && <Suspense fallback={<p role="status">Loading PDF tools…</p>}><NotebookPdf sync={context.sync} fileId={fileId} width={width} blockId={node.attrs.id} context={context}/></Suspense>}
     {context && !context.mobile && context.editable && mimeType==='application/pdf' && <div><button onClick={()=>updateAttributes({display:display==='pdf'?'chip':'pdf'})}>{display==='pdf'?'Show attachment only':'Insert PDF printout'}</button>{display==='pdf' && <label>Printout width <input aria-label="PDF display width" type="range" min="240" max="1200" value={width||640} onChange={e=>updateAttributes({width:Number(e.target.value)})}/></label>}</div>}
     {display==='image' && (image?<img src={image} alt={name} style={{width:Math.min(1600,width||640)}} onError={()=>setError('This image could not be rendered. Download its original file.')}/>:<p role="status">Loading image…</p>)}
     {context && !context.mobile && context.editable && mimeType.startsWith('image/') && <label>Image width <input aria-label="Image display width" type="range" min="120" max="1200" value={width||640} onChange={e=>updateAttributes({display:'image',width:Number(e.target.value)})}/></label>}

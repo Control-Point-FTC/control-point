@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import { canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, seedCanvas, validatedCanvas, type Ink } from '../canvasModel';
+import { NotebookSync } from '../NotebookSync';
+import { pdfCanvasHistory } from '../canvasHistory';
 import { directedLine, inkHit, lassoHit, splitInk } from '../canvasGeometry';
 const stroke = (id: string): Ink => ({ id, type: 'stroke', tool: 'pen', x: 0, y: 0, width: 100, height: 20, z: 1, rotation: 0, locked: false, groupId: null, color: '#111111', strokeWidth: 2, opacity: 1, points: [[0, 10, .5], [100, 10, .5]] });
 describe('shared notebook canvas', () => {
+    it('retains independent PDF undo histories across viewport remounts',()=>{
+        const sync=new NotebookSync(5),first=pdfCanvasHistory(sync,'pdf-1'),second=pdfCanvasHistory(sync,'pdf-2');
+        try{
+            insertCanvasItem(sync.doc,{...stroke('page-one'),pdfScope:'pdf-1'},first.origin);
+            insertCanvasItem(sync.doc,{...stroke('page-two'),pdfScope:'pdf-2'},second.origin);
+            expect(pdfCanvasHistory(sync,'pdf-1')).toBe(first);
+            first.undo.undo();expect(canvasJSON(sync.doc).objects.map(item=>item.id)).toEqual(['page-two']);
+            first.undo.redo();expect(canvasJSON(sync.doc).objects).toHaveLength(2);
+            second.undo.undo();expect(canvasJSON(sync.doc).objects.map(item=>item.id)).toEqual(['page-one']);
+        }finally{sync.destroy();}
+    });
     it('keeps all untouched ink when an eraser split exceeds object capacity', () => {
         const doc = new Y.Doc();
         try {

@@ -10,6 +10,7 @@ import { notebookCommandGlyph } from './NotebookIcons';
 import './canvas.css';
 import { NotebookRuler, snapToRuler, type Ruler } from './NotebookRuler';
 import { readDrawingPreferences, type DrawingTool } from './drawingPreferences';
+import { pdfCanvasHistory } from './canvasHistory';
 import { NotebookFileView } from './NotebookAttachments';
 import { notebookPageLink } from './pageLinks';
 type Tool = DrawingTool;
@@ -47,6 +48,9 @@ function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
 }
 type Props = {
     sync: NotebookSync;
+    scopeId?: string;
+    active?: boolean;
+    onActivate?: () => void;
     editable: boolean;
     mobile: boolean;
     onRibbon: (panel: React.ReactNode) => void;
@@ -58,9 +62,13 @@ type Props = {
     anchorTarget?: string | null;
     children: React.ReactNode;
 };
-export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEditorFocus, onEditorRemoved, zoom = 100, onZoom, onSelectionChange, anchorTarget, children }: Props) {
+export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEditorFocus, onEditorRemoved, zoom = 100, onZoom, onSelectionChange, anchorTarget, scopeId, active = true, onActivate, children }: Props) {
+    const retainedHistory = useMemo(() => scopeId ? pdfCanvasHistory(sync,scopeId) : null,[sync,scopeId]);
+    const canvasOrigin = retainedHistory?.origin ?? CANVAS_ORIGIN;
+    const scopedItems = () => canvasJSON(sync.doc).objects.filter(item => item.pdfScope === scopeId);
+    const scopedBase = (x:number,y:number,z:number) => ({...base(x,y,z),...(scopeId?{pdfScope:scopeId}:{})});
     const root = useMemo(() => sync.doc.getMap<Y.Map<unknown>>('canvas'), [sync]);
-    const [items, setItems] = useState<CanvasItem[]>(() => canvasJSON(sync.doc).objects);
+    const [items, setItems] = useState<CanvasItem[]>(() => scopedItems());
     const preferenceKey = sync.scope ? `cp:notebook:drawing:${sync.scope.memberId}:${sync.scope.teamId}` : undefined;
     const preferences = useMemo(() => readDrawingPreferences(preferenceKey), [preferenceKey]);
     const [ruler, setRuler] = useState<Ruler>({ x: 60, y: 180, angle: 0 });
@@ -90,7 +98,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         touches.current.clear(); pan.current = null; setDraft([]);
     };
     const touchMetrics = () => { const [a,b] = [...touches.current.values()]; return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)) }; };
-    const undo = useMemo(() => new Y.UndoManager(root, { trackedOrigins: new Set([CANVAS_ORIGIN]), captureTimeout: 500 }), [root]);
+    const undo = useMemo(() => retainedHistory?.undo ?? new Y.UndoManager(root, { trackedOrigins: new Set([canvasOrigin]), captureTimeout: 500 }), [root, retainedHistory]);
     const selected = items.filter(i => selection.includes(i.id));
     useEffect(() => {
         if (!anchorTarget || !/^[\w-]{1,100}$/.test(anchorTarget)) return;
@@ -99,7 +107,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         const timer = setTimeout(() => target?.classList.remove('nb-linked-block'),2500);
         return () => { clearTimeout(timer); target?.classList.remove('nb-linked-block'); };
     }, [anchorTarget, items]);
-    useEffect(() => { onSelectionChange?.(selected.length === 1 ? selected[0].id : null); }, [selection, items, onSelectionChange]);
+    useEffect(() => { if (active) onSelectionChange?.(selected.length === 1 ? selected[0].id : null); }, [selection, items, onSelectionChange, active]);
     useEffect(() => {
         if (!preferenceKey || mobile) return;
         try { localStorage.setItem(preferenceKey, JSON.stringify({ tool, color, size })); } catch { /* Optional device preference. */ }
@@ -111,7 +119,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     }, [sync, undo]);
     useEffect(() => {
         const update = () => { try {
-            setItems(canvasJSON(sync.doc).objects);
+            setItems(scopedItems());
             setSelection(ids => ids.filter(id => root.has(id)));
         }
         catch (e) {
@@ -121,10 +129,10 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         const limit = () => { if (undo.undoStack.length > 100)
             undo.undoStack.splice(0, undo.undoStack.length - 100); };
         undo.on('stack-item-added', limit);
-        return () => { root.unobserveDeep(update); undo.off('stack-item-added', limit); undo.destroy(); if (frame.current !== null)
+        return () => { root.unobserveDeep(update); undo.off('stack-item-added', limit); if(!retainedHistory) undo.destroy(); if (frame.current !== null)
             cancelAnimationFrame(frame.current); };
-    }, [root, sync, undo]);
-    const transact = (fn: () => void) => { undo.stopCapturing(); sync.doc.transact(fn, CANVAS_ORIGIN); undo.stopCapturing(); };
+    }, [root, sync, undo, scopeId]);
+    const transact = (fn: () => void) => { undo.stopCapturing(); sync.doc.transact(fn, canvasOrigin); undo.stopCapturing(); };
     const patchSelection = (values: Record<string, unknown>) => transact(() => { for (const id of selection) {
         const map = root.get(id);
         if (map)
@@ -155,12 +163,13 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         catch (e) { setNotice(e instanceof Error ? e.message : 'Cannot paste canvas items'); }
     };
     useEffect(() => {
+        if (!active) return;
         if (mobile) {
             onRibbon(null);
             return;
         }
         onRibbon(<><div className="nb-draw-tools">{(['type', 'select', 'pen', 'highlighter', 'eraser', 'lasso', 'shape', 'ruler'] as Tool[]).map(t => <button key={t} className="nb-tool" disabled={!editable} aria-label={`Drawing ${t}`} aria-pressed={tool === t} onClick={() => { clearGesture(); setTool(t); if (t === 'ruler') setRulerVisible(true); }}>{React.createElement(notebookCommandGlyph(t)!)}<span>{t[0].toUpperCase() + t.slice(1)}</span></button>)}</div><label>Ink <input aria-label="Ink color" type="color" value={color} disabled={!editable} onChange={e => setColor(e.target.value)}/></label><select aria-label="Stroke size" value={size} disabled={!editable} onChange={e => setSize(Number(e.target.value))}>{[[2, 'S'], [3, 'M'], [6, 'L'], [12, 'XL']].map(([n, label]) => <option key={n} value={n}>{label}</option>)}</select><div className="nb-ink-colors">{(tool === 'highlighter' ? HIGHLIGHT_COLORS : INK_COLORS).map(c => <button key={c} aria-label={`Ink ${c}`} disabled={!editable} style={{ background: c }} onClick={() => setColor(c)}/>)}</div>{tool === 'shape' && <select aria-label="Shape" disabled={!editable} value={shape} onChange={e => setShape(e.target.value as Shape['shape'])}>{['line', 'arrow', 'rectangle', 'ellipse'].map(t => <option key={t}>{t}</option>)}</select>}{tool === 'eraser' && <><select aria-label="Eraser mode" value={eraserMode} onChange={e => setEraserMode(e.target.value)}><option value="stroke">Whole stroke</option><option value="point">Point eraser</option></select><select aria-label="Eraser size" value={eraserSize} onChange={e => setEraserSize(Number(e.target.value))}>{[6, 12, 24, 48].map(n => <option key={n}>{n}</option>)}</select></>}<button className="nb-tool" disabled={!editable} onClick={() => undo.undo()}>Undo ink</button><button className="nb-tool" disabled={!editable} onClick={() => undo.redo()}>Redo ink</button>{hasClipboard && <button className="nb-tool" disabled={!editable} onClick={() => duplicate(clipboard.current)}>Paste canvas items</button>}{rulerVisible && <button className="nb-tool" onClick={() => setRulerVisible(false)}>Hide ruler</button>}{selection.length > 0 && <details className="nb-canvas-actions"><summary>Selection · {selection.length}</summary><div>{selected.length === 1 && <button onClick={async () => { try { await navigator.clipboard.writeText(`${location.origin}${notebookPageLink(sync.pageId,selected[0].id)}`); setNotice('Drawing link copied.'); } catch { setNotice('Clipboard unavailable. Use the page link and selected drawing ID.'); } }}>Copy drawing link</button>}<button disabled={!editable} onClick={() => duplicate()}>Duplicate</button><button onClick={() => { clipboard.current = structuredClone(selected); setHasClipboard(true); setNotice('Canvas selection copied.'); }}>Copy</button><button disabled={!editable} onClick={() => duplicate(clipboard.current)}>Paste</button><button disabled={!editable} onClick={() => transact(() => selection.forEach(id => root.delete(id)))}>Delete</button><button disabled={!editable} onClick={() => patchSelection({ locked: !selected.every(i => i.locked) })}>Lock / unlock position</button><button disabled={!editable} onClick={() => patchSelection({ groupId: crypto.randomUUID() })}>Group</button><button disabled={!editable} onClick={() => patchSelection({ groupId: null })}>Ungroup</button><button disabled={!editable} onClick={() => patchSelection({ z: Math.min(1000000, Math.max(0, ...items.map(i => i.z)) + 1) })}>Bring to front</button><button disabled={!editable} onClick={() => patchSelection({ z: Math.max(-1000000, Math.min(0, ...items.map(i => i.z)) - 1) })}>Send to back</button><button disabled={!editable} onClick={() => patchSelection({ color })}>Recolor ink / shapes</button><label>Stroke width <select aria-label="Selection stroke width" disabled={!editable} value={selected.find(i => i.type !== 'text')?.type === 'stroke' || selected.find(i => i.type !== 'text')?.type === 'shape' ? (selected.find(i => i.type !== 'text') as Ink | Shape).strokeWidth : 3} onChange={e => patchSelection({ strokeWidth:Number(e.target.value) })}>{[1,2,3,6,12,24,48,64].map(n => <option key={n} value={n}>{n}</option>)}</select></label><label>Shape fill <input aria-label="Selection shape fill" type="color" disabled={!editable || !selected.some(i => i.type === 'shape')} value={(selected.find(i => i.type === 'shape') as Shape | undefined)?.fill ?? color} onChange={e => patchSelection({ fill:e.target.value })}/></label><button disabled={!editable} onClick={() => patchSelection({ fill:null })}>No fill</button></div></details>}</>);
-    }, [tool, color, size, shape, eraserMode, eraserSize, selection, items, editable, mobile, undo, onRibbon, rulerVisible, hasClipboard]);
+    }, [tool, color, size, shape, eraserMode, eraserSize, selection, items, editable, mobile, undo, onRibbon, rulerVisible, hasClipboard, active]);
     const point = (e: React.PointerEvent | PointerEvent): Point => {
         const el = stage.current!, rect = el.getBoundingClientRect();
         const p: Point = [roundCanvas((e.clientX - rect.left) * el.offsetWidth / rect.width), roundCanvas((e.clientY - rect.top) * el.offsetHeight / rect.height), roundCanvas(e.pointerType === 'pen' ? Math.max(.05, e.pressure) : .5)];
@@ -168,13 +177,13 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     };
     const erase = (p: Point) => {
         const removed: string[] = [], replacements: CanvasItem[] = [];
-        for (const item of canvasJSON(sync.doc).objects) {
+        for (const item of scopedItems()) {
             if (item.type !== 'stroke' || item.locked || !inkHit(item,[p[0],p[1]],eraserSize)) continue;
             removed.push(item.id);
             if (eraserMode === 'point') for (const points of splitInk(item,[p[0],p[1]],eraserSize))
                 replacements.push({ ...item,id:crypto.randomUUID(),points });
         }
-        try { replaceCanvasItems(sync.doc,removed,replacements); }
+        try { replaceCanvasItems(sync.doc,removed,replacements,canvasOrigin); }
         catch (e) { setNotice(e instanceof Error ? e.message : 'Cannot erase: canvas is full.'); }
     };
     const begin = (e: React.PointerEvent) => {
@@ -205,7 +214,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         if (tool === 'type') {
             if ((e.target as Element).closest('.nb-flow,.nb-canvas-text'))
                 return;
-            const item: TextBox = { ...base(Math.max(0, p[0]), Math.max(0, p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'text', content: emptyText as TextBox['content'] };
+            const item: TextBox = { ...scopedBase(Math.max(0, p[0]), Math.max(0, p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'text', content: emptyText as TextBox['content'] };
             transact(() => insertCanvasItem(sync.doc, item));
             setSelection([item.id]);
             requestAnimationFrame(() => stage.current?.querySelector<HTMLElement>(`[data-canvas-id="${item.id}"] [role=textbox]`)?.focus());
@@ -269,7 +278,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
                     map.set('x', Math.max(0, Math.min(50000, roundCanvas(item.x + dx))));
                     map.set('y', Math.max(0, Math.min(50000, roundCanvas(item.y + dy))));
                 }
-            } }, CANVAS_ORIGIN);
+            } }, canvasOrigin);
             return;
         }
         if (g.tool === 'eraser') {
@@ -314,14 +323,14 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             }
             else if (g.tool === 'pen' || g.tool === 'highlighter') {
                 const points = simplifyInk(g.points), x = Math.min(...points.map(p => p[0])), y = Math.min(...points.map(p => p[1]));
-                const item: Ink = { ...base(x, y, Math.max(0, ...items.map(i => i.z)) + 1), type: 'stroke', tool: g.tool, color, strokeWidth: g.tool === 'highlighter' ? Math.min(64, size * 6) : size, opacity: g.tool === 'highlighter' ? .35 : 1, width: Math.max(.1, Math.max(...points.map(p => p[0])) - x), height: Math.max(.1, Math.max(...points.map(p => p[1])) - y), points: points.map(p => [roundCanvas(p[0] - x), roundCanvas(p[1] - y), p[2]]) };
-                insertCanvasItem(sync.doc, item);
+                const item: Ink = { ...scopedBase(x, y, Math.max(0, ...items.map(i => i.z)) + 1), type: 'stroke', tool: g.tool, color, strokeWidth: g.tool === 'highlighter' ? Math.min(64, size * 6) : size, opacity: g.tool === 'highlighter' ? .35 : 1, width: Math.max(.1, Math.max(...points.map(p => p[0])) - x), height: Math.max(.1, Math.max(...points.map(p => p[1])) - y), points: points.map(p => [roundCanvas(p[0] - x), roundCanvas(p[1] - y), p[2]]) };
+                insertCanvasItem(sync.doc, item,canvasOrigin);
             }
             else if (g.tool === 'shape') {
                 let width = Math.max(1, Math.abs(p[0] - g.start[0])), height = Math.max(1, Math.abs(p[1] - g.start[1]));
                 if (e.shiftKey)
                     width = height = Math.max(width, height);
-                insertCanvasItem(sync.doc, { ...base(Math.min(g.start[0], p[0]), Math.min(g.start[1], p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'shape', shape, color, fill: null, strokeWidth: size, width, height, ...((shape === 'line' || shape === 'arrow') ? directedLine(g.start, p, e.shiftKey) : {}) });
+                insertCanvasItem(sync.doc, { ...scopedBase(Math.min(g.start[0], p[0]), Math.min(g.start[1], p[1]), Math.max(0, ...items.map(i => i.z)) + 1), type: 'shape', shape, color, fill: null, strokeWidth: size, width, height, ...((shape === 'line' || shape === 'arrow') ? directedLine(g.start, p, e.shiftKey) : {}) },canvasOrigin);
             }
         }
         catch (e) {
@@ -330,7 +339,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         undo.stopCapturing();
     };
     const width = Math.max(0, ...items.map(i => i.x + i.width + 40)), height = Math.max(600, ...items.map(i => i.y + i.height + 40));
-    return <div ref={stage} className="nb-canvas-stage" data-tool={mobile ? 'type' : tool} style={{ minWidth: Math.min(50000, width), minHeight: Math.min(50000, height) }} onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={e => { if (gesture.current?.pointer === e.pointerId) clearGesture(); }} onKeyDown={e => {
+    return <div ref={stage} className="nb-canvas-stage" data-tool={mobile ? 'type' : tool} style={{ minWidth: Math.min(50000, width), minHeight: Math.min(50000, height) }} onPointerDown={e => { if (scopeId) e.stopPropagation(); onActivate?.(); begin(e); }} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={e => { if (gesture.current?.pointer === e.pointerId) clearGesture(); }} onKeyDown={e => {
             if ((e.target as Element).closest('[role=textbox]'))
                 return;
             if (e.key === 'Escape') {

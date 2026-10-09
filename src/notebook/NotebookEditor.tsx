@@ -54,6 +54,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [ruled, setRuled] = useState(false);
   const [viewError, setViewError] = useState('');
   const [drawPanel, setDrawPanel] = useState<React.ReactNode>(null);
+  const [drawingScope,setDrawingScope]=useState<string|null>(null);
   const [canvasTarget, setCanvasTarget] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
@@ -110,7 +111,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     return () => window.removeEventListener('beforeunload', unload);
   }, [sync]);
   const fileUpload=useNotebookUpload(sync,activeEditor ?? editor);
-  return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked}}><div className="nb-document">
+  return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked,drawingScope,setDrawingScope,onRibbon:setDrawPanel,onEditorFocus:focusEditor,onEditorRemoved:removeEditor,onSelectionChange:setCanvasTarget}}><div className="nb-document">
     <div className="nb-doc-status"><span role="status" aria-live="polite">{sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
       {sync.data?.protected && <span>Admin-only · Bruno excluded</span>}
       {!sync.data?.editable && <span>Read only</span>}
@@ -130,7 +131,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     </div>}
     {(() => {
       const panels = {
-        ...(!mobile && drawPanel ? { draw: drawPanel } : {}),
+        ...(!mobile && drawPanel ? { draw: <><button className="nb-tool" onClick={()=>setDrawingScope(null)}>Draw on notebook page</button>{drawPanel}</> } : {}),
         insert: fileUpload.controls,
         file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" onClick={() => window.print()}>Print page</button></>,
         history: <NotebookHistory sync={sync} />,
@@ -144,7 +145,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     <div className="nb-paper-scroll"><article className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
-      <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} editable={!blocked && !sync.data?.legacyCanvas} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>
+      <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
       {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} />}
     </article></div>
