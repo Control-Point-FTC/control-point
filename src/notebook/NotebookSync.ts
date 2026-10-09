@@ -8,7 +8,7 @@ import { registerNotebookSession } from './notebookRuntime';
 export type SyncStatus = 'joining' | 'saved' | 'saving' | 'offline' | 'conflict' | 'unavailable' | 'error';
 export interface SyncResponse {
   epoch: string; update: string; vector: string; revision: number; title: string;
-  protected: boolean; editable: boolean; updatedBy: number | null; updatedAt: string; createdAt?: string;
+  protected: boolean; editable: boolean; updatedBy: number | null; updatedAt: string; createdAt?: string; legacyCanvas?: unknown;
   peers?: { clientId: number; memberId: number; name: string; color: string; cursor: unknown; clock: number }[];
 }
 export function encodeBytes(bytes: Uint8Array): string {
@@ -198,6 +198,7 @@ export class NotebookSync {
           this.doc.transact(() => {
             this.doc.getXmlFragment('prosemirror').delete(0, this.doc.getXmlFragment('prosemirror').length);
             this.doc.getMap('meta').clear();
+            if (this.doc.share.has('canvas')) this.doc.getMap('canvas').clear();
           }, this);
           this.doc.destroy();
         } else if (e instanceof ApiError && e.status === 409) {

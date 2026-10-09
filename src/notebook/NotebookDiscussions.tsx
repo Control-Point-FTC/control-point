@@ -21,7 +21,7 @@ export function selectionCommentAnchor(editor: Editor | null): CommentAnchor {
   }
   return { kind: 'page' };
 }
-export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; editor: Editor | null }) {
+export function NotebookDiscussions({ sync, editor, canvasTarget }: { sync: NotebookSync; editor: Editor | null; canvasTarget?: string | null }) {
   const [params] = useSearchParams();
   const highlightedThread = Number(params.get('thread'));
   const [threads, setThreads] = useState<Threads>({ items: [], next: null, canComment: false });
@@ -96,7 +96,7 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
         {canWrite && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void mutate(async () => { await request(`/threads/${t.id}/resolved`, { method: 'PUT', body: JSON.stringify({ resolved: !t.resolved }) }); }, t.id); }}>{t.resolved ? 'Reopen' : 'Resolve'}</Button>}
       </div>
       {t.anchor.quote && <blockquote>{t.anchor.quote}</blockquote>}
-      {!t.orphaned && t.anchor.targetId && <Button size="sm" variant="ghost" onClick={() => editor?.view.dom.querySelector(`[data-id="${t.anchor.targetId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Go to target</Button>}
+      {!t.orphaned && t.anchor.targetId && <Button size="sm" variant="ghost" onClick={() => editor?.view.dom.closest('.nb-document')?.querySelector(`[data-id="${t.anchor.targetId}"],[data-canvas-id="${t.anchor.targetId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Go to target</Button>}
       {(olderComments[t.id] ? olderComments[t.id].next : t.commentsBefore) && <Button size="sm" variant="outline" disabled={busy} onClick={async () => {
         setBusy(true); try {
           const more = await request<{ items: Comment[]; next: number | null }>(`/threads/${t.id}/comments?limit=100`);
@@ -119,7 +119,7 @@ export function NotebookDiscussions({ sync, editor }: { sync: NotebookSync; edit
     }}>Older discussions</Button>}
     {canWrite ? <form onSubmit={e => { e.preventDefault(); void submit(); }}>
       <label htmlFor={`nb-comment-input-${sync.pageId}`}>{editing ? 'Edit comment' : reply ? 'Reply to discussion' : 'New discussion'}</label>
-      {!reply && !editing && <div><Button type="button" size="sm" variant="ghost" onClick={() => setAnchor(selectionCommentAnchor(editor))}>Anchor to selected text or block</Button><Button type="button" size="sm" variant="ghost" onClick={() => setAnchor({ kind: 'page' })}>Discuss whole page</Button><span>{anchor.kind === 'page' ? 'Whole page' : anchor.quote || 'Selected block'}</span></div>}
+      {!reply && !editing && <div><Button type="button" size="sm" variant="ghost" onClick={() => setAnchor(selectionCommentAnchor(editor))}>Anchor to selected text or block</Button>{canvasTarget && <Button type="button" size="sm" variant="ghost" onClick={() => setAnchor({ kind:'canvas', targetId:canvasTarget })}>Anchor to selected drawing</Button>}<Button type="button" size="sm" variant="ghost" onClick={() => setAnchor({ kind: 'page' })}>Discuss whole page</Button><span>{anchor.kind === 'page' ? 'Whole page' : anchor.quote || 'Selected block'}</span></div>}
       <textarea id={`nb-comment-input-${sync.pageId}`} value={body} maxLength={10_000} rows={3} required onChange={e => setBody(e.target.value)} placeholder="Share a thought with your team…" />
       <details><summary>Mention teammates{recipients.length ? ` (${recipients.length})` : ''}</summary>
         <input aria-label="Find teammate to mention" placeholder="Search teammates" value={memberQuery} onChange={e => setMemberQuery(e.target.value)} />

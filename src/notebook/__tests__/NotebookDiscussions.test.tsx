@@ -10,14 +10,23 @@ import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 const editors: Editor[] = [], providers: NotebookSync[] = [];
 afterEach(() => { cleanup(); editors.splice(0).forEach(e => e.destroy()); providers.splice(0).forEach(p => p.destroy()); vi.restoreAllMocks(); vi.resetAllMocks(); });
-function mount(canComment = true, request?: (url: string) => Promise<any>) {
+function mount(canComment = true, request?: (url: string) => Promise<any>, canvasTarget?: string) {
   const editor = new Editor({ extensions: notebookExtensions(), content: { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'saved-drive-block' }, content: [{ type: 'text', text: 'Drive testing' }] }] } }); editors.push(editor);
   const sync = new NotebookSync(7); providers.push(sync); sync.status = 'saved';
   vi.mocked(apiJson).mockImplementation(request ?? (async url => url.endsWith('/mention-members') ? [{ id: 4, name: 'Lee' }] as any : { items: [], next: null, canComment } as any));
-  render(<MemoryRouter><NotebookDiscussions sync={sync} editor={editor} /></MemoryRouter>);
+  render(<MemoryRouter><NotebookDiscussions sync={sync} editor={editor} canvasTarget={canvasTarget} /></MemoryRouter>);
   return { sync, editor };
 }
 describe('notebook discussions in the mounted editor', () => {
+  it('posts a discussion anchored to a selected drawing ID', async () => {
+    mount(true, undefined, 'drawing-one'); await screen.findByRole('textbox', {name:'New discussion'});
+    fireEvent.click(screen.getByRole('button',{name:'Anchor to selected drawing'}));
+    fireEvent.change(screen.getByRole('textbox',{name:'New discussion'}),{target:{value:'Check this trajectory'}});
+    fireEvent.click(screen.getByRole('button',{name:'Post discussion'}));
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([url])=>url.endsWith('/comments'))).toBe(true));
+    const call = vi.mocked(apiJson).mock.calls.find(([url])=>url.endsWith('/comments'))!;
+    expect(JSON.parse(String(call[1]?.body))).toMatchObject({body:'Check this trajectory',anchor:{kind:'canvas',targetId:'drawing-one'}});
+  });
   it('coalesces slow polls so repeated timer ticks cannot starve successful results', async () => {
     let poll!: () => void, finishPeople!: (value: any) => void, peopleCalls = 0;
     const interval = globalThis.setInterval;
