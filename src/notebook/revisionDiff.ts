@@ -12,16 +12,24 @@ function stable(value:unknown):string{
 }
 function blocks(value:unknown):Map<string,Block>{
   const document=notebookSchema.nodeFromJSON(validatedNotebookDocument(value)).toJSON(),result=new Map<string,Block>();
-  const text=(node:any):string=>node.type==='text'?node.text||'':(node.content||[]).map(text).join(node.type==='tableRow'?' | ':node.type==='table'?'\n':'');
-  const formatting=(node:any):unknown=>({type:node.type,attrs:Object.fromEntries(Object.entries(node.attrs||{}).filter(([key])=>key!=='id')),marks:node.marks,children:(node.content||[]).map(formatting)});
-  const structure=(node:any):unknown=>({type:node.type,children:(node.content||[]).map(structure)});
+  const text=(node:any):string=>node.type==='text'?node.text||'':node.type==='hardBreak'?'\n':(node.content||[]).map(text).join(node.type==='tableRow'?' | ':node.type==='table'||node.type==='tableCell'||node.type==='tableHeader'?'\n':'');
+  const attributes=(node:any)=>Object.fromEntries(Object.entries(node.attrs||{}).filter(([key])=>key!=='id'));
+  const formatting=(node:any,leaf:boolean):unknown=>{
+    const runs:{marks:string;length:number}[]=[];
+    const collect=(child:any)=>{if(child.type==='text'||child.type==='hardBreak'){const marks=stable(child.marks||[]),length=child.type==='hardBreak'?1:(child.text||'').length;const last=runs.at(-1);if(last?.marks===marks)last.length+=length;else runs.push({marks,length});}else(child.content||[]).forEach(collect);};
+    if(leaf)collect(node);
+    // Adjacent text-node splits are editor details, not block structure changes.
+    return {type:node.type,attrs:attributes(node),runs:runs.some(run=>run.marks!=='[]')?runs:[]};
+  };
+  const structure=(node:any):unknown=>({type:node.type,children:(node.content||[]).filter((child:any)=>child.type!=='text'&&child.type!=='hardBreak').map(structure)});
   const visit=(node:any,path:string,owner:string)=>{
     if(node.type==='text'||node.type==='hardBreak')return;
     const base=typeof node.attrs?.id==='string'?`id:${node.attrs.id}`:`${owner}/${path}:${node.type}`;
     let id=base,duplicate=0;while(result.has(id))id=`${base}#${++duplicate}`;
     const label=node.type==='tableCell'||node.type==='tableHeader'?`Table cell ${path.split('.').slice(-2).map(n=>Number(n)+1).join(', ')}`:node.type.replace(/([a-z])([A-Z])/g,'$1 $2');
-    result.set(id,{id,label,text:text(node),format:stable(formatting(node)),structure:stable(structure(node)),path});
-    (node.content||[]).forEach((child:any,index:number)=>visit(child,`${path}.${index}`,node.attrs?.id?base:owner));
+    const cell=node.type==='tableCell'||node.type==='tableHeader',leaf=cell||!(node.content||[]).some((child:any)=>child.type!=='text'&&child.type!=='hardBreak');
+    result.set(id,{id,label,text:leaf?text(node):'',format:stable(formatting(node,leaf)),structure:stable(structure(node)),path});
+    if(!cell)(node.content||[]).forEach((child:any,index:number)=>visit(child,`${path}.${index}`,node.attrs?.id?base:owner));
   };
   (document.content||[]).forEach((node,index)=>visit(node,String(index),'page'));
   return result;
@@ -35,7 +43,7 @@ function compareBlocks(before:unknown,after:unknown):RevisionChange[]{
     if(old.text!==next.text)flags.push('Text');
     if(old.structure!==next.structure)flags.push('Structure');
     // Formatting includes attributes/marks but excludes text and stable IDs.
-    if(old.format!==next.format && old.structure===next.structure)flags.push('Formatting');
+    if(old.format!==next.format)flags.push('Formatting');
     if(old.path!==next.path && id.startsWith('id:'))flags.push('Moved');
     if(flags.length)changes.push({id,label:next.label,kind:'changed',changes:flags,before:old.text,after:next.text});
   }

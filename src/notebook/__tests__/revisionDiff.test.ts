@@ -4,6 +4,19 @@ const paragraph=(id:string,text:string,marks:any[]=[])=>({type:'paragraph',attrs
 const page=(content:any[],objects:any[]=[])=>({title:'Build journal',content:{type:'doc',content:content.length?content:[{type:'paragraph'}]},canvas:{version:1,objects}});
 const shape={id:'shape',type:'shape',shape:'rectangle',x:10,y:20,width:200,height:100,z:0,rotation:0,locked:false,groupId:null,color:'#112233',fill:null,strokeWidth:2};
 describe('retained revision comparisons',()=>{
+  it('reports a moved hard line break as a visible text change',()=>{
+    const broken=(first:string,last:string)=>({type:'paragraph',attrs:{id:'break'},content:[{type:'text',text:first},{type:'hardBreak'},{type:'text',text:last}]});
+    expect(compareNotebookRevisions(page([broken('abc','def')]),page([broken('ab','cdef')]))).toEqual([expect.objectContaining({before:'abc\ndef',after:'ab\ncdef',changes:['Text']})]);
+  });
+  it('recognizes partial word formatting independently of text-node splits',()=>{
+    const after={type:'paragraph',attrs:{id:'a'},content:[{type:'text',text:'Drive '},{type:'text',text:'ratio',marks:[{type:'bold'}]}]};
+    expect(compareNotebookRevisions(page([paragraph('a','Drive ratio')]),page([after]))).toEqual([expect.objectContaining({changes:['Formatting']})]);
+  });
+  it('reports one text change for an edited table cell instead of repeating container text',()=>{
+    const table=(value:string)=>({type:'table',attrs:{id:'t'},content:[{type:'tableRow',content:[{type:'tableCell',content:[paragraph('p',value)]}]}]});
+    const changes=compareNotebookRevisions(page([table('3:1')]),page([table('4:1')]));
+    expect(changes).toHaveLength(1);expect(changes[0]).toMatchObject({before:'3:1',after:'4:1',changes:['Text']});
+  });
   it('distinguishes changed text, formatting, stable block moves and additions/removals',()=>{
     const before=page([paragraph('a','Old gearing'),paragraph('b','Same text'),paragraph('removed','Removed')]);
     const after=page([paragraph('b','Same text',[{type:'bold'}]),paragraph('a','New gearing'),paragraph('added','Added')]);
