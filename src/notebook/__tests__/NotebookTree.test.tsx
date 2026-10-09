@@ -31,7 +31,14 @@ describe('notebook hierarchy controls', () => {
       expect(appToggle).not.toHaveBeenCalled();fireEvent.click(restore);
       expect(screen.getByRole('complementary',{name:'Notebook explorer'})).toBeTruthy();
       expect(screen.getByRole('complementary',{name:'Pages in selected section'})).toBeTruthy();
+      expect(document.activeElement).toBe(screen.getByRole('button',{name:'Expand writing space'}));
     }finally{window.removeEventListener('cp:notebook-navigation',appToggle);}
+  });
+  it('offers an organizer recovery path only when no notebook exists',async()=>{
+    vi.mocked(apiJson).mockImplementation(async path=>path==='/api/notebook/mentions'?[] as any:({notebooks:[],sections:[],pages:[],permissions:{organize:true,edit:true}} as any));
+    render(<MemoryRouter><NotebookPage activeTeamId={20} currentUserId={10}/></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button',{name:'Set up team notebook'}));
+    expect(screen.getByRole('dialog').textContent).toContain('New notebook');
   });
   it('keeps existing notebook and section creation available while new notebooks are hidden',async()=>{
     mount();expect(await screen.findByRole('button',{name:'Robot notes'})).toBeTruthy();
