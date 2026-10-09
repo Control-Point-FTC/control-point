@@ -13,6 +13,15 @@ function setup(){
 }
 afterEach(()=>{vi.restoreAllMocks();vi.clearAllMocks();});
 describe('complete notebook page preparation',()=>{
+  it('rejects offscreen placeholder heights instead of overlapping later pages',async()=>{
+    setup();const page:any={title:'PDF sizes',revision:1,updatedAt:'now',content:{type:'doc',content:[file(2,'pdf','application/pdf')]},canvas:{}};
+    const layout={blocks:[{x:0,y:0,width:800,height:2000}],attachments:{'file-2':{rect:{x:0,y:0,width:800,height:2000},pages:[{x:0,y:100,width:640,height:905},{x:0,y:1020,width:640,height:905}]}}};
+    await expect(prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn(),undefined,layout)).rejects.toThrow('placeholders do not match');
+    expect(mock.destroy).toHaveBeenCalledOnce();
+    layout.attachments['file-2'].pages.forEach(rect=>rect.height=640*800/600);
+    const html=await prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn(),undefined,layout);
+    expect(html).toContain('PDF page 2');
+  });
   it('preserves measured image and following text coordinates beneath ordinary saved marks',async()=>{
     setup();const page:any={title:'Aligned',revision:1,updatedAt:'now',content:{type:'doc',content:[file(1,'image','image/png'),{type:'paragraph',content:[{type:'text',text:'Text below attachment'}]}]},canvas:{version:1,objects:[stroke('image-mark'),{...stroke('below-mark'),y:650}]}};
     const layout={blocks:[{x:0,y:40,width:800,height:570},{x:0,y:630,width:800,height:40}],attachments:{'file-1':{rect:{x:0,y:40,width:800,height:570},image:{x:13,y:96,width:640,height:426},pages:[]}}};
