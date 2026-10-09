@@ -9,6 +9,7 @@ import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import UniqueID from '@tiptap/extension-unique-id';
 import { Plugin } from '@tiptap/pm/state';
+import { NotebookFile, validNotebookFile } from './fileNode';
 import { normalizeNotebookLink } from './pageLinks';
 
 // System fonts require no CDN or redistribution. Every choice has a portable
@@ -23,7 +24,7 @@ export const NOTEBOOK_FONTS = [
 ] as const;
 export const NOTEBOOK_COLORS = ['#171717', '#ffffff', '#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 export const NOTEBOOK_TAGS = ['todo', 'important', 'question', 'remember'] as const;
-export const BLOCK_TYPES = ['paragraph', 'heading', 'blockquote', 'codeBlock', 'horizontalRule', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'table', 'tableRow', 'tableCell', 'tableHeader'];
+export const BLOCK_TYPES = ['paragraph', 'heading', 'blockquote', 'codeBlock', 'horizontalRule', 'bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'table', 'tableRow', 'tableCell', 'tableHeader', 'notebookFile'];
 export const DOCUMENT_SCHEMA_VERSION = 1;
 
 export function safeNotebookColor(value: unknown): string | null {
@@ -104,7 +105,7 @@ const InternalLinks = Extension.create({
 });
 
 /** Shared by the real editor and server conversion: schema drift loses data. */
-export function notebookExtensions(collaborative = false, updateDocument = true) {
+export function notebookExtensions(collaborative = false, updateDocument = true, fileNode = NotebookFile) {
   return [
     StarterKit.configure({ undoRedo: collaborative ? false : { depth: 100 }, link: { openOnClick: false, HTMLAttributes: { rel: 'noreferrer', target: '_blank' }, isAllowedUri: safeNotebookLink } }),
     TextStyleKit.configure({ fontFamily: false, fontSize: false, color: false, backgroundColor: false }),
@@ -113,7 +114,7 @@ export function notebookExtensions(collaborative = false, updateDocument = true)
     Highlight.configure({ multicolor: true }), Subscript, Superscript,
     TaskList, TaskItem.configure({ nested: true }),
     Table.configure({ resizable: true }), TableRow, ShadedCell, ShadedHeader,
-    UniqueID.configure({ types: BLOCK_TYPES, updateDocument }), Blocks, InternalLinks,
+    UniqueID.configure({ types: BLOCK_TYPES, updateDocument }), Blocks, InternalLinks, fileNode,
   ];
 }
 export const notebookSchema = getSchema(notebookExtensions(true));
@@ -129,6 +130,7 @@ export function validatedNotebookDocument(value: unknown): JSONContent {
     // dropping a newer editor's fields during the next autosave.
     const validate = (json: any) => {
       for (const key of Object.keys(json)) if (!['type', 'attrs', 'content', 'marks', 'text'].includes(key)) throw new Error('Unknown notebook field');
+      if (json.type === 'notebookFile' && !validNotebookFile(json.attrs)) throw new Error('Invalid notebook file');
       const type = notebookSchema.nodes[json.type];
       if (!type) throw new Error('Unknown notebook block');
       for (const key of Object.keys(json.attrs ?? {})) if (!Object.hasOwn(type.spec.attrs ?? {}, key)) throw new Error('Unknown notebook attribute');

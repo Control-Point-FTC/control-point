@@ -10,6 +10,7 @@ import { notebookCommandGlyph } from './NotebookIcons';
 import './canvas.css';
 import { NotebookRuler, snapToRuler, type Ruler } from './NotebookRuler';
 import { readDrawingPreferences, type DrawingTool } from './drawingPreferences';
+import { NotebookFileView } from './NotebookAttachments';
 import { notebookPageLink } from './pageLinks';
 type Tool = DrawingTool;
 const INK_COLORS = ['#111111', '#ffffff', '#e63946', '#f28c28', '#f5ce36', '#2caa65', '#2587db', '#9457c7'];
@@ -38,7 +39,7 @@ function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
     onFocus: (editor: Editor) => void;
     onRemoved: (editor: Editor) => void;
 }) {
-    const editor = useEditor({ extensions: [...notebookExtensions(true, editable), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
+    const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
     useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
     useEffect(() => () => { if (editor)
         onRemoved(editor); }, [editor, onRemoved]);
