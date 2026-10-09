@@ -14,7 +14,8 @@ export default function NotebookPdf({sync,fileId,width=640,blockId,context}:{syn
   useEffect(()=>{if(!printout.current)return;const resize=()=>setDisplayWidth(printout.current?.clientWidth||Math.min(width,640));resize();if(typeof ResizeObserver==='undefined')return;const observer=new ResizeObserver(resize);observer.observe(printout.current);return()=>observer.disconnect();},[width]);
   const [document,setDocument]=useState<PDFDocumentProxy|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);
   const [first,setFirst]=useState(1),[last,setLast]=useState(1),[printStatus,setPrintStatus]=useState(''),[printing,setPrinting]=useState(false),printAbort=useRef<AbortController|null>(null);
-  useEffect(()=>()=>printAbort.current?.abort(),[sync,fileId]);
+  const closePrintPreview=useRef<(()=>void)|null>(null);
+  useEffect(()=>()=>{printAbort.current?.abort();closePrintPreview.current?.();closePrintPreview.current=null;},[sync,fileId]);
   const printPdf=async()=>{
     if(!document || printing)return;
     const abort=new AbortController();printAbort.current=abort;setPrinting(true);setPrintStatus('Preparing annotated PDF…');
@@ -26,7 +27,7 @@ export default function NotebookPdf({sync,fileId,width=640,blockId,context}:{syn
       await apiJson(`/api/notebook/pages/${sync.pageId}`,{cache:'no-store',signal:abort.signal,headers:sync.scope?{'X-CP-Notebook-Team':String(sync.scope.teamId)}:undefined});
       abort.signal.throwIfAborted();
       if(['unavailable','conflict','error'].includes(sync.status))throw new Error('Page access changed. Reopen the page before printing.');
-      showAnnotatedPdfPrint(markup);setPrintStatus('Annotated print preview ready.');
+      closePrintPreview.current?.();closePrintPreview.current=showAnnotatedPdfPrint(markup);setPrintStatus('Annotated print preview ready.');
     }catch(e){if(!abort.signal.aborted)setPrintStatus((e as Error).message||'Cannot prepare this printout.');}
     finally{if(!abort.signal.aborted)setPrinting(false);}
   };

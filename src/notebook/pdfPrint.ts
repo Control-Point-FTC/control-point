@@ -79,11 +79,12 @@ export function showAnnotatedPdfPrint(markup:string){
     *{box-sizing:border-box}body{margin:0;background:#dce4e8;font-family:system-ui,sans-serif;color:#111}.pdf-sheet{position:relative;background:white;overflow:hidden;margin:20px auto;break-after:page;isolation:isolate}.pdf-sheet:last-child{break-after:auto}.pdf-sheet>img{position:absolute;inset:0;width:100%;height:100%;z-index:0}.annotation-text{position:absolute;padding:8px;font-size:16px;overflow-wrap:anywhere}.annotation-text p{margin:0 0 12px}.annotation-text table{border-collapse:collapse;width:100%}.annotation-text td,.annotation-text th{border:1px solid #888;padding:5px}.annotation-text pre{white-space:pre-wrap}a{color:inherit}input{appearance:none}input[type=checkbox]{width:12px;height:12px;border:1px solid #666}input:checked::after{content:'✓'}@page{margin:0;size:800px 1132px}@media print{body{background:white}.pdf-sheet{margin:0}}
     </style></head><body>${markup}</body></html>`;
   host.append(toolbar,frame);document.body.append(host);
-  const remove=()=>{host.close();host.remove();};close.onclick=remove;host.oncancel=event=>{event.preventDefault();remove();};
+  const remove=()=>{if(host.open)host.close();host.remove();};close.onclick=remove;host.oncancel=event=>{event.preventDefault();remove();};
   frame.onload=async()=>{
     const doc=frame.contentDocument;if(!doc)return;
     try{await Promise.all(Array.from(doc.images).map(image=>image.decode()));await doc.fonts?.ready;print.disabled=false;status.textContent='Choose Save as PDF in the print dialog to export annotations.';}
     catch{status.textContent='Some pages could not load. Close this preview and retry.';}
   };
   print.onclick=()=>{frame.contentWindow?.focus();frame.contentWindow?.print();};host.showModal();
+  return remove;
 }
