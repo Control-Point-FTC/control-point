@@ -49,6 +49,11 @@ export function writeNotebookJournal(value: NotebookJournal): Promise<void> {
 export function deleteNotebookJournal(key: string): Promise<void> {
   return serialize(key, async () => { await transaction('readwrite', store => store.delete(key)); });
 }
+export async function pendingNotebookJournals(): Promise<NotebookJournal[]> {
+  await Promise.allSettled([...writes.values()]);
+  const entries = await transaction<NotebookJournal[]>('readonly', store => store.getAll());
+  return entries.filter(entry => entry.pending);
+}
 export async function clearNotebookJournals(): Promise<void> {
   await Promise.allSettled([...writes.values()]);
   await transaction('readwrite', store => store.clear());

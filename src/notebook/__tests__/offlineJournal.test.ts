@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { ApiError, apiJson } from '../../services/api';
 import { NotebookSync, decodeBytes, encodeBytes } from '../NotebookSync';
-import { clearNotebookJournals, readNotebookJournal } from '../offlineJournal';
+import { clearNotebookJournals, readNotebookJournal, pendingNotebookJournals } from '../offlineJournal';
+import { prepareNotebookExit, findNotebookSession } from '../notebookRuntime';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 const providers: NotebookSync[] = [], docs: Y.Doc[] = [];
 beforeEach(async () => { await clearNotebookJournals(); });
@@ -22,6 +23,34 @@ function server() {
   return { doc, request, protect: () => { protectedPage = true; }, restore: () => { epoch = 'restored'; doc.getMap('meta').set('title', 'Restored title'); } };
 }
 describe('ordinary-page durable offline journal', () => {
+  it('refuses logout when a pending journal survives without a mounted editor', async () => {
+    server(); const current = provider(); await current.start();
+    current.doc.getMap('meta').set('title', 'Must survive logout'); await current.persist(); current.destroy();
+    expect(await prepareNotebookExit('logout')).toBe(false);
+    expect((await pendingNotebookJournals())[0].title).toBe('Must survive logout');
+    const recovered = provider(); await recovered.start(); await recovered.flush();
+    expect(await prepareNotebookExit('logout')).toBe(true);
+  });
+  it('retains a detached dirty provider until its save completes and allows it to resume', async () => {
+    const remote = server(), current = provider(); await current.start();
+    current.doc.getMap('meta').set('title', 'Last debounced edit');
+    vi.mocked(apiJson).mockRejectedValueOnce(new TypeError('Offline'));
+    await current.release();
+    expect(findNotebookSession(15, scope)).toBe(current);
+    expect(current.pending).toBe(true); expect(current.locallyDurable).toBe(true);
+    current.resume(); expect(await current.flush()).toBe(true);
+    expect(remote.doc.getMap('meta').get('title')).toBe('Last debounced edit');
+  });
+  it('keeps the old ordinary journal after a server restore rejects its queued update', async () => {
+    server(); const current = provider(); await current.start();
+    current.doc.getMap('meta').set('title', 'Recover me'); await current.persist();
+    vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(409, 'Restored'));
+    await current.flush();
+    expect((await readNotebookJournal('41:73:15'))?.pending).toBe(true);
+    await current.discardRecovery();
+    expect(await readNotebookJournal('41:73:15')).toBeUndefined();
+    expect(findNotebookSession(15, scope)).toBeUndefined();
+  });
   it('recovers unsaved edits across reload and revalidates before merging them', async () => {
     const remote = server(), first = provider(); await first.start();
     first.doc.getMap('meta').set('title', 'Offline discovery');

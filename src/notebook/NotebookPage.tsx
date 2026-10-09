@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useSearchParams, useMatch } from 'react-router-dom';
+import React, { useCallback, useEffect, useRef, useState, useContext } from 'react';
+import { useSearchParams, useMatch, UNSAFE_NavigationContext } from 'react-router-dom';
 import { BookOpen, ChevronDown, ChevronRight, FileText, Folder, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui-kit';
 import { apiJson } from '../services/api';
@@ -10,7 +10,7 @@ import './notebook.css';
 import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
 import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
-import { registerNotebookSession } from './notebookRuntime';
+import { findNotebookSession } from './notebookRuntime';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -52,7 +52,22 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [collapsed, setCollapsed] = useState(() => readPreference(collapsedKey));
   const [sync, setSync] = useState<NotebookSync | null>(null);
   const syncRef = useRef<NotebookSync | null>(null);
-  useEffect(() => sync ? registerNotebookSession(sync) : undefined, [sync]);
+  const { navigator } = useContext(UNSAFE_NavigationContext);
+  useEffect(() => {
+    const originalPush = navigator.push, originalReplace = navigator.replace;
+    let navigating = false;
+    const guard = (original: typeof navigator.push) => (...args: Parameters<typeof navigator.push>) => {
+      const current = syncRef.current;
+      if (!current?.pending || current.locallyDurable) { original.apply(navigator, args); return; }
+      if (navigating) return; navigating = true;
+      void (async () => {
+        if (await current.flush() || await current.persist()) original.apply(navigator, args);
+        else setError('Save or recover your notebook changes before leaving this page.');
+      })().finally(() => { navigating = false; });
+    };
+    navigator.push = guard(originalPush); navigator.replace = guard(originalReplace);
+    return () => { navigator.push = originalPush; navigator.replace = originalReplace; };
+  }, [navigator]);
   const mounted = useRef(true);
   const loadTree = useCallback(async () => {
     try {
@@ -76,9 +91,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (!selected || !tree?.pages.some(p => p.id === selected)) return;
     if (syncRef.current?.pageId === selected) return;
     void syncRef.current?.release();
-    const next = new NotebookSync(selected, memberId && teamId ? { memberId, teamId } : undefined);
+    const scope = memberId && teamId ? { memberId, teamId } : undefined;
+    const retained = findNotebookSession(selected, scope);
+    const next = retained ?? new NotebookSync(selected, scope);
     syncRef.current = next; setSync(next);
-    void next.start();
+    if (retained) retained.resume(); else void next.start();
   }, [selected, tree]);
   useEffect(() => {
     if (!query.trim()) { setHits([]); setSearching(false); return; }
@@ -174,7 +191,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const dropClass = (kind: Kind, id: number) => drop?.kind === kind && drop.id === id ? `nb-drop-${drop.zone}` : '';
   const options = (kind: Kind, item: Item) => <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end">
-      {kind === 'page' && <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(new URL(notebookPageLink(item.id), window.location.origin).href).then(() => setAnnouncement('Page link copied')).catch(() => setError('Clipboard unavailable')); }}>Copy page link</DropdownMenuItem>}
+      {kind === 'page' && <DropdownMenuItem onClick={() => { void window.navigator.clipboard.writeText(new URL(notebookPageLink(item.id), window.location.origin).href).then(() => setAnnouncement('Page link copied')).catch(() => setError('Clipboard unavailable')); }}>Copy page link</DropdownMenuItem>}
       {tree?.permissions.edit && kind === 'page' && <DropdownMenuItem onClick={() => open({ action: 'rename', kind, item })}>Rename page</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'page' && <DropdownMenuItem onClick={() => open({ action: 'rename', kind, item })}>Rename / color</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'move', kind, item })}>Move…</DropdownMenuItem>}
@@ -220,7 +237,10 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     </header>
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
     <div className="nb-body"><aside className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><main className="nb-main">
-      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
+      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} onRejoin={() => {
+        const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
+        syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
+      }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
     </main></div>
     <Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" className="w-[min(90vw,350px)]"><SheetHeader><SheetTitle>Notebooks</SheetTitle><SheetDescription>Shared pages in this workspace</SheetDescription></SheetHeader><div className="nb-drawer">{explorer}</div></SheetContent></Sheet>
     <Dialog open={!!dialog} onOpenChange={v => { if (!v && !busy) setDialog(null); }}><DialogContent><DialogHeader><DialogTitle>{dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'move' ? 'Move' : dialog?.action === 'rename' ? 'Rename' : 'New'} {dialog?.kind}</DialogTitle><DialogDescription>{dialog?.action === 'delete' ? `“${dialog.item?.title}” and its descendants will be hidden. Their retained data can be restored from trash.` : 'Changes are shared with your team. Protected content is available only to team admins.'}</DialogDescription></DialogHeader>

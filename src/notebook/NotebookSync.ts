@@ -3,6 +3,7 @@ import { ApiError, apiJson } from '../services/api';
 import { Awareness, applyAwarenessUpdate } from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import { readNotebookJournal, writeNotebookJournal, deleteNotebookJournal, type NotebookJournal } from './offlineJournal';
+import { registerNotebookSession } from './notebookRuntime';
 
 export type SyncStatus = 'joining' | 'saved' | 'saving' | 'offline' | 'conflict' | 'unavailable' | 'error';
 export interface SyncResponse {
@@ -41,8 +42,13 @@ export class NotebookSync {
   private cached: NotebookJournal | undefined;
   private revalidate = false;
   private detached = false;
+  private workspaceChanged = false;
   private journalKey: string | undefined;
+  private unregister: () => void;
+  private unload = (event: BeforeUnloadEvent) => { if (this.pending && !this.locallyDurable) { event.preventDefault(); event.returnValue = ''; } };
   constructor(readonly pageId: number, readonly scope?: { memberId: number; teamId: number }) {
+    this.unregister = registerNotebookSession(this);
+    if (typeof window !== 'undefined') window.addEventListener('beforeunload', this.unload);
     this.journalKey = scope ? `${scope.memberId}:${scope.teamId}:${pageId}` : undefined;
     this.doc.on('update', (_update: Uint8Array, origin: unknown) => {
       if (origin === this) return;
@@ -78,7 +84,8 @@ export class NotebookSync {
   }
   private async purgeJournal() {
     if (!this.journalKey) return;
-    try { await deleteNotebookJournal(this.journalKey); } catch { /* unavailable storage cannot retain an entry */ }
+    try { await deleteNotebookJournal(this.journalKey); }
+    catch { this.storageError = 'This device could not remove its offline copy. Clear notebook site storage before sharing this device.'; this.emit(); }
   }
   async persist(): Promise<boolean> {
     if (!this.scope || !this.journalKey || !this.data || ['conflict','unavailable','error'].includes(this.status)) return false;
@@ -131,7 +138,7 @@ export class NotebookSync {
         const hasRecovery = this.pending || this.cached?.pending;
         if (res.protected) await this.purgeJournal();
         if (hasRecovery && oldEpoch && oldEpoch !== res.epoch) {
-          if (this.cached && !this.data) { Y.applyUpdate(this.doc, decodeBytes(this.cached.state), this); if (this.cached.pending) this.generation++; }
+          if (this.cached && !this.data) { Y.applyUpdate(this.doc, decodeBytes(this.cached.state), this); if (this.cached.pending) this.generation++; this.durableGeneration = this.generation; }
           this.data = res; this.cached = undefined; this.status = 'conflict';
           this.error = 'This page was restored or replaced. Download your unsaved changes before rejoining.';
           return;
@@ -171,13 +178,14 @@ export class NotebookSync {
           // Access loss removes editor content immediately; no protected source
           // or stale title survives in this provider or a browser cache.
           this.status = 'unavailable'; this.data = null;
+          this.acknowledged = this.generation; this.unregister();
           await this.purgeJournal(); this.cached = undefined;
           this.doc.transact(() => {
             this.doc.getXmlFragment('prosemirror').delete(0, this.doc.getXmlFragment('prosemirror').length);
             this.doc.getMap('meta').clear();
           }, this);
           this.doc.destroy();
-        } else if (e instanceof ApiError && e.status === 409) { this.status = 'conflict'; if (!e.body?.workspaceChanged) await this.purgeJournal(); }
+        } else if (e instanceof ApiError && e.status === 409) { this.status = 'conflict'; this.workspaceChanged = !!e.body?.workspaceChanged; if (this.data?.protected) await this.purgeJournal(); }
         else if (e instanceof ApiError && e.status < 500) this.status = 'error';
         else { this.restoreCached(); this.revalidate = true; this.status = 'offline'; this.schedule(5_000); }
       } finally { this.running = undefined; this.emit(); if (this.detached && this.status === 'saved' && !this.pending) this.destroy(); }
@@ -191,6 +199,7 @@ export class NotebookSync {
     return !this.pending && this.status === 'saved';
   }
   retry() { if (this.status === 'offline') { this.schedule(0); } }
+  resume() { this.detached = false; if (this.workspaceChanged) { this.workspaceChanged = false; this.revalidate = true; this.status = 'offline'; } if (!['conflict','error','unavailable'].includes(this.status)) this.schedule(0); }
   async discardRecovery() { await this.purgeJournal(); this.acknowledged = this.generation; this.destroy(); }
   async release() {
     if (!this.pending) { this.destroy(); return; }
@@ -199,5 +208,5 @@ export class NotebookSync {
     await this.persist(); this.detached = true;
     await this.flush();
   }
-  destroy() { this.stopped = true; clearTimeout(this.timer); this.abort.abort(); this.listeners.clear(); this.events.clear(); this.awareness.destroy(); this.doc.destroy(); }
+  destroy() { if (this.stopped) return; this.stopped = true; this.unregister(); if (typeof window !== 'undefined') window.removeEventListener('beforeunload', this.unload); clearTimeout(this.timer); this.abort.abort(); this.listeners.clear(); this.events.clear(); this.awareness.destroy(); this.doc.destroy(); }
 }

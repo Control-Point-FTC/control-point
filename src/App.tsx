@@ -852,6 +852,7 @@ export default function App() {
     const onUnauthorized = () => {
       clearDrafts(); // a half-written form never follows a session to the next user
       clearOfflineData();
+      void clearNotebookData().catch(() => { /* Storage failure must not keep a revoked session signed in. */ });
       setIsLoggedIn(false);
       setCurrentUser(null);
       setSessionId(null);
