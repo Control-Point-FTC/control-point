@@ -4708,6 +4708,7 @@ async function startServer() {
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_links WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },

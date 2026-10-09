@@ -40,6 +40,62 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('indexes stable page/block links and filters backlinks by inherited access', async () => {
+    const target = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const linked = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'See drive note', marks: [{ type: 'link', attrs: { href: `/notebook?page=${target.id}&block=stable-block` } }] }] }] };
+    const visible = await page({ title: 'Public source', content: linked });
+    const secret = await page({ title: 'Secret source', content: linked, protected: true }, adminSession);
+    expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).toEqual([visible.id]);
+    expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).toEqual([visible.id, secret.id]);
+    expect((await store.backlinks(ctx(admin, 'bruno'), target.id)).map(p => p.id)).toEqual([visible.id]);
+    expect((await get(`/pages/${target.id}/backlinks`, otherSession)).status).toBe(404);
+    await put(`/pages/${visible.id}`, { title: 'Renamed source', baseRevision: 1 });
+    expect((await get(`/pages/${target.id}/backlinks`)).body[0]).toMatchObject({ title: 'Renamed source', targetBlockId: 'stable-block' });
+    await put(`/pages/${visible.id}`, { content: { type: 'doc', content: [{ type: 'paragraph' }] }, baseRevision: 2 });
+    expect((await get(`/pages/${target.id}/backlinks`)).body).toEqual([]);
+    const copy = (await post(`/pages/${secret.id}/duplicate`, {}, adminSession)).body;
+    expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).toContain(copy.id);
+    await del(`/pages/${secret.id}`);
+    expect((await get(`/pages/${target.id}/backlinks`, adminSession)).body.map((p: any) => p.id)).not.toContain(secret.id);
+  });
+  it('updates backlinks from durable collaboration edits', async () => {
+    const target = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const source = await page({ content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Reference' }] }] } });
+    const joined = (await post(`/pages/${source.id}/sync`, {})).body;
+    const d = new Y.Doc();
+    try {
+      Y.applyUpdate(d, Buffer.from(joined.update, 'base64'));
+      const text = (d.getXmlFragment('prosemirror').get(0) as Y.XmlElement).get(0) as Y.XmlText;
+      text.format(0, 9, { link: { href: `/notebook?page=${target.id}` } });
+      expect((await post(`/pages/${source.id}/sync`, { epoch: joined.epoch, update: Buffer.from(Y.encodeStateAsUpdate(d)).toString('base64') })).status).toBe(200);
+      expect((await get(`/pages/${target.id}/backlinks`)).body.map((p: any) => p.id)).toContain(source.id);
+    } finally { d.destroy(); }
+  });
+  it('uses verified teammate identities for presence and removes revoked protected viewers', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] }, protected: true }, adminSession);
+    const joined = await post(`/pages/${p.id}/sync`, { clientId: 123, name: 'Impersonation' }, adminSession);
+    expect(joined.body.peers).toEqual([expect.objectContaining({ clientId: 123, memberId: admin, name: 'Admin' })]);
+    expect((await post(`/pages/${p.id}/sync`, { clientId: 124 }, userSession)).status).toBe(404);
+    const secondAdmin = await seedMember(t.db, team, 'Second admin', 'second-admin@notebook.test', 'admin');
+    const session = await t.session(secondAdmin);
+    expect((await post(`/pages/${p.id}/sync`, { clientId: 124 }, session)).body.peers).toHaveLength(2);
+    expect((await post(`/pages/${p.id}/sync`, { clientId: 123 }, session)).status).toBe(409);
+    await t.db.execute({ sql: "UPDATE members SET account_type='student' WHERE id=?", args: [secondAdmin] });
+    const current = await post(`/pages/${p.id}/sync`, { clientId: 123 }, adminSession);
+    expect(current.body.peers.map((p: any) => p.memberId)).toEqual([admin]);
+  });
+  it('rejects malformed cursors without applying the accompanying text update', async () => {
+    const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const joined = (await post(`/pages/${p.id}/sync`, { clientId: 234 })).body;
+    const d = new Y.Doc();
+    try {
+      Y.applyUpdate(d, Buffer.from(joined.update, 'base64'));
+      d.getMap('meta').set('title', 'Must not commit');
+      expect((await post(`/pages/${p.id}/sync`, { epoch: joined.epoch, clientId: -1, update: Buffer.from(Y.encodeStateAsUpdate(d)).toString('base64') })).status).toBe(400);
+      expect((await get(`/pages/${p.id}`)).body.title).toBe(p.title);
+      expect((await post(`/pages/${p.id}/sync`, { clientId: 234, cursor: { anchor: null, head: null } })).status).toBe(400);
+    } finally { d.destroy(); }
+  });
   it('merges concurrent rich-text edits and survives a new store instance without duplicating initial text', async () => {
     const p = await page({ content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Drive' }] }] } });
     const joined = await post(`/pages/${p.id}/sync`, {});

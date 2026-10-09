@@ -86,7 +86,7 @@ const ShadedCell = TableCell.extend({ addAttributes() { return { ...this.parent?
 const ShadedHeader = TableHeader.extend({ addAttributes() { return { ...this.parent?.(), ...shading }; } });
 
 /** Shared by the real editor and server conversion: schema drift loses data. */
-export function notebookExtensions(collaborative = false) {
+export function notebookExtensions(collaborative = false, updateDocument = true) {
   return [
     StarterKit.configure({ undoRedo: collaborative ? false : { depth: 100 }, link: { openOnClick: false, HTMLAttributes: { rel: 'noreferrer', target: '_blank' }, isAllowedUri: safeNotebookLink } }),
     TextStyleKit.configure({ fontFamily: false, fontSize: false, color: false, backgroundColor: false }),
@@ -95,7 +95,7 @@ export function notebookExtensions(collaborative = false) {
     Highlight.configure({ multicolor: true }), Subscript, Superscript,
     TaskList, TaskItem.configure({ nested: true }),
     Table.configure({ resizable: true }), TableRow, ShadedCell, ShadedHeader,
-    UniqueID.configure({ types: BLOCK_TYPES }), Blocks,
+    UniqueID.configure({ types: BLOCK_TYPES, updateDocument }), Blocks,
   ];
 }
 export const notebookSchema = getSchema(notebookExtensions(true));

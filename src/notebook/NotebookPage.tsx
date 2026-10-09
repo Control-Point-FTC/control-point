@@ -84,7 +84,7 @@ function TeamNotebook({ teamId }: { teamId?: number | null }) {
     if (current?.pending && !await current.flush()) { setError('Your changes have not reached the server. Reconnect or download recovery changes before leaving this page.'); return false; }
     return true;
   };
-  const pick = async (id: number) => { if (!await leave()) return; setParams({ page: String(id) }); setDrawer(false); setError(''); };
+  const pick = async (id: number, blockId?: string) => { if (!await leave()) return; setParams({ page: String(id), ...(blockId ? { block: blockId } : {}) }); setDrawer(false); setError(''); };
   const onTitle = useCallback((title: string) => { const id = syncRef.current?.pageId; setTree(t => t ? { ...t, pages: t.pages.map(p => p.id === id ? { ...p, title } : p) } : t); }, []);
   const open = (value: EditDialog) => {
     setName(value.action === 'create' ? '' : value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
@@ -163,7 +163,7 @@ function TeamNotebook({ teamId }: { teamId?: number | null }) {
     </header>
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
     <div className="nb-body"><aside className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><main className="nb-main">
-      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} /> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
+      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} /> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
     </main></div>
     <Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" className="w-[min(90vw,350px)]"><SheetHeader><SheetTitle>Notebooks</SheetTitle><SheetDescription>Shared pages in this workspace</SheetDescription></SheetHeader><div className="nb-drawer">{explorer}</div></SheetContent></Sheet>
     <Dialog open={!!dialog} onOpenChange={v => { if (!v && !busy) setDialog(null); }}><DialogContent><DialogHeader><DialogTitle>{dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'move' ? 'Move' : dialog?.action === 'rename' ? 'Rename' : 'New'} {dialog?.kind}</DialogTitle><DialogDescription>{dialog?.action === 'delete' ? `“${dialog.item?.title}” and its descendants will be hidden. Their retained data can be restored from trash.` : 'Changes are shared with your team. Protected content is available only to team admins.'}</DialogDescription></DialogHeader>

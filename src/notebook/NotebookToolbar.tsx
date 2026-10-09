@@ -1,8 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { NOTEBOOK_FONTS, NOTEBOOK_TAGS } from './editorSchema';
+import type { NotebookPageItem } from './types';
+import { notebookPageLink } from './pageLinks';
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../components/ui-kit';
 
-export function NotebookToolbar({ editor, disabled }: { editor: Editor | null; disabled: boolean }) {
+export function NotebookToolbar({ editor, disabled, pages, pageId }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number }) {
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [href, setHref] = useState('');
+  const [label, setLabel] = useState('');
+  const [notice, setNotice] = useState('');
   if (!editor) return null;
   const action = (label: string, run: () => void, active = false, desktop = false) => <button
     type="button" title={label} aria-label={label} aria-pressed={active}
@@ -28,6 +35,7 @@ export function NotebookToolbar({ editor, disabled }: { editor: Editor | null; d
     {action('Highlight', () => chain().toggleHighlight({ color: '#eab308' }).run(), editor.isActive('highlight'))}
     {action('Checklist', () => chain().toggleTaskList().run(), editor.isActive('taskList'))}
     {action('Bullets', () => chain().toggleBulletList().run(), editor.isActive('bulletList'))}
+    {action('Link', () => { setHref(editor.getAttributes('link').href ?? ''); setLabel(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)); setLinkOpen(true); }, editor.isActive('link'))}
     {action('Numbered', () => chain().toggleOrderedList().run(), editor.isActive('orderedList'), true)}
     <select aria-label="Paragraph style" disabled={disabled} value={editor.isActive('heading', { level: 1 }) ? '1' : editor.isActive('heading', { level: 2 }) ? '2' : editor.isActive('heading', { level: 3 }) ? '3' : 'paragraph'} onChange={e => e.target.value === 'paragraph' ? chain().setParagraph().run() : chain().toggleHeading({ level: Number(e.target.value) as 1|2|3 }).run()}>
       <option value="paragraph">Body</option><option value="1">Title</option><option value="2">Heading</option><option value="3">Subheading</option>
@@ -43,6 +51,12 @@ export function NotebookToolbar({ editor, disabled }: { editor: Editor | null; d
     {action('Clear formatting', () => chain().unsetAllMarks().clearNodes().run(), false, true)}
     <select aria-label="Block tag" className="nb-desktop" disabled={disabled} value="" onChange={e => tag(e.target.value)}><option value="">Tag…</option>{NOTEBOOK_TAGS.map(t => <option key={t} value={t}>{t}</option>)}<option value="">Clear tag</option></select>
     {action('Table', () => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(), false, true)}
+    {action('Copy block link', () => {
+      let blockId: string | null = null;
+      for (let depth = editor.state.selection.$from.depth; depth > 0; depth--) { const id = editor.state.selection.$from.node(depth).attrs.id; if (typeof id === 'string') { blockId = id; break; } }
+      if (!blockId) { setNotice('Select a text block first.'); return; }
+      void navigator.clipboard.writeText(new URL(notebookPageLink(pageId, blockId), window.location.origin).href).then(() => setNotice('Block link copied.')).catch(() => setNotice('Clipboard is unavailable.'));
+    }, false, true)}
     {editor.isActive('table') && <>
       {action('Add row', () => chain().addRowAfter().run(), false, true)}
       {action('Add column', () => chain().addColumnAfter().run(), false, true)}
@@ -54,5 +68,19 @@ export function NotebookToolbar({ editor, disabled }: { editor: Editor | null; d
       {action('Delete table', () => chain().deleteTable().run(), false, true)}
       <label className="nb-desktop">Cell fill <input aria-label="Cell shading" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setCellAttribute('backgroundColor', e.target.value).run()} /></label>
     </>}
+    {notice && <span role="status" className="nb-small">{notice}</span>}
+    <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
+      <form className="nb-form" onSubmit={e => {
+        e.preventDefault();
+        if (editor.state.selection.empty) chain().insertContent({ type: 'text', text: label || href, marks: [{ type: 'link', attrs: { href } }] }).run();
+        else chain().extendMarkRange('link').setLink({ href }).run();
+        setLinkOpen(false);
+      }}>
+        <Label htmlFor="nb-link-page">Notebook page</Label><select id="nb-link-page" value="" onChange={e => { const p = pages.find(p => p.id === Number(e.target.value)); if (p) { setHref(notebookPageLink(p.id)); setLabel(p.title); } }}><option value="">Choose a page…</option>{pages.map(p => <option key={p.id} value={p.id}>{p.title}{p.protected ? ' · Admin only' : ''}</option>)}</select>
+        <Label htmlFor="nb-link-url">Address</Label><Input id="nb-link-url" value={href} required onChange={e => setHref(e.target.value)} placeholder="https://… or /notebook?page=…" />
+        <Label htmlFor="nb-link-label">Link text</Label><Input id="nb-link-label" value={label} onChange={e => setLabel(e.target.value)} />
+        <DialogFooter><Button type="button" variant="ghost" onClick={() => { chain().unsetLink().run(); setLinkOpen(false); }}>Remove link</Button><Button type="submit" disabled={!href.trim()}>Insert link</Button></DialogFooter>
+      </form>
+    </DialogContent></Dialog>
   </div>;
 }

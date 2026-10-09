@@ -7,6 +7,7 @@ import { dbClient } from "../db.js";
 import { randomUUID } from 'node:crypto';
 import * as Y from 'yjs';
 import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
+import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -22,6 +23,8 @@ const MAX_DEPTH = 6;
 // operations per client so a second BEGIN cannot block the first one's commit
 // on the same JS event loop. Other server processes still need bounded retries.
 const queues = new WeakMap<Client, Promise<void>>();
+type Presence = { memberId: number; clientId: number; cursor: unknown; seen: number; epoch: string };
+const presence = new WeakMap<Client, Map<string, Map<number, Presence>>>();
 const notFound = () => new NotebookError("Notebook item unavailable", 404);
 function id(value: unknown): number {
   const n = Number(value);
@@ -165,6 +168,10 @@ class Session {
       SELECT team_id,id,title,content,canvas,revision,updated_by,updated_at FROM notebook_pages WHERE id=? AND team_id=?`, row.id, this.ctx.teamId);
     await this.run("DELETE FROM notebook_versions WHERE page_id=? AND team_id=? AND id NOT IN (SELECT id FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC LIMIT 50)", row.id, this.ctx.teamId, row.id, this.ctx.teamId);
   }
+  async indexLinks(pageId: number, content: unknown) {
+    await this.run('DELETE FROM notebook_links WHERE team_id=? AND source_page_id=?', this.ctx.teamId, pageId);
+    for (const link of notebookPageReferences(content)) await this.run('INSERT INTO notebook_links(team_id,source_page_id,target_page_id,target_block_id) VALUES(?,?,?,?)', this.ctx.teamId, pageId, link.pageId, link.blockId);
+  }
   async save(pageId: number, body: Row) {
     this.require("edit_notebook");
     const row = await this.item("page", pageId);
@@ -185,6 +192,7 @@ class Session {
         await this.run('UPDATE notebook_pages SET crdt_state=? WHERE id=? AND team_id=?', Y.encodeStateAsUpdate(shared), row.id, this.ctx.teamId);
       } finally { shared.destroy(); }
     } else await this.run('UPDATE notebook_pages SET crdt_state=NULL,crdt_epoch=? WHERE id=? AND team_id=?', randomUUID(), row.id, this.ctx.teamId);
+    if (body.content !== undefined) await this.indexLinks(row.id, JSON.parse(content));
     return this.page(await this.item("page", row.id));
   }
 }
@@ -265,10 +273,59 @@ export class NotebookStore {
       if (changed) {
         await s.snapshot(row);
         await s.run('UPDATE notebook_pages SET content=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(row.canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
+        await s.indexLinks(row.id, json.content);
       }
       if (!row.crdt_state || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
+      if (!row.crdt_state && !changed) await s.indexLinks(row.id, json.content);
       const current = changed ? await s.item('page', pageId) : row;
-      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: await s.isProtected(row), editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at };
+      const protectedPage = await s.isProtected(row);
+      const peers: Row[] = [];
+      if (body.clientId !== undefined) {
+        if (!Number.isInteger(body.clientId) || body.clientId < 0 || body.clientId > 0xffffffff) throw new NotebookError('Invalid collaborator identity');
+        let cursor: unknown = null;
+        if (body.cursor != null) {
+          if (typeof body.cursor !== 'object' || JSON.stringify(body.cursor).length > 2000) throw new NotebookError('Invalid collaborator cursor');
+          const parse = (p: any) => {
+            if (!p || typeof p !== 'object' || Array.isArray(p) || Object.keys(p).some(k => !['type','tname','item','assoc'].includes(k))) throw new NotebookError('Invalid collaborator cursor');
+            for (const key of ['type', 'item']) if (p[key] != null) {
+              const value = p[key];
+              if (typeof value !== 'object' || Object.keys(value).some(k => !['client','clock'].includes(k)) || !Number.isInteger(value.client) || value.client < 0 || value.client > 0xffffffff || !Number.isSafeInteger(value.clock) || value.clock < 0) throw new NotebookError('Invalid collaborator cursor');
+            }
+            if ((p.tname != null && p.tname !== 'prosemirror') || (p.assoc != null && ![-1,0,1].includes(p.assoc))) throw new NotebookError('Invalid collaborator cursor');
+            return Y.relativePositionToJSON(Y.createRelativePositionFromJSON(p));
+          };
+          cursor = { anchor: parse(body.cursor.anchor), head: parse(body.cursor.head) };
+        }
+        const rooms = presence.get(this.client) ?? new Map<string, Map<number, Presence>>();
+        presence.set(this.client, rooms);
+        const now = Date.now();
+        for (const [key, room] of rooms) {
+          for (const [clientId, peer] of room) if (now - peer.seen > 20_000) room.delete(clientId);
+          if (!room.size) rooms.delete(key);
+        }
+        const key = `${ctx.teamId}:${pageId}`;
+        const room = rooms.get(key) ?? new Map<number, Presence>();
+        if (!rooms.has(key) && rooms.size >= 200) throw new NotebookError('Too many active collaboration rooms', 429);
+        const prior = room.get(body.clientId);
+        if (prior && prior.memberId !== ctx.memberId) throw new NotebookError('Collaborator identity collision; reopen this page', 409);
+        if (!prior && room.size >= 64) throw new NotebookError('This page has reached its collaborator limit', 429);
+        room.set(body.clientId, { memberId: ctx.memberId, clientId: body.clientId, cursor, seen: now, epoch });
+        rooms.set(key, room);
+        // Names and permissions come from current membership, never client
+        // awareness payloads. A revoked admin must disappear from a protected
+        // page before any viewer receives another cursor/presence response.
+        const ids = [...new Set([...room.values()].map(p => p.memberId))];
+        const members = await s.all(`SELECT id,name,account_type FROM members WHERE team_id=? AND COALESCE(is_active,1)=1 AND id IN (${ids.map(() => '?').join(',')})`, ctx.teamId, ...ids);
+        const roles = protectedPage ? await s.all(`SELECT mr.member_id,r.permissions FROM roles r JOIN member_roles mr ON r.id=mr.role_id WHERE r.team_id=? AND mr.member_id IN (${ids.map(() => '?').join(',')})`, ctx.teamId, ...ids) : [];
+        const admins = new Set(members.filter(m => m.account_type === 'admin').map(m => m.id));
+        for (const role of roles) { try { const keys = JSON.parse(role.permissions); if (Array.isArray(keys) && (keys.includes('*') || keys.includes('manage_members'))) admins.add(role.member_id); } catch { /* malformed grants nothing */ } }
+        for (const [clientId, peer] of room) {
+          const member = members.find(m => m.id === peer.memberId);
+          if (!member || peer.epoch !== epoch || (protectedPage && !admins.has(peer.memberId))) { room.delete(clientId); continue; }
+          peers.push({ clientId, memberId: member.id, name: String(member.name).slice(0, 80), color: ['#3b82f6','#8b5cf6','#ec4899','#06b6d4','#22c55e','#f97316'][member.id % 6], cursor: peer.cursor, clock: peer.seen });
+        }
+      }
+      return { epoch, update: Buffer.from(Y.encodeStateAsUpdate(doc, vector)).toString('base64'), vector: Buffer.from(Y.encodeStateVector(doc)).toString('base64'), revision: current.revision, title: nextTitle, protected: protectedPage, editable: s.can('edit_notebook'), updatedBy: current.updated_by, updatedAt: current.updated_at, peers };
     } catch (e) {
       if (e instanceof NotebookError) throw e;
       throw new NotebookError(e instanceof Error ? e.message : 'Invalid collaboration document', 422);
@@ -304,6 +361,7 @@ export class NotebookStore {
       result = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)", ctx.teamId, section.id, parentId, name, body.protected ? 1 : 0, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), section.id, parentId, ctx.memberId, ctx.memberId, now, now);
     }
     const row = await s.item(kind, Number(result.lastInsertRowid));
+    if (kind === 'page') await s.indexLinks(row.id, JSON.parse(row.content));
     return kind === "page" ? s.page(row) : { id: row.id, title: row.title, color: row.color, notebookId: row.notebook_id, protected: !!row.protected };
   }); }
   update(ctx: NotebookContext, kind: "notebook" | "section", itemId: number, body: Row) { return this.session(ctx, async s => {
@@ -378,7 +436,15 @@ export class NotebookStore {
     const now = new Date().toISOString();
     const copy = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)",
       ctx.teamId, row.section_id, row.parent_id, row.title.slice(0, 193) + " (copy)", await s.isProtected(row) ? 1 : 0, row.content, row.canvas, row.plain, row.section_id, row.parent_id, ctx.memberId, ctx.memberId, now, now);
+    await s.indexLinks(Number(copy.lastInsertRowid), JSON.parse(row.content));
     return s.page(await s.item("page", Number(copy.lastInsertRowid)));
+  }); }
+  backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
+    await s.item('page', pageId);
+    const tree = await s.tree();
+    const references = await s.all('SELECT source_page_id,target_block_id FROM notebook_links WHERE team_id=? AND target_page_id=?', ctx.teamId, pageId);
+    const visible = new Map(tree.pages.map(p => [p.id, p]));
+    return references.filter(r => visible.has(r.source_page_id)).slice(0, 200).map(r => ({ ...visible.get(r.source_page_id), targetBlockId: r.target_block_id }));
   }); }
   move(ctx: NotebookContext, kind: Kind, itemId: number, to: Row, index: unknown) { return this.session(ctx, async s => {
     s.require("organize_notebook");
@@ -480,6 +546,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   }
   app.get("/api/notebook/pages/:id", handle((ctx, req) => store.page(ctx, id(req.params.id))));
   app.post('/api/notebook/pages/:id/sync', handle((ctx, req) => store.sync(ctx, id(req.params.id), req.body ?? {})));
+  app.get('/api/notebook/pages/:id/backlinks', handle((ctx, req) => store.backlinks(ctx, id(req.params.id))));
   app.put("/api/notebook/pages/:id", handle((ctx, req) => store.save(ctx, id(req.params.id), req.body ?? {})));
   app.post("/api/notebook/pages/:id/duplicate", handle((ctx, req) => store.duplicate(ctx, id(req.params.id))));
   app.post("/api/notebook/move", handle((ctx, req) => {
