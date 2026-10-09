@@ -54,7 +54,7 @@ export function NotebookHistory({sync,onRejoin}:{sync:NotebookSync;onRejoin?:()=
       const selected=versions.find(version=>String(version.id)===left);
       if(!await confirmDialog({title:`Restore revision ${selected?.revision}?`,message:'The current page will be saved as a revision before replacement. Page protection stays in place. Other connected editors will need to rejoin.',confirmLabel:'Restore revision'}))return;
       abort.signal.throwIfAborted();await apiJson(`${endpoint}/versions/${Number(left)}/restore`,{method:'POST',headers:headers(),body:JSON.stringify({baseRevision:current.revision}),signal:abort.signal});
-      abort.signal.throwIfAborted();setInspection(null);onRejoin();
+      abort.signal.throwIfAborted();setInspection(null);sync.destroy();onRejoin();
     }catch(e){if(!abort.signal.aborted)setError(e instanceof Error?e.message:'Cannot restore this revision.');}
     finally{if(!abort.signal.aborted)setBusy(false);}
   };

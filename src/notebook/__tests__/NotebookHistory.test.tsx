@@ -9,7 +9,7 @@ vi.mock('../../components/dialog',()=>({confirmDialog:vi.fn()}));
 const doc=(text:string)=>({type:'doc',content:[{type:'paragraph',attrs:{id:'stable'},content:[{type:'text',text}]}]});
 const old={id:8,revision:2,title:'Old title',content:doc('Old ratio'),canvas:{},authorName:'Ana',savedAt:'2026-10-08T12:00:00Z'};
 function mount(editable=true){
-  const sync:any={pageId:4,scope:{teamId:9},data:{editable},pending:false,flush:vi.fn().mockResolvedValue(true)};
+  const sync:any={pageId:4,scope:{teamId:9},data:{editable},pending:false,flush:vi.fn().mockResolvedValue(true),destroy:vi.fn()};
   const rejoin=vi.fn();
   vi.mocked(apiJson).mockImplementation(async url=>url.endsWith('/versions')?[old]:url.endsWith('/versions/8')?old:{revision:7,title:'Current title',content:doc('New ratio'),canvas:{}} as any);
   render(<NotebookHistory sync={sync} onRejoin={rejoin}/>);return {sync,rejoin};
@@ -31,6 +31,7 @@ describe('revision viewer and restore',()=>{
     const {sync,rejoin}=mount();sync.pending=true;vi.mocked(confirmDialog).mockResolvedValue(true);
     await screen.findByRole('option',{name:'Revision 2 · Ana'});fireEvent.click(screen.getByRole('button',{name:'Restore revision'}));
     await waitFor(()=>expect(rejoin).toHaveBeenCalledOnce());expect(sync.flush).toHaveBeenCalledOnce();
+    expect(sync.destroy).toHaveBeenCalledOnce();expect(sync.destroy.mock.invocationCallOrder[0]).toBeLessThan(rejoin.mock.invocationCallOrder[0]);
     expect(confirmDialog).toHaveBeenCalledOnce();
     expect(vi.mocked(apiJson).mock.calls.find(([url])=>url.endsWith('/restore'))?.[1]).toMatchObject({method:'POST',body:JSON.stringify({baseRevision:7})});
   });
