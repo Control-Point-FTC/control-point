@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { fireEvent,render,screen,act,cleanup } from '@testing-library/react';
-import { useNotebookUpload } from '../NotebookAttachments';
+import { useNotebookUpload,attachmentOwnsInput } from '../NotebookAttachments';
 import { validatedNotebookDocument } from '../editorSchema';
 import { notebookSchema } from '../editorSchema';
 import {DOMParser,DOMSerializer} from '@tiptap/pm/model';
@@ -16,6 +16,12 @@ const sync:any={pageId:9,scope:{teamId:3},data:{editable:true},status:'saved'};
 function Harness({editor}:any){const upload=useNotebookUpload(sync,editor);return <>{upload.controls}</>;}
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('notebook attachment upload',()=>{
+  it('routes preview image gestures to drawing while controls and nested PDFs keep their input',()=>{
+    const parent=vi.fn();render(<div onPointerDown={parent}><figure onPointerDown={event=>{if(attachmentOwnsInput(event.target))event.stopPropagation();}}><img alt="Image preview"/><button>Download file</button><label>Image width<input aria-label="Resize image"/></label><div className="nb-pdf-printout"><canvas data-testid="pdf-page"/></div></figure></div>);
+    fireEvent.pointerDown(screen.getByAltText('Image preview'));expect(parent).toHaveBeenCalledOnce();
+    fireEvent.pointerDown(screen.getByText('Download file'));fireEvent.pointerDown(screen.getByLabelText('Resize image'));fireEvent.pointerDown(screen.getByTestId('pdf-page'));
+    expect(parent).toHaveBeenCalledOnce();
+  });
   it('retains a successful upload and retries insertion without another upload',()=>{
     vi.stubGlobal('XMLHttpRequest',Upload);const run=vi.fn(()=>false),chain:any={focus:()=>chain,insertContent:()=>chain,run};
     render(<Harness editor={{chain:()=>chain,isDestroyed:false}}/>);
