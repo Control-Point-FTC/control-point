@@ -57,6 +57,25 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [drawingScope,setDrawingScope]=useState<string|null>(null);
   const [canvasTarget, setCanvasTarget] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
+  const [printing,setPrinting]=useState(false),[printProgress,setPrintProgress]=useState('');
+  const printAbort=React.useRef<AbortController|null>(null),closePrintPreview=React.useRef<(()=>void)|null>(null),paper=React.useRef<HTMLElement|null>(null);
+  useEffect(()=>()=>{printAbort.current?.abort();closePrintPreview.current?.();},[sync]);
+  const printPage=async()=>{
+    if(printing)return;
+    const abort=new AbortController();printAbort.current=abort;setPrinting(true);setPrintProgress('Preparing notebook page…');
+    try{
+      if(sync.pending && !await sync.flush())throw new Error('Save your changes before printing.');
+      const headers=sync.scope?{'X-CP-Notebook-Team':String(sync.scope.teamId)}:undefined;
+      const snapshot=await apiJson<NotebookPageData>(`/api/notebook/pages/${sync.pageId}`,{headers,cache:'no-store',signal:abort.signal});
+      const [{prepareNotebookPrint},{showAnnotatedPdfPrint}]=await Promise.all([import('./notebookPrint'),import('./pdfPrint')]);
+      const stage=paper.current?.querySelector<HTMLElement>('.nb-canvas-stage');
+      const markup=await prepareNotebookPrint(sync,snapshot,abort.signal,setPrintProgress,{width:stage?.offsetWidth||800,height:stage?.scrollHeight||600});
+      await apiJson(`/api/notebook/pages/${sync.pageId}`,{headers,cache:'no-store',signal:abort.signal});abort.signal.throwIfAborted();
+      if(['unavailable','conflict','error'].includes(sync.status))throw new Error('Page access changed. Reopen the page before printing.');
+      closePrintPreview.current?.();closePrintPreview.current=showAnnotatedPdfPrint(markup,'Notebook page print preview');setViewError('');setPrintProgress('Notebook print preview ready.');
+    }catch(e){if(!abort.signal.aborted)setViewError(e instanceof Error?e.message:'Cannot prepare this page.');}
+    finally{if(!abort.signal.aborted)setPrinting(false);}
+  };
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
@@ -133,7 +152,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       const panels = {
         ...(!mobile && drawPanel ? { draw: <><button className="nb-tool" onClick={()=>setDrawingScope(null)}>Draw on notebook page</button>{drawPanel}</> } : {}),
         insert: fileUpload.controls,
-        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" onClick={() => window.print()}>Print page</button></>,
+        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
         history: <NotebookHistory sync={sync} />,
         view: <><label>Zoom <select aria-label="Page zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[...new Set([50,75,90,100,110,125,150,175,200,250,300,zoom])].sort((a,b)=>a-b).map(n => <option key={n} value={n}>{n}%</option>)}</select></label><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
@@ -142,7 +161,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}
     {viewError && <div className="nb-alert" role="alert">{viewError}<button aria-label="Dismiss view error" onClick={() => setViewError('')}>×</button></div>}
-    <div className="nb-paper-scroll"><article className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
+    <div className="nb-paper-scroll"><article ref={paper} className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>
