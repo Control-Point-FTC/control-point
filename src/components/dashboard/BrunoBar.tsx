@@ -5,6 +5,8 @@ import '../../i18n';
 import { BrunoMarkdown } from '../BrunoMarkdown';
 import BrunoIcon from '../BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from '../ActionProposalCard';
+import { extractNotebookOps } from '../../services/notebookProposals';
+import { NotebookProposalCard } from '../bruno/NotebookProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
 import {
   streamBuildHelper,
@@ -177,6 +179,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
               <BrunoMarkdown>{stripEventBlocks(lastReply.text)}</BrunoMarkdown>
             </div>
           )}
+          {!busy && lastReply && extractNotebookOps(lastReply.text).length > 0 && <NotebookProposalCard key={messages.length} ops={extractNotebookOps(lastReply.text)} />}
           {proposals.length > 0 && (
             <ActionProposalCard
               proposals={proposals}

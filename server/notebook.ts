@@ -5,8 +5,12 @@
 import type { Client, Transaction } from "@libsql/client";
 import { dbClient } from "../db.js";
 import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import * as Y from 'yjs';
+import { updateYFragment } from '@tiptap/y-tiptap';
+import type { JSONContent } from '@tiptap/core';
 import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.js';
+import { notebookSchema, validatedNotebookDocument } from '../src/notebook/editorSchema.js';
 import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
@@ -19,10 +23,17 @@ import {notebookPurge} from './notebookPurge.js';
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
 }
-export type NotebookContext = { memberId: number; teamId: number; source?: "human" | "bruno" };
+// "bruno" reads only. "bruno_confirmed" is a write the member confirmed on a
+// Bruno proposal card: it carries that member's edit/organize/delete rights
+// and attribution, but sees exactly what Bruno sees, never protected items.
+export type NotebookContext = { memberId: number; teamId: number; source?: "human" | "bruno" | "bruno_confirmed" };
 type Kind = "notebook" | "section" | "page";
 type Row = Record<string, any>;
-type Access = { admin: boolean; permissions: Set<string>; human: boolean };
+type Access = { admin: boolean; permissions: Set<string>; human: boolean; confirmed?: boolean };
+// A batch (one confirmed Bruno card) runs every operation in one transaction.
+// Calls made inside it reuse that session instead of queueing behind it.
+const activeSession = new AsyncLocalStorage<{ store: NotebookStore; session: Session }>();
+const sameContext = (a: NotebookContext, b: NotebookContext) => a.memberId === b.memberId && a.teamId === b.teamId && (a.source ?? "human") === (b.source ?? "human");
 const tables = { notebook: "notebook_books", section: "notebook_sections", page: "notebook_pages" };
 const MAX_PAGES = 20_000;
 const MAX_DEPTH = 6;
@@ -74,7 +85,7 @@ export class Session {
   async run(sql: string, ...args: any[]) { return this.tx.execute({ sql, args }); }
   can(capability: string) { return this.access.admin || this.access.permissions.has(capability); }
   require(capability: string) {
-    if (!this.access.human || !this.can(capability)) throw new NotebookError("Notebook permission required", 403);
+    if (!(this.access.human || this.access.confirmed) || !this.can(capability)) throw new NotebookError("Notebook permission required", 403);
   }
   async item(kind: Kind, itemId: number, includeDeleted = false): Promise<Row> {
     const row = await this.one(`SELECT * FROM ${tables[kind]} WHERE id = ? AND team_id = ?`, id(itemId), this.ctx.teamId);
@@ -220,6 +231,11 @@ export class NotebookStore {
   registerFile(ctx: NotebookContext, pageId: number, fileId: number) { return this.session(ctx,s=>registerNotebookFile(s,pageId,id(fileId))); }
   fileForPage(ctx: NotebookContext, pageId: number, fileId: number) { return this.session(ctx,s=>notebookFileForPage(s,pageId,id(fileId))); }
   private async session<T>(ctx: NotebookContext, fn: (s: Session) => Promise<T>): Promise<T> {
+    const active = activeSession.getStore();
+    if (active?.store === this) {
+      if (!sameContext(active.session.ctx, ctx)) throw new Error("A notebook batch cannot switch principals");
+      return fn(active.session);
+    }
     const prior = queues.get(this.client) ?? Promise.resolve();
     let release!: () => void;
     const done = new Promise<void>(resolve => { release = resolve; });
@@ -245,7 +261,9 @@ export class NotebookStore {
       const permissions = new Set<string>();
       for (const role of roles) { try { const p = JSON.parse(String(role.permissions)); if (Array.isArray(p)) for (const key of p) if (typeof key === "string") permissions.add(key); } catch { /* malformed role grants nothing */ } }
       const admin = member.account_type === "admin" || permissions.has("*") || permissions.has("manage_members");
-      const result = await fn(new Session(tx, ctx, { admin, permissions, human: ctx.source !== "bruno" }));
+      const source = ctx.source ?? "human";
+      const session = new Session(tx, ctx, { admin, permissions, human: source === "human", confirmed: source === "bruno_confirmed" });
+      const result = await activeSession.run({ store: this, session }, () => fn(session));
       await tx.commit();
       return result;
     } catch (e) { await tx.rollback(); throw e; } finally { tx.close(); }
@@ -378,6 +396,7 @@ export class NotebookStore {
     s.require(kind === "page" ? "edit_notebook" : "organize_notebook");
     const name = title(body.title);
     if (body.protected !== undefined && typeof body.protected !== "boolean") throw new NotebookError("Protection must be true or false");
+    if (body.protected && !s.access.human) throw new NotebookError("Team admin required", 403);
     const now = new Date().toISOString();
     let result;
     if (kind === "notebook") {
@@ -551,6 +570,59 @@ export class NotebookStore {
     siblings.splice(Math.min(n, siblings.length), 0, row.id);
     for (let i = 0; i < siblings.length; i++) await s.run(`UPDATE ${tables[kind]} SET position=? WHERE id=? AND team_id=?`, i, siblings[i], ctx.teamId);
     return s.tree();
+  }); }
+  /** Runs `fn` in one transaction: every store call inside it commits or
+   *  rolls back together (one confirmed Bruno card). */
+  batch<T>(ctx: NotebookContext, fn: () => Promise<T>): Promise<T> { return this.session(ctx, () => fn()); }
+  /** batch() keyed by a client receipt: the same key replays the first
+   *  result instead of applying the operations again. */
+  batchOnce<T>(ctx: NotebookContext, key: string, fn: () => Promise<T>): Promise<{ result: T; replayed: boolean }> { return this.session(ctx, async s => {
+    if (!/^[A-Za-z0-9_-]{16,80}$/.test(key)) throw new NotebookError("Invalid confirmation key");
+    const now = new Date();
+    await s.run("DELETE FROM bruno_notebook_receipts WHERE team_id=? AND created_at<?", ctx.teamId, new Date(now.getTime() - 7 * 86_400_000).toISOString());
+    const prior = await s.one("SELECT member_id,result FROM bruno_notebook_receipts WHERE team_id=? AND receipt_key=?", ctx.teamId, key);
+    if (prior) {
+      if (Number(prior.member_id) !== ctx.memberId) throw new NotebookError("This confirmation belongs to another member", 409);
+      return { result: JSON.parse(prior.result) as T, replayed: true };
+    }
+    const result = await fn();
+    await s.run("INSERT INTO bruno_notebook_receipts(team_id,receipt_key,member_id,result,created_at) VALUES(?,?,?,?,?)", ctx.teamId, key, ctx.memberId, JSON.stringify(result), now.toISOString());
+    return { result, replayed: false };
+  }); }
+  /** A confirmed content/title change merged into the live shared document,
+   *  so collaborators' unsynced edits survive (unlike save(), which replaces
+   *  the page and forces open editors to recover). */
+  mergeEdit(ctx: NotebookContext, pageId: number, change: { title?: string; transform?: (content: JSONContent) => JSONContent }) { return this.session(ctx, async s => {
+    s.require('edit_notebook');
+    const row = await s.item('page', pageId);
+    const storedCanvas = JSON.parse(row.canvas);
+    let seed: unknown = storedCanvas;
+    try { validatedCanvas(storedCanvas); } catch { seed = {}; }
+    const doc = row.crdt_state ? new Y.Doc() : seedNotebookDocument(JSON.parse(row.content), row.title, seed);
+    try {
+      if (row.crdt_state) {
+        Y.applyUpdate(doc, new Uint8Array(row.crdt_state));
+        if (!doc.share.has('canvas')) seedCanvas(doc, seed);
+      }
+      const current = notebookDocumentJSON(doc);
+      const nextContent = change.transform ? change.transform(structuredClone(current.content)) : current.content;
+      const valid = validatedNotebookDocument(nextContent);
+      const nextTitle = change.title === undefined ? title(current.title) : title(change.title);
+      doc.transact(() => {
+        if (change.transform) updateYFragment(doc, doc.getXmlFragment('prosemirror'), notebookSchema.nodeFromJSON(valid), { mapping: new Map(), isOMark: new Map() } as any);
+        if (nextTitle !== current.title) doc.getMap('meta').set('title', nextTitle);
+      });
+      const json = notebookDocumentJSON(doc);
+      const content = document(json.content, [], 2_000_000);
+      const state = Y.encodeStateAsUpdate(doc);
+      if (state.length > 6_000_000) throw new NotebookError('Shared document too large; copy it into a new page', 413);
+      await s.snapshot(row);
+      await s.run('UPDATE notebook_pages SET content=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=?,crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=? AND revision=?',
+        content, nextTitle, notebookText(json.content) + ' ' + notebookText(storedCanvas), ctx.memberId, new Date().toISOString(), state, row.crdt_epoch ?? randomUUID(), row.id, ctx.teamId, row.revision);
+      await s.indexLinks(row.id, json.content, storedCanvas);
+      await indexNotebookFiles(s, row.id, json.content, storedCanvas);
+      return s.page(await s.item('page', row.id));
+    } finally { doc.destroy(); }
   }); }
   export(ctx: NotebookContext) { return this.session(ctx, async s => {
     const tree = await s.tree();

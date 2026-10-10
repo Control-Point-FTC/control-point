@@ -11,6 +11,8 @@ import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
 import { KIND_META, itemSummary, type ProposalStatus } from '../../../components/ActionProposalCard';
 import { useProposalContext } from '../../../services/proposalContext';
+import { extractNotebookOps } from '../../../services/notebookProposals';
+import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
 import {
   AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste,
   MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf,
@@ -156,6 +158,7 @@ export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, b
 }) {
   const proposals = useMemo(() => (text ? extractActionProposals(text) : []), [text]);
   const switchTo = useMemo(() => (text ? stripSwitchBlock(text).switchTo : null), [text]);
+  const notebookOps = useMemo(() => (text ? extractNotebookOps(text) : []), [text]);
   const status = proposal?.status || 'pending';
   return (
     <div className="flex gap-3">
@@ -166,6 +169,7 @@ export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, b
         {proposals.length > 0 && status !== 'dismissed' && (
           <ProposalCard proposals={proposals} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
+        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} />}
         {isLastModel && switchTo === 'bruno' && !switchDismissed && !busy && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={onSwitchToBruno}>Yes, switch to Bruno</Button>

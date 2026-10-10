@@ -144,7 +144,10 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     mounted.current = true;
     if (teamId) void loadTree();
     const timer = setInterval(() => { if (teamId) void loadTree(); }, 5000);
-    return () => { mounted.current = false; clearInterval(timer); void syncRef.current?.release(); syncRef.current = null; };
+    // A confirmed Bruno change: show new/moved/renamed pages now, not on the next poll.
+    const onBruno = (event: Event) => { if (teamId && (event as CustomEvent).detail?.types?.includes('notebook')) void loadTree(); };
+    window.addEventListener('bruno-data-changed', onBruno);
+    return () => { mounted.current = false; clearInterval(timer); window.removeEventListener('bruno-data-changed', onBruno); void syncRef.current?.release(); syncRef.current = null; };
   }, [loadTree, teamId]);
   useEffect(() => {
     if (!selected) { void syncRef.current?.release(); syncRef.current = null; setSync(null); return; }

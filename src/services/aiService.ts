@@ -207,8 +207,11 @@ export interface BuildHelperMessage {
 }
 
 /** Remove ```event / ```delete-event / ```outreach blocks (complete or still streaming) from displayed Bruno text. */
+import { stripNotebookBlocks } from "./notebookProposals";
+
 export function stripEventBlocks(text: string): string {
-  return String(text || "").replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "")
+  // Notebook blocks first: their JSON may quote other fences inside strings.
+  return stripNotebookBlocks(String(text || "")).replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "")
     // Scouting lookup requests: the server runs them and appends the results.
     .replace(/```lookup[\s\S]*?(```|$)/g, "").replace(/```remember[\s\S]*?(```|$)/g, "").replace(/```scout-team[\s\S]*?(```|$)/g, "").replace(/```scout-event[\s\S]*?(```|$)/g, "").trim();
 }

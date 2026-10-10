@@ -78,6 +78,8 @@ import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
+import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
+import { NotebookError } from "./server/notebook.js";
 // Bruno's notebook reads (lookups, screen context) use Bruno-scoped access:
 // protected sections/pages are never visible, whoever is asking.
 const brunoNotebookStore = new NotebookStore();
@@ -4714,6 +4716,7 @@ async function startServer() {
       { sql: "DELETE FROM tasks WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM bruno_notebook_receipts WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_mentions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_comments WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_threads WHERE team_id = ?", args: [teamId] },
@@ -12042,6 +12045,8 @@ Rules:
         t = extractBudgetBlock(t).text;
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
+        // Notebook proposals live only on the live confirm card.
+        t = t.replace(/```notebook\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```notebook[\s\S]*$/, "").trim();
         return t;
       };
       // Optional chat persistence: validate access, store the user message now
@@ -12426,6 +12431,29 @@ Rules:
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // Bruno's notebook proposals: the card's preview is described by the server
+  // under Bruno's access; apply runs as the confirming member (their rights,
+  // their attribution) but still never reaches protected content.
+  const notebookRoute = (fn: (ctx: { memberId: number; teamId: number }, body: any) => Promise<unknown>) => async (req: any, res: any) => {
+    res.setHeader("Cache-Control", "no-store");
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
+    try {
+      await ensureRolesSeeded(auth.teamId);
+      res.json(await fn({ memberId: auth.memberId, teamId: auth.teamId }, req.body ?? {}));
+    } catch (e) {
+      if (e instanceof NotebookError) return res.status(e.status).json({ error: e.message });
+      console.error("Bruno notebook action failed:", e);
+      res.status(500).json({ error: "Couldn't apply those notebook changes — nothing was saved" });
+    }
+  };
+  app.post("/api/ai/notebook/preview", notebookRoute(async (ctx, body) => ({ previews: await previewNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops)) })));
+  app.post("/api/ai/notebook/apply", notebookRoute(async (ctx, body) => {
+    const { result, replayed } = await applyNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops), String(body.receipt ?? ""));
+    return { results: result, replayed };
+  }));
 
   app.post("/api/ai/apply-actions", async (req, res) => {
     try {
