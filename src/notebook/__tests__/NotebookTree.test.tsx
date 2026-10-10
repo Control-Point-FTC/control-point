@@ -52,8 +52,10 @@ describe('tabs layout', () => {
     const picker = await screen.findByRole('combobox', { name: 'Notebook' }) as HTMLSelectElement;
     expect(vi.mocked(apiJson).mock.calls.filter(([p]) => p === '/api/notebook/mentions')).toHaveLength(1);
     fireEvent.change(picker, { target: { value: '2' } });
-    expect(picker.value).toBe('2');
+    await waitFor(() => expect(picker.value).toBe('2'));
     expect(within(screen.getByRole('navigation', { name: 'Sections' })).queryByRole('button', { name: 'Build' })).toBeNull();
+    // Nothing from the other notebook stays selected: no adding pages there.
+    await waitFor(() => expect((screen.getByRole('button', { name: /Add Page/ }) as HTMLButtonElement).disabled).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: 'New section' }));
     await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p, o]) => p === '/api/notebook/sections' && JSON.parse(String(o?.body)).notebookId === 2)).toBe(true));
   });

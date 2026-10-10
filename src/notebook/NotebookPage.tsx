@@ -181,6 +181,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   };
   const pick = async (id: number, blockId?: string, threadId?: number) => {
     if (!await leave()) return false;
+    setChosenBook(null); // Opening a page makes its notebook the current one.
     const page = tree?.pages.find(p => p.id === id), section = tree?.sections.find(s => s.id === page?.sectionId);
     const openKeys = new Set([`section:${section?.id}`, `notebook:${section?.notebookId}`]);
     let parent = page?.parentId;
@@ -455,12 +456,15 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       </div>{!isCollapsed('page', p.id) && pageRows(sectionId, p.id, depth + 1, baseIndent)}
     </div>);
   };
-  const sectionId = tree?.sections.find(s => s.id === tree.pages.find(p => p.id === selected)?.sectionId)?.id
-    ?? tree?.sections.find(s => s.id === activeSection)?.id ?? tree?.sections[0]?.id;
+  // With a notebook picked in the tabs layout, only its sections count: an
+  // empty notebook has none selected (so nothing is added to another one).
+  const inBook = (id: number | undefined) => chosenBook === null || tree?.sections.find(s => s.id === id)?.notebookId === chosenBook;
+  const sectionId = [tree?.pages.find(p => p.id === selected)?.sectionId, activeSection ?? undefined, ...(tree?.sections.map(s => s.id) ?? [])]
+    .find(id => id !== undefined && tree?.sections.some(s => s.id === id) && inBook(id));
   // Opening a section elsewhere (explorer, links) makes its notebook the current one again.
-  useEffect(() => { setChosenBook(null); }, [sectionId]);
   const chooseSection = async (id: number) => {
     if (!await leave()) return;
+    setChosenBook(null);
     setActiveSection(id);
     const first = tree?.pages.find(p => p.sectionId === id && !p.parentId);
     if (first) await pick(first.id); else navigate('/notebook');
@@ -469,7 +473,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   // notebook may have no sections yet; it stays picked so + adds its first.
   const currentBook = (chosenBook !== null && tree?.notebooks.some(n => n.id === chosenBook) ? chosenBook : null) ?? tree?.sections.find(s => s.id === sectionId)?.notebookId ?? tree?.notebooks[0]?.id;
   const sectionTabs = tree && <nav className="nb-section-tabs" aria-label="Sections">
-    {tree.notebooks.length > 1 && <select aria-label="Notebook" value={currentBook ?? ''} onChange={e => { const book = Number(e.target.value), first = tree.sections.find(s => s.notebookId === book); setChosenBook(book); if (first) void chooseSection(first.id); }}>{tree.notebooks.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select>}
+    {tree.notebooks.length > 1 && <select aria-label="Notebook" value={currentBook ?? ''} onChange={e => { const book = Number(e.target.value), first = tree.sections.find(s => s.notebookId === book); if (first) { void chooseSection(first.id); return; } void (async () => { if (!await leave()) return; setChosenBook(book); setActiveSection(null); navigate('/notebook'); })(); }}>{tree.notebooks.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select>}
     {tree.sections.filter(s => s.notebookId === currentBook).map(s => <button key={s.id} type="button" aria-current={s.id === sectionId ? 'true' : undefined} style={{ ['--nb-tab' as string]: s.color || '#ffc700' }} onClick={() => { void chooseSection(s.id); }}>{s.protected && <Lock size={12} aria-label="Admin only" />}{s.title}</button>)}
     {tree.permissions.organize && currentBook && <button type="button" className="nb-section-tab-add" aria-label="New section" title="New section" onClick={() => createInstant('section', { notebookId: currentBook })}><Plus size={14} /></button>}
     {/* The explorer is hidden in this layout: search, browse and mentions stay one click away. */}
