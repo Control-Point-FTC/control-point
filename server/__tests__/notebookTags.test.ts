@@ -39,6 +39,17 @@ describe("tag summary", () => {
     await expect(store.tags(ctx(member), { section: "abc" })).rejects.toThrow("valid section");
   });
 
+  it("says it was capped only when something was left out", async () => {
+    const many = (n: number) => ({ type: "doc", content: Array.from({ length: n }, (_, i) => para(`Item ${i}`, "todo")) });
+    const s1 = await store.create(ctx(admin), "section", { notebookId: (await store.tree(ctx(admin))).notebooks[0].id, title: "Exactly" }) as any;
+    await store.create(ctx(admin), "page", { sectionId: s1.id, title: "Five hundred", content: many(500) });
+    expect(await store.tags(ctx(admin), { section: s1.id })).toMatchObject({ truncated: false });
+    expect((await store.tags(ctx(admin), { section: s1.id })).blocks).toHaveLength(500);
+    await store.create(ctx(admin), "page", { sectionId: s1.id, title: "One more", content: many(1) });
+    const capped = await store.tags(ctx(admin), { section: s1.id });
+    expect(capped.truncated).toBe(true); expect(capped.blocks).toHaveLength(500);
+  });
+
   it("reads nested tags, task state and soft line breaks", () => {
     const content = { type: "doc", content: [
       { type: "taskList", content: [{ type: "taskItem", attrs: { checked: true, nbTag: "todo", id: "t1" }, content: [{ type: "paragraph", content: [{ type: "text", text: "Wire" }, { type: "hardBreak" }, { type: "text", text: "motors" }] }] }] },
@@ -48,5 +59,11 @@ describe("tag summary", () => {
     const found = taggedBlocks(JSON.stringify(content), { id: 1, title: "P", sectionId: 2, updatedAt: "" });
     expect(found.map(b => [b.tag, b.text, b.done, b.blockId])).toEqual([["todo", "Wire motors", true, "t1"], ["remember", "Inner", null, null], ["important", "Inner", null, null]]);
     expect(taggedBlocks("not json", { id: 1, title: "P", sectionId: 2, updatedAt: "" })).toEqual([]);
+    // The shape Home → Tag saves: the tag is on the task's paragraph.
+    const saved = { type: "doc", content: [{ type: "taskList", content: [{ type: "taskItem", attrs: { checked: true }, content: [para("Done thing", "todo")] }, { type: "taskItem", attrs: { checked: false }, content: [para("Open thing", "todo")] }] }] };
+    expect(taggedBlocks(saved, { id: 1, title: "P", sectionId: 2, updatedAt: "" }).map(b => b.done)).toEqual([true, false]);
+    // Malformed children are skipped, not fatal.
+    const odd = { type: "doc", content: [{ type: "paragraph", attrs: { nbTag: "todo" }, content: {} }, null, para("Fine", "important")] };
+    expect(taggedBlocks(odd, { id: 1, title: "P", sectionId: 2, updatedAt: "" }).map(b => [b.tag, b.text])).toEqual([["todo", ""], ["important", "Fine"]]);
   });
 });

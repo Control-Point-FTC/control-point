@@ -2,7 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { TagSummary, type TaggedBlock } from '../ribbon/TagSummary';
-import { NotebookWorkspaceContext, type NotebookWorkspace } from '../workspaceContext';
+import { NotebookWorkspaceContext, type NotebookWorkspace, type TagSummaryView } from '../workspaceContext';
 import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -31,6 +31,22 @@ describe('tag summary', () => {
     fireEvent.click(screen.getByRole('button', { name: /Which auto\?/ }));
     expect(openPage).toHaveBeenCalledWith(2, 'b3');
     fireEvent.change(screen.getByRole('combobox', { name: 'Where to look' }), { target: { value: 'all' } });
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.at(-1)![0]).toBe('/api/notebook/tags'));
+  });
+
+  it('keeps where-to-look and filters when the panel reopens on another page', async () => {
+    vi.mocked(apiJson).mockResolvedValue({ truncated: false, blocks: [] } as any);
+    function Host({ page }: { page: number }) {
+      const [view, setView] = React.useState<TagSummaryView>({ scope: 'section', only: '', hideDone: false });
+      const workspace = { teamId: 3, tree: null, openPage: vi.fn(), refreshTree: vi.fn(), openTrash: vi.fn(), toggleStickyNotes: vi.fn(), stickyNotesOpen: false, tagSummaryView: view, setTagSummaryView: setView } as NotebookWorkspace;
+      return <NotebookWorkspaceContext.Provider value={workspace}><TagSummary key={page} pageId={page} sectionId={4} onClose={vi.fn()} /></NotebookWorkspaceContext.Provider>;
+    }
+    const view = render(<Host page={1} />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Where to look' }), { target: { value: 'all' } });
+    fireEvent.click(screen.getByLabelText('Hide done'));
+    view.rerender(<Host page={2} />);
+    expect((screen.getByRole('combobox', { name: 'Where to look' }) as HTMLSelectElement).value).toBe('all');
+    expect((screen.getByLabelText('Hide done') as HTMLInputElement).checked).toBe(true);
     await waitFor(() => expect(vi.mocked(apiJson).mock.calls.at(-1)![0]).toBe('/api/notebook/tags'));
   });
 

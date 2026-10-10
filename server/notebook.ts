@@ -589,17 +589,19 @@ export class NotebookStore {
     if (pageId) pages = pages.filter(p => p.id === pageId);
     else if (sectionId) pages = pages.filter(p => p.sectionId === sectionId);
     const blocks: TaggedBlock[] = [];
-    for (let i = 0; i < pages.length && blocks.length < MAX_TAGGED_BLOCKS; i += 200) {
+    // One past the cap tells us whether anything was really left out.
+    const room = () => MAX_TAGGED_BLOCKS + 1 - blocks.length;
+    for (let i = 0; i < pages.length && room() > 0; i += 200) {
       const chunk = pages.slice(i, i + 200);
       // Only pages whose saved content has a tag are read in full.
       const rows = await s.all(`SELECT id,content FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND content LIKE '%"nbTag":"%' AND id IN (${chunk.map(() => '?').join(',')})`, ctx.teamId, ...chunk.map(p => p.id));
       const content = new Map(rows.map(r => [Number(r.id), r.content]));
       for (const p of chunk) {
-        if (!content.has(p.id) || blocks.length >= MAX_TAGGED_BLOCKS) continue;
-        blocks.push(...taggedBlocks(content.get(p.id), { id: p.id, title: p.title, sectionId: p.sectionId, updatedAt: p.updatedAt }, MAX_TAGGED_BLOCKS - blocks.length));
+        if (!content.has(p.id) || room() <= 0) continue;
+        blocks.push(...taggedBlocks(content.get(p.id), { id: p.id, title: p.title, sectionId: p.sectionId, updatedAt: p.updatedAt }, room()));
       }
     }
-    return { blocks, truncated: blocks.length >= MAX_TAGGED_BLOCKS };
+    return { blocks: blocks.slice(0, MAX_TAGGED_BLOCKS), truncated: blocks.length > MAX_TAGGED_BLOCKS };
   }); }
   trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
   trashPage(ctx:NotebookContext,pageId:number){return this.session(ctx,s=>notebookTrashPage(s,pageId));}

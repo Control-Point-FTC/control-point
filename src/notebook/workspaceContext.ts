@@ -3,6 +3,7 @@
 import { createContext, useContext } from 'react';
 import type { NotebookTree } from './types';
 
+export type TagSummaryView = { scope: 'page' | 'section' | 'all'; only: string; hideDone: boolean };
 export type NotebookWorkspace = {
   teamId: number | null;
   tree: NotebookTree | null;
@@ -15,6 +16,8 @@ export type NotebookWorkspace = {
   /** Home → Find Tags stays open while you jump between pages. */
   tagSummaryOpen?: boolean;
   setTagSummaryOpen?: (open: boolean) => void;
+  tagSummaryView?: TagSummaryView;
+  setTagSummaryView?: (view: TagSummaryView) => void;
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);

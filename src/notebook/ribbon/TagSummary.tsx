@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { apiJson } from '../../services/api';
 import { NOTEBOOK_TAGS } from '../editorSchema';
-import { useNotebookWorkspace } from '../workspaceContext';
+import { useNotebookWorkspace, type TagSummaryView } from '../workspaceContext';
 
 type Tag = (typeof NOTEBOOK_TAGS)[number];
 export type TaggedBlock = { pageId: number; pageTitle: string; sectionId: number; blockId: string | null; tag: Tag; text: string; done: boolean | null; updatedAt: string };
@@ -13,9 +13,13 @@ type Scope = 'page' | 'section' | 'all';
 
 export function TagSummary({ pageId, sectionId, onClose }: { pageId: number; sectionId?: number; onClose: () => void }) {
   const workspace = useNotebookWorkspace();
-  const [scope, setScope] = useState<Scope>('section');
-  const [only, setOnly] = useState<Tag | ''>('');
-  const [hideDone, setHideDone] = useState(false);
+  const [localView, setLocalView] = useState<TagSummaryView>({ scope: 'section', only: '', hideDone: false });
+  const view = workspace?.tagSummaryView ?? localView;
+  const setView = (change: Partial<TagSummaryView>) => (workspace?.setTagSummaryView ?? setLocalView)({ ...view, ...change });
+  const scope = view.scope, only = view.only as Tag | '', hideDone = view.hideDone;
+  const setScope = (value: Scope) => setView({ scope: value });
+  const setOnly = (value: Tag | '') => setView({ only: value });
+  const setHideDone = (value: boolean) => setView({ hideDone: value });
   const [result, setResult] = useState<{ blocks: TaggedBlock[]; truncated: boolean } | null>(null);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);

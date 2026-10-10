@@ -21,7 +21,7 @@ import {NotebookTrash} from './NotebookTrash';
 import {NotebookQuickNote} from './NotebookQuickNote';
 import { defaultNotebookPage, lastPageKey, readLastPage, saveLastPage } from './autoOpen';
 import { NotebookRibbonShell } from './NotebookToolbar';
-import { NotebookWorkspaceContext } from './workspaceContext';
+import { NotebookWorkspaceContext, type TagSummaryView } from './workspaceContext';
 import { StickyNotes } from './StickyNotes';
 import { NotebookBreadcrumbs, pageTrail, usePageHistory } from './NotebookBreadcrumbs';
 
@@ -287,6 +287,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [landingNotice, setLandingNotice] = useState('');
   const [stickyOpen, setStickyOpen] = useState(false);
   const [tagSummaryOpen, setTagSummaryOpen] = useState(false);
+  const [tagSummaryView, setTagSummaryView] = useState<TagSummaryView>({ scope: 'section', only: '', hideDone: false });
   useEffect(() => {
     if (!tree || params.get('action')) return;
     if (selected && tree.pages.some(p => p.id === selected)) { saveLastPage(lastKey, selected); return; }
@@ -478,7 +479,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number, blockId?: string) => { void pick(id, blockId); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen, tagSummaryOpen, setTagSummaryOpen };
+  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number, blockId?: string) => { void pick(id, blockId); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen, tagSummaryOpen, setTagSummaryOpen, tagSummaryView, setTagSummaryView };
   return <NotebookWorkspaceContext.Provider value={workspace}><div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
