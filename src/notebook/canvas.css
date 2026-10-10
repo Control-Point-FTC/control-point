@@ -13,3 +13,13 @@
 .nb-canvas-text:hover>.nb-text-grip,.nb-canvas-text:hover>.nb-text-width,.nb-canvas-text:focus-within>.nb-text-grip,.nb-canvas-text:focus-within>.nb-text-width{opacity:1}
 .nb-text-grip:focus-visible,.nb-text-width:focus-visible{opacity:1;outline:2px solid #8a6100;outline-offset:1px}
 @media (prefers-reduced-motion:reduce){.nb-text-grip,.nb-text-width{transition:none}}
+
+/* Draw → Favorite pens. */
+.nb-pens{display:inline-flex;align-items:center;gap:4px}
+.nb-pen{position:relative;display:inline-flex}
+.nb-pen>button:first-child{display:grid;place-items:center;width:30px;height:30px;border-radius:6px;border:1px solid transparent}
+.nb-pen>button[aria-pressed=true]{border-color:#ffc700;background:rgb(255 199 0 / .12)}
+.nb-pen-dot{display:block;border-radius:50%;max-width:20px;max-height:20px}
+.nb-pen-dot[data-tool=highlighter]{border-radius:3px;opacity:.75}
+.nb-pen-remove{position:absolute;top:-4px;right:-4px;display:none;width:14px;height:14px;border-radius:50%;background:#44403c;color:#fff;place-items:center}
+.nb-pen:hover>.nb-pen-remove,.nb-pen:focus-within>.nb-pen-remove{display:grid}
