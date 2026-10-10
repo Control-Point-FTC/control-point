@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { Editor } from '@tiptap/core';
 import { notebookExtensions } from '../editorSchema';
-import { PageLinkMenu, pageLinkKey, pageMatches } from '../pageLinkMenu';
+import { PageLinkMenu, insertPageLink, pageLinkKey, pageMatches } from '../pageLinkMenu';
 import type { NotebookPageItem } from '../types';
 
 const page = (id: number, title: string): NotebookPageItem => ({ id, sectionId: 1, parentId: null, title, sort: id, protected: false, ownProtected: false, revision: 1, updatedAt: '' });
@@ -46,6 +46,17 @@ describe('[[ page links', () => {
     pages = [page(1, 'Drivetrain')];               // a tree refresh removed two matches
     expect(() => key(editor, 'Enter')).not.toThrow();
     expect(editor.getText()).toBe('Drivetrain ');
+  });
+
+  it('does nothing once the page becomes read-only', () => {
+    const editor = make();
+    editor.commands.insertContent('[[dri');
+    expect(state(editor).active).toBe(true);
+    editor.setEditable(false);
+    key(editor, 'Enter');
+    expect(editor.getText()).toBe('[[dri');
+    insertPageLink(editor, { from: 1, to: 6 }, PAGES[0]);
+    expect(editor.getText()).toBe('[[dri');
   });
 
   it('stays closed in code, after Escape, with no match, or when switched off', () => {

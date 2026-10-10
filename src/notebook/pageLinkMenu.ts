@@ -22,6 +22,8 @@ export function pageMatches(pages: NotebookPageItem[], query: string, currentPag
 }
 
 export function insertPageLink(editor: Editor, range: { from: number; to: number }, page: NotebookPageItem) {
+  // Editing may have stopped (conflict, permission change) since the list opened.
+  if (!editor.isEditable) return;
   editor.chain().focus().deleteRange(range)
     .insertContent([{ type: 'text', text: page.title || 'Untitled', marks: [{ type: 'link', attrs: { href: notebookPageLink(page.id) } }] }, { type: 'text', text: ' ' }])
     .run();
@@ -46,7 +48,7 @@ export const PageLinkMenu = Extension.create<PageLinkOptions>({
           let dismissed = meta?.dismissed !== undefined ? meta.dismissed : prev.dismissed !== null ? tr.mapping.map(prev.dismissed) : null;
           if (dismissed !== null && (dismissed + 2 > next.doc.content.size || next.doc.textBetween(dismissed, dismissed + 2) !== '[[')) dismissed = null;
           const { selection } = next, $from = selection.$from, parent = $from.parent;
-          if (!selection.empty || !parent.isTextblock || parent.type.spec.code || !options.enabled()) return { ...idle, dismissed };
+          if (!selection.empty || !parent.isTextblock || parent.type.spec.code || !options.enabled() || !editor.isEditable) return { ...idle, dismissed };
           if ($from.marks().some(m => m.type.spec.code)) return { ...idle, dismissed };
           const before = parent.textBetween(Math.max(0, $from.parentOffset - 60), $from.parentOffset, '\0', '\0');
           const match = /\[\[([^[\]\0\n]{0,40})$/.exec(before);
@@ -62,7 +64,7 @@ export const PageLinkMenu = Extension.create<PageLinkOptions>({
       props: {
         handleKeyDown(view, event) {
           const state = pageLinkKey.getState(view.state);
-          if (!state?.active || !options.enabled()) return false;
+          if (!state?.active || !options.enabled() || !editor.isEditable) return false;
           const items = results(state);
           if (!items.length) return false;
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

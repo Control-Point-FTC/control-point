@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { Editor } from '@tiptap/core';
 import { notebookExtensions } from '../editorSchema';
@@ -26,5 +26,14 @@ describe('page link list', () => {
     // Focus already moved to the canvas text box before the popup switched to it.
     view.rerender(<PageLinkPopup editor={second} pages={PAGES} currentPageId={1} />);
     expect(screen.getByRole('option', { name: /Drivetrain/ })).toBeTruthy();
+  });
+
+  it('scrolls the highlighted page into view', () => {
+    const editor = make();
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    editor.view.dom.focus(); editor.commands.insertContent('[[dri');
+    render(<PageLinkPopup editor={editor} pages={PAGES} currentPageId={1} />);
+    expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
   });
 });
