@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { encodeBytes, decodeBytes } from '../NotebookSync';
 import { MemoryRouter } from 'react-router-dom';
 import { NotebookPage } from '../NotebookPage';
+import { rowMenuTrigger } from '../../components/contextmenu/ContextMenuProvider';
 import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 vi.mock('../NotebookEditor', () => ({ NotebookEditor: () => null, downloadNotebookJSON: vi.fn() }));
@@ -45,6 +46,13 @@ function mount(path = '/notebook', emptySection = false) {
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('right-click on a notebook, section or page row opens that row\'s own actions', async () => {
+    mount();
+    for (const name of ['Robot notes', 'Build', 'Motor tests']) {
+      const label = (await screen.findAllByText(name))[0];
+      expect(rowMenuTrigger(label)?.getAttribute('aria-label')).toBe(`Actions for ${name}`);
+    }
+  });
   it('falls back to a surviving section after the selected empty section disappears', async () => {
     const tree = mount('/notebook', true);
     fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));

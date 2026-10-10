@@ -383,6 +383,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     setAnnouncement(`${item.title} moved to position ${index + 1} of ${siblings.length}`);
   };
   const rowEvents = (kind: Kind, item: Item): React.HTMLAttributes<HTMLDivElement> => ({
+    // Right-click (or the menu key) on a row opens its ⋯ menu (app context menus).
+    ...({ 'data-cm-row-root': '' } as React.HTMLAttributes<HTMLDivElement>),
     draggable: !!tree?.permissions.organize && !busy,
     onDragStart: e => { setDragging({ kind, id: item.id }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-cp-notebook', JSON.stringify({ kind, id: item.id })); },
     onDragEnd: () => { setDragging(null); setDrop(null); },
@@ -425,7 +427,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     },
   });
   const dropClass = (kind: Kind, id: number) => drop?.kind === kind && drop.id === id ? `nb-drop-${drop.zone}` : '';
-  const options = (kind: Kind, item: Item) => <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
+  const options = (kind: Kind, item: Item) => <DropdownMenu><DropdownMenuTrigger asChild><Button data-cm-menu variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end">
       {kind === 'page' && <DropdownMenuItem onClick={() => { void window.navigator.clipboard.writeText(new URL(notebookPageLink(item.id), window.location.origin).href).then(() => setAnnouncement('Page link copied')).catch(() => setError('Clipboard unavailable')); }}>Copy page link</DropdownMenuItem>}
       {(kind === 'page' ? tree?.permissions.edit : tree?.permissions.organize) && <DropdownMenuItem onClick={() => setRenaming({ kind, item, title: item.title })}>Rename inline</DropdownMenuItem>}
