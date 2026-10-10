@@ -37,9 +37,10 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
   };
   useEffect(()=>{
     setItems([]);setCursor(null);setDestination(null);setPreview(null);setError('');setMessage('');setBusy(false);locked.current=false;
-    if(open)void load();
+    if(!tree.permissions.delete)setOpen(false);
+    else if(open)void load();
     return ()=>{request.current?.abort();locked.current=false;};
-  },[open,teamId]);
+  },[open,teamId,tree.permissions.delete,tree.permissions.protect,tree.permissions.organize]);
   const chooseDestination=(entry:Entry)=>{setDestination(entry);setBook(String(tree.notebooks[0]?.id??''));setSection(String(tree.sections[0]?.id??''));setParent('');};
   const inspect=async(entry:Entry)=>{
     if(locked.current)return;const abort=begin();setPreview(null);
