@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bold, Italic, Underline, Undo2, Redo2, Highlighter, ListTodo, List, ListOrdered, Link2, Table2, Quote, Code2, Minus, Search, MessageSquare, Ellipsis } from 'lucide-react';
+import { Bold, Italic, Underline, Undo2, Redo2, Highlighter, ListTodo, List, ListOrdered, Link2, Table2, Quote, Code2, Minus, Search, MessageSquare, Ellipsis, Smile, Sigma } from 'lucide-react';
 import type { Editor } from '@tiptap/react';
 import { NOTEBOOK_FONTS, NOTEBOOK_TAGS } from './editorSchema';
 import type { NotebookPageItem } from './types';
@@ -11,8 +11,11 @@ import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookMobileToolbar } from './NotebookMobileToolbar';
 import { notebookCommandGlyph } from './NotebookIcons';
 
-const icons: Record<string, React.ComponentType<{ size?: number }>> = { Bold, Italic, Underline, Undo: Undo2, Redo: Redo2, Highlight: Highlighter, Checklist: ListTodo, Bullets: List, Numbered: ListOrdered, Link: Link2, Table: Table2, Quote, Code: Code2, Divider: Minus };
-const insertCommands = new Set(['Link', 'Table', 'Quote', 'Code', 'Divider', 'Add row', 'Row above', 'Add column', 'Column left', 'Delete row', 'Delete column', 'Merge cells', 'Split cell', 'Header row', 'Delete table', 'Reset cell fill']);
+const icons: Record<string, React.ComponentType<{ size?: number }>> = { Bold, Italic, Underline, Undo: Undo2, Redo: Redo2, Highlight: Highlighter, Checklist: ListTodo, Bullets: List, Numbered: ListOrdered, Link: Link2, Table: Table2, Quote, Code: Code2, Divider: Minus, Symbols: Sigma, Emoji: Smile };
+const insertCommands = new Set(['Link', 'Table', 'Quote', 'Code', 'Divider', 'Symbols', 'Emoji', 'Add row', 'Row above', 'Add column', 'Column left', 'Delete row', 'Delete column', 'Merge cells', 'Split cell', 'Header row', 'Delete table', 'Reset cell fill']);
+
+const SYMBOLS = ['©','®','™','§','¶','†','‡','•','…','–','—','‘','’','“','”','«','»','‹','›','¡','¿','×','÷','±','∓','≈','≠','≤','≥','√','∞','∑','∏','∫','∂','∆','π','θ','λ','μ','Ω','α','β','γ','δ','σ','φ','ψ','←','↑','→','↓','↔','⇒','⇐','⇔','★','☆','✓','✗','⚠','●','○','◆','◇','▲','▼','°','′','″','€','£','¥','₹'];
+const EMOJI = ['😀','😁','😂','🤣','😊','😍','🤔','😮','😢','😡','👍','👎','👏','🙌','💪','✌️','🤝','👀','🧠','💡','📌','📝','📊','📅','✅','❌','⭐','🔥','🎉','🚀','🤖','🔧','⚙️','🔩','💻','📐','📏','🔬','🧪','⚡','🔋','🏆','🎯','💯','❓','❗','💤','🎓','📚','✏️','📎','🔗','💬','👥','🕒','📍'];
 
 const ribbonTabs = [['file','File'],['home','Home'],['insert','Insert'],['draw','Draw'],['history','History'],['review','Review'],['view','View'],['help','Help']];
 export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {},requestedGroup }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>;requestedGroup?:{group:string;key:number} }) {
@@ -25,6 +28,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [label, setLabel] = useState('');
   const [notice, setNotice] = useState('');
   const [finding, setFinding] = useState(false);
+  const [picker, setPicker] = useState<null | 'symbols' | 'emoji'>(null);
   const [format, setFormat] = useState<{ marks: { type: string; attrs: Record<string, any> }[] } | null>(null);
   useEffect(() => {
     if (!editor) return;
@@ -68,8 +72,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     {action('Bullets', () => chain().toggleBulletList().run(), editor.isActive('bulletList'))}
     {action('Link', () => { setHref(editor.getAttributes('link').href ?? ''); setLabel(editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to)); setLinkOpen(true); }, editor.isActive('link'))}
     {action('Numbered', () => chain().toggleOrderedList().run(), editor.isActive('orderedList'), true)}
-    <select aria-label="Paragraph style" disabled={disabled} value={editor.isActive('heading', { level: 1 }) ? '1' : editor.isActive('heading', { level: 2 }) ? '2' : editor.isActive('heading', { level: 3 }) ? '3' : 'paragraph'} onChange={e => e.target.value === 'paragraph' ? chain().setParagraph().run() : chain().toggleHeading({ level: Number(e.target.value) as 1|2|3 }).run()}>
-      <option value="paragraph">Body</option><option value="1">Title</option><option value="2">Heading</option><option value="3">Subheading</option>
+    <select aria-label="Paragraph style" disabled={disabled} value={editor.isActive('heading', { level: 1 }) ? '1' : editor.isActive('heading', { level: 2 }) ? '2' : editor.isActive('heading', { level: 3 }) ? '3' : editor.isActive('heading', { level: 4 }) ? '4' : editor.isActive('heading', { level: 5 }) ? '5' : editor.isActive('heading', { level: 6 }) ? '6' : 'paragraph'} onChange={e => e.target.value === 'paragraph' ? chain().setParagraph().run() : chain().toggleHeading({ level: Number(e.target.value) as 1|2|3|4|5|6 }).run()}>
+      <option value="paragraph">Body</option><option value="1">Title</option><option value="2">Heading</option><option value="3">Subheading</option><option value="4">Heading 4</option><option value="5">Heading 5</option><option value="6">Heading 6</option>
     </select>
     <label className="nb-desktop">Text <input aria-label="Text color" type="color" disabled={disabled} value={editor.getAttributes('textStyle').color?.startsWith('#') ? editor.getAttributes('textStyle').color : '#171717'} onChange={e => chain().setColor(e.target.value).run()} /></label>
     <label className="nb-desktop">Fill <input aria-label="Text background color" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setBackgroundColor(e.target.value).run()} /></label>
@@ -79,6 +83,27 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     {action('Quote', () => chain().toggleBlockquote().run(), editor.isActive('blockquote'), true)}
     {action('Code', () => chain().toggleCodeBlock().run(), editor.isActive('codeBlock'), true)}
     {action('Divider', () => chain().setHorizontalRule().run(), false, true)}
+    <span className="nb-picker-anchor" data-command-group="insert">
+      {(['symbols','emoji'] as const).map(kind => (
+        <button key={kind} type="button" title={kind === 'symbols' ? 'Symbols' : 'Emoji'} aria-label={kind === 'symbols' ? 'Symbols' : 'Emoji'} aria-expanded={picker === kind}
+          data-command-group="insert" className={`nb-tool nb-icon-tool ${picker === kind ? 'is-active' : ''}`}
+          disabled={disabled} onMouseDown={e => e.preventDefault()} onClick={() => setPicker(p => p === kind ? null : kind)}>
+          {kind === 'symbols' ? <Sigma size={17} /> : <Smile size={17} />}
+        </button>
+      ))}
+      {picker && <React.Fragment key="picker">
+        <button type="button" aria-label="Close picker" className="nb-picker-backdrop" onClick={() => setPicker(null)} />
+        <div className="nb-picker" role="dialog" aria-label={picker === 'emoji' ? 'Emoji picker' : 'Symbol picker'}
+          onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setPicker(null); } }}>
+          <div className="nb-picker-grid">
+            {(picker === 'emoji' ? EMOJI : SYMBOLS).map(ch => (
+              <button key={ch} type="button" className="nb-picker-cell" title={`Insert ${ch}`} aria-label={`Insert ${ch}`}
+                onMouseDown={e => e.preventDefault()} onClick={() => { editor.chain().focus().insertContent(ch).run(); }}>{ch}</button>
+            ))}
+          </div>
+        </div>
+      </React.Fragment>}
+    </span>
     {action('Clear formatting', () => chain().unsetAllMarks().clearNodes().run(), false, true)}
     {action('Inline code', () => chain().toggleCode().run(), editor.isActive('code'), true)}
     {action('Indent', () => { editor.commands.focus(); notebookIndent(editor, 1); }, false, true)}
