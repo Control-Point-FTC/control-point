@@ -1,0 +1,162 @@
+name: Deploy to Oracle VM
+
+# Every push to main builds the app on the runner and ships it to the Oracle VM
+# over SSH. Same steps as ~/deploy-control-point.sh: dist + backend files
+# taken straight from git, backups on the VM, restart, then verify the live site.
+# Never touches /opt/control-point/.env, uploads/, node_modules/ or the database.
+#
+# Secrets (repo Settings -> Secrets and variables -> Actions):
+#   ORACLE_SSH_KEY      private key for ubuntu@132.145.202.89 (contents of ~/.ssh/oracle-controlpoint)
+#   ORACLE_KNOWN_HOSTS  optional: output of `ssh-keyscan 132.145.202.89` (pins the host key)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one, older queued ones are dropped.
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VM: ubuntu@132.145.202.89
+  APP: /opt/control-point
+  SITE: https://tryctrlpoint.org
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check for SSH key
+        id: gate
+        env:
+          KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::warning::ORACLE_SSH_KEY secret is not set, skipping deploy."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.ok == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          npm ci --no-audit --no-fund --loglevel=error
+          npm run build
+
+      - name: Stage files
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          mkdir -p stage/backend
+          cp -r dist stage/dist
+          # Everything tracked except frontend sources, uploads and repo plumbing...
+          git archive HEAD -- . ':(exclude)src' ':(exclude)uploads' ':(exclude).github' ':(exclude).claude' \
+            | tar -x -C stage/backend
+          # ...plus the browser-free shared modules the server imports from src/.
+          git archive HEAD -- src/types src/utils ':(exclude)src/utils/__tests__' | tar -x -C stage/backend
+
+      - name: Set up SSH
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          KNOWN: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          if [ -n "$KNOWN" ]; then
+            printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          else
+            echo "::warning::ORACLE_KNOWN_HOSTS not set, trusting the host key on first sight."
+            ssh-keyscan -T 15 "${VM#*@}" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Compare with the VM
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          SSH="ssh -i $HOME/.ssh/id_deploy -o BatchMode=yes $VM"
+          ( cd stage/backend && find . -type f ! -path './public/*' | sed 's|^\./||' | sort ) > stage/files.txt
+          $SSH "sudo sh -c 'cd $APP && xargs md5sum 2>/dev/null; true'" < stage/files.txt > stage/vm.md5
+          ( cd stage/backend && xargs md5sum < ../files.txt ) > stage/new.md5
+          comm -13 <(sort stage/vm.md5) <(sort stage/new.md5) | awk '{print $2}' > stage/changed.txt
+          echo "Backend files that will change:"; sed 's/^/  /' stage/changed.txt
+          if grep -q '^migrations/' stage/changed.txt; then
+            echo "::notice::New or changed migrations will run on the live database at startup."
+          fi
+          # Runtime dependency change -> npm install on the VM before the restart.
+          INSTALL=0
+          if grep -qE '^package(-lock)?\.json$' stage/changed.txt; then
+            OLD=$($SSH "sudo cat $APP/package.json" | jq -S '.dependencies // {}')
+            NEW=$(jq -S '.dependencies // {}' stage/backend/package.json)
+            [ "$OLD" != "$NEW" ] && INSTALL=1 && echo "::notice::Runtime dependencies changed, running npm install on the VM."
+          fi
+          echo "INSTALL=$INSTALL" >> "$GITHUB_ENV"
+
+      - name: Upload and swap in
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          SSH="ssh -i $HOME/.ssh/id_deploy -o BatchMode=yes $VM"
+          tar -C stage -czf - dist backend | $SSH 'rm -rf /tmp/cp-new && mkdir -p /tmp/cp-new && tar -xzf - -C /tmp/cp-new'
+          $SSH "sudo INSTALL=$INSTALL bash -s" <<'REMOTE'
+          set -e
+          C=/opt/control-point; N=/tmp/cp-new; TS=$(date +%Y%m%d-%H%M%S)
+          cp -a $C/dist $C/dist.bak-$TS
+          mkdir -p $C/server-bak-$TS
+          (cd $N/backend && find . -type f) | while read -r f; do
+            f=${f#./}
+            if [ -f "$C/$f" ] && ! cmp -s "$C/$f" "$N/backend/$f"; then
+              mkdir -p "$C/server-bak-$TS/$(dirname "$f")"; cp -a "$C/$f" "$C/server-bak-$TS/$f"
+            fi
+            mkdir -p "$C/$(dirname "$f")"; cp "$N/backend/$f" "$C/$f"
+          done
+          rm -rf $C/dist && mkdir -p $C/dist && cp -r $N/dist/. $C/dist/
+          chown -R controlpoint:controlpoint $C/dist $C/server-bak-$TS
+          (cd $N/backend && find . -type f | sed 's|^\./||') | while read -r f; do chown controlpoint:controlpoint "$C/$f"; done
+          chmod -R 755 $C/dist
+          if [ "$INSTALL" = "1" ]; then
+            (cd $C && sudo -u controlpoint HOME=/home/controlpoint npm install --no-audit --no-fund --loglevel=error)
+          fi
+          systemctl restart control-point; sleep 12
+          echo "service: $(systemctl is-active control-point)"
+          journalctl -u control-point --since "-20s" --no-pager | grep -E "Server running|rror" | grep -viE "key|token|status=143|exit-code" | tail -3 || true
+          # keep only the newest backups
+          ls -d $C/dist.bak-* 2>/dev/null | sort | head -n -1 | xargs -r rm -rf
+          ls -d $C/server-bak-* 2>/dev/null | sort | head -n -1 | xargs -r rm -rf
+          echo "rollback: dist.bak-$TS / server-bak-$TS"
+          rm -rf $N
+          REMOTE
+
+      - name: Verify
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          EXPECTED=$(grep -o 'index-[A-Za-z0-9_-]*\.js' dist/index.html | head -1)
+          for i in 1 2 3 4 5 6; do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/")
+            LIVE=$(curl -s "$SITE/" | grep -o 'index-[A-Za-z0-9_-]*\.js' | head -1 || true)
+            [ "$CODE" = "200" ] && [ "$LIVE" = "$EXPECTED" ] && break
+            sleep 5
+          done
+          echo "$SITE -> $CODE"
+          echo "api/auth/config -> $(curl -s -o /dev/null -w '%{http_code}' "$SITE/api/auth/config")"
+          echo "live bundle $LIVE (expected $EXPECTED)"
+          [ "$CODE" = "200" ] || { echo "::error::Site is not returning 200. Check journalctl -u control-point and roll back from the backups."; exit 1; }
+          [ "$LIVE" = "$EXPECTED" ] || { echo "::error::Live bundle doesn't match the build."; exit 1; }
+
+      - name: Clean up key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy
