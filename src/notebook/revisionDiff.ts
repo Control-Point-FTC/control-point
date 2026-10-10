@@ -12,7 +12,8 @@ function stable(value:unknown):string{
 }
 function blocks(value:unknown):Map<string,Block>{
   const document=notebookSchema.nodeFromJSON(validatedNotebookDocument(value)).toJSON(),result=new Map<string,Block>();
-  const text=(node:any):string=>node.type==='text'?node.text||'':node.type==='hardBreak'?'\n':(node.content||[]).map(text).join(node.type==='tableRow'?' | ':node.type==='table'||node.type==='tableCell'||node.type==='tableHeader'?'\n':'');
+  const textContainers=new Set(['doc','table','tableCell','tableHeader','bulletList','orderedList','taskList','listItem','taskItem','blockquote']);
+  const text=(node:any):string=>node.type==='text'?node.text||'':node.type==='hardBreak'?'\n':(node.content||[]).map(text).join(node.type==='tableRow'?' | ':textContainers.has(node.type)?'\n':'');
   const attributes=(node:any)=>Object.fromEntries(Object.entries(node.attrs||{}).filter(([key])=>key!=='id'));
   const formatting=(node:any,leaf:boolean):unknown=>{
     const runs:{marks:string;length:number}[]=[];

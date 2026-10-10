@@ -4,6 +4,10 @@ const paragraph=(id:string,text:string,marks:any[]=[])=>({type:'paragraph',attrs
 const page=(content:any[],objects:any[]=[])=>({title:'Build journal',content:{type:'doc',content:content.length?content:[{type:'paragraph'}]},canvas:{version:1,objects}});
 const shape={id:'shape',type:'shape',shape:'rectangle',x:10,y:20,width:200,height:100,z:0,rotation:0,locked:false,groupId:null,color:'#112233',fill:null,strokeWidth:2};
 describe('retained revision comparisons',()=>{
+  it('retains paragraph and list-item boundaries inside a table cell',()=>{
+    const table=(values:string[])=>({type:'table',attrs:{id:'list-table'},content:[{type:'tableRow',content:[{type:'tableCell',content:[{type:'bulletList',content:values.map((text,index)=>({type:'listItem',content:[paragraph(`item-${index}`,text)]}))}]}]}]});
+    expect(compareNotebookRevisions(page([table(['a','bc'])]),page([table(['ab','c'])]))).toEqual([expect.objectContaining({changes:['Text'],before:'a\nbc',after:'ab\nc'})]);
+  });
   it('preserves nested paragraph alignment and heading level differences inside table cells',()=>{
     const table=(block:any)=>({type:'table',attrs:{id:'table-format'},content:[{type:'tableRow',content:[{type:'tableCell',content:[block]}]}]});
     const before={...paragraph('p','Same text'),attrs:{id:'p',textAlign:'left'}},after={...before,attrs:{id:'p',textAlign:'right'}};
