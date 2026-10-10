@@ -53,8 +53,8 @@ describe('[[ page links', () => {
     editor.commands.insertContent('[[dri');
     expect(state(editor).active).toBe(true);
     editor.setEditable(false);
-    key(editor, 'Enter');
-    expect(editor.getText()).toBe('[[dri');
+    editor.view.dispatch(editor.state.tr.setMeta('refresh', true));
+    expect(state(editor).active).toBe(false);
     insertPageLink(editor, { from: 1, to: 6 }, PAGES[0]);
     expect(editor.getText()).toBe('[[dri');
   });
