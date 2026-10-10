@@ -14,6 +14,14 @@ export function BlockHandle({ editor, pageId }: { editor: Editor | null; pageId:
   const [status, setStatus] = useState('');
   useEffect(() => { if (!status) return; const t = window.setTimeout(() => setStatus(''), 2500); return () => window.clearTimeout(t); }, [status]);
   const notify = setStatus;
+  // A collaborator deleted the block: drop its handle and menu so hovering works again.
+  useEffect(() => {
+    if (!editor || !hover) return;
+    const check = () => { if (currentBlockIndex(editor.state, hover) < 0) { setMenuOpen(false); setHover(null); } };
+    check();
+    editor.on('update', check);
+    return () => { editor.off('update', check); };
+  }, [editor, hover]);
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
     const dom = editor.view.dom as HTMLElement;
