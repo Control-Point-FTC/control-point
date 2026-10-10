@@ -22,7 +22,7 @@ function blocks(value:unknown):Map<string,Block>{
       if(child.type==='text'){if(typeof children.at(-1)==='string')children[children.length-1]+=child.text||'';else children.push(child.text||'');}
       else children.push(textSignature(child));
     }
-    return {type:node.type,children};
+    return node.type==='hardBreak'?{authoredBreak:true}:{children};
   };
   const attributes=(node:any)=>Object.fromEntries(Object.entries(node.attrs||{}).filter(([key])=>key!=='id'));
   const formatting=(node:any,leaf:boolean):unknown=>{
