@@ -43,6 +43,21 @@ describe('section print', () => {
     await expect(prepareSectionPrint({ id: 9, title: 'Empty' }, [item(1)], undefined, new AbortController().signal, vi.fn())).rejects.toThrow('no pages');
   });
 
+  it('leaves out a page that lost access while its attachments loaded, but stops on other attachment failures', async () => {
+    let protectedNow = false;
+    vi.mocked(apiJson).mockImplementation(async (url: string) => {
+      if (url.endsWith('/1') && protectedNow) throw new ApiError(404, 'gone');
+      return { ...item(Number(url.split('/').pop())), content: {}, canvas: {} } as any;
+    });
+    vi.mocked(prepareNotebookPrint).mockImplementationOnce(async () => { protectedNow = true; throw new Error('Attachment unavailable or permission changed.'); });
+    const result = await prepareSectionPrint({ id: 1, title: 'S' }, [item(1), item(2)], undefined, new AbortController().signal, vi.fn());
+    expect(result.printed).toBe(1);
+    expect(result.skipped).toEqual(['Page 1']);
+    // Still accessible: the attachment problem is real, so the print stops.
+    vi.mocked(prepareNotebookPrint).mockImplementationOnce(async () => { throw new Error('This page has too much attachment data for one export.'); });
+    await expect(prepareSectionPrint({ id: 1, title: 'S' }, [item(2)], undefined, new AbortController().signal, vi.fn())).rejects.toThrow('too much attachment data');
+  });
+
   it('escapes titles in the cover', async () => {
     vi.mocked(apiJson).mockResolvedValue({ ...item(1), content: {}, canvas: {} } as any);
     const result = await prepareSectionPrint({ id: 1, title: '<img src=x onerror=alert(1)>' }, [item(1)], undefined, new AbortController().signal, vi.fn());

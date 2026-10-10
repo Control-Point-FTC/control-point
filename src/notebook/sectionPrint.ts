@@ -32,6 +32,11 @@ export function sectionPageOrder(pages: NotebookPageItem[], sectionId: number): 
   return ordered;
 }
 
+async function stillHere(pageId: number, sectionId: number, headers: Record<string, string> | undefined, signal: AbortSignal) {
+  try { return (await apiJson<NotebookPageData>(`/api/notebook/pages/${pageId}`, { headers, cache: 'no-store', signal })).sectionId === sectionId; }
+  catch (e) { if (e instanceof ApiError && (e.status === 403 || e.status === 404)) return false; throw e; }
+}
+
 export type SectionPrint = { markup: string; printed: number; skipped: string[] };
 
 export async function prepareSectionPrint(
@@ -60,7 +65,14 @@ export async function prepareSectionPrint(
     if (page.sectionId !== section.id) { skipped.push(item.title || 'Untitled'); continue; }
     // Attachments load through the page they belong to.
     const pageSync = { pageId: item.id, scope } as NotebookSync;
-    sheets.push(await prepareNotebookPrint(pageSync, page, signal, message => onProgress(`Page ${index + 1} of ${ordered.length}: ${message}`)));
+    try { sheets.push(await prepareNotebookPrint(pageSync, page, signal, message => onProgress(`Page ${index + 1} of ${ordered.length}: ${message}`))); }
+    catch (e) {
+      // An attachment or background failed. If the page itself is no longer
+      // here for you (protected, deleted or moved meanwhile), leave it out;
+      // any other failure stops the print.
+      if (signal.aborted || await stillHere(item.id, section.id, headers, signal)) throw e;
+      skipped.push(item.title || 'Untitled');
+    }
   }
   if (!sheets.length) throw new Error('None of the pages in this section could be opened. Access may have changed.');
   const cover = document.createElement('header');
