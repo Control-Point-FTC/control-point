@@ -58,6 +58,7 @@ const commandPaths: Record<string, string> = {
   'Collapse ribbon': 'm6 15 6-6 6 6',
   'Expand ribbon': 'm6 9 6 6 6-6',
   Sticky: 'M5 4h14v10l-6 6H5V4Zm8 16v-6h6M8 8h8M8 11h5',
+  Record: 'M4 5h16v14H4V5Zm4 4h8M8 12h8M8 15h5M17 2v4M7 2v4',
   Panes: 'M3 4h18v16H3V4Zm6 0v16m5-16v16',
   Tabs: 'M3 8h18v12H3V8Zm0 0V5h6v3m0-3h6v3',
   Dock: 'M3 4h18v16H3V4Zm11 0v16M16 9h3M16 12h3',

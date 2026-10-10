@@ -27,6 +27,13 @@ describe('withHead', () => {
     expect(out).toContain('<meta name="description" content="x" />');
     expect(out).toContain('<meta property="og:url" content="https://x/terms" />');
   });
+  it('points the canonical link at the page, and a 404 claims no URL', () => {
+    const page = html + '<link rel="canonical" href="https://x/" />';
+    expect(withHead(page, { title: 'T', description: 'd' }, 'https://x/privacy')).toContain('<link rel="canonical" href="https://x/privacy" />');
+    const notFound = withHead(page, { title: 'Page not found', description: 'd' });
+    expect(notFound).not.toContain('canonical');
+    expect(notFound).not.toContain('og:url');
+  });
   it('has heads for both legal pages', () => {
     expect(Object.keys(PUBLIC_HEADS).sort()).toEqual(['/privacy', '/terms']);
   });
