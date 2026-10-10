@@ -10,7 +10,7 @@ import type { NotebookTree, NotebookPageItem } from './types';
 import './notebook.css';
 import './notebook-desktop.css';
 import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
-import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
+import { notebookDrop, notebookSiblings, promoteMove, subpageMove, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
 import { findNotebookSession,notebookExitNeedsSave,prepareNotebookExit } from './notebookRuntime';
 import {NotebookSplitView} from './NotebookSplitView';
@@ -260,6 +260,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       }
     })();
   };
+  /** Make subpage / Promote subpage: the page keeps its subpages and its place in the list. */
+  const nestPage = async (id: number, move: { to: { parentId: number | null; afterId?: number }; index: number | 'end' } | null) => {
+    if (!move || !await leave()) return;
+    await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind: 'page', id, ...move }) }));
+  };
   const mutate = async (fn: () => Promise<unknown>) => {
     if (busy) return false;
     setBusy(true); setError('');
@@ -390,6 +395,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     setAnnouncement(`${item.title} moved to position ${index + 1} of ${siblings.length}`);
   };
   const rowEvents = (kind: Kind, item: Item): React.HTMLAttributes<HTMLDivElement> => ({
+    // Right-click (or the menu key) on a row opens its ⋯ menu (app context menus).
+    ...({ 'data-cm-row-root': '' } as React.HTMLAttributes<HTMLDivElement>),
     draggable: !!tree?.permissions.organize && !busy,
     onDragStart: e => { setDragging({ kind, id: item.id }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-cp-notebook', JSON.stringify({ kind, id: item.id })); },
     onDragEnd: () => { setDragging(null); setDrop(null); },
@@ -432,7 +439,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     },
   });
   const dropClass = (kind: Kind, id: number) => drop?.kind === kind && drop.id === id ? `nb-drop-${drop.zone}` : '';
-  const options = (kind: Kind, item: Item) => <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
+  const options = (kind: Kind, item: Item) => <DropdownMenu><DropdownMenuTrigger asChild><Button data-cm-menu variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end">
       {kind === 'page' && <DropdownMenuItem onClick={() => { void window.navigator.clipboard.writeText(new URL(notebookPageLink(item.id), window.location.origin).href).then(() => setAnnouncement('Page link copied')).catch(() => setError('Clipboard unavailable')); }}>Copy page link</DropdownMenuItem>}
       {(kind === 'page' ? tree?.permissions.edit : tree?.permissions.organize) && <DropdownMenuItem onClick={() => setRenaming({ kind, item, title: item.title })}>Rename inline</DropdownMenuItem>}
@@ -440,7 +447,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree?.permissions.organize && kind === 'section' && <DropdownMenuItem onClick={() => open({ action: 'defaults', kind, item })}>Page defaults…</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'move', kind, item })}>Move…</DropdownMenuItem>}
       {tree?.permissions.organize && <><DropdownMenuItem onClick={() => { void reorder(kind, item, -1); }}>Move up</DropdownMenuItem><DropdownMenuItem onClick={() => { void reorder(kind, item, 1); }}>Move down</DropdownMenuItem></>}
-      {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind, id: item.id, to: { parentId: tree.pages.find(p => p.id === item.parentId)?.parentId ?? null }, index: 0 }) })); })(); }}>Promote page</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'page' && <DropdownMenuItem disabled={!subpageMove(tree, item.id)} onClick={() => { void nestPage(item.id, subpageMove(tree, item.id)); }}>Make subpage</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void nestPage(item.id, promoteMove(tree, item.id)); }}>Promote subpage</DropdownMenuItem>}
       {tree?.permissions.edit && kind === 'page' && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(async () => { const p = await apiJson(`/api/notebook/pages/${item.id}/duplicate`, { method: 'POST', body: '{}' }); setParams({ page: String(p.id) }); }); })(); }}>Duplicate page only</DropdownMenuItem>}
       {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => createInstant('page', { sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>Add {kind === 'page' ? 'subpage' : 'page'}</DropdownMenuItem>}
       {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'template', kind: 'page', sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>New page from template…</DropdownMenuItem>}
@@ -492,7 +500,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     <div className="nb-filters" role="group" aria-label="Notebook page filter">{[['all','Notebooks'],['recent','Recent'],['starred','Pinned']].map(([id,label]) => <button key={id} aria-pressed={filter === id} onClick={() => { setFilter(id); setQuery(''); }}>{label}</button>)}</div>
     {tree && <div className="nb-filters"><button onClick={() => { setCollapsed([]); savePreference(collapsedKey, []); }}>Expand all</button><button onClick={() => { const keys = [...tree.notebooks.map(n => `notebook:${n.id}`), ...tree.sections.map(n => `section:${n.id}`), ...tree.pages.filter(p => tree.pages.some(child => child.parentId === p.id)).map(n => `page:${n.id}`)]; setCollapsed(keys); savePreference(collapsedKey, keys); }}>Collapse all</button></div>}
     <div className="nb-tree-scroll">
-      {query.trim() ? <><p className="nb-small">{searching ? 'Searching typed notes…' : `${hits.length} results`}</p>{hits.map(h => <button key={h.id} className="nb-search-hit" onClick={() => { void pick(h.id); }}><strong>{h.title}</strong><span>{h.snippet}</span></button>)}</> : filter !== 'all' ? <>{(filter === 'starred' ? tree?.pages.filter(p => stars.includes(p.id)) : [...(tree?.pages ?? [])].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30))?.map(p => <div key={p.id} className="nb-tree-row"><button className="nb-tree-label" onClick={() => { void pick(p.id); }}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} />}</button>{options('page', p)}</div>)}</> : tree?.notebooks.map(book => <div key={book.id} className="nb-book">
+      {query.trim() ? <><p className="nb-small">{searching ? 'Searching typed notes…' : `${hits.length} results`}</p>{hits.map(h => <button key={h.id} className="nb-search-hit" onClick={() => { void pick(h.id); }}><strong>{h.title}</strong><span>{h.snippet}</span></button>)}</> : filter !== 'all' ? <>{(filter === 'starred' ? tree?.pages.filter(p => stars.includes(p.id)) : [...(tree?.pages ?? [])].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30))?.map(p => <div key={p.id} className="nb-tree-row" data-cm-row-root=""><button className="nb-tree-label" onClick={() => { void pick(p.id); }}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} />}</button>{options('page', p)}</div>)}</> : tree?.notebooks.map(book => <div key={book.id} className="nb-book">
         <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}>{renameInput('notebook', book) ?? <button data-nb-focus data-nb-kind="notebook" data-nb-id={book.id} className="nb-tree-label" aria-expanded={!isCollapsed('notebook', book.id)} onClick={() => toggleCollapse('notebook', book.id)}>{isCollapsed('notebook', book.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<NotebookGlyph color={book.color ?? '#88c900'} /><strong>{book.title}</strong></button>}{options('notebook', book)}</div>
         {!isCollapsed('notebook', book.id) && tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
           <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{(tabRename ? null : renameInput('section', section)) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span className={tree?.pages.some(pg => pg.sectionId === section.id && pg.unread) ? 'nb-unread' : undefined}>{section.title}</span>{tree?.pages.some(pg => pg.sectionId === section.id && pg.unread) && <span className="nb-unread-dot" title="Has unread changes"><span className="sr-only">Has unread changes</span></span>}{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
