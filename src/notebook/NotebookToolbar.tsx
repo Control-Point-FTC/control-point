@@ -10,6 +10,7 @@ import { notebookCommandGlyph } from './NotebookIcons';
 import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
+import { ViewControls } from './ribbon/ViewControls';
 import { TableGrid } from './ribbon/TableGrid';
 import { TagSummary } from './ribbon/TagSummary';
 import { sortTable } from './tableSort';
@@ -221,6 +222,8 @@ export function NotebookRibbonShell({ loading }: { loading: boolean }) {
   return <div className="nb-command-bar nb-ribbon-shell" aria-busy={loading}>
     <RibbonTabs group={group} onSelect={setGroup} collapsed={false} trailing={<TopBar />} />
     <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label="Note formatting">
+      {/* View's layout choice works without a page, so it's never a dead end. */}
+      {group === 'view' && <ViewControls />}
       <span className="nb-small" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
     </div>
   </div>;

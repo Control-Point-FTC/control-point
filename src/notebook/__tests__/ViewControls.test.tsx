@@ -2,6 +2,7 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ViewControls, dockFeatures } from '../ribbon/ViewControls';
+import { NotebookRibbonShell } from '../NotebookToolbar';
 import { NotebookWorkspaceContext, type NotebookWorkspace } from '../workspaceContext';
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -13,6 +14,16 @@ describe('View: navigation and dock', () => {
     expect(screen.getByRole('button', { name: 'Navigation panes' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Tabs layout' }));
     expect(setNavigationLayout).toHaveBeenCalledWith('tabs');
+  });
+
+  it('lets you switch layout back with no page open (ribbon shell)', () => {
+    const setNavigationLayout = vi.fn();
+    const workspace = { teamId: 1, tree: null, openPage: vi.fn(), refreshTree: vi.fn(), openTrash: vi.fn(), toggleStickyNotes: vi.fn(), stickyNotesOpen: false, navigationLayout: 'tabs', setNavigationLayout } as NotebookWorkspace;
+    render(<NotebookWorkspaceContext.Provider value={workspace}><NotebookRibbonShell loading={false} /></NotebookWorkspaceContext.Provider>);
+    fireEvent.click(screen.getByRole('tab', { name: 'View' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Navigation panes' }));
+    expect(setNavigationLayout).toHaveBeenCalledWith('panes');
+    expect(screen.queryByRole('button', { name: 'Dock window' })).toBeNull(); // needs a page
   });
 
   it('docks the page in a narrow window on the right, and explains a blocked pop-up', () => {
