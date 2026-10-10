@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import type { Editor } from '@tiptap/core';
 import { Button, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Input, Label } from '../../components/ui-kit';
 import { apiJson } from '../../services/api';
+import { useNotebookWorkspace } from '../workspaceContext';
 import { eventHref, eventWhen, insertMeetingDetails, insertRecordLink, taskHref, type EventRecord, type TaskRecord } from '../recordLinks';
 
 type Kind = 'task' | 'event';
@@ -14,6 +15,7 @@ export function RecordLinkDialog({ editor, open, onOpenChange }: { editor: Edito
   const [query, setQuery] = useState('');
   const [records, setRecords] = useState<{ task?: TaskRecord[]; event?: EventRecord[] }>({});
   const [error, setError] = useState('');
+  const admin = !!useNotebookWorkspace()?.tree?.permissions.protect;
   useEffect(() => {
     if (!open || records[kind]) return;
     const abort = new AbortController();
@@ -27,14 +29,16 @@ export function RecordLinkDialog({ editor, open, onOpenChange }: { editor: Edito
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = (records[kind] ?? []) as (TaskRecord | EventRecord)[];
-    const matching = list.filter(r => !q || (r.title ?? '').toLowerCase().includes(q));
+    // Board tasks are for admins only, as on the Tasks page.
+    const matching = list.filter(r => !(kind === 'task' && (r as TaskRecord).is_board && !admin) && (!q || (r.title ?? '').toLowerCase().includes(q)));
     // Open tasks first; for meetings, upcoming first then most recent.
-    const today = new Date().toISOString().slice(0, 10);
+    // The viewer's own calendar day, like the calendar itself.
+    const now = new Date(), today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const sorted = kind === 'task'
       ? [...matching].sort((a, b) => Number((a as TaskRecord).status === 'done') - Number((b as TaskRecord).status === 'done'))
       : [...matching].sort((a, b) => { const da = (a as EventRecord).date ?? '', db = (b as EventRecord).date ?? ''; const fa = da >= today, fb = db >= today; return fa !== fb ? (fa ? -1 : 1) : fa ? da.localeCompare(db) : db.localeCompare(da); });
     return sorted.slice(0, LIMIT);
-  }, [records, kind, query]);
+  }, [records, kind, query, admin]);
   const done = () => onOpenChange(false);
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent>
     <DialogHeader><DialogTitle>Link a task or meeting</DialogTitle><DialogDescription>Links open the record in Control Point for anyone who can see it.</DialogDescription></DialogHeader>

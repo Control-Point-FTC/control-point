@@ -7,6 +7,13 @@
 .nb-prose ul[data-type=taskList] ul[data-type=taskList]{list-style:none}
 .nb-prose [contenteditable=true]{cursor:text}
 
+/* "[[" page link list. */
+.nb-link-menu{position:fixed;z-index:80;width:264px;overflow:auto;padding:6px;border-radius:10px;border:1px solid #d6d3d1;background:#fff;color:#151515;box-shadow:0 12px 32px rgb(0 0 0 / .18);display:grid;gap:2px}
+.nb-link-menu button{display:flex;justify-content:space-between;gap:8px;text-align:start;padding:6px 10px;border-radius:6px;font-size:13px}
+.nb-link-menu button strong{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nb-link-menu button span{font-size:11px;color:#8a6100}
+.nb-link-menu button[aria-selected=true]{background:#fff3b0}
+.nb-link-menu-help{margin:4px 6px 2px;font-size:10px;color:#777}
 /* The "/" block menu. */
 .nb-slash-menu{position:fixed;z-index:80;width:264px;max-height:320px;overflow:auto;padding:6px;border-radius:10px;border:1px solid #d6d3d1;background:#fff;color:#151515;box-shadow:0 12px 32px rgb(0 0 0 / .18);display:grid;gap:2px}
 .nb-slash-menu button{display:grid;gap:1px;text-align:start;padding:6px 10px;border-radius:6px}

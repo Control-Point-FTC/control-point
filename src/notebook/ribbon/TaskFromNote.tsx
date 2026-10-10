@@ -2,7 +2,7 @@
 // into a real Control Point task with assignees, priority and a due date.
 // The task links back to that exact line, and the line gets a link to the
 // task, so either side leads to the other.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label } from '../../components/ui-kit';
@@ -43,9 +43,12 @@ export function TaskFromNote({ editor, pageId, pageTitle, open, onOpenChange, no
   const [priority, setPriority] = useState('medium');
   const [due, setDue] = useState(''), [time, setTime] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  // After a failed attempt the task may still have been created (the answer
+  // got lost): a retry first looks for it, so it isn't made twice.
+  const attempted = useRef(false);
   useEffect(() => {
     if (!open) return;
-    setDraft(currentLine(editor)); setAssignees([]); setPriority('medium'); setDue(''); setTime(''); setError('');
+    setDraft(currentLine(editor)); attempted.current = false; setAssignees([]); setPriority('medium'); setDue(''); setTime(''); setError('');
     const abort = new AbortController();
     apiJson<Member[]>('/api/members', { cache: 'no-store', signal: abort.signal }).then(list => { if (!abort.signal.aborted) setMembers(Array.isArray(list) ? list : []); }).catch(() => undefined);
     return () => abort.abort();
@@ -56,8 +59,13 @@ export function TaskFromNote({ editor, pageId, pageTitle, open, onOpenChange, no
     setBusy(true); setError('');
     const source = `${window.location.origin}${notebookPageLink(pageId, draft.blockId)}`;
     try {
-      const created = await apiJson<{ id: number }>('/api/tasks', { method: 'POST', body: JSON.stringify({
-        title: draft.title.trim(), description: `From the notebook page “${pageTitle || 'Untitled'}”: ${source}`,
+      const title = draft.title.trim();
+      const existing = attempted.current
+        ? (await apiJson<{ id: number; title: string; description?: string | null }[]>('/api/tasks', { cache: 'no-store' }).catch(() => [])).find(t => t.title === title && (t.description ?? '').includes(source))
+        : undefined;
+      attempted.current = true;
+      const created = existing ?? await apiJson<{ id: number }>('/api/tasks', { method: 'POST', body: JSON.stringify({
+        title, description: `From the notebook page “${pageTitle || 'Untitled'}”: ${source}`,
         assignee_ids: assignees, priority, ...(due ? { due_date: due, ...(time ? { due_time: time } : {}) } : {}),
       }) });
       const linked = linkLineToTask(editor, draft.blockId, created.id);

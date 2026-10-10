@@ -12,6 +12,7 @@ import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
 import { RecordLinkDialog } from './ribbon/RecordLinkDialog';
 import { TaskFromNote } from './ribbon/TaskFromNote';
+import { ViewControls } from './ribbon/ViewControls';
 import { TableGrid } from './ribbon/TableGrid';
 import { TagSummary } from './ribbon/TagSummary';
 import { sortTable } from './tableSort';
@@ -82,6 +83,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [notice, setNotice] = useState('');
   const [recordOpen, setRecordOpen] = useState(false);
   const [taskOpen, setTaskOpen] = useState(false);
+  // Editing stopped (read-only, conflict): the record picker and task dialog close.
+  useEffect(() => { if (disabled) { setRecordOpen(false); setTaskOpen(false); } }, [disabled]);
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
@@ -197,8 +200,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     {thesaurus && <Thesaurus editor={editor} disabled={disabled} onClose={() => setThesaurus(false)} />}
     {findingTags && <TagSummary pageId={pageId} sectionId={pages.find(p => p.id === pageId)?.sectionId} onClose={() => setFindingTags(false)} />}
-    {recordOpen && <RecordLinkDialog editor={editor} open={recordOpen} onOpenChange={setRecordOpen} />}
-    {taskOpen && <TaskFromNote editor={editor} pageId={pageId} pageTitle={pages.find(p => p.id === pageId)?.title ?? ''} open={taskOpen} onOpenChange={setTaskOpen} notify={setNotice} />}
+    {recordOpen && !disabled && <RecordLinkDialog editor={editor} open={recordOpen} onOpenChange={setRecordOpen} />}
+    {taskOpen && !disabled && <TaskFromNote editor={editor} pageId={pageId} pageTitle={pages.find(p => p.id === pageId)?.title ?? ''} open={taskOpen} onOpenChange={setTaskOpen} notify={setNotice} />}
     {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {
@@ -227,6 +230,8 @@ export function NotebookRibbonShell({ loading }: { loading: boolean }) {
   return <div className="nb-command-bar nb-ribbon-shell" aria-busy={loading}>
     <RibbonTabs group={group} onSelect={setGroup} collapsed={false} trailing={<TopBar />} />
     <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label="Note formatting">
+      {/* View's layout choice works without a page, so it's never a dead end. */}
+      {group === 'view' && <ViewControls />}
       <span className="nb-small" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
     </div>
   </div>;

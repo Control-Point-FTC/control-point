@@ -4,6 +4,8 @@ import { createContext, useContext } from 'react';
 import type { NotebookTree } from './types';
 
 export type TagSummaryView = { scope: 'page' | 'section' | 'all'; only: string; hideDone: boolean };
+/** View → Navigation: the explorer pane, or sections as tabs across the top. */
+export type NavigationLayout = 'panes' | 'tabs';
 export type NotebookWorkspace = {
   teamId: number | null;
   tree: NotebookTree | null;
@@ -20,6 +22,8 @@ export type NotebookWorkspace = {
   setTagSummaryView?: (view: TagSummaryView) => void;
   /** Insert → Page templates: a new page in this section from a template. */
   openTemplates?: (sectionId: number) => void;
+  navigationLayout?: NavigationLayout;
+  setNavigationLayout?: (layout: NavigationLayout) => void;
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);

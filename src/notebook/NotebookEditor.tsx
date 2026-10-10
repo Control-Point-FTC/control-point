@@ -7,6 +7,9 @@ import { yDocToProsemirrorJSON, yUndoPluginKey } from '@tiptap/y-tiptap';
 import { notebookExtensions, notebookSchema, safeNotebookLink, validatedNotebookDocument } from './editorSchema';
 import { useNotebookWorkspace } from './workspaceContext';
 import { AutoCapitalize } from './autoCapitalize';
+import { ViewControls } from './ribbon/ViewControls';
+import { PageLinkMenu } from './pageLinkMenu';
+import { PageLinkPopup, PageLinkSourceContext } from './PageLinkPopup';
 import { SlashMenu } from './slashMenu';
 import { SlashMenuPopup } from './SlashMenuPopup';
 import { NotebookSync, type SyncStatus } from './NotebookSync';
@@ -17,6 +20,7 @@ import type { NotebookPageItem, NotebookPageData } from './types';
 import { confirmDialog } from '../components/dialog';
 import { parseNotebookPageLink } from './pageLinks';
 import { appRecordPath } from './recordLinks';
+import { RecordNavigationContext } from './recordNavigation';
 import { useNavigate } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { NotebookDiscussions } from './NotebookDiscussions';
@@ -61,6 +65,10 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const mobile = useNotebookMobile();
   const mobileRef = React.useRef(mobile); mobileRef.current = mobile;
   const navigate = useNavigate(); const navigateRef = React.useRef(navigate); navigateRef.current = navigate;
+  const openRecordPath = React.useCallback((path: string) => navigateRef.current(path), []);
+  const pagesRef = React.useRef(pages); pagesRef.current = pages;
+  // Page links for the page and its canvas text boxes.
+  const pageLinks = React.useMemo(() => ({ pages: () => pagesRef.current, currentPageId: () => sync.pageId, enabled: () => !mobileRef.current }), [sync.pageId]);
   const blocked = sync.restoring || !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
@@ -134,7 +142,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
-    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, SlashMenu.configure({ enabled: () => !mobileRef.current }), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
+    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, PageLinkMenu.configure(pageLinks), SlashMenu.configure({ enabled: () => !mobileRef.current }), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
       if (!mobileRef.current || !view.editable) return false;
@@ -213,7 +221,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
         insert: fileUpload.controls,
         file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button><button className="nb-tool" disabled={printing || !workspace?.tree} onClick={() => { void printSection(); }}>Print section</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
         history: <NotebookHistory sync={sync} onRejoin={onRejoin} />,
-        view: <><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><NotebookPaperControls value={paperView} onChange={setPaperView}/><NotebookReader sync={sync} preferences={readerPreferences} onPreferencesChange={setReaderPreferences}/><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
+        view: <><ViewControls pageId={sync.pageId}/><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><NotebookPaperControls value={paperView} onChange={setPaperView}/><NotebookReader sync={sync} preferences={readerPreferences} onPreferencesChange={setReaderPreferences}/><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
       const toolbar = <div className="nb-pane-ribbon" hidden={!toolbarVisible}><NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup}/></div>;
       return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
@@ -228,7 +236,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     }}><article ref={paper} className={`nb-paper ${paperView.pattern==='ruled' && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { ...paperViewStyle(paperView),zoom: zoom / 100 } : undefined}>
       <input hidden={!mobile&&!paperView.showTitle} className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
-      <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>{!mobile && <SlashMenuPopup editor={editor} />}
+      <RecordNavigationContext.Provider value={openRecordPath}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
       {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}
     </article></div>

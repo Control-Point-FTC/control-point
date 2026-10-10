@@ -5,6 +5,7 @@ import * as Y from 'yjs';
 import { encodeBytes, decodeBytes } from '../NotebookSync';
 import { MemoryRouter } from 'react-router-dom';
 import { NotebookPage } from '../NotebookPage';
+import { rowMenuTrigger } from '../../components/contextmenu/ContextMenuProvider';
 import { apiJson } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
 vi.mock('../NotebookEditor', () => ({ NotebookEditor: () => null, downloadNotebookJSON: vi.fn() }));
@@ -12,8 +13,9 @@ const viewport=vi.hoisted(()=>({mobile:false}));
 vi.mock('../useNotebookMobile',()=>({useNotebookMobile:()=>viewport.mobile}));
 let view:ReturnType<typeof render>;
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear();viewport.mobile=false; });
-function mount(path = '/notebook', emptySection = false) {
+function mount(path = '/notebook', emptySection = false, extraBook = false) {
   const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false }], pages: [{ id: 2, sectionId: 1, parentId: null, title: 'Drive', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }, { id: 3, sectionId: 1, parentId: 2, title: 'Motor tests', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
+  if (extraBook) (tree.notebooks as any[]).push({ id: 2, title: 'Outreach', color: null, sort: 1 });
   if (emptySection) tree.sections.push({id:4,notebookId:1,title:'Empty section',color:'#111111',sort:1,protected:false});
   const documents = new Map<number, Y.Doc>();
   vi.mocked(apiJson).mockImplementation(async (path, options) => {
@@ -44,7 +46,43 @@ function mount(path = '/notebook', emptySection = false) {
   view=render(<MemoryRouter initialEntries={[path]}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
   return tree;
 }
+describe('tabs layout', () => {
+  it('polls mentions once per layout and lets you pick an empty notebook to add its first section', async () => {
+    localStorage.setItem('cp-notebook-layout:10:20', 'tabs');
+    mount('/notebook', false, true);
+    const picker = await screen.findByRole('combobox', { name: 'Notebook' }) as HTMLSelectElement;
+    expect(vi.mocked(apiJson).mock.calls.filter(([p]) => p === '/api/notebook/mentions')).toHaveLength(1);
+    const syncsBefore = vi.mocked(apiJson).mock.calls.filter(([p]) => String(p).endsWith('/sync')).length;
+    fireEvent.change(picker, { target: { value: '2' } });
+    await waitFor(() => expect(picker.value).toBe('2'));
+    expect(within(screen.getByRole('navigation', { name: 'Sections' })).queryByRole('button', { name: 'Build' })).toBeNull();
+    // Nothing from the other notebook stays selected: no adding pages there.
+    await waitFor(() => expect((screen.getByRole('button', { name: /Add Page/ }) as HTMLButtonElement).disabled).toBe(true));
+    // No page from the other notebook gets reopened behind the empty one.
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    expect(picker.value).toBe('2');
+    expect(vi.mocked(apiJson).mock.calls.filter(([p]) => String(p).endsWith('/sync')).length).toBe(syncsBefore);
+    fireEvent.click(screen.getByRole('button', { name: 'New section' }));
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p, o]) => p === '/api/notebook/sections' && JSON.parse(String(o?.body)).notebookId === 2)).toBe(true));
+    await act(async () => { await new Promise(r => setTimeout(r, 300)); });
+    // Let the creation finish (rename field shown) so nothing is still in flight after this test.
+    fireEvent.keyDown(await screen.findByRole('textbox', { name: 'Rename section' }), { key: 'Escape' });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+  });
+});
+
 describe('notebook hierarchy controls', () => {
+  it('right-click on a notebook, section or page row opens that row\'s own actions', async () => {
+    mount();
+    for (const name of ['Robot notes', 'Build', 'Motor tests']) {
+      const label = (await screen.findAllByText(name))[0];
+      expect(rowMenuTrigger(label)?.getAttribute('aria-label')).toBe(`Actions for ${name}`);
+    }
+    // Recent and Pinned list pages without the tree around them; same menu.
+    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+    const recent = (await screen.findAllByText('Drive'))[0];
+    expect(rowMenuTrigger(recent)?.getAttribute('aria-label')).toBe('Actions for Drive');
+  });
   it('falls back to a surviving section after the selected empty section disappears', async () => {
     const tree = mount('/notebook', true);
     fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));

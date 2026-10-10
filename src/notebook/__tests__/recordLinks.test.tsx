@@ -20,27 +20,33 @@ describe('record links', () => {
     expect(appRecordPath('https://evil.test/tasks?task=1', origin)).toBeNull();
     expect(appRecordPath('/notebook/p/4', origin)).toBeNull();
     expect(appRecordPath('/settings', origin)).toBeNull();
+    expect(appRecordPath('/cad-snapshots', origin)).toBe('/cad-snapshots');
   });
 
   it('writes meeting details: linked title, when and where, description', () => {
     const editor = make();
-    insertMeetingDetails(editor, { id: 7, title: 'Design review', date: '2026-10-14', start_time: '18:00', end_time: '19:30', location: 'Shop', description: 'Intake v2' });
+    insertMeetingDetails(editor, { id: 7, title: 'Design review', date: '2026-10-14', start_time: '18:00', end_time: '19:30', location: 'Shop', description: 'Intake v2\nRoll call\n' + 'x'.repeat(3000) });
     const json = JSON.stringify(editor.getJSON());
     expect(editor.getText()).toContain('Design review');
     expect(editor.getText()).toContain('18:00–19:30 · Shop');
     expect(editor.getText()).toContain('Intake v2');
+    expect(editor.getText()).toContain('Roll call');
+    expect(editor.getText()).toContain('x'.repeat(3000)); // nothing cut off
+    editor.setEditable(false);
+    expect(insertMeetingDetails(editor, { id: 8, title: 'Blocked' })).toBe(false);
     expect(json).toContain('/calendar?event=7');
     expect(eventWhen({ id: 1, title: 'x' })).toBe('');
   });
 
   it('finds a task or meeting and links it, or adds meeting details', async () => {
     vi.mocked(apiJson).mockImplementation(async (url: string) => url === '/api/tasks'
-      ? [{ id: 1, title: 'Order bolts', status: 'done' }, { id: 2, title: 'Wire drivetrain', status: 'todo', due_date: '2026-10-20' }] as any
+      ? [{ id: 1, title: 'Order bolts', status: 'done' }, { id: 2, title: 'Wire drivetrain', status: 'todo', due_date: '2026-10-20' }, { id: 3, title: 'Board budget review', status: 'todo', is_board: 1 }] as any
       : [{ id: 9, title: 'Kickoff', date: '2030-01-05', start_time: '10:00' }] as any);
     const editor = make(), onOpenChange = vi.fn();
     render(<RecordLinkDialog editor={editor} open onOpenChange={onOpenChange} />);
     const options = await screen.findAllByRole('button', { name: /Order bolts|Wire drivetrain/ });
     expect(options[0].textContent).toContain('Wire drivetrain'); // open tasks first
+    expect(screen.queryByText('Board budget review')).toBeNull(); // board tasks: admins only
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'wire' } });
     fireEvent.click(screen.getByRole('button', { name: /Wire drivetrain/ }));
     expect(JSON.stringify(editor.getJSON())).toContain('/tasks?task=2');

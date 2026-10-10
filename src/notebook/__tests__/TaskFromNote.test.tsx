@@ -55,6 +55,24 @@ describe('create a task from a note', () => {
     expect(JSON.stringify(editor.getJSON())).toContain('/tasks?task=77');
   });
 
+  it('does not create the task twice when retrying after a lost answer', async () => {
+    let created: any = null; let posts = 0;
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/members') return [] as any;
+      if (url === '/api/tasks' && init?.method === 'POST') { posts++; created = { id: 90, ...JSON.parse(init.body) }; throw new Error('Network error'); }
+      if (url === '/api/tasks') return (created ? [created] : []) as any;
+      return null as any;
+    });
+    const editor = make(), onOpenChange = vi.fn();
+    render(<TaskFromNote editor={editor} pageId={12} pageTitle="Build log" open onOpenChange={onOpenChange} notify={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network error');
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(posts).toBe(1);
+    expect(JSON.stringify(editor.getJSON())).toContain('/tasks?task=90');
+  });
+
   it('shows why it could not create the task', async () => {
     vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => {
       if (init?.method === 'POST') throw new Error('Permission denied: manage_tasks');
