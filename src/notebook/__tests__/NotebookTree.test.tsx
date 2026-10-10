@@ -98,6 +98,28 @@ describe('notebook hierarchy controls', () => {
     const renameBox=await screen.findByRole('textbox',{name:'Rename page'});
     expect(renameBox).toHaveValue('Untitled');
   });
+  it('applies the section default template and date stamp on instant creation', async () => {
+    // mount with section defaults pre-set
+    const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false, defaultTemplate: 'meeting', dateStamp: true }], pages: [], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
+    let lastBody: any = null;
+    vi.mocked(apiJson).mockImplementation(async (path, options) => {
+      if (path === '/api/notebook/tree') return structuredClone(tree) as any;
+      if (path === '/api/notebook/mentions') return [] as any;
+      if (path === '/api/notebook/pages' && options?.method === 'POST') {
+        lastBody = JSON.parse(String(options.body));
+        return { id: 901 } as any;
+      }
+      throw new Error(`Unexpected request ${path}`);
+    });
+    render(<MemoryRouter initialEntries={['/notebook']}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
+    await screen.findByRole('button', { name: 'Add Page' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Page' }));
+    await waitFor(() => expect(lastBody).toBeTruthy());
+    expect(lastBody.title).toBe('Untitled');
+    expect(lastBody.content.type).toBe('doc');
+    expect(lastBody.content.content[0].content[0].text).toMatch(/\d{4}/); // date stamp first
+    expect(JSON.stringify(lastBody.content)).toContain('Meeting details'); // then template
+  });
   it('ignores a second create click while the first is still in flight', async () => {
     mount(); await screen.findByRole('button',{name:'Robot notes'});
     const btn = screen.getByRole('button',{name:'New section'});
