@@ -56,6 +56,8 @@ describe('mounted collaborative notebook editor', () => {
     expect(JSON.stringify(yDocToProsemirrorJSON(other.doc))).toContain('"type":"bold"');expect(JSON.stringify(yDocToProsemirrorJSON(sync.doc))).not.toContain('"type":"bold"');
     expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);view.rerender(panes('main'));
     expect(main.querySelector('[aria-label="Page content"]')).toBe(first);expect(pane.querySelector('[aria-label="Page content"]')).toBe(second);expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button',{name:'Copy formatting'}));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();view.rerender(panes('other'));view.rerender(panes('main'));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();
+    fireEvent.keyDown(first,{key:'f',ctrlKey:true});expect(screen.getAllByRole('search',{name:'Find in page',hidden:true})).toHaveLength(1);
     await act(async()=>{await other.flush();});expect(server.getMap('meta').get('title')).toBe('Journal');expect(secondary.getMap('meta').get('title')).toBe('Changed independently');
   });
   it('makes text, title and insertion controls read only while a revision restore is pending',async()=>{
