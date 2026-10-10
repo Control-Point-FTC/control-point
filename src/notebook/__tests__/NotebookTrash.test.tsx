@@ -18,6 +18,7 @@ describe('desktop notebook trash controls',()=>{
   it('requires exact typed confirmation and never removes on cancellation',async()=>{
     mount();await open();fireEvent.click(screen.getByRole('button',{name:'Permanently remove page Build notes'}));
     expect(screen.getByRole('region',{name:'Permanent removal confirmation'})).toHaveTextContent('This cannot be undone');
+    expect(screen.getByLabelText('Type the exact title to confirm')).toHaveFocus();
     const confirm=screen.getByRole('button',{name:'Confirm permanent removal'});expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Type the exact title to confirm'),{target:{value:'Build notes '}});expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Type the exact title to confirm'),{target:{value:'Build notes'}});expect(confirm).not.toBeDisabled();
@@ -36,6 +37,16 @@ describe('desktop notebook trash controls',()=>{
     await screen.findByRole('alert');expect(screen.getByRole('region',{name:'Permanent removal confirmation'})).toBeTruthy();
     vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(403,'Notebook permission required'));fireEvent.click(screen.getByRole('button',{name:'Confirm permanent removal'}));
     await waitFor(()=>expect(screen.queryByRole('region',{name:'Permanent removal confirmation'})).toBeNull());expect(screen.queryByText('Build notes')).toBeNull();
+  });
+  it('discards typed removal when the item is restored instead',async()=>{
+    mount();await open();fireEvent.click(screen.getByRole('button',{name:'Permanently remove page Build notes'}));fireEvent.change(screen.getByLabelText('Type the exact title to confirm'),{target:{value:'Build notes'}});
+    vi.mocked(apiJson).mockResolvedValueOnce({ok:true}).mockResolvedValueOnce({...listing,items:[]});fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
+    await screen.findByText('Trash is empty');expect(screen.queryByRole('region',{name:'Permanent removal confirmation'})).toBeNull();expect(vi.mocked(apiJson).mock.calls.some(([url])=>url.endsWith('/purge'))).toBe(false);
+  });
+  it('discards typed removal when another preview loses access',async()=>{
+    mount();await open();fireEvent.click(screen.getByRole('button',{name:'Permanently remove page Build notes'}));fireEvent.change(screen.getByLabelText('Type the exact title to confirm'),{target:{value:'Build notes'}});
+    vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(404,'Deleted page unavailable'));fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));
+    await screen.findByRole('alert');expect(screen.queryByRole('region',{name:'Permanent removal confirmation'})).toBeNull();expect(screen.queryByText('Build notes')).toBeNull();
   });
   it('clears protected snapshots when admin access changes and reads the permitted listing again',async()=>{
     const {rerender,onRestored}=mount();await open();

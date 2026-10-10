@@ -23,6 +23,8 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
   const [destination,setDestination]=useState<Entry|null>(null),[book,setBook]=useState(''),[section,setSection]=useState(''),[parent,setParent]=useState('');
   const [preview,setPreview]=useState<NotebookPageData|null>(null);
   const [purge,setPurge]=useState<Entry|null>(null),[confirmation,setConfirmation]=useState('');
+  const confirmationInput=useRef<HTMLInputElement|null>(null);
+  useEffect(()=>{if(purge)confirmationInput.current?.focus();},[purge]);
   const request=useRef<AbortController|null>(null),locked=useRef(false),refreshButton=useRef<HTMLButtonElement|null>(null),restoreFocus=useRef(false);
   useEffect(()=>{if(!busy&&restoreFocus.current){restoreFocus.current=false;refreshButton.current?.focus();}},[busy]);
   const headers={'X-CP-Notebook-Team':String(teamId)};
@@ -44,7 +46,7 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
   },[open,teamId,tree.permissions.delete,tree.permissions.protect,tree.permissions.organize]);
   const chooseDestination=(entry:Entry)=>{setDestination(entry);setBook(String(tree.notebooks[0]?.id??''));setSection(String(tree.sections[0]?.id??''));setParent('');};
   const inspect=async(entry:Entry)=>{
-    if(locked.current)return;const abort=begin();setPreview(null);
+    if(locked.current)return;const abort=begin();setPreview(null);setPurge(null);setConfirmation('');
     try{
       const snapshot=await apiJson<NotebookPageData>(`/api/notebook/trash/pages/${entry.id}`,{headers,cache:'no-store',signal:abort.signal});
       abort.signal.throwIfAborted();setPreview(snapshot);
@@ -52,7 +54,7 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
     finally{finish(abort);}
   };
   const restore=async(entry:Entry,relocate=false)=>{
-    if(locked.current)return;const abort=begin();setMessage('');
+    if(locked.current)return;const abort=begin();setMessage('');setPurge(null);setConfirmation('');
     try{
       if(!await confirmDialog({title:`Restore “${entry.title}”?`,message:'Retained notes and drawings return with their protection. Independently deleted children stay in trash. Previously connected editors must rejoin.',confirmLabel:'Restore'}))return;
       abort.signal.throwIfAborted();
@@ -96,7 +98,7 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
       </section>}
       {purge&&<section className="nb-trash-purge" aria-label="Permanent removal confirmation"><h3>Permanently remove “{purge.title}”?</h3>
         <p>This permanently removes this {purge.kind}{purge.kind==='page'?' and its child pages':' and everything inside it'}, including saved revisions and discussions. This cannot be undone. Files still used by other retained pages stay available.</p>
-        <Label htmlFor="nb-purge-title">Type the exact title to confirm</Label><input id="nb-purge-title" autoComplete="off" spellCheck={false} disabled={busy} value={confirmation} onChange={event=>setConfirmation(event.target.value)}/>
+        <Label htmlFor="nb-purge-title">Type the exact title to confirm</Label><input ref={confirmationInput} id="nb-purge-title" autoComplete="off" spellCheck={false} disabled={busy} value={confirmation} onChange={event=>setConfirmation(event.target.value)}/>
         <div><Button variant="destructive" disabled={busy||confirmation!==purge.title} onClick={()=>void removePermanently()}>Confirm permanent removal</Button><Button variant="ghost" disabled={busy} onClick={()=>{setPurge(null);setConfirmation('');}}>Cancel removal</Button></div>
       </section>}
       {cursor&&<Button variant="outline" disabled={busy} onClick={()=>void load(cursor)}>Load older items</Button>}
