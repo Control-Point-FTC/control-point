@@ -133,12 +133,24 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     const touchMetrics = () => { const [a,b] = [...touches.current.values()]; return { x:(a.x+b.x)/2, y:(a.y+b.y)/2, distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)) }; };
     const undo = useMemo(() => retainedHistory?.undo ?? new Y.UndoManager(root, { trackedOrigins: new Set([canvasOrigin]), captureTimeout: 500 }), [root, retainedHistory]);
     const selected = items.filter(i => selection.includes(i.id));
+    // The link target already scrolled to, so later canvas edits don't pull the page back.
+    // Any new link (even back to the same line after another) scrolls again.
+    const anchored = useRef<string | null>(null);
+    useEffect(() => { anchored.current = null; }, [anchorTarget]);
     useEffect(() => {
-        if (!anchorTarget || !/^[\w-]{1,100}$/.test(anchorTarget)) return;
-        const target = stage.current?.querySelector(`[data-canvas-id="${anchorTarget}"]`);
-        target?.scrollIntoView({ block:'center', behavior:'smooth' }); target?.classList.add('nb-linked-block');
-        const timer = setTimeout(() => target?.classList.remove('nb-linked-block'),2500);
-        return () => { clearTimeout(timer); target?.classList.remove('nb-linked-block'); };
+        if (!anchorTarget || anchored.current === anchorTarget || !/^[\w-]{1,100}$/.test(anchorTarget)) return;
+        // A whole canvas item, or a line inside a canvas text box (its editor
+        // may still be mounting, so look again for a moment).
+        let timer: ReturnType<typeof setTimeout> | undefined, tries = 0;
+        const find = () => {
+            const target = stage.current?.querySelector(`[data-canvas-id="${anchorTarget}"], [data-canvas-id] [data-id="${anchorTarget}"]`);
+            if (!target) { if (++tries < 10) timer = setTimeout(find, 200); return; }
+            anchored.current = anchorTarget;
+            target.scrollIntoView({ block:'center', behavior:'smooth' }); target.classList.add('nb-linked-block');
+            setTimeout(() => target.classList.remove('nb-linked-block'),2500);
+        };
+        find();
+        return () => clearTimeout(timer);
     }, [anchorTarget, items]);
     useEffect(() => { if (active) onSelectionChange?.(selected.length === 1 ? selected[0].id : null); }, [selection, items, onSelectionChange, active]);
     useEffect(() => {

@@ -11,6 +11,7 @@ import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
 import { RecordLinkDialog } from './ribbon/RecordLinkDialog';
+import { TaskFromNote } from './ribbon/TaskFromNote';
 import { ViewControls } from './ribbon/ViewControls';
 import { TableGrid } from './ribbon/TableGrid';
 import { TagSummary } from './ribbon/TagSummary';
@@ -81,8 +82,9 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [label, setLabel] = useState('');
   const [notice, setNotice] = useState('');
   const [recordOpen, setRecordOpen] = useState(false);
-  // Editing stopped (read-only, conflict): the record picker closes.
-  useEffect(() => { if (disabled) setRecordOpen(false); }, [disabled]);
+  const [taskOpen, setTaskOpen] = useState(false);
+  // Editing stopped (read-only, conflict): the record picker and task dialog close.
+  useEffect(() => { if (disabled) { setRecordOpen(false); setTaskOpen(false); } }, [disabled]);
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
@@ -157,7 +159,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
 
   const content: Record<Tab, React.ReactNode> = {
     file: pagePanel('file'),
-    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} />,
+    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} onCreateTask={() => setTaskOpen(true)} />,
     insert: <>
       <RibbonGroup label="Tables"><RibbonMenu label="Table" showLabel disabled={disabled} open={tableMenu} onOpenChange={setTableMenu}><TableGrid onPick={(rows, cols) => { setTableMenu(false); chain().insertTable({ rows, cols, withHeaderRow: true }).run(); }} /></RibbonMenu></RibbonGroup>
       {panels.insert && <RibbonGroup label="Files">{panels.insert}</RibbonGroup>}
@@ -199,6 +201,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     {thesaurus && <Thesaurus editor={editor} disabled={disabled} onClose={() => setThesaurus(false)} />}
     {findingTags && <TagSummary pageId={pageId} sectionId={pages.find(p => p.id === pageId)?.sectionId} onClose={() => setFindingTags(false)} />}
     {recordOpen && !disabled && <RecordLinkDialog editor={editor} open={recordOpen} onOpenChange={setRecordOpen} />}
+    {taskOpen && !disabled && <TaskFromNote editor={editor} pageId={pageId} pageTitle={pages.find(p => p.id === pageId)?.title ?? ''} open={taskOpen} onOpenChange={setTaskOpen} notify={setNotice} />}
     {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {
