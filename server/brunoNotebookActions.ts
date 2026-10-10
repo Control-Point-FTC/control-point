@@ -9,7 +9,7 @@
 // - merged into the live shared document, so collaborators keep their edits.
 import type { JSONContent } from "@tiptap/core";
 import { NotebookError, type NotebookContext, type NotebookStore } from "./notebook.js";
-import { markdownToNotebookBlocks, MARKDOWN_LIMIT } from "../src/notebook/markdownBlocks.js";
+import { markdownToNotebookBlocks, MarkdownTooLargeError, MARKDOWN_LIMIT } from "../src/notebook/markdownBlocks.js";
 import { notebookTemplate, NOTEBOOK_TEMPLATES } from "../src/notebook/templates.js";
 import { renderNotebookText } from "./brunoNotebook.js";
 
@@ -31,6 +31,8 @@ const markdownOf = (v: unknown, required: boolean) => {
   if (v === undefined || v === null) { if (required) throw bad("Notebook text is missing"); return ""; }
   if (typeof v !== "string") throw bad("Notebook text must be text");
   if (v.length > MARKDOWN_LIMIT) throw bad(`Notebook text is limited to ${MARKDOWN_LIMIT.toLocaleString()} characters`);
+  // Convert once now: text that can't become blocks whole is refused, never cut short.
+  try { markdownToNotebookBlocks(v); } catch (e) { if (e instanceof MarkdownTooLargeError) throw bad(e.message); throw e; }
   return v;
 };
 
@@ -123,6 +125,22 @@ const bruno = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.member
 const confirmed = (ctx: NotebookContext): NotebookContext => ({ memberId: ctx.memberId, teamId: ctx.teamId, source: "bruno_confirmed" });
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
+// The card shows everything a change writes (bounded by the input limit).
+const PREVIEW_LIMIT = MARKDOWN_LIMIT + 5000;
+type Tree = Awaited<ReturnType<NotebookStore["tree"]>>;
+/** Where a create/move lands. A parent page decides the section, so a
+ *  parent-only destination works across sections, in preview and apply alike. */
+function destination(tree: Tree, op: { section?: number; parent?: number | null }): { sectionId?: number; error?: string } {
+  if (op.parent) {
+    const parent = tree.pages.find(p => p.id === op.parent);
+    if (!parent) return { error: "That parent page isn't available." };
+    if (op.section && op.section !== parent.sectionId) return { error: "That parent page is in a different section." };
+    return { sectionId: parent.sectionId };
+  }
+  if (op.section && !tree.sections.some(s => s.id === op.section)) return { error: "That section isn't available." };
+  return { sectionId: op.section };
+}
+
 export type NotebookOpPreview = { op: NotebookOp["op"]; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
 
 /** What the card shows, resolved from the server's data under Bruno's access.
@@ -135,9 +153,10 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
   const out: NotebookOpPreview[] = [];
   for (const op of ops) {
     if (op.op === "create") {
-      const target = op.section ? section(op.section) : tree.sections[0];
-      if (!target || (op.parent && !pageTitle(op.parent))) { out.push({ op: "create", summary: `New page "${clip(op.title, 80)}"`, error: "That section or parent page isn't available." }); continue; }
-      const body = op.markdown ? renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, 600).text : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
+      const where = destination(tree, op);
+      const target = section(where.sectionId) ?? (where.error ? undefined : tree.sections[0]);
+      if (!target) { out.push({ op: "create", summary: `New page "${clip(op.title, 80)}"`, error: where.error ?? "There is no notebook section to add a page to." }); continue; }
+      const body = op.markdown ? renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text : op.template ? `${NOTEBOOK_TEMPLATES.find(t => t.id === op.template)?.label} template` : "";
       out.push({ op: "create", summary: `New page "${clip(op.title, 80)}" in ${clip(target.title, 60)}${op.parent ? ` under "${clip(pageTitle(op.parent), 60)}"` : ""}`, ...(body ? { after: body } : {}) });
       continue;
     }
@@ -147,18 +166,19 @@ export async function previewNotebookOps(store: NotebookStore, ctx: NotebookCont
     if (op.op === "rename") out.push({ op: "rename", summary: `Rename ${name} to "${clip(op.title, 80)}"` });
     else if (op.op === "delete") out.push({ op: "delete", summary: `Move ${name} and its subpages to the trash (restorable from Trash)`, destructive: true });
     else if (op.op === "move") {
-      const to = op.parent ? pageTitle(op.parent) : op.section ? section(op.section)?.title : undefined;
-      if (!to && op.parent !== null) { out.push({ op: "move", summary: `Move ${name}`, error: "That destination isn't available." }); continue; }
+      const where = destination(tree, op);
+      const to = op.parent ? pageTitle(op.parent) : where.sectionId ? section(where.sectionId)?.title : undefined;
+      if (where.error || (!to && op.parent !== null)) { out.push({ op: "move", summary: `Move ${name}`, error: where.error ?? "That destination isn't available." }); continue; }
       out.push({ op: "move", summary: `Move ${name} ${op.parent ? `under "${clip(to, 60)}"` : `to ${clip(to ?? "the top of its section", 60)}`}` });
     } else {
       let page;
       try { page = await store.page(bruno(ctx), op.page); } catch { out.push(unavailable(op.op)); continue; }
-      const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, 600).text;
+      const added = renderNotebookText({ type: "doc", content: markdownToNotebookBlocks(op.markdown) }, {}, PREVIEW_LIMIT).text;
       if (op.op === "append") out.push({ op: "append", summary: `Add to ${name}`, after: added });
       else {
         const at = locate(page.content as PMNode, op.block);
         if (!at) { out.push({ op: "replace", summary: `Rewrite part of ${name}`, error: "That part of the page changed or was removed." }); continue; }
-        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: renderNotebookText({ type: "doc", content: [at.siblings[at.index]] }, {}, 600).text, ...(added ? { after: added } : {}), destructive: !added });
+        out.push({ op: "replace", summary: added ? `Rewrite part of ${name}` : `Remove part of ${name}`, before: renderNotebookText({ type: "doc", content: [at.siblings[at.index]] }, {}, PREVIEW_LIMIT).text, ...(added ? { after: added } : {}), destructive: !added });
       }
     }
   }
@@ -176,7 +196,9 @@ export async function applyNotebookOps(store: NotebookStore, ctx: NotebookContex
     for (const op of ops) {
       if (op.op === "create") {
         const tree = await store.tree(as);
-        const sectionId = op.section ?? tree.sections[0]?.id;
+        const where = destination(tree, op);
+        if (where.error) throw new NotebookError(where.error, 404);
+        const sectionId = where.sectionId ?? tree.sections[0]?.id;
         if (!sectionId) throw new NotebookError("There is no notebook section to add a page to", 404);
         const content: PMNode = op.markdown ? { type: "doc", content: markdownToNotebookBlocks(op.markdown) } : notebookTemplate(op.template ?? "blank");
         if (!content.content?.length) content.content = [{ type: "paragraph" }];
@@ -189,7 +211,9 @@ export async function applyNotebookOps(store: NotebookStore, ctx: NotebookContex
         const page = await store.mergeEdit(as, op.page, { title: op.title });
         results.push({ op: "rename", pageId: page.id, title: page.title });
       } else if (op.op === "move") {
-        await store.move(as, "page", op.page, { ...(op.section ? { sectionId: op.section } : {}), ...(op.parent !== undefined ? { parentId: op.parent } : {}) }, Number.MAX_SAFE_INTEGER);
+        const where = destination(await store.tree(as), op);
+        if (where.error) throw new NotebookError(where.error, 404);
+        await store.move(as, "page", op.page, { ...(where.sectionId ? { sectionId: where.sectionId } : {}), ...(op.parent !== undefined ? { parentId: op.parent } : {}) }, Number.MAX_SAFE_INTEGER);
         const page = await store.page(as, op.page);
         results.push({ op: "move", pageId: page.id, title: page.title });
       } else {

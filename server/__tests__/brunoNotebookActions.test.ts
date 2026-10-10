@@ -91,6 +91,26 @@ describe("confirmed Bruno notebook writes", () => {
     expect(textOf(await store.page(human(editor), result[0].pageId))).toContain("Action items");
   });
 
+  it("a parent-only destination uses the parent's section, for create and move alike", async () => {
+    const other = (await store.create(human(admin), "section", { notebookId: book, title: "Other section" })).id;
+    const parent = await store.create(human(admin), "page", { sectionId: other, title: "Elsewhere", content: doc(para("e", "e")) }) as any;
+    const mover = await newPage("Mover");
+    const ops = parseNotebookOps([{ op: "create", title: "Child", parent: parent.id }, { op: "move", page: mover.id, parent: parent.id }]);
+    const previews = await previewNotebookOps(store, me(editor), ops);
+    expect(previews.map(p => p.error)).toEqual([undefined, undefined]);
+    expect(previews[0].summary).toContain("in Other section");
+    const { result } = await applyNotebookOps(store, me(editor), ops, key());
+    for (const id of [result[0].pageId, mover.id]) expect(await store.page(human(editor), id)).toMatchObject({ sectionId: other, parentId: parent.id });
+    // A section that contradicts the parent is refused, in preview and on apply.
+    const wrong = parseNotebookOps([{ op: "create", title: "Bad", section, parent: parent.id }]);
+    expect((await previewNotebookOps(store, me(editor), wrong))[0].error).toMatch(/different section/);
+    await expect(applyNotebookOps(store, me(editor), wrong, key())).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("refuses text too long to convert whole instead of saving part of it", () => {
+    expect(() => parseNotebookOps([{ op: "append", page: 1, markdown: "p\n\n".repeat(401) }])).toThrow(/split it into smaller changes/);
+  });
+
   it("appends, rewrites, renames, moves and trashes; each keeps a revision", async () => {
     const p = await newPage("Edit me");
     const parent = await newPage("Parent");

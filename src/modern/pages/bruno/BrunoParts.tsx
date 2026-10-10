@@ -169,7 +169,7 @@ export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, b
         {proposals.length > 0 && status !== 'dismissed' && (
           <ProposalCard proposals={proposals} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
-        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} />}
+        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${index}:${text}`} />}
         {isLastModel && switchTo === 'bruno' && !switchDismissed && !busy && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={onSwitchToBruno}>Yes, switch to Bruno</Button>

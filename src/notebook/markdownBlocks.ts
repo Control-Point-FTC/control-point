@@ -13,7 +13,10 @@ const MAX_BLOCKS = 400;
 const LANGUAGES = new Set(['plaintext', 'javascript', 'typescript', 'java', 'kotlin', 'python', 'cpp', 'json', 'bash']);
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
-type MdNode = { type: string; value?: string; depth?: number; ordered?: boolean | null; start?: number | null; checked?: boolean | null; lang?: string | null; url?: string; children?: MdNode[] };
+type MdNode = { type: string; value?: string; alt?: string | null; depth?: number; ordered?: boolean | null; start?: number | null; checked?: boolean | null; lang?: string | null; url?: string; children?: MdNode[] };
+
+/** Thrown when the text can't be converted whole; nothing is ever cut short silently. */
+export class MarkdownTooLargeError extends Error {}
 
 const newId = () => globalThis.crypto.randomUUID();
 
@@ -29,8 +32,9 @@ function inlines(nodes: MdNode[] = [], marks: Mark[] = []): JSONContent[] {
       case 'delete': add({ type: 'strike' }); break;
       case 'link': if (n.url && safeNotebookLink(n.url) && /^(https?:|mailto:|tel:|\/)/i.test(n.url)) add({ type: 'link', attrs: { href: n.url } }); else out.push(...inlines(n.children, marks)); break;
       case 'break': out.push({ type: 'hardBreak' }); break;
-      // Images and raw HTML become their text: no remote fetches, no markup.
-      case 'image': case 'html': if (n.value) out.push({ type: 'text', text: n.value }); break;
+      // Images keep their description and raw HTML its text: no remote fetches, no markup.
+      case 'image': if (n.alt?.trim()) out.push({ type: 'text', text: `[${n.alt.trim()}]` }); break;
+      case 'html': if (n.value) out.push({ type: 'text', text: n.value }); break;
       default: out.push(...inlines(n.children, marks));
     }
   }
@@ -55,10 +59,20 @@ function blocks(nodes: MdNode[] = []): JSONContent[] {
       case 'thematicBreak': out.push({ type: 'horizontalRule', attrs: { id: newId() } }); break;
       case 'list': {
         const items = n.children ?? [];
-        const isTask = items.length > 0 && items.every(i => typeof i.checked === 'boolean');
         const itemContent = (i: MdNode) => { const c = blocks(i.children); return c.length && c[0].type === 'paragraph' ? c : [paragraph([]), ...c]; };
-        if (isTask) out.push({ type: 'taskList', attrs: { id: newId() }, content: items.map(i => ({ type: 'taskItem', attrs: { id: newId(), checked: !!i.checked }, content: itemContent(i) })) });
-        else out.push({ type: n.ordered ? 'orderedList' : 'bulletList', attrs: { id: newId(), ...(n.ordered && n.start && n.start > 1 ? { start: n.start } : {}) }, content: items.map(i => ({ type: 'listItem', attrs: { id: newId() }, content: itemContent(i) })) });
+        // A list mixing checkboxes and plain items becomes runs of checklists
+        // and lists, so every checkbox keeps its state.
+        let start = n.ordered && n.start && n.start > 1 ? n.start : 1;
+        for (let i = 0; i < items.length;) {
+          const task = typeof items[i].checked === 'boolean';
+          let j = i;
+          while (j < items.length && (typeof items[j].checked === 'boolean') === task) j++;
+          const run = items.slice(i, j);
+          if (task) out.push({ type: 'taskList', attrs: { id: newId() }, content: run.map(it => ({ type: 'taskItem', attrs: { id: newId(), checked: !!it.checked }, content: itemContent(it) })) });
+          else out.push({ type: n.ordered ? 'orderedList' : 'bulletList', attrs: { id: newId(), ...(n.ordered && start > 1 ? { start } : {}) }, content: run.map(it => ({ type: 'listItem', attrs: { id: newId() }, content: itemContent(it) })) });
+          if (!task) start += run.length;
+          i = j;
+        }
         break;
       }
       case 'table': {
@@ -72,15 +86,18 @@ function blocks(nodes: MdNode[] = []): JSONContent[] {
       case 'html': if (n.value?.trim()) out.push(paragraph([{ type: 'text', text: n.value }])); break;
       default: if (n.children) out.push(...blocks(n.children));
     }
-    if (out.length > MAX_BLOCKS) break;
   }
-  return out.slice(0, MAX_BLOCKS);
+  return out;
 }
 
-/** Top-level notebook blocks (with fresh ids) for a Markdown string. */
+/** Top-level notebook blocks (with fresh ids) for a Markdown string. Throws
+ *  MarkdownTooLargeError rather than dropping anything. */
 export function markdownToNotebookBlocks(markdown: string): JSONContent[] {
-  const source = String(markdown ?? '').replace(/\r\n?/g, '\n').slice(0, MARKDOWN_LIMIT);
+  const source = String(markdown ?? '').replace(/\r\n?/g, '\n');
+  if (source.length > MARKDOWN_LIMIT) throw new MarkdownTooLargeError(`Notebook text is limited to ${MARKDOWN_LIMIT.toLocaleString()} characters; split it into smaller changes.`);
   if (!source.trim()) return [];
   const tree = fromMarkdown(source, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] }) as unknown as MdNode;
-  return blocks(tree.children);
+  const out = blocks(tree.children);
+  if (out.length > MAX_BLOCKS) throw new MarkdownTooLargeError(`That's more than ${MAX_BLOCKS} blocks in one change; split it into smaller changes.`);
+  return out;
 }

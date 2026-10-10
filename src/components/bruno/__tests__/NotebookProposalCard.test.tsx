@@ -9,7 +9,8 @@ const apiJson = vi.fn();
 vi.mock('../../../services/api', () => ({ apiJson: (...args: unknown[]) => apiJson(...args) }));
 
 const body = (call: number) => JSON.parse(apiJson.mock.calls[call][1].body);
-const card = (ops: Record<string, unknown>[]) => render(<MemoryRouter><NotebookProposalCard ops={ops} /></MemoryRouter>);
+let scopeN = 0;
+const card = (ops: Record<string, unknown>[], scope = `reply-${++scopeN}`) => render(<MemoryRouter><NotebookProposalCard ops={ops} scope={scope} /></MemoryRouter>);
 
 describe('notebook proposal blocks', () => {
   it('extracts operations, including Markdown that quotes code fences', () => {
@@ -37,6 +38,30 @@ describe('NotebookProposalCard', () => {
     expect(await screen.findByText(/Notebook updated/)).toBeTruthy();
     expect(body(1).receipt).toBe(body(2).receipt);
     expect(screen.getByRole('link', { name: 'Open “Log”' }).getAttribute('href')).toBe('/notebook/p/1');
+  });
+
+  it('a reopened chat keeps the same receipt, and a finished card stays finished', async () => {
+    const ops = [{ op: 'create', title: 'Once' }];
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'create', summary: 'New page "Once" in Build' }] });
+    const first = card(ops, 'reply-7');
+    await screen.findByText('New page "Once" in Build');
+    apiJson.mockRejectedValueOnce(new Error('Response lost'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await screen.findByText('Response lost');
+    first.unmount();
+    // The dock closed and reopened: same reply, new card instance.
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'create', summary: 'New page "Once" in Build' }] });
+    const second = card(ops, 'reply-7');
+    await screen.findByText('New page "Once" in Build');
+    apiJson.mockResolvedValueOnce({ results: [{ op: 'create', pageId: 4, title: 'Once' }], replayed: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    await screen.findByText(/Notebook updated/);
+    expect(body(1).receipt).toBe(body(3).receipt);
+    second.unmount();
+    apiJson.mockReset();
+    card(ops, 'reply-7');
+    expect(screen.getByText(/Notebook updated/)).toBeTruthy();
+    expect(apiJson).not.toHaveBeenCalled();
   });
 
   it('blocks apply when any page is unavailable to Bruno', async () => {

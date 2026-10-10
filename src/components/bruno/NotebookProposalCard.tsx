@@ -10,16 +10,34 @@ import { Button } from '../ui-kit';
 import { applyNotebookOps, newReceiptKey, previewNotebookOps, type NotebookOpPreview, type NotebookOpResult } from '../../services/notebookProposals';
 
 type State = { status: 'loading' | 'pending' | 'confirming' | 'done' | 'dismissed' | 'error'; error?: string };
+type Memory = { receipt?: string; results?: NotebookOpResult[] };
 
-export function NotebookProposalCard({ ops }: { ops: Record<string, unknown>[] }) {
-  const [previews, setPreviews] = useState<NotebookOpPreview[] | null>(null);
-  const [state, setState] = useState<State>({ status: 'loading' });
-  const [results, setResults] = useState<NotebookOpResult[]>([]);
-  const [deleteOk, setDeleteOk] = useState(false);
-  const receipt = useRef(newReceiptKey());
+/** Session-scoped record of one card (falls back to memory when storage is blocked). */
+const fallback = new Map<string, Memory>();
+function cardMemory(identity: string) {
+  let h = 2166136261;
+  for (let i = 0; i < identity.length; i++) { h ^= identity.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const key = `cp-bruno-notebook-card:${(h >>> 0).toString(36)}:${identity.length}`;
+  return {
+    read(): Memory { try { const v = sessionStorage.getItem(key); if (v) return JSON.parse(v); } catch { /* storage optional */ } return fallback.get(key) ?? {}; },
+    write(value: Memory): Memory { fallback.set(key, value); try { sessionStorage.setItem(key, JSON.stringify(value)); } catch { /* storage optional */ } return value; },
+  };
+}
+
+/** `scope` identifies the reply this card belongs to (its position and text).
+ *  The receipt and outcome are kept per reply for the tab's session, so
+ *  closing and reopening the chat never confirms the same change twice. */
+export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unknown>[]; scope: string }) {
   const opsKey = JSON.stringify(ops);
+  const memory = useRef(cardMemory(`${scope}\u0000${opsKey}`));
+  const [previews, setPreviews] = useState<NotebookOpPreview[] | null>(null);
+  const [state, setState] = useState<State>(() => memory.current.read().results ? { status: 'done' } : { status: 'loading' });
+  const [results, setResults] = useState<NotebookOpResult[]>(() => memory.current.read().results ?? []);
+  const [deleteOk, setDeleteOk] = useState(false);
+  const receipt = useRef(memory.current.read().receipt ?? memory.current.write({ receipt: newReceiptKey() }).receipt!);
 
   useEffect(() => {
+    if (memory.current.read().results) return;
     const abort = new AbortController();
     setState({ status: 'loading' });
     previewNotebookOps(JSON.parse(opsKey), abort.signal)
@@ -35,6 +53,7 @@ export function NotebookProposalCard({ ops }: { ops: Record<string, unknown>[] }
     setState({ status: 'confirming' });
     try {
       const out = await applyNotebookOps(ops, receipt.current);
+      memory.current.write({ receipt: receipt.current, results: out.results });
       setResults(out.results);
       setState({ status: 'done' });
     } catch (e) {

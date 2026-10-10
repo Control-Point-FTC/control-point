@@ -179,7 +179,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
               <BrunoMarkdown>{stripEventBlocks(lastReply.text)}</BrunoMarkdown>
             </div>
           )}
-          {!busy && lastReply && extractNotebookOps(lastReply.text).length > 0 && <NotebookProposalCard key={messages.length} ops={extractNotebookOps(lastReply.text)} />}
+          {!busy && lastReply && extractNotebookOps(lastReply.text).length > 0 && <NotebookProposalCard key={messages.length} ops={extractNotebookOps(lastReply.text)} scope={`${messages.length - 1}:${lastReply.text}`} />}
           {proposals.length > 0 && (
             <ActionProposalCard
               proposals={proposals}

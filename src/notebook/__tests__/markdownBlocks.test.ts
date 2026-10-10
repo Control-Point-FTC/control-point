@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { markdownToNotebookBlocks } from '../markdownBlocks';
+import { markdownToNotebookBlocks, MarkdownTooLargeError } from '../markdownBlocks';
 import { validatedNotebookDocument } from '../editorSchema';
 
 const strip = (v: any): any => Array.isArray(v) ? v.map(strip) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k]) => k !== 'id').map(([k, x]) => [k, strip(x)])) : v;
@@ -40,8 +40,22 @@ describe('markdownToNotebookBlocks', () => {
     expect(() => validatedNotebookDocument({ type: 'doc', content: markdownToNotebookBlocks('<script>x</script>\n\n<div>y</div>') })).not.toThrow();
   });
 
-  it('returns nothing for blank input and caps huge input', () => {
+  it('returns nothing for blank input and refuses, never truncates, oversized input', () => {
     expect(markdownToNotebookBlocks('   \n ')).toEqual([]);
-    expect(markdownToNotebookBlocks('p\n\n'.repeat(5000)).length).toBeLessThanOrEqual(400);
+    expect(markdownToNotebookBlocks('p\n\n'.repeat(400))).toHaveLength(400);
+    expect(() => markdownToNotebookBlocks('p\n\n'.repeat(401))).toThrow(MarkdownTooLargeError);
+    expect(() => markdownToNotebookBlocks('x'.repeat(20_001))).toThrow(MarkdownTooLargeError);
+  });
+
+  it('keeps checkbox state in a list that mixes checkboxes and plain items', () => {
+    const blocks = strip(markdownToNotebookBlocks('- [x] Cut plate\n- Notes\n- [ ] Drill'));
+    expect(blocks.map((b: any) => b.type)).toEqual(['taskList', 'bulletList', 'taskList']);
+    expect(blocks[0].content[0].attrs.checked).toBe(true);
+    expect(blocks[2].content[0].attrs.checked).toBe(false);
+    expect(() => validatedNotebookDocument({ type: 'doc', content: markdownToNotebookBlocks('1. a\n2. [ ] b\n3. c') })).not.toThrow();
+  });
+
+  it('keeps an image description as text without fetching it', () => {
+    expect(JSON.stringify(markdownToNotebookBlocks('![Intake layout](https://example.com/layout.png)'))).toContain('[Intake layout]');
   });
 });

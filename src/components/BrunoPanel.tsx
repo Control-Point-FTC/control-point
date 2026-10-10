@@ -261,7 +261,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                         const notebookOps = extractNotebookOps(m.text);
                         const st = proposalState[i]?.status || 'pending';
                         return (<>
-                          {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} />}
+                          {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${i}:${m.text}`} />}
                           {proposals.length > 0 && st !== 'dismissed' && <ActionProposalCard
                             proposals={proposals}
                             status={st}
