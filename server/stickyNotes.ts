@@ -38,11 +38,13 @@ export class StickyNotes {
   }
   async create(teamId: number, memberId: number, body: Row) {
     const patch = stickyPatch(body);
-    const count = Number((await this.all("SELECT COUNT(*) AS n FROM sticky_notes WHERE team_id=? AND member_id=?", teamId, memberId))[0]?.n ?? 0);
-    if (count >= MAX_STICKY_NOTES) throw new StickyError(`You can keep up to ${MAX_STICKY_NOTES} sticky notes. Delete one to add another.`, 409);
     const now = new Date().toISOString();
-    const r = await this.db.execute({ sql: "INSERT INTO sticky_notes(team_id,member_id,body,color,x,y,width,height,open,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)",
-      args: [teamId, memberId, patch.body ?? "", patch.color ?? "volt", patch.x ?? 80, patch.y ?? 120, patch.width ?? 260, patch.height ?? 220, now, now] });
+    // One statement checks the limit and inserts, so simultaneous requests
+    // can't both slip under it.
+    const r = await this.db.execute({ sql: `INSERT INTO sticky_notes(team_id,member_id,body,color,x,y,width,height,open,created_at,updated_at)
+      SELECT ?,?,?,?,?,?,?,?,1,?,? WHERE (SELECT COUNT(*) FROM sticky_notes WHERE team_id=? AND member_id=?) < ?`,
+      args: [teamId, memberId, patch.body ?? "", patch.color ?? "volt", patch.x ?? 80, patch.y ?? 120, patch.width ?? 260, patch.height ?? 220, now, now, teamId, memberId, MAX_STICKY_NOTES] });
+    if (!r.rowsAffected) throw new StickyError(`You can keep up to ${MAX_STICKY_NOTES} sticky notes. Delete one to add another.`, 409);
     return shape((await this.all("SELECT * FROM sticky_notes WHERE id=?", Number(r.lastInsertRowid)))[0]);
   }
   async update(teamId: number, memberId: number, id: number, body: Row) {

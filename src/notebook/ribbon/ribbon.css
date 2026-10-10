@@ -82,3 +82,6 @@
 .nb-sticky[data-color=mint], [data-color=mint] { --sticky-bg: #dcfce7; --sticky: #22c55e; }
 .nb-sticky[data-color=rose], [data-color=rose] { --sticky-bg: #ffe4e6; --sticky: #f43f5e; }
 .nb-sticky[data-color=sand], [data-color=sand] { --sticky-bg: #f5ead6; --sticky: #b45309; }
+
+/* Top bar messages (e.g. Share) stay visible when the ribbon is hidden. */
+.nb-command-bar > .nb-toolbar-shared[role=status] { display: block; padding: 6px 18px 8px; }

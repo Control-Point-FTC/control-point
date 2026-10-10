@@ -35,7 +35,11 @@ describe("sticky notes", () => {
 
   it(`allow at most ${MAX_STICKY_NOTES} notes per member`, async () => {
     const member = await seedMember(t.db, team, "Many", "many@sticky.test");
-    for (let i = 0; i < MAX_STICKY_NOTES; i++) await notes.create(team, member, { body: String(i) });
+    for (let i = 0; i < MAX_STICKY_NOTES - 1; i++) await notes.create(team, member, { body: String(i) });
+    // The last slot can't be taken twice by simultaneous requests.
+    const results = await Promise.allSettled([notes.create(team, member, {}), notes.create(team, member, {})]);
+    expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
+    expect((await notes.list(team, member)).length).toBe(MAX_STICKY_NOTES);
     await expect(notes.create(team, member, {})).rejects.toMatchObject({ status: 409 });
   });
 

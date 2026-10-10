@@ -39,6 +39,64 @@ describe('Sticky notes', () => {
     expect(JSON.parse(String((patch[1] as any).body))).toEqual({ body: 'Buy zip ties and bolts' });
   });
 
+  it('sends one save at a time per note and keeps every unsaved field for Retry', async () => {
+    const calls: any[] = []; let release!: () => void; let fail = false;
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => {
+      if (init?.method !== 'PATCH') return [note()] as any;
+      calls.push(JSON.parse(init.body));
+      if (calls.length === 1) await new Promise<void>(r => { release = r; });
+      if (fail) throw new Error('offline');
+      return { ...note(), updatedAt: '2026-10-10T13:00:00Z' } as any;
+    });
+    render(<StickyNotes open onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Note color' }), { target: { value: 'sky' } });
+    await waitFor(() => expect(calls).toHaveLength(1));
+    // While the first save is in flight, more changes queue up behind it.
+    fireEvent.keyDown(screen.getByLabelText('Move note (arrow keys)'), { key: 'ArrowDown' });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Note color' }), { target: { value: 'rose' } });
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(calls).toHaveLength(1);
+    fail = true; release();
+    expect(await screen.findByText('Not saved')).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('Not saved')).toBeNull());
+    expect(calls.at(-1)).toEqual({ color: 'rose', x: 100, y: 110 });
+  });
+
+  it('keeps drafts through a hidden layout and sends them when the notebook closes', async () => {
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => init?.method === 'PATCH' ? note() as any : [note()] as any);
+    const view = render(<StickyNotes open onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Note text' }), { target: { value: 'Draft kept' } });
+    view.rerender(<StickyNotes open hidden onClose={vi.fn()} />);
+    expect(screen.queryByRole('textbox', { name: 'Note text' })).toBeNull();
+    view.rerender(<StickyNotes open onClose={vi.fn()} />);
+    expect((screen.getByRole('textbox', { name: 'Note text' }) as HTMLTextAreaElement).value).toBe('Draft kept');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note text' }), { target: { value: 'Draft kept, then left' } });
+    view.unmount();
+    const patch = vi.mocked(apiJson).mock.calls.find(([, i]) => (i as any)?.method === 'PATCH')!;
+    expect(JSON.parse(String((patch[1] as any).body))).toEqual({ body: 'Draft kept, then left' });
+    expect((patch[1] as any).keepalive).toBe(true);
+  });
+
+  it('waits for the list before New note, and places new notes inside the window', async () => {
+    let list!: (v: StickyNote[]) => void;
+    vi.mocked(apiJson).mockImplementation((url: string, init?: any) => init?.method === 'POST' ? Promise.resolve(note({ id: 9, body: '' }) as any) : new Promise(r => { list = r as any; }));
+    const width = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 400, configurable: true });
+    try {
+      render(<StickyNotes open onClose={vi.fn()} />);
+      const add = screen.getByRole('button', { name: /New note/ }) as HTMLButtonElement;
+      expect(add.disabled).toBe(true);
+      await act(async () => { list([]); });
+      fireEvent.click(add);
+      await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([, i]) => (i as any)?.method === 'POST')).toBe(true));
+      const body = JSON.parse(String((vi.mocked(apiJson).mock.calls.find(([, i]) => (i as any)?.method === 'POST')![1] as any).body));
+      expect(body.x).toBeLessThanOrEqual(400 - 160);
+    } finally { Object.defineProperty(window, 'innerWidth', { value: width, configurable: true }); }
+  });
+
   it('nudges with the keyboard, recolors, closes and deletes after confirming', async () => {
     vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => init?.method === 'PATCH' ? { ...note(), ...JSON.parse(init.body) } as any : init?.method === 'DELETE' ? { ok: true } as any : [note()] as any);
     render(<StickyNotes open onClose={vi.fn()} />);

@@ -4587,6 +4587,8 @@ async function startServer() {
     }
     await dbRun("UPDATE members SET is_active = 0 WHERE id = ?", row.id);
     await dbRun("DELETE FROM stream_sessions WHERE member_id = ?", row.id);
+    // Personal sticky notes in this workspace go with the membership.
+    await dbRun("DELETE FROM sticky_notes WHERE member_id = ?", row.id);
     // Hand back a session on another team when leaving the active one; the
     // current session simply becomes teamless when nothing remains.
     let switched: any = null;
@@ -8823,6 +8825,7 @@ Rules:
     // Bruno's personal facts about them (team facts stay with the team).
     await dbRun("DELETE FROM bruno_memories WHERE scope = 'user' AND member_id = ?", target.id);
     await dbRun("DELETE FROM bruno_nudges_sent WHERE member_id = ?", target.id);
+    await dbRun("DELETE FROM sticky_notes WHERE member_id = ?", target.id);
     await dbRun("DELETE FROM members WHERE id = ?", target.id);
     return { ok: true };
   }

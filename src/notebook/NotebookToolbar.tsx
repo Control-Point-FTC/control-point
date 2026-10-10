@@ -47,9 +47,25 @@ function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed, trailing }:
   </div>;
 }
 
+/** Top bar actions beside the tabs. Share needs an open page. */
+function TopBar({ pageId, onNotice }: { pageId?: number; onNotice?: (message: string) => void }) {
+  const workspace = useNotebookWorkspace();
+  const share = async () => {
+    if (!pageId || !onNotice) return;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('unavailable');
+      await navigator.clipboard.writeText(new URL(notebookPageLink(pageId), window.location.origin).href);
+      onNotice('Page link copied. Anyone on your team who can open this page can follow it.');
+    } catch { onNotice('Copying isn’t available here. Copy the address from the browser bar instead.'); }
+  };
+  return <>
+    {workspace && <RibbonButton label="Sticky Notes" icon="Sticky" showLabel active={workspace.stickyNotesOpen} onClick={workspace.toggleStickyNotes} />}
+    {pageId && onNotice && <RibbonButton label="Share" icon="Share" showLabel onClick={() => { void share(); }} />}
+  </>;
+}
+
 export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {},requestedGroup }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>;requestedGroup?:{group:string;key:number} }) {
   const mobile = useNotebookMobile();
-  const workspace = useNotebookWorkspace();
   const [group, setGroup] = useState<Tab>(() => { const saved = readPref(preferenceKey); return saved && ['home','insert','review','help'].includes(saved) ? saved as Tab : 'home'; });
   const [collapsed, setCollapsed] = useState(() => readPref(preferenceKey && `${preferenceKey}:collapsed`) === '1');
   useEffect(()=>{if(requestedGroup && isTab(requestedGroup.group)){setGroup(requestedGroup.group);setCollapsed(false);}},[requestedGroup]);
@@ -149,14 +165,11 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   };
 
   return <div className="nb-command-bar" data-collapsed={collapsed}>
-    <RibbonTabs group={group} onSelect={select} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} trailing={<>
-      {workspace && <RibbonButton label="Sticky Notes" icon="Sticky" showLabel active={workspace.stickyNotesOpen} onClick={workspace.toggleStickyNotes} />}
-      <RibbonButton label="Share" showLabel onClick={() => { void navigator.clipboard.writeText(new URL(notebookPageLink(pageId), window.location.origin).href).then(() => setNotice('Page link copied. Anyone on your team who can open this page can follow it.')).catch(() => setNotice('Clipboard is unavailable.')); }} />
-    </>} />
+    <RibbonTabs group={group} onSelect={select} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} trailing={<TopBar pageId={pageId} onNotice={setNotice} />} />
     {!collapsed && <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label={`${ribbonTabs.find(([id]) => id === group)![1]} commands`} data-ribbon={group}>
       {content[group]}
-      {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     </div>}
+    {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {
@@ -183,7 +196,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
 export function NotebookRibbonShell({ loading }: { loading: boolean }) {
   const [group, setGroup] = useState<Tab>('home');
   return <div className="nb-command-bar nb-ribbon-shell" aria-busy={loading}>
-    <RibbonTabs group={group} onSelect={setGroup} collapsed={false} />
+    <RibbonTabs group={group} onSelect={setGroup} collapsed={false} trailing={<TopBar />} />
     <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label="Note formatting">
       <span className="nb-small" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
     </div>
