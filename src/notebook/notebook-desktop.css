@@ -14,10 +14,12 @@
   .nb-body {gap:0}
   .nb-explorer {width:clamp(220px,14.7vw,282px);background:#111113;border:0}
   .nb-explorer-inner {padding:0 8px 12px 0;gap:8px}
-  .nb-navigation-row {display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;font-size:12px;color:#bbb}
+  .nb-navigation-row {display:flex;align-items:center;gap:6px;height:32px;padding:0 8px;font-size:12px;color:#bbb}
   .nb-navigation-row>button {display:grid;place-items:center;width:28px;height:28px}
-  .nb-navigation-row>span {flex:1}
-  .nb-navigation-row>button:last-child {width:auto}
+  .nb-navigation-row>span {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nb-navigation-row>button:last-child {width:auto;display:inline-flex;align-items:center;gap:4px;padding:0 6px;white-space:nowrap;flex-shrink:0}
+  /* The explorer is narrow: the icon (with its tooltip and label) stands for Mentions here. */
+  .nb-navigation-row .nb-mentions-label {position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
   .nb-search {border:0;border-radius:4px;padding:8px;background:#181818;margin:0 4px}
   .nb-filters {border-radius:4px;background:transparent}
   .nb-filters button {padding:5px 2px;font-size:11px}
