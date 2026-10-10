@@ -157,6 +157,22 @@ describe('desktop shared drawing surface', () => {
         await waitFor(() => expect(boxText(sync)).toContain('"text":"Note"'));
         expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Canvas text');
     });
+    it('keeps typed text through a tool switch and keeps a caret moved to another spot', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 50, 50);
+        fireEvent.input(caret(), { target: { value: 'parts list' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing pen' }));
+        await waitFor(() => expect(boxText(sync)).toContain('"text":"Parts list"'));
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 300, 300);
+        const first = caret();
+        first.focus();
+        expect(document.activeElement).toBe(first);
+        pointer(surface, 'pointerdown', 500, 400);
+        fireEvent.blur(first);
+        expect(caret().style.left).toBe('500px');
+    });
     it('makes a text box at once on double-click, with move and width handles', () => {
         const { sync, surface } = mount();
         fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));

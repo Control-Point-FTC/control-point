@@ -89,6 +89,11 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     // what's typed while the box's editor gets ready is carried into it.
     const [pending, setPending] = useState<{ x: number; y: number } | null>(null);
     const caretInput = useRef<HTMLTextAreaElement>(null);
+    // The caret's text, kept outside the field so it survives the field going away (e.g. a tool switch).
+    const caretText = useRef('');
+    // Where the caret was when its field got focus: a blur that comes after a
+    // click elsewhere on the canvas must not clear the newly placed caret.
+    const caretFocusedAt = useRef<{ x: number; y: number } | null>(null);
     const opening = useRef<{ id: string; focus: boolean } | null>(null);
     useEffect(() => {
         if (!pending) return;
@@ -203,7 +208,8 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             const box = stage.current?.querySelector<HTMLElement & { editor?: Editor }>(`[data-canvas-id="${item.id}"] [role=textbox]`);
             if (!box?.editor && ++frames < 120) { requestAnimationFrame(attach); return; }
             const { focus } = opening.current; opening.current = null;
-            const text = fromCaret ? caretInput.current?.value ?? '' : '';
+            const text = fromCaret ? caretText.current : '';
+            if (fromCaret) caretText.current = '';
             if (fromCaret) setPending(null);
             if (!box?.editor) return;
             const editor = box.editor, capitalize = autoCapitalizeEnabled();
@@ -215,9 +221,11 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         };
         requestAnimationFrame(attach);
     };
-    const leaveCaret = () => {
+    /** The caret at `at` lost focus or was cancelled. A caret the person has
+     *  just placed somewhere else on this canvas is kept. */
+    const leaveCaret = (at: { x: number; y: number }) => {
         if (opening.current) opening.current.focus = false; // Keep the text, don't pull focus back.
-        else setPending(null);
+        else setPending(current => current === at ? null : current);
     };
     /** Text box handles: the dotted bar moves the box, the right edge sets its
      *  width. Both work by pointer (zoom-aware) or keyboard (arrows; Shift = 10). */
@@ -298,6 +306,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             if (within?.closest('.nb-canvas-stage')===stage.current && (within.classList.contains('nb-canvas-text') || !scopeId))
                 return;
             if (opening.current) return;
+            caretText.current = '';
             setPending({ x: p[0], y: p[1] }); setSelection([]);
             return;
         }
@@ -463,10 +472,11 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     {!mobile && <svg className="nb-canvas-live" width="100%" height="100%" aria-hidden="true">{draft.length > 0 && <path d={draft.map((p, i) => `${i ? 'L' : 'M'}${p[0]} ${p[1]}`).join(' ')} fill="none" stroke={color} strokeWidth={tool === 'highlighter' ? Math.min(64, size * 6) : size} opacity={tool === 'highlighter' ? .35 : 1} strokeLinecap="round"/>}{selected.map(i => <g key={i.id} data-canvas-id={i.id} transform={`translate(${i.x} ${i.y}) rotate(${i.rotation} ${i.width/2} ${i.height/2})`}><rect x={-4} y={-4} width={i.width + 8} height={i.height + 8} fill="none" stroke="#8a6100" strokeWidth="1" strokeDasharray="5 3"/>{editable && !i.locked && <rect data-resize="true" x={i.width-1} y={i.height-1} width={8} height={8} fill="#8a6100" style={{pointerEvents:'all',cursor:'nwse-resize'}}/>}</g>)}</svg>}
     {pending && tool === 'type' && editable && !mobile && <textarea ref={caretInput} className="nb-canvas-caret" style={{ left: pending.x, top: pending.y }} aria-label="Type to add a text box here" rows={1} spellCheck={false}
         onPointerDown={e => e.stopPropagation()}
-        onInput={e => { if (!(e.nativeEvent as InputEvent).isComposing && e.currentTarget.value && !opening.current) createTextBox(pending.x, pending.y, true); }}
-        onCompositionEnd={e => { if (e.currentTarget.value && !opening.current) createTextBox(pending.x, pending.y, true); }}
-        onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); leaveCaret(); } }}
-        onBlur={leaveCaret}/>}
+        onInput={e => { caretText.current = e.currentTarget.value; if (!(e.nativeEvent as InputEvent).isComposing && e.currentTarget.value && !opening.current) createTextBox(pending.x, pending.y, true); }}
+        onCompositionEnd={e => { caretText.current = e.currentTarget.value; if (e.currentTarget.value && !opening.current) createTextBox(pending.x, pending.y, true); }}
+        onKeyDown={e => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); leaveCaret(pending); } }}
+        onFocus={() => { caretFocusedAt.current = pending; }}
+        onBlur={() => { if (caretFocusedAt.current) leaveCaret(caretFocusedAt.current); }}/>}
     {rulerVisible && !mobile && <NotebookRuler value={ruler} onChange={setRuler}/>}{notice && <div className="nb-canvas-notice" role="status">{notice}<button aria-label="Dismiss drawing message" onClick={() => setNotice('')}>×</button></div>}
   </div>;
 }
