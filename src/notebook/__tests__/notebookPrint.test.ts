@@ -22,6 +22,15 @@ describe('complete notebook page preparation',()=>{
     const html=await prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn(),undefined,layout);
     expect(html).toContain('PDF page 2');
   });
+  it('accepts whole-pixel measurements of loaded tall PDF pages in canvas text boxes',async()=>{
+    setup();mock.pages=1;mock.getPage.mockImplementation(async()=>({getViewport:({scale}:any)=>({width:600*scale,height:2400*scale}),render:()=>({promise:Promise.resolve(),cancel:vi.fn()}),cleanup:vi.fn()}));
+    const page:any={title:'Tall PDF',revision:1,updatedAt:'now',content:{type:'doc',content:[file(2,'pdf','application/pdf')]},canvas:{}};
+    // 256.4 x 1025.6 rendered, captured through offsetWidth/offsetHeight as 256 x 1026.
+    const layout={blocks:[{x:0,y:0,width:800,height:1100}],attachments:{'file-2':{rect:{x:0,y:0,width:300,height:1100},pages:[{x:0,y:20,width:256,height:1026}]}}};
+    expect(await prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn(),undefined,layout)).toContain('PDF page 1');
+    layout.attachments['file-2'].pages[0].height=256*1.414;
+    await expect(prepareNotebookPrint({pageId:1} as any,page,new AbortController().signal,vi.fn(),undefined,layout)).rejects.toThrow('placeholders do not match');
+  });
   it('preserves measured image and following text coordinates beneath ordinary saved marks',async()=>{
     setup();const page:any={title:'Aligned',revision:1,updatedAt:'now',content:{type:'doc',content:[file(1,'image','image/png'),{type:'paragraph',content:[{type:'text',text:'Text below attachment'}]}]},canvas:{version:1,objects:[stroke('image-mark'),{...stroke('below-mark'),y:650}]}};
     const layout={blocks:[{x:0,y:40,width:800,height:570},{x:0,y:630,width:800,height:40}],attachments:{'file-1':{rect:{x:0,y:40,width:800,height:570},image:{x:13,y:96,width:640,height:426},pages:[]}}};

@@ -72,8 +72,9 @@ export async function prepareNotebookPrint(sync:NotebookSync,page:NotebookPageDa
           const sheets=Array.from(printout.querySelectorAll<HTMLElement>(':scope > .pdf-sheet'));
           if(sheets.length!==measured.pages.length)throw new Error('Wait for the PDF printout layout to finish loading before printing this page.');
           if(sheets.some((sheet,index)=>{
-            const rect=measured.pages[index],expectedHeight=parseFloat(sheet.style.height)*rect.width/800;
-            return !Number.isFinite(expectedHeight)||Math.abs(expectedHeight-rect.height)>1;
+            // Canvas text measurements round width and height to whole pixels; tall pages magnify width rounding.
+            const rect=measured.pages[index],sheetHeight=parseFloat(sheet.style.height),expectedHeight=sheetHeight*rect.width/800;
+            return !Number.isFinite(expectedHeight)||Math.abs(expectedHeight-rect.height)>1+sheetHeight/1600;
           }))throw new Error('Scroll through this PDF so every page size loads, then print again. Its current placeholders do not match the PDF.');
           Object.assign(printout.style,{zoom:'1',position:'absolute',inset:'0'});
           sheets.forEach((sheet,index)=>{const rect=measured.pages[index];Object.assign(sheet.style,{position:'absolute',left:`${rect.x}px`,top:`${rect.y}px`,margin:'0',transform:`scale(${rect.width/800})`,transformOrigin:'0 0',page:'auto',breakAfter:'auto'});});
