@@ -62,3 +62,22 @@ describe('complete notebook page preparation',()=>{
     await expect(prepareNotebookPrint({pageId:1} as any,page,abort.signal,vi.fn())).rejects.toThrow();expect(mock.getPage).not.toHaveBeenCalled();
   });
 });
+
+describe('printing the page background', () => {
+  it('carries the background color and picture (with its fit) onto the printed stage', async () => {
+    setup();
+    const page: any = { title: 'Background', revision: 1, updatedAt: 'now', content: { type: 'doc', content: [{ type: 'paragraph' }] },
+      canvas: { version: 1, objects: [], background: { color: '#1f2937', image: { type: 'image', fileId: 1, fit: 'tile' } } } };
+    const html = await prepareNotebookPrint({ pageId: 1 } as any, page, new AbortController().signal, vi.fn());
+    const stage = new DOMParser().parseFromString(html, 'text/html').querySelector<HTMLElement>('.notebook-print-stage')!;
+    expect(stage.style.backgroundColor).toBe('rgb(31, 41, 55)');
+    expect(stage.style.backgroundImage).toContain('data:image/png');
+    expect(stage.style.backgroundRepeat).toBe('repeat');
+  });
+  it('refuses a background that is not a printable picture', async () => {
+    setup(); mock.file.mockResolvedValue(new Blob(['x'], { type: 'text/html' }));
+    const page: any = { title: 'Bad', revision: 1, updatedAt: 'now', content: { type: 'doc', content: [{ type: 'paragraph' }] },
+      canvas: { version: 1, objects: [], background: { color: null, image: { type: 'image', fileId: 9, fit: 'cover' } } } };
+    await expect(prepareNotebookPrint({ pageId: 1 } as any, page, new AbortController().signal, vi.fn())).rejects.toThrow('background picture cannot be printed');
+  });
+});

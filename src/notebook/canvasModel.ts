@@ -38,10 +38,18 @@ export type TextBox = Base & {
     content: ReturnType<typeof validatedNotebookDocument>;
 };
 export type CanvasItem = Ink | Shape | TextBox;
+/** Draw → Format Background: the page's drawing surface (shared with
+ *  everyone, unlike the per-device paper settings). */
+export type CanvasBackground = {
+    color: string | null;
+    image: null | { type: 'image'; fileId: number; fit: 'cover' | 'tile' | 'center' };
+};
 export type NotebookCanvas = {
     version: 1;
     objects: CanvasItem[];
+    background?: CanvasBackground;
 };
+export const BACKGROUND_KEY = 'canvasBackground';
 export const CANVAS_ORIGIN = Symbol('notebook-canvas-edit');
 const validId = (v: unknown): v is string => typeof v === 'string' && /^[\w-]{1,100}$/.test(v);
 const finite = (v: unknown, min: number, max: number): v is number => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
@@ -51,7 +59,9 @@ export function validatedCanvas(value: unknown): NotebookCanvas {
     if (value && typeof value === 'object' && !Array.isArray(value) && !Object.keys(value).length)
         return { version: 1, objects: [] };
     const canvas = value as NotebookCanvas;
-    if (!canvas || canvas.version !== 1 || Object.keys(canvas).some(k => !['version', 'objects'].includes(k)) || !Array.isArray(canvas.objects) || canvas.objects.length > 5000)
+    if (!canvas || canvas.version !== 1 || Object.keys(canvas).some(k => !['version', 'objects', 'background'].includes(k)) || !Array.isArray(canvas.objects) || canvas.objects.length > 5000)
+        fail();
+    if (canvas.background !== undefined && !validBackground(canvas.background))
         fail();
     const ids = new Set<string>();
     let points = 0;
@@ -91,7 +101,22 @@ export function validatedCanvas(value: unknown): NotebookCanvas {
     // Same budget in the browser and server; encoders never silently truncate ink.
     if (new TextEncoder().encode(JSON.stringify(canvas)).length > 4000000)
         throw new Error('Canvas is full. Move some drawings to another page.');
-    return { version: 1, objects: [...canvas.objects].sort((a, b) => a.z - b.z || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) };
+    const objects = [...canvas.objects].sort((a, b) => a.z - b.z || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return canvas.background ? { version: 1, objects, background: canvas.background } : { version: 1, objects };
+}
+export function validBackground(value: unknown): value is CanvasBackground {
+    const b = value as CanvasBackground;
+    if (!b || typeof b !== 'object' || Array.isArray(b) || Object.keys(b).some(k => !['color', 'image'].includes(k))) return false;
+    if (b.color !== null && !color(b.color)) return false;
+    if (b.image === null) return true;
+    const i = b.image;
+    return !!i && typeof i === 'object' && Object.keys(i).every(k => ['type', 'fileId', 'fit'].includes(k)) && i.type === 'image'
+        && Number.isSafeInteger(i.fileId) && i.fileId > 0 && ['cover', 'tile', 'center'].includes(i.fit);
+}
+/** The background stored beside the canvas items in a shared document. */
+export function readBackground(doc: Y.Doc): CanvasBackground | null {
+    const value = doc.getMap('meta').get(BACKGROUND_KEY);
+    return validBackground(value) && (value.color || value.image) ? value : null;
 }
 export function canvasJSON(doc: Y.Doc): NotebookCanvas {
     const root = doc.getMap<Y.Map<unknown>>('canvas');
@@ -112,7 +137,11 @@ export function canvasJSON(doc: Y.Doc): NotebookCanvas {
         }
         objects.push(item as CanvasItem);
     }
-    return validatedCanvas({ version: 1, objects });
+    const stored = doc.getMap('meta').get(BACKGROUND_KEY);
+    if (stored !== undefined && !validBackground(stored))
+        fail();
+    const background = stored as CanvasBackground | undefined;
+    return validatedCanvas(background && (background.color || background.image) ? { version: 1, objects, background } : { version: 1, objects });
 }
 export function insertCanvasItem(doc: Y.Doc, value: CanvasItem, origin: unknown = CANVAS_ORIGIN) {
     validatedCanvas({ version: 1, objects: [...canvasJSON(doc).objects, value] });
@@ -162,9 +191,10 @@ function insertValidatedItem(doc: Y.Doc, value: CanvasItem, origin: unknown) {
     return map;
 }
 export function seedCanvas(doc: Y.Doc, value: unknown) {
-    const objects = validatedCanvas(value).objects;
+    const { objects, background } = validatedCanvas(value);
     if (doc.getMap('canvas').size) throw new Error('Canvas seed requires an empty document');
     doc.transact(() => {
         for (const item of objects) insertValidatedItem(doc, item, 'server-seed');
+        if (background) doc.getMap('meta').set(BACKGROUND_KEY, background);
     }, 'server-seed');
 }

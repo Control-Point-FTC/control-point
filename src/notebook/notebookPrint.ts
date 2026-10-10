@@ -1,3 +1,4 @@
+import { backgroundStyle } from './backgroundStyle';
 import {DOMSerializer} from '@tiptap/pm/model';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {notebookSchema,validatedNotebookDocument} from './editorSchema';
@@ -39,6 +40,18 @@ export async function prepareNotebookPrint(sync:NotebookSync,page:NotebookPageDa
   article.append(stage);
   const pending=Array.from(article.querySelectorAll<HTMLElement>('figure[data-notebook-file]')).map(node=>({node,depth:0}));
   const budget:PrintBudget={pages:0,pixels:0,sequence:0};let bytes=0,processed=0;
+  // Draw → Format Background prints too (color, picture and fit), so marks
+  // drawn for a dark or pictured surface keep their context on paper.
+  if(canvas.background){
+    let picture='';
+    if(canvas.background.image){
+      onProgress('Preparing the page background…');
+      const blob=await fileBlob(sync,canvas.background.image.fileId,signal);signal.throwIfAborted();bytes+=blob.size;
+      if(!['image/png','image/jpeg','image/gif','image/webp'].includes(blob.type))throw new Error('The page background picture cannot be printed.');
+      picture=await dataURL(blob,signal);
+    }
+    Object.assign(stage.style,backgroundStyle(canvas.background,picture),{printColorAdjust:'exact',webkitPrintColorAdjust:'exact'});
+  }
   while(pending.length){
     signal.throwIfAborted();const {node,depth}=pending.shift()!;
     if(++processed>500||depth>10)throw new Error('Nested printouts are too large. Export the PDFs separately.');

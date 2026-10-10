@@ -85,3 +85,16 @@
 
 /* Top bar messages (e.g. Share) stay visible when the ribbon is hidden. */
 .nb-command-bar > .nb-toolbar-shared[role=status] { display: block; padding: 6px 18px 8px; }
+/* Review → Thesaurus: a docked panel at the side of the page. */
+.nb-thesaurus { position: fixed; z-index: 40; inset-inline-end: 16px; top: 132px; width: min(300px, calc(100vw - 32px)); max-height: calc(100vh - 160px); overflow: auto; display: grid; gap: 10px; align-content: start; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--color-line); background: var(--color-elevated); color: var(--color-text-base); box-shadow: 0 12px 32px rgb(0 0 0 / .35); }
+.nb-thesaurus header { display: flex; align-items: center; justify-content: space-between; }
+.nb-thesaurus h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.nb-thesaurus h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--color-text-muted); margin: 4px 0; }
+.nb-thesaurus h3 span { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.nb-thesaurus input { width: 100%; height: 32px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--color-line); background: var(--color-primary); color: inherit; }
+.nb-thesaurus ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.nb-thesaurus li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nb-syn-word { text-align: start; flex: 1; padding: 4px 6px; border-radius: 6px; font-size: 13px; }
+.nb-syn-word:hover, .nb-syn-word:focus-visible { background: var(--color-primary); }
+.nb-syn-insert { font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--color-line); color: var(--color-accent); }
+.nb-syn-insert:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }

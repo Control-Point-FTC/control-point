@@ -59,10 +59,12 @@ const commandPaths: Record<string, string> = {
   'Expand ribbon': 'm6 9 6 6 6-6',
   Sticky: 'M5 4h14v10l-6 6H5V4Zm8 16v-6h6M8 8h8M8 11h5',
   Share: 'M12 3v12M7 8l5-5 5 5M5 13v7h14v-7',
+  Background: 'M3 4h18v16H3V4Zm0 12 5-5 4 4 3-3 6 6M15 9h.01',
   Trash: 'M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v6m4-6v6',
   Recent: 'M12 4a8 8 0 1 0 8 8M12 8v4l3 2m5-10v4h-4',
   Author: 'M9 4a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM3 20c1-4 4-6 6-6s5 2 6 6m2-9h4m-2-2v4',
   Read: 'M4 5h10l4 4v10H4V5Zm10 0v4h4M7 14l2 2 5-5',
+  Thesaurus: 'M4 4h7a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H4V4Zm16 0h-5a2 2 0 0 0-2 2v14a2 2 0 0 1 2-2h5V4ZM6 8h4m-4 3h4m6-3h2m-2 3h2',
 };
 /** `accent` paints the swatch bar under color commands (current text color / highlight). */
 export function notebookCommandGlyph(command: string): React.ComponentType<{ size?: number; accent?: string }> | undefined {

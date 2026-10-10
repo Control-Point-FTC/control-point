@@ -15,6 +15,8 @@ export function notebookAttachmentIds(...documents: unknown[]): number[] {
       }
     }
     for (const key of ['content','objects']) if (Array.isArray(node[key])) for(const child of node[key])pending.push(child);
+    // Canvas background picture: { background: { image: { type: 'image', fileId } } }.
+    if (node.background && typeof node.background === 'object') pending.push(node.background.image);
   }
   return [...ids];
 }
