@@ -1,8 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import * as Y from 'yjs';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { encodeBytes } from '../NotebookSync';
 import { NotebookPage } from '../NotebookPage';
 import { apiJson, ApiError } from '../../services/api';
@@ -33,7 +33,8 @@ describe('default page', () => {
 });
 
 let location = '';
-function Where() { const l = useLocation(); location = `${l.pathname}${l.search}`; return null; }
+let go: (path: string) => void = () => {};
+function Where() { const l = useLocation(); go = useNavigate(); location = `${l.pathname}${l.search}`; return null; }
 function mount(path: string, data = tree(), missing: number[] = []) {
   vi.mocked(apiJson).mockImplementation(async (url: string) => {
     if (url === '/api/notebook/tree') return structuredClone(data) as any;
@@ -66,5 +67,18 @@ describe('opening the notebook', () => {
     mount('/notebook', { ...tree(), pages: [] });
     expect(await screen.findByText(/Open a page to use these commands/)).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'New page' }).length).toBeGreaterThan(0);
+  });
+  it('following the same dead link again falls back again', async () => {
+    mount('/notebook?page=55', tree(), [55]);
+    await waitFor(() => expect(location).toBe('/notebook?page=10'));
+    act(() => go('/notebook?page=55'));
+    await waitFor(() => expect(location).toBe('/notebook?page=10'));
+    expect(vi.mocked(apiJson).mock.calls.filter(([url]) => url === '/api/notebook/pages/55')).toHaveLength(2);
+  });
+  it('a dead /notebook/p/:id link in an empty notebook shows the empty state', async () => {
+    mount('/notebook/p/55', { ...tree(), pages: [] }, [55]);
+    await waitFor(() => expect(location).toBe('/notebook'));
+    expect(screen.queryByText('Page unavailable')).toBeNull();
+    expect(await screen.findByText(/A place for your team/)).toBeTruthy();
   });
 });

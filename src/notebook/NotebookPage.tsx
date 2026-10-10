@@ -273,15 +273,19 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   // workspace) opens the default page with a note instead of a dead end.
   const lastKey = lastPageKey(memberId, teamId);
   const selectedRef = useRef(selected); selectedRef.current = selected;
+  // The page whose server check is in flight or already confirmed present;
+  // cleared whenever the selection moves, so revisiting a dead link re-checks.
   const verifiedMissing = useRef<number | null>(null);
+  if (verifiedMissing.current !== null && verifiedMissing.current !== selected) verifiedMissing.current = null;
   const [landingNotice, setLandingNotice] = useState('');
   useEffect(() => {
     if (!tree || params.get('action')) return;
     if (selected && tree.pages.some(p => p.id === selected)) { saveLastPage(lastKey, selected); return; }
     const openDefault = () => {
       const id = defaultNotebookPage(tree, readLastPage(lastKey));
-      if (id && id !== selectedRef.current) setParams({ page: String(id) }, { replace: true });
-      else if (!id && selectedRef.current) setParams({}, { replace: true });
+      // Navigate (not just search params) so a /notebook/p/:id path is replaced too.
+      if (id && id !== selectedRef.current) navigate(`/notebook?page=${id}`, { replace: true });
+      else if (!id && selectedRef.current) navigate('/notebook', { replace: true });
     };
     // An explicitly chosen (empty) section stays chosen; only a fresh visit lands on a page.
     if (!selected) { if (activeSection == null) openDefault(); return; }
