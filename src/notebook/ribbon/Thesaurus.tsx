@@ -107,9 +107,11 @@ export function Thesaurus({ editor, disabled, onClose }: { editor: Editor; disab
     if (at) { aim(editor, at.word, at.from, at.to); void search(at.word); } else { target.current?.anchor.dispose(); target.current = null; setResult(null); setNotice('Select a word, or type one to look it up.'); }
     // Selecting a word in the page while the panel is open makes it the new
     // target (also how the person recovers after "the word changed"). Plain
-    // cursor moves while typing don't trigger lookups.
-    const follow = () => {
-      if (editor.state.selection.empty) return;
+    // cursor moves while typing don't trigger lookups, and neither does a
+    // selection that only moved because the document changed (someone typed
+    // inside the word): that must keep the refusal, not adopt the new word.
+    const follow = ({ transaction }: { transaction: Editor['state']['tr'] }) => {
+      if (transaction.docChanged || editor.state.selection.empty) return;
       const next = wordAtSelection(editor);
       if (!next) return;
       const current = target.current?.anchor.resolve();

@@ -147,3 +147,20 @@ describe('Thesaurus retargeting', () => {
     expect(editor.getText()).toBe('bxig large');
   });
 });
+
+describe('Thesaurus and edits inside a selection', () => {
+  it("an edit inside the selected word doesn't become the new target", async () => {
+    vi.mocked(apiJson).mockResolvedValue(senses as any);
+    mount('<p>big robot</p>');
+    editor.commands.setTextSelection({ from: 1, to: 4 }); // "big" selected
+    fireEvent.click(screen.getByRole('tab', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Thesaurus' }));
+    await screen.findByText('above average in size');
+    // Text typed inside the selected word (as a collaborator's edit would arrive).
+    act(() => { editor.view.dispatch(editor.state.tr.insertText('x', 2)); });
+    expect(editor.state.selection.empty).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Insert “large”' }));
+    expect(editor.getText()).toBe('bxig robot');
+    expect(screen.getByText(/The word changed/)).toBeTruthy();
+  });
+});
