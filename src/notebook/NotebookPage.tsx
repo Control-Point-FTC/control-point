@@ -19,6 +19,8 @@ import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookGlyph, SectionGlyph } from './NotebookIcons';
 import {NotebookTrash} from './NotebookTrash';
 import {NotebookQuickNote} from './NotebookQuickNote';
+import { defaultNotebookPage, lastPageKey, readLastPage, saveLastPage } from './autoOpen';
+import { NotebookRibbonShell } from './NotebookToolbar';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -266,6 +268,39 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       createInstant('page', { sectionId });
     }
   }, [params, tree]);
+  // Land on a page: the last one this person opened here, else the first.
+  // A link to a page that isn't available (deleted, protected, another
+  // workspace) opens the default page with a note instead of a dead end.
+  const lastKey = lastPageKey(memberId, teamId);
+  const selectedRef = useRef(selected); selectedRef.current = selected;
+  // The page whose server check is in flight or already confirmed present;
+  // cleared whenever the selection moves, so revisiting a dead link re-checks.
+  const verifiedMissing = useRef<number | null>(null);
+  if (verifiedMissing.current !== null && verifiedMissing.current !== selected) verifiedMissing.current = null;
+  const [landingNotice, setLandingNotice] = useState('');
+  useEffect(() => {
+    if (!tree || params.get('action')) return;
+    if (selected && tree.pages.some(p => p.id === selected)) { saveLastPage(lastKey, selected); return; }
+    const openDefault = () => {
+      const id = defaultNotebookPage(tree, readLastPage(lastKey));
+      // Navigate (not just search params) so a /notebook/p/:id path is replaced too.
+      if (id && id !== selectedRef.current) navigate(`/notebook?page=${id}`, { replace: true });
+      else if (!id && selectedRef.current) navigate('/notebook', { replace: true });
+    };
+    // An explicitly chosen (empty) section stays chosen; only a fresh visit lands on a page.
+    if (!selected) { if (activeSection == null) openDefault(); return; }
+    if (verifiedMissing.current === selected) return;
+    verifiedMissing.current = selected;
+    const asked = selected;
+    // The tree may simply be older than a page created a moment ago: ask the server.
+    apiJson(`/api/notebook/pages/${asked}`, { cache: 'no-store' }).then(() => { if (mounted.current) void loadTree(); }).catch(e => {
+      if (!mounted.current || selectedRef.current !== asked) return;
+      if (e instanceof ApiError && [403, 404, 409].includes(e.status)) {
+        setLandingNotice("That page isn't available in this workspace, so the notebook opened another page.");
+        openDefault();
+      } else verifiedMissing.current = null; // offline or a server error: keep the current state
+    });
+  }, [tree, selected, params, activeSection]);
   const savePageTitle = async (id: number, title: string) => {
     const current = syncRef.current;
     if (current?.pageId === id) {
@@ -442,7 +477,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
+    {!sync && !mobile && <NotebookRibbonShell loading={treeLoading || !!selected} />}
     <div className="nb-ribbon-host" ref={setToolbarHost} />
+    {landingNotice && <div className="nb-alert" role="status">{landingNotice}<button aria-label="Dismiss notice" onClick={() => setLandingNotice('')}>×</button></div>}
     {offlineTreeAt&&<div className="nb-alert" role="status">Offline navigation · showing last-known navigation or cached ordinary pages. Already-open protected pages stay in memory and are never cached for offline reload. Files may need a connection. Access is checked again when connected. <Button variant="ghost" onClick={()=>{void loadTree();}}>Retry connection</Button></div>}
     {treeStorageError&&<div className="nb-alert" role="status">{treeStorageError} Online editing still works.</div>}
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
