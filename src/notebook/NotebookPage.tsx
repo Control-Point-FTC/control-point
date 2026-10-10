@@ -10,7 +10,7 @@ import type { NotebookTree, NotebookPageItem } from './types';
 import './notebook.css';
 import './notebook-desktop.css';
 import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
-import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
+import { notebookDrop, notebookSiblings, promoteMove, subpageMove, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
 import { findNotebookSession,notebookExitNeedsSave,prepareNotebookExit } from './notebookRuntime';
 import {NotebookSplitView} from './NotebookSplitView';
@@ -259,6 +259,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       }
     })();
   };
+  /** Make subpage / Promote subpage: the page keeps its subpages and its place in the list. */
+  const nestPage = async (id: number, move: { to: { parentId: number | null; afterId?: number }; index: number | 'end' } | null) => {
+    if (!move || !await leave()) return;
+    await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind: 'page', id, ...move }) }));
+  };
   const mutate = async (fn: () => Promise<unknown>) => {
     if (busy) return false;
     setBusy(true); setError('');
@@ -433,7 +438,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree?.permissions.organize && kind === 'section' && <DropdownMenuItem onClick={() => open({ action: 'defaults', kind, item })}>Page defaults…</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'move', kind, item })}>Move…</DropdownMenuItem>}
       {tree?.permissions.organize && <><DropdownMenuItem onClick={() => { void reorder(kind, item, -1); }}>Move up</DropdownMenuItem><DropdownMenuItem onClick={() => { void reorder(kind, item, 1); }}>Move down</DropdownMenuItem></>}
-      {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind, id: item.id, to: { parentId: tree.pages.find(p => p.id === item.parentId)?.parentId ?? null }, index: 0 }) })); })(); }}>Promote page</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'page' && <DropdownMenuItem disabled={!subpageMove(tree, item.id)} onClick={() => { void nestPage(item.id, subpageMove(tree, item.id)); }}>Make subpage</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void nestPage(item.id, promoteMove(tree, item.id)); }}>Promote subpage</DropdownMenuItem>}
       {tree?.permissions.edit && kind === 'page' && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(async () => { const p = await apiJson(`/api/notebook/pages/${item.id}/duplicate`, { method: 'POST', body: '{}' }); setParams({ page: String(p.id) }); }); })(); }}>Duplicate page only</DropdownMenuItem>}
       {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => createInstant('page', { sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>Add {kind === 'page' ? 'subpage' : 'page'}</DropdownMenuItem>}
       {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'template', kind: 'page', sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>New page from template…</DropdownMenuItem>}
