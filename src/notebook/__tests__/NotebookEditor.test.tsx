@@ -72,7 +72,7 @@ describe('mounted collaborative notebook editor', () => {
     expect(JSON.stringify(yDocToProsemirrorJSON(other.doc))).toContain('"type":"bold"');expect(JSON.stringify(yDocToProsemirrorJSON(sync.doc))).not.toContain('"type":"bold"');
     expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);view.rerender(panes('main'));
     expect(main.querySelector('[aria-label="Page content"]')).toBe(first);expect(pane.querySelector('[aria-label="Page content"]')).toBe(second);expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button',{name:'Copy formatting'}));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();view.rerender(panes('other'));view.rerender(panes('main'));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'Format painter'}));expect(screen.getByRole('button',{name:'Format painter'})).toHaveAttribute('aria-pressed','true');view.rerender(panes('other'));view.rerender(panes('main'));expect(screen.getByRole('button',{name:'Format painter'})).toHaveAttribute('aria-pressed','true');
     fireEvent.keyDown(first,{key:'f',ctrlKey:true});expect(screen.getAllByRole('search',{name:'Find in page',hidden:true})).toHaveLength(1);
     fireEvent.click(screen.getByRole('tab',{name:'View'}));fireEvent.change(within(main as HTMLElement).getByLabelText('Paper pattern'),{target:{value:'ruled'}});fireEvent.click(screen.getByRole('button',{name:'Hide page title'}));
     const mainPaper=main.querySelector<HTMLElement>('.nb-paper')!,otherPaper=pane.querySelector<HTMLElement>('.nb-paper')!;
@@ -103,7 +103,8 @@ describe('mounted collaborative notebook editor', () => {
   });
   it('mounts the real CRDT editor, toolbar and carets, and saves shared titles', async () => {
     const { sync, server } = await mount();
-    expect(screen.getByRole('toolbar', { name: 'Note formatting' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Home' }));
+    expect(screen.getByRole('toolbar', { name: 'Home commands' })).toBeTruthy();
     expect(screen.getByLabelText('People on this page').textContent).toContain('Teammate');
     fireEvent.change(screen.getByRole('textbox', { name: 'Page title' }), { target: { value: 'Shared journal' } });
     await act(async () => { expect(await sync.flush()).toBe(true); });

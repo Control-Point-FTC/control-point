@@ -33,6 +33,7 @@ describe('notebook contextual ribbon',()=>{
     editor=new Editor({extensions:notebookExtensions(false,true),content:'<p>Hello</p>'});
     const view=render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1}/>);
     editor.commands.focus();editor.commands.setTextSelection(6); // caret after "Hello"
+    fireEvent.click(screen.getByRole('tab',{name:'Insert'}));
     const emojiBtn=screen.getByRole('button',{name:'Emoji'});
     fireEvent.mouseDown(emojiBtn);fireEvent.click(emojiBtn);
     expect(screen.getByRole('dialog',{name:'Emoji picker'})).toBeTruthy();
