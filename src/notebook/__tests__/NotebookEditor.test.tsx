@@ -9,8 +9,13 @@ import { NotebookSync, decodeBytes, encodeBytes } from '../NotebookSync';
 import { NotebookEditor } from '../NotebookEditor';
 import { apiJson, ApiError } from '../../services/api';
 vi.mock('../../services/api', async importOriginal => ({ ...await importOriginal<any>(), apiJson: vi.fn() }));
+const uploadState=vi.hoisted(()=>({busy:false}));
+vi.mock('../NotebookAttachments',async importOriginal=>{
+  const actual=await importOriginal<any>();
+  return {...actual,useNotebookUpload:(...args:any[])=>({...actual.useNotebookUpload(...args),busy:uploadState.busy})};
+});
 const providers: NotebookSync[] = [], docs: Y.Doc[] = [];
-afterEach(() => { cleanup(); providers.splice(0).forEach(p => p.destroy()); docs.splice(0).forEach(d => d.destroy()); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); uploadState.busy=false; providers.splice(0).forEach(p => p.destroy()); docs.splice(0).forEach(d => d.destroy()); vi.resetAllMocks(); });
 async function mount(editable = true) {
   const server = prosemirrorJSONToYDoc(notebookSchema, { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'discovery-block' }, content: [{ type: 'text', text: 'Team discoveries' }] }] });
   server.getMap('meta').set('title', 'Journal'); docs.push(server);
@@ -29,6 +34,15 @@ async function mount(editable = true) {
   return { sync, server, navigate };
 }
 describe('mounted collaborative notebook editor', () => {
+  it('does not claim a pending upload is saved or print an incomplete snapshot',async()=>{
+    uploadState.busy=true;await mount();
+    expect(screen.getByText('Uploading attachment · not saved yet')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab',{name:'File'}));
+    const calls=vi.mocked(apiJson).mock.calls.length;
+    fireEvent.click(screen.getByRole('button',{name:'Print page'}));
+    expect(screen.getByText('Wait for the attachment upload to finish before printing.')).toBeTruthy();
+    expect(vi.mocked(apiJson).mock.calls).toHaveLength(calls);
+  });
   it('mounts the real CRDT editor, toolbar and carets, and saves shared titles', async () => {
     const { sync, server } = await mount();
     expect(screen.getByRole('toolbar', { name: 'Note formatting' })).toBeTruthy();

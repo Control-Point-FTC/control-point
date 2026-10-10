@@ -199,7 +199,7 @@ export function ModernShell(props: ModernShellProps) {
     <MotionConfig reducedMotion="user">
     <TooltipProvider>
       <div className="modern-shell flex h-dvh w-full overflow-hidden bg-primary text-text-base" data-ui-shell="modern">
-        {!isMobile && (!notebookRoute || notebookExpanded) && (
+        {!isMobile && (
           <aside
             data-print-hide
             aria-label="Sidebar"

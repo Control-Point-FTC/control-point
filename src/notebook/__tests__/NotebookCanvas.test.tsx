@@ -7,12 +7,12 @@ import { canvasJSON, seedCanvas, type Ink } from '../canvasModel';
 import * as geometry from '../canvasGeometry';
 const providers: NotebookSync[] = [];
 afterEach(() => { cleanup(); providers.splice(0).forEach(p => p.destroy()); vi.restoreAllMocks(); });
-function mount(editable = true, mobile = false, strokes = 0, scoped = false) {
+function mount(editable = true, mobile = false, strokes = 0, scoped = false, scopeId?: string) {
     const sync = new NotebookSync(1,scoped?{memberId:123,teamId:456}:undefined);
     const zoom = vi.fn();
     providers.push(sync);
     if (strokes) seedCanvas(sync.doc, { version: 1, objects: Array.from({length:strokes},(_,i): Ink => ({ id:`stroke-${i}`, type:'stroke',tool:'pen',x:i%100,y:Math.floor(i/100),width:10,height:10,z:i,rotation:0,locked:false,groupId:null,color:'#111111',strokeWidth:2,opacity:1,points:[[0,0,.5],[10,10,.5]] })) });
-    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><NotebookCanvas sync={sync} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></div></>; }
+    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><NotebookCanvas sync={sync} scopeId={scopeId} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></div></>; }
     render(<Harness />);
     const surface = screen.getByLabelText('Page drawing surface');
     Object.defineProperties(surface, { offsetWidth: { value: 1000 }, offsetHeight: { value: 600 } });
@@ -22,6 +22,19 @@ function mount(editable = true, mobile = false, strokes = 0, scoped = false) {
 }
 function pointer(surface: HTMLElement, type: string, x: number, y: number, id = 1, source = 'mouse') { const event = new Event(type, { bubbles: true }); Object.assign(event, { pointerId: id, button: 0, clientX: x, clientY: y, pressure: .5, pointerType: source }); fireEvent(surface, event); }
 describe('desktop shared drawing surface', () => {
+    it('starts PDF text boxes inside a nested flow without treating the outer flow as its text editor',()=>{
+        const {sync,surface}=mount(true,false,0,false,'block-pdf-1');
+        fireEvent.click(screen.getByRole('button',{name:'Drawing type'}));
+        pointer(screen.getByText('Flow text remains here'),'pointerdown',100,100);
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({type:'text',pdfScope:'block-pdf-1'});
+    });
+    it('anchors PDF ink to its page without selecting or erasing another surface',()=>{
+        const {sync,surface}=mount(true,false,1,false,'pdf-block-pdf-2');
+        expect(surface.querySelectorAll('.nb-canvas-ink path')).toHaveLength(0);
+        fireEvent.click(screen.getByRole('button',{name:'Drawing pen'}));pointer(surface,'pointerdown',100,100);pointer(surface,'pointerup',200,120);
+        expect(canvasJSON(sync.doc).objects.find(item=>item.id!=='stroke-0')).toMatchObject({pdfScope:'pdf-block-pdf-2'});
+        fireEvent.click(screen.getByRole('button',{name:'Undo ink'}));expect(canvasJSON(sync.doc).objects.map(item=>item.id)).toEqual(['stroke-0']);
+    });
     it('keeps flow text clickable when drawing is disabled with a remembered pen',()=>{
         const key='cp:notebook:drawing:123:456';localStorage.setItem(key,JSON.stringify({tool:'pen',color:'#111111',size:3}));
         try{const {surface}=mount(false,false,0,true);expect(surface).toHaveAttribute('data-tool','type');expect(screen.getByText('Flow text remains here')).toBeVisible();expect(JSON.parse(localStorage.getItem(key)!).tool).toBe('pen');}

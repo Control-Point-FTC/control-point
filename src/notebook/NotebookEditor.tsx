@@ -4,7 +4,7 @@ import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import Placeholder from '@tiptap/extension-placeholder';
 import { yDocToProsemirrorJSON, yUndoPluginKey } from '@tiptap/y-tiptap';
-import { notebookExtensions, safeNotebookLink } from './editorSchema';
+import { notebookExtensions, notebookSchema, safeNotebookLink, validatedNotebookDocument } from './editorSchema';
 import { NotebookSync, type SyncStatus } from './NotebookSync';
 import { NotebookToolbar } from './NotebookToolbar';
 import { Button } from '../components/ui-kit';
@@ -17,6 +17,7 @@ import { NotebookDiscussions } from './NotebookDiscussions';
 import { useNotebookMobile } from './useNotebookMobile';
 import { pasteNotebookText } from './NotebookMobileToolbar';
 import { createPortal } from 'react-dom';
+import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
 import { NotebookHistory } from './NotebookHistory';
 const NotebookCanvas = lazy(() => import('./NotebookCanvas'));
 
@@ -53,12 +54,40 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [ruled, setRuled] = useState(false);
   const [viewError, setViewError] = useState('');
   const [drawPanel, setDrawPanel] = useState<React.ReactNode>(null);
+  const [drawingScope,setDrawingScopeState]=useState<string|null>(null);
+  const [requestedGroup,setRequestedGroup]=useState<{group:string;key:number}>();
+  const drawingScopeRef=React.useRef<string|null>(null);
+  const setDrawingScope=useCallback((id:string|null)=>{if(id && drawingScopeRef.current!==id)setRequestedGroup(previous=>({group:'draw',key:(previous?.key||0)+1}));drawingScopeRef.current=id;setDrawingScopeState(id);},[]);
   const [canvasTarget, setCanvasTarget] = useState<string | null>(null);
   const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
+  const [printing,setPrinting]=useState(false),[printProgress,setPrintProgress]=useState('');
+  const printAbort=React.useRef<AbortController|null>(null),closePrintPreview=React.useRef<(()=>void)|null>(null),paper=React.useRef<HTMLElement|null>(null);
+  useEffect(()=>()=>{printAbort.current?.abort();closePrintPreview.current?.();},[sync]);
+  const printPage=async()=>{
+    if(printing)return;
+    if(fileUpload.busy){setViewError('Wait for the attachment upload to finish before printing.');return;}
+    const abort=new AbortController();printAbort.current=abort;setPrinting(true);setPrintProgress('Preparing notebook page…');
+    try{
+      if(sync.pending && !await sync.flush())throw new Error('Save your changes before printing.');
+      const headers=sync.scope?{'X-CP-Notebook-Team':String(sync.scope.teamId)}:undefined;
+      const snapshot=await apiJson<NotebookPageData>(`/api/notebook/pages/${sync.pageId}`,{headers,cache:'no-store',signal:abort.signal});
+      const [{prepareNotebookPrint},{showAnnotatedPdfPrint},{captureNotebookPrintLayout}]=await Promise.all([import('./notebookPrint'),import('./pdfPrint'),import('./printLayout')]);
+      const stage=paper.current?.querySelector<HTMLElement>('.nb-canvas-stage');
+      if(!stage||!editor)throw new Error('The page layout is unavailable. Reopen the page before printing.');
+      const local=notebookSchema.nodeFromJSON(validatedNotebookDocument(yDocToProsemirrorJSON(sync.doc))).toJSON();
+      const saved=notebookSchema.nodeFromJSON(validatedNotebookDocument(snapshot.content)).toJSON();
+      if(JSON.stringify(local)!==JSON.stringify(saved))throw new Error('The shared page changed. Wait for its saved layout before printing.');
+      const markup=await prepareNotebookPrint(sync,snapshot,abort.signal,setPrintProgress,{width:stage.offsetWidth||800,height:stage.scrollHeight||600},captureNotebookPrintLayout(stage,editor.view.dom));
+      await apiJson(`/api/notebook/pages/${sync.pageId}`,{headers,cache:'no-store',signal:abort.signal});abort.signal.throwIfAborted();
+      if(['unavailable','conflict','error'].includes(sync.status))throw new Error('Page access changed. Reopen the page before printing.');
+      closePrintPreview.current?.();closePrintPreview.current=showAnnotatedPdfPrint(markup,'Notebook page print preview');setViewError('');setPrintProgress('Notebook print preview ready.');
+    }catch(e){if(!abort.signal.aborted)setViewError(e instanceof Error?e.message:'Cannot prepare this page.');}
+    finally{if(!abort.signal.aborted)setPrinting(false);}
+  };
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
-    extensions: [...notebookExtensions(true, !!sync.data?.editable), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
+    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
       if (!mobileRef.current || !view.editable) return false;
@@ -108,8 +137,9 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     window.addEventListener('beforeunload', unload);
     return () => window.removeEventListener('beforeunload', unload);
   }, [sync]);
-  return <div className="nb-document">
-    <div className="nb-doc-status"><span role="status" aria-live="polite">{sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
+  const fileUpload=useNotebookUpload(sync,activeEditor ?? editor);
+  return <NotebookFileContext.Provider value={{sync,mobile,editable:!blocked,drawingScope,setDrawingScope,onRibbon:setDrawPanel,onEditorFocus:focusEditor,onEditorRemoved:removeEditor,onSelectionChange:setCanvasTarget}}><div className="nb-document">
+    <div className="nb-doc-status"><span role="status" aria-live="polite">{fileUpload.busy ? 'Uploading attachment · not saved yet' : sync.status === 'offline' && sync.locallyDurable ? 'Offline · saved on this device, will sync' : labels[sync.status]}</span>
       {sync.data?.protected && <span>Admin-only · Bruno excluded</span>}
       {!sync.data?.editable && <span>Read only</span>}
       <span>Revision {sync.data?.revision}</span>
@@ -128,22 +158,23 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     </div>}
     {(() => {
       const panels = {
-        ...(!mobile && drawPanel ? { draw: drawPanel } : {}),
-        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" onClick={() => window.print()}>Print page</button></>,
+        ...(!mobile && drawPanel ? { draw: <><button className="nb-tool" onClick={()=>setDrawingScope(null)}>Draw on notebook page</button>{drawPanel}</> } : {}),
+        insert: fileUpload.controls,
+        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
         history: <NotebookHistory sync={sync} />,
         view: <><label>Zoom <select aria-label="Page zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[...new Set([50,75,90,100,110,125,150,175,200,250,300,zoom])].sort((a,b)=>a-b).map(n => <option key={n} value={n}>{n}%</option>)}</select></label><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
-      const toolbar = <NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} />;
+      const toolbar = <NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup} />;
       return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}
     {viewError && <div className="nb-alert" role="alert">{viewError}<button aria-label="Dismiss view error" onClick={() => setViewError('')}>×</button></div>}
-    <div className="nb-paper-scroll"><article className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
+    <div className="nb-paper-scroll"><article ref={paper} className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
-      <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} editable={!blocked && !sync.data?.legacyCanvas} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>
+      <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
       {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} />}
     </article></div>
-  </div>;
+  </div></NotebookFileContext.Provider>;
 }

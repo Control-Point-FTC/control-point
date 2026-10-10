@@ -60,17 +60,26 @@ describe('Settings on phones', () => {
 });
 
 describe('immersive notebook navigation', () => {
-  it('hides the app sidebar on entry, reopens it on request, and preserves the other pages preference', () => {
+  it('auto-compacts to the full icon rail on entry and preserves other pages preference', () => {
     localStorage.setItem('cp-modern-sidebar-collapsed', 'false');
     shell({ activeTab: 'notebook', immersive: true });
-    expect(screen.queryByRole('button', { name: 'Account menu' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'nav.dashboard' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Search' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inbox' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bruno' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('cp:notebook-navigation')));
     expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeInTheDocument();
     act(() => window.dispatchEvent(new Event('cp:notebook-navigation')));
-    expect(screen.queryByRole('button', { name: 'Account menu' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
     expect(localStorage.getItem('cp-modern-sidebar-collapsed')).toBe('false');
     cleanup(); shell();
     expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Collapse sidebar' })).toBeInTheDocument();
   });
 });
 

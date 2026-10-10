@@ -15,9 +15,10 @@ const icons: Record<string, React.ComponentType<{ size?: number }>> = { Bold, It
 const insertCommands = new Set(['Link', 'Table', 'Quote', 'Code', 'Divider', 'Add row', 'Row above', 'Add column', 'Column left', 'Delete row', 'Delete column', 'Merge cells', 'Split cell', 'Header row', 'Delete table', 'Reset cell fill']);
 
 const ribbonTabs = [['file','File'],['home','Home'],['insert','Insert'],['draw','Draw'],['history','History'],['review','Review'],['view','View'],['help','Help']];
-export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {} }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode> }) {
+export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {},requestedGroup }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>;requestedGroup?:{group:string;key:number} }) {
   const mobile = useNotebookMobile();
   const [group, setGroup] = useState(() => { try { const saved = preferenceKey && localStorage.getItem(preferenceKey); return saved && ['home','insert','review','help'].includes(saved) ? saved : 'home'; } catch { return 'home'; } });
+  useEffect(()=>{if(requestedGroup && ribbonTabs.some(([group])=>group===requestedGroup.group))setGroup(requestedGroup.group);},[requestedGroup]);
   const [expanded, setExpanded] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [href, setHref] = useState('');

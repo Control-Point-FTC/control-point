@@ -75,7 +75,8 @@ import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
 import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
-import { registerNotebookRoutes } from "./server/notebook.js";
+import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
+import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { buildArticleCsp, buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
@@ -4687,6 +4688,7 @@ async function startServer() {
    */
   async function deleteWorkspace(teamId: number, { keepMemberId, keepSessionId }: { keepMemberId: number | null; keepSessionId: string }) {
     const memberIds = ((await dbAll("SELECT id FROM members WHERE team_id = ?", teamId)) as any[]).map((r) => r.id);
+    const notebookFileIds=((await dbAll("SELECT id FROM stored_files WHERE team_id = ? AND kind = 'notebook'",teamId)) as any[]).map(row=>Number(row.id));
     const inMembers = memberIds.length ? `IN (${memberIds.map(() => "?").join(",")})` : "IN (NULL)";
     const stmts: { sql: string; args?: any[] }[] = [
       { sql: "DELETE FROM bruno_messages WHERE chat_id IN (SELECT id FROM bruno_chats WHERE team_id = ?)", args: [teamId] },
@@ -4713,6 +4715,9 @@ async function startServer() {
       { sql: "DELETE FROM notebook_threads WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_links WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_versions WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_file_refs WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_files WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM stored_files WHERE team_id = ? AND kind = 'notebook'", args: [teamId] },
       { sql: "DELETE FROM notebook_pages WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_sections WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_books WHERE team_id = ?", args: [teamId] },
@@ -4765,6 +4770,8 @@ async function startServer() {
       { sql: "DELETE FROM teams WHERE id = ?", args: [teamId] },
     ];
     await dbBatch(stmts);
+    // Remove the private object copies only after the database deletion commits.
+    for(const fileId of notebookFileIds)await deleteStoredRow(fileId);
     for (const id of memberIds) if (id !== keepMemberId) disconnectMember(teamId, id);
   }
 
@@ -7563,6 +7570,8 @@ async function startServer() {
     return Buffer.from(row.data as ArrayBuffer);
   }
 
+  registerNotebookFileRoutes(app,{requireAuth,ensureRolesSeeded,storeFile,deleteStoredRow,readStoredBytes},new NotebookStore());
+
   // Copy existing files into R2 in the background (the owner asked for every
   // existing image and file to move). Each copy is verified by size before
   // the row points at R2. The database copy is cleared only when
@@ -7702,7 +7711,7 @@ async function startServer() {
       const f = (await dbGet(
         `SELECT id, team_id, kind, filename, mime_type, r2_key, length(data) AS blob_len FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
       )) as any;
-      if (!f) return res.status(404).end();
+      if (!f || f.kind === "notebook") return res.status(404).end();
       let email = String((auth as any).email || "");
       if (!email) {
         const me = (await dbGet(`SELECT email FROM members WHERE id = ?`, auth.memberId)) as any;

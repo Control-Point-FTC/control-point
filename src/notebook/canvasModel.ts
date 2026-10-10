@@ -7,6 +7,7 @@ export type Point = [
     number
 ];
 type Base = {
+    pdfScope?: string;
     id: string;
     x: number;
     y: number;
@@ -60,7 +61,8 @@ export function validatedCanvas(value: unknown): NotebookCanvas {
         ids.add(item.id);
         if (!finite(item.x, -50000, 50000) || !finite(item.y, -50000, 50000) || !finite(item.width, .1, 50000) || !finite(item.height, .1, 50000) || !finite(item.z, -1000000, 1000000) || !finite(item.rotation, -360, 360) || typeof item.locked !== 'boolean' || item.groupId !== null && !validId(item.groupId))
             fail();
-        const keys = ['id', 'type', 'x', 'y', 'width', 'height', 'z', 'rotation', 'locked', 'groupId'];
+        if (item.pdfScope !== undefined && !validId(item.pdfScope)) fail();
+        const keys = ['pdfScope', 'id', 'type', 'x', 'y', 'width', 'height', 'z', 'rotation', 'locked', 'groupId'];
         if (item.type === 'text') {
             keys.push('content');
             validatedNotebookDocument(item.content);

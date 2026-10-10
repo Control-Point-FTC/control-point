@@ -10,6 +10,7 @@ import { notebookDocumentJSON, seedNotebookDocument } from './notebookDocument.j
 import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
+import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -166,9 +167,14 @@ export class Session {
     };
   }
   async snapshot(row: Row) {
+    // Tree operations pass structural rows without the authored document.
+    // Load the complete revision inside the same transaction before indexing it.
+    row = await this.one('SELECT * FROM notebook_pages WHERE id=? AND team_id=?', row.id, this.ctx.teamId);
     await this.run(`INSERT OR IGNORE INTO notebook_versions(team_id,page_id,title,content,canvas,revision,author_id,saved_at)
       SELECT team_id,id,title,content,canvas,revision,updated_by,updated_at FROM notebook_pages WHERE id=? AND team_id=?`, row.id, this.ctx.teamId);
     await this.run("DELETE FROM notebook_versions WHERE page_id=? AND team_id=? AND id NOT IN (SELECT id FROM notebook_versions WHERE page_id=? AND team_id=? ORDER BY revision DESC LIMIT 50)", row.id, this.ctx.teamId, row.id, this.ctx.teamId);
+    await indexNotebookFiles(this,row.id,JSON.parse(row.content),JSON.parse(row.canvas),row.revision,true);
+    await this.run('DELETE FROM notebook_file_refs WHERE team_id=? AND page_id=? AND revision!=0 AND revision NOT IN (SELECT revision FROM notebook_versions WHERE team_id=? AND page_id=?)',this.ctx.teamId,row.id,this.ctx.teamId,row.id);
   }
   async indexLinks(pageId: number, content: unknown, canvas: unknown = {}) {
     await this.run('DELETE FROM notebook_links WHERE team_id=? AND source_page_id=?', this.ctx.teamId, pageId);
@@ -199,12 +205,16 @@ export class Session {
       } finally { shared.destroy(); }
     } else await this.run('UPDATE notebook_pages SET crdt_state=NULL,crdt_epoch=? WHERE id=? AND team_id=?', randomUUID(), row.id, this.ctx.teamId);
     if (body.content !== undefined || body.canvas !== undefined) await this.indexLinks(row.id, JSON.parse(content), JSON.parse(canvas));
+    await indexNotebookFiles(this,row.id,JSON.parse(content),JSON.parse(canvas));
     return this.page(await this.item("page", row.id));
   }
 }
 
 export class NotebookStore {
   constructor(private readonly client: Client = dbClient) {}
+  authorizeFileUpload(ctx: NotebookContext, pageId: number) { return this.session(ctx,s=>authorizeNotebookUpload(s,pageId)); }
+  registerFile(ctx: NotebookContext, pageId: number, fileId: number) { return this.session(ctx,s=>registerNotebookFile(s,pageId,id(fileId))); }
+  fileForPage(ctx: NotebookContext, pageId: number, fileId: number) { return this.session(ctx,s=>notebookFileForPage(s,pageId,id(fileId))); }
   private async session<T>(ctx: NotebookContext, fn: (s: Session) => Promise<T>): Promise<T> {
     const prior = queues.get(this.client) ?? Promise.resolve();
     let release!: () => void;
@@ -296,6 +306,7 @@ export class NotebookStore {
         await s.snapshot(row);
         await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
         await s.indexLinks(row.id, json.content, json.canvas);
+        await indexNotebookFiles(s,row.id,json.content,json.canvas);
       }
       if (!row.crdt_state || seededCanvas || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
       if (!row.crdt_state && !changed) {
@@ -303,6 +314,7 @@ export class NotebookStore {
         // representation fields are not an authored text change/revision.
         await s.run('UPDATE notebook_pages SET content=? WHERE id=? AND team_id=?', content, row.id, ctx.teamId);
         await s.indexLinks(row.id, json.content, json.canvas);
+        await indexNotebookFiles(s,row.id,json.content,json.canvas);
       }
       const current = changed ? await s.item('page', pageId) : row;
       const protectedPage = await s.isProtected(row);
@@ -389,7 +401,10 @@ export class NotebookStore {
       result = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)", ctx.teamId, section.id, parentId, name, body.protected ? 1 : 0, content, canvas, notebookText(JSON.parse(content)) + " " + notebookText(JSON.parse(canvas)), section.id, parentId, ctx.memberId, ctx.memberId, now, now);
     }
     const row = await s.item(kind, Number(result.lastInsertRowid));
-    if (kind === 'page') await s.indexLinks(row.id, JSON.parse(row.content), JSON.parse(row.canvas));
+    if (kind === 'page') {
+      await s.indexLinks(row.id, JSON.parse(row.content), JSON.parse(row.canvas));
+      await indexNotebookFiles(s,row.id,JSON.parse(row.content),JSON.parse(row.canvas));
+    }
     return kind === "page" ? s.page(row) : { id: row.id, title: row.title, color: row.color, notebookId: row.notebook_id, protected: !!row.protected };
   }); }
   update(ctx: NotebookContext, kind: "notebook" | "section", itemId: number, body: Row) { return this.session(ctx, async s => {
@@ -465,6 +480,7 @@ export class NotebookStore {
     const copy = await s.run("INSERT INTO notebook_pages(team_id,section_id,parent_id,title,protected,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(position),-1)+1 FROM notebook_pages WHERE section_id=? AND parent_id IS ?),?,?,?,?)",
       ctx.teamId, row.section_id, row.parent_id, row.title.slice(0, 193) + " (copy)", await s.isProtected(row) ? 1 : 0, row.content, row.canvas, row.plain, row.section_id, row.parent_id, ctx.memberId, ctx.memberId, now, now);
     await s.indexLinks(Number(copy.lastInsertRowid), JSON.parse(row.content), JSON.parse(row.canvas));
+    await indexNotebookFiles(s,Number(copy.lastInsertRowid),JSON.parse(row.content),JSON.parse(row.canvas),0,true);
     return s.page(await s.item("page", Number(copy.lastInsertRowid)));
   }); }
   backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
