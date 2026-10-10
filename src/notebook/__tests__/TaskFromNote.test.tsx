@@ -31,6 +31,12 @@ describe('create a task from a note', () => {
     expect(linkLineToTask(editor, 'gone', 1)).toBe(false);
   });
 
+  it('uses the first line when the whole box is selected', () => {
+    const editor = make();
+    editor.commands.selectAll();
+    expect(currentLine(editor)).toEqual({ title: 'Notes', blockId: 'p1' });
+  });
+
   it('creates the task with assignees, priority, due date and a link back to the line', async () => {
     vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => url === '/api/members'
       ? [{ id: 3, name: 'Ana' }, { id: 4, name: 'Lee' }] as any

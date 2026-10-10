@@ -15,7 +15,17 @@ export type TaskDraft = { title: string; blockId: string | null };
 
 /** The line under the cursor: its text and the id of its block. */
 export function currentLine(editor: Editor): TaskDraft {
-  const { $from } = editor.state.selection;
+  const { selection, doc } = editor.state, { $from } = selection;
+  if (!$from.parent.isTextblock) {
+    // A whole-box or node selection: use the first line inside it.
+    let line: TaskDraft | null = null;
+    doc.nodesBetween(selection.from, selection.to, node => {
+      if (line) return false;
+      if (node.isTextblock && typeof node.attrs.id === 'string') { line = { title: node.textContent.trim().slice(0, 200), blockId: node.attrs.id }; return false; }
+      return true;
+    });
+    return line ?? { title: '', blockId: null };
+  }
   let blockId: string | null = null;
   for (let d = $from.depth; d > 0 && !blockId; d--) { const id = $from.node(d).attrs.id; if (typeof id === 'string') blockId = id; }
   return { title: $from.parent.textContent.trim().slice(0, 200), blockId };
