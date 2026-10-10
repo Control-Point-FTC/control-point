@@ -5,6 +5,7 @@ import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import Placeholder from '@tiptap/extension-placeholder';
 import { yDocToProsemirrorJSON, yUndoPluginKey } from '@tiptap/y-tiptap';
 import { notebookExtensions, notebookSchema, safeNotebookLink, validatedNotebookDocument } from './editorSchema';
+import { useNotebookWorkspace } from './workspaceContext';
 import { AutoCapitalize } from './autoCapitalize';
 import { NotebookSync, type SyncStatus } from './NotebookSync';
 import { NotebookRibbonShell, NotebookToolbar } from './NotebookToolbar';
@@ -101,6 +102,23 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     }catch(e){if(!abort.signal.aborted)setViewError(e instanceof Error?e.message:'Cannot prepare this page.');}
     finally{if(!abort.signal.aborted)setPrinting(false);}
   };
+  const workspace = useNotebookWorkspace();
+  const printSection = async () => {
+    if (printing) return;
+    const sectionId = pages.find(p => p.id === sync.pageId)?.sectionId;
+    const section = workspace?.tree?.sections.find(s => s.id === sectionId);
+    if (!section) { setViewError('This page’s section is unavailable. Reopen the notebook and try again.'); return; }
+    const abort = new AbortController(); printAbort.current = abort; setPrinting(true); setPrintProgress('Preparing section…');
+    try {
+      if (sync.pending && !await sync.flush()) throw new Error('Save your changes before printing.');
+      const [{ prepareSectionPrint }, { showAnnotatedPdfPrint }] = await Promise.all([import('./sectionPrint'), import('./pdfPrint')]);
+      const result = await prepareSectionPrint(section, workspace?.tree?.pages ?? pages, sync.scope, abort.signal, setPrintProgress);
+      abort.signal.throwIfAborted();
+      closePrintPreview.current?.(); closePrintPreview.current = showAnnotatedPdfPrint(result.markup, 'Notebook section print preview'); setViewError('');
+      setPrintProgress(`Section print preview ready: ${result.printed} ${result.printed === 1 ? 'page' : 'pages'}${result.skipped.length ? ` (${result.skipped.length} no longer available)` : ''}.`);
+    } catch (e) { if (!abort.signal.aborted) setViewError(e instanceof Error ? e.message : 'Cannot prepare this section.'); }
+    finally { if (!abort.signal.aborted) setPrinting(false); }
+  };
   // Bruno screen context: the split view reports which page is active; this
   // editor adds the ids of the smallest blocks the selection touches (a table
   // cell's paragraph, not the whole table). Text is resolved server side.
@@ -185,7 +203,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       const panels = {
         ...(!mobile && drawPanel ? { draw: <><button className="nb-tool" onClick={()=>setDrawingScope(null)}>Draw on notebook page</button>{drawPanel}</> } : {}),
         insert: fileUpload.controls,
-        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
+        file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button><button className="nb-tool" disabled={printing || !workspace?.tree} onClick={() => { void printSection(); }}>Print section</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
         history: <NotebookHistory sync={sync} onRejoin={onRejoin} />,
         view: <><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><NotebookPaperControls value={paperView} onChange={setPaperView}/><NotebookReader sync={sync} preferences={readerPreferences} onPreferencesChange={setReaderPreferences}/><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };

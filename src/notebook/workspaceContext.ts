@@ -18,6 +18,8 @@ export type NotebookWorkspace = {
   setTagSummaryOpen?: (open: boolean) => void;
   tagSummaryView?: TagSummaryView;
   setTagSummaryView?: (view: TagSummaryView) => void;
+  /** Insert → Page templates: a new page in this section from a template. */
+  openTemplates?: (sectionId: number) => void;
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);
