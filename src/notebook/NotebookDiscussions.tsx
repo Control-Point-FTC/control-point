@@ -21,9 +21,9 @@ export function selectionCommentAnchor(editor: Editor | null): CommentAnchor {
   }
   return { kind: 'page' };
 }
-export function NotebookDiscussions({ sync, editor, canvasTarget }: { sync: NotebookSync; editor: Editor | null; canvasTarget?: string | null }) {
+export function NotebookDiscussions({ sync, editor, canvasTarget,highlightedThreadId }: { sync: NotebookSync; editor: Editor | null; canvasTarget?: string | null;highlightedThreadId?:number|null }) {
   const [params] = useSearchParams();
-  const highlightedThread = Number(params.get('thread'));
+  const highlightedThread = highlightedThreadId===undefined?Number(params.get('thread')):Number(highlightedThreadId);
   const [threads, setThreads] = useState<Threads>({ items: [], next: null, canComment: false });
   const [olderComments, setOlderComments] = useState<Record<number, { items: Comment[]; next: number | null }>>({});
   const expandedThreads = useRef(new Set<number>());
