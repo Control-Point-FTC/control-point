@@ -113,6 +113,9 @@ describe('mounted collaborative notebook editor', () => {
     fireEvent.click(screen.getByRole('button',{name:'Reset to 100%'}));expect(paper.style.zoom).toBe('1');
     fireEvent.click(screen.getByRole('button', { name: 'Rule lines' }));
     expect(document.querySelector('.nb-paper.nb-ruled')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Paper pattern'),{target:{value:'grid'}});fireEvent.change(screen.getByLabelText('Paper line spacing'),{target:{value:'40'}});expect(paper.style.backgroundSize).toBe('40px 40px');
+    fireEvent.click(screen.getByRole('button',{name:'Hide page title'}));expect(screen.queryByRole('textbox',{name:'Page title'})).toBeNull();expect(sync.doc.getMap('meta').get('title')).toBe('Journal');
+    fireEvent.click(screen.getByRole('button',{name:'Show page title'}));expect(screen.getByRole('textbox',{name:'Page title'})).toHaveValue('Journal');
     await act(async () => { await sync.flush(); });
     expect(yDocToProsemirrorJSON(server)).toEqual(before);
   });
