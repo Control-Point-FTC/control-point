@@ -165,7 +165,7 @@ export class Session {
     const visiblePages = pages.filter(p => inspect(p).visible);
     return {
       notebooks: notebooks.map(n => ({ id: n.id, title: n.title, color: n.color, sort: n.position })),
-      sections: visibleSections.map(s => ({ id: s.id, notebookId: s.notebook_id, title: s.title, color: s.color, sort: s.position, protected: !!s.protected })),
+      sections: visibleSections.map(s => ({ id: s.id, notebookId: s.notebook_id, title: s.title, color: s.color, sort: s.position, protected: !!s.protected, defaultTemplate: s.default_template ?? null, dateStamp: !!s.date_stamp })),
       pages: visiblePages.map(p => ({ id: p.id, sectionId: p.section_id, parentId: p.parent_id, title: p.title, sort: p.position, protected: inspect(p).protected, ownProtected: !!p.protected, revision: p.revision, updatedAt: p.updated_at })),
       permissions: { read: true, edit: this.access.human && this.can("edit_notebook"), organize: this.access.human && this.can("organize_notebook"), delete: this.access.human && this.can("delete_notebook"), protect: this.access.human && this.access.admin },
     };
@@ -414,7 +414,13 @@ export class NotebookStore {
   update(ctx: NotebookContext, kind: "notebook" | "section", itemId: number, body: Row) { return this.session(ctx, async s => {
     s.require("organize_notebook");
     const row = await s.item(kind, itemId);
-    await s.run(`UPDATE ${tables[kind]} SET title=?,color=? WHERE id=? AND team_id=?`, body.title === undefined ? row.title : title(body.title), body.color === undefined ? row.color : color(body.color), row.id, ctx.teamId);
+    const validTemplates = ["blank", "meeting", "todo", "engineering", "design"];
+    const defaultTemplate = body.defaultTemplate === undefined || body.defaultTemplate === null ? row.default_template
+      : validTemplates.includes(String(body.defaultTemplate)) ? String(body.defaultTemplate) : row.default_template;
+    const dateStamp = body.dateStamp === undefined ? row.date_stamp : body.dateStamp ? 1 : 0;
+    await s.run(`UPDATE ${tables[kind]} SET title=?,color=?${kind === "section" ? ",default_template=?,date_stamp=?" : ""} WHERE id=? AND team_id=?`,
+      body.title === undefined ? row.title : title(body.title), body.color === undefined ? row.color : color(body.color),
+      ...(kind === "section" ? [defaultTemplate, dateStamp] : []), row.id, ctx.teamId);
     return { ok: true };
   }); }
   save(ctx: NotebookContext, pageId: number, body: Row) { return this.session(ctx, s => s.save(pageId, body)); }
