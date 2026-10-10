@@ -24,5 +24,4 @@
 
 /* Page link states. */
 .nb-prose .nb-link-missing,.nb-prose .nb-link-missing a{color:#9a3412!important;text-decoration-style:dashed!important}
-.nb-prose .nb-link-missing::after{content:" (unavailable)";font-size:.8em;color:#9a3412}
-.nb-prose .nb-link-locked::after{content:" · admin only";font-size:.8em;color:#8a6100}
+.nb-link-note{font-size:.8em;pointer-events:none;user-select:none}.nb-link-note-missing{color:#9a3412}.nb-link-note-locked{color:#8a6100}
