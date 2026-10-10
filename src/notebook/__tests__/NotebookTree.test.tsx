@@ -51,13 +51,22 @@ describe('tabs layout', () => {
     mount('/notebook', false, true);
     const picker = await screen.findByRole('combobox', { name: 'Notebook' }) as HTMLSelectElement;
     expect(vi.mocked(apiJson).mock.calls.filter(([p]) => p === '/api/notebook/mentions')).toHaveLength(1);
+    const syncsBefore = vi.mocked(apiJson).mock.calls.filter(([p]) => String(p).endsWith('/sync')).length;
     fireEvent.change(picker, { target: { value: '2' } });
     await waitFor(() => expect(picker.value).toBe('2'));
     expect(within(screen.getByRole('navigation', { name: 'Sections' })).queryByRole('button', { name: 'Build' })).toBeNull();
     // Nothing from the other notebook stays selected: no adding pages there.
     await waitFor(() => expect((screen.getByRole('button', { name: /Add Page/ }) as HTMLButtonElement).disabled).toBe(true));
+    // No page from the other notebook gets reopened behind the empty one.
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    expect(picker.value).toBe('2');
+    expect(vi.mocked(apiJson).mock.calls.filter(([p]) => String(p).endsWith('/sync')).length).toBe(syncsBefore);
     fireEvent.click(screen.getByRole('button', { name: 'New section' }));
     await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p, o]) => p === '/api/notebook/sections' && JSON.parse(String(o?.body)).notebookId === 2)).toBe(true));
+    await act(async () => { await new Promise(r => setTimeout(r, 300)); });
+    // Let the creation finish (rename field shown) so nothing is still in flight after this test.
+    fireEvent.keyDown(await screen.findByRole('textbox', { name: 'Rename section' }), { key: 'Escape' });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
   });
 });
 

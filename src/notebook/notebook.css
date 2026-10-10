@@ -62,3 +62,4 @@
 .nb-section-tabs .nb-section-tab-add{border-bottom-color:transparent;background:transparent;padding:6px 8px}
 .nb-section-tabs-end{margin-inline-start:auto;display:inline-flex;align-items:center;gap:6px;padding-bottom:4px}
 .nb-section-tabs .nb-section-tabs-end button{border-bottom:0;background:transparent;border-radius:6px;padding:4px 8px}
+.nb-section-tab-rename{display:inline-flex;padding:2px 4px;min-width:160px}
