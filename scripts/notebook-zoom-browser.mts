@@ -5,6 +5,7 @@
  */
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import * as Y from 'yjs';
 import { prosemirrorJSONToYDoc } from '@tiptap/y-tiptap';
 import { notebookSchema } from '../src/notebook/editorSchema';
@@ -13,7 +14,7 @@ const doc = prosemirrorJSONToYDoc(notebookSchema, {type:'doc',content:[{type:'pa
 doc.getMap('meta').set('title','Synthetic oversized drawing');
 insertCanvasItem(doc,{id:'oversized-drawing',type:'shape',shape:'rectangle',x:650,y:140,width:650,height:360,z:1,rotation:0,locked:false,groupId:null,color:'#007c91',fill:'#c6edf3',strokeWidth:3});
 const bytes = (value:Uint8Array) => Buffer.from(value).toString('base64');
-const server = await createServer({configFile:false,root:process.cwd(),plugins:[react(),{name:'synthetic-notebook-api',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
+const server = await createServer({configFile:false,root:process.cwd(),plugins:[react(),tailwindcss(),{name:'synthetic-notebook-api',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
   if(!req.url?.startsWith('/api/'))return next();
   res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
   if(req.url==='/api/notebook/pages/1/sync'){
