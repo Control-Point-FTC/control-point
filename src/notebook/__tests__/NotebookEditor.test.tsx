@@ -34,6 +34,16 @@ async function mount(editable = true) {
   return { sync, server, navigate,view };
 }
 describe('mounted collaborative notebook editor', () => {
+  it('keeps reading preferences when the View ribbon unmounts even without device storage',async()=>{
+    await mount();const storage=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('blocked');});
+    try{
+      fireEvent.click(screen.getByRole('tab',{name:'View'}));fireEvent.click(screen.getByRole('button',{name:'Reading mode'}));
+      fireEvent.change(screen.getByLabelText('Reader text size'),{target:{value:'28'}});fireEvent.change(screen.getByLabelText('Reader background'),{target:{value:'dark'}});
+      fireEvent.click(screen.getByRole('button',{name:'Return to page'}));fireEvent.click(screen.getByRole('tab',{name:'Home'}));fireEvent.click(screen.getByRole('tab',{name:'View'}));fireEvent.click(screen.getByRole('button',{name:'Reading mode'}));
+      expect(screen.getByLabelText('Reader text size')).toHaveValue('28');expect(screen.getByRole('dialog')).toHaveClass('nb-reader-dark');
+      expect(screen.getByRole('heading',{name:'Journal'}).style.color).toBe('inherit');
+    }finally{storage.mockRestore();}
+  });
   it('keeps two real editors and titles independent while ribbon ownership changes',async()=>{
     const {sync,server,view}=await mount();
     const secondary=prosemirrorJSONToYDoc(notebookSchema,{type:'doc',content:[{type:'paragraph',attrs:{id:'secondary-block'},content:[{type:'text',text:'Linked experiment',marks:[{type:'link',attrs:{href:'/notebook/p/3?block=target'}}]}]}]});secondary.getMap('meta').set('title','Other journal');docs.push(secondary);
