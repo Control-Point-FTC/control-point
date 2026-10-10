@@ -10,6 +10,7 @@ import { notebookCommandGlyph } from './NotebookIcons';
 import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup } from './ribbon/RibbonParts';
+import { useNotebookWorkspace } from './workspaceContext';
 import './ribbon/ribbon.css';
 
 const SYMBOLS = ['©','®','™','§','¶','†','‡','•','…','–','—','‘','’','“','”','«','»','‹','›','¡','¿','×','÷','±','∓','≈','≠','≤','≥','√','∞','∑','∏','∫','∂','∆','π','θ','λ','μ','Ω','α','β','γ','δ','σ','φ','ψ','←','↑','→','↓','↔','⇒','⇐','⇔','★','☆','✓','✗','⚠','●','○','◆','◇','▲','▼','°','′','″','€','£','¥','₹'];
@@ -31,7 +32,7 @@ const isTab = (value: unknown): value is Tab => ribbonTabs.some(([id]) => id ===
 function readPref(key: string | undefined) { try { return key ? localStorage.getItem(key) : null; } catch { return null; } }
 function writePref(key: string | undefined, value: string) { try { if (key) localStorage.setItem(key, value); } catch { /* optional device preference */ } }
 
-function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed }: { group: Tab; onSelect: (tab: Tab) => void; collapsed: boolean; onToggleCollapsed?: () => void }) {
+function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed, trailing }: { group: Tab; onSelect: (tab: Tab) => void; collapsed: boolean; onToggleCollapsed?: () => void; trailing?: React.ReactNode }) {
   const Toggle = notebookCommandGlyph(collapsed ? 'Expand ribbon' : 'Collapse ribbon');
   return <div className="nb-command-tabs" role="tablist" aria-label="Notebook commands">
     {ribbonTabs.map(([id, label]) => <button key={id} role="tab" aria-selected={group === id} tabIndex={group === id ? 0 : -1} onClick={() => onSelect(id)} onKeyDown={e => {
@@ -41,12 +42,14 @@ function RibbonTabs({ group, onSelect, collapsed, onToggleCollapsed }: { group: 
       const next = e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (index + (e.key === 'ArrowRight' ? 1 : n - 1)) % n;
       onSelect(ribbonTabs[next][0]); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role=tab]')[next]?.focus();
     }}>{label}</button>)}
+    {trailing && <span className="nb-topbar">{trailing}</span>}
     {onToggleCollapsed && Toggle && <button type="button" className="nb-ribbon-toggle" aria-label={collapsed ? 'Show the ribbon' : 'Hide the ribbon'} title={collapsed ? 'Show the ribbon' : 'Hide the ribbon'} aria-expanded={!collapsed} onClick={onToggleCollapsed}><Toggle size={16} /></button>}
   </div>;
 }
 
 export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey, panels = {},requestedGroup }: { editor: Editor | null; disabled: boolean; pages: NotebookPageItem[]; pageId: number; preferenceKey?: string; panels?: Record<string, React.ReactNode>;requestedGroup?:{group:string;key:number} }) {
   const mobile = useNotebookMobile();
+  const workspace = useNotebookWorkspace();
   const [group, setGroup] = useState<Tab>(() => { const saved = readPref(preferenceKey); return saved && ['home','insert','review','help'].includes(saved) ? saved as Tab : 'home'; });
   const [collapsed, setCollapsed] = useState(() => readPref(preferenceKey && `${preferenceKey}:collapsed`) === '1');
   useEffect(()=>{if(requestedGroup && isTab(requestedGroup.group)){setGroup(requestedGroup.group);setCollapsed(false);}},[requestedGroup]);
@@ -146,7 +149,10 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   };
 
   return <div className="nb-command-bar" data-collapsed={collapsed}>
-    <RibbonTabs group={group} onSelect={select} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} />
+    <RibbonTabs group={group} onSelect={select} collapsed={collapsed} onToggleCollapsed={toggleCollapsed} trailing={<>
+      {workspace && <RibbonButton label="Sticky Notes" icon="Sticky" showLabel active={workspace.stickyNotesOpen} onClick={workspace.toggleStickyNotes} />}
+      <RibbonButton label="Share" showLabel onClick={() => { void navigator.clipboard.writeText(new URL(notebookPageLink(pageId), window.location.origin).href).then(() => setNotice('Page link copied. Anyone on your team who can open this page can follow it.')).catch(() => setNotice('Clipboard is unavailable.')); }} />
+    </>} />
     {!collapsed && <div className="nb-toolbar nb-ribbon" role="toolbar" aria-label={`${ribbonTabs.find(([id]) => id === group)![1]} commands`} data-ribbon={group}>
       {content[group]}
       {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}

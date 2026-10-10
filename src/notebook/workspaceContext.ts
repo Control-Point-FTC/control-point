@@ -9,6 +9,9 @@ export type NotebookWorkspace = {
   openPage: (id: number) => void;
   refreshTree: () => void;
   openTrash: () => void;
+  /** Top bar → Sticky Notes (personal scratch notes, not page content). */
+  toggleStickyNotes: () => void;
+  stickyNotesOpen: boolean;
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);

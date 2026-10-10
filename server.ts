@@ -77,6 +77,7 @@ import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
+import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
 import { NotebookError } from "./server/notebook.js";
@@ -4204,6 +4205,7 @@ async function startServer() {
         // Bruno's personal facts and morning-summary records go with the account.
         { sql: `DELETE FROM bruno_memories WHERE scope = 'user' AND member_id IN (${ph})`, args: ids },
         { sql: `DELETE FROM bruno_nudges_sent WHERE member_id IN (${ph})`, args: ids },
+        { sql: `DELETE FROM sticky_notes WHERE member_id IN (${ph})`, args: ids },
         { sql: "DELETE FROM members WHERE email = ?", args: [email] },
         { sql: "DELETE FROM onboarding_state WHERE email = ?", args: [normalizeOnboardingEmail(email) || ""] },
       ]);
@@ -4717,6 +4719,7 @@ async function startServer() {
       { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM bruno_notebook_receipts WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM sticky_notes WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_reads WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_read_baselines WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_contributors WHERE team_id = ?", args: [teamId] },
@@ -6625,6 +6628,7 @@ async function startServer() {
       { sql: "UPDATE members SET is_active = 0, account_type = 'student', is_board = 0, scopes = '[]', role = 'Member' WHERE id = ?", args: [memberId] },
       { sql: "DELETE FROM member_roles WHERE member_id = ?", args: [memberId] },
       { sql: "DELETE FROM sessions WHERE member_id = ?", args: [memberId] },
+      { sql: "DELETE FROM sticky_notes WHERE member_id = ?", args: [memberId] },
     ]);
     await endMemberPresence(auth.teamId, memberId);
     broadcastToTeam(auth.teamId, { type: "member_removed", id: memberId });
@@ -7336,6 +7340,7 @@ async function startServer() {
   registerVoiceRoutes(app, voiceDeps);
 
   registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow });
+  registerStickyNoteRoutes(app, { requireAuth });
 
   // ---- Manual scouting (works with no FTC data; synced from devices) ----
   registerScoutingRoutes(app, {
