@@ -57,6 +57,42 @@ describe('slash menu', () => {
     expect(state(editor).active).toBe(false);
   });
 
+  it('keeps a dismissed "/" closed after moving away and back, and through edits above it', () => {
+    const editor = make('<p>first</p><p></p>');
+    editor.commands.focus('end'); type(editor, '/h');
+    key(editor, 'Escape');
+    editor.commands.setTextSelection(2);          // into the first line
+    editor.commands.focus('end');                 // and back
+    expect(state(editor).active).toBe(false);
+    editor.commands.insertContentAt(1, 'more ');  // someone edits above
+    editor.commands.focus('end');
+    expect(state(editor).active).toBe(false);
+    editor.commands.deleteRange({ from: editor.state.selection.from - 2, to: editor.state.selection.from });
+    type(editor, '/h');                            // a new "/" opens again
+    expect(state(editor).active).toBe(true);
+  });
+
+  it('keeps the list or quote you are already in', () => {
+    for (const [html, query, kind] of [['<ul><li><p></p></li></ul>', 'bullet', 'bulletList'], ['<ol><li><p></p></li></ol>', 'numbered', 'orderedList'], ['<blockquote><p></p></blockquote>', 'quote', 'blockquote']] as const) {
+      const editor = make(html);
+      editor.commands.focus('end'); type(editor, `/${query}`); key(editor, 'Enter');
+      expect(editor.getJSON().content![0].type).toBe(kind);
+      expect(editor.getText().trim()).toBe('');
+    }
+  });
+
+  it('stops taking keys once it is switched off, even while open', () => {
+    let on = true;
+    const element = document.createElement('div'); document.body.append(element);
+    const editor = new Editor({ element, extensions: [...notebookExtensions(false), SlashMenu.configure({ enabled: () => on })], content: '<p></p>' });
+    editors.push(editor);
+    type(editor, '/head');
+    expect(state(editor).active).toBe(true);
+    on = false;
+    key(editor, 'Enter');
+    expect(editor.getJSON().content![0].type).not.toBe('heading');
+  });
+
   it('turns lines into lists, quotes, code, dividers and tables', () => {
     for (const [query, type_] of [['to-do', 'taskList'], ['bullet', 'bulletList'], ['numbered', 'orderedList'], ['quote', 'blockquote'], ['code', 'codeBlock'], ['divider', 'horizontalRule'], ['table', 'table']] as const) {
       const editor = make();
@@ -73,7 +109,13 @@ describe('slash menu', () => {
     act(() => { editor.view.dom.focus(); type(editor, '/quo'); });
     const option = screen.getByRole('option', { name: /Quote/ });
     expect(option.getAttribute('aria-selected')).toBe('true');
-    fireEvent.mouseDown(option);
+    // Near the bottom of the window it opens above the caret, within the window.
+    editor.view.coordsAtPos = () => ({ left: 10, right: 10, top: window.innerHeight - 30, bottom: window.innerHeight - 10 });
+    act(() => { window.dispatchEvent(new Event('scroll')); });
+    const menu = screen.getByRole('listbox');
+    expect(menu.style.top).toBe('');
+    expect(menu.style.bottom).toBe('36px');
+        fireEvent.mouseDown(option);
     expect(editor.getJSON().content![0].type).toBe('blockquote');
     expect(screen.queryByRole('listbox')).toBeNull();
   });
