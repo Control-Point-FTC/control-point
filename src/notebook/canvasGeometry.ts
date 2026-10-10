@@ -139,3 +139,17 @@ export function stepStacking(order: string[], chosen: Set<string>, direction: 1 
   }
   return next;
 }
+
+/** Stacking steps within the layers the page actually draws: highlighters
+ *  have their own layer under everything else, so they only trade places
+ *  with other highlighters, and other items only with each other. Each
+ *  layer keeps the z slots it had. */
+export function stepStackingInLayers(order: string[], chosen: Set<string>, direction: 1 | -1, layerOf: (id: string) => string): string[] {
+  const result = [...order];
+  for (const layer of new Set(order.map(layerOf))) {
+    const slots = order.flatMap((id, i) => layerOf(id) === layer ? [i] : []);
+    const stepped = stepStacking(slots.map(i => order[i]), chosen, direction);
+    slots.forEach((slot, k) => { result[slot] = stepped[k]; });
+  }
+  return result;
+}

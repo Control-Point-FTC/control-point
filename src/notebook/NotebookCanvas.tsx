@@ -7,7 +7,7 @@ import { notebookExtensions } from './editorSchema';
 import { AutoCapitalize, autoCapitalizeEnabled, rememberCapital } from './autoCapitalize';
 import type { NotebookSync } from './NotebookSync';
 import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
-import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk, stepStacking } from './canvasGeometry';
+import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk, stepStackingInLayers } from './canvasGeometry';
 import { notebookCommandGlyph } from './NotebookIcons';
 import './canvas.css';
 import { NotebookRuler, snapToRuler, type Ruler } from './NotebookRuler';
@@ -169,7 +169,8 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     } });
     /** Bring forward / Send backward: one step past the neighbouring item. */
     const stepZ = (direction: 1 | -1) => transact(() => {
-        const order = stepStacking([...items].sort((a, b) => a.z - b.z).map(i => i.id), new Set(selection), direction);
+        const layer = new Map(items.map(i => [i.id, i.type === 'stroke' && i.tool === 'highlighter' ? 'highlights' : 'page']));
+        const order = stepStackingInLayers([...items].sort((a, b) => a.z - b.z).map(i => i.id), new Set(selection), direction, id => layer.get(id) ?? 'page');
         order.forEach((id, z) => { const map = root.get(id); if (map && map.get('z') !== z) map.set('z', z); });
     });
     const duplicate = (source = selected) => {
