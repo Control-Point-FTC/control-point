@@ -45,6 +45,20 @@ function mount(path = '/notebook', emptySection = false) {
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('falls back to a surviving section after the selected empty section disappears', async () => {
+    const tree = mount('/notebook', true);
+    fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Drive' })).toBeNull());
+    // A refreshed tree can lose the chosen section through another member's deletion.
+    tree.sections = tree.sections.filter(s => s.id !== 4);
+    fireEvent.click(screen.getByRole('button', { name: 'New section' }));
+    const rename = await screen.findByRole('textbox', { name: 'Rename section' });
+    fireEvent.keyDown(rename, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    await screen.findByRole('textbox', { name: 'Rename page' });
+    const post = vi.mocked(apiJson).mock.calls.find(([p, o]) => p === '/api/notebook/pages' && o?.method === 'POST')!;
+    expect(JSON.parse(String(post[1]?.body)).sectionId).toBe(1);
+  });
   it('keeps focus on instant naming when creation exits writing focus', async () => {
     mount(); await screen.findByRole('button', { name: 'Build' });
     fireEvent.click(screen.getByRole('button', { name: 'Expand writing space' }));
