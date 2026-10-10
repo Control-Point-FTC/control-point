@@ -2,7 +2,7 @@ import React from 'react';
 import * as Y from 'yjs';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
-import {MemoryRouter} from 'react-router-dom';
+import {MemoryRouter,useNavigate,useLocation} from 'react-router-dom';
 import {NotebookPage} from '../NotebookPage';
 import {apiJson} from '../../services/api';
 const sessions=vi.hoisted(()=>({created:[] as any[]}));
@@ -26,11 +26,30 @@ beforeEach(()=>{
   });
 });
 afterEach(()=>{cleanup();sessions.created.forEach(session=>{session.unregister();session.doc.destroy();});vi.clearAllMocks();localStorage.clear();});
-async function mount(){render(<MemoryRouter initialEntries={['/notebook?page=2']}><NotebookPage activeTeamId={20} currentUserId={10}/></MemoryRouter>);await screen.findByTestId('editor-2');fireEvent.click(screen.getByRole('button',{name:'Split view'}));await screen.findByTestId('editor-3');return sessions.created.find(session=>session.pageId===3);}
+function NavigationProbe(){const navigate=useNavigate(),location=useLocation();return <><button onClick={()=>navigate('/dashboard')}>Leave notebook</button><output data-testid="route-path">{location.pathname}</output></>;}
+async function mount(){render(<MemoryRouter initialEntries={['/notebook?page=2']}><NotebookPage activeTeamId={20} currentUserId={10}/><NavigationProbe/></MemoryRouter>);await screen.findByTestId('editor-2');fireEvent.click(screen.getByRole('button',{name:'Split view'}));await screen.findByTestId('editor-3');return sessions.created.find(session=>session.pageId===3);}
 it('keeps the actual split workspace mounted through main-route page changes',async()=>{
   const secondary=await mount(),element=screen.getByTestId('editor-3');
   fireEvent.click(screen.getAllByRole('button',{name:'Navigate main to page 4'})[0]);await screen.findByTestId('editor-4');
   expect(screen.getByTestId('editor-3')).toBe(element);expect(secondary.release).not.toHaveBeenCalled();expect(screen.getByRole('separator',{name:'Resize notebook panes'})).toBeTruthy();
+});
+it('keeps blocked offline secondary edits mounted while the main page changes',async()=>{
+  const secondary=await mount(),element=screen.getByTestId('editor-3');
+  secondary.pending=true;secondary.locallyDurable=false;secondary.flush.mockResolvedValue(false);secondary.persist.mockResolvedValue(false);
+  fireEvent.click(screen.getAllByRole('button',{name:'Navigate main to page 4'})[0]);
+  await screen.findByTestId('editor-4');expect(screen.getByTestId('editor-3')).toBe(element);
+  expect(secondary.flush).not.toHaveBeenCalled();expect(secondary.persist).not.toHaveBeenCalled();expect(secondary.release).not.toHaveBeenCalled();
+});
+it('still guards every unsaved pane when leaving the notebook',async()=>{
+  const secondary=await mount();secondary.pending=true;secondary.locallyDurable=false;
+  secondary.flush.mockResolvedValue(false);secondary.persist.mockResolvedValue(false);
+  fireEvent.click(screen.getByRole('button',{name:'Leave notebook'}));
+  await screen.findByText('Save or recover your notebook changes before leaving this page.');
+  expect(secondary.flush).toHaveBeenCalled();expect(secondary.persist).toHaveBeenCalled();
+  expect(screen.getByTestId('route-path')).toHaveTextContent('/notebook');
+  secondary.flush.mockImplementation(async()=>{secondary.pending=false;return true;});
+  fireEvent.click(screen.getByRole('button',{name:'Leave notebook'}));
+  await waitFor(()=>expect(screen.getByTestId('route-path')).toHaveTextContent('/dashboard'));
 });
 it('adopts the actual secondary session when the main route selects its page',async()=>{
   const secondary=await mount();fireEvent.click(screen.getAllByRole('button',{name:'Navigate main to page 3'})[0]);
