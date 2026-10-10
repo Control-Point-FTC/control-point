@@ -23,6 +23,12 @@ function mount(path = '/notebook', emptySection = false) {
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('does not steal focus on resize after writing focus has ended',async()=>{
+    mount();await screen.findByRole('button',{name:'Build'});fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));
+    fireEvent.click(screen.getByRole('button',{name:'Show sections and pages'}));
+    const editor=document.createElement('textarea');document.body.append(editor);editor.focus();
+    try{viewport.mobile=true;view.rerender(<MemoryRouter><NotebookPage activeTeamId={20} currentUserId={10}/></MemoryRouter>);expect(document.activeElement).toBe(editor);}finally{editor.remove();}
+  });
   it('moves focus to mobile notebook navigation when the focused return control disappears on resize',async()=>{
     mount();await screen.findByRole('button',{name:'Build'});fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));
     expect(document.activeElement).toBe(screen.getByRole('button',{name:'Show sections and pages'}));

@@ -53,7 +53,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [drawer, setDrawer] = useState(false);
   const [writingFocus,setWritingFocus]=useState(false);
   const focusExit=useRef<HTMLButtonElement|null>(null),focusEntry=useRef<HTMLButtonElement|null>(null),mobileOpen=useRef<HTMLButtonElement|null>(null),exitFocused=useRef(false),wasWritingFocus=useRef(false);
-  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else if(wasWritingFocus.current)focusEntry.current?.focus();}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}wasWritingFocus.current=writingFocus;},[writingFocus,mobile]);
+  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else {if(wasWritingFocus.current)focusEntry.current?.focus();exitFocused.current=false;}}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}wasWritingFocus.current=writingFocus;},[writingFocus,mobile]);
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
