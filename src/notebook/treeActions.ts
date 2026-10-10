@@ -39,3 +39,23 @@ export function notebookDrop(tree: NotebookTree, source: NotebookDrag, target: N
   }
   throw new Error('Drop pages in a section or beside another page; drop sections in a notebook');
 }
+
+/** Make subpage: nest a page under the page just above it at the same
+ *  level, as that page's last subpage. Null when there's no page above. */
+export function subpageMove(tree: NotebookTree, pageId: number) {
+  const page = tree.pages.find(p => p.id === pageId);
+  if (!page) return null;
+  const level = tree.pages.filter(p => p.sectionId === page.sectionId && p.parentId === page.parentId);
+  const above = level[level.indexOf(page) - 1];
+  if (!above) return null;
+  return { to: { parentId: above.id }, index: tree.pages.filter(p => p.parentId === above.id && p.id !== page.id).length };
+}
+
+/** Promote: move a subpage up one level, right after its former parent. */
+export function promoteMove(tree: NotebookTree, pageId: number) {
+  const page = tree.pages.find(p => p.id === pageId);
+  const parent = page?.parentId ? tree.pages.find(p => p.id === page.parentId) : undefined;
+  if (!page || !parent) return null;
+  const level = tree.pages.filter(p => p.sectionId === page.sectionId && p.parentId === parent.parentId && p.id !== page.id);
+  return { to: { parentId: parent.parentId ?? null }, index: level.findIndex(p => p.id === parent.id) + 1 };
+}
