@@ -458,7 +458,7 @@ export class NotebookStore {
     }
     return hits;
   }); }
-  trash(ctx:NotebookContext){return this.session(ctx,notebookTrash);}
+  trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
   versions(ctx: NotebookContext, pageId: number, versionId?: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
     if (versionId !== undefined) {
@@ -583,7 +583,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     }
   };
   app.get("/api/notebook/tree", handle(ctx => store.tree(ctx)));
-  app.get('/api/notebook/trash',handle(ctx=>store.trash(ctx)));
+  app.get('/api/notebook/trash',handle((ctx,req)=>store.trash(ctx,req.query.cursor)));
   app.get("/api/notebook/search", handle((ctx, req) => store.search(ctx, String(req.query.q ?? ""), Number(req.query.limit ?? 30))));
   app.get("/api/notebook/export", handle(ctx => store.export(ctx)));
   app.get('/api/notebook/mentions', handle(ctx => store.mentionInbox(ctx)));

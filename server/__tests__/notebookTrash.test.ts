@@ -49,6 +49,17 @@ describe('notebook trash metadata and visibility',()=>{
     await expect(store.trash(ctx(deleter))).rejects.toMatchObject({status:403});
     const response=await fetch(`${server.base}/api/notebook/trash`,{headers:withSession(new Headers(),session)});expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store');
   });
+  it('continues past 100 entries with equal deletion timestamps and rejects malformed cursors',async()=>{
+    await server.db.batch(Array.from({length:103},(_,index)=>({sql:"INSERT INTO notebook_pages(team_id,section_id,title,created_at,updated_at,deleted_at,deleted_by) VALUES(?,?,?,'2030-01-01T00:00:00.000Z','2030-01-01T00:00:00.000Z','2030-01-01T00:00:00.000Z',?)",args:[team,section,`Pagination ${index}`,admin]})),'write');
+    const first=(await server.api('/api/notebook/trash',{session})).body;
+    expect(first.items).toHaveLength(100);expect(first.hasMore).toBe(true);expect(first.nextCursor).toEqual(expect.any(String));
+    const second=(await server.api(`/api/notebook/trash?cursor=${encodeURIComponent(first.nextCursor)}`,{session})).body;
+    expect(second.hasMore).toBe(false);expect(second.nextCursor).toBeNull();
+    const all=[...first.items,...second.items].filter((item:any)=>item.title.startsWith('Pagination '));
+    expect(all).toHaveLength(103);expect(new Set(all.map((item:any)=>item.id)).size).toBe(103);
+    expect((await server.api('/api/notebook/trash?cursor=bad',{session})).status).toBe(400);
+    await expect(store.trash(ctx(reader),first.nextCursor)).rejects.toMatchObject({status:403});
+  });
   it('collapses a trashed section and notebook into their own root entries',async()=>{
     const tree=await store.tree(ctx()),book=tree.notebooks[0].id;
     const extra=await store.create(ctx(),'section',{notebookId:book,title:'Old section'});
