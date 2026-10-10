@@ -1,10 +1,12 @@
 import { Link } from 'react-router-dom';
+import { CONTACT_EMAIL } from './utils/contact';
+import { usePublicPageView } from './utils/pageViews';
 import { Bolt, ArrowLeft } from 'lucide-react';
 
 type LegalKind = 'privacy' | 'terms';
 
 const EFFECTIVE_DATE = 'September 29, 2026';
-const CONTACT_EMAIL = 'Sushil.m@icloud.com';
+
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -144,6 +146,7 @@ function TermsBody() {
 
 export default function LegalPage({ page }: { page: LegalKind }) {
   const isPrivacy = page === 'privacy';
+  usePublicPageView(`/${page}`);
   return (
     <div className="min-h-screen bg-primary text-text-base">
       <header className="border-b border-text-base/[0.06]">
