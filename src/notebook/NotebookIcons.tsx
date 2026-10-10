@@ -57,6 +57,10 @@ const commandPaths: Record<string, string> = {
   'Copy block link': 'm10 8 3-3a5 5 0 0 1 7 7l-3 3m-3 1-3 3a5 5 0 0 1-7-7l3-3',
   'Collapse ribbon': 'm6 15 6-6 6 6',
   'Expand ribbon': 'm6 9 6 6 6-6',
+  Trash: 'M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v6m4-6v6',
+  Recent: 'M12 4a8 8 0 1 0 8 8M12 8v4l3 2m5-10v4h-4',
+  Author: 'M9 4a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM3 20c1-4 4-6 6-6s5 2 6 6m2-9h4m-2-2v4',
+  Read: 'M4 5h10l4 4v10H4V5Zm10 0v4h4M7 14l2 2 5-5',
 };
 /** `accent` paints the swatch bar under color commands (current text color / highlight). */
 export function notebookCommandGlyph(command: string): React.ComponentType<{ size?: number; accent?: string }> | undefined {

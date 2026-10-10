@@ -8,6 +8,7 @@ import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookMobileToolbar } from './NotebookMobileToolbar';
 import { notebookCommandGlyph } from './NotebookIcons';
 import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
+import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup } from './ribbon/RibbonParts';
 import './ribbon/ribbon.css';
 
@@ -128,7 +129,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
       {tables}
     </>,
     draw: pagePanel('draw'),
-    history: pagePanel('history'),
+    history: <HistoryTab versions={pagePanel('history')} pageId={pageId} notify={setNotice} />,
     review: <>
       <RibbonGroup label="Proofing"><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /></RibbonGroup>
       <RibbonGroup label="Find"><RibbonButton label="Find in page" icon="Find" showLabel shortcut="Ctrl+F" active={finding} onClick={() => setFinding(v => !v)} /></RibbonGroup>

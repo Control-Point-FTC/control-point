@@ -21,6 +21,7 @@ import {NotebookTrash} from './NotebookTrash';
 import {NotebookQuickNote} from './NotebookQuickNote';
 import { defaultNotebookPage, lastPageKey, readLastPage, saveLastPage } from './autoOpen';
 import { NotebookRibbonShell } from './NotebookToolbar';
+import { NotebookWorkspaceContext } from './workspaceContext';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -438,7 +439,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     return tree?.pages.filter(p => p.sectionId === sectionId && p.parentId === parentId).map(p => <div key={p.id}>
       <div {...rowEvents('page', p)} className={`nb-tree-row ${selected === p.id ? 'is-selected' : ''} ${dropClass('page', p.id)}`} style={{ paddingInlineStart: `${depth * 14 + baseIndent}px` }}>
         {tree.pages.some(child => child.parentId === p.id) && <button className="nb-star" aria-label={`${isCollapsed('page', p.id) ? 'Expand' : 'Collapse'} ${p.title}`} onClick={() => toggleCollapse('page', p.id)}>{isCollapsed('page', p.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</button>}
-        {renameInput('page', p) ?? <button data-nb-focus data-nb-kind="page" data-nb-id={p.id} className="nb-tree-label" onClick={() => { void pick(p.id); }} aria-current={selected === p.id ? 'page' : undefined}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} aria-label="Admin only" />}</button>}
+        {renameInput('page', p) ?? <button data-nb-focus data-nb-kind="page" data-nb-id={p.id} className="nb-tree-label" onClick={() => { void pick(p.id); }} aria-current={selected === p.id ? 'page' : undefined}><FileText size={16} /><span className={p.unread ? 'nb-unread' : undefined}>{p.title}</span>{p.unread && <span className="nb-unread-dot" title="Changed since you last read it"><span className="sr-only">Unread changes</span></span>}{p.protected && <Lock size={13} aria-label="Admin only" />}</button>}
         <button className="nb-star" aria-label={`${stars.includes(p.id) ? 'Unpin' : 'Pin'} ${p.title}`} aria-pressed={stars.includes(p.id)} onClick={() => toggleStar(p.id)}><Star size={14} fill={stars.includes(p.id) ? 'currentColor' : 'none'} /></button>{options('page', p)}
       </div>{!isCollapsed('page', p.id) && pageRows(sectionId, p.id, depth + 1, baseIndent)}
     </div>);
@@ -460,7 +461,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {query.trim() ? <><p className="nb-small">{searching ? 'Searching typed notes…' : `${hits.length} results`}</p>{hits.map(h => <button key={h.id} className="nb-search-hit" onClick={() => { void pick(h.id); }}><strong>{h.title}</strong><span>{h.snippet}</span></button>)}</> : filter !== 'all' ? <>{(filter === 'starred' ? tree?.pages.filter(p => stars.includes(p.id)) : [...(tree?.pages ?? [])].sort((a,b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30))?.map(p => <div key={p.id} className="nb-tree-row"><button className="nb-tree-label" onClick={() => { void pick(p.id); }}><FileText size={16} /><span>{p.title}</span>{p.protected && <Lock size={13} />}</button>{options('page', p)}</div>)}</> : tree?.notebooks.map(book => <div key={book.id} className="nb-book">
         <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}>{renameInput('notebook', book) ?? <button data-nb-focus data-nb-kind="notebook" data-nb-id={book.id} className="nb-tree-label" aria-expanded={!isCollapsed('notebook', book.id)} onClick={() => toggleCollapse('notebook', book.id)}>{isCollapsed('notebook', book.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<NotebookGlyph color={book.color ?? '#88c900'} /><strong>{book.title}</strong></button>}{options('notebook', book)}</div>
         {!isCollapsed('notebook', book.id) && tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
-          <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{renameInput('section', section) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span>{section.title}</span>{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
+          <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{renameInput('section', section) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span className={tree?.pages.some(pg => pg.sectionId === section.id && pg.unread) ? 'nb-unread' : undefined}>{section.title}</span>{tree?.pages.some(pg => pg.sectionId === section.id && pg.unread) && <span className="nb-unread-dot" title="Has unread changes"><span className="sr-only">Has unread changes</span></span>}{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
           {mobile && !isCollapsed('section', section.id) && <>{pageRows(section.id,null,0,72)}{tree.permissions.edit && <button className="nb-add nb-add-page" onClick={() => createInstant('page', { sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
         </div>)}
         {tree.permissions.organize && <button className="nb-add nb-add-section" onClick={() => createInstant('section', { notebookId: book.id })}><Plus size={14} /> New section</button>}
@@ -472,7 +473,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
+  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number) => { void pick(id); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')) };
+  return <NotebookWorkspaceContext.Provider value={workspace}><div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId })}><Plus /> New page</Button>}
@@ -506,5 +508,5 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button><Button type="submit" variant={dialog?.action === 'delete' ? 'destructive' : 'default'} disabled={busy || (dialog?.action === 'rename' && !name.trim())}>{busy ? 'Saving…' : dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'template' ? 'Create page' : 'Save'}</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>
-  </div>;
+  </div></NotebookWorkspaceContext.Provider>;
 }

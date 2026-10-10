@@ -45,3 +45,11 @@
 .nb-ribbon .nb-notebook-help { margin: 0 8px; display: block; max-width: 640px; }
 
 @media (prefers-reduced-motion: reduce) { .nb-rbtn, .nb-rsplit-arrow { transition: none; } }
+
+/* Unread changes (History → Mark as Read): bold plus a dot, with screen-reader text. */
+.nb-unread { font-weight: 700; color: var(--color-text-base); }
+.nb-unread-dot { display: inline-block; width: 7px; height: 7px; margin-inline-start: 6px; border-radius: 50%; background: var(--color-accent); flex: 0 0 auto; }
+.nb-edit-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; display: grid; gap: 2px; }
+.nb-edit-list button { width: 100%; text-align: start; display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; }
+.nb-edit-list button:hover, .nb-edit-list button:focus-visible { background: var(--color-primary); }
+.nb-edit-list span { font-size: 12px; color: var(--color-text-muted); }
