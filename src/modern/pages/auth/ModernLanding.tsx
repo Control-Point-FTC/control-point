@@ -13,6 +13,7 @@ import {
   Accordion, AccordionContent, AccordionItem, AccordionTrigger, Button,
 } from '../../../components/ui-kit';
 import { BrandLogo } from '../../../components/BrandMark';
+import { CONTACT_EMAIL } from '../../../utils/contact';
 import { SignedOutModern } from '../../signedOut';
 
 const ease = [0.2, 0.8, 0.2, 1] as const;
@@ -254,7 +255,7 @@ export function ModernLanding({ onSignIn, onGetStarted }: { onSignIn: () => void
         <header className={cn('fixed inset-x-0 top-0 z-40 border-b transition-colors', scrolled ? 'border-border bg-background/80 backdrop-blur-lg' : 'border-transparent')}>
           <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6" aria-label="Main">
             <a href="#top" className="flex min-h-11 items-center gap-2.5">
-              <BrandLogo className="size-8 rounded-lg" />
+              <BrandLogo className="size-8 rounded-lg" decorative />
               <span className="font-display text-base font-semibold tracking-tight">Control Point</span>
             </a>
             <div className="hidden items-center gap-1 text-sm text-muted-foreground md:flex">
@@ -367,10 +368,11 @@ export function ModernLanding({ onSignIn, onGetStarted }: { onSignIn: () => void
 
         <footer className="border-t border-border">
           <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:px-6">
-            <span className="flex items-center gap-2"><BrandLogo className="size-5 rounded" /> Control Point · Mission control for robotics teams</span>
+            <span className="flex items-center gap-2"><BrandLogo className="size-5 rounded" decorative /> Control Point · Mission control for robotics teams</span>
             <nav className="flex flex-wrap items-center justify-center gap-x-4" aria-label="Footer">
               <a href="/privacy" className="inline-flex min-h-11 items-center hover:text-foreground">Privacy</a>
               <a href="/terms" className="inline-flex min-h-11 items-center hover:text-foreground">Terms</a>
+              <a href={`mailto:${CONTACT_EMAIL}`} className="inline-flex min-h-11 items-center hover:text-foreground">Contact</a>
             </nav>
           </div>
         </footer>

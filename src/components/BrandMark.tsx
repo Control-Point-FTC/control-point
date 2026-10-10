@@ -28,7 +28,9 @@ export function BetaBadge({ className }: { className?: string }) {
   );
 }
 
-function LogoImage({ className }: { className?: string }) {
+// decorative: the name "Control Point" is right next to it, so screen readers
+// shouldn't hear it twice.
+function LogoImage({ className, decorative = false }: { className?: string; decorative?: boolean }) {
   const [missing, setMissing] = useState(false);
   if (missing) {
     return (
@@ -40,7 +42,7 @@ function LogoImage({ className }: { className?: string }) {
   return (
     <img
       src="/logo.png?v=3"
-      alt="Control Point logo"
+      alt={decorative ? '' : 'Control Point logo'}
       onError={() => setMissing(true)}
       className={cn('object-contain flex-shrink-0', className)}
     />
@@ -48,8 +50,8 @@ function LogoImage({ className }: { className?: string }) {
 }
 
 /** Standalone logo image (with bolt fallback) for one-off placements. */
-export function BrandLogo({ className }: { className?: string }) {
-  return <LogoImage className={className} />;
+export function BrandLogo({ className, decorative }: { className?: string; decorative?: boolean }) {
+  return <LogoImage className={className} decorative={decorative} />;
 }
 
 export function BrandMark({
@@ -65,7 +67,7 @@ export function BrandMark({
   if (variant === 'landing') {
     return (
       <div className="flex items-center gap-3">
-        <LogoImage className="w-11 h-11 rounded-2xl" />
+        <LogoImage className="w-11 h-11 rounded-2xl" decorative />
         <div className="flex items-center gap-2">
           <span className="text-2xl font-display font-bold text-text-base tracking-tight">Control Point</span>
           <BetaBadge className="mt-0.5" />
@@ -75,7 +77,7 @@ export function BrandMark({
   }
   return (
     <div className="flex items-center gap-3 flex-shrink-0">
-      <LogoImage className="w-10 h-10 rounded-2xl" />
+      <LogoImage className="w-10 h-10 rounded-2xl" decorative />
       <div className="whitespace-nowrap">
         <div className="flex items-center gap-1.5">
           <h1 className="text-[17px] font-display font-bold text-text-base leading-none tracking-tight">Control Point</h1>

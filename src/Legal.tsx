@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
+import { CONTACT_EMAIL } from './utils/contact';
 import { Bolt, ArrowLeft } from 'lucide-react';
 
 type LegalKind = 'privacy' | 'terms';
 
 const EFFECTIVE_DATE = 'September 29, 2026';
-const CONTACT_EMAIL = 'Sushil.m@icloud.com';
+
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
