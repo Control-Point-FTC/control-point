@@ -234,7 +234,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     const next = new URLSearchParams(params); next.delete('action'); setParams(next, { replace: true });
     if (action === 'search') { setDrawer(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.nb-search input')?.focus()); }
     if (action === 'new-page') {
-      createInstant('page', { sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? activeSection ?? tree.sections[0]?.id });
+      createInstant('page', { sectionId });
     }
   }, [params, tree]);
   const savePageTitle = async (id: number, title: string) => {
@@ -376,7 +376,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       </div>{!isCollapsed('page', p.id) && pageRows(sectionId, p.id, depth + 1, baseIndent)}
     </div>);
   };
-  const sectionId = tree?.pages.find(p => p.id === selected)?.sectionId ?? activeSection ?? tree?.sections[0]?.id;
+  const sectionId = tree?.sections.find(s => s.id === tree.pages.find(p => p.id === selected)?.sectionId)?.id
+    ?? tree?.sections.find(s => s.id === activeSection)?.id ?? tree?.sections[0]?.id;
   const chooseSection = async (id: number) => {
     if (!await leave()) return;
     setActiveSection(id);
