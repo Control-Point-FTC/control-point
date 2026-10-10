@@ -100,6 +100,35 @@ describe('Sticky notes', () => {
     expect(bodies).toHaveLength(2);
   });
 
+  it('keeps changes after a failed exit save, for Retry or the next visit', async () => {
+    let fail = true; const bodies: any[] = [];
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => {
+      if (init?.method !== 'PATCH') return [note()] as any;
+      bodies.push(JSON.parse(init.body));
+      if (fail) throw new Error('offline');
+      return note() as any;
+    });
+    const view = render(<StickyNotes open scope="7:3" onClose={vi.fn()} />);
+    fireEvent.change(await screen.findByRole('textbox', { name: 'Note text' }), { target: { value: 'Kept' } });
+    window.dispatchEvent(new Event('pagehide')); // Back/forward cache: the page stays.
+    expect(await screen.findByText('Not saved')).toBeTruthy();
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByText('Not saved')).toBeNull());
+    expect(bodies.at(-1)).toEqual({ body: 'Kept' });
+    expect(localStorage.getItem('cp-sticky-drafts:7:3')).toBeNull();
+    // A draft that never got through comes back next time and is sent.
+    fail = true;
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note text' }), { target: { value: 'Kept again' } });
+    view.unmount();
+    expect(JSON.parse(localStorage.getItem('cp-sticky-drafts:7:3')!)).toEqual({ 1: { body: 'Kept again' } });
+    await act(async () => {});
+    fail = false;
+    render(<StickyNotes open={false} scope="7:3" onClose={vi.fn()} />);
+    await waitFor(() => expect(bodies.at(-1)).toEqual({ body: 'Kept again' }));
+    await waitFor(() => expect(localStorage.getItem('cp-sticky-drafts:7:3')).toBeNull());
+  });
+
   it('waits for the list before New note, and places new notes inside the window', async () => {
     let list!: (v: StickyNote[]) => void;
     vi.mocked(apiJson).mockImplementation((url: string, init?: any) => init?.method === 'POST' ? Promise.resolve(note({ id: 9, body: '' }) as any) : new Promise(r => { list = r as any; }));

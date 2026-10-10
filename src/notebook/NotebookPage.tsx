@@ -486,7 +486,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     </header>
     {!sync && !mobile && <NotebookRibbonShell loading={treeLoading || !!selected} />}
     <div className="nb-ribbon-host" ref={setToolbarHost} />
-    <StickyNotes open={stickyOpen} hidden={mobile} onClose={() => setStickyOpen(false)} />
+    <StickyNotes open={stickyOpen} hidden={mobile} scope={memberId && teamId ? `${memberId}:${teamId}` : undefined} onClose={() => setStickyOpen(false)} />
     {landingNotice && <div className="nb-alert" role="status">{landingNotice}<button aria-label="Dismiss notice" onClick={() => setLandingNotice('')}>×</button></div>}
     {offlineTreeAt&&<div className="nb-alert" role="status">Offline navigation · showing last-known navigation or cached ordinary pages. Already-open protected pages stay in memory and are never cached for offline reload. Files may need a connection. Access is checked again when connected. <Button variant="ghost" onClick={()=>{void loadTree();}}>Retry connection</Button></div>}
     {treeStorageError&&<div className="nb-alert" role="status">{treeStorageError} Online editing still works.</div>}

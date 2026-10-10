@@ -89,9 +89,17 @@ function NoteCard({ note, state, onChange, onFlush, onRetry, onClose, onDelete }
   </div>;
 }
 
+function readDrafts(key: string | null): Record<string, Change> {
+  if (!key) return {};
+  try { const v = JSON.parse(localStorage.getItem(key) ?? '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; }
+}
+
 /** Mounted for the whole notebook session; `hidden` (e.g. the phone layout)
- *  hides the panel and cards without dropping unsaved changes. */
-export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; onClose: () => void; hidden?: boolean }) {
+ *  hides the panel and cards without dropping unsaved changes. Unsaved
+ *  changes are also kept on this device (per account and workspace, given
+ *  `scope`) until the server confirms them, and offered again next time. */
+export function StickyNotes({ open, onClose, hidden = false, scope }: { open: boolean; onClose: () => void; hidden?: boolean; scope?: string }) {
+  const draftsKey = scope ? `cp-sticky-drafts:${scope}` : null;
   const [notes, setNotes] = useState<StickyNote[] | null>(null);
   const [error, setError] = useState('');
   const [states, setStates] = useState<Record<number, SaveState>>({});
@@ -100,12 +108,28 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
   const timers = useRef(new Map<number, number>());
   const failed = useRef(new Set<number>());
   const mark = (id: number, state: SaveState) => setStates(s => s[id] === state ? s : { ...s, [id]: state });
+  const keepDrafts = useCallback(() => {
+    if (!draftsKey) return;
+    const drafts: Record<number, Change> = {};
+    for (const id of new Set([...sending.current.keys(), ...unsaved.current.keys()])) drafts[id] = { ...sending.current.get(id), ...unsaved.current.get(id) };
+    try { if (Object.keys(drafts).length) localStorage.setItem(draftsKey, JSON.stringify(drafts)); else localStorage.removeItem(draftsKey); } catch { /* storage optional */ }
+  }, [draftsKey]);
 
   const load = useCallback(async () => {
-    try { setNotes(await request<StickyNote[]>('/api/sticky-notes')); setError(''); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not load your sticky notes.'); }
-  }, []);
-  useEffect(() => { if (open && !hidden && notes === null) void load(); }, [open, hidden, notes, load]);
+    let list: StickyNote[];
+    try { list = await request<StickyNote[]>('/api/sticky-notes'); setError(''); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not load your sticky notes.'); return; }
+    // Put back changes that never reached the server, then send them.
+    const drafts = readDrafts(draftsKey);
+    setNotes(list.map(n => drafts[n.id] ? { ...n, ...drafts[n.id] } : n));
+    for (const n of list) if (drafts[n.id] && !unsaved.current.has(n.id) && !sending.current.has(n.id)) {
+      unsaved.current.set(n.id, drafts[n.id]); void flush(n.id);
+    }
+    keepDrafts();
+  }, [draftsKey, keepDrafts]); // eslint-disable-line react-hooks/exhaustive-deps -- flush is stable
+  useEffect(() => {
+    if (!hidden && notes === null && (open || Object.keys(readDrafts(draftsKey)).length)) void load();
+  }, [open, hidden, notes, load, draftsKey]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (e.target as Element)?.closest?.('.nb-sticky-panel')) onClose(); };
@@ -117,7 +141,7 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
     window.clearTimeout(timers.current.get(id)); timers.current.delete(id);
     const change = unsaved.current.get(id);
     if (!change || sending.current.has(id)) return;
-    unsaved.current.delete(id); sending.current.set(id, change); mark(id, 'saving');
+    unsaved.current.delete(id); sending.current.set(id, change); mark(id, 'saving'); keepDrafts();
     try {
       const saved = await request<StickyNote>(`/api/sticky-notes/${id}`, 'PATCH', change);
       failed.current.delete(id);
@@ -126,36 +150,44 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
       // Newer edits win over the ones that failed; all of them stay unsaved.
       unsaved.current.set(id, { ...change, ...unsaved.current.get(id) });
       failed.current.add(id);
-    } finally { sending.current.delete(id); }
+    } finally { sending.current.delete(id); keepDrafts(); }
     if (failed.current.has(id)) mark(id, 'failed');
     else if (unsaved.current.has(id)) void flush(id);
     else mark(id, 'saved');
-  }, []);
+  }, [keepDrafts]);
 
   const change = useCallback((id: number, next: Change, delay = 0) => {
     setNotes(list => list?.map(n => n.id === id ? { ...n, ...next } : n) ?? list);
-    unsaved.current.set(id, { ...unsaved.current.get(id), ...next });
+    unsaved.current.set(id, { ...unsaved.current.get(id), ...next }); keepDrafts();
     mark(id, failed.current.has(id) ? 'failed' : 'saving');
     window.clearTimeout(timers.current.get(id));
     if (failed.current.has(id)) return; // Wait for Retry instead of hammering a failing server.
     timers.current.set(id, window.setTimeout(() => { void flush(id); }, delay));
-  }, [flush]);
+  }, [flush, keepDrafts]);
   const retry = useCallback((id: number) => { failed.current.delete(id); void flush(id); }, [flush]);
 
   // Leaving the notebook (or closing the tab) is the last chance to save:
   // send everything waiting, including failed changes and anything whose
   // request is still in flight (its answer may never arrive), with keepalive.
+  // Changes stay unsaved (and kept on this device) until a save succeeds.
   useEffect(() => {
+    const sent = new WeakSet<Change>();
     const sendAll = () => {
+      keepDrafts();
       for (const [id, change] of [...unsaved.current]) {
+        if (sent.has(change)) continue; // pagehide, then unmount: once is enough.
+        sent.add(change);
         window.clearTimeout(timers.current.get(id)); timers.current.delete(id);
-        void request(`/api/sticky-notes/${id}`, 'PATCH', { ...sending.current.get(id), ...change }, true).catch(() => undefined);
+        void request(`/api/sticky-notes/${id}`, 'PATCH', { ...sending.current.get(id), ...change }, true).then(() => {
+          if (unsaved.current.get(id) !== change) return; // Edited again since; that edit is still queued.
+          unsaved.current.delete(id); failed.current.delete(id); keepDrafts();
+          if (!sending.current.has(id)) mark(id, 'saved');
+        }, () => { failed.current.add(id); mark(id, 'failed'); });
       }
-      unsaved.current.clear();
     };
     window.addEventListener('pagehide', sendAll);
     return () => { window.removeEventListener('pagehide', sendAll); sendAll(); };
-  }, []);
+  }, [keepDrafts]);
 
   const create = async () => {
     if (!notes) return;
@@ -169,7 +201,7 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
     try {
       await request(`/api/sticky-notes/${note.id}`, 'DELETE');
       window.clearTimeout(timers.current.get(note.id)); timers.current.delete(note.id);
-      unsaved.current.delete(note.id); failed.current.delete(note.id);
+      unsaved.current.delete(note.id); failed.current.delete(note.id); keepDrafts();
       setNotes(list => list?.filter(n => n.id !== note.id) ?? list);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not delete the note.'); }
   };
