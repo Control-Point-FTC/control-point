@@ -225,6 +225,10 @@ describe('desktop shared drawing surface', () => {
         box.editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'line-in-box' }, content: [{ type: 'text', text: 'Order bolts' }] }] });
         await waitFor(() => expect(scroll).toHaveBeenCalled());
         expect((scroll.mock.contexts[0] as Element).getAttribute('data-id')).toBe('line-in-box');
+        // Later canvas edits don't pull the page back to the link target.
+        box.editor.commands.insertContent(' and nuts');
+        await new Promise(r => setTimeout(r, 300));
+        expect(scroll).toHaveBeenCalledTimes(1);
     });
     it('offers page links in canvas text boxes too', async () => {
         const { surface } = mount();
