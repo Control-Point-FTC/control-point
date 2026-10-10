@@ -1,0 +1,47 @@
+/* Notebook ribbon: graphite surfaces, accent (volt) for active state.
+   Groups sit on one line and wrap rather than hiding commands (nothing is
+   reachable only by resizing the window). */
+.nb-command-tabs { align-items: center; }
+.nb-ribbon-toggle { margin-inline-start: auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; color: var(--color-text-muted); }
+.nb-ribbon-toggle:hover { background: var(--color-primary); color: var(--color-text-base); }
+.nb-command-bar[data-collapsed=true] .nb-command-tabs { border-bottom: 0; }
+
+.nb-command-bar .nb-ribbon { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; min-height: 50px; padding: 7px 8px; }
+/* Groups wrap internally too, so a long group (table layout) never runs off a narrow window. */
+.nb-rgroup { display: inline-flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 1px; padding: 0 6px; min-height: 36px; border-inline-end: 1px solid var(--color-line); }
+.nb-rgroup:last-of-type { border-inline-end: 0; }
+
+.nb-rbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 30px; height: 32px; padding: 0 6px; border-radius: 7px; border: 1px solid transparent; color: var(--color-text-base); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.nb-rbtn.has-label { padding: 0 10px; }
+.nb-rbtn:hover:not(:disabled) { background: var(--color-primary); border-color: var(--color-line); }
+.nb-rbtn:focus-visible, .nb-rsplit-arrow:focus-visible, .nb-ribbon-toggle:focus-visible, .nb-rselect:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.nb-rbtn.is-active { background: color-mix(in srgb, var(--color-accent) 14%, transparent); border-color: color-mix(in srgb, var(--color-accent) 40%, transparent); color: var(--color-accent); }
+.nb-rbtn:disabled, .nb-rsplit-arrow:disabled { opacity: .4; cursor: default; }
+
+.nb-rsplit { display: inline-flex; align-items: center; border-radius: 7px; }
+.nb-rsplit > .nb-rbtn { border-start-end-radius: 0; border-end-end-radius: 0; }
+.nb-rsplit-arrow { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 32px; border-radius: 0 7px 7px 0; color: var(--color-text-muted); }
+.nb-rsplit-arrow:hover:not(:disabled) { background: var(--color-primary); color: var(--color-text-base); }
+
+.nb-rselect { height: 30px; font-size: 12px; padding: 4px 8px; border-radius: 7px; border: 1px solid var(--color-line); background: var(--color-primary); color: var(--color-text-base); }
+.nb-rfont { width: 128px; }
+.nb-rsize { width: 58px; }
+.nb-rstyle { width: 104px; }
+.nb-rfield { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); padding: 0 6px; }
+
+.nb-rmenu { min-width: 180px; }
+.nb-palette { padding: 4px; display: grid; gap: 6px; }
+.nb-palette-grid { display: grid; grid-template-columns: repeat(5, 28px); gap: 4px; }
+.nb-swatch { padding: 2px !important; justify-content: center; }
+.nb-swatch span { display: block; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--color-line); }
+.nb-swatch[aria-checked=true] span { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.nb-palette-custom { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; padding: 4px 8px; color: var(--color-text-muted); }
+
+.nb-shortcuts { width: 100%; border-collapse: collapse; font-size: 13px; }
+.nb-shortcuts th { text-align: start; font-weight: 500; padding: 6px 8px 6px 0; color: var(--color-text-base); }
+.nb-shortcuts td { text-align: end; padding: 6px 0; }
+.nb-shortcuts tr + tr { border-top: 1px solid var(--color-line); }
+.nb-shortcuts kbd { font-family: inherit; font-size: 12px; padding: 2px 6px; border-radius: 5px; border: 1px solid var(--color-line); background: var(--color-primary); }
+.nb-ribbon .nb-notebook-help { margin: 0 8px; display: block; max-width: 640px; }
+
+@media (prefers-reduced-motion: reduce) { .nb-rbtn, .nb-rsplit-arrow { transition: none; } }

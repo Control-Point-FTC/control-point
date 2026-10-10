@@ -38,11 +38,32 @@ const commandPaths: Record<string, string> = {
   justify: 'M3 5h18M3 10h18M3 15h18M3 20h18',
   Indent: 'M10 5h11M10 10h11M10 15h11M10 20h11m-18-5 4-3-4-3',
   Outdent: 'M10 5h11M10 10h11M10 15h11M10 20h11m-4-5-4-3 4-3',
+  Paste: 'M9 4h6v3H9V4Zm-3 1H5v16h6m4-14h4v4M11 11h9v10h-9V11Z',
+  Cut: 'M6 7a3 3 0 1 0 0 .01M6 20a3 3 0 1 0 0 .01M8.5 8.5 20 19M8.5 18.5 20 5',
+  Copy: 'M8 8h12v13H8V8Zm-4 9V3h12',
+  'Format painter': 'M4 3h13v6H4V3Zm13 3h3v6h-9v3m-1 0h2v6h-2v-6Z',
+  'Font color': 'm6 17 6-14 6 14M8.5 11h7',
+  Subscript: 'm4 5 8 10m0-10L4 15m13 6h4c0-3-4-2-4-5 0-2 4-2 4 0',
+  Superscript: 'm4 9 8 10m0-10L4 19m13-9h4c0-3-4-2-4-5 0-2 4-2 4 0',
+  'Clear formatting': 'M6 4h13M12 4 8 20m-4 0h8m3-7 6 6m0-6-6 6',
+  Tag: 'M3 4h8l10 10-7 7L4 11V4Zm4 3h.01',
+  Styles: 'M4 19 11 3l7 16M7 13h8m-9 8h12',
+  Spelling: 'M3 14 7 4l4 10M4.5 10h5M14 4v10m0-6c3-3 6-1 6 2s-3 5-6 2m-9 7 3 3 6-6',
+  Find: 'M10 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm4.5 10.5L21 21',
+  Discussion: 'M4 5h16v11H9l-5 4V5Z',
+  Symbols: 'M17 4H7l6 8-6 8h10',
+  Emoji: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM8 14c2 3 6 3 8 0M9 9h.01M15 9h.01',
+  Shortcuts: 'M3 6h18v12H3V6Zm3 3h.01M10 9h.01M14 9h.01M18 9h.01M7 15h10',
+  'Copy block link': 'm10 8 3-3a5 5 0 0 1 7 7l-3 3m-3 1-3 3a5 5 0 0 1-7-7l3-3',
+  'Collapse ribbon': 'm6 15 6-6 6 6',
+  'Expand ribbon': 'm6 9 6 6 6-6',
 };
-export function notebookCommandGlyph(command: string): React.ComponentType<{ size?: number }> | undefined {
+/** `accent` paints the swatch bar under color commands (current text color / highlight). */
+export function notebookCommandGlyph(command: string): React.ComponentType<{ size?: number; accent?: string }> | undefined {
   const path = commandPaths[command];
   if (!path) return undefined;
-  return function CommandGlyph({ size = 22 }) {
-    return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={command === 'Bold' ? 2.6 : 1.6} strokeLinecap="round" strokeLinejoin="round"><path d={path}/>{command === 'Highlight' && <path d="M3 22h13" stroke="#ffe400" strokeWidth="4"/>}</svg>;
+  return function CommandGlyph({ size = 22, accent }) {
+    const bar = command === 'Highlight' ? accent ?? '#ffe400' : command === 'Font color' ? accent ?? '#ef4444' : null;
+    return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={command === 'Bold' ? 2.6 : 1.6} strokeLinecap="round" strokeLinejoin="round"><path d={path}/>{bar && <path d={command === 'Font color' ? 'M4 21.5h16' : 'M3 22h13'} stroke={bar} strokeWidth="3.5"/>}</svg>;
   };
 }

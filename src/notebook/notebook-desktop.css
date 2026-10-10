@@ -1,18 +1,18 @@
 /* Immersive desktop notebook: ribbon, sections, pages, and uninterrupted paper. */
 @media (min-width:768px) {
-  .nb-shell {background:#0b0f12;color:#eee;--color-text-base:#eee;--color-text-muted:#aaa;--color-primary:#0b0f12;--color-elevated:#22282d;--color-line:#3a444c;--color-accent:#08b6d0}
+  .nb-shell {background:#111113;color:#eee;--color-text-base:#eee;--color-text-muted:#aaa;--color-primary:#111113;--color-elevated:#1c1c1f;--color-line:#34343a;--color-accent:#ffc700}
   .nb-header {display:none}
-  .nb-command-tabs {padding:6px 14px;gap:5px;background:#0b0f12;border:0;min-height:44px;align-items:center}
-  .nb-command-tabs::before {content:'NOTEBOOK';font-size:10px;font-weight:700;letter-spacing:1.5px;color:#08b6d0;margin-right:16px}
+  .nb-command-tabs {padding:6px 14px;gap:5px;background:#111113;border:0;min-height:44px;align-items:center}
+  .nb-command-tabs::before {content:'NOTEBOOK';font-size:10px;font-weight:700;letter-spacing:1.5px;color:#ffc700;margin-right:16px}
   .nb-command-tabs button {padding:6px 12px;font-size:13px;color:#d6e0e5;border:0;border-radius:6px}
-  .nb-command-tabs button[aria-selected=true] {background:#08b6d01c;color:#35c9df;box-shadow:inset 0 0 0 1px #08b6d044}
-  .nb-command-bar {border-bottom:1px solid #303c44;background:#0b0f12;padding:0 10px 9px}
-  .nb-command-bar .nb-toolbar {min-height:60px;padding:10px 14px;border-radius:6px;background:#22282d;gap:9px}
-  .nb-command-bar select {height:36px;font-size:13px;background:#22282d;border-color:#53636e;border-radius:5px}
+  .nb-command-tabs button[aria-selected=true] {background:#ffc7001c;color:#ffd84d;box-shadow:inset 0 0 0 1px #ffc70044}
+  .nb-command-bar {border-bottom:1px solid #2c2c31;background:#111113;padding:0 10px 9px}
+  .nb-command-bar .nb-toolbar {min-height:60px;padding:10px 14px;border-radius:6px;background:#1c1c1f;gap:9px}
+  .nb-command-bar select {height:36px;font-size:13px;background:#1c1c1f;border-color:#4a4a52;border-radius:5px}
   .nb-command-bar .nb-icon-tool {height:38px;width:36px;border-radius:4px}
   .nb-command-bar .nb-icon-tool svg {width:21px;height:21px}
   .nb-body {gap:0}
-  .nb-explorer {width:clamp(220px,14.7vw,282px);background:#0b0f12;border:0}
+  .nb-explorer {width:clamp(220px,14.7vw,282px);background:#111113;border:0}
   .nb-explorer-inner {padding:0 8px 12px 0;gap:8px}
   .nb-navigation-row {display:flex;align-items:center;gap:8px;height:32px;padding:0 8px;font-size:12px;color:#bbb}
   .nb-navigation-row>button {display:grid;place-items:center;width:28px;height:28px}
@@ -25,21 +25,21 @@
   .nb-book-label {padding:0;background:#191919;margin-top:8px}
   .nb-book-label strong {font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .nb-section-row .nb-tree-label {padding-inline-start:26px}
-  .nb-tree-row.is-selected {background:#08b6d012;box-shadow:inset 3px 0 #08b6d0}
+  .nb-tree-row.is-selected {background:#ffc70012;box-shadow:inset 3px 0 #ffc700}
   .nb-tree-label:hover {color:#fff}
   .nb-tree-row>button:not(.nb-tree-label),.nb-tree-row>[data-state] {opacity:0}
   .nb-tree-row:hover>button,.nb-tree-row:focus-within>button,.nb-tree-row:hover>[data-state],.nb-tree-row:focus-within>[data-state] {opacity:1}
   .nb-pages-pane {display:flex;flex-direction:column;width:clamp(230px,24vw,460px);flex-shrink:0;padding:14px 12px 8px;background:#20262b;border-radius:0;border-right:1px solid #39444b}
   .nb-pages-heading {display:flex;align-items:center;gap:12px;margin-bottom:10px}
-  .nb-pages-heading>button {height:30px;border:1px solid #08b6d04d;border-radius:6px;background:#08b6d014;color:#4ed3e5;font-size:12px;padding:0 12px;order:2;margin-left:auto}
+  .nb-pages-heading>button {height:30px;border:1px solid #ffc7004d;border-radius:6px;background:#ffc70014;color:#ffd84d;font-size:12px;padding:0 12px;order:2;margin-left:auto}
   .nb-pages-heading>span {font-size:12px;font-weight:600;color:#becbd2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;order:1}
   .nb-pages-pane .nb-tree-row {min-height:32px}
-  .nb-pages-pane .nb-tree-row.is-selected {background:#08b6d014;box-shadow:inset 3px 0 #08b6d0}
+  .nb-pages-pane .nb-tree-row.is-selected {background:#ffc70014;box-shadow:inset 3px 0 #ffc700}
   .nb-pages-pane .nb-tree-label {padding:6px 8px;font-weight:600}
   .nb-pages-pane .nb-tree-label>svg:first-child {display:none}
   .nb-export-link {padding:8px;text-align:left;color:#aaa;font-size:11px}
   .nb-main {background:#fff;color:#151515;border-top:0}
-  .nb-document {--color-text-base:#151515;--color-text-muted:#777;--color-primary:#f3f3f3;--color-elevated:#fff;--color-line:#ccc;--color-accent:#007f94;color:#151515}
+  .nb-document {--color-text-base:#151515;--color-text-muted:#777;--color-primary:#f3f3f3;--color-elevated:#fff;--color-line:#ccc;--color-accent:#8a6100;color:#151515}
   .nb-doc-status {background:#fff;padding:5px 22px;border:0;font-size:10px;gap:10px}
   .nb-paper-scroll {background:#fff}
   .nb-paper {padding:18px clamp(30px,3.2vw,64px) 60px;background:#fff;max-width:none;min-height:100%}
