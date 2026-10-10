@@ -70,7 +70,7 @@ export async function prepareNotebookPrint(sync:NotebookSync,page:NotebookPageDa
     const targetWidth=Math.min(width,Math.max(120,Number(node.getAttribute('width'))||640));
     if(display==='image'){
       if(!['image/png','image/jpeg','image/gif','image/webp'].includes(blob.type))throw new Error(`${name} cannot be rendered as an image.`);
-      const image=document.createElement('img');image.alt=name;image.src=await dataURL(blob,signal);image.style.width=`${targetWidth}px`;image.style.maxWidth='100%';
+      const image=document.createElement('img');image.alt=node.getAttribute('alt')||name;image.src=await dataURL(blob,signal);image.style.width=`${targetWidth}px`;image.style.maxWidth='100%';
       if(measured){if(!measured.image)throw new Error('Wait for the image preview to load before printing marks over it.');position(image,measured.image);image.style.height=`${measured.image.height}px`;}
       node.append(image);
     }else if(display==='pdf'){

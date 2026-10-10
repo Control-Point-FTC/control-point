@@ -126,3 +126,30 @@ export function splitInk(ink: Ink, point: [
         parts.push(current);
     return parts;
 }
+
+/** Bring forward (1) / Send backward (-1): each chosen item swaps with its
+ *  neighbour in stacking order, unless that neighbour is chosen too (so a
+ *  chosen group moves together). Returns ids bottom to top. */
+export function stepStacking(order: string[], chosen: Set<string>, direction: 1 | -1): string[] {
+  const next = [...order];
+  const indexes = direction === 1 ? [...next.keys()].reverse() : [...next.keys()];
+  for (const i of indexes) {
+    const j = i + direction;
+    if (chosen.has(next[i]) && j >= 0 && j < next.length && !chosen.has(next[j])) [next[i], next[j]] = [next[j], next[i]];
+  }
+  return next;
+}
+
+/** Stacking steps within the layers the page actually draws: highlighters
+ *  have their own layer under everything else, so they only trade places
+ *  with other highlighters, and other items only with each other. Each
+ *  layer keeps the z slots it had. */
+export function stepStackingInLayers(order: string[], chosen: Set<string>, direction: 1 | -1, layerOf: (id: string) => string): string[] {
+  const result = [...order];
+  for (const layer of new Set(order.map(layerOf))) {
+    const slots = order.flatMap((id, i) => layerOf(id) === layer ? [i] : []);
+    const stepped = stepStacking(slots.map(i => order[i]), chosen, direction);
+    slots.forEach((slot, k) => { result[slot] = stepped[k]; });
+  }
+  return result;
+}
