@@ -1,10 +1,12 @@
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import Collaboration from '@tiptap/extension-collaboration';
 import { AllSelection } from '@tiptap/pm/state';
 import { notebookExtensions } from './editorSchema';
 import { AutoCapitalize, autoCapitalizeEnabled, rememberCapital } from './autoCapitalize';
+import { PageLinkMenu } from './pageLinkMenu';
+import { PageLinkSourceContext } from './PageLinkPopup';
 import type { NotebookSync } from './NotebookSync';
 import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
 import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk } from './canvasGeometry';
@@ -43,7 +45,8 @@ function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
     onFocus: (editor: Editor) => void;
     onRemoved: (editor: Editor) => void;
 }) {
-    const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), AutoCapitalize, Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' },
+    const links = useContext(PageLinkSourceContext);
+    const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), AutoCapitalize, ...(links ? [PageLinkMenu.configure(links)] : []), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' },
         // Double-click selects a word (browser default); triple-click selects the whole box.
         handleTripleClick: view => { view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc))); return true; } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
     useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);

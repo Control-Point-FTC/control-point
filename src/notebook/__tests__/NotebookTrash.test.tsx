@@ -29,7 +29,7 @@ describe('desktop notebook trash controls',()=>{
     fireEvent.change(screen.getByLabelText('Type the exact title to confirm'),{target:{value:'Build notes'}});
     vi.mocked(apiJson).mockResolvedValueOnce({ok:true}).mockResolvedValueOnce({...listing,items:[]});fireEvent.click(screen.getByRole('button',{name:'Confirm permanent removal'}));
     await screen.findByText('Trash is empty');expect(apiJson).toHaveBeenCalledWith('/api/notebook/pages/4/purge',expect.objectContaining({method:'POST',body:JSON.stringify({confirmationTitle:'Build notes'}),headers:{'X-CP-Notebook-Team':'9'}}));
-    expect(onRestored).toHaveBeenCalledOnce();expect(screen.getByRole('status')).toHaveTextContent('permanently removed');expect(screen.getByRole('button',{name:'Refresh'})).toHaveFocus();
+    expect(onRestored).toHaveBeenCalledOnce();expect(screen.getByRole('status')).toHaveTextContent('permanently removed');await waitFor(()=>expect(screen.getByRole('button',{name:'Refresh'})).toHaveFocus());
   });
   it('keeps a rejected removal visible and clears it on permission denial',async()=>{
     mount();await open();fireEvent.click(screen.getByRole('button',{name:'Permanently remove page Build notes'}));fireEvent.change(screen.getByLabelText('Type the exact title to confirm'),{target:{value:'Build notes'}});
@@ -88,7 +88,7 @@ describe('desktop notebook trash controls',()=>{
   it('confirms restoration, updates the tree, and removes the restored root from the list',async()=>{
     const {onRestored}=mount();await open();vi.mocked(apiJson).mockResolvedValueOnce({ok:true}).mockResolvedValueOnce({...listing,items:[]});fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
     await waitFor(()=>expect(onRestored).toHaveBeenCalledOnce());expect(confirmDialog).toHaveBeenCalledOnce();expect(apiJson).toHaveBeenCalledWith('/api/notebook/pages/4/restore',expect.objectContaining({method:'POST',body:JSON.stringify({destination:{}})}));
-    expect(screen.queryByText('Build notes')).toBeNull();expect(screen.getByRole('status')).toHaveTextContent('restored');expect(screen.getByRole('button',{name:'Refresh'})).toHaveFocus();
+    expect(screen.queryByText('Build notes')).toBeNull();expect(screen.getByRole('status')).toHaveTextContent('restored');await waitFor(()=>expect(screen.getByRole('button',{name:'Refresh'})).toHaveFocus());
   });
   it('requires an explicit active destination after the original parent is unavailable',async()=>{
     mount();await open();vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(409,'Original parent unavailable',{destinationRequired:true}));fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
