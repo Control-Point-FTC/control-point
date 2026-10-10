@@ -19,7 +19,7 @@ import { pasteNotebookText } from './NotebookMobileToolbar';
 import { createPortal } from 'react-dom';
 import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
 import { getScreenEntity, setScreenEntity } from '../services/brunoContext';
-import { selectedNotebookBlocks } from './brunoScreen';
+import { registerNotebookSelection, selectedNotebookBlocks } from './brunoScreen';
 import { NotebookHistory } from './NotebookHistory';
 import {NotebookZoom} from './NotebookZoom';
 import {NotebookReader,useNotebookReaderPreferences} from './NotebookReader';
@@ -127,6 +127,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     }} },
     onFocus: ({ editor }) => { setActiveEditor(editor); reportSelection(editor); }, onSelectionUpdate: ({ editor }) => { redraw(v => v + 1); if (editor.isFocused) reportSelection(editor); }, onTransaction: () => redraw(v => v + 1),
   }, [sync]);
+  useEffect(() => editor ? registerNotebookSelection(sync.pageId, () => selectedNotebookBlocks(editor.state)) : undefined, [editor, sync.pageId]);
   const title = String(sync.doc.getMap('meta').get('title') ?? '');
   const blockId = blockTarget===undefined?params.get('block'):blockTarget;
   useEffect(() => {

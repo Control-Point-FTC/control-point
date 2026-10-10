@@ -7,26 +7,35 @@ import { getScreenEntity, setScreenEntity } from '../services/brunoContext';
 
 const MAX_BLOCKS = 20;
 
-/** Ids of the innermost text blocks the selection overlaps. */
+/** Ids of the innermost blocks the selection overlaps: text blocks (a table
+ *  cell's paragraph, not the table) and atomic blocks such as attachments. */
 export function selectedNotebookBlocks(state: EditorState): string[] | null {
   const { selection, doc } = state;
   if (selection.empty) return null;
   const ids: string[] = [];
   doc.nodesBetween(selection.from, selection.to, node => {
     if (ids.length >= MAX_BLOCKS) return false;
-    if (node.isTextblock) { if (typeof node.attrs?.id === 'string') ids.push(node.attrs.id); return false; }
+    if (node.isTextblock || (node.isBlock && node.isAtom)) { if (typeof node.attrs?.id === 'string') ids.push(node.attrs.id); return false; }
     return true;
   });
   return ids.length ? ids : null;
 }
 
-/** Report the active pane's page; clear it when the page is protected,
- *  changes, or the notebook unmounts. */
+// Each mounted editor tells us how to read its current selection, so a pane
+// switch can report the new pane's selection without waiting for a click.
+const selections = new Map<number, () => string[] | null>();
+export function registerNotebookSelection(pageId: number, read: () => string[] | null): () => void {
+  selections.set(pageId, read);
+  return () => { if (selections.get(pageId) === read) selections.delete(pageId); };
+}
+
+/** Report the active pane's page and its current selection; clear both when
+ *  the page is protected, changes, or the notebook unmounts. */
 export function useBrunoNotebookPage(pageId: number | null, isProtected: boolean) {
   useEffect(() => {
     const id = pageId && !isProtected ? pageId : null;
-    if (getScreenEntity('notebookPageId') !== id) setScreenEntity('notebookBlockIds', null);
     setScreenEntity('notebookPageId', id);
+    setScreenEntity('notebookBlockIds', id ? selections.get(id)?.() ?? null : null);
     return () => { if (getScreenEntity('notebookPageId') === id) { setScreenEntity('notebookPageId', null); setScreenEntity('notebookBlockIds', null); } };
   }, [pageId, isProtected]);
 }
