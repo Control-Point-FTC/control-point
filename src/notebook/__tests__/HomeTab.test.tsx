@@ -1,7 +1,7 @@
 import React from 'react';
 import { Editor } from '@tiptap/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, act } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, act, waitFor } from '@testing-library/react';
 import { NotebookToolbar } from '../NotebookToolbar';
 import { notebookExtensions } from '../editorSchema';
 let editor: Editor;
@@ -63,6 +63,9 @@ describe('Home ribbon', () => {
     fireEvent.change(screen.getByLabelText('Paragraph style'), { target: { value: 'quote' } });
     expect(editor.getHTML()).toMatch(/<blockquote/);
     fireEvent.change(screen.getByLabelText('Paragraph style'), { target: { value: 'paragraph' } });
+    // Normal leaves the quote entirely.
+    expect(editor.getHTML()).not.toMatch(/<blockquote/);
+    expect((screen.getByLabelText('Paragraph style') as HTMLSelectElement).value).toBe('paragraph');
     openMenu('Alignment');
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Align center' }));
     expect(editor.getHTML()).toContain('text-align: center');
@@ -95,5 +98,55 @@ describe('Home ribbon', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Help' }));
     fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
     expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeTruthy();
+  });
+});
+
+describe('Home ribbon state and safety', () => {
+  it('keeps the remembered color and an armed format painter across tab switches', () => {
+    mount();
+    editor.commands.setTextSelection({ from: 1, to: 6 });
+    openMenu('Font color options');
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Font color: #3b82f6' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Format painter' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Insert' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Home' }));
+    expect(screen.getByRole('button', { name: 'Format painter' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Format painter' }));
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    fireEvent.click(screen.getByRole('button', { name: 'Font color' }));
+    expect(JSON.stringify(editor.getJSON()).match(/#3b82f6/g)).toHaveLength(2);
+  });
+
+  it('removes old text fills from the highlight menu', () => {
+    mount('<p><span style="background-color: #fde047">Filled</span> text</p>');
+    editor.commands.setTextSelection({ from: 1, to: 7 });
+    openMenu('Highlight colors');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove text fill' }));
+    expect(JSON.stringify(editor.getJSON())).not.toContain('backgroundColor":"#fde047');
+  });
+
+  it('cut never deletes text when the page changed while the clipboard was pending', async () => {
+    mount('<p>Hello world</p>');
+    const original = document.execCommand;
+    document.execCommand = () => false;
+    let release!: () => void;
+    Object.assign(navigator, { clipboard: { writeText: vi.fn(() => new Promise<void>(r => { release = r; })) } });
+    editor.commands.setTextSelection({ from: 7, to: 12 });
+    fireEvent.click(screen.getByRole('button', { name: 'Cut' }));
+    act(() => { editor.commands.insertContentAt(1, 'Oh '); });
+    await act(async () => { release(); });
+    expect(editor.getText()).toBe('Oh Hello world');
+    expect(await screen.findByText(/changed before it could be cut/)).toBeTruthy();
+    document.execCommand = original;
+  });
+
+  it('returns focus to the menu button when a menu is cancelled', async () => {
+    mount();
+    const trigger = screen.getByRole('button', { name: 'Alignment' });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    await screen.findByRole('menuitemradio', { name: 'Align center' });
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 });

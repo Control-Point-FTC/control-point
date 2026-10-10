@@ -7,7 +7,7 @@ import { NotebookFind } from './NotebookFind';
 import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookMobileToolbar } from './NotebookMobileToolbar';
 import { notebookCommandGlyph } from './NotebookIcons';
-import { HomeTab } from './ribbon/HomeTab';
+import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { RibbonButton, RibbonGroup } from './ribbon/RibbonParts';
 import './ribbon/ribbon.css';
 
@@ -71,6 +71,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     const find = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && event.target instanceof Node && editor.view.dom.closest('.nb-document')?.contains(event.target)) { event.preventDefault(); setFinding(true); setGroup('review'); setCollapsed(false); } };
     window.addEventListener('keydown', find); return () => window.removeEventListener('keydown', find);
   }, [editor]);
+  // Remembered colors and an armed format painter survive tab switches.
+  const home = useHomeRibbonState(editor, disabled, setNotice);
   // Native spellcheck only (no AI); the choice is kept on this device.
   useEffect(() => { if (editor && !editor.isDestroyed) editor.view.dom.setAttribute('spellcheck', spellcheck ? 'true' : 'false'); }, [editor, spellcheck]);
   if (!editor) return null;
@@ -110,7 +112,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
 
   const content: Record<Tab, React.ReactNode> = {
     file: pagePanel('file'),
-    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} />,
+    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} />,
     insert: <>
       <RibbonGroup label="Tables"><RibbonButton label="Table" showLabel disabled={disabled} onClick={() => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} /></RibbonGroup>
       {panels.insert && <RibbonGroup label="Files">{panels.insert}</RibbonGroup>}

@@ -7,7 +7,8 @@
 .nb-command-bar[data-collapsed=true] .nb-command-tabs { border-bottom: 0; }
 
 .nb-command-bar .nb-ribbon { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 0; min-height: 50px; padding: 7px 8px; }
-.nb-rgroup { display: inline-flex; align-items: center; gap: 1px; padding: 0 6px; min-height: 36px; border-inline-end: 1px solid var(--color-line); }
+/* Groups wrap internally too, so a long group (table layout) never runs off a narrow window. */
+.nb-rgroup { display: inline-flex; flex-wrap: wrap; max-width: 100%; align-items: center; gap: 1px; padding: 0 6px; min-height: 36px; border-inline-end: 1px solid var(--color-line); }
 .nb-rgroup:last-of-type { border-inline-end: 0; }
 
 .nb-rbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 30px; height: 32px; padding: 0 6px; border-radius: 7px; border: 1px solid transparent; color: var(--color-text-base); font-size: 12px; white-space: nowrap; cursor: pointer; }

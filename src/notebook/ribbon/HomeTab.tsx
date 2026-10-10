@@ -13,16 +13,16 @@ const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 96];
 const TAG_LABELS: Record<(typeof NOTEBOOK_TAGS)[number], string> = { todo: 'To Do', important: 'Important', question: 'Question', remember: 'Remember for later' };
 type Marks = { type: string; attrs: Record<string, unknown> }[];
 
-export function HomeTab({ editor, disabled, notify }: { editor: Editor; disabled: boolean; notify: (message: string) => void }) {
-  const chain = () => editor.chain().focus();
+/** Home state that must survive switching tabs or hiding the ribbon (the
+ *  remembered colors and an armed format painter): owned by the toolbar. */
+export function useHomeRibbonState(editor: Editor | null, disabled: boolean, notify: (message: string) => void) {
   const [fontColor, setFontColor] = useState('#ef4444');
   const [highlight, setHighlight] = useState<string>(HIGHLIGHT_COLORS[0]);
   const [painter, setPainter] = useState<Marks | null>(null);
-
   // Format painter: pick up formatting, then apply it to the next selection
   // the person makes with the mouse or Shift+arrows. Escape cancels.
   useEffect(() => {
-    if (!painter) return;
+    if (!painter || !editor || editor.isDestroyed) return;
     const dom = editor.view.dom;
     const apply = () => {
       const { from, to, empty } = editor.state.selection;
@@ -38,14 +38,34 @@ export function HomeTab({ editor, disabled, notify }: { editor: Editor; disabled
     return () => { dom.removeEventListener('pointerup', apply); dom.removeEventListener('keyup', onKeyUp); document.removeEventListener('keydown', onKeyDown); };
   }, [painter, editor]);
   useEffect(() => { if (disabled) setPainter(null); }, [disabled]);
+  const togglePainter = () => {
+    if (!editor) return;
+    if (painter) { setPainter(null); return; }
+    setPainter(editor.state.selection.$from.marks().filter(m => m.type.name !== 'link').map(m => ({ type: m.type.name, attrs: { ...m.attrs } })));
+    notify('Format painter on: select text to apply this formatting. Esc cancels.');
+  };
+  return { fontColor, setFontColor, highlight, setHighlight, painterOn: !!painter, togglePainter };
+}
+export type HomeRibbonState = ReturnType<typeof useHomeRibbonState>;
+
+export function HomeTab({ editor, disabled, notify, state }: { editor: Editor; disabled: boolean; notify: (message: string) => void; state: HomeRibbonState }) {
+  const chain = () => editor.chain().focus();
+  const { fontColor, setFontColor, highlight, setHighlight } = state;
 
   const clipboard = async (kind: 'cut' | 'copy') => {
     const { from, to, empty } = editor.state.selection;
     if (empty) { notify('Select something first.'); return; }
     editor.commands.focus();
     if (document.execCommand?.(kind)) return;
-    try { await navigator.clipboard.writeText(editor.state.doc.textBetween(from, to, '\n')); if (kind === 'cut' && !disabled) chain().deleteRange({ from, to }).run(); }
-    catch { notify(`Press ${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+${kind === 'cut' ? 'X' : 'C'} to ${kind}.`); }
+    // Clipboard access can wait on a permission prompt: only cut if the page,
+    // the selection and edit rights are all unchanged by then.
+    const doc = editor.state.doc, selection = editor.state.selection;
+    try {
+      await navigator.clipboard.writeText(doc.textBetween(from, to, '\n'));
+      if (kind !== 'cut') return;
+      if (disabled || !editor.isEditable || !editor.state.doc.eq(doc) || !editor.state.selection.eq(selection)) { notify('Text copied. The page or selection changed before it could be cut.'); return; }
+      chain().deleteRange({ from, to }).run();
+    } catch { notify(`Press ${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+${kind === 'cut' ? 'X' : 'C'} to ${kind}.`); }
   };
   const paste = async (plain: boolean) => {
     const before = editor.state.selection;
@@ -69,7 +89,8 @@ export function HomeTab({ editor, disabled, notify }: { editor: Editor; disabled
   };
   const style = editor.isActive('heading') ? String(editor.getAttributes('heading').level) : editor.isActive('blockquote') ? 'quote' : editor.isActive('codeBlock') ? 'code' : 'paragraph';
   const setStyle = (value: string) => {
-    if (value === 'paragraph') chain().setParagraph().run();
+    // Normal also leaves a quote: lifting removes the blockquote wrapper.
+    if (value === 'paragraph') { const command = chain().setParagraph(); if (editor.isActive('blockquote')) command.lift('blockquote'); command.run(); }
     else if (value === 'quote') chain().setParagraph().toggleBlockquote().run();
     else if (value === 'code') chain().toggleCodeBlock().run();
     else chain().setHeading({ level: Number(value) as 1 | 2 | 3 | 4 | 5 | 6 }).run();
@@ -89,11 +110,7 @@ export function HomeTab({ editor, disabled, notify }: { editor: Editor; disabled
       </RibbonSplit>
       <RibbonButton label="Cut" shortcut="Ctrl+X" disabled={disabled} onClick={() => { void clipboard('cut'); }} />
       <RibbonButton label="Copy" shortcut="Ctrl+C" onClick={() => { void clipboard('copy'); }} />
-      <RibbonButton label="Format painter" active={!!painter} disabled={disabled} onClick={() => {
-        if (painter) { setPainter(null); return; }
-        setPainter(editor.state.selection.$from.marks().filter(m => m.type.name !== 'link').map(m => ({ type: m.type.name, attrs: { ...m.attrs } })));
-        notify('Format painter on: select text to apply this formatting. Esc cancels.');
-      }} />
+      <RibbonButton label="Format painter" active={state.painterOn} disabled={disabled} onClick={state.togglePainter} />
     </RibbonGroup>
     <RibbonGroup label="Basic text">
       <select aria-label="Font" title="Font" className="nb-rselect nb-rfont" disabled={disabled} value={editor.getAttributes('textStyle').fontFamily ?? ''} onChange={e => e.target.value ? chain().setFontFamily(e.target.value).run() : chain().unsetFontFamily().run()}>
@@ -112,6 +129,8 @@ export function HomeTab({ editor, disabled, notify }: { editor: Editor; disabled
       </RibbonSplit>
       <RibbonSplit label="Highlight" accent={highlight} menuLabel="Highlight colors" active={editor.isActive('highlight')} disabled={disabled} onClick={() => editor.isActive('highlight') ? chain().unsetHighlight().run() : chain().setHighlight({ color: highlight }).run()}>
         <ColorPalette label="Highlight" colors={HIGHLIGHT_COLORS} value={editor.getAttributes('highlight').color} onPick={c => { setHighlight(c); chain().setHighlight({ color: c }).run(); }} resetLabel="No highlight" onReset={() => chain().unsetHighlight().run()} />
+        {/* Text fills from older pages or pasted HTML are a separate mark. */}
+        <RibbonItem onSelect={() => chain().unsetBackgroundColor().run()}>Remove text fill</RibbonItem>
       </RibbonSplit>
       <RibbonSplit label="Subscript" shortcut="Ctrl+=" menuLabel="Subscript and superscript" active={editor.isActive('subscript')} disabled={disabled} onClick={() => chain().toggleSubscript().run()}>
         <RibbonItem onSelect={() => chain().toggleSubscript().run()}>Subscript</RibbonItem>

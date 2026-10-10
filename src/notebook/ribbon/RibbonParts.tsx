@@ -3,7 +3,7 @@
 // Every command has an accessible name; icon-only buttons explain themselves
 // on hover/focus. Buttons never take focus from the page on mouse down, so
 // the text selection a command acts on stays put.
-import React from 'react';
+import React, { useRef } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../../components/ui-kit';
 import { notebookCommandGlyph } from '../NotebookIcons';
@@ -27,11 +27,12 @@ export function RibbonButton({ label, icon, accent, showLabel, active, disabled,
 
 /** A main action with a menu of related ones (OneNote's split buttons). */
 export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: ButtonProps & { menuLabel: string; children: React.ReactNode; align?: 'start' | 'end' }) {
+  const trigger = useRef<HTMLButtonElement>(null);
   return <span className="nb-rsplit">
     <RibbonButton {...main} />
     <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild><button type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
-      <DropdownMenuContent align={align} className="nb-rmenu" onCloseAutoFocus={e => e.preventDefault()}>{children}</DropdownMenuContent>
+      <DropdownMenuTrigger asChild><button ref={trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
+      <DropdownMenuContent align={align} className="nb-rmenu" onCloseAutoFocus={closeFocus(trigger)}>{children}</DropdownMenuContent>
     </DropdownMenu>
   </span>;
 }
@@ -39,13 +40,23 @@ export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: B
 /** A labelled dropdown (no main action), e.g. alignment or tags. */
 export function RibbonMenu({ label, icon, showLabel, disabled, children }: { label: string; icon?: string; showLabel?: boolean; disabled?: boolean; children: React.ReactNode }) {
   const Glyph = notebookCommandGlyph(icon ?? label);
+  const trigger = useRef<HTMLButtonElement>(null);
   return <DropdownMenu modal={false}>
-    <DropdownMenuTrigger asChild><button type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{(showLabel || !Glyph) && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
-    <DropdownMenuContent className="nb-rmenu" onCloseAutoFocus={e => e.preventDefault()}>{children}</DropdownMenuContent>
+    <DropdownMenuTrigger asChild><button ref={trigger} type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{(showLabel || !Glyph) && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
+    <DropdownMenuContent className="nb-rmenu" onCloseAutoFocus={closeFocus(trigger)}>{children}</DropdownMenuContent>
   </DropdownMenu>;
 }
 
 export const RibbonItem = DropdownMenuItem;
+
+/** After a command the page keeps focus (the command focused it); after
+ *  Escape or clicking away, focus returns to the menu's own button. */
+function closeFocus(trigger: React.RefObject<HTMLButtonElement | null>) {
+  return (e: Event) => {
+    e.preventDefault();
+    if (!document.activeElement?.closest('.ProseMirror')) trigger.current?.focus();
+  };
+}
 
 /** Swatches, a custom color and a reset entry. */
 export function ColorPalette({ label, colors, value, onPick, resetLabel, onReset }: { label: string; colors: readonly string[]; value?: string | null; onPick: (color: string) => void; resetLabel: string; onReset: () => void }) {
