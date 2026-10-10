@@ -14,6 +14,7 @@ import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, note
 import {notebookTrash} from './notebookTrash.js';
 import {notebookRestore} from './notebookRecovery.js';
 import {notebookTrashPage} from './notebookTrashPreview.js';
+import {notebookPurge} from './notebookPurge.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -462,6 +463,7 @@ export class NotebookStore {
   }); }
   trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
   trashPage(ctx:NotebookContext,pageId:number){return this.session(ctx,s=>notebookTrashPage(s,pageId));}
+  purge(ctx:NotebookContext,kind:Kind,itemId:number,confirmation:unknown){return this.session(ctx,s=>notebookPurge(s,kind,itemId,confirmation));}
   restore(ctx:NotebookContext,kind:Kind,itemId:number,to:Row={}){return this.session(ctx,s=>notebookRestore(s,kind,itemId,to));}
   versions(ctx: NotebookContext, pageId: number, versionId?: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
@@ -557,7 +559,7 @@ export class NotebookStore {
   }); }
 }
 
-type NotebookDeps = { requireAuth: (req: any, res: any) => Promise<{ memberId: number; teamId: number | null } | null>; ensureRolesSeeded: (teamId: number) => Promise<void> };
+type NotebookDeps = { requireAuth: (req: any, res: any) => Promise<{ memberId: number; teamId: number | null } | null>; ensureRolesSeeded: (teamId: number) => Promise<void>;deleteStoredRow?:(id:number)=>Promise<void> };
 export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new NotebookStore()) {
   const initializing = new Map<number, Promise<void>>();
   const initializeRoles = async (teamId: number) => {
@@ -597,6 +599,12 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));
     app.delete(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.remove(ctx, kind, id(req.params.id))));
     app.post(`/api/notebook/${plural}/:id/restore`,handle((ctx,req)=>store.restore(ctx,kind,id(req.params.id),req.body?.destination??{})));
+    app.post(`/api/notebook/${plural}/:id/purge`,handle(async(ctx,req)=>{
+      const result=await store.purge(ctx,kind,id(req.params.id),req.body?.confirmationTitle);
+      // Remote object cleanup runs only after the database transaction commits.
+      for(const fileId of result.deletedFiles)try{await deps.deleteStoredRow?.(fileId);}catch(e){console.error('Notebook object cleanup failed',e);}
+      return {ok:true,filesRemoved:result.deletedFiles.length};
+    }));
     if (kind !== "page") app.patch(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.update(ctx, kind, id(req.params.id), req.body ?? {})));
     if (kind !== "notebook") app.put(`/api/notebook/${plural}/:id/protection`, handle((ctx, req) => store.protect(ctx, kind, id(req.params.id), req.body?.protected)));
   }
