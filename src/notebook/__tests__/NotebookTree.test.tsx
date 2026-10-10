@@ -12,8 +12,9 @@ const viewport=vi.hoisted(()=>({mobile:false}));
 vi.mock('../useNotebookMobile',()=>({useNotebookMobile:()=>viewport.mobile}));
 let view:ReturnType<typeof render>;
 afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear();viewport.mobile=false; });
-function mount(path = '/notebook', emptySection = false) {
+function mount(path = '/notebook', emptySection = false, extraBook = false) {
   const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false }], pages: [{ id: 2, sectionId: 1, parentId: null, title: 'Drive', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }, { id: 3, sectionId: 1, parentId: 2, title: 'Motor tests', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
+  if (extraBook) (tree.notebooks as any[]).push({ id: 2, title: 'Outreach', color: null, sort: 1 });
   if (emptySection) tree.sections.push({id:4,notebookId:1,title:'Empty section',color:'#111111',sort:1,protected:false});
   const documents = new Map<number, Y.Doc>();
   vi.mocked(apiJson).mockImplementation(async (path, options) => {
@@ -44,6 +45,20 @@ function mount(path = '/notebook', emptySection = false) {
   view=render(<MemoryRouter initialEntries={[path]}><NotebookPage activeTeamId={20} currentUserId={10} /></MemoryRouter>);
   return tree;
 }
+describe('tabs layout', () => {
+  it('polls mentions once per layout and lets you pick an empty notebook to add its first section', async () => {
+    localStorage.setItem('cp-notebook-layout:10:20', 'tabs');
+    mount('/notebook', false, true);
+    const picker = await screen.findByRole('combobox', { name: 'Notebook' }) as HTMLSelectElement;
+    expect(vi.mocked(apiJson).mock.calls.filter(([p]) => p === '/api/notebook/mentions')).toHaveLength(1);
+    fireEvent.change(picker, { target: { value: '2' } });
+    expect(picker.value).toBe('2');
+    expect(within(screen.getByRole('navigation', { name: 'Sections' })).queryByRole('button', { name: 'Build' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'New section' }));
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p, o]) => p === '/api/notebook/sections' && JSON.parse(String(o?.body)).notebookId === 2)).toBe(true));
+  });
+});
+
 describe('notebook hierarchy controls', () => {
   it('falls back to a surviving section after the selected empty section disappears', async () => {
     const tree = mount('/notebook', true);
