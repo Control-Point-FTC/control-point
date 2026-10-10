@@ -29,20 +29,31 @@ describe('notebook contextual ribbon',()=>{
     fireEvent.change(screen.getByLabelText('Paragraph style'),{target:{value:'paragraph'}});
     expect(editor.getHTML()).toMatch(/<p[\s>]/);
   });
-  it('inserts emoji and symbols from the pickers without losing the selection',()=>{
-    editor=new Editor({extensions:notebookExtensions(false,true),content:'<p>Build </p>'});
-    render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1}/>);
-    editor.commands.focus();
-    fireEvent.click(screen.getByRole('button',{name:'Emoji'}));
+  it('inserts emoji and symbols at the caret without losing the selection',()=>{
+    editor=new Editor({extensions:notebookExtensions(false,true),content:'<p>Hello</p>'});
+    const view=render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1}/>);
+    editor.commands.focus();editor.commands.setTextSelection(6); // caret after "Hello"
+    const emojiBtn=screen.getByRole('button',{name:'Emoji'});
+    fireEvent.mouseDown(emojiBtn);fireEvent.click(emojiBtn);
     expect(screen.getByRole('dialog',{name:'Emoji picker'})).toBeTruthy();
-    fireEvent.click(screen.getByRole('button',{name:'Insert 🚀'}));
-    expect(editor.getHTML()).toContain('🚀');
-    fireEvent.click(screen.getByRole('button',{name:'Symbols'}));
+    const rocket=screen.getByRole('button',{name:'Insert 🚀'});
+    fireEvent.mouseDown(rocket);fireEvent.click(rocket);
+    expect(editor.state.doc.textContent).toBe('Hello🚀');
+    // picker stays open for another insert; switching pickers works despite the backdrop
+    const symBtn=screen.getByRole('button',{name:'Symbols'});
+    fireEvent.mouseDown(symBtn);fireEvent.click(symBtn);
     expect(screen.getByRole('dialog',{name:'Symbol picker'})).toBeTruthy();
-    fireEvent.click(screen.getByRole('button',{name:'Insert →'}));
-    const html=editor.getHTML();
-    expect(html).toContain('🚀');expect(html).toContain('→');
-    fireEvent.click(screen.getByRole('button',{name:'Symbols'}));
+    expect(screen.queryByRole('dialog',{name:'Emoji picker'})).toBeNull();
+    const arrow=screen.getByRole('button',{name:'Insert →'});
+    fireEvent.mouseDown(arrow);fireEvent.click(arrow);
+    expect(editor.state.doc.textContent).toBe('Hello🚀→');
+    // Escape closes the picker even though focus stayed in the editor
+    fireEvent.keyDown(document,{key:'Escape'});
     expect(screen.queryByRole('dialog',{name:'Symbol picker'})).toBeNull();
+    // becoming read-only closes the picker and disables its cells
+    fireEvent.mouseDown(emojiBtn);fireEvent.click(emojiBtn);
+    expect(screen.getByRole('dialog',{name:'Emoji picker'})).toBeTruthy();
+    view.rerender(<NotebookToolbar editor={editor} disabled={true} pages={[]} pageId={1}/>);
+    expect(screen.queryByRole('dialog',{name:'Emoji picker'})).toBeNull();
   });
 });

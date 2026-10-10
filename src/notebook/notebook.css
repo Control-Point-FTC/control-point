@@ -29,6 +29,7 @@
 .nb-prose h5{font-size:.98em;font-weight:700;margin:.9em 0 .45em;line-height:1.35}
 .nb-prose h6{font-size:.88em;font-weight:700;margin:.9em 0 .45em;line-height:1.35;letter-spacing:.03em}
 .nb-picker-anchor{position:relative;display:inline-flex;gap:5px}
+.nb-picker-anchor>.nb-tool{position:relative;z-index:71}
 .nb-picker{position:absolute;top:calc(100% + 6px);left:0;z-index:70;min-width:288px;max-width:min(340px,80vw);background:var(--color-popover,var(--color-elevated));border:1px solid var(--color-line);border-radius:10px;padding:8px;box-shadow:0 12px 32px rgba(0,0,0,.28)}
 .nb-picker-grid{display:grid;grid-template-columns:repeat(8,minmax(32px,1fr));gap:2px;max-height:224px;overflow:auto}
 .nb-picker-cell{min-width:32px;min-height:36px;font-size:18px;line-height:1;border-radius:6px;color:var(--color-text-base)}
