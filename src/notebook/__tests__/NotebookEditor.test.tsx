@@ -34,6 +34,15 @@ async function mount(editable = true) {
   return { sync, server, navigate };
 }
 describe('mounted collaborative notebook editor', () => {
+  it('makes text, title and insertion controls read only while a revision restore is pending',async()=>{
+    const {sync}=await mount();
+    act(()=>sync.setRestoring(true));
+    expect(screen.getByRole('textbox',{name:'Page title'})).toBeDisabled();
+    expect(screen.getByRole('textbox',{name:'Page content'}).getAttribute('contenteditable')).toBe('false');
+    fireEvent.click(screen.getByRole('tab',{name:'Insert'}));expect(screen.getByRole('button',{name:/^Table$/})).toBeDisabled();
+    act(()=>sync.setRestoring(false));expect(screen.getByRole('textbox',{name:'Page title'})).not.toBeDisabled();
+    expect(screen.getByRole('textbox',{name:'Page content'}).getAttribute('contenteditable')).toBe('true');
+  });
   it('does not claim a pending upload is saved or print an incomplete snapshot',async()=>{
     uploadState.busy=true;await mount();
     expect(screen.getByText('Uploading attachment · not saved yet')).toBeTruthy();
@@ -83,7 +92,7 @@ describe('mounted collaborative notebook editor', () => {
     vi.mocked(apiJson).mockImplementation(async (url, options) => url.endsWith('/versions') ? [{ id: 3, revision: 2, authorId: 1, savedAt: '2026-10-08T18:00:00Z' }] as any : original(url, options));
     expect(vi.mocked(apiJson).mock.calls.some(([url]) => url.endsWith('/versions'))).toBe(false);
     fireEvent.click(screen.getByRole('tab', { name: 'History' }));
-    expect(await screen.findByText('Revision 2')).toBeTruthy();
+    expect(await screen.findByRole('option',{name:'Revision 2 · Team member'})).toBeTruthy();
     expect(document.querySelector('time[datetime="2026-10-08T18:00:00Z"]')).toBeTruthy();
   });
 });

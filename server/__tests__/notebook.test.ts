@@ -42,6 +42,19 @@ beforeAll(async () => {
 afterAll(async () => { await t?.stop(); });
 
 describe("team notebook", () => {
+  it('attributes retained revisions only to members of the owning team',async()=>{
+    const p=await page();await put(`/pages/${p.id}`,{baseRevision:1,title:'Updated title'});
+    const versions=(await get(`/pages/${p.id}/versions`)).body;
+    expect(versions[0]).toMatchObject({revision:1,authorId:member,authorName:'Ana'});
+    expect((await get(`/pages/${p.id}/versions/${versions[0].id}`)).body.authorName).toBe('Ana');
+    const foreign=await seedMember(t.db,otherTeam,'Foreign private name','foreign-history@test');
+    await t.db.execute({sql:'UPDATE notebook_versions SET author_id=? WHERE id=?',args:[foreign,versions[0].id]});
+    expect((await get(`/pages/${p.id}/versions`)).body[0].authorName).toBe('Former team member');
+    expect((await get(`/pages/${p.id}/versions`,otherSession)).status).toBe(404);
+    await store.protect(ctx(admin),'page',p.id,true);
+    expect((await get(`/pages/${p.id}/versions`)).status).toBe(404);
+    await expect(store.versions(ctx(admin,'bruno'),p.id)).rejects.toMatchObject({status:404});
+  });
   it('retains older canvas bytes while opening and editing text, and rejects unsupported new writes', async () => {
     const p = await page({content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Older text'}]}]}}); const legacy = {items:[{text:'Linear slides'}]};
     await t.db.execute({sql:'UPDATE notebook_pages SET canvas=? WHERE id=?',args:[JSON.stringify(legacy),p.id]});
