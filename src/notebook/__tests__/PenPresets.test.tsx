@@ -22,22 +22,32 @@ describe('favorite pens', () => {
 
   it('keeps two open ribbons in step (split view)', () => {
     const current = { tool: 'pen', color: '#16a34a', size: 6 };
-    render(<><div data-testid="a"><PenPresets storageKey="pens" current={current} onPick={vi.fn()} /></div><div data-testid="b"><PenPresets storageKey="pens" current={current} onPick={vi.fn()} /></div></>);
+    render(<><div data-testid="a"><PenPresets storageKey="pens-split" current={current} onPick={vi.fn()} /></div><div data-testid="b"><PenPresets storageKey="pens-split" current={current} onPick={vi.fn()} /></div></>);
     const [saveA] = screen.getAllByRole('button', { name: 'Save pen' });
     fireEvent.click(saveA);
     const removeInB = within(screen.getByTestId('b')).getByRole('button', { name: 'Remove Pen #111111, fine' });
     fireEvent.click(removeInB);
-    const saved = readPens('pens');
+    const saved = readPens('pens-split');
     expect(saved.map(p => p.color)).toContain('#16a34a');
     expect(saved.map(p => p.color)).not.toContain('#111111');
     expect(within(screen.getByTestId('a')).queryByRole('button', { name: 'Remove Pen #111111, fine' })).toBeNull();
   });
 
+  it('keeps editing in memory when storage is unavailable', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    render(<PenPresets storageKey="nostore" current={{ tool: 'pen', color: '#16a34a', size: 6 }} onPick={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Save pen' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Pen #111111, fine' }));
+    expect(screen.getByRole('button', { name: 'Pen #16a34a, thick' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Pen #111111, fine' })).toBeNull();
+    setItem.mockRestore();
+  });
+
   it('ignores damaged stored pens', () => {
-    localStorage.setItem('pens', JSON.stringify([{ tool: 'pen', color: 'red', size: 3 }, { tool: 'pen', color: '#000000', size: 2 }]));
-    expect(readPens('pens')).toEqual([{ tool: 'pen', color: '#000000', size: 2 }]);
-    localStorage.setItem('pens', '{oops');
-    expect(readPens('pens')).toEqual(DEFAULT_PENS);
+    localStorage.setItem('damaged', JSON.stringify([{ tool: 'pen', color: 'red', size: 3 }, { tool: 'pen', color: '#000000', size: 2 }]));
+    expect(readPens('damaged')).toEqual([{ tool: 'pen', color: '#000000', size: 2 }]);
+    localStorage.setItem('broken', '{oops');
+    expect(readPens('broken')).toEqual(DEFAULT_PENS);
   });
 });
 

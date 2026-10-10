@@ -13,8 +13,13 @@ const valid = (p: unknown): p is PenPreset => !!p && typeof p === 'object'
   && ['pen', 'highlighter'].includes((p as PenPreset).tool) && /^#[0-9a-f]{6}$/i.test((p as PenPreset).color) && [2, 3, 6, 12].includes((p as PenPreset).size);
 const same = (a: PenPreset, b: PenPreset) => a.tool === b.tool && a.color.toLowerCase() === b.color.toLowerCase() && a.size === b.size;
 
+// The latest list per key in this window: edits build on it even when
+// storage is unavailable (private mode, full quota).
+const latest = new Map<string, PenPreset[]>();
 export function readPens(key?: string): PenPreset[] {
   if (!key) return DEFAULT_PENS;
+  const known = latest.get(key);
+  if (known) return known;
   try { const v = JSON.parse(localStorage.getItem(key) ?? 'null'); return Array.isArray(v) ? v.filter(valid).slice(0, MAX_PENS) : DEFAULT_PENS; } catch { return DEFAULT_PENS; }
 }
 // Several Draw ribbons can be open at once (split view): every change is
@@ -22,6 +27,7 @@ export function readPens(key?: string): PenPreset[] {
 const CHANGED = 'cp-notebook-pens-changed';
 function changePens(key: string | undefined, change: (pens: PenPreset[]) => PenPreset[]) {
   const next = change(readPens(key)).slice(-MAX_PENS);
+  if (key) latest.set(key, next);
   try { if (key) localStorage.setItem(key, JSON.stringify(next)); } catch { /* storage optional */ }
   window.dispatchEvent(new CustomEvent(CHANGED, { detail: key }));
   return next;
@@ -34,7 +40,7 @@ export function PenPresets({ storageKey, current, disabled, onPick }: { storageK
   const [pens, setPens] = useState(() => readPens(storageKey));
   useEffect(() => {
     const refresh = (e: Event) => { if (!(e instanceof CustomEvent) || e.detail === storageKey) setPens(readPens(storageKey)); };
-    const fromOtherTab = (e: StorageEvent) => { if (e.key === storageKey) setPens(readPens(storageKey)); };
+    const fromOtherTab = (e: StorageEvent) => { if (storageKey && e.key === storageKey) { latest.delete(storageKey); setPens(readPens(storageKey)); } };
     window.addEventListener(CHANGED, refresh); window.addEventListener('storage', fromOtherTab);
     return () => { window.removeEventListener(CHANGED, refresh); window.removeEventListener('storage', fromOtherTab); };
   }, [storageKey]);
