@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { NotebookEditor } from '../../src/notebook/NotebookEditor';
 import { NotebookSync } from '../../src/notebook/NotebookSync';
+import '../../src/index.css';
+import '../../src/modern/modern.css';
 import '../../src/notebook/notebook.css';
 import '../../src/notebook/notebook-desktop.css';
 
