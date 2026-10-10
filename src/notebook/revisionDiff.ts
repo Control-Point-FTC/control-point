@@ -3,7 +3,7 @@ import {validatedCanvas,type CanvasItem} from './canvasModel';
 
 export type RevisionDocument={title:string;content:unknown;canvas:unknown};
 export type RevisionChange={id:string;label:string;kind:'added'|'removed'|'changed';changes:string[];before:string;after:string};
-type Block={id:string;label:string;text:string;format:string;structure:string;path:string};
+type Block={id:string;label:string;text:string;textSignature:string;format:string;structure:string;path:string};
 // Canonical serialization avoids reporting a change just because JSON keys differ.
 function stable(value:unknown):string{
   if(Array.isArray(value))return `[${value.map(stable).join(',')}]`;
@@ -14,6 +14,16 @@ function blocks(value:unknown):Map<string,Block>{
   const document=notebookSchema.nodeFromJSON(validatedNotebookDocument(value)).toJSON(),result=new Map<string,Block>();
   const textContainers=new Set(['doc','table','tableCell','tableHeader','bulletList','orderedList','taskList','listItem','taskItem','blockquote']);
   const text=(node:any):string=>node.type==='text'?node.text||'':node.type==='hardBreak'?'\n':(node.content||[]).map(text).join(node.type==='tableRow'?' | ':textContainers.has(node.type)?'\n':'');
+  // Display newlines are intentionally readable. Comparison keeps hard breaks
+  // separate from block boundaries, while ignoring adjacent text-node splits.
+  const textSignature=(node:any):unknown=>{
+    const children:any[]=[];
+    for(const child of node.content||[]){
+      if(child.type==='text'){if(typeof children.at(-1)==='string')children[children.length-1]+=child.text||'';else children.push(child.text||'');}
+      else children.push(textSignature(child));
+    }
+    return {type:node.type,children};
+  };
   const attributes=(node:any)=>Object.fromEntries(Object.entries(node.attrs||{}).filter(([key])=>key!=='id'));
   const formatting=(node:any,leaf:boolean):unknown=>{
     const runs:{marks:string;length:number}[]=[];
@@ -30,7 +40,7 @@ function blocks(value:unknown):Map<string,Block>{
     let id=base,duplicate=0;while(result.has(id))id=`${base}#${++duplicate}`;
     const label=node.type==='tableCell'||node.type==='tableHeader'?`Table cell ${path.split('.').slice(-2).map(n=>Number(n)+1).join(', ')}`:node.type.replace(/([a-z])([A-Z])/g,'$1 $2');
     const cell=node.type==='tableCell'||node.type==='tableHeader',leaf=cell||!(node.content||[]).some((child:any)=>child.type!=='text'&&child.type!=='hardBreak');
-    result.set(id,{id,label,text:leaf?text(node):'',format:stable(formatting(node,leaf)),structure:stable(structure(node)),path});
+    result.set(id,{id,label,text:leaf?text(node):'',textSignature:leaf?stable(textSignature(node)):'',format:stable(formatting(node,leaf)),structure:stable(structure(node)),path});
     if(!cell)(node.content||[]).forEach((child:any,index:number)=>visit(child,`${path}.${index}`,node.attrs?.id?base:owner));
   };
   (document.content||[]).forEach((node,index)=>visit(node,String(index),'page'));
@@ -42,7 +52,7 @@ function compareBlocks(before:unknown,after:unknown):RevisionChange[]{
     const old=a.get(id),next=b.get(id);
     if(!old||!next){const item=old||next!;changes.push({id,label:item.label,kind:old?'removed':'added',changes:[],before:old?.text||'',after:next?.text||''});continue;}
     const flags:string[]=[];
-    if(old.text!==next.text)flags.push('Text');
+    if(old.text!==next.text||old.textSignature!==next.textSignature)flags.push('Text');
     if(old.structure!==next.structure)flags.push('Structure');
     // Formatting includes attributes/marks but excludes text and stable IDs.
     if(old.format!==next.format)flags.push('Formatting');
