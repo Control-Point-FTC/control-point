@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { Editor } from '@tiptap/core';
 import { notebookExtensions } from '../editorSchema';
 import { PageLinkMenu } from '../pageLinkMenu';
@@ -35,5 +35,9 @@ describe('page link list', () => {
     editor.view.dom.focus(); editor.commands.insertContent('[[dri');
     render(<PageLinkPopup editor={editor} pages={PAGES} currentPageId={1} />);
     expect(scroll).toHaveBeenCalledWith({ block: 'nearest' });
+    // Scrolling the list (or the page) doesn't snap it back.
+    scroll.mockClear();
+    act(() => { window.dispatchEvent(new Event('scroll')); });
+    expect(scroll).not.toHaveBeenCalled();
   });
 });

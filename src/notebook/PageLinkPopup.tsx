@@ -12,7 +12,8 @@ export function PageLinkPopup({ editor, pages, currentPageId }: { editor: Editor
   const [, setTick] = useState(0);
   const list = useRef<HTMLDivElement>(null);
   // Keep the highlighted page visible as arrow keys move through a short list.
-  useEffect(() => { list.current?.querySelector('[aria-selected=true]')?.scrollIntoView?.({ block: 'nearest' }); });
+  // Only when the choice or the query changes, never because the list itself was scrolled.
+  useEffect(() => { list.current?.querySelector('[aria-selected=true]')?.scrollIntoView?.({ block: 'nearest' }); }, [state?.index, state?.from, state?.query]);
   useEffect(() => {
     if (!editor) return;
     const update = () => { const next = editor.isDestroyed ? null : pageLinkKey.getState(editor.state) ?? null; setState(next?.active && editor.view.hasFocus() ? next : null); };
