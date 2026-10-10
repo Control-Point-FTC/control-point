@@ -30,6 +30,7 @@ import * as cheerio from "cheerio";
 import { parseRevProduct, revTarget, type RevProduct } from "./server/revImport.js";
 import { MAX_PURCHASE_URL, SUPPLIERS, cleanPurchaseUrl, detectSupplier, supplierById } from "./src/utils/suppliers.js";
 import { dbGet, dbAll, dbRun, dbExec, dbBatch, dbBatchResults } from "./db.js";
+import { countArticleView, registerPageViewRoutes } from "./server/pageViews.js";
 import { runMigrations } from "./migrations/runner.js";
 import {
   isEmailVerified,
@@ -7343,6 +7344,8 @@ async function startServer() {
 
   registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow });
   registerStickyNoteRoutes(app, { requireAuth });
+  // Public pages only: a cookieless daily pageview counter (the owner can read it).
+  const pageViews = registerPageViewRoutes(app, { requireOwner });
 
   // ---- Manual scouting (works with no FTC data; synced from devices) ----
   registerScoutingRoutes(app, {
@@ -13945,7 +13948,8 @@ Rules:
   }
   // Exact path only (Express would otherwise also match other letter cases
   // and a trailing slash); anything else falls through to the app.
-  app.get(/^\/predict\/how-it-works$/, (_req, res) => {
+  app.get(/^\/predict\/how-it-works$/, (req, res) => {
+    countArticleView(pageViews, req);
     res.setHeader("Cache-Control", "no-cache");
     if (predictArticleCsp) {
       res.setHeader(process.env.CSP_ENFORCE === "1" ? "Content-Security-Policy" : "Content-Security-Policy-Report-Only", predictArticleCsp);
