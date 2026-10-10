@@ -29,7 +29,7 @@ const HISTORY_LIMIT = 50;
  *  from the tree are skipped. `open` returns false when navigation was
  *  cancelled (e.g. the person chose to keep editing). */
 export function usePageHistory(selected: number | null, exists: (id: number) => boolean, open: (id: number) => Promise<boolean>) {
-  const history = useRef({ stack: [] as number[], index: -1, jumping: null as number | null });
+  const history = useRef({ stack: [] as number[], index: -1, jumping: null as number | null, moving: false });
   const [, rerender] = useState(0);
   useEffect(() => {
     if (!selected) return;
@@ -46,15 +46,20 @@ export function usePageHistory(selected: number | null, exists: (id: number) => 
     for (let i = h.index + step; i >= 0 && i < h.stack.length; i += step) if (exists(h.stack[i]) && h.stack[i] !== selected) return i;
     return -1;
   };
+  // One move at a time: a second click while the first is still leaving the
+  // page (e.g. saving) is ignored, so positions can't cross.
   const go = useCallback(async (step: -1 | 1) => {
     const h = history.current, i = target(step);
-    if (i < 0) return;
-    const before = h.index;
-    h.index = i; h.jumping = h.stack[i];
-    if (!await open(h.stack[i])) { h.index = before; h.jumping = null; }
-    rerender(n => n + 1);
+    if (i < 0 || h.moving) return;
+    const before = h.index, page = h.stack[i];
+    h.index = i; h.jumping = page; h.moving = true; rerender(n => n + 1);
+    try {
+      // Cancelled: go back to where we were, unless something newer moved us.
+      if (!await open(page) && h.jumping === page) { h.index = before; h.jumping = null; }
+    } finally { h.moving = false; rerender(n => n + 1); }
   }, [open, selected, exists]); // eslint-disable-line react-hooks/exhaustive-deps -- target reads the ref
-  return { canBack: target(-1) >= 0, canForward: target(1) >= 0, back: () => go(-1), forward: () => go(1) };
+  const moving = history.current.moving;
+  return { canBack: !moving && target(-1) >= 0, canForward: !moving && target(1) >= 0, back: () => go(-1), forward: () => go(1) };
 }
 
 export function NotebookBreadcrumbs({ trail, canBack, canForward, onBack, onForward, onOpen }: {

@@ -62,4 +62,22 @@ describe('back and forward', () => {
     expect(result.current.canBack).toBe(true);
     expect(result.current.canForward).toBe(false);
   });
+
+  it('takes one move at a time while the page is being left', async () => {
+    let finish!: (ok: boolean) => void;
+    const open = vi.fn(() => new Promise<boolean>(r => { finish = r; }));
+    const { result, rerender } = renderHook(({ selected }) => usePageHistory(selected, () => true, open), { initialProps: { selected: 1 as number | null } });
+    rerender({ selected: 2 }); rerender({ selected: 3 });
+    let first!: Promise<void>;
+    act(() => { first = result.current.back(); });
+    expect(result.current.canBack).toBe(false);
+    await act(async () => { await result.current.back(); }); // Ignored while the first is pending.
+    expect(open).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(false); await first; });
+    // Cancelled: still on page 3, with Back to page 2 available.
+    expect(result.current.canBack).toBe(true); expect(result.current.canForward).toBe(false);
+    act(() => { void result.current.back(); });
+    expect(open).toHaveBeenLastCalledWith(2);
+    await act(async () => { finish(true); });
+  });
 });
