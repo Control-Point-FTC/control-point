@@ -29,6 +29,15 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [notice, setNotice] = useState('');
   const [finding, setFinding] = useState(false);
   const [picker, setPicker] = useState<null | 'symbols' | 'emoji'>(null);
+  // A picker must never stay open (or insert) once the editor is read-only.
+  useEffect(() => { if (disabled) setPicker(null); }, [disabled]);
+  // Mouse users keep focus in the editor, so Escape has to work document-wide while a picker is open.
+  useEffect(() => {
+    if (!picker) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPicker(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [picker]);
   const [format, setFormat] = useState<{ marks: { type: string; attrs: Record<string, any> }[] } | null>(null);
   useEffect(() => {
     if (!editor) return;
@@ -93,12 +102,11 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
       ))}
       {picker && <React.Fragment key="picker">
         <button type="button" aria-label="Close picker" className="nb-picker-backdrop" onClick={() => setPicker(null)} />
-        <div className="nb-picker" role="dialog" aria-label={picker === 'emoji' ? 'Emoji picker' : 'Symbol picker'}
-          onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setPicker(null); } }}>
+        <div className="nb-picker" role="dialog" aria-label={picker === 'emoji' ? 'Emoji picker' : 'Symbol picker'}>
           <div className="nb-picker-grid">
             {(picker === 'emoji' ? EMOJI : SYMBOLS).map(ch => (
-              <button key={ch} type="button" className="nb-picker-cell" title={`Insert ${ch}`} aria-label={`Insert ${ch}`}
-                onMouseDown={e => e.preventDefault()} onClick={() => { editor.chain().focus().insertContent(ch).run(); }}>{ch}</button>
+              <button key={ch} type="button" className="nb-picker-cell" title={`Insert ${ch}`} aria-label={`Insert ${ch}`} disabled={disabled}
+                onMouseDown={e => e.preventDefault()} onClick={() => { if (!disabled) editor.chain().focus().insertContent(ch).run(); }}>{ch}</button>
             ))}
           </div>
         </div>
