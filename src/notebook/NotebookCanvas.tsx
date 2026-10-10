@@ -453,6 +453,17 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
                 e.preventDefault();
                 transact(() => selection.forEach(id => root.delete(id)));
             }
+            // Keyboard copy / cut / paste / duplicate for selected drawings and boxes.
+            const command = (e.ctrlKey || e.metaKey) && !e.altKey ? e.key.toLowerCase() : '';
+            if ((command === 'c' || command === 'x') && selection.length) {
+                e.preventDefault();
+                clipboard.current = structuredClone(selected); setHasClipboard(true);
+                const movable = selected.filter(i => !i.locked);
+                if (command === 'x') transact(() => movable.forEach(i => root.delete(i.id)));
+                setNotice(command === 'x' ? `Cut ${movable.length} ${movable.length === 1 ? 'item' : 'items'}${movable.length < selected.length ? ' (locked items stay)' : ''}. Paste with Ctrl+V.` : `Copied ${selected.length} ${selected.length === 1 ? 'item' : 'items'}. Paste with Ctrl+V.`);
+            }
+            if (command === 'v' && clipboard.current.length) { e.preventDefault(); duplicate(clipboard.current); }
+            if (command === 'd' && selection.length) { e.preventDefault(); duplicate(); }
             if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && selection.length) {
                 e.preventDefault();
                 const d = e.shiftKey ? 10 : 1;

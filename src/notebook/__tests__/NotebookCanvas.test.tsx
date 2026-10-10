@@ -202,6 +202,22 @@ describe('desktop shared drawing surface', () => {
         fireEvent.keyDown(grip, { key: 'ArrowRight', shiftKey: true });
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
     });
+    it('copies, cuts, pastes and duplicates the selection from the keyboard', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 100, clientY: 100 });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(1);
+        fireEvent.keyDown(surface, { key: 'd', ctrlKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(2);
+        fireEvent.keyDown(surface, { key: 'c', ctrlKey: true });
+        expect(screen.getByRole('status')).toHaveTextContent('Copied 1 item');
+        fireEvent.keyDown(surface, { key: 'v', ctrlKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(3);
+        fireEvent.keyDown(surface, { key: 'x', metaKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(2);
+        fireEvent.keyDown(surface, { key: 'v', ctrlKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(3);
+    });
     it('prevents readers and mobile users from changing canvas objects', () => {
         const { sync, surface } = mount(false, true);
         expect(screen.queryByRole('button', { name: 'Drawing pen' })).toBeNull();
