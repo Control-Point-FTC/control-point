@@ -306,6 +306,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree && !tree.notebooks.length && <p className="nb-small">No notebooks yet.</p>}
     </div>
     {(SHOW_NOTEBOOK_CREATION || tree?.notebooks.length===0) && tree?.permissions.organize && <Button variant="outline" onClick={() => open({ action: 'create', kind: 'notebook' })}><Plus /> {tree.notebooks.length ? 'New notebook' : 'Set up team notebook'}</Button>}
+    {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
   return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
@@ -313,7 +314,6 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
       <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
-      {!mobile&&tree&&<NotebookTrash teamId={teamId} tree={tree} onRestored={()=>{void loadTree();}}/>}
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
