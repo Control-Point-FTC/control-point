@@ -1,17 +1,19 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-// Point the db layer at a scratch file BEFORE the runner (and db.js) load.
-const scratchDb = join(tmpdir(), `mig-test-${process.pid}.db`);
-process.env.DATABASE_URL = `file:${scratchDb}`;
+// Isolate migration SQL without a native file handle that Windows cannot unlink.
+// Set the URL BEFORE the runner (and db.js) load.
+process.env.DATABASE_URL = 'file::memory:';
 const { runMigrations, getAppliedVersions, listMigrations } = await import('../runner');
-const { dbAll } = await import('../../db.js');
+const { dbAll, dbExec, dbClient } = await import('../../db.js');
 
 let dir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Reset through the open connection; Windows cannot unlink its database.
+  await dbExec('DROP TABLE IF EXISTS schema_migrations; DROP TABLE IF EXISTS migtest;');
   dir = mkdtempSync(join(tmpdir(), 'mig-versions-'));
   writeFileSync(join(dir, '002-add-index.sql'),
     `CREATE INDEX IF NOT EXISTS idx_migtest_name ON migtest(name);`);
@@ -22,8 +24,10 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
-  rmSync(scratchDb, { force: true });
-  rmSync(`${scratchDb}-journal`, { force: true });
+});
+
+afterAll(() => {
+  dbClient.close();
 });
 
 describe('migration runner', () => {
