@@ -4,6 +4,20 @@ const paragraph=(id:string,text:string,marks:any[]=[])=>({type:'paragraph',attrs
 const page=(content:any[],objects:any[]=[])=>({title:'Build journal',content:{type:'doc',content:content.length?content:[{type:'paragraph'}]},canvas:{version:1,objects}});
 const shape={id:'shape',type:'shape',shape:'rectangle',x:10,y:20,width:200,height:100,z:0,rotation:0,locked:false,groupId:null,color:'#112233',fill:null,strokeWidth:2};
 describe('retained revision comparisons',()=>{
+  it('does not label a table-cell paragraph-to-heading conversion as a text edit',()=>{
+    const table=(type:string)=>({type:'table',attrs:{id:'type-table'},content:[{type:'tableRow',content:[{type:'tableCell',content:[{type,attrs:{id:'stable-block',...(type==='heading'?{level:2}:{})},content:[{type:'text',text:'Same words'}]}]}]}]});
+    const changes=compareNotebookRevisions(page([table('paragraph')]),page([table('heading')]));
+    expect(changes).toEqual(expect.arrayContaining([expect.objectContaining({changes:['Structure','Formatting'],before:'Same words',after:'Same words'})]));
+    expect(changes.every(change=>!change.changes.includes('Text'))).toBe(true);
+  });
+  it('distinguishes authored hard breaks from list-item boundaries inside table cells',()=>{
+    const table=(values:string[])=>({type:'table',attrs:{id:'break-list'},content:[{type:'tableRow',content:[{type:'tableCell',content:[{type:'bulletList',content:values.map((value,index)=>({type:'listItem',content:[{type:'paragraph',attrs:{id:`item-${index}`},content:value.split('\n').flatMap((text,part)=>[...(part?[{type:'hardBreak'}]:[]),{type:'text',text}])}]}))}]}]}]});
+    expect(compareNotebookRevisions(page([table(['a\nb','c'])]),page([table(['a','b\nc'])]))).toEqual([expect.objectContaining({changes:['Text'],before:'a\nb\nc',after:'a\nb\nc'})]);
+  });
+  it('retains paragraph and list-item boundaries inside a table cell',()=>{
+    const table=(values:string[])=>({type:'table',attrs:{id:'list-table'},content:[{type:'tableRow',content:[{type:'tableCell',content:[{type:'bulletList',content:values.map((text,index)=>({type:'listItem',content:[paragraph(`item-${index}`,text)]}))}]}]}]});
+    expect(compareNotebookRevisions(page([table(['a','bc'])]),page([table(['ab','c'])]))).toEqual([expect.objectContaining({changes:['Text'],before:'a\nbc',after:'ab\nc'})]);
+  });
   it('preserves nested paragraph alignment and heading level differences inside table cells',()=>{
     const table=(block:any)=>({type:'table',attrs:{id:'table-format'},content:[{type:'tableRow',content:[{type:'tableCell',content:[block]}]}]});
     const before={...paragraph('p','Same text'),attrs:{id:'p',textAlign:'left'}},after={...before,attrs:{id:'p',textAlign:'right'}};
