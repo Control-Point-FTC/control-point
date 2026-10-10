@@ -17,6 +17,9 @@ export function PageLinkPopup({ editor, pages, currentPageId }: { editor: Editor
     const follow = () => setTick(n => n + 1);
     editor.on('transaction', update); editor.on('focus', update); editor.on('blur', hide);
     window.addEventListener('scroll', follow, true); window.addEventListener('resize', follow);
+    // Switching editors (page text ↔ a canvas text box) happens after that
+    // editor's focus event, so read its state now.
+    update();
     return () => { editor.off('transaction', update); editor.off('focus', update); editor.off('blur', hide); window.removeEventListener('scroll', follow, true); window.removeEventListener('resize', follow); };
   }, [editor]);
   if (!editor || !state) return null;
