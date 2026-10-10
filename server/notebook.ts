@@ -11,6 +11,7 @@ import { seedCanvas, validatedCanvas } from '../src/notebook/canvasModel.js';
 import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
+import {notebookTrash} from './notebookTrash.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -427,7 +428,7 @@ export class NotebookStore {
     await s.checkChildren(kind, row);
     // Tombstone only the root. Descendants inherit deletion and retain ancestry
     // and protection for a later restore, instead of losing user content.
-    await s.run(`UPDATE ${tables[kind]} SET deleted_at=? WHERE id=? AND team_id=?`, new Date().toISOString(), row.id, ctx.teamId);
+    await s.run(`UPDATE ${tables[kind]} SET deleted_at=?,deleted_by=? WHERE id=? AND team_id=?`, new Date().toISOString(), ctx.memberId, row.id, ctx.teamId);
     return { ok: true };
   }); }
   search(ctx: NotebookContext, query: string, limit = 30) { return this.session(ctx, async s => {
@@ -457,6 +458,7 @@ export class NotebookStore {
     }
     return hits;
   }); }
+  trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
   versions(ctx: NotebookContext, pageId: number, versionId?: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
     if (versionId !== undefined) {
@@ -581,6 +583,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
     }
   };
   app.get("/api/notebook/tree", handle(ctx => store.tree(ctx)));
+  app.get('/api/notebook/trash',handle((ctx,req)=>store.trash(ctx,req.query.cursor)));
   app.get("/api/notebook/search", handle((ctx, req) => store.search(ctx, String(req.query.q ?? ""), Number(req.query.limit ?? 30))));
   app.get("/api/notebook/export", handle(ctx => store.export(ctx)));
   app.get('/api/notebook/mentions', handle(ctx => store.mentionInbox(ctx)));
