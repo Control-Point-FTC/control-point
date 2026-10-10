@@ -54,7 +54,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [drawer, setDrawer] = useState(false);
   const [writingFocus,setWritingFocus]=useState(false);
   const focusExit=useRef<HTMLButtonElement|null>(null),focusEntry=useRef<HTMLButtonElement|null>(null),mobileOpen=useRef<HTMLButtonElement|null>(null),exitFocused=useRef(false),wasWritingFocus=useRef(false);
-  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else {if(wasWritingFocus.current && !skipFocusReturn.current)focusEntry.current?.focus();exitFocused.current=false;}}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}wasWritingFocus.current=writingFocus;skipFocusReturn.current=false;},[writingFocus,mobile]);
+  const skipFocusReturn = useRef(false);
+  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else {if(wasWritingFocus.current && !skipFocusReturn.current)focusEntry.current?.focus();exitFocused.current=false;}}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}skipFocusReturn.current=false;wasWritingFocus.current=writingFocus;},[writingFocus,mobile]);
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
@@ -97,7 +98,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const creatingRef = useRef(false); // claimed before leave() so a second click during the save cannot POST a duplicate
   const loadFailedRef = useRef(false); // set when the tree reload inside mutate fails
   const closeDrawerAfterRename = useRef(false); // mobile: keep the drawer open for the rename box, close it when rename ends
-  const skipFocusReturn = useRef(false); // creating a row exits writing focus — don't steal focus from the rename box
+
   const loadTree = useCallback(async () => {
     try {
       const value = await apiJson<NotebookTree>('/api/notebook/tree', { cache: 'no-store' });
@@ -207,10 +208,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
           openKeys.add(`notebook:${target.notebookId}`);
         }
         const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
-        if (writingFocus) { skipFocusReturn.current = true; setWritingFocus(false); } // the rename box lives in the panes, which writing focus hides
+        setFilter('all'); setQuery(''); // filtered/search views do not render inline rename
+        if (writingFocus) { skipFocusReturn.current = true; setWritingFocus(false); }
         if (kind === 'page') {
           setParams({ page: String(created) });
-          // On mobile the drawer holds the rename box — open it and keep it open until rename ends.
+          // On mobile the drawer holds the rename box — keep it open until rename ends.
           if (mobile) { setDrawer(true); closeDrawerAfterRename.current = true; } else setDrawer(false);
         }
         setError(''); setAnnouncement(`${kind === 'page' ? 'Page' : kind === 'section' ? 'Section' : 'Notebook'} created. Type a name and press Enter.`);
@@ -232,9 +234,24 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     const next = new URLSearchParams(params); next.delete('action'); setParams(next, { replace: true });
     if (action === 'search') { setDrawer(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.nb-search input')?.focus()); }
     if (action === 'new-page') {
-      createInstant('page', { sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0]?.id });
+      createInstant('page', { sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? activeSection ?? tree.sections[0]?.id });
     }
   }, [params, tree]);
+  const savePageTitle = async (id: number, title: string) => {
+    const current = syncRef.current;
+    if (current?.pageId === id) {
+      // Join first: a local title written before the initial remote document
+      // arrives can lose to its independently-created Yjs map entry.
+      if (!current.data && !await current.flush()) throw new Error('Wait for the page to load before renaming it.');
+      if (syncRef.current !== current || !current.data?.editable || current.restoring || ['unavailable', 'conflict', 'error'].includes(current.status)) throw new Error('This page cannot be renamed right now.');
+      current.doc.getMap('meta').set('title', title);
+      if (!await current.flush()) throw new Error('Title has not reached the server.');
+    } else {
+      const base = `/api/notebook/pages/${id}`;
+      const page = await apiJson(base, { cache: 'no-store' });
+      await apiJson(base, { method: 'PUT', body: JSON.stringify({ title, baseRevision: page.revision }) });
+    }
+  };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!dialog || !await leave()) return;
     const { action, kind, item } = dialog;
@@ -253,8 +270,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       const base = `/api/notebook/${plural[kind]}`;
       if (action === 'delete') { await apiJson(`${base}/${item!.id}`, { method: 'DELETE' }); if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); } }
       if (action === 'rename') {
-        if (kind === 'page' && syncRef.current?.pageId === item!.id) { syncRef.current.doc.getMap('meta').set('title', name.trim()); if (!await syncRef.current.flush()) throw new Error('Title has not been saved yet'); }
-        else if (kind === 'page') { const p = await apiJson(`${base}/${item!.id}`, { cache: 'no-store' }); await apiJson(`${base}/${item!.id}`, { method: 'PUT', body: JSON.stringify({ title: name, baseRevision: p.revision }) }); }
+        if (kind === 'page') await savePageTitle(item!.id, name.trim());
         else await apiJson(`${base}/${item!.id}`, { method: 'PATCH', body: JSON.stringify({ title: name, color }) });
       }
       if (action === 'move') await apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind, id: item!.id, to: kind === 'section' ? { notebookId: Number(targetBook) } : { sectionId: Number(targetSection), parentId: targetParent ? Number(targetParent) : null }, index: 0 }) });
@@ -277,8 +293,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       if (!await leave()) return;
       const saved = await mutate(async () => {
         const base = `/api/notebook/${plural[kind]}/${item.id}`;
-        if (kind === 'page' && syncRef.current?.pageId === item.id) { syncRef.current.doc.getMap('meta').set('title', value); if (!await syncRef.current.flush()) throw new Error('Title has not reached the server.'); }
-        else if (kind === 'page') { const current = await apiJson(base, { cache: 'no-store' }); await apiJson(base, { method: 'PUT', body: JSON.stringify({ title: value, baseRevision: current.revision }) }); }
+        if (kind === 'page') await savePageTitle(item.id, value);
         else await apiJson(base, { method: 'PATCH', body: JSON.stringify({ title: value }) });
         setRenaming(null);
       });
@@ -392,13 +407,13 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
-      <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
+      <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId })}><Plus /> New page</Button>}
       <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
-    <div className="nb-body"><aside hidden={!mobile&&writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={!mobile&&writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => sectionId && createInstant('page', { sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+    <div className="nb-body">{!mobile && <><aside hidden={writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => sectionId && createInstant('page', { sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside></>}<main className="nb-main">
       {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onFocus={()=>{exitFocused.current=true;}} onBlur={()=>{exitFocused.current=false;}} onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
       {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
