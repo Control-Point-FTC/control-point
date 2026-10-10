@@ -84,10 +84,15 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     const originalPush = navigator.push, originalReplace = navigator.replace;
     let navigating = false;
     const guard = (original: typeof navigator.push) => (...args: Parameters<typeof navigator.push>) => {
-      if (!notebookExitNeedsSave()) { original.apply(navigator, args); return; }
+      const destination = args[0];
+      const pathname = typeof destination === 'string' ? destination.split(/[?#]/)[0] : destination.pathname;
+      const withinNotebook = !!pathname && /^\/notebook(?:\/p\/[1-9]\d*)?\/?$/.test(pathname);
+      // Main-page changes keep the secondary session mounted. Only leaving the
+      // notebook must flush every session; pick() also guards the main editor.
+      if (withinNotebook ? !syncRef.current?.pending : !notebookExitNeedsSave()) { original.apply(navigator, args); return; }
       if (navigating) return; navigating = true;
       void (async () => {
-        if (await prepareNotebookExit('switch')) original.apply(navigator, args);
+        if (withinNotebook ? await leave() : await prepareNotebookExit('switch')) original.apply(navigator, args);
         else setError('Save or recover your notebook changes before leaving this page.');
       })().finally(() => { navigating = false; });
     };
