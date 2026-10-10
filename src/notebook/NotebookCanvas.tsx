@@ -135,10 +135,17 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     const selected = items.filter(i => selection.includes(i.id));
     useEffect(() => {
         if (!anchorTarget || !/^[\w-]{1,100}$/.test(anchorTarget)) return;
-        const target = stage.current?.querySelector(`[data-canvas-id="${anchorTarget}"]`);
-        target?.scrollIntoView({ block:'center', behavior:'smooth' }); target?.classList.add('nb-linked-block');
-        const timer = setTimeout(() => target?.classList.remove('nb-linked-block'),2500);
-        return () => { clearTimeout(timer); target?.classList.remove('nb-linked-block'); };
+        // A whole canvas item, or a line inside a canvas text box (its editor
+        // may still be mounting, so look again for a moment).
+        let target: Element | null = null, timer: ReturnType<typeof setTimeout> | undefined, tries = 0;
+        const find = () => {
+            target = stage.current?.querySelector(`[data-canvas-id="${anchorTarget}"], [data-canvas-id] [data-id="${anchorTarget}"]`) ?? null;
+            if (!target) { if (++tries < 10) timer = setTimeout(find, 200); return; }
+            target.scrollIntoView({ block:'center', behavior:'smooth' }); target.classList.add('nb-linked-block');
+            const el = target; timer = setTimeout(() => el.classList.remove('nb-linked-block'),2500);
+        };
+        find();
+        return () => { clearTimeout(timer); (target as Element | null)?.classList.remove('nb-linked-block'); };
     }, [anchorTarget, items]);
     useEffect(() => { if (active) onSelectionChange?.(selected.length === 1 ? selected[0].id : null); }, [selection, items, onSelectionChange, active]);
     useEffect(() => {

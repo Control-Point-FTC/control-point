@@ -44,11 +44,14 @@ export function TaskFromNote({ editor, pageId, pageTitle, open, onOpenChange, no
   const [due, setDue] = useState(''), [time, setTime] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   // After a failed attempt the task may still have been created (the answer
-  // got lost): a retry first looks for it, so it isn't made twice.
-  const attempted = useRef(false);
+  // got lost). The attempted request is kept as sent, the form is locked, and
+  // a retry first looks for that exact task (by its reference) so it is never
+  // made twice and later edits can't be silently dropped.
+  const attempted = useRef<{ title: string; description: string; body: string; blockId: string | null } | null>(null);
+  const locked = attempted.current !== null;
   useEffect(() => {
     if (!open) return;
-    setDraft(currentLine(editor)); attempted.current = false; setAssignees([]); setPriority('medium'); setDue(''); setTime(''); setError('');
+    setDraft(currentLine(editor)); attempted.current = null; setAssignees([]); setPriority('medium'); setDue(''); setTime(''); setError('');
     const abort = new AbortController();
     apiJson<Member[]>('/api/members', { cache: 'no-store', signal: abort.signal }).then(list => { if (!abort.signal.aborted) setMembers(Array.isArray(list) ? list : []); }).catch(() => undefined);
     return () => abort.abort();
@@ -57,28 +60,35 @@ export function TaskFromNote({ editor, pageId, pageTitle, open, onOpenChange, no
     e.preventDefault();
     if (!draft.title.trim() || busy) return;
     setBusy(true); setError('');
-    const source = `${window.location.origin}${notebookPageLink(pageId, draft.blockId)}`;
     try {
-      const title = draft.title.trim();
-      const existing = attempted.current
-        ? (await apiJson<{ id: number; title: string; description?: string | null }[]>('/api/tasks', { cache: 'no-store' }).catch(() => [])).find(t => t.title === title && (t.description ?? '').includes(source))
-        : undefined;
-      attempted.current = true;
-      const created = existing ?? await apiJson<{ id: number }>('/api/tasks', { method: 'POST', body: JSON.stringify({
-        title, description: `From the notebook page “${pageTitle || 'Untitled'}”: ${source}`,
-        assignee_ids: assignees, priority, ...(due ? { due_date: due, ...(time ? { due_time: time } : {}) } : {}),
-      }) });
-      const linked = linkLineToTask(editor, draft.blockId, created.id);
+      let request = attempted.current, existing: { id: number } | undefined;
+      if (request) {
+        // A failed lookup throws: without proof the task doesn't exist, don't post it again.
+        const tasks = await apiJson<{ id: number; title: string; description?: string | null }[]>('/api/tasks', { cache: 'no-store' });
+        existing = (Array.isArray(tasks) ? tasks : []).find(t => t.title === request!.title && t.description === request!.description);
+      } else {
+        const source = `${window.location.origin}${notebookPageLink(pageId, draft.blockId)}`;
+        const ref = Math.random().toString(36).slice(2, 10);
+        const title = draft.title.trim(), description = `From the notebook page “${pageTitle || 'Untitled'}”: ${source} (ref ${ref})`;
+        request = { title, description, blockId: draft.blockId, body: JSON.stringify({
+          title, description, assignee_ids: assignees, priority, ...(due ? { due_date: due, ...(time ? { due_time: time } : {}) } : {}),
+        }) };
+        attempted.current = request;
+      }
+      const created = existing ?? await apiJson<{ id: number }>('/api/tasks', { method: 'POST', body: request.body });
+      attempted.current = null;
+      const linked = linkLineToTask(editor, request.blockId, created.id);
       notify(linked ? 'Task created and linked on this line.' : 'Task created. The line changed, so add a link to it from Insert → Task or meeting.');
       onOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create the task.');
+      setError(`${err instanceof Error ? err.message : 'Could not create the task.'} It may have been saved anyway, so the details are locked: Retry checks for it first.`);
     } finally { setBusy(false); }
   };
   return <Dialog open={open} onOpenChange={v => { if (!busy) onOpenChange(v); }}><DialogContent>
     <DialogHeader><DialogTitle>Create a task</DialogTitle><DialogDescription>The task links back to this line, and this line links to the task.</DialogDescription></DialogHeader>
     <form className="nb-form" onSubmit={submit}>
       <Label htmlFor="nb-task-title">Task</Label>
+      <fieldset disabled={locked} className="contents">
       <Input id="nb-task-title" required maxLength={200} value={draft.title} onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} />
       <Label htmlFor="nb-task-assignees">Assign to</Label>
       <select id="nb-task-assignees" multiple size={Math.min(5, Math.max(2, members.length))} value={assignees.map(String)} onChange={e => setAssignees([...e.target.selectedOptions].map(o => Number(o.value)))}>
@@ -90,8 +100,9 @@ export function TaskFromNote({ editor, pageId, pageTitle, open, onOpenChange, no
       <Input id="nb-task-due" type="date" value={due} onChange={e => { setDue(e.target.value); if (!e.target.value) setTime(''); }} />
       <Label htmlFor="nb-task-time">Due time</Label>
       <Input id="nb-task-time" type="time" disabled={!due} value={time} onChange={e => setTime(e.target.value)} />
+      </fieldset>
       {error && <p role="alert" className="text-rose-500">{error}</p>}
-      <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button><Button type="submit" disabled={busy || !draft.title.trim()}>{busy ? 'Creating…' : 'Create task'}</Button></DialogFooter>
+      <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button><Button type="submit" disabled={busy || !draft.title.trim()}>{busy ? 'Creating…' : locked ? 'Retry' : 'Create task'}</Button></DialogFooter>
     </form>
   </DialogContent></Dialog>;
 }

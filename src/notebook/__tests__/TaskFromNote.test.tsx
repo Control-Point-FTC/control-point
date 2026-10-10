@@ -67,10 +67,33 @@ describe('create a task from a note', () => {
     render(<TaskFromNote editor={editor} pageId={12} pageTitle="Build log" open onOpenChange={onOpenChange} notify={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Network error');
-    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    // The attempted request is locked so edits can't drift from what was sent.
+    expect(screen.getByLabelText('Task')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(posts).toBe(1);
     expect(JSON.stringify(editor.getJSON())).toContain('/tasks?task=90');
+  });
+
+  it('does not post again when the lookup fails, and resends the same request when nothing was saved', async () => {
+    const bodies: string[] = []; let lookup: 'fail' | 'empty' = 'fail';
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => {
+      if (url === '/api/members') return [] as any;
+      if (url === '/api/tasks' && init?.method === 'POST') { bodies.push(init.body); if (bodies.length === 1) throw new Error('Network error'); return { id: 5 } as any; }
+      if (url === '/api/tasks') { if (lookup === 'fail') throw new Error('Lookup failed'); return [] as any; }
+      return null as any;
+    });
+    const onOpenChange = vi.fn();
+    render(<TaskFromNote editor={make()} pageId={12} pageTitle="Build log" open onOpenChange={onOpenChange} notify={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network error');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText(/Lookup failed/)).toBeInTheDocument();
+    expect(bodies).toHaveLength(1);
+    lookup = 'empty';
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(bodies).toEqual([bodies[0], bodies[0]]);
   });
 
   it('shows why it could not create the task', async () => {
