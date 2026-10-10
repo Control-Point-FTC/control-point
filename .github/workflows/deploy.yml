@@ -136,7 +136,9 @@ jobs:
           # Remove files an earlier deploy shipped that are gone from git (moved into the backup).
           if [ -f $C/.deploy-manifest ]; then
             comm -23 <(sort $C/.deploy-manifest) <(sort "$N/backend/.deploy-manifest") | while read -r f; do
-              [ -f "$C/$f" ] && { backup "$f"; rm -f "$C/$f"; echo "removed $f"; }
+              if [ -f "$C/$f" ]; then
+                backup "$f"; rm -f "$C/$f"; echo "removed $f"
+              fi
             done
           fi
           cp $N/backend/.deploy-manifest $C/.deploy-manifest
