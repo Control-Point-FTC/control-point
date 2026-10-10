@@ -12,6 +12,8 @@ export type NotebookWorkspace = {
   /** Top bar → Sticky Notes (personal scratch notes, not page content). */
   toggleStickyNotes: () => void;
   stickyNotesOpen: boolean;
+  /** Insert → Page templates: a new page in this section from a template. */
+  openTemplates?: (sectionId: number) => void;
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);

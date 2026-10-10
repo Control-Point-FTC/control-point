@@ -38,10 +38,10 @@ export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: B
 }
 
 /** A labelled dropdown (no main action), e.g. alignment or tags. */
-export function RibbonMenu({ label, icon, showLabel, disabled, children }: { label: string; icon?: string; showLabel?: boolean; disabled?: boolean; children: React.ReactNode }) {
+export function RibbonMenu({ label, icon, showLabel, disabled, children, open, onOpenChange }: { label: string; icon?: string; showLabel?: boolean; disabled?: boolean; children: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void }) {
   const Glyph = notebookCommandGlyph(icon ?? label);
   const menu = useMenuFocus();
-  return <DropdownMenu modal={false}>
+  return <DropdownMenu modal={false} open={open} onOpenChange={onOpenChange}>
     <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{(showLabel || !Glyph) && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
     <DropdownMenuContent className="nb-rmenu" {...menu.content}>{children}</DropdownMenuContent>
   </DropdownMenu>;

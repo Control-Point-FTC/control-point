@@ -9,7 +9,8 @@ import { NotebookMobileToolbar } from './NotebookMobileToolbar';
 import { notebookCommandGlyph } from './NotebookIcons';
 import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
-import { RibbonButton, RibbonGroup } from './ribbon/RibbonParts';
+import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
+import { TableGrid } from './ribbon/TableGrid';
 import { useNotebookWorkspace } from './workspaceContext';
 import { Thesaurus } from './ribbon/Thesaurus';
 import { autoCapitalizeEnabled, setAutoCapitalize } from './autoCapitalize';
@@ -75,6 +76,9 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [href, setHref] = useState('');
   const [label, setLabel] = useState('');
   const [notice, setNotice] = useState('');
+  const [tableMenu, setTableMenu] = useState(false);
+  const workspace = useNotebookWorkspace();
+  const pageSection = pages.find(p => p.id === pageId)?.sectionId;
   const [finding, setFinding] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
   const [thesaurus, setThesaurus] = useState(false);
@@ -142,8 +146,9 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     file: pagePanel('file'),
     home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} />,
     insert: <>
-      <RibbonGroup label="Tables"><RibbonButton label="Table" showLabel disabled={disabled} onClick={() => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} /></RibbonGroup>
+      <RibbonGroup label="Tables"><RibbonMenu label="Table" showLabel disabled={disabled} open={tableMenu} onOpenChange={setTableMenu}><TableGrid onPick={(rows, cols) => { setTableMenu(false); chain().insertTable({ rows, cols, withHeaderRow: true }).run(); }} /></RibbonMenu></RibbonGroup>
       {panels.insert && <RibbonGroup label="Files">{panels.insert}</RibbonGroup>}
+      {workspace?.openTemplates && <RibbonGroup label="Pages"><RibbonButton label="Page templates" icon="Template" showLabel disabled={!workspace.tree?.permissions.edit || !pageSection} onClick={() => { if (pageSection) workspace.openTemplates?.(pageSection); }} /></RibbonGroup>}
       <RibbonGroup label="Links"><RibbonButton label="Link" showLabel shortcut="Ctrl+K" active={editor.isActive('link')} disabled={disabled} onClick={openLink} /></RibbonGroup>
       <RibbonGroup label="Blocks">
         <RibbonButton label="Code block" icon="Code" showLabel active={editor.isActive('codeBlock')} disabled={disabled} onClick={() => chain().toggleCodeBlock().run()} />

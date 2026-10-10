@@ -39,20 +39,27 @@ export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
   </NodeViewWrapper>;
 }
 export const NotebookFileView=NotebookFile.extend({addNodeView(){return ReactNodeViewRenderer(NotebookAttachment);}});
+/** How a chosen file goes in: as it is (images show, others are chips),
+ *  as a picture, or as a PDF printout whose pages show (and take ink). */
+export type UploadAs='auto'|'image'|'pdf';
+export const PICTURE_TYPES=['image/png','image/jpeg','image/gif','image/webp'];
 export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
+  const [fileAs,setFileAs]=useState<UploadAs>('auto');
   const [file,setFile]=useState<File|null>(null),[status,setStatus]=useState(''),[progress,setProgress]=useState(0),[busy,setBusy]=useState(false);
   const request=useRef<XMLHttpRequest|null>(null),mounted=useRef(true);
   const retained=useRef<{file:File;metadata:any}|null>(null),latestEditor=useRef(editor);latestEditor.current=editor;
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;request.current?.abort();};},[sync]);
-  const upload=(chosen:File)=>{
-    if(busy)return;setFile(chosen);setProgress(0);
+  const upload=(chosen:File,as:UploadAs='auto')=>{
+    if(busy)return;setFile(chosen);setFileAs(as);setProgress(0);
+    if(as==='image'&&!PICTURE_TYPES.includes(chosen.type)){setStatus('Choose a picture: PNG, JPEG, GIF or WebP.');setFile(null);return;}
+    if(as==='pdf'&&chosen.type!=='application/pdf'){setStatus('A file printout needs a PDF. Use Attach file for other files.');setFile(null);return;}
     if(chosen.size>25*1024*1024){setStatus('Files must be 25 MB or smaller.');return;}
     if(!chosen.size){setStatus('Choose a nonempty file.');return;}
     if(!editor || editor.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status)){setStatus('Editing is unavailable.');return;}
     const insert=(uploaded:any)=>{
       const target=latestEditor.current;
       if(!target || target.isDestroyed || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status))throw new Error('The file uploaded, but editing permission changed. Reopen the page before inserting it.');
-      const inserted=target.chain().focus().insertContent({type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}}).run();
+      const inserted=target.chain().focus().insertContent({type:'notebookFile',attrs:{fileId:uploaded.id,name:uploaded.name,mimeType:uploaded.mimeType,size:uploaded.size,display:as==='pdf'&&uploaded.mimeType==='application/pdf'?'pdf':uploaded.mimeType.startsWith('image/')?'image':'chip',width:640}}).run();
       if(!inserted)throw new Error('The file uploaded, but could not be inserted here. Choose a text position and retry.');
       setStatus(`${uploaded.name} inserted.`);setFile(null);retained.current=null;
     };
@@ -71,7 +78,8 @@ export function useNotebookUpload(sync:NotebookSync,editor:Editor|null){
     xhr.onabort=()=>{if(mounted.current){setBusy(false);setStatus('Upload cancelled.');}};
     const form=new FormData();form.append('file',chosen);xhr.send(form);
   };
-  const Glyph=notebookCommandGlyph('Link');
-  const controls=<div className="nb-upload-controls"><label className="nb-tool">{Glyph && <Glyph/>}Attach file<input type="file" disabled={busy || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status)} onChange={e=>{const next=e.target.files?.[0];if(next)upload(next);e.target.value='';}}/></label>{busy?<><progress aria-label="File upload progress" value={progress} max={100}/><button onClick={()=>request.current?.abort()}>Cancel upload</button></>:file && <button onClick={()=>upload(file)}>Retry upload</button>}{status && <span role="status">{status}</span>}</div>;
+  const blocked=busy || !sync.data?.editable || ['unavailable','conflict','error'].includes(sync.status);
+  const picker=(label:string,glyph:string,as:UploadAs,accept?:string)=>{const Glyph=notebookCommandGlyph(glyph);return <label className="nb-tool" aria-disabled={blocked || undefined}>{Glyph && <Glyph/>}{label}<input type="file" accept={accept} disabled={blocked} onChange={e=>{const next=e.target.files?.[0];if(next)upload(next,as);e.target.value='';}}/></label>;};
+  const controls=<div className="nb-upload-controls">{picker('Attach file','Link','auto')}{picker('Pictures','Picture','image',PICTURE_TYPES.join(','))}{picker('File printout','Printout','pdf','application/pdf')}{busy?<><progress aria-label="File upload progress" value={progress} max={100}/><button onClick={()=>request.current?.abort()}>Cancel upload</button></>:file && <button onClick={()=>upload(file,fileAs)}>Retry upload</button>}{status && <span role="status">{status}</span>}</div>;
   return {upload,controls,busy};
 }
