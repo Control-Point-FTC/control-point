@@ -20,6 +20,7 @@ import {notebookRestore} from './notebookRecovery.js';
 import {notebookTrashPage} from './notebookTrashPreview.js';
 import {notebookPurge} from './notebookPurge.js';
 import { lookUpWord } from './thesaurus.js';
+import { MAX_TAGGED_BLOCKS, taggedBlocks, type TaggedBlock } from './notebookTags.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -574,6 +575,34 @@ export class NotebookStore {
     }
     return hits;
   }); }
+  /** Home → Find Tags. Visibility is decided by the tree first, so protected
+   *  pages are never read for someone who can't see them. */
+  tags(ctx: NotebookContext, filter: { section?: unknown; page?: unknown }) { return this.session(ctx, async s => {
+    const wanted = (value: unknown) => {
+      if (value === undefined || value === '') return null;
+      const n = Number(value);
+      if (!Number.isSafeInteger(n) || n <= 0) throw new NotebookError("Choose a valid section or page");
+      return n;
+    };
+    const pageId = wanted(filter.page), sectionId = wanted(filter.section);
+    let pages = (await s.tree()).pages;
+    if (pageId) pages = pages.filter(p => p.id === pageId);
+    else if (sectionId) pages = pages.filter(p => p.sectionId === sectionId);
+    const blocks: TaggedBlock[] = [];
+    // One past the cap tells us whether anything was really left out.
+    const room = () => MAX_TAGGED_BLOCKS + 1 - blocks.length;
+    for (let i = 0; i < pages.length && room() > 0; i += 200) {
+      const chunk = pages.slice(i, i + 200);
+      // Only pages whose saved content has a tag are read in full.
+      const rows = await s.all(`SELECT id,content FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND content LIKE '%"nbTag":"%' AND id IN (${chunk.map(() => '?').join(',')})`, ctx.teamId, ...chunk.map(p => p.id));
+      const content = new Map(rows.map(r => [Number(r.id), r.content]));
+      for (const p of chunk) {
+        if (!content.has(p.id) || room() <= 0) continue;
+        blocks.push(...taggedBlocks(content.get(p.id), { id: p.id, title: p.title, sectionId: p.sectionId, updatedAt: p.updatedAt }, room()));
+      }
+    }
+    return { blocks: blocks.slice(0, MAX_TAGGED_BLOCKS), truncated: blocks.length > MAX_TAGGED_BLOCKS };
+  }); }
   trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
   trashPage(ctx:NotebookContext,pageId:number){return this.session(ctx,s=>notebookTrashPage(s,pageId));}
   purge(ctx:NotebookContext,kind:Kind,itemId:number,confirmation:unknown){return this.session(ctx,s=>notebookPurge(s,kind,itemId,confirmation));}
@@ -616,7 +645,10 @@ export class NotebookStore {
     s.require("organize_notebook");
     const row = await s.item(kind, itemId);
     await s.checkChildren(kind, row);
-    const n = Number(index);
+    // A position can also be relative, so pages hidden from this member
+    // (protected siblings) never throw the placement off: 'end' appends,
+    // and to.afterId lands right after that sibling.
+    const n = index === 'end' ? Number.MAX_SAFE_INTEGER : Number(index);
     if (!Number.isSafeInteger(n) || n < 0) throw new NotebookError("Invalid position");
     let siblingWhere = "team_id=? AND deleted_at IS NULL";
     let siblingArgs: any[] = [ctx.teamId];
@@ -655,7 +687,16 @@ export class NotebookStore {
       siblingArgs.push(sectionId, parentId);
     }
     const siblings = (await s.all(`SELECT id FROM ${tables[kind]} WHERE ${siblingWhere} AND id!=? ORDER BY position,id`, ...siblingArgs, row.id)).map(r => r.id);
-    siblings.splice(Math.min(n, siblings.length), 0, row.id);
+    let at = Math.min(n, siblings.length);
+    if (to.afterId !== undefined && to.afterId !== null) {
+      // The reference goes through the same access check as any item, so a
+      // hidden page and a missing one look alike (no probing for ids).
+      const reference = await s.item(kind, id(to.afterId));
+      const after = siblings.indexOf(reference.id);
+      if (after < 0) throw new NotebookError("Choose a page at the same level");
+      at = after + 1;
+    }
+    siblings.splice(at, 0, row.id);
     for (let i = 0; i < siblings.length; i++) await s.run(`UPDATE ${tables[kind]} SET position=? WHERE id=? AND team_id=?`, i, siblings[i], ctx.teamId);
     return s.tree();
   }); }
@@ -765,6 +806,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.put('/api/notebook/read', handle((ctx, req) => store.markRead(ctx, req.body ?? {})));
   app.get('/api/notebook/recent', handle((ctx, req) => store.recent(ctx, { since: req.query.since, author: req.query.author })));
   app.get('/api/notebook/authors', handle(ctx => store.authors(ctx)));
+  app.get('/api/notebook/tags', handle((ctx, req) => store.tags(ctx, { section: req.query.section, page: req.query.page })));
   // Review → Thesaurus (WordNet, on this server; no AI).
   app.get('/api/notebook/thesaurus', handle(async (_ctx, req) => lookUpWord(String(req.query.word ?? '').slice(0, 60)) ?? { word: String(req.query.word ?? '').slice(0, 60), senses: [] }));
   app.put('/api/notebook/mentions/:id/read', handle((ctx, req) => store.readMention(ctx, id(req.params.id))));

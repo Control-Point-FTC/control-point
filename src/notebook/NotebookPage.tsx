@@ -10,7 +10,7 @@ import type { NotebookTree, NotebookPageItem } from './types';
 import './notebook.css';
 import './notebook-desktop.css';
 import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
-import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
+import { notebookDrop, notebookSiblings, promoteMove, subpageMove, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
 import { findNotebookSession,notebookExitNeedsSave,prepareNotebookExit } from './notebookRuntime';
 import {NotebookSplitView} from './NotebookSplitView';
@@ -21,7 +21,7 @@ import {NotebookTrash} from './NotebookTrash';
 import {NotebookQuickNote} from './NotebookQuickNote';
 import { defaultNotebookPage, lastPageKey, readLastPage, saveLastPage } from './autoOpen';
 import { NotebookRibbonShell } from './NotebookToolbar';
-import { NotebookWorkspaceContext } from './workspaceContext';
+import { NotebookWorkspaceContext, type TagSummaryView } from './workspaceContext';
 import { StickyNotes } from './StickyNotes';
 import { NotebookBreadcrumbs, pageTrail, usePageHistory } from './NotebookBreadcrumbs';
 
@@ -259,6 +259,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       }
     })();
   };
+  /** Make subpage / Promote subpage: the page keeps its subpages and its place in the list. */
+  const nestPage = async (id: number, move: { to: { parentId: number | null; afterId?: number }; index: number | 'end' } | null) => {
+    if (!move || !await leave()) return;
+    await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind: 'page', id, ...move }) }));
+  };
   const mutate = async (fn: () => Promise<unknown>) => {
     if (busy) return false;
     setBusy(true); setError('');
@@ -286,6 +291,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   if (verifiedMissing.current !== null && verifiedMissing.current !== selected) verifiedMissing.current = null;
   const [landingNotice, setLandingNotice] = useState('');
   const [stickyOpen, setStickyOpen] = useState(false);
+  const [tagSummaryOpen, setTagSummaryOpen] = useState(false);
+  const [tagSummaryView, setTagSummaryView] = useState<TagSummaryView>({ scope: 'section', only: '', hideDone: false });
   useEffect(() => {
     if (!tree || params.get('action')) return;
     if (selected && tree.pages.some(p => p.id === selected)) { saveLastPage(lastKey, selected); return; }
@@ -431,7 +438,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree?.permissions.organize && kind === 'section' && <DropdownMenuItem onClick={() => open({ action: 'defaults', kind, item })}>Page defaults…</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'move', kind, item })}>Move…</DropdownMenuItem>}
       {tree?.permissions.organize && <><DropdownMenuItem onClick={() => { void reorder(kind, item, -1); }}>Move up</DropdownMenuItem><DropdownMenuItem onClick={() => { void reorder(kind, item, 1); }}>Move down</DropdownMenuItem></>}
-      {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind, id: item.id, to: { parentId: tree.pages.find(p => p.id === item.parentId)?.parentId ?? null }, index: 0 }) })); })(); }}>Promote page</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'page' && <DropdownMenuItem disabled={!subpageMove(tree, item.id)} onClick={() => { void nestPage(item.id, subpageMove(tree, item.id)); }}>Make subpage</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void nestPage(item.id, promoteMove(tree, item.id)); }}>Promote subpage</DropdownMenuItem>}
       {tree?.permissions.edit && kind === 'page' && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(async () => { const p = await apiJson(`/api/notebook/pages/${item.id}/duplicate`, { method: 'POST', body: '{}' }); setParams({ page: String(p.id) }); }); })(); }}>Duplicate page only</DropdownMenuItem>}
       {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => createInstant('page', { sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>Add {kind === 'page' ? 'subpage' : 'page'}</DropdownMenuItem>}
       {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'template', kind: 'page', sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>New page from template…</DropdownMenuItem>}
@@ -477,7 +485,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number) => { void pick(id); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen, openTemplates: (sectionId: number) => open({ action: 'template', kind: 'page', sectionId }) };
+  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number, blockId?: string) => { void pick(id, blockId); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen, tagSummaryOpen, setTagSummaryOpen, tagSummaryView, setTagSummaryView, openTemplates: (sectionId: number) => open({ action: 'template', kind: 'page', sectionId }) };
   return <NotebookWorkspaceContext.Provider value={workspace}><div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>

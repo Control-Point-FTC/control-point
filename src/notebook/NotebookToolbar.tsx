@@ -11,6 +11,8 @@ import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
 import { TableGrid } from './ribbon/TableGrid';
+import { TagSummary } from './ribbon/TagSummary';
+import { sortTable } from './tableSort';
 import { useNotebookWorkspace } from './workspaceContext';
 import { Thesaurus } from './ribbon/Thesaurus';
 import { autoCapitalizeEnabled, setAutoCapitalize } from './autoCapitalize';
@@ -79,6 +81,10 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
+  const [localTags, setLocalTags] = useState(false);
+  const tagsWorkspace = workspace;
+  const findingTags = tagsWorkspace?.setTagSummaryOpen ? !!tagsWorkspace.tagSummaryOpen : localTags;
+  const setFindingTags = (open: boolean) => (tagsWorkspace?.setTagSummaryOpen ?? setLocalTags)(open);
   const [finding, setFinding] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
   const [thesaurus, setThesaurus] = useState(false);
@@ -138,13 +144,15 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
       ['Delete row', () => chain().deleteRow().run()], ['Delete column', () => chain().deleteColumn().run()], ['Merge cells', () => chain().mergeCells().run()], ['Split cell', () => chain().splitCell().run()],
       ['Header row', () => chain().toggleHeaderRow().run()], ['Delete table', () => chain().deleteTable().run()], ['Reset cell fill', () => chain().setCellAttribute('backgroundColor', null).run()]] as [string, () => void][])
       .map(([name, run]) => <RibbonButton key={name} label={name} showLabel disabled={disabled} onClick={run} />)}
+    <RibbonButton label="Sort ascending" icon="SortAsc" showLabel disabled={disabled} onClick={() => { const problem = sortTable(editor.state, editor.view.dispatch, 'asc'); if (problem) setNotice(problem); else editor.commands.focus(); }} />
+    <RibbonButton label="Sort descending" icon="SortDesc" showLabel disabled={disabled} onClick={() => { const problem = sortTable(editor.state, editor.view.dispatch, 'desc'); if (problem) setNotice(problem); else editor.commands.focus(); }} />
     <label className="nb-rfield">Cell fill <input aria-label="Cell shading" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setCellAttribute('backgroundColor', e.target.value).run()} /></label>
   </RibbonGroup>;
   const pagePanel = (tab: Tab) => panels[tab] ?? <span className="nb-small" role="status">These commands load with the page.</span>;
 
   const content: Record<Tab, React.ReactNode> = {
     file: pagePanel('file'),
-    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} />,
+    home: <HomeTab editor={editor} disabled={disabled} notify={setNotice} state={home} findingTags={findingTags} onFindTags={() => setFindingTags(!findingTags)} />,
     insert: <>
       <RibbonGroup label="Tables"><RibbonMenu label="Table" showLabel disabled={disabled} open={tableMenu} onOpenChange={setTableMenu}><TableGrid onPick={(rows, cols) => { setTableMenu(false); chain().insertTable({ rows, cols, withHeaderRow: true }).run(); }} /></RibbonMenu></RibbonGroup>
       {panels.insert && <RibbonGroup label="Files">{panels.insert}</RibbonGroup>}
@@ -184,6 +192,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     </div>}
     {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     {thesaurus && <Thesaurus editor={editor} disabled={disabled} onClose={() => setThesaurus(false)} />}
+    {findingTags && <TagSummary pageId={pageId} sectionId={pages.find(p => p.id === pageId)?.sectionId} onClose={() => setFindingTags(false)} />}
     {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {
