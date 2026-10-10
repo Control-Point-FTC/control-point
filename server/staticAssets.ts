@@ -9,7 +9,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
-import { isKnownRoute, withHead, PUBLIC_HEADS, NOT_FOUND_HEAD } from "../src/utils/publicRoutes.js";
+import { isKnownRoute, withHead, publicHeadFor, NOT_FOUND_HEAD } from "../src/utils/publicRoutes.js";
 
 const ENCODINGS: { name: string; ext: string }[] = [
   { name: "br", ext: ".br" },
@@ -130,8 +130,8 @@ export function serveDist(app: express.Express, distDir: string, opts: { csp?: {
   app.get("*", (req, res) => {
     if (req.path.startsWith("/assets/")) return res.status(404).type("text").send("Not found");
     if (!isKnownRoute(req.path)) return sendShell(res, 404, NOT_FOUND_HEAD);
-    const head = PUBLIC_HEADS[req.path];
-    if (head) return sendShell(res, 200, head, req.path);
+    const pub = publicHeadFor(req.path);
+    if (pub) return sendShell(res, 200, pub.head, pub.path);
     sendIndex(req, res);
   });
 }

@@ -83,9 +83,7 @@ import { DialogHost, confirmDialog, promptDialog, notify } from './components/di
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import LegalPage from './Legal';
 import NotFoundPage from './NotFound';
-import { isKnownRoute, PUBLIC_HEADS, SITE_NAME } from './utils/publicRoutes';
-// index.html's own title, restored on the signed-out landing page.
-const DEFAULT_TITLE = typeof document !== 'undefined' ? document.title : SITE_NAME;
+import { isKnownRoute, publicHeadFor, HOME_TITLE, SITE_NAME } from './utils/publicRoutes';
 import { cn, Card, Button, Input } from './components/ui';
 import DashboardView from './components/dashboard/DashboardView';
 import { useTranslation } from 'react-i18next';
@@ -1618,9 +1616,9 @@ export default function App() {
   // Tab titles: "Tasks · Control Point" when signed in, the public page's own
   // title (or the default) when not. Never a notebook page or record name.
   useEffect(() => {
-    const publicHead = PUBLIC_HEADS[location.pathname];
-    if (publicHead) document.title = publicHead.title;
-    else if (!isLoggedIn) document.title = DEFAULT_TITLE;
+    const publicPage = publicHeadFor(location.pathname);
+    if (publicPage) document.title = publicPage.head.title;
+    else if (!isLoggedIn) document.title = HOME_TITLE;
     else if (isKnownRoute(location.pathname)) document.title = `${pageTitle} · ${SITE_NAME}`;
   }, [location.pathname, pageTitle, isLoggedIn]);
   useEffect(() => {
@@ -2226,8 +2224,9 @@ export default function App() {
   if (!isKnownRoute(location.pathname)) {
     return <NotFoundPage signedIn={isLoggedIn} />;
   }
-  if (location.pathname === '/privacy' || location.pathname === '/terms') {
-    return <LegalPage page={location.pathname === '/privacy' ? 'privacy' : 'terms'} />;
+  const legalPath = publicHeadFor(location.pathname)?.path;
+  if (legalPath === '/privacy' || legalPath === '/terms') {
+    return <LegalPage page={legalPath === '/privacy' ? 'privacy' : 'terms'} />;
   }
 
   if (!isLoggedIn) {

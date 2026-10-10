@@ -122,7 +122,7 @@ describe("serveDist", () => {
   });
 
   it("known app routes stay 200, including notebook deep links and join links", async () => {
-    for (const path of ["/notebook", "/notebook/p/12", "/join/cpi_abc", "/checkin/AB12", "/settings/"]) {
+    for (const path of ["/notebook", "/notebook/p/12", "/join/cpi_abc", "/checkin/AB12", "/settings/", "/Tasks", "/NOTEBOOK/p/3"]) {
       expect((await raw(path)).status).toBe(200);
     }
   });
@@ -134,6 +134,15 @@ describe("serveDist", () => {
     expect(html).toContain("<title>Privacy Policy · Control Point</title>");
     expect(html).not.toContain('content="home"');
     expect(html).toContain('content="https://example.test/privacy"');
+  });
+
+  it("trailing-slash and mixed-case legal URLs get the same public head, canonical URL", async () => {
+    for (const path of ["/terms/", "/Terms"]) {
+      const r = await raw(path);
+      expect(r.status).toBe(200);
+      expect(r.body.toString()).toContain("<title>Terms of Service · Control Point</title>");
+      expect(r.body.toString()).toContain('content="https://example.test/terms"');
+    }
   });
 
   it("redirects /favicon.ico to the PNG icon", async () => {

@@ -1,6 +1,7 @@
 // Shared by the server (HTTP status + crawler-visible head tags) and the
 // client (not-found page + document titles). Keep in sync with the <Route>
 // list in App.tsx: a path missing here is answered with a 404 status.
+// Matching is case-insensitive and ignores a trailing slash, like React Router.
 
 const APP_SEGMENTS = [
   'dashboard', 'inbox', 'stats', 'predict', 'teams', 'roles', 'attendance', 'tasks', 'calendar',
@@ -10,10 +11,10 @@ const APP_SEGMENTS = [
 
 const KNOWN = [
   /^\/$/,
-  new RegExp(`^/(${APP_SEGMENTS.join('|')})/?$`),
-  /^\/notebook(\/.*)?$/,
-  /^\/checkin\/[A-Za-z0-9]+\/?$/,
-  /^\/join\/[^/]+\/?$/,
+  new RegExp(`^/(${APP_SEGMENTS.join('|')})/?$`, 'i'),
+  /^\/notebook(\/.*)?$/i,
+  /^\/checkin\/[A-Za-z0-9]+\/?$/i,
+  /^\/join\/[^/]+\/?$/i,
   /^\/predict\/how-it-works$/,
 ];
 
@@ -38,6 +39,15 @@ export const PUBLIC_HEADS: Record<string, PublicHead> = {
     description: 'The terms for using Control Point, the team workspace for robotics clubs: accounts, team content, acceptable use and AI features.',
   },
 };
+
+/** The public page head for a path, if it has one ("/Privacy/" -> privacy). */
+export function publicHeadFor(pathname: string): { path: string; head: PublicHead } | null {
+  const path = (pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname).toLowerCase();
+  return PUBLIC_HEADS[path] ? { path, head: PUBLIC_HEADS[path] } : null;
+}
+
+/** index.html's title: the signed-out home page. */
+export const HOME_TITLE = 'Control Point — AI-powered mission control for your robotics team';
 
 export const NOT_FOUND_HEAD: PublicHead = {
   title: 'Page not found · Control Point',
