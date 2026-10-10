@@ -37,6 +37,12 @@ export async function applyNotebookOps(ops: Record<string, unknown>[], receipt: 
   return out;
 }
 
+/** Identifies the conversation a card belongs to: the saved chat id (unique
+ *  across members and workspaces), or a token for an unsaved conversation. */
+export function conversationScope(chatId: number | null | undefined, draftToken: string): string {
+  return chatId ? `chat:${chatId}` : `draft:${draftToken}`;
+}
+
 export function newReceiptKey(): string {
   return `nb_${globalThis.crypto.randomUUID().replace(/-/g, '')}`;
 }

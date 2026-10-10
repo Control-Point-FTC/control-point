@@ -52,7 +52,10 @@ describe('markdownToNotebookBlocks', () => {
     expect(blocks.map((b: any) => b.type)).toEqual(['taskList', 'bulletList', 'taskList']);
     expect(blocks[0].content[0].attrs.checked).toBe(true);
     expect(blocks[2].content[0].attrs.checked).toBe(false);
-    expect(() => validatedNotebookDocument({ type: 'doc', content: markdownToNotebookBlocks('1. a\n2. [ ] b\n3. c') })).not.toThrow();
+    const steps = markdownToNotebookBlocks('1. a\n2. [ ] b\n3. c');
+    expect(() => validatedNotebookDocument({ type: 'doc', content: steps })).not.toThrow();
+    // Step 3 stays step 3 after the checkbox run.
+    expect(steps.map(b => [b.type, b.attrs?.start])).toEqual([['orderedList', undefined], ['taskList', undefined], ['orderedList', 3]]);
   });
 
   it('keeps an image description as text without fetching it', () => {

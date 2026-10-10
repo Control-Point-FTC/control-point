@@ -70,7 +70,8 @@ function blocks(nodes: MdNode[] = []): JSONContent[] {
           const run = items.slice(i, j);
           if (task) out.push({ type: 'taskList', attrs: { id: newId() }, content: run.map(it => ({ type: 'taskItem', attrs: { id: newId(), checked: !!it.checked }, content: itemContent(it) })) });
           else out.push({ type: n.ordered ? 'orderedList' : 'bulletList', attrs: { id: newId(), ...(n.ordered && start > 1 ? { start } : {}) }, content: run.map(it => ({ type: 'listItem', attrs: { id: newId() }, content: itemContent(it) })) });
-          if (!task) start += run.length;
+          // Every item keeps its original step number, checkbox runs included.
+          start += run.length;
           i = j;
         }
         break;

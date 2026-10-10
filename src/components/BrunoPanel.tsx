@@ -6,7 +6,7 @@ import { stripEventBlocks, extractActionProposals } from '../services/aiService'
 import ChatInput from './ChatInput';
 import BrunoIcon from './BrunoIcon';
 import ActionProposalCard from './ActionProposalCard';
-import { extractNotebookOps } from '../services/notebookProposals';
+import { conversationScope, extractNotebookOps, newReceiptKey } from '../services/notebookProposals';
 import { NotebookProposalCard } from './bruno/NotebookProposalCard';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS } from './BrunoImageAttach';
 import { cn } from './ui';
@@ -31,12 +31,13 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
   // Conversation, starters, output length and streaming are shared with the
   // Modern panel (and survive a mode switch via the draft store).
   const {
-    name, messages, input, setInput, busy, thinkMeta, stop, send, newChat,
+    name, messages, chatId, input, setInput, busy, thinkMeta, stop, send, newChat,
     proposalState, confirmProposals, dismissProposal,
     scoutCtx, greeting, starterPool, starterBatch, refreshStarters,
     attached, setAttached, attachedPdfs, setAttachedPdfs, addAttached,
     outputLevel, changeOutputLevel, levelSaving,
   } = useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved });
+  const draftConversation = useRef(newReceiptKey());
   // Modern experience: live thinking steps, streaming caret and a Stop button.
   const modern = useInterfaceMode().mode === 'modern';
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -261,7 +262,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                         const notebookOps = extractNotebookOps(m.text);
                         const st = proposalState[i]?.status || 'pending';
                         return (<>
-                          {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${i}:${m.text}`} />}
+                          {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversationScope(chatId, draftConversation.current)}:${i}:${m.text}`} />}
                           {proposals.length > 0 && st !== 'dismissed' && <ActionProposalCard
                             proposals={proposals}
                             status={st}

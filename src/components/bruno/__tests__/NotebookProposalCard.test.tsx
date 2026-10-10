@@ -59,9 +59,15 @@ describe('NotebookProposalCard', () => {
     expect(body(1).receipt).toBe(body(3).receipt);
     second.unmount();
     apiJson.mockReset();
-    card(ops, 'reply-7');
+    const third = card(ops, 'reply-7');
     expect(screen.getByText(/Notebook updated/)).toBeTruthy();
     expect(apiJson).not.toHaveBeenCalled();
+    third.unmount();
+    // The same reply text in a different conversation is a new proposal.
+    apiJson.mockResolvedValueOnce({ previews: [{ op: 'create', summary: 'New page "Once" in Build' }] });
+    card(ops, 'chat:99:reply-7');
+    expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
+    expect(screen.queryByText(/Notebook updated/)).toBeNull();
   });
 
   it('blocks apply when any page is unavailable to Bruno', async () => {
