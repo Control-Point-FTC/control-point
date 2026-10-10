@@ -22,13 +22,14 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
   const [destination,setDestination]=useState<Entry|null>(null),[book,setBook]=useState(''),[section,setSection]=useState(''),[parent,setParent]=useState('');
   const [preview,setPreview]=useState<NotebookPageData|null>(null);
+  const [purge,setPurge]=useState<Entry|null>(null),[confirmation,setConfirmation]=useState('');
   const request=useRef<AbortController|null>(null),locked=useRef(false),refreshButton=useRef<HTMLButtonElement|null>(null),restoreFocus=useRef(false);
   useEffect(()=>{if(!busy&&restoreFocus.current){restoreFocus.current=false;refreshButton.current?.focus();}},[busy]);
   const headers={'X-CP-Notebook-Team':String(teamId)};
   const begin=()=>{request.current?.abort();const abort=new AbortController();request.current=abort;locked.current=true;setBusy(true);setError('');return abort;};
   const finish=(abort:AbortController)=>{if(!abort.signal.aborted){locked.current=false;setBusy(false);}};
   const load=async(continuation?:string)=>{
-    if(locked.current)return;const abort=begin();setPreview(null);
+    if(locked.current)return;const abort=begin();setPreview(null);setPurge(null);setConfirmation('');
     try{
       const result=await apiJson<Listing>(`/api/notebook/trash${continuation?`?cursor=${encodeURIComponent(continuation)}`:''}`,{headers,cache:'no-store',signal:abort.signal});
       abort.signal.throwIfAborted();setItems(previous=>continuation?[...new Map([...previous,...result.items].map(item=>[key(item),item])).values()]:result.items);setCursor(result.nextCursor);setRetention(result.retention);
@@ -36,7 +37,7 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
     finally{finish(abort);}
   };
   useEffect(()=>{
-    setItems([]);setCursor(null);setDestination(null);setPreview(null);setError('');setMessage('');setBusy(false);locked.current=false;
+    setItems([]);setCursor(null);setDestination(null);setPreview(null);setPurge(null);setConfirmation('');setError('');setMessage('');setBusy(false);locked.current=false;
     if(!tree.permissions.delete)setOpen(false);
     else if(open)void load();
     return ()=>{request.current?.abort();locked.current=false;};
@@ -66,6 +67,20 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
       else{if(e instanceof ApiError&&[401,403,404].includes(e.status)){setItems([]);setCursor(null);setDestination(null);setPreview(null);}setError(e instanceof Error?e.message:'Cannot restore this item.');}
     }}finally{finish(abort);}
   };
+  const removePermanently=async()=>{
+    if(!purge||confirmation!==purge.title||locked.current)return;
+    const entry=purge,abort=begin();setMessage('');
+    try{
+      await apiJson(`/api/notebook/${plurals[entry.kind]}/${entry.id}/purge`,{method:'POST',headers,body:JSON.stringify({confirmationTitle:confirmation}),signal:abort.signal});
+      abort.signal.throwIfAborted();setPurge(null);setConfirmation('');setPreview(null);setDestination(null);setItems(previous=>previous.filter(item=>key(item)!==key(entry)));
+      setMessage(`“${entry.title}” permanently removed.`);restoreFocus.current=true;onRestored();
+      const refreshed=await apiJson<Listing>('/api/notebook/trash',{headers,cache:'no-store',signal:abort.signal});
+      abort.signal.throwIfAborted();setItems(refreshed.items);setCursor(refreshed.nextCursor);setRetention(refreshed.retention);
+    }catch(e){if(!abort.signal.aborted){
+      if(e instanceof ApiError&&[401,403,404].includes(e.status)){setItems([]);setCursor(null);setPurge(null);setConfirmation('');setPreview(null);setDestination(null);}
+      setError(e instanceof Error?e.message:'Cannot permanently remove this item.');
+    }}finally{finish(abort);}
+  };
   if(!tree.permissions.delete)return null;
   return <>
     <Button className="nb-desktop nb-trash-entry" variant="ghost" onClick={()=>setOpen(true)}><Trash2 size={16}/> Trash</Button>
@@ -73,11 +88,16 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
       <div className="nb-trash-actions"><Button ref={refreshButton} variant="outline" disabled={busy} onClick={()=>void load()}><RefreshCw size={15}/> Refresh</Button><span>{items.length} loaded items</span></div>
       {error&&<p role="alert" className="nb-trash-error">{error}</p>}{message&&<p role="status" className="nb-trash-success">{message}</p>}{busy&&<p role="status">Working with notebook trash…</p>}
       {!busy&&!items.length&&!error&&<div className="nb-trash-empty"><Trash2 size={28}/><h3>Trash is empty</h3><p>Deleted notebook content will appear here.</p></div>}
-      <ul className="nb-trash-items" aria-label="Deleted notebook items">{items.map(entry=>{const Icon=entry.kind==='page'?FileText:entry.kind==='section'?Folder:BookOpen;return <li key={key(entry)}><Icon size={20} aria-hidden="true"/><div><strong>{entry.title}</strong><span>{entry.kind} · Deleted by {entry.deletedBy}</span><time dateTime={entry.deletedAt}>{new Date(entry.deletedAt).toLocaleString()}</time></div><div className="nb-trash-item-actions">{entry.kind==='page'&&<Button variant="ghost" disabled={busy} aria-label={`Preview deleted page ${entry.title}`} onClick={()=>void inspect(entry)}>Preview</Button>}{tree.permissions.organize&&<><Button variant="outline" disabled={busy} aria-label={`Restore ${entry.kind} ${entry.title}`} onClick={()=>void restore(entry)}><ArchiveRestore size={15}/> Restore</Button>{entry.kind!=='notebook'&&<button disabled={busy} onClick={()=>chooseDestination(entry)}>Choose destination</button>}</>}</div></li>;})}</ul>
+      <ul className="nb-trash-items" aria-label="Deleted notebook items">{items.map(entry=>{const Icon=entry.kind==='page'?FileText:entry.kind==='section'?Folder:BookOpen;return <li key={key(entry)}><Icon size={20} aria-hidden="true"/><div><strong>{entry.title}</strong><span>{entry.kind} · Deleted by {entry.deletedBy}</span><time dateTime={entry.deletedAt}>{new Date(entry.deletedAt).toLocaleString()}</time></div><div className="nb-trash-item-actions">{entry.kind==='page'&&<Button variant="ghost" disabled={busy} aria-label={`Preview deleted page ${entry.title}`} onClick={()=>void inspect(entry)}>Preview</Button>}{tree.permissions.organize&&<><Button variant="outline" disabled={busy} aria-label={`Restore ${entry.kind} ${entry.title}`} onClick={()=>void restore(entry)}><ArchiveRestore size={15}/> Restore</Button>{entry.kind!=='notebook'&&<button disabled={busy} onClick={()=>chooseDestination(entry)}>Choose destination</button>}</>}<Button variant="ghost" disabled={busy} aria-label={`Permanently remove ${entry.kind} ${entry.title}`} onClick={()=>{setPurge(entry);setConfirmation('' );setError('');}}>Remove permanently</Button></div></li>;})}</ul>
       {preview&&<section className="nb-trash-preview" aria-label="Retained page preview"><div><h3>{preview.title}</h3><Button variant="ghost" onClick={()=>setPreview(null)}>Close preview</Button></div><p>Read only · Original files open after restoration.</p><RetainedPreview snapshot={preview}/></section>}
       {destination&&<section className="nb-trash-destination" aria-label="Restore destination"><h3>Restore “{destination.title}” to</h3>
         {destination.kind==='section'?<><Label htmlFor="nb-restore-book">Notebook</Label><select id="nb-restore-book" disabled={busy} value={book} onChange={event=>setBook(event.target.value)}><option value="">Choose a notebook</option>{tree.notebooks.map(item=><option key={item.id} value={item.id}>{item.title}</option>)}</select></>:<><Label htmlFor="nb-restore-section">Section</Label><select id="nb-restore-section" disabled={busy} value={section} onChange={event=>{setSection(event.target.value);setParent('');}}><option value="">Choose a section</option>{tree.sections.map(item=><option key={item.id} value={item.id}>{tree.notebooks.find(book=>book.id===item.notebookId)?.title??'Notebook'} / {item.title}{item.protected?' · Admin only':''}</option>)}</select><Label htmlFor="nb-restore-parent">Parent page</Label><select id="nb-restore-parent" disabled={busy} value={parent} onChange={event=>setParent(event.target.value)}><option value="">Top level</option>{tree.pages.filter(item=>item.sectionId===Number(section)).map(item=><option key={item.id} value={item.id}>{item.title}</option>)}</select></>}
         <div><Button disabled={busy||!(destination.kind==='section'?book:section)} onClick={()=>void restore(destination,true)}>Restore here</Button><Button variant="ghost" disabled={busy} onClick={()=>setDestination(null)}>Cancel destination</Button></div>
+      </section>}
+      {purge&&<section className="nb-trash-purge" aria-label="Permanent removal confirmation"><h3>Permanently remove “{purge.title}”?</h3>
+        <p>This permanently removes this {purge.kind}{purge.kind==='page'?' and its child pages':' and everything inside it'}, including saved revisions and discussions. This cannot be undone. Files still used by other retained pages stay available.</p>
+        <Label htmlFor="nb-purge-title">Type the exact title to confirm</Label><input id="nb-purge-title" autoComplete="off" spellCheck={false} disabled={busy} value={confirmation} onChange={event=>setConfirmation(event.target.value)}/>
+        <div><Button variant="destructive" disabled={busy||confirmation!==purge.title} onClick={()=>void removePermanently()}>Confirm permanent removal</Button><Button variant="ghost" disabled={busy} onClick={()=>{setPurge(null);setConfirmation('');}}>Cancel removal</Button></div>
       </section>}
       {cursor&&<Button variant="outline" disabled={busy} onClick={()=>void load(cursor)}>Load older items</Button>}
       {!tree.permissions.organize&&<p>Restoration also requires permission to organize the notebook.</p>}<p className="nb-trash-retention">{retention}</p>
