@@ -15,6 +15,7 @@ import { findNotebookSession } from './notebookRuntime';
 import { NotebookMentions } from './NotebookMentions';
 import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookGlyph, SectionGlyph } from './NotebookIcons';
+import {NotebookTrash} from './NotebookTrash';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -305,6 +306,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree && !tree.notebooks.length && <p className="nb-small">No notebooks yet.</p>}
     </div>
     {(SHOW_NOTEBOOK_CREATION || tree?.notebooks.length===0) && tree?.permissions.organize && <Button variant="outline" onClick={() => open({ action: 'create', kind: 'notebook' })}><Plus /> {tree.notebooks.length ? 'New notebook' : 'Set up team notebook'}</Button>}
+    {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
   return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
