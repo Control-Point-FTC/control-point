@@ -23,7 +23,17 @@ export function optedOut(headers: Record<string, unknown>): boolean {
 export class PageViews {
   // Short-lived, in memory only: who sent a lot just now (not stored).
   private recent = new Map<string, { count: number; since: number }>();
-  constructor(private db: Client = dbClient) {}
+  constructor(private db: Client = dbClient) {
+    // Addresses are forgotten within about a minute, even if no one else visits.
+    setInterval(() => this.prune(), RATE_WINDOW_MS).unref?.();
+  }
+
+  prune(now = Date.now()) {
+    for (const [key, entry] of this.recent) if (now - entry.since > RATE_WINDOW_MS) this.recent.delete(key);
+  }
+
+  /** How many addresses are remembered right now (for tests). */
+  get remembered() { return this.recent.size; }
 
   allow(key: string, now = Date.now()): boolean {
     const entry = this.recent.get(key);

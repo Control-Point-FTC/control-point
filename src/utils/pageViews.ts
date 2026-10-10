@@ -11,6 +11,11 @@ export function countPublicPageView(path: string) {
   } catch { /* counting is never worth an error */ }
 }
 
+/** Counts only when the address bar really shows that public page (the
+ *  landing page also appears, signed out, at private addresses). */
 export function usePublicPageView(path: string) {
-  useEffect(() => { countPublicPageView(path); }, [path]);
+  useEffect(() => {
+    const here = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+    if (here === path) countPublicPageView(path);
+  }, [path]);
 }
