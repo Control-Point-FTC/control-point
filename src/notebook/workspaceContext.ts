@@ -6,12 +6,15 @@ import type { NotebookTree } from './types';
 export type NotebookWorkspace = {
   teamId: number | null;
   tree: NotebookTree | null;
-  openPage: (id: number) => void;
+  openPage: (id: number, blockId?: string) => void;
   refreshTree: () => void;
   openTrash: () => void;
   /** Top bar → Sticky Notes (personal scratch notes, not page content). */
   toggleStickyNotes: () => void;
   stickyNotesOpen: boolean;
+  /** Home → Find Tags stays open while you jump between pages. */
+  tagSummaryOpen?: boolean;
+  setTagSummaryOpen?: (open: boolean) => void;
 };
 export const NotebookWorkspaceContext = createContext<NotebookWorkspace | null>(null);
 export const useNotebookWorkspace = () => useContext(NotebookWorkspaceContext);

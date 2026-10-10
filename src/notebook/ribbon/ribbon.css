@@ -98,3 +98,18 @@
 .nb-syn-word:hover, .nb-syn-word:focus-visible { background: var(--color-primary); }
 .nb-syn-insert { font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--color-line); color: var(--color-accent); }
 .nb-syn-insert:hover:not(:disabled) { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
+
+/* Home → Find Tags: tag summary panel under the ribbon. */
+.nb-tag-summary { display: grid; gap: 10px; max-height: 320px; overflow: auto; margin: 0 10px 8px; padding: 10px 14px; border-radius: 8px; background: var(--color-elevated); border: 1px solid var(--color-line); color: var(--color-text-base); font-size: 13px; }
+.nb-tag-summary header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.nb-tag-summary h2 { font-size: 13px; font-weight: 600; margin: 0 8px 0 0; }
+.nb-tag-summary select { height: 28px; font-size: 12px; }
+.nb-tag-summary header button { padding: 3px 8px; border-radius: 6px; }
+.nb-tag-summary header button:last-child { margin-inline-start: auto; }
+.nb-tag-group h3 { font-size: 12px; font-weight: 600; margin: 0 0 4px; color: var(--color-text-muted); }
+.nb-tag-group h3 span { font-weight: 400; }
+.nb-tag-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.nb-tag-group li button { width: 100%; display: flex; justify-content: space-between; gap: 12px; text-align: start; padding: 5px 8px; border-radius: 6px; }
+.nb-tag-group li button:hover, .nb-tag-group li button:focus-visible { background: var(--color-primary); }
+.nb-tag-group li button[data-done] span { text-decoration: line-through; opacity: .7; }
+.nb-tag-group li small { color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
