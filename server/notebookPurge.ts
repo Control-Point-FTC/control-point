@@ -23,13 +23,12 @@ export async function notebookPurge(s:Session,kind:Kind,itemId:number,confirmati
   await s.run(`${targets} DELETE FROM notebook_links WHERE team_id=? AND target_page_id IN (SELECT id FROM targets)`,...targetArgs,team);
   // Foreign keys remove revisions, discussions, outgoing links and file references atomically.
   await s.run(`DELETE FROM ${tables[kind]} WHERE id=? AND team_id=?`,row.id,team);
-  const deletedFiles:number[]=[];
-  for(const file of candidates){
-    const retained=await s.one('SELECT 1 FROM notebook_file_refs WHERE file_id=? LIMIT 1',file.file_id);
-    const upload=await s.one('SELECT uploaded_page_id FROM notebook_files WHERE file_id=? AND team_id=?',file.file_id,team);
-    if(retained||upload?.uploaded_page_id!=null)continue;
-    const removed=await s.run("DELETE FROM stored_files WHERE id=? AND team_id=? AND kind='notebook'",file.file_id,team);
-    if(removed.rowsAffected)deletedFiles.push(Number(file.file_id));
-  }
-  return {deletedFiles};
+  // One set-based statement avoids holding the shared write queue for three
+  // database round trips per attachment. JSON keeps parameter count bounded.
+  const removed=candidates.length?await s.all(`DELETE FROM stored_files WHERE team_id=? AND kind='notebook' AND id IN (
+    SELECT n.file_id FROM notebook_files n WHERE n.team_id=? AND n.uploaded_page_id IS NULL
+    AND n.file_id IN (SELECT value FROM json_each(?))
+    AND NOT EXISTS (SELECT 1 FROM notebook_file_refs refs WHERE refs.team_id=? AND refs.file_id=n.file_id)
+  ) RETURNING id`,team,team,JSON.stringify(candidates.map(file=>Number(file.file_id))),team):[];
+  return {deletedFiles:removed.map(file=>Number(file.id))};
 }
