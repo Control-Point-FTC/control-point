@@ -4,6 +4,13 @@ const paragraph=(id:string,text:string,marks:any[]=[])=>({type:'paragraph',attrs
 const page=(content:any[],objects:any[]=[])=>({title:'Build journal',content:{type:'doc',content:content.length?content:[{type:'paragraph'}]},canvas:{version:1,objects}});
 const shape={id:'shape',type:'shape',shape:'rectangle',x:10,y:20,width:200,height:100,z:0,rotation:0,locked:false,groupId:null,color:'#112233',fill:null,strokeWidth:2};
 describe('retained revision comparisons',()=>{
+  it('preserves nested paragraph alignment and heading level differences inside table cells',()=>{
+    const table=(block:any)=>({type:'table',attrs:{id:'table-format'},content:[{type:'tableRow',content:[{type:'tableCell',content:[block]}]}]});
+    const before={...paragraph('p','Same text'),attrs:{id:'p',textAlign:'left'}},after={...before,attrs:{id:'p',textAlign:'right'}};
+    expect(compareNotebookRevisions(page([table(before)]),page([table(after)]))).toEqual([expect.objectContaining({changes:['Formatting']})]);
+    const heading=(level:number)=>({type:'heading',attrs:{level},content:[{type:'text',text:'Same heading'}]});
+    expect(compareNotebookRevisions(page([table(heading(2))]),page([table(heading(3))]))).toEqual([expect.objectContaining({changes:['Formatting']})]);
+  });
   it('reports a moved hard line break as a visible text change',()=>{
     const broken=(first:string,last:string)=>({type:'paragraph',attrs:{id:'break'},content:[{type:'text',text:first},{type:'hardBreak'},{type:'text',text:last}]});
     expect(compareNotebookRevisions(page([broken('abc','def')]),page([broken('ab','cdef')]))).toEqual([expect.objectContaining({before:'abc\ndef',after:'ab\ncdef',changes:['Text']})]);

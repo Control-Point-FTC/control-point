@@ -9,13 +9,21 @@ vi.mock('../../components/dialog',()=>({confirmDialog:vi.fn()}));
 const doc=(text:string)=>({type:'doc',content:[{type:'paragraph',attrs:{id:'stable'},content:[{type:'text',text}]}]});
 const old={id:8,revision:2,title:'Old title',content:doc('Old ratio'),canvas:{},authorName:'Ana',savedAt:'2026-10-08T12:00:00Z'};
 function mount(editable=true){
-  const sync:any={pageId:4,scope:{teamId:9},data:{editable},pending:false,flush:vi.fn().mockResolvedValue(true),destroy:vi.fn()};
+  const sync:any={pageId:4,scope:{teamId:9},data:{editable},pending:false,flush:vi.fn().mockImplementation(async()=>{sync.pending=false;return true;}),destroy:vi.fn(),setRestoring:vi.fn()};
   const rejoin=vi.fn();
   vi.mocked(apiJson).mockImplementation(async url=>url.endsWith('/versions')?[old]:url.endsWith('/versions/8')?old:{revision:7,title:'Current title',content:doc('New ratio'),canvas:{}} as any);
   render(<NotebookHistory sync={sync} onRejoin={rejoin}/>);return {sync,rejoin};
 }
 afterEach(()=>{cleanup();vi.resetAllMocks();});
 describe('revision viewer and restore',()=>{
+  it('blocks editing during restore and retains unexpected new pending edits instead of destroying them',async()=>{
+    const {sync,rejoin}=mount();sync.data.protected=true;vi.mocked(confirmDialog).mockResolvedValue(true);
+    await screen.findByRole('option',{name:'Revision 2 · Ana'});
+    vi.mocked(apiJson).mockImplementation(async url=>{if(url.endsWith('/restore')){expect(sync.setRestoring).toHaveBeenCalledWith(true);sync.pending=true;}return {revision:7} as any;});
+    fireEvent.click(screen.getByRole('button',{name:'Restore revision'}));
+    await waitFor(()=>expect(screen.getByRole('alert')).toHaveTextContent('new local edits remain'));
+    expect(sync.destroy).not.toHaveBeenCalled();expect(rejoin).not.toHaveBeenCalled();expect(sync.status).toBe('conflict');expect(sync.setRestoring).toHaveBeenLastCalledWith(false);
+  });
   it('loads scoped read-only snapshots only on explicit preview and compares saved content',async()=>{
     mount();await screen.findByRole('option',{name:'Revision 2 · Ana'});
     expect(vi.mocked(apiJson).mock.calls).toHaveLength(1);

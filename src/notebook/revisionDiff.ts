@@ -19,7 +19,8 @@ function blocks(value:unknown):Map<string,Block>{
     const collect=(child:any)=>{if(child.type==='text'||child.type==='hardBreak'){const marks=stable(child.marks||[]),length=child.type==='hardBreak'?1:(child.text||'').length;const last=runs.at(-1);if(last?.marks===marks)last.length+=length;else runs.push({marks,length});}else(child.content||[]).forEach(collect);};
     if(leaf)collect(node);
     // Adjacent text-node splits are editor details, not block structure changes.
-    return {type:node.type,attrs:attributes(node),runs:runs.some(run=>run.marks!=='[]')?runs:[]};
+    const blockAttributes=(block:any):unknown=>({type:block.type,attrs:attributes(block),children:(block.content||[]).filter((child:any)=>child.type!=='text'&&child.type!=='hardBreak').map(blockAttributes)});
+    return {type:node.type,attrs:attributes(node),runs:runs.some(run=>run.marks!=='[]')?runs:[],childBlocks:leaf?(node.content||[]).filter((child:any)=>child.type!=='text'&&child.type!=='hardBreak').map(blockAttributes):[]};
   };
   const structure=(node:any):unknown=>({type:node.type,children:(node.content||[]).filter((child:any)=>child.type!=='text'&&child.type!=='hardBreak').map(structure)});
   const visit=(node:any,path:string,owner:string)=>{

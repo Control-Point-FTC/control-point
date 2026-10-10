@@ -29,6 +29,8 @@ export class NotebookSync {
   error = '';
   storageError = '';
   data: SyncResponse | null = null;
+  restoring = false;
+  setRestoring(value:boolean) { this.restoring=value;this.emit(); }
   private generation = 0;
   private acknowledged = 0;
   private durableGeneration = -1;

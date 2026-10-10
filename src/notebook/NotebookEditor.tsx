@@ -47,7 +47,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [, redraw] = useState(0);
   const mobile = useNotebookMobile();
   const mobileRef = React.useRef(mobile); mobileRef.current = mobile;
-  const blocked = !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
+  const blocked = sync.restoring || !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
   const [zoom, setZoom] = useState(100);
