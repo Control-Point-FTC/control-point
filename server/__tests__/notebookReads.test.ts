@@ -104,3 +104,45 @@ describe("recent edits and authors", () => {
     expect((await t.api("/api/notebook/read", { method: "PUT", body: JSON.stringify({ read: true }), session })).status).toBe(400);
   });
 });
+
+describe("History review fixes", () => {
+  it("an explicit unread mark survives polls of the open page, and a new visit clears it", async () => {
+    const p = await store.create(ctx(admin), "page", { sectionId: section, title: "Keep unread", content: doc("k") }) as any;
+    const join: any = await store.sync(ctx(ana), p.id, {});
+    await store.markRead(ctx(ana), { pageIds: [p.id], read: false });
+    await store.sync(ctx(ana), p.id, { epoch: join.epoch });
+    expect(await unread(ana, p.id)).toBe(true);
+    await store.sync(ctx(ana), p.id, {});
+    expect(await unread(ana, p.id)).toBe(false);
+  });
+
+  it("purging a page removes its read and contributor rows", async () => {
+    const p = await store.create(ctx(admin), "page", { sectionId: section, title: "Purge me", content: doc("x") }) as any;
+    await store.markRead(ctx(ana), { pageIds: [p.id], read: true });
+    await store.remove(ctx(admin), "page", p.id);
+    await store.purge(ctx(admin), "page", p.id, "Purge me");
+    for (const table of ["notebook_reads", "notebook_contributors"]) {
+      const left = await t.db.execute({ sql: `SELECT COUNT(*) AS n FROM ${table} WHERE page_id=?`, args: [p.id] });
+      expect(Number(left.rows[0].n), table).toBe(0);
+    }
+  });
+
+  it("an earlier contributor stays findable after their revisions age out", async () => {
+    const p = await store.create(ctx(ana), "page", { sectionId: section, title: "Long history", content: doc("a") }) as any;
+    await edit(lee, p.id, "lee");
+    await t.db.execute({ sql: "DELETE FROM notebook_versions WHERE page_id=?", args: [p.id] });
+    expect((await store.recent(ctx(admin), { author: ana, since: new Date(0).toISOString() })).map(r => r.id)).toContain(p.id);
+    expect((await store.authors(ctx(admin))).find(a => a.name === "Ana")).toBeTruthy();
+  });
+
+  it("pages a member can't see never crowd out the ones they can", async () => {
+    const reader = await seedMember(t.db, team, "Reader", "reader@reads.test");
+    const visible = await store.create(ctx(admin), "page", { sectionId: section, title: "Older visible", content: doc("v") }) as any;
+    const vault = (await store.create(ctx(admin), "section", { notebookId: (await store.tree(ctx(admin))).notebooks[0].id, title: "Vault", protected: true })).id;
+    for (let i = 0; i < 520; i++) await t.db.execute({ sql: "INSERT INTO notebook_pages(team_id,section_id,title,content,canvas,plain,position,created_by,updated_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+      args: [team, vault, `Hidden ${i}`, "[]", "{}", "", i, admin, admin, new Date().toISOString(), new Date(Date.now() + 60_000).toISOString()] });
+    const recent = await store.recent(ctx(reader), { since: new Date(0).toISOString() });
+    expect(recent.map(r => r.id)).toContain(visible.id);
+    expect(recent.some(r => r.title.startsWith("Hidden"))).toBe(false);
+  });
+});

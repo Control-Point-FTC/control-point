@@ -1,7 +1,7 @@
 // History: page versions (the existing panel), the notebook recycle bin,
 // Recent Edits, Find by Author and Mark as Read. Every list comes from the
 // server filtered to pages this member may see; read state is personal.
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { apiJson } from '../../services/api';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui-kit';
 import { useNotebookWorkspace } from '../workspaceContext';
@@ -25,15 +25,21 @@ export function HistoryTab({ versions, pageId, notify }: { versions: React.React
   const sectionId = workspace?.tree?.pages.find(p => p.id === pageId)?.sectionId;
   const notebookId = workspace?.tree?.sections.find(s => s.id === sectionId)?.notebookId;
 
+  // Only the latest request may change the dialog; closing it cancels the rest.
+  const request = useRef<AbortController | null>(null);
+  const begin = () => { request.current?.abort(); request.current = new AbortController(); return request.current; };
+  const close = () => { request.current?.abort(); request.current = null; setList(null); setAuthors(null); };
   const showEdits = async (title: string, query: string) => {
+    const call = begin();
     setList({ title, edits: null });
-    try { setList({ title, edits: await apiJson<Edit[]>(`/api/notebook/recent?${query}`, { headers, cache: 'no-store' }) }); }
-    catch (e) { setList({ title, edits: [], error: e instanceof Error ? e.message : 'Could not load recent edits.' }); }
+    try { const edits = await apiJson<Edit[]>(`/api/notebook/recent?${query}`, { headers, cache: 'no-store', signal: call.signal }); if (!call.signal.aborted) setList({ title, edits }); }
+    catch (e) { if (!call.signal.aborted) setList({ title, edits: [], error: e instanceof Error ? e.message : 'Could not load recent edits.' }); }
   };
   const findByAuthor = async () => {
+    const call = begin();
     setAuthors(null); setList({ title: 'Find by author', edits: [] });
-    try { setAuthors(await apiJson<Author[]>('/api/notebook/authors', { headers, cache: 'no-store' })); }
-    catch (e) { setList({ title: 'Find by author', edits: [], error: e instanceof Error ? e.message : 'Could not load authors.' }); }
+    try { const people = await apiJson<Author[]>('/api/notebook/authors', { headers, cache: 'no-store', signal: call.signal }); if (!call.signal.aborted) setAuthors(people); }
+    catch (e) { if (!call.signal.aborted) setList({ title: 'Find by author', edits: [], error: e instanceof Error ? e.message : 'Could not load authors.' }); }
   };
   const mark = async (target: Record<string, unknown>, read: boolean, done: string) => {
     try { await apiJson('/api/notebook/read', { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ ...target, read }) }); workspace?.refreshTree(); notify(done); }
@@ -59,7 +65,7 @@ export function HistoryTab({ versions, pageId, notify }: { versions: React.React
         {notebookId && <RibbonItem onSelect={() => { void mark({ notebookId }, true, 'Notebook marked as read.'); }}>Mark notebook as read</RibbonItem>}
       </RibbonSplit>
     </RibbonGroup>
-    <Dialog open={!!list} onOpenChange={open => { if (!open) { setList(null); setAuthors(null); } }}>
+    <Dialog open={!!list} onOpenChange={open => { if (!open) close(); }}>
       <DialogContent>
         <DialogHeader><DialogTitle>{list?.title}</DialogTitle><DialogDescription>Only pages you can open are listed.</DialogDescription></DialogHeader>
         {authors && <label className="nb-rfield">Person <select className="nb-rselect" defaultValue="" onChange={e => { const a = authors.find(x => x.id === Number(e.target.value)); if (a) void showEdits(`Pages changed by ${a.name}`, `author=${a.id}&since=${encodeURIComponent(since(null))}`).then(() => setAuthors(authors)); }}>
@@ -69,7 +75,7 @@ export function HistoryTab({ versions, pageId, notify }: { versions: React.React
         {list?.edits === null && <p role="status" className="nb-small">Loading…</p>}
         {list?.edits && !list.error && <ul className="nb-edit-list" aria-label={list.title}>
           {list.edits.length === 0 && !authors && <li className="nb-small">No changes in this period.</li>}
-          {list.edits.map(e => <li key={e.id}><button type="button" onClick={() => { workspace?.openPage(e.id); setList(null); setAuthors(null); }}>
+          {list.edits.map(e => <li key={e.id}><button type="button" onClick={() => { workspace?.openPage(e.id); close(); }}>
             <strong>{e.title}</strong><span>{workspace?.tree?.sections.find(s => s.id === e.sectionId)?.title} · {e.authorName} · {when(e.at)}</span>
           </button></li>)}
         </ul>}

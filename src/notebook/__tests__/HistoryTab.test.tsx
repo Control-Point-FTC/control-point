@@ -70,3 +70,19 @@ describe('History ribbon', () => {
     expect(vi.mocked(apiJson).mock.calls.some(([url]) => String(url).includes('author=2'))).toBe(true);
   });
 });
+
+describe('History dialog requests', () => {
+  it("a slow response after closing doesn't reopen the dialog", async () => {
+    let resolve!: (value: unknown) => void;
+    vi.mocked(apiJson).mockImplementation(() => new Promise(r => { resolve = r; }) as any);
+    mount();
+    openMenu('Recent edits');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Today' }));
+    await screen.findByRole('dialog');
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    resolve([{ id: 9, sectionId: 5, title: 'Drive', at: '2026-10-10T12:00:00Z', authorId: 2, authorName: 'Lee' }]);
+    await new Promise(r => setTimeout(r, 20));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});

@@ -221,7 +221,14 @@ export class Session {
     } else await this.run('UPDATE notebook_pages SET crdt_state=NULL,crdt_epoch=? WHERE id=? AND team_id=?', randomUUID(), row.id, this.ctx.teamId);
     if (body.content !== undefined || body.canvas !== undefined) await this.indexLinks(row.id, JSON.parse(content), JSON.parse(canvas));
     await indexNotebookFiles(this,row.id,JSON.parse(content),JSON.parse(canvas));
+    await this.contributed(row.id);
     return this.page(await this.item("page", row.id));
+  }
+  /** Lasting "who changed this page" record for Find by author (not limited
+   *  to the retained revisions). */
+  async contributed(pageId: number) {
+    await this.run(`INSERT INTO notebook_contributors(team_id,page_id,member_id,last_at) VALUES(?,?,?,?)
+      ON CONFLICT(team_id,page_id,member_id) DO UPDATE SET last_at=excluded.last_at`, this.ctx.teamId, pageId, this.ctx.memberId, new Date().toISOString());
   }
 }
 
@@ -311,23 +318,35 @@ export class NotebookStore {
     const since = typeof options.since === "string" && !Number.isNaN(Date.parse(options.since)) ? new Date(options.since).toISOString() : new Date(Date.now() - 7 * 86_400_000).toISOString();
     const author = options.author === undefined || options.author === "" ? null : id(options.author);
     const visible = new Map((await s.tree()).pages.map(p => [p.id, p]));
-    const rows = author == null
-      ? await s.all(`SELECT p.id,p.updated_at AS at,p.updated_by AS author,m.name FROM notebook_pages p LEFT JOIN members m ON m.id=p.updated_by AND m.team_id=p.team_id
-          WHERE p.team_id=? AND p.deleted_at IS NULL AND p.updated_at>=? ORDER BY p.updated_at DESC LIMIT 2000`, ctx.teamId, since)
-      : await s.all(`SELECT x.id,MAX(x.at) AS at,? AS author,(SELECT name FROM members WHERE id=? AND team_id=?) AS name FROM (
-            SELECT id,updated_at AS at FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND updated_by=?
-            UNION ALL SELECT page_id AS id,saved_at AS at FROM notebook_versions WHERE team_id=? AND author_id=?
-          ) x WHERE x.at>=? GROUP BY x.id ORDER BY at DESC LIMIT 2000`, author, author, ctx.teamId, ctx.teamId, author, ctx.teamId, author, since);
-    return rows.filter(r => visible.has(Number(r.id))).slice(0, 200).map(r => {
+    // Visibility is applied before the limit: pages the member can't see (or
+    // deleted ones) never crowd out ones they can. Keyset pages of 500.
+    const results: Row[] = [];
+    let cursor: { at: string; id: number } | null = null;
+    while (results.length < 200) {
+      const after = cursor ? "AND (at<? OR (at=? AND id<?))" : "";
+      const args = cursor ? [cursor.at, cursor.at, cursor.id] : [];
+      const rows = author == null
+        ? await s.all(`SELECT * FROM (SELECT p.id,p.updated_at AS at,p.updated_by AS author,m.name FROM notebook_pages p LEFT JOIN members m ON m.id=p.updated_by AND m.team_id=p.team_id
+            WHERE p.team_id=? AND p.deleted_at IS NULL AND p.updated_at>=?) WHERE 1 ${after} ORDER BY at DESC,id DESC LIMIT 500`, ctx.teamId, since, ...args)
+        : await s.all(`SELECT * FROM (SELECT c.page_id AS id,c.last_at AS at,c.member_id AS author,m.name FROM notebook_contributors c
+            JOIN notebook_pages p ON p.id=c.page_id AND p.team_id=c.team_id AND p.deleted_at IS NULL
+            LEFT JOIN members m ON m.id=c.member_id AND m.team_id=c.team_id
+            WHERE c.team_id=? AND c.member_id=? AND c.last_at>=?) WHERE 1 ${after} ORDER BY at DESC,id DESC LIMIT 500`, ctx.teamId, author, since, ...args);
+      for (const r of rows) if (visible.has(Number(r.id)) && results.length < 200) results.push(r);
+      if (rows.length < 500) break;
+      cursor = { at: String(rows[rows.length - 1].at), id: Number(rows[rows.length - 1].id) };
+    }
+    return results.map(r => {
       const p = visible.get(Number(r.id))!;
       return { id: p.id, sectionId: p.sectionId, title: p.title, at: r.at, authorId: r.author == null ? null : Number(r.author), authorName: r.name ? String(r.name).slice(0, 80) : "Former team member" };
     });
   }); }
-  /** People who changed pages the member can see (for Find by Author). */
+  /** People who changed pages the member can see (for Find by Author), from
+   *  the lasting contributor record rather than the retained revisions. */
   authors(ctx: NotebookContext) { return this.session(ctx, async s => {
     const visible = new Set((await s.tree()).pages.map(p => p.id));
-    const rows = await s.all(`SELECT page_id,author_id FROM notebook_versions WHERE team_id=? AND author_id IS NOT NULL
-      UNION SELECT id AS page_id,updated_by AS author_id FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND updated_by IS NOT NULL`, ctx.teamId, ctx.teamId);
+    const rows = await s.all(`SELECT c.page_id,c.member_id AS author_id FROM notebook_contributors c
+      JOIN notebook_pages p ON p.id=c.page_id AND p.team_id=c.team_id AND p.deleted_at IS NULL WHERE c.team_id=?`, ctx.teamId);
     const counts = new Map<number, Set<number>>();
     for (const r of rows) if (visible.has(Number(r.page_id))) { const a = Number(r.author_id); counts.set(a, (counts.get(a) ?? new Set()).add(Number(r.page_id))); }
     if (!counts.size) return [];
@@ -386,6 +405,7 @@ export class NotebookStore {
         await s.run('UPDATE notebook_pages SET content=?,canvas=?,title=?,plain=?,revision=revision+1,updated_by=?,updated_at=? WHERE id=? AND team_id=?', content, canvas, nextTitle, notebookText(json.content) + ' ' + notebookText(JSON.parse(canvas)), ctx.memberId, new Date().toISOString(), row.id, ctx.teamId);
         await s.indexLinks(row.id, json.content, json.canvas);
         await indexNotebookFiles(s,row.id,json.content,json.canvas);
+        await s.contributed(row.id);
       }
       if (!row.crdt_state || seededCanvas || changed) await s.run('UPDATE notebook_pages SET crdt_state=?,crdt_epoch=? WHERE id=? AND team_id=?', state, epoch, row.id, ctx.teamId);
       if (!row.crdt_state && !changed) {
@@ -396,10 +416,14 @@ export class NotebookStore {
         await indexNotebookFiles(s,row.id,json.content,json.canvas);
       }
       const current = changed ? await s.item('page', pageId) : row;
-      // Having the page open means having seen this revision.
+      // Having the page open means having seen this revision. Opening it (the
+      // join, without an epoch) also clears an explicit "unread" mark; later
+      // polls of the same visit keep that mark until the member reopens it.
+      const visit = body.epoch === undefined;
       await s.run(`INSERT INTO notebook_reads(team_id,member_id,page_id,read_revision,read_at) VALUES(?,?,?,?,?)
-        ON CONFLICT(team_id,member_id,page_id) DO UPDATE SET read_revision=excluded.read_revision,read_at=excluded.read_at WHERE notebook_reads.read_revision<>excluded.read_revision`,
-        ctx.teamId, ctx.memberId, row.id, current.revision, new Date().toISOString());
+        ON CONFLICT(team_id,member_id,page_id) DO UPDATE SET read_revision=excluded.read_revision,read_at=excluded.read_at
+        WHERE notebook_reads.read_revision<>excluded.read_revision AND (? OR notebook_reads.read_revision>=0)`,
+        ctx.teamId, ctx.memberId, row.id, current.revision, new Date().toISOString(), visit ? 1 : 0);
       const protectedPage = await s.isProtected(row);
       const peers: Row[] = [];
       if (body.clientId !== undefined) {
@@ -488,6 +512,7 @@ export class NotebookStore {
     if (kind === 'page') {
       await s.indexLinks(row.id, JSON.parse(row.content), JSON.parse(row.canvas));
       await indexNotebookFiles(s,row.id,JSON.parse(row.content),JSON.parse(row.canvas));
+      await s.contributed(row.id);
     }
     return kind === "page" ? s.page(row) : { id: row.id, title: row.title, color: row.color, notebookId: row.notebook_id, protected: !!row.protected };
   }); }
@@ -576,6 +601,7 @@ export class NotebookStore {
       ctx.teamId, row.section_id, row.parent_id, row.title.slice(0, 193) + " (copy)", await s.isProtected(row) ? 1 : 0, row.content, row.canvas, row.plain, row.section_id, row.parent_id, ctx.memberId, ctx.memberId, now, now);
     await s.indexLinks(Number(copy.lastInsertRowid), JSON.parse(row.content), JSON.parse(row.canvas));
     await indexNotebookFiles(s,Number(copy.lastInsertRowid),JSON.parse(row.content),JSON.parse(row.canvas),0,true);
+    await s.contributed(Number(copy.lastInsertRowid));
     return s.page(await s.item("page", Number(copy.lastInsertRowid)));
   }); }
   backlinks(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => {
@@ -682,6 +708,7 @@ export class NotebookStore {
         content, nextTitle, notebookText(json.content) + ' ' + notebookText(storedCanvas), ctx.memberId, new Date().toISOString(), state, row.crdt_epoch ?? randomUUID(), row.id, ctx.teamId, row.revision);
       await s.indexLinks(row.id, json.content, storedCanvas);
       await indexNotebookFiles(s, row.id, json.content, storedCanvas);
+      await s.contributed(row.id);
       return s.page(await s.item('page', row.id));
     } finally { doc.destroy(); }
   }); }
