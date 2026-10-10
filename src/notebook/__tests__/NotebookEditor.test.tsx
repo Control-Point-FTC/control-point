@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import * as Y from 'yjs';
 import { prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from '@tiptap/y-tiptap';
@@ -58,6 +58,13 @@ describe('mounted collaborative notebook editor', () => {
     expect(main.querySelector('[aria-label="Page content"]')).toBe(first);expect(pane.querySelector('[aria-label="Page content"]')).toBe(second);expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);
     fireEvent.click(screen.getByRole('button',{name:'Copy formatting'}));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();view.rerender(panes('other'));view.rerender(panes('main'));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();
     fireEvent.keyDown(first,{key:'f',ctrlKey:true});expect(screen.getAllByRole('search',{name:'Find in page',hidden:true})).toHaveLength(1);
+    fireEvent.click(screen.getByRole('tab',{name:'View'}));fireEvent.change(within(main as HTMLElement).getByLabelText('Paper pattern'),{target:{value:'ruled'}});fireEvent.click(screen.getByRole('button',{name:'Hide page title'}));
+    const mainPaper=main.querySelector<HTMLElement>('.nb-paper')!,otherPaper=pane.querySelector<HTMLElement>('.nb-paper')!;
+    expect(mainPaper.style.backgroundImage).toContain('repeating-linear-gradient');expect(otherPaper.style.backgroundImage).toBe('none');expect((main.querySelector('[aria-label="Page title"]') as HTMLInputElement).hidden).toBe(true);
+    view.rerender(panes('other'));fireEvent.click(screen.getByRole('tab',{name:'View'}));fireEvent.change(within(pane as HTMLElement).getByLabelText('Paper pattern'),{target:{value:'grid'}});fireEvent.click(screen.getByRole('button',{name:'Hide page title'}));
+    expect(otherPaper.style.backgroundImage).toContain('to right');expect(mainPaper.style.backgroundImage).toContain('repeating-linear-gradient');
+    view.rerender(panes('main'));fireEvent.click(screen.getByRole('button',{name:'Reset page appearance'}));expect(mainPaper.style.backgroundImage).toBe('none');expect((main.querySelector('[aria-label="Page title"]') as HTMLInputElement).hidden).toBe(false);
+    expect(otherPaper.style.backgroundImage).toContain('to right');expect((pane.querySelector('[aria-label="Page title"]') as HTMLInputElement).hidden).toBe(true);
     await act(async()=>{await other.flush();});expect(server.getMap('meta').get('title')).toBe('Journal');expect(secondary.getMap('meta').get('title')).toBe('Changed independently');
   });
   it('makes text, title and insertion controls read only while a revision restore is pending',async()=>{
