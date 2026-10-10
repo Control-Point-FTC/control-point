@@ -51,6 +51,24 @@ describe('notebook attachment upload',()=>{
     last.responseText=JSON.stringify({id:17,name:'drive.pdf',mimeType:'application/pdf',size:3});act(()=>last.onload());
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({type:'notebookFile',attrs:expect.objectContaining({fileId:17,display:'chip'})}));
   });
+  it('Pictures takes pictures only; File printout takes PDFs and shows their pages',()=>{
+    vi.stubGlobal('XMLHttpRequest',Upload);last=undefined;const insert=vi.fn();const chain:any={focus:()=>chain,insertContent:(value:any)=>{insert(value);return chain;},run:()=>true};
+    render(<Harness editor={{chain:()=>chain,isDestroyed:false}}/>);
+    const pictures=screen.getByLabelText('Pictures') as HTMLInputElement,printout=screen.getByLabelText('File printout') as HTMLInputElement;
+    expect(pictures.accept).toBe('image/png,image/jpeg,image/gif,image/webp');expect(printout.accept).toBe('application/pdf');
+    fireEvent.change(pictures,{target:{files:[new File(['%PDF'],'part.pdf',{type:'application/pdf'})]}});
+    expect(screen.getByRole('status')).toHaveTextContent('Choose a picture');expect(last).toBeUndefined();
+    fireEvent.change(printout,{target:{files:[new File(['png'],'part.png',{type:'image/png'})]}});
+    expect(screen.getByRole('status')).toHaveTextContent('needs a PDF');expect(last).toBeUndefined();
+    fireEvent.change(printout,{target:{files:[new File(['%PDF'],'drive.pdf',{type:'application/pdf'})]}});
+    last.responseText=JSON.stringify({id:21,name:'drive.pdf',mimeType:'application/pdf',size:4});act(()=>last.onload());
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({attrs:expect.objectContaining({fileId:21,display:'pdf'})}));
+  });
+  it('shows the file commands as unavailable on a read-only page',()=>{
+    sync.data.editable=false;
+    try{render(<Harness editor={{chain:()=>({}),isDestroyed:false}}/>);for(const name of ['Attach file','Pictures','File printout']){const input=screen.getByLabelText(name) as HTMLInputElement;expect(input.disabled).toBe(true);expect(input.closest('label')).toHaveAttribute('aria-disabled','true');}}
+    finally{sync.data.editable=true;}
+  });
   it('does not insert a finished upload after editing permission is revoked',()=>{
     vi.stubGlobal('XMLHttpRequest',Upload);const insert=vi.fn();render(<Harness editor={{chain:insert,isDestroyed:false}}/>);
     fireEvent.change(document.querySelector('input[type=file]')!,{target:{files:[new File(['abc'],'part.png')]}});

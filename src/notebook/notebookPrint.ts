@@ -24,7 +24,7 @@ export async function prepareNotebookPrint(sync:NotebookSync,page:NotebookPageDa
   const content=notebookSchema.nodeFromJSON(validatedNotebookDocument(page.content)),canvas=validatedCanvas(page.canvas);
   const article=document.createElement('article');article.className='notebook-sheet';
   const title=document.createElement('h1');title.textContent=page.title;article.append(title);
-  const date=document.createElement('p');date.className='print-page-date';date.textContent=`Revision ${page.revision} · ${page.updatedAt}`;article.append(date);
+  const date=document.createElement('p');date.className='print-page-date';const when=new Date(page.updatedAt);date.textContent=`Revision ${page.revision} · ${Number.isNaN(when.getTime())?page.updatedAt:when.toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'})}`;article.append(date);
   const stage=document.createElement('div');stage.className='notebook-print-stage';
   const width=Math.max(120,size.width,...canvas.objects.filter(item=>!item.pdfScope).map(item=>item.x+item.width));
   const height=Math.max(600,size.height,...canvas.objects.filter(item=>!item.pdfScope).map(item=>item.y+item.height));

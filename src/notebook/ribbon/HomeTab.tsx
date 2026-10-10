@@ -48,7 +48,7 @@ export function useHomeRibbonState(editor: Editor | null, disabled: boolean, not
 }
 export type HomeRibbonState = ReturnType<typeof useHomeRibbonState>;
 
-export function HomeTab({ editor, disabled, notify, state }: { editor: Editor; disabled: boolean; notify: (message: string) => void; state: HomeRibbonState }) {
+export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTags }: { editor: Editor; disabled: boolean; notify: (message: string) => void; state: HomeRibbonState; findingTags?: boolean; onFindTags?: () => void }) {
   const chain = () => editor.chain().focus();
   const { fontColor, setFontColor, highlight, setHighlight } = state;
 
@@ -153,6 +153,7 @@ export function HomeTab({ editor, disabled, notify, state }: { editor: Editor; d
         {NOTEBOOK_TAGS.map(t => <RibbonItem key={t} onSelect={() => tag(t)}>{TAG_LABELS[t]}</RibbonItem>)}
         <RibbonItem onSelect={() => tag(null)}>Remove tag</RibbonItem>
       </RibbonMenu>
+      {onFindTags && <RibbonButton label="Find tags" icon="FindTags" showLabel active={findingTags} onClick={onFindTags} />}
     </RibbonGroup>
     <RibbonGroup label="Styles">
       <select aria-label="Paragraph style" title="Styles" className="nb-rselect nb-rstyle" disabled={disabled} value={style} onChange={e => setStyle(e.target.value)}>
