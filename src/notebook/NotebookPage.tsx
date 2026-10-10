@@ -475,7 +475,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number) => { void pick(id); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen };
+  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number) => { void pick(id); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen, openTemplates: (sectionId: number) => open({ action: 'template', kind: 'page', sectionId }) };
   return <NotebookWorkspaceContext.Provider value={workspace}><div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
