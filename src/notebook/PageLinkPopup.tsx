@@ -1,8 +1,10 @@
 // The list for "[[" page links, placed at the caret (above it when there's
 // no room below) and kept in place while the page scrolls.
-import React, { useEffect, useState } from 'react';
+import React, { createContext, useEffect, useState } from 'react';
 import type { Editor } from '@tiptap/core';
-import { insertPageLink, pageLinkKey, pageMatches, type PageLinkState } from './pageLinkMenu';
+import { insertPageLink, pageLinkKey, pageMatches, type PageLinkSource, type PageLinkState } from './pageLinkMenu';
+
+export const PageLinkSourceContext = createContext<PageLinkSource | null>(null);
 import type { NotebookPageItem } from './types';
 
 export function PageLinkPopup({ editor, pages, currentPageId }: { editor: Editor | null; pages: NotebookPageItem[]; currentPageId: number }) {
@@ -20,6 +22,7 @@ export function PageLinkPopup({ editor, pages, currentPageId }: { editor: Editor
   if (!editor || !state) return null;
   const items = pageMatches(pages, state.query, currentPageId);
   if (!items.length) return null;
+  const selected = Math.min(state.index, items.length - 1);
   let at: { left: number; top: number; bottom: number };
   try { at = editor.view.coordsAtPos(state.to); } catch { return null; }
   const below = window.innerHeight - at.bottom - 12, above = at.top - 12;
@@ -28,7 +31,7 @@ export function PageLinkPopup({ editor, pages, currentPageId }: { editor: Editor
   const left = Math.max(8, Math.min(at.left, window.innerWidth - 272));
   const place = downward ? { top: at.bottom + 6 } : { bottom: window.innerHeight - at.top + 6 };
   return <div className="nb-link-menu" role="listbox" aria-label="Link a page" style={{ left, maxHeight, ...place }}>
-    {items.map((page, i) => <button key={page.id} type="button" role="option" aria-selected={i === state.index}
+    {items.map((page, i) => <button key={page.id} type="button" role="option" aria-selected={i === selected}
       onMouseDown={e => { e.preventDefault(); insertPageLink(editor, state, page); }}
       onMouseEnter={() => editor.view.dispatch(editor.state.tr.setMeta(pageLinkKey, { index: i }))}>
       <strong>{page.title || 'Untitled'}</strong>{page.protected && <span>Admin only</span>}

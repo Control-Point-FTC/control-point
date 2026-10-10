@@ -35,6 +35,19 @@ describe('[[ page links', () => {
     expect(state(editor).active).toBe(false);
   });
 
+  it('picks from the current list when the page list changes while it is open', () => {
+    let pages = PAGES;
+    const element = document.createElement('div'); document.body.append(element);
+    const editor = new Editor({ element, extensions: [...notebookExtensions(false), PageLinkMenu.configure({ pages: () => pages, currentPageId: () => 4, enabled: () => true })], content: '<p></p>' });
+    editors.push(editor); editor.commands.focus('end');
+    editor.commands.insertContent('[[d');
+    key(editor, 'ArrowDown'); key(editor, 'ArrowDown');
+    expect(state(editor).index).toBe(2);
+    pages = [page(1, 'Drivetrain')];               // a tree refresh removed two matches
+    expect(() => key(editor, 'Enter')).not.toThrow();
+    expect(editor.getText()).toBe('Drivetrain ');
+  });
+
   it('stays closed in code, after Escape, with no match, or when switched off', () => {
     const code = make('<pre><code></code></pre>');
     code.commands.insertContent('[[dri');

@@ -27,6 +27,8 @@ export function insertPageLink(editor: Editor, range: { from: number; to: number
     .run();
 }
 
+/** Where page links come from; shared with canvas text boxes on the page. */
+export type PageLinkSource = { pages: () => NotebookPageItem[]; currentPageId: () => number | undefined; enabled: () => boolean };
 export type PageLinkOptions = { pages: () => NotebookPageItem[]; currentPageId: () => number | undefined; enabled: () => boolean };
 
 export const PageLinkMenu = Extension.create<PageLinkOptions>({
@@ -67,7 +69,7 @@ export const PageLinkMenu = Extension.create<PageLinkOptions>({
             view.dispatch(view.state.tr.setMeta(pageLinkKey, { index: (state.index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length }));
             return true;
           }
-          if (event.key === 'Enter' || event.key === 'Tab') { insertPageLink(editor, state, items[state.index]); return true; }
+          if (event.key === 'Enter' || event.key === 'Tab') { insertPageLink(editor, state, items[Math.min(state.index, items.length - 1)]); return true; }
           if (event.key === 'Escape') { view.dispatch(view.state.tr.setMeta(pageLinkKey, { dismissed: state.from })); return true; }
           return false;
         },
