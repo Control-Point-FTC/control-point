@@ -616,7 +616,10 @@ export class NotebookStore {
     s.require("organize_notebook");
     const row = await s.item(kind, itemId);
     await s.checkChildren(kind, row);
-    const n = Number(index);
+    // A position can also be relative, so pages hidden from this member
+    // (protected siblings) never throw the placement off: 'end' appends,
+    // and to.afterId lands right after that sibling.
+    const n = index === 'end' ? Number.MAX_SAFE_INTEGER : Number(index);
     if (!Number.isSafeInteger(n) || n < 0) throw new NotebookError("Invalid position");
     let siblingWhere = "team_id=? AND deleted_at IS NULL";
     let siblingArgs: any[] = [ctx.teamId];
@@ -655,7 +658,13 @@ export class NotebookStore {
       siblingArgs.push(sectionId, parentId);
     }
     const siblings = (await s.all(`SELECT id FROM ${tables[kind]} WHERE ${siblingWhere} AND id!=? ORDER BY position,id`, ...siblingArgs, row.id)).map(r => r.id);
-    siblings.splice(Math.min(n, siblings.length), 0, row.id);
+    let at = Math.min(n, siblings.length);
+    if (to.afterId !== undefined && to.afterId !== null) {
+      const after = siblings.indexOf(id(to.afterId));
+      if (after < 0) throw new NotebookError("Choose a page at the same level");
+      at = after + 1;
+    }
+    siblings.splice(at, 0, row.id);
     for (let i = 0; i < siblings.length; i++) await s.run(`UPDATE ${tables[kind]} SET position=? WHERE id=? AND team_id=?`, i, siblings[i], ctx.teamId);
     return s.tree();
   }); }

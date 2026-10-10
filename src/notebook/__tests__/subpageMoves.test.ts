@@ -9,9 +9,9 @@ const tree = { notebooks: [], sections: [], permissions: { read: true, edit: tru
 
 describe('make subpage / promote', () => {
   it('nests a page under the page above it, as its last subpage', () => {
-    expect(subpageMove(tree, 5)).toEqual({ to: { parentId: 2 }, index: 2 });
-    expect(subpageMove(tree, 2)).toEqual({ to: { parentId: 1 }, index: 0 });
-    expect(subpageMove(tree, 4)).toEqual({ to: { parentId: 3 }, index: 0 });
+    expect(subpageMove(tree, 5)).toEqual({ to: { parentId: 2 }, index: 'end' });
+    expect(subpageMove(tree, 2)).toEqual({ to: { parentId: 1 }, index: 'end' });
+    expect(subpageMove(tree, 4)).toEqual({ to: { parentId: 3 }, index: 'end' });
   });
 
   it('has nothing to nest under for the first page at its level', () => {
@@ -21,7 +21,7 @@ describe('make subpage / promote', () => {
   });
 
   it('promotes a subpage to just after its former parent', () => {
-    expect(promoteMove(tree, 3)).toEqual({ to: { parentId: null }, index: 2 });
+    expect(promoteMove(tree, 3)).toEqual({ to: { parentId: null, afterId: 2 }, index: 0 });
     expect(promoteMove(tree, 1)).toBeNull();
   });
 });

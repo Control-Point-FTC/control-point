@@ -48,7 +48,8 @@ export function subpageMove(tree: NotebookTree, pageId: number) {
   const level = tree.pages.filter(p => p.sectionId === page.sectionId && p.parentId === page.parentId);
   const above = level[level.indexOf(page) - 1];
   if (!above) return null;
-  return { to: { parentId: above.id }, index: tree.pages.filter(p => p.parentId === above.id && p.id !== page.id).length };
+  // 'end' lets the server count subpages this member can't see too.
+  return { to: { parentId: above.id }, index: 'end' as const };
 }
 
 /** Promote: move a subpage up one level, right after its former parent. */
@@ -56,6 +57,6 @@ export function promoteMove(tree: NotebookTree, pageId: number) {
   const page = tree.pages.find(p => p.id === pageId);
   const parent = page?.parentId ? tree.pages.find(p => p.id === page.parentId) : undefined;
   if (!page || !parent) return null;
-  const level = tree.pages.filter(p => p.sectionId === page.sectionId && p.parentId === parent.parentId && p.id !== page.id);
-  return { to: { parentId: parent.parentId ?? null }, index: level.findIndex(p => p.id === parent.id) + 1 };
+  // Placed by the server right after the parent, counting hidden siblings too.
+  return { to: { parentId: parent.parentId ?? null, afterId: parent.id }, index: 0 };
 }

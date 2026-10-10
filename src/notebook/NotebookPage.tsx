@@ -260,7 +260,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     })();
   };
   /** Make subpage / Promote subpage: the page keeps its subpages and its place in the list. */
-  const nestPage = async (id: number, move: { to: { parentId: number | null }; index: number } | null) => {
+  const nestPage = async (id: number, move: { to: { parentId: number | null; afterId?: number }; index: number | 'end' } | null) => {
     if (!move || !await leave()) return;
     await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind: 'page', id, ...move }) }));
   };
