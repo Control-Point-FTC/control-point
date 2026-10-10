@@ -21,3 +21,7 @@
 .nb-slash-menu button span{font-size:11px;color:#666}
 .nb-slash-menu button[aria-selected=true]{background:#fff3b0}
 .nb-slash-help{margin:4px 6px 2px;font-size:10px;color:#777}
+
+/* Page link states. */
+.nb-prose .nb-link-missing,.nb-prose .nb-link-missing a{color:#9a3412!important;text-decoration-style:dashed!important}
+.nb-link-note{font-size:.8em;pointer-events:none;user-select:none}.nb-link-note-missing{color:#9a3412}.nb-link-note-locked{color:#8a6100}

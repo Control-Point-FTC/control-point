@@ -4,6 +4,7 @@
 // bento grid of what's inside, a three-step timeline, an FAQ and a closing
 // call to action. Same two exits as Classic: Sign in and Get started.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { usePublicPageView } from '../../../utils/pageViews';
 import { motion, useInView } from 'motion/react';
 import {
   ArrowRight, Bot, CalendarCheck, CalendarDays, CheckSquare, LineChart, MessageSquare, QrCode, ShieldCheck, Users, Wallet,
@@ -249,6 +250,7 @@ function useScrolled() {
 
 export function ModernLanding({ onSignIn, onGetStarted }: { onSignIn: () => void; onGetStarted: () => void }) {
   const scrolled = useScrolled();
+  usePublicPageView('/');
   return (
     <SignedOutModern>
       <div className="min-h-dvh overflow-x-clip bg-background text-foreground">

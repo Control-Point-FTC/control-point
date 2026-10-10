@@ -181,7 +181,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         const order = stepStackingInLayers([...items].sort((a, b) => a.z - b.z).map(i => i.id), new Set(selection), direction, id => layer.get(id) ?? 'page');
         order.forEach((id, z) => { const map = root.get(id); if (map && map.get('z') !== z) map.set('z', z); });
     });
-    const duplicate = (source = selected) => {
+    const duplicate = (source = selected, done?: string) => {
         const groupIds = new Map<string, string>();
         const copies: CanvasItem[] = [];
         for (const item of source) {
@@ -198,7 +198,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             }
             copies.push(copy);
         }
-        try { transact(() => insertCanvasItems(sync.doc, copies)); setSelection(copies.map(i => i.id)); }
+        try { transact(() => insertCanvasItems(sync.doc, copies)); setSelection(copies.map(i => i.id)); if (done) setNotice(`${done} ${copies.length} ${copies.length === 1 ? 'item' : 'items'}.`); }
         catch (e) { setNotice(e instanceof Error ? e.message : 'Cannot paste canvas items'); }
     };
     useEffect(() => {
@@ -468,6 +468,18 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
                 e.preventDefault();
                 transact(() => selection.forEach(id => root.delete(id)));
             }
+            // Keyboard copy / cut / paste / duplicate for selected drawings and boxes.
+            const command = (e.ctrlKey || e.metaKey) && !e.altKey ? e.key.toLowerCase() : '';
+            if ((command === 'c' || command === 'x') && selection.length) {
+                e.preventDefault();
+                // Cut takes only what it removes; locked items stay put and aren't copied.
+                const movable = selected.filter(i => !i.locked);
+                clipboard.current = structuredClone(command === 'x' ? movable : selected); setHasClipboard(clipboard.current.length > 0);
+                if (command === 'x') transact(() => movable.forEach(i => root.delete(i.id)));
+                setNotice(command === 'x' ? `Cut ${movable.length} ${movable.length === 1 ? 'item' : 'items'}${movable.length < selected.length ? ' (locked items stay)' : ''}. Paste with Ctrl+V.` : `Copied ${selected.length} ${selected.length === 1 ? 'item' : 'items'}. Paste with Ctrl+V.`);
+            }
+            if (command === 'v' && clipboard.current.length) { e.preventDefault(); duplicate(clipboard.current, 'Pasted'); }
+            if (command === 'd' && selection.length) { e.preventDefault(); duplicate(undefined, 'Duplicated'); }
             if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && selection.length) {
                 e.preventDefault();
                 const d = e.shiftKey ? 10 : 1;

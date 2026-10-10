@@ -25,6 +25,7 @@ import { MemberAvatar } from '../tasks/AssigneePicker';
 import { apiFetch } from '../../../services/api';
 import { notify, promptDialog } from '../../../components/dialog';
 import { ChangelogTab } from './ChangelogTab';
+import { PageViewsSection } from './PageViewsSection';
 
 type Ctl = ReturnType<typeof useOwnerConsole>;
 // Legacy status classes are tuned for dark; Modern badges get their own tones.
@@ -73,6 +74,7 @@ export function OwnerPage() {
       {ctl.loading ? <div className="grid grid-cols-2 gap-6 lg:grid-cols-4" aria-busy="true">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24" />)}</div> : (
         <>
           {ctl.tab === 'overview' && <OverviewTab ctl={ctl} refreshKey={refreshKey} onRefresh={refresh} />}
+          {ctl.tab === 'overview' && <PageViewsSection refreshKey={refreshKey} />}
           {ctl.tab === 'users' && <UsersTab ctl={ctl} />}
           {ctl.tab === 'ai' && <AiTab ctl={ctl} />}
           {ctl.tab === 'flags' && <FlagsTab ctl={ctl} />}
