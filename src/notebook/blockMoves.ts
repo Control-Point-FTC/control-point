@@ -3,6 +3,10 @@
 // Alt+Shift+↑/↓. Each is one transaction, so one undo step.
 import { Extension, type Editor } from '@tiptap/core';
 import { TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
+import { yUndoPluginKey } from '@tiptap/y-tiptap';
+
+/** Opens the block handle's menu for the block the cursor is in. */
+export const BLOCK_MENU_EVENT = 'nb-block-menu';
 
 /** The top-level block at index `index`: its start and end positions. */
 export function blockRange(state: EditorState, index: number) {
@@ -10,6 +14,15 @@ export function blockRange(state: EditorState, index: number) {
   let from = 0;
   for (let i = 0; i < index; i++) from += state.doc.child(i).nodeSize;
   return { from, to: from + state.doc.child(index).nodeSize, node: state.doc.child(index) };
+}
+
+/** Where a block is now: by its id when it has one (collaborators may have
+ *  inserted blocks before it), otherwise by index. -1 when it's gone. */
+export function currentBlockIndex(state: EditorState, target: { index: number; id: string | null }) {
+  if (!target.id) return target.index < state.doc.childCount ? target.index : -1;
+  let found = -1;
+  state.doc.forEach((node, _offset, i) => { if (found < 0 && node.attrs.id === target.id) found = i; });
+  return found;
 }
 
 /** Index of the top-level block containing a position. */
@@ -47,7 +60,11 @@ export function runBlock(editor: Editor, make: (state: EditorState) => Transacti
   if (!editor.isEditable) return false;
   const tr = make(editor.state);
   if (!tr) return false;
+  // Each block action is its own undo step, apart from typing around it.
+  const undo = yUndoPluginKey.getState(editor.state)?.undoManager;
+  undo?.stopCapturing();
   editor.view.dispatch(tr);
+  undo?.stopCapturing();
   editor.commands.focus();
   return true;
 }
@@ -57,6 +74,8 @@ export const BlockMoves = Extension.create({
   name: 'notebookBlockMoves',
   addKeyboardShortcuts() {
     const move = (direction: -1 | 1) => () => runBlock(this.editor, state => moveBlock(state, blockIndexAt(state, state.selection.from), direction));
-    return { 'Alt-Shift-ArrowUp': move(-1), 'Alt-Shift-ArrowDown': move(1) };
+    // Alt+Shift+O opens the block's menu (duplicate, copy link, delete) from the keyboard.
+    const menu = () => { if (!this.editor.isEditable) return false; this.editor.view.dom.dispatchEvent(new CustomEvent(BLOCK_MENU_EVENT, { bubbles: true })); return true; };
+    return { 'Alt-Shift-ArrowUp': move(-1), 'Alt-Shift-ArrowDown': move(1), 'Alt-Shift-o': menu };
   },
 });

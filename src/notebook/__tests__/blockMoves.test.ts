@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from '@tiptap/core';
 import { notebookExtensions } from '../editorSchema';
-import { BlockMoves, blockIndexAt, deleteBlock, duplicateBlock, moveBlock, runBlock } from '../blockMoves';
+import { BLOCK_MENU_EVENT, BlockMoves, blockIndexAt, currentBlockIndex, deleteBlock, duplicateBlock, moveBlock, runBlock } from '../blockMoves';
+import Collaboration from '@tiptap/extension-collaboration';
+import * as Y from 'yjs';
 
 const editors: Editor[] = [];
 afterEach(() => editors.splice(0).forEach(e => e.destroy()));
@@ -41,5 +43,35 @@ describe('block moves', () => {
     expect(texts(e)).toEqual(['one', 'three', 'two']);
     e.setEditable(false);
     expect(runBlock(e, s => moveBlock(s, 0, 1))).toBe(false);
+  });
+
+  it('finds the target block by id after collaborators insert above it', () => {
+    const e = new Editor({ extensions: notebookExtensions(false), content: { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'a' }, content: [{ type: 'text', text: 'one' }] }, { type: 'paragraph', attrs: { id: 'b' }, content: [{ type: 'text', text: 'two' }] }] } });
+    editors.push(e);
+    const id = 'b';
+    expect(currentBlockIndex(e.state, { index: 1, id })).toBe(1);
+    e.commands.insertContentAt(0, '<p>new above</p>');
+    expect(currentBlockIndex(e.state, { index: 1, id })).toBe(2);
+    expect(currentBlockIndex(e.state, { index: 1, id: 'gone' })).toBe(-1);
+  });
+
+  it('keeps each block move its own undo step in a shared page', () => {
+    const element = document.createElement('div'); document.body.append(element);
+    const e = new Editor({ element, extensions: [...notebookExtensions(true), BlockMoves, Collaboration.configure({ document: new Y.Doc() })] });
+    editors.push(e);
+    e.commands.setContent('<p>one</p><p>two</p><p>three</p>');
+    runBlock(e, s => moveBlock(s, 0, 1));
+    runBlock(e, s => moveBlock(s, 1, 1));
+    expect(texts(e)).toEqual(['two', 'three', 'one']);
+    e.commands.undo();
+    expect(texts(e)).toEqual(['two', 'one', 'three']);
+  });
+
+  it('Alt+Shift+O asks for the block menu', () => {
+    const e = make();
+    const heard = vi.fn();
+    e.view.dom.addEventListener(BLOCK_MENU_EVENT, heard);
+    e.view.someProp('handleKeyDown', f => f(e.view, new KeyboardEvent('keydown', { key: 'o', altKey: true, shiftKey: true })));
+    expect(heard).toHaveBeenCalledOnce();
   });
 });
