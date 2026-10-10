@@ -1,6 +1,8 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import * as Y from 'yjs';
+import { encodeBytes, decodeBytes } from '../NotebookSync';
 import { MemoryRouter } from 'react-router-dom';
 import { NotebookPage } from '../NotebookPage';
 import { apiJson } from '../../services/api';
@@ -13,9 +15,19 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); localStorage.clear();viewport.m
 function mount(path = '/notebook', emptySection = false) {
   const tree = { notebooks: [{ id: 1, title: 'Robot notes', color: '#3b82f6', sort: 0 }], sections: [{ id: 1, notebookId: 1, title: 'Build', color: '#22c55e', sort: 0, protected: false }], pages: [{ id: 2, sectionId: 1, parentId: null, title: 'Drive', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }, { id: 3, sectionId: 1, parentId: 2, title: 'Motor tests', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' }], permissions: { read: true, edit: true, organize: true, delete: true, protect: true } };
   if (emptySection) tree.sections.push({id:4,notebookId:1,title:'Empty section',color:'#111111',sort:1,protected:false});
+  const documents = new Map<number, Y.Doc>();
   vi.mocked(apiJson).mockImplementation(async (path, options) => {
     if (path === '/api/notebook/tree') return structuredClone(tree) as any;
     if (path === '/api/notebook/mentions') return [] as any;
+    const match = path.match(/^\/api\/notebook\/pages\/(\d+)\/sync$/);
+    if (match) {
+      const id = Number(match[1]), page = tree.pages.find(p => p.id === id)!;
+      let doc = documents.get(id);
+      if (!doc) { doc = new Y.Doc(); doc.getMap('meta').set('title', page.title); documents.set(id, doc); }
+      const body = JSON.parse(String(options?.body ?? '{}'));
+      if (body.update) { Y.applyUpdate(doc, decodeBytes(body.update)); page.title = String(doc.getMap('meta').get('title')); }
+      return { epoch: 'one', update: encodeBytes(Y.encodeStateAsUpdate(doc)), vector: encodeBytes(Y.encodeStateVector(doc)), title: page.title, revision: 1, protected: false, editable: true, updatedBy: 10, updatedAt: 'now', peers: [] } as any;
+    }
     if (path === '/api/notebook/sections' && options?.method === 'POST') {
       const body = JSON.parse(String(options.body));
       const section = { id: 90 + tree.sections.length, notebookId: body.notebookId, title: body.title, color: null, sort: tree.sections.length, protected: false };
@@ -33,6 +45,58 @@ function mount(path = '/notebook', emptySection = false) {
   return tree;
 }
 describe('notebook hierarchy controls', () => {
+  it('keeps focus on instant naming when creation exits writing focus', async () => {
+    mount(); await screen.findByRole('button', { name: 'Build' });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand writing space' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    const input = await screen.findByRole('textbox', { name: 'Rename page' });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByRole('complementary', { name: 'Pages in selected section' })).toBeTruthy();
+  });
+  it('creates from the header in the chosen empty section and leaves filtered views for naming', async () => {
+    mount('/notebook', true); fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Drive' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    await screen.findByRole('textbox', { name: 'Rename page' });
+    const post = vi.mocked(apiJson).mock.calls.find(([p, o]) => p === '/api/notebook/pages' && o?.method === 'POST')!;
+    expect(JSON.parse(String(post[1]?.body)).sectionId).toBe(4);
+    expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'true');
+  });
+  it('retains the mobile rename and draft after failure, then closes it after retry', async () => {
+    viewport.mobile = true; mount(); await within(screen.getByRole('banner')).findByRole('button', { name: 'New page' });
+    const original = vi.mocked(apiJson).getMockImplementation()!;
+    let fail = true;
+    vi.mocked(apiJson).mockImplementation(async (path, options) => {
+      if (path.endsWith('/sync') && JSON.parse(String(options?.body ?? '{}')).update && fail) throw new Error('rename save failed');
+      return original(path, options);
+    });
+    fireEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: 'New page' }));
+    const input = await screen.findByRole('textbox', { name: 'Rename page' });
+    fireEvent.change(input, { target: { value: 'Retry this title' } }); fireEvent.keyDown(input, { key: 'Enter' });
+    await screen.findByText('Title has not reached the server.');
+    expect(screen.getByRole('textbox', { name: 'Rename page' })).toHaveValue('Retry this title');
+    fail = false; fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
+  });
+  it('waits for the initial CRDT document before saving an instant page title', async () => {
+    const tree = mount(); await screen.findByRole('button', { name: 'Build' });
+    const original = vi.mocked(apiJson).getMockImplementation()!;
+    let release!: () => void; const joining = new Promise<void>(resolve => { release = resolve; });
+    let joined = false;
+    vi.mocked(apiJson).mockImplementation(async (path, options) => {
+      if (path === '/api/notebook/pages/902/sync' && !joined) { await joining; joined = true; }
+      return original(path, options);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'New page' }));
+    const input = await screen.findByRole('textbox', { name: 'Rename page' });
+    fireEvent.change(input, { target: { value: 'Named before join' } }); fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p]) => p === '/api/notebook/pages/902/sync')).toBe(true));
+    expect(tree.pages.find(p => p.id === 902)?.title).toBe('Untitled');
+    await act(async () => { release(); });
+    await waitFor(() => expect(tree.pages.find(p => p.id === 902)?.title).toBe('Named before join'));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename page' })).toBeNull());
+  });
   it('does not steal focus on resize after writing focus has ended',async()=>{
     mount();await screen.findByRole('button',{name:'Build'});fireEvent.click(screen.getByRole('button',{name:'Expand writing space'}));
     fireEvent.click(screen.getByRole('button',{name:'Show sections and pages'}));
