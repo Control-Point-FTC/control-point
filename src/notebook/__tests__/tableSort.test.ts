@@ -61,6 +61,11 @@ describe('table sort', () => {
     expect($from.parentOffset).toBe(2);
   });
 
+  it('treats negative money as numbers in both directions', () => {
+    expect(['$10', '-$95', '$-5', '+$3'].sort(compareCells)).toEqual(['-$95', '$-5', '+$3', '$10']);
+    expect(['-$95', '$10'].sort((a, b) => -compareCells(a, b))).toEqual(['$10', '-$95']);
+  });
+
   it('orders mixed numbers and text the same way whatever the starting order', () => {
     const values = ['1,000', '900', '2x'];
     const once = [...values].sort(compareCells), again = [...values].reverse().sort(compareCells);

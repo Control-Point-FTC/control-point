@@ -8,7 +8,8 @@ import { isInTable, selectedRect } from '@tiptap/pm/tables';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 const asNumber = (text: string) => {
-  const cleaned = text.replace(/[,\s]/g, '').replace(/^[$€£¥₹]/, '').replace(/%$/, '');
+  // A sign may come before or after the currency symbol: -$95 and $-95.
+  const cleaned = text.replace(/[,\s]/g, '').replace(/^([-+]?)[$€£¥₹]/, '$1').replace(/%$/, '');
   return cleaned && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(cleaned) ? Number(cleaned) : null;
 };
 
