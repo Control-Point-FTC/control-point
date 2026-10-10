@@ -108,10 +108,17 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   const timers = useRef(new Map<number, number>());
   const failed = useRef(new Set<number>());
   const mark = (id: number, state: SaveState) => setStates(s => s[id] === state ? s : { ...s, [id]: state });
-  const keepDrafts = useCallback(() => {
+  // Notes whose draft entry this tab is responsible for. Other tabs' entries
+  // are left alone; an entry is removed only once this tab has saved it.
+  const touched = useRef(new Set<number>());
+  const keepDrafts = useCallback((gone: number[] = []) => {
     if (!draftsKey) return;
-    const drafts: Record<number, Change> = {};
-    for (const id of new Set([...sending.current.keys(), ...unsaved.current.keys()])) drafts[id] = { ...sending.current.get(id), ...unsaved.current.get(id) };
+    const drafts = readDrafts(draftsKey);
+    for (const id of gone) delete drafts[id];
+    for (const id of [...touched.current]) {
+      if (sending.current.has(id) || unsaved.current.has(id)) drafts[id] = { ...sending.current.get(id), ...unsaved.current.get(id) };
+      else { delete drafts[id]; touched.current.delete(id); }
+    }
     try { if (Object.keys(drafts).length) localStorage.setItem(draftsKey, JSON.stringify(drafts)); else localStorage.removeItem(draftsKey); } catch { /* storage optional */ }
   }, [draftsKey]);
 
@@ -123,9 +130,10 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     const drafts = readDrafts(draftsKey);
     setNotes(list.map(n => drafts[n.id] ? { ...n, ...drafts[n.id] } : n));
     for (const n of list) if (drafts[n.id] && !unsaved.current.has(n.id) && !sending.current.has(n.id)) {
-      unsaved.current.set(n.id, drafts[n.id]); void flush(n.id);
+      touched.current.add(n.id); unsaved.current.set(n.id, drafts[n.id]); void flush(n.id);
     }
-    keepDrafts();
+    // Drafts for notes that no longer exist can't be saved anywhere.
+    keepDrafts(Object.keys(drafts).map(Number).filter(id => !list.some(n => n.id === id)));
   }, [draftsKey, keepDrafts]); // eslint-disable-line react-hooks/exhaustive-deps -- flush is stable
   useEffect(() => {
     if (!hidden && notes === null && (open || Object.keys(readDrafts(draftsKey)).length)) void load();
@@ -158,7 +166,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
 
   const change = useCallback((id: number, next: Change, delay = 0) => {
     setNotes(list => list?.map(n => n.id === id ? { ...n, ...next } : n) ?? list);
-    unsaved.current.set(id, { ...unsaved.current.get(id), ...next }); keepDrafts();
+    unsaved.current.set(id, { ...unsaved.current.get(id), ...next }); touched.current.add(id); keepDrafts();
     mark(id, failed.current.has(id) ? 'failed' : 'saving');
     window.clearTimeout(timers.current.get(id));
     if (failed.current.has(id)) return; // Wait for Retry instead of hammering a failing server.
@@ -201,7 +209,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     try {
       await request(`/api/sticky-notes/${note.id}`, 'DELETE');
       window.clearTimeout(timers.current.get(note.id)); timers.current.delete(note.id);
-      unsaved.current.delete(note.id); failed.current.delete(note.id); keepDrafts();
+      unsaved.current.delete(note.id); failed.current.delete(note.id); keepDrafts([note.id]);
       setNotes(list => list?.filter(n => n.id !== note.id) ?? list);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not delete the note.'); }
   };

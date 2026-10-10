@@ -129,6 +129,21 @@ describe('Sticky notes', () => {
     await waitFor(() => expect(localStorage.getItem('cp-sticky-drafts:7:3')).toBeNull());
   });
 
+  it("leaves another tab's unsaved drafts alone", async () => {
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => init?.method === 'PATCH' ? note() as any : [note(), note({ id: 2, body: 'Second', open: false })] as any);
+    const view = render(<StickyNotes open scope="8:3" onClose={vi.fn()} />);
+    const text = await screen.findByRole('textbox', { name: 'Note text' });
+    // Another tab, open at the same time, couldn't save its edit to note 2.
+    localStorage.setItem('cp-sticky-drafts:8:3', JSON.stringify({ 2: { body: 'From the other tab' } }));
+    fireEvent.change(text, { target: { value: 'Saved here' } });
+    fireEvent.blur(text);
+    await waitFor(() => expect(screen.queryByText('Saving…')).toBeNull());
+    view.unmount();
+    expect(JSON.parse(localStorage.getItem('cp-sticky-drafts:8:3')!)).toEqual({ 2: { body: 'From the other tab' } });
+    localStorage.removeItem('cp-sticky-drafts:8:3');
+  });
+
+
   it('waits for the list before New note, and places new notes inside the window', async () => {
     let list!: (v: StickyNote[]) => void;
     vi.mocked(apiJson).mockImplementation((url: string, init?: any) => init?.method === 'POST' ? Promise.resolve(note({ id: 9, body: '' }) as any) : new Promise(r => { list = r as any; }));
