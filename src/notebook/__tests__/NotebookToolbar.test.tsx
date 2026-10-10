@@ -18,4 +18,31 @@ describe('notebook contextual ribbon',()=>{
     view.rerender(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1} panels={panels} requestedGroup={{group:'draw',key:2}}/>);
     expect(screen.getByRole('tab',{name:'Draw'})).toHaveAttribute('aria-selected','true');
   });
+  it('applies heading levels 4-6 from the paragraph style menu',()=>{
+    editor=new Editor({extensions:notebookExtensions(false,true),content:'<p>Deep dive</p>'});
+    render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1}/>);
+    editor.commands.focus();editor.commands.selectAll();
+    fireEvent.change(screen.getByLabelText('Paragraph style'),{target:{value:'4'}});
+    expect(editor.getHTML()).toMatch(/<h4[\s>]/);
+    fireEvent.change(screen.getByLabelText('Paragraph style'),{target:{value:'6'}});
+    expect(editor.getHTML()).toMatch(/<h6[\s>]/);
+    fireEvent.change(screen.getByLabelText('Paragraph style'),{target:{value:'paragraph'}});
+    expect(editor.getHTML()).toMatch(/<p[\s>]/);
+  });
+  it('inserts emoji and symbols from the pickers without losing the selection',()=>{
+    editor=new Editor({extensions:notebookExtensions(false,true),content:'<p>Build </p>'});
+    render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1}/>);
+    editor.commands.focus();
+    fireEvent.click(screen.getByRole('button',{name:'Emoji'}));
+    expect(screen.getByRole('dialog',{name:'Emoji picker'})).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'Insert 🚀'}));
+    expect(editor.getHTML()).toContain('🚀');
+    fireEvent.click(screen.getByRole('button',{name:'Symbols'}));
+    expect(screen.getByRole('dialog',{name:'Symbol picker'})).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'Insert →'}));
+    const html=editor.getHTML();
+    expect(html).toContain('🚀');expect(html).toContain('→');
+    fireEvent.click(screen.getByRole('button',{name:'Symbols'}));
+    expect(screen.queryByRole('dialog',{name:'Symbol picker'})).toBeNull();
+  });
 });
