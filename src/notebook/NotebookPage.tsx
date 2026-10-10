@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef, useState, useContext } from 'rea
 import { useSearchParams, useMatch, useNavigate, UNSAFE_NavigationContext } from 'react-router-dom';
 import { BookOpen, ChevronDown, ChevronRight, FileText, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui-kit';
-import { apiJson as requestNotebookAPI } from '../services/api';
+import { apiJson as requestNotebookAPI,ApiError } from '../services/api';
+import {cacheNotebookTree,readCachedNotebookTree,forgetCachedNotebookTree} from './offlineTree';
 import { downloadNotebookJSON } from './NotebookEditor';
 import { NotebookSync } from './NotebookSync';
 import type { NotebookTree, NotebookPageItem } from './types';
@@ -48,6 +49,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const selected = Number(params.get('page') ?? pageRoute?.params.pageId) || null;
   const [tree, setTree] = useState<NotebookTree | null>(null);
   const [error, setError] = useState('');
+  const [offlineTreeAt,setOfflineTreeAt]=useState(''),[treeStorageError,setTreeStorageError]=useState('');
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState<NotebookDrag | null>(null);
   const [drop, setDrop] = useState<{ kind: Kind; id: number; zone: 'before' | 'inside' | 'after' } | null>(null);
@@ -110,11 +112,26 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       if (!mounted.current) return;
       loadFailedRef.current = false;
       setTree(value);
+      setOfflineTreeAt('');
+      if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value).then(()=>{if(mounted.current)setTreeStorageError('');}).catch(e=>{if(mounted.current)setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
         void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
       }
-    } catch (e) { loadFailedRef.current = true; if (mounted.current) setError(e instanceof Error ? e.message : 'Cannot load notebooks'); }
+    } catch (e) {
+      loadFailedRef.current=true;if(!mounted.current)return;
+      const denied=e instanceof ApiError&&[401,403,404].includes(e.status);
+      if(memberId&&teamId){
+        try{
+          if(denied){setTree(null);setOfflineTreeAt('');void syncRef.current?.discardRecovery();syncRef.current=null;setSync(null);await forgetCachedNotebookTree({memberId,teamId});}
+          else if(!(e instanceof ApiError)){
+            const cached=await readCachedNotebookTree({memberId,teamId});
+            if(cached&&mounted.current){setTree(cached.tree);setOfflineTreeAt(cached.savedAt);setError('');return;}
+          }
+        }catch(storageError){if(mounted.current)setTreeStorageError(storageError instanceof Error?storageError.message:'Offline navigation is unavailable.');}
+      }
+      if(mounted.current)setError(e instanceof Error?e.message:'Cannot load notebooks');
+    }
   }, []);
   useEffect(() => {
     mounted.current = true;
@@ -418,6 +435,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
+    {offlineTreeAt&&<div className="nb-alert" role="status">Offline navigation · showing ordinary sections and pages last available on this device. Only previously cached pages can open; files may need a connection. Access is checked again when connected. <Button variant="ghost" onClick={()=>{void loadTree();}}>Retry connection</Button></div>}
+    {treeStorageError&&<div className="nb-alert" role="status">{treeStorageError} Online editing still works.</div>}
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
     <div className="nb-body">{!mobile && <><aside hidden={writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => sectionId && createInstant('page', { sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside></>}<main className="nb-main">
       {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onFocus={()=>{exitFocused.current=true;}} onBlur={()=>{exitFocused.current=false;}} onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}

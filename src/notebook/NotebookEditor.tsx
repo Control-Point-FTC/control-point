@@ -37,7 +37,7 @@ export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, t
   const [downloadError, setDownloadError] = useState('');
   useEffect(() => sync.subscribe(() => redraw(v => v + 1)), [sync]);
   if (!sync.data || sync.status === 'unavailable') return <div className="nb-empty" role={sync.error ? 'alert' : 'status'}>
-    <h2>{sync.status === 'joining' ? 'Opening your team’s page…' : 'This page cannot be opened'}</h2><p>{sync.error}</p>
+    <h2>{sync.status === 'joining' ? 'Opening your team’s page…' : 'This page cannot be opened'}</h2><p>{sync.error || (sync.status==='offline'?'This page is not cached on this device. Reconnect to open it.':'')}</p>
     {sync.status === 'error' && <Button variant="outline" onClick={async () => {
       try { const source = await apiJson<NotebookPageData>(`/api/notebook/pages/${sync.pageId}`, { cache: 'no-store' }); downloadNotebookJSON(source, 'notebook-original-page.json'); }
       catch (e) { setDownloadError(e instanceof Error ? e.message : 'Cannot download this page'); }
