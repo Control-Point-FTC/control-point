@@ -3,7 +3,7 @@ import { useSearchParams, useMatch, useNavigate, UNSAFE_NavigationContext } from
 import { BookOpen, ChevronDown, ChevronRight, FileText, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui-kit';
 import { apiJson as requestNotebookAPI,ApiError } from '../services/api';
-import {cacheNotebookTree,readCachedNotebookTree,forgetCachedNotebookTree} from './offlineTree';
+import {cacheNotebookTree,readCachedNotebookTree,forgetCachedNotebookTree,notebookNavigationEpoch} from './offlineTree';
 import { downloadNotebookJSON } from './NotebookEditor';
 import { NotebookSync } from './NotebookSync';
 import type { NotebookTree, NotebookPageItem } from './types';
@@ -51,6 +51,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [tree, setTree] = useState<NotebookTree | null>(null);
   const [error, setError] = useState('');
   const [offlineTreeAt,setOfflineTreeAt]=useState(''),[treeStorageError,setTreeStorageError]=useState('');
+  const [treeLoading,setTreeLoading]=useState(true);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState<NotebookDrag | null>(null);
   const [drop, setDrop] = useState<{ kind: Kind; id: number; zone: 'before' | 'inside' | 'after' } | null>(null);
@@ -104,20 +105,22 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   }, [navigator]);
   const mounted = useRef(true);
   const treeRequest=useRef(0);
+  const navigationEpoch=useRef(notebookNavigationEpoch());
   const creatingRef = useRef(false); // claimed before leave() so a second click during the save cannot POST a duplicate
   const loadFailedRef = useRef(false); // set when the tree reload inside mutate fails
   const closeDrawerAfterRename = useRef(false); // mobile: keep the drawer open for the rename box, close it when rename ends
 
   const loadTree = useCallback(async () => {
+    if(navigationEpoch.current!==notebookNavigationEpoch())return;
     const requestId=++treeRequest.current;
-    const currentRequest=()=>mounted.current&&requestId===treeRequest.current;
+    const currentRequest=()=>mounted.current&&requestId===treeRequest.current&&navigationEpoch.current===notebookNavigationEpoch();
     try {
       const value = await apiJson<NotebookTree>('/api/notebook/tree', { cache: 'no-store' });
       if (!currentRequest()) return;
       loadFailedRef.current = false;
       setTree(value);
       setOfflineTreeAt('');
-      if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value).then(()=>{if(currentRequest())setTreeStorageError('');}).catch(e=>{if(currentRequest())setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
+      if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value,navigationEpoch.current).then(()=>{if(currentRequest())setTreeStorageError('');}).catch(e=>{if(currentRequest())setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
         void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
@@ -129,13 +132,13 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         try{
           if(denied){setTree(null);setOfflineTreeAt('');void syncRef.current?.discardRecovery();syncRef.current=null;setSync(null);await forgetCachedNotebookTree({memberId,teamId});}
           else if(!(e instanceof ApiError)){
-            const cached=await readCachedNotebookTree({memberId,teamId});
-            if(cached&&currentRequest()){setTree(cached.tree);setOfflineTreeAt(cached.savedAt);setError('');return;}
+            const cached=await readCachedNotebookTree({memberId,teamId},navigationEpoch.current);
+            if(cached&&currentRequest()){setTree(previous=>previous??cached.tree);setOfflineTreeAt(cached.savedAt);setError('');return;}
           }
         }catch(storageError){if(currentRequest())setTreeStorageError(storageError instanceof Error?storageError.message:'Offline navigation is unavailable.');}
       }
       if(currentRequest())setError(e instanceof Error?e.message:'Cannot load notebooks');
-    }
+    }finally{if(currentRequest())setTreeLoading(false);}
   }, []);
   useEffect(() => {
     mounted.current = true;
@@ -424,7 +427,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         </div>)}
         {tree.permissions.organize && <button className="nb-add nb-add-section" onClick={() => createInstant('section', { notebookId: book.id })}><Plus size={14} /> New section</button>}
       </div>)}
-      {!tree && <p className="nb-small">Loading notebooks…</p>}
+      {!tree && <p className="nb-small">{treeLoading?'Loading notebooks…':'Notebook navigation is unavailable. Connect to load this workspace on this device.'}{!treeLoading&&<Button variant="ghost" onClick={()=>{setTreeLoading(true);void loadTree();}}>Retry navigation</Button>}</p>}
       {tree && !tree.notebooks.length && <p className="nb-small">No notebooks yet.</p>}
     </div>
     {(SHOW_NOTEBOOK_CREATION || tree?.notebooks.length===0) && tree?.permissions.organize && <Button variant="outline" onClick={() => createInstant('notebook', {})}><Plus /> {tree.notebooks.length ? 'New notebook' : 'Set up team notebook'}</Button>}
@@ -440,7 +443,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
-    {offlineTreeAt&&<div className="nb-alert" role="status">Offline navigation · showing ordinary sections and pages last available on this device. Only previously cached pages can open; files may need a connection. Access is checked again when connected. <Button variant="ghost" onClick={()=>{void loadTree();}}>Retry connection</Button></div>}
+    {offlineTreeAt&&<div className="nb-alert" role="status">Offline navigation · showing last-known navigation or cached ordinary pages. Already-open protected pages stay in memory and are never cached for offline reload. Files may need a connection. Access is checked again when connected. <Button variant="ghost" onClick={()=>{void loadTree();}}>Retry connection</Button></div>}
     {treeStorageError&&<div className="nb-alert" role="status">{treeStorageError} Online editing still works.</div>}
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
     <div className="nb-body">{!mobile && <><aside hidden={writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => sectionId && createInstant('page', { sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside></>}<main className="nb-main">

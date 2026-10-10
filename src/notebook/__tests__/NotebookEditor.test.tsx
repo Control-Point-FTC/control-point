@@ -34,6 +34,12 @@ async function mount(editable = true) {
   return { sync, server, navigate,view };
 }
 describe('mounted collaborative notebook editor', () => {
+  it('explains an uncached offline page even when the sync also has a network error',async()=>{
+    vi.mocked(apiJson).mockRejectedValue(new TypeError('Failed to fetch'));
+    const sync=new NotebookSync(42);providers.push(sync);await sync.start();
+    render(<MemoryRouter><NotebookEditor sync={sync} onChanged={()=>{}} pages={[]} onNavigate={()=>{}}/></MemoryRouter>);
+    expect(screen.getByText('This page is not cached on this device. Reconnect to open it.')).toBeTruthy();expect(screen.getByText('Failed to fetch')).toBeTruthy();
+  });
   it('keeps reading preferences when the View ribbon unmounts even without device storage',async()=>{
     await mount();const storage=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('blocked');});
     try{

@@ -2,6 +2,9 @@ import type {NotebookTree} from './types';
 type Scope={memberId:number;teamId:number};
 type Snapshot={key:string;schema:1;savedAt:string;tree:NotebookTree};
 let opening:Promise<IDBDatabase>|undefined,queue:Promise<unknown>=Promise.resolve();
+let epoch=0;
+const invalidated=new Set<string>();
+export const notebookNavigationEpoch=()=>epoch;
 const key=(scope:Scope)=>`${scope.memberId}:${scope.teamId}`;
 function database(){
   if(!globalThis.indexedDB)return Promise.reject(new Error('Offline notebook navigation is unavailable on this device.'));
@@ -31,17 +34,28 @@ export function ordinaryNotebookTree(tree:NotebookTree):NotebookTree {
   const bookIds=new Set(sections.map(s=>s.notebookId));
   return {notebooks:tree.notebooks.filter(n=>bookIds.has(n.id)),sections,pages,permissions:{read:true,edit:false,organize:false,delete:false,protect:false}};
 }
-export function cacheNotebookTree(scope:Scope,tree:NotebookTree){return ordered(async()=>{
+export function cacheNotebookTree(scope:Scope,tree:NotebookTree,ownerEpoch=epoch){return ordered(async()=>{
+  if(ownerEpoch!==epoch)return;
+  invalidated.add(key(scope));
   if(!tree.permissions.read){await transaction('readwrite',store=>store.delete(key(scope)));return;}
   const snapshot:Snapshot={key:key(scope),schema:1,savedAt:new Date().toISOString(),tree:ordinaryNotebookTree(tree)};
-  if(JSON.stringify(snapshot).length>2000000)throw new Error('This notebook is too large to cache its navigation on this device.');
-  await transaction('readwrite',store=>store.put(snapshot));
+  try{
+    if(JSON.stringify(snapshot).length>2000000)throw new Error('This notebook is too large to cache its navigation on this device.');
+    await transaction('readwrite',store=>store.put(snapshot));
+    if(ownerEpoch===epoch)invalidated.delete(key(scope));
+  }catch(error){
+    try{await transaction('readwrite',store=>store.delete(key(scope)));}
+    catch{throw new Error('The stale offline navigation could not be removed. Clear notebook site storage before sharing this device.');}
+    throw error;
+  }
 });}
-export function readCachedNotebookTree(scope:Scope){return ordered(async()=>{
+export function readCachedNotebookTree(scope:Scope,ownerEpoch=epoch){return ordered(async()=>{
+  if(ownerEpoch!==epoch||invalidated.has(key(scope)))return undefined;
   const snapshot=await transaction<Snapshot|undefined>('readonly',store=>store.get(key(scope)));
+  if(ownerEpoch!==epoch||invalidated.has(key(scope)))return undefined;
   if(!snapshot||snapshot.schema!==1||snapshot.key!==key(scope)||!snapshot.tree?.permissions?.read)return undefined;
   // Re-filter on read so older cached rights never become active authorizations.
   return {...snapshot,tree:ordinaryNotebookTree(snapshot.tree)};
 });}
-export function forgetCachedNotebookTree(scope:Scope){return ordered(async()=>{await transaction('readwrite',store=>store.delete(key(scope)));});}
-export function clearCachedNotebookTrees(){return ordered(async()=>{await transaction('readwrite',store=>store.clear());});}
+export function forgetCachedNotebookTree(scope:Scope){invalidated.add(key(scope));return ordered(async()=>{await transaction('readwrite',store=>store.delete(key(scope)));});}
+export function clearCachedNotebookTrees(){epoch++;return ordered(async()=>{await transaction('readwrite',store=>store.clear());invalidated.clear();});}
