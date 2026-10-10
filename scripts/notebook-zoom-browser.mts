@@ -17,7 +17,9 @@ const bytes = (value:Uint8Array) => Buffer.from(value).toString('base64');
 const server = await createServer({configFile:false,root:process.cwd(),plugins:[react(),tailwindcss(),{name:'synthetic-notebook-api',configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
   if(!req.url?.startsWith('/api/'))return next();
   res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store');
-  if(req.url==='/api/notebook/pages/1/sync'){
+  if(req.url==='/api/notebook/tree')res.end(JSON.stringify({notebooks:[],sections:[{id:1},{id:2}],pages:[],permissions:{edit:true}}));
+  else if(req.url==='/api/notebook/pages'&&req.method==='POST')res.end(JSON.stringify({id:100}));
+  else if(req.url==='/api/notebook/pages/1/sync'){
     let raw='';for await(const chunk of req)raw+=chunk;
     try { const body=JSON.parse(raw||'{}');if(body.update)Y.applyUpdate(doc,Buffer.from(body.update,'base64'));
       res.end(JSON.stringify({epoch:'fixture',update:bytes(Y.encodeStateAsUpdate(doc)),vector:bytes(Y.encodeStateVector(doc)),title:doc.getMap('meta').get('title'),revision:1,protected:false,editable:true,updatedBy:1,updatedAt:'2026-10-10T00:00:00Z',peers:[]}));

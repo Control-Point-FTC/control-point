@@ -2,6 +2,7 @@ import React,{useEffect,useRef,useState} from 'react';
 import {Button,Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle,Input,Label} from '../components/ui-kit';
 import {apiJson} from '../services/api';
 import type {NotebookTree} from './types';
+import './quick-note.css';
 
 export function quickNoteDocument(text:string) {
   return {type:'doc',content:text.replace(/\r\n?/g,'\n').split('\n').map(line=>({type:'paragraph',...(line?{content:[{type:'text',text:line}]}:{})}))};
@@ -12,6 +13,7 @@ export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen}:{tree:N
   const [open,setOpen]=useState(false),[destination,setDestination]=useState(''),[title,setTitle]=useState(''),[text,setText]=useState('');
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState<number|null>(null);
   const claimed=useRef(false),mounted=useRef(true),abort=useRef<AbortController|null>(null);
+  const trigger=useRef<HTMLButtonElement|null>(null);
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;abort.current?.abort();};},[]);
   useEffect(()=>{
     if(!tree.permissions.edit||(destination&&!tree.sections.some(s=>String(s.id)===destination))){
@@ -34,9 +36,9 @@ export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen}:{tree:N
     finally{claimed.current=false;if(mounted.current)setBusy(false);}
   };
   return <>
-    <Button variant="ghost" onClick={show} disabled={!tree.permissions.edit||!tree.sections.length}>Quick note</Button>
+    <Button ref={trigger} variant="ghost" onClick={show} disabled={!tree.permissions.edit||!tree.sections.length}>Quick note</Button>
     {saved!=null&&<span role="status">Quick note saved. <button className="nb-tool" onClick={()=>{onOpen(saved);setSaved(null);}}>Open saved note</button></span>}
-    <Dialog open={open} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent><DialogHeader><DialogTitle>Quick team note</DialogTitle><DialogDescription>Capture a thought without leaving your current page. It becomes an editable page in the section you choose.</DialogDescription></DialogHeader>
+    <Dialog open={open} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent onCloseAutoFocus={event=>{event.preventDefault();trigger.current?.focus();}}><DialogHeader><DialogTitle>Quick team note</DialogTitle><DialogDescription>Capture a thought without leaving your current page. It becomes an editable page in the section you choose.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={submit}>
         <Label htmlFor="nb-quick-section">Save to section</Label><select id="nb-quick-section" value={destination} disabled={busy} required onChange={e=>setDestination(e.target.value)}>{tree.sections.map(s=><option key={s.id} value={s.id}>{tree.notebooks.find(n=>n.id===s.notebookId)?.title} / {s.title}{s.protected?' · Admin only':''}</option>)}</select>
         <p className="nb-small">{tree.sections.find(s=>String(s.id)===destination)?.protected?'Only team admins can access this note.':'Everyone with notebook access on your team can read this note.'}</p>

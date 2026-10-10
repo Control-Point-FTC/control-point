@@ -1,0 +1,2 @@
+.nb-form textarea{width:100%;resize:vertical;min-height:140px;max-height:40vh;padding:12px;border:1px solid var(--color-line);border-radius:10px;background:var(--color-primary);color:var(--color-text-base);font:inherit;line-height:1.6}
+.nb-form textarea:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
