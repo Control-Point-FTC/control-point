@@ -12,6 +12,7 @@ import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup, RibbonMenu } from './ribbon/RibbonParts';
 import { TableGrid } from './ribbon/TableGrid';
 import { TagSummary } from './ribbon/TagSummary';
+import { sortTable } from './tableSort';
 import { useNotebookWorkspace } from './workspaceContext';
 import { Thesaurus } from './ribbon/Thesaurus';
 import { autoCapitalizeEnabled, setAutoCapitalize } from './autoCapitalize';
@@ -143,6 +144,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
       ['Delete row', () => chain().deleteRow().run()], ['Delete column', () => chain().deleteColumn().run()], ['Merge cells', () => chain().mergeCells().run()], ['Split cell', () => chain().splitCell().run()],
       ['Header row', () => chain().toggleHeaderRow().run()], ['Delete table', () => chain().deleteTable().run()], ['Reset cell fill', () => chain().setCellAttribute('backgroundColor', null).run()]] as [string, () => void][])
       .map(([name, run]) => <RibbonButton key={name} label={name} showLabel disabled={disabled} onClick={run} />)}
+    <RibbonButton label="Sort ascending" icon="SortAsc" showLabel disabled={disabled} onClick={() => { const problem = sortTable(editor.state, editor.view.dispatch, 'asc'); if (problem) setNotice(problem); else editor.commands.focus(); }} />
+    <RibbonButton label="Sort descending" icon="SortDesc" showLabel disabled={disabled} onClick={() => { const problem = sortTable(editor.state, editor.view.dispatch, 'desc'); if (problem) setNotice(problem); else editor.commands.focus(); }} />
     <label className="nb-rfield">Cell fill <input aria-label="Cell shading" type="color" disabled={disabled} defaultValue="#eab308" onChange={e => chain().setCellAttribute('backgroundColor', e.target.value).run()} /></label>
   </RibbonGroup>;
   const pagePanel = (tab: Tab) => panels[tab] ?? <span className="nb-small" role="status">These commands load with the page.</span>;
