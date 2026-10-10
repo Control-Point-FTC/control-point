@@ -126,3 +126,16 @@ export function splitInk(ink: Ink, point: [
         parts.push(current);
     return parts;
 }
+
+/** Bring forward (1) / Send backward (-1): each chosen item swaps with its
+ *  neighbour in stacking order, unless that neighbour is chosen too (so a
+ *  chosen group moves together). Returns ids bottom to top. */
+export function stepStacking(order: string[], chosen: Set<string>, direction: 1 | -1): string[] {
+  const next = [...order];
+  const indexes = direction === 1 ? [...next.keys()].reverse() : [...next.keys()];
+  for (const i of indexes) {
+    const j = i + direction;
+    if (chosen.has(next[i]) && j >= 0 && j < next.length && !chosen.has(next[j])) [next[i], next[j]] = [next[j], next[i]];
+  }
+  return next;
+}
