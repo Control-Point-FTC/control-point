@@ -1,0 +1,189 @@
+name: Deploy to Oracle VM
+
+# Every push to main builds the app on the runner and ships it to the Oracle VM
+# over SSH. Same steps as ~/deploy-control-point.sh: dist + backend files
+# taken straight from git, backups on the VM, restart, then verify the live site.
+# Never touches /opt/control-point/.env, uploads/, node_modules/ or the database.
+#
+# Secrets (repo Settings -> Secrets and variables -> Actions):
+#   ORACLE_SSH_KEY      private key for ubuntu@132.145.202.89 (contents of ~/.ssh/oracle-controlpoint)
+#   ORACLE_KNOWN_HOSTS  optional: output of `ssh-keyscan 132.145.202.89` (pins the host key)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits for the running one, older queued ones are dropped.
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VM: ubuntu@132.145.202.89
+  APP: /opt/control-point
+  SITE: https://tryctrlpoint.org
+  KEEP_BACKUPS: 3
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check for SSH key
+        id: gate
+        env:
+          KEY: ${{ secrets.ORACLE_SSH_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::warning::ORACLE_SSH_KEY secret is not set, skipping deploy."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pinned to commit SHAs: this job holds the production SSH key.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.gate.outputs.ok == 'true'
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          npm ci --no-audit --no-fund --loglevel=error
+          npm run build
+
+      - name: Stage files
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          mkdir -p stage/backend
+          cp -r dist stage/dist
+          # Everything tracked except uploads, tests and repo plumbing. src/ ships too:
+          # the server imports shared modules from src/types, src/utils and src/notebook,
+          # and tsx only loads what is imported.
+          git archive HEAD -- . ':(exclude)uploads' ':(exclude).github' ':(exclude).claude' \
+            ':(exclude,glob)**/__tests__/**' | tar -x -C stage/backend
+          ( cd stage/backend && find . -type f | sed 's|^\./||' | sort ) > stage/manifest
+          mv stage/manifest stage/backend/.deploy-manifest
+
+      - name: Set up SSH
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          KEY: ${{ secrets.ORACLE_SSH_KEY }}
+          KNOWN: ${{ secrets.ORACLE_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          if [ -n "$KNOWN" ]; then
+            printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          else
+            echo "::warning::ORACLE_KNOWN_HOSTS not set, trusting the host key on first sight."
+            ssh-keyscan -T 15 "${VM#*@}" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+          echo "SSH=ssh -i $HOME/.ssh/id_deploy -o BatchMode=yes $VM" >> "$GITHUB_ENV"
+
+      - name: Compare with the VM
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          ( cd stage/backend && find . -type f ! -path './public/*' | sed 's|^\./||' | sort ) > stage/files.txt
+          $SSH "sudo sh -c 'cd $APP && xargs md5sum 2>/dev/null; true'" < stage/files.txt > stage/vm.md5
+          ( cd stage/backend && xargs md5sum < ../files.txt ) > stage/new.md5
+          comm -13 <(sort stage/vm.md5) <(sort stage/new.md5) | awk '{print $2}' > stage/changed.txt
+          echo "Backend files that will change:"; sed 's/^/  /' stage/changed.txt
+          if grep -q '^migrations/' stage/changed.txt; then
+            echo "::notice::New or changed migrations will run on the live database at startup."
+          fi
+          # Any manifest or lockfile change -> npm install on the VM before the restart.
+          INSTALL=0
+          if grep -qE '^package(-lock)?\.json$' stage/changed.txt; then
+            INSTALL=1
+            echo "::notice::package.json or package-lock.json changed, running npm install on the VM."
+          fi
+          echo "INSTALL=$INSTALL" >> "$GITHUB_ENV"
+
+      - name: Upload and swap in
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          # Private upload dir (mktemp -d is 0700), so no other VM user can tamper with it.
+          N=$($SSH 'mktemp -d /tmp/cp-new.XXXXXXXX')
+          case "$N" in /tmp/cp-new.*) ;; *) echo "::error::bad upload dir '$N'"; exit 1 ;; esac
+          tar -C stage -czf - dist backend | $SSH "tar -xzf - -C '$N'"
+          TS=$(date -u +%Y%m%d-%H%M%S)
+          echo "TS=$TS" >> "$GITHUB_ENV"
+          $SSH "sudo N='$N' TS='$TS' INSTALL='$INSTALL' bash -s" <<'REMOTE'
+          set -e
+          C=/opt/control-point
+          trap 'rm -rf "$N"' EXIT
+          [ "$(stat -c %U "$N")" = ubuntu ] || { echo "upload dir not owned by ubuntu"; exit 1; }
+          B=$C/server-bak-$TS; mkdir -p $B
+          backup() { [ -f "$C/$1" ] && { mkdir -p "$B/$(dirname "$1")"; cp -a "$C/$1" "$B/$1"; }; true; }
+          # Backend: copy changed files (backing up what they replace).
+          while read -r f; do
+            if [ ! -f "$C/$f" ] || ! cmp -s "$C/$f" "$N/backend/$f"; then
+              backup "$f"
+              mkdir -p "$C/$(dirname "$f")"; cp "$N/backend/$f" "$C/$f"; chown controlpoint:controlpoint "$C/$f"
+            fi
+          done < "$N/backend/.deploy-manifest"
+          # Remove files an earlier deploy shipped that are gone from git (moved into the backup).
+          if [ -f $C/.deploy-manifest ]; then
+            comm -23 <(sort $C/.deploy-manifest) <(sort "$N/backend/.deploy-manifest") | while read -r f; do
+              if [ -f "$C/$f" ]; then
+                backup "$f"; rm -f "$C/$f"; echo "removed $f"
+              fi
+            done
+          fi
+          cp $N/backend/.deploy-manifest $C/.deploy-manifest
+          chown -R controlpoint:controlpoint $B
+          # Frontend: stage beside the live dir, then swap with two renames.
+          rm -rf $C/dist.new && cp -r $N/dist $C/dist.new
+          chown -R controlpoint:controlpoint $C/dist.new && chmod -R 755 $C/dist.new
+          mv $C/dist $C/dist.bak-$TS && mv $C/dist.new $C/dist
+          if [ "$INSTALL" = "1" ]; then
+            (cd $C && sudo -u controlpoint HOME=/home/controlpoint npm install --no-audit --no-fund --loglevel=error)
+          fi
+          systemctl restart control-point; sleep 12
+          echo "service: $(systemctl is-active control-point)"
+          journalctl -u control-point --since "-20s" --no-pager | grep -E "Server running|rror" | grep -viE "key|token|status=143|exit-code" | tail -3 || true
+          echo "rollback: dist.bak-$TS / server-bak-$TS"
+          REMOTE
+
+      - name: Verify
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          EXPECTED=$(grep -o 'index-[A-Za-z0-9_-]*\.js' dist/index.html | head -1)
+          for i in $(seq 1 12); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SITE/" || true)
+            LIVE=$(curl -s "$SITE/" | grep -o 'index-[A-Za-z0-9_-]*\.js' | head -1 || true)
+            API=$(curl -s -o api.json -w '%{http_code}' "$SITE/api/auth/config" || true)
+            [ "$CODE" = "200" ] && [ "$LIVE" = "$EXPECTED" ] && [ "$API" = "200" ] && jq -e 'type == "object"' api.json >/dev/null 2>&1 && break
+            sleep 5
+          done
+          echo "$SITE/ -> $CODE"
+          echo "$SITE/api/auth/config -> $API"
+          echo "live bundle $LIVE (expected $EXPECTED)"
+          [ "$CODE" = "200" ] || { echo "::error::Site is not returning 200. Check journalctl -u control-point and roll back from dist.bak-$TS / server-bak-$TS."; exit 1; }
+          [ "$LIVE" = "$EXPECTED" ] || { echo "::error::Live bundle doesn't match the build."; exit 1; }
+          [ "$API" = "200" ] && jq -e 'type == "object"' api.json >/dev/null || { echo "::error::/api/auth/config is not returning JSON 200."; exit 1; }
+
+      # Only after a verified deploy: older backups are never pruned by a failed one.
+      - name: Prune old backups
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          $SSH "sudo bash -s" <<REMOTE
+          C=$APP
+          ls -d \$C/dist.bak-* 2>/dev/null | sort | head -n -$KEEP_BACKUPS | xargs -r rm -rf
+          ls -d \$C/server-bak-* 2>/dev/null | sort | head -n -$KEEP_BACKUPS | xargs -r rm -rf
+          REMOTE
+
+      - name: Clean up key
+        if: always()
+        run: rm -f ~/.ssh/id_deploy
