@@ -9,6 +9,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { isKnownRoute, withHead, PUBLIC_HEADS, NOT_FOUND_HEAD } from "../src/utils/publicRoutes.js";
 
 const ENCODINGS: { name: string; ext: string }[] = [
   { name: "br", ext: ".br" },
@@ -47,9 +48,26 @@ export function pickEncoding(acceptEncoding: string, file: string, exists: (p: s
   return null;
 }
 
-export function serveDist(app: express.Express, distDir: string, opts: { csp?: { header: string; value: string } } = {}) {
+export function serveDist(app: express.Express, distDir: string, opts: { csp?: { header: string; value: string }; siteUrl?: string } = {}) {
   const root = path.resolve(distDir);
   const indexFile = path.join(root, "index.html");
+
+  // index.html with route-specific head tags (public pages, 404). Read once
+  // per deploy: the file only changes when the mtime does.
+  let shell: { mtimeMs: number; html: string } | null = null;
+  const readShell = (): string => {
+    const mtimeMs = fs.statSync(indexFile).mtimeMs;
+    if (!shell || shell.mtimeMs !== mtimeMs) shell = { mtimeMs, html: fs.readFileSync(indexFile, "utf8") };
+    return shell.html;
+  };
+  const sendShell = (res: express.Response, status: number, head: { title: string; description: string }, urlPath?: string) => {
+    res.setHeader("Cache-Control", "no-cache");
+    if (opts.csp) res.setHeader(opts.csp.header, opts.csp.value);
+    let html: string;
+    try { html = readShell(); } catch { return res.status(status).type("text").send(status === 404 ? "Not found" : "Unavailable"); }
+    const url = opts.siteUrl && urlPath ? opts.siteUrl.replace(/\/$/, "") + urlPath : undefined;
+    res.status(status).type("html").send(withHead(html, head, url));
+  };
 
   const sendIndex = (req: express.Request, res: express.Response) => {
     res.setHeader("Cache-Control", "no-cache");
@@ -94,6 +112,8 @@ export function serveDist(app: express.Express, distDir: string, opts: { csp?: {
   // The page itself always goes through sendIndex (CSP + no-cache), also
   // when asked for by name.
   app.get("/index.html", sendIndex);
+  // Browsers and crawlers ask for /favicon.ico by name; the icon is a PNG.
+  app.get("/favicon.ico", (_req, res) => res.redirect(301, "/favicon.png"));
   app.use(express.static(root, {
     index: false,
     setHeaders: (res, filePath) => {
@@ -105,8 +125,13 @@ export function serveDist(app: express.Express, distDir: string, opts: { csp?: {
 
   // SPA routes. A request for a missing hashed asset (an old tab after a
   // deploy) is a real 404 — never index.html, which would be parsed as JS.
+  // Unknown paths still get the app (it renders a not-found page), but with
+  // a real 404 status so crawlers and link checkers see the truth.
   app.get("*", (req, res) => {
     if (req.path.startsWith("/assets/")) return res.status(404).type("text").send("Not found");
+    if (!isKnownRoute(req.path)) return sendShell(res, 404, NOT_FOUND_HEAD);
+    const head = PUBLIC_HEADS[req.path];
+    if (head) return sendShell(res, 200, head, req.path);
     sendIndex(req, res);
   });
 }

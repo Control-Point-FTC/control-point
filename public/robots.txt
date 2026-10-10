@@ -1,0 +1,13 @@
+# Control Point. Team workspaces sit behind sign-in; this file only steers
+# crawlers to the public pages and is not an access control.
+User-agent: *
+Allow: /$
+Allow: /privacy
+Allow: /terms
+Allow: /predict/how-it-works
+Disallow: /api/
+Disallow: /join/
+Disallow: /checkin/
+Disallow: /notebook
+
+Sitemap: https://tryctrlpoint.org/sitemap.xml

@@ -82,6 +82,10 @@ import { apiFetch, assetUrl } from './services/api';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import LegalPage from './Legal';
+import NotFoundPage from './NotFound';
+import { isKnownRoute, PUBLIC_HEADS, SITE_NAME } from './utils/publicRoutes';
+// index.html's own title, restored on the signed-out landing page.
+const DEFAULT_TITLE = typeof document !== 'undefined' ? document.title : SITE_NAME;
 import { cn, Card, Button, Input } from './components/ui';
 import DashboardView from './components/dashboard/DashboardView';
 import { useTranslation } from 'react-i18next';
@@ -1611,6 +1615,14 @@ export default function App() {
     // deliberately generic until an explicit permitted Bruno action is added.
     setScreenRoute(activeTab === 'notebook' ? '/notebook' : `${location.pathname}${location.search}`, pageTitle);
   }, [location.pathname, location.search, pageTitle]);
+  // Tab titles: "Tasks · Control Point" when signed in, the public page's own
+  // title (or the default) when not. Never a notebook page or record name.
+  useEffect(() => {
+    const publicHead = PUBLIC_HEADS[location.pathname];
+    if (publicHead) document.title = publicHead.title;
+    else if (!isLoggedIn) document.title = DEFAULT_TITLE;
+    else if (isKnownRoute(location.pathname)) document.title = `${pageTitle} · ${SITE_NAME}`;
+  }, [location.pathname, pageTitle, isLoggedIn]);
   useEffect(() => {
     setScreenEntity('channelId', isChatRoute ? activeChannelId : null);
   }, [isChatRoute, activeChannelId]);
@@ -2193,7 +2205,7 @@ export default function App() {
         <Route path="/checkin/:token" element={<CheckinPage currentUser={currentUser} onRefresh={fetchData} />} />
         {/* The invite effect joins and then leaves this page. */}
         <Route path="/join/:token" element={<p className="p-8 text-sm text-muted-foreground">Joining workspace…</p>} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<NotFoundPage signedIn />} />
       </Routes>
       </Suspense>
     );
@@ -2211,6 +2223,9 @@ export default function App() {
 
   // Public legal pages — reachable without login so OAuth app reviewers
   // (TikTok, Google) can verify them. Rendered outside the auth flow.
+  if (!isKnownRoute(location.pathname)) {
+    return <NotFoundPage signedIn={isLoggedIn} />;
+  }
   if (location.pathname === '/privacy' || location.pathname === '/terms') {
     return <LegalPage page={location.pathname === '/privacy' ? 'privacy' : 'terms'} />;
   }

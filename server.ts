@@ -13931,7 +13931,7 @@ Rules:
     } catch (e) {
       console.error("[csp] could not read dist/index.html — no CSP header:", e);
     }
-    serveDist(app, path.join(__dirname, "dist"), { csp });
+    serveDist(app, path.join(__dirname, "dist"), { csp, siteUrl: "https://tryctrlpoint.org" });
   }
 
   // Centralized error handler (reached via express-async-errors for async
