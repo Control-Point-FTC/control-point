@@ -13,6 +13,7 @@ import { notebookThreads, notebookThreadComments, notebookComment, notebookEditC
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 import {notebookTrash} from './notebookTrash.js';
 import {notebookRestore} from './notebookRecovery.js';
+import {notebookTrashPage} from './notebookTrashPreview.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -460,6 +461,7 @@ export class NotebookStore {
     return hits;
   }); }
   trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
+  trashPage(ctx:NotebookContext,pageId:number){return this.session(ctx,s=>notebookTrashPage(s,pageId));}
   restore(ctx:NotebookContext,kind:Kind,itemId:number,to:Row={}){return this.session(ctx,s=>notebookRestore(s,kind,itemId,to));}
   versions(ctx: NotebookContext, pageId: number, versionId?: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
@@ -586,6 +588,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   };
   app.get("/api/notebook/tree", handle(ctx => store.tree(ctx)));
   app.get('/api/notebook/trash',handle((ctx,req)=>store.trash(ctx,req.query.cursor)));
+  app.get('/api/notebook/trash/pages/:id',handle((ctx,req)=>store.trashPage(ctx,id(req.params.id))));
   app.get("/api/notebook/search", handle((ctx, req) => store.search(ctx, String(req.query.q ?? ""), Number(req.query.limit ?? 30))));
   app.get("/api/notebook/export", handle(ctx => store.export(ctx)));
   app.get('/api/notebook/mentions', handle(ctx => store.mentionInbox(ctx)));

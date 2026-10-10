@@ -15,6 +15,37 @@ async function open(){fireEvent.click(screen.getByRole('button',{name:'Trash'}))
 beforeEach(()=>{vi.mocked(apiJson).mockResolvedValue(listing);vi.mocked(confirmDialog).mockResolvedValue(true);});
 afterEach(()=>{cleanup();vi.resetAllMocks();});
 describe('desktop notebook trash controls',()=>{
+  it('clears protected snapshots when admin access changes and reads the permitted listing again',async()=>{
+    const {rerender,onRestored}=mount();await open();
+    vi.mocked(apiJson).mockResolvedValueOnce({id:4,title:'Build notes',content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Retained secret'}]}]},canvas:{}});
+    fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));await screen.findByText('Retained secret');
+    vi.mocked(apiJson).mockResolvedValueOnce({...listing,items:[]});
+    rerender(<NotebookTrash teamId={9} tree={{...tree,permissions:{...tree.permissions,protect:false}}} onRestored={onRestored}/>);
+    await screen.findByText('Trash is empty');expect(screen.queryByText('Retained secret')).toBeNull();expect(apiJson).toHaveBeenCalledTimes(3);
+  });
+  it('aborts pending previews on permission loss and does not revive them when access returns',async()=>{
+    const {rerender,onRestored}=mount();await open();let finish!:(value:any)=>void;
+    vi.mocked(apiJson).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));
+    await waitFor(()=>expect(apiJson).toHaveBeenCalledTimes(2));const signal=vi.mocked(apiJson).mock.calls[1][1]?.signal;
+    rerender(<NotebookTrash teamId={9} tree={{...tree,permissions:{...tree.permissions,delete:false}}} onRestored={onRestored}/>);
+    expect(signal?.aborted).toBe(true);finish({title:'Lost access',content:{type:'doc',content:[]},canvas:{}});await Promise.resolve();
+    rerender(<NotebookTrash teamId={9} tree={tree} onRestored={onRestored}/>);expect(screen.queryByRole('dialog')).toBeNull();expect(screen.queryByText('Lost access')).toBeNull();
+    await open();expect(screen.queryByRole('region',{name:'Retained page preview'})).toBeNull();
+  });
+  it('reads retained text only on explicit preview and keeps the snapshot read only',async()=>{
+    mount();await open();expect(apiJson).toHaveBeenCalledOnce();
+    vi.mocked(apiJson).mockResolvedValueOnce({id:4,title:'Build notes',content:{type:'doc',content:[{type:'paragraph',attrs:{id:'retained'},content:[{type:'text',text:'Original gearing measurements'}]}]},canvas:{}});
+    fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));
+    const preview=await screen.findByRole('region',{name:'Retained page preview'});expect(preview).toHaveTextContent('Original gearing measurements');expect(preview.querySelector('[contenteditable="true"]')).toBeNull();
+    expect(apiJson).toHaveBeenCalledTimes(2);expect(apiJson).toHaveBeenLastCalledWith('/api/notebook/trash/pages/4',expect.objectContaining({headers:{'X-CP-Notebook-Team':'9'},cache:'no-store'}));
+    fireEvent.click(screen.getByRole('button',{name:'Close preview'}));expect(screen.queryByRole('region',{name:'Retained page preview'})).toBeNull();
+  });
+  it('clears a retained snapshot and prior titles when preview authorization is denied',async()=>{
+    mount();await open();vi.mocked(apiJson).mockResolvedValueOnce({id:4,title:'Build notes',content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Retained secret'}]}]},canvas:{}});
+    fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));await screen.findByRole('region',{name:'Retained page preview'});
+    vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(404,'Deleted page unavailable'));fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));
+    await screen.findByRole('alert');expect(screen.queryByText('Build notes')).toBeNull();expect(screen.queryByText('Retained secret')).toBeNull();
+  });
   it('loads only on explicit open and paginates older entries under current team scope',async()=>{
     mount();expect(apiJson).not.toHaveBeenCalled();vi.mocked(apiJson).mockResolvedValueOnce({...listing,nextCursor:'continuation'});await open();
     expect(screen.getByText('page · Deleted by Ana')).toBeTruthy();

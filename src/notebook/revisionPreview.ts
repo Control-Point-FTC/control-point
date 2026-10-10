@@ -5,7 +5,7 @@ import {printAnnotation} from './pdfPrint';
 import type {RevisionDocument} from './revisionDiff';
 
 /** Read-only local rendering. History never opens files or external images automatically. */
-export function revisionPreview(document:RevisionDocument){
+export function revisionPreview(document:RevisionDocument,attachmentHint='open from the current page'){
   const host=window.document.createElement('div');
   const prose=window.document.createElement('div');prose.className='nb-prose';
   prose.append(DOMSerializer.fromSchema(notebookSchema).serializeFragment(notebookSchema.nodeFromJSON(validatedNotebookDocument(document.content)).content));host.append(prose);
@@ -30,7 +30,7 @@ export function revisionPreview(document:RevisionDocument){
     items.forEach((item,index)=>{const annotation=printAnnotation({...item,x:item.x-left,y:item.y-top},height,index,width);annotation.style.overflow='visible';stage.append(annotation);});host.append(stage);
   }
   for(const file of host.querySelectorAll('figure[data-notebook-file]')){
-    const caption=window.document.createElement('span');caption.textContent=`Attachment: ${file.getAttribute('name')||'File'} · open from the current page`;file.replaceChildren(caption);
+    const caption=window.document.createElement('span');caption.textContent=`Attachment: ${file.getAttribute('name')||'File'} · ${attachmentHint}`;file.replaceChildren(caption);
   }
   for(const image of host.querySelectorAll('img')){
     const label=window.document.createElement('span');label.textContent=image.alt||'Saved image';image.replaceWith(label);
