@@ -28,7 +28,7 @@ request to produce an answer.
 - Bruno changes your notebook only after you confirm a proposed change.
 - We don't use your team's content to train AI models, and we don't share it for
   advertising.
-- Team admins can turn AI off for members, and usage limits apply.
+- The app owner can turn AI off for members, and usage limits apply.
 
 ## Files you upload
 
