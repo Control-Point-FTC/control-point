@@ -7,6 +7,8 @@ import { notebookExtensions } from './editorSchema';
 import { AutoCapitalize, autoCapitalizeEnabled, rememberCapital } from './autoCapitalize';
 import { PageLinkMenu } from './pageLinkMenu';
 import { PageLinkSourceContext } from './PageLinkPopup';
+import { RecordNavigationContext } from './recordNavigation';
+import { appRecordPath } from './recordLinks';
 import type { NotebookSync } from './NotebookSync';
 import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
 import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk, stepStackingInLayers } from './canvasGeometry';
@@ -47,9 +49,12 @@ function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
     onRemoved: (editor: Editor) => void;
 }) {
     const links = useContext(PageLinkSourceContext);
+    const openRecord = useRef(useContext(RecordNavigationContext)); openRecord.current = useContext(RecordNavigationContext);
     const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), AutoCapitalize, ...(links ? [PageLinkMenu.configure(links)] : []), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' },
         // Double-click selects a word (browser default); triple-click selects the whole box.
-        handleTripleClick: view => { view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc))); return true; } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
+        handleTripleClick: view => { view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc))); return true; },
+        // Record links (tasks, meetings…) open in the app, as in the page text.
+        handleDOMEvents: { click: (_view, event) => { const path = appRecordPath((event.target as Element).closest('a')?.getAttribute('href')); if (!path || !openRecord.current) return false; event.preventDefault(); openRecord.current(path); return true; } } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
     useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
     useEffect(() => () => { if (editor)
         onRemoved(editor); }, [editor, onRemoved]);
