@@ -14,7 +14,7 @@ export function NotebookMentions({ teamId, visiblePageIds, onNavigate }: { teamI
     return () => { clearInterval(timer); abort.abort(); };
   }, [teamId]);
   const visible = mentions.filter(m => visiblePageIds.includes(m.pageId)), unread = visible.filter(m => !m.read).length;
-  return <><Button variant="ghost" aria-label={`Notebook mentions${unread ? `, ${unread} unread` : ''}`} onClick={() => setOpen(true)}><AtSign size={16} /><span>Mentions{unread ? ` (${unread})` : ''}</span></Button>
+  return <><Button variant="ghost" aria-label={`Notebook mentions${unread ? `, ${unread} unread` : ''}`} title="Mentions" onClick={() => setOpen(true)}><AtSign size={16} /><span className="nb-mentions-label">Mentions</span>{unread ? <span className="nb-mentions-count">{unread}</span> : null}</Button>
     <Dialog open={open} onOpenChange={setOpen}><DialogContent><DialogHeader><DialogTitle>Notebook mentions</DialogTitle><DialogDescription>Discussions mentioning you in pages you can currently access.</DialogDescription></DialogHeader>
       {error && <p role="alert">{error}</p>}
       <div className="nb-mention-inbox">{visible.length ? visible.map(m => <Button key={m.commentId} variant="ghost" className="nb-mention-item" onClick={async () => {
