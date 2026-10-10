@@ -2,17 +2,20 @@ import React, { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import NotebookCanvas from '../NotebookCanvas';
+import { PageLinkSourceContext } from '../PageLinkPopup';
+import { pageLinkKey } from '../pageLinkMenu';
 import { NotebookSync } from '../NotebookSync';
 import { canvasJSON, seedCanvas, type Ink } from '../canvasModel';
 import * as geometry from '../canvasGeometry';
 const providers: NotebookSync[] = [];
 afterEach(() => { cleanup(); providers.splice(0).forEach(p => p.destroy()); vi.restoreAllMocks(); });
+const LINKS = { pages: () => [{ id: 5, sectionId: 1, parentId: null, title: 'Drivetrain', sort: 0, protected: false, ownProtected: false, revision: 1, updatedAt: '' }], currentPageId: () => 1, enabled: () => true };
 function mount(editable = true, mobile = false, strokes = 0, scoped = false, scopeId?: string) {
     const sync = new NotebookSync(1,scoped?{memberId:123,teamId:456}:undefined);
     const zoom = vi.fn();
     providers.push(sync);
     if (strokes) seedCanvas(sync.doc, { version: 1, objects: Array.from({length:strokes},(_,i): Ink => ({ id:`stroke-${i}`, type:'stroke',tool:'pen',x:i%100,y:Math.floor(i/100),width:10,height:10,z:i,rotation:0,locked:false,groupId:null,color:'#111111',strokeWidth:2,opacity:1,points:[[0,0,.5],[10,10,.5]] })) });
-    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><NotebookCanvas sync={sync} scopeId={scopeId} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></div></>; }
+    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><PageLinkSourceContext.Provider value={LINKS}><NotebookCanvas sync={sync} scopeId={scopeId} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></PageLinkSourceContext.Provider></div></>; }
     render(<Harness />);
     const surface = screen.getByLabelText('Page drawing surface');
     Object.defineProperties(surface, { offsetWidth: { value: 1000 }, offsetHeight: { value: 600 } });
@@ -201,6 +204,14 @@ describe('desktop shared drawing surface', () => {
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
         fireEvent.keyDown(grip, { key: 'ArrowRight', shiftKey: true });
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
+    });
+    it('offers page links in canvas text boxes too', async () => {
+        const { surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 60, clientY: 60 });
+        const box = await waitFor(() => { const el = surface.querySelector<HTMLElement & { editor?: any }>('[data-canvas-id] [role=textbox]'); if (!el?.editor) throw new Error('not ready'); return el; });
+        box.editor.commands.insertContent('[[dri');
+        expect(pageLinkKey.getState(box.editor.state)).toMatchObject({ active: true, query: 'dri' });
     });
     it('prevents readers and mobile users from changing canvas objects', () => {
         const { sync, surface } = mount(false, true);
