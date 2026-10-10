@@ -16,12 +16,16 @@ import { apiJson } from '../../services/api';
 export function anchorRange(editor: Editor, from: number, to: number): { resolve: () => { from: number; to: number } | null; dispose: () => void } {
   const ys = ySyncPluginKey.getState(editor.state) as any;
   if (ys?.binding) {
-    const ends = [absolutePositionToRelativePosition(from, ys.type, ys.binding.mapping), absolutePositionToRelativePosition(to, ys.type, ys.binding.mapping)];
+    // A relative position sticks to the character on its left. Anchor both ends
+    // to characters inside the range (after its first and after its last), so
+    // text typed right before or after the range stays outside it.
+    const ends = [absolutePositionToRelativePosition(Math.min(from + 1, to), ys.type, ys.binding.mapping), absolutePositionToRelativePosition(to, ys.type, ys.binding.mapping)];
     return {
       resolve: () => {
         const now = ySyncPluginKey.getState(editor.state) as any;
         if (!now?.binding) return null;
-        const [a, b] = ends.map(rel => relativePositionToAbsolutePosition(now.doc, now.type, rel, now.binding.mapping));
+        const [first, b] = ends.map(rel => relativePositionToAbsolutePosition(now.doc, now.type, rel, now.binding.mapping));
+        const a = first == null ? null : to > from ? first - 1 : first;
         return a == null || b == null || b < a ? null : { from: a, to: b };
       },
       dispose: () => {},
@@ -56,15 +60,25 @@ export function wordAtSelection(editor: Editor): { word: string; from: number; t
     return WORD.test(text) && text.split(' ').length <= 3 ? { word: text, from: from + lead, to: from + lead + text.length } : null;
   }
   if (!$from.parent.isTextblock) return null;
-  const text = $from.parent.textContent, offset = $from.parentOffset;
-  let start = offset, end = offset;
-  while (start > 0 && /[A-Za-z'-]/.test(text[start - 1])) start--;
-  while (end < text.length && /[A-Za-z'-]/.test(text[end])) end++;
-  const word = text.slice(start, end).replace(/^['-]+|['-]+$/g, '');
+  // Characters with their document positions: a line break (or any other
+  // inline node) occupies a position but no word character, so offsets into
+  // textContent would drift after it.
+  const chars: string[] = [], positions: number[] = [];
+  const blockStart = $from.start();
+  $from.parent.descendants((child, offset) => {
+    if (child.isText && child.text) { for (let i = 0; i < child.text.length; i++) { chars.push(child.text[i]); positions.push(blockStart + offset + i); } }
+    else if (child.isInline) { chars.push('\n'); positions.push(blockStart + offset); }
+  });
+  let at = positions.findIndex(p => p >= from);
+  if (at < 0) at = chars.length;
+  let start = at, end = at;
+  while (start > 0 && /[A-Za-z'-]/.test(chars[start - 1])) start--;
+  while (end < chars.length && /[A-Za-z'-]/.test(chars[end])) end++;
+  while (start < end && /['-]/.test(chars[start])) start++;
+  while (end > start && /['-]/.test(chars[end - 1])) end--;
+  const word = chars.slice(start, end).join('');
   if (!WORD.test(word)) return null;
-  const lead = text.slice(start, end).indexOf(word);
-  const base = from - offset + start + lead;
-  return { word, from: base, to: base + word.length };
+  return { word, from: positions[start], to: positions[end - 1] + 1 };
 }
 
 const matchCase = (original: string, replacement: string) =>
@@ -72,31 +86,37 @@ const matchCase = (original: string, replacement: string) =>
     : original[0] === original[0].toUpperCase() ? replacement[0].toUpperCase() + replacement.slice(1) : replacement;
 
 export function Thesaurus({ editor, disabled, onClose }: { editor: Editor; disabled: boolean; onClose: () => void }) {
-  const target = useRef<{ word: string; anchor: ReturnType<typeof anchorRange> } | null>(null);
-  const aim = (word: string, from: number, to: number) => { target.current?.anchor.dispose(); target.current = { word, anchor: anchorRange(editor, from, to) }; };
+  // The word to replace stays tied to the editor it was found in (the page or
+  // a canvas text box), even if another editor becomes active meanwhile.
+  const target = useRef<{ word: string; editor: Editor; anchor: ReturnType<typeof anchorRange> } | null>(null);
+  const aim = (on: Editor, word: string, from: number, to: number) => { target.current?.anchor.dispose(); target.current = { word, editor: on, anchor: anchorRange(on, from, to) }; };
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<Result | null | 'loading' | 'missing'>('loading');
   const [notice, setNotice] = useState('');
+  const latest = useRef(0);
   const search = async (word: string) => {
+    const ticket = ++latest.current;  // only the newest lookup may update the panel
     setQuery(word); setNotice('');
     if (!WORD.test(word.trim())) { setResult('missing'); return; }
     setResult('loading');
-    try { const found = await lookUp(word); setResult(found.senses.length ? found : 'missing'); } catch { setResult('missing'); setNotice('The thesaurus needs a connection to Control Point. Try again when you are online.'); }
+    try { const found = await lookUp(word); if (ticket === latest.current) setResult(found.senses.length ? found : 'missing'); }
+    catch { if (ticket === latest.current) { setResult('missing'); setNotice('The thesaurus needs a connection to Control Point. Try again when you are online.'); } }
   };
   useEffect(() => {
     const at = wordAtSelection(editor);
-    if (at) { aim(at.word, at.from, at.to); void search(at.word); } else { setResult(null); setNotice('Select a word, or type one to look it up.'); }
-    return () => { target.current?.anchor.dispose(); };
+    if (at) { aim(editor, at.word, at.from, at.to); void search(at.word); } else { target.current?.anchor.dispose(); target.current = null; setResult(null); setNotice('Select a word, or type one to look it up.'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [editor]);
+  useEffect(() => () => { target.current?.anchor.dispose(); }, []);
   const insert = (synonym: string) => {
     const t = target.current, range = t?.anchor.resolve();
-    if (disabled || !editor.isEditable) { setNotice('This page is read only right now.'); return; }
+    if (!t || t.editor.isDestroyed) { setNotice('Select the word in the page that you want to replace.'); return; }
+    if (disabled || !t.editor.isEditable) { setNotice('This page is read only right now.'); return; }
     // The word must still be there, unchanged, wherever it has moved to.
-    if (!t || !range || editor.state.doc.textBetween(range.from, range.to) !== t.word) { setNotice('The word changed. Select it again to replace it.'); return; }
+    if (!range || t.editor.state.doc.textBetween(range.from, range.to) !== t.word) { setNotice('The word changed. Select it again to replace it.'); return; }
     const text = matchCase(t.word, synonym);
-    editor.chain().focus().insertContentAt(range, text).run();
-    aim(text, range.from, range.from + text.length);
+    t.editor.chain().focus().insertContentAt(range, text).run();
+    aim(t.editor, text, range.from, range.from + text.length);
     setNotice(`Replaced “${t.word}” with “${text}”.`);
   };
   return <aside className="nb-thesaurus" role="complementary" aria-label="Thesaurus">

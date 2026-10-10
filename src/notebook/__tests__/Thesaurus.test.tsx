@@ -72,3 +72,60 @@ describe('Thesaurus', () => {
     expect(await screen.findByText(/needs a connection/)).toBeTruthy();
   });
 });
+
+describe('Thesaurus review fixes', () => {
+  it('finds the right word after a line break', () => {
+    editor = new Editor({ extensions: notebookExtensions(false, true), content: '<p>Notes<br>big robot</p>' });
+    const start = editor.state.doc.textBetween(0, editor.state.doc.content.size, '|', '|').indexOf('big');
+    // Cursor inside "big" (after the break): the range covers exactly "big".
+    let pos = 0;
+    editor.state.doc.descendants((n, p) => { if (n.isText && n.text?.startsWith('big')) pos = p; });
+    editor.commands.setTextSelection(pos + 1);
+    const at = wordAtSelection(editor)!;
+    expect(at.word).toBe('big');
+    expect(editor.state.doc.textBetween(at.from, at.to)).toBe('big');
+    expect(start).toBeGreaterThan(0);
+  });
+
+  it('only the newest lookup updates the panel', async () => {
+    const pending: ((v: unknown) => void)[] = [];
+    vi.mocked(apiJson).mockImplementation(() => new Promise(r => { pending.push(r); }) as any);
+    mount('<p>big</p>');
+    editor.commands.setTextSelection(2);
+    fireEvent.click(screen.getByRole('tab', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Thesaurus' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Word to look up' }), { target: { value: 'robot' } });
+    fireEvent.submit(screen.getByRole('search'));
+    await act(async () => { pending[1]({ word: 'robot', senses: [{ partOfSpeech: 'Noun', definition: 'a machine', synonyms: ['automaton'] }] }); });
+    await act(async () => { pending[0](senses); });
+    expect(screen.getByText('a machine')).toBeTruthy();
+    expect(screen.queryByText('above average in size')).toBeNull();
+  });
+
+  it('follows the word through remote Yjs edits and refuses when a collaborator changes it', async () => {
+    const { prosemirrorJSONToYDoc } = await import('@tiptap/y-tiptap');
+    const { default: Collaboration } = await import('@tiptap/extension-collaboration');
+    const Y = await import('yjs');
+    const { notebookSchema } = await import('../editorSchema');
+    const local = prosemirrorJSONToYDoc(notebookSchema, { type: 'doc', content: [{ type: 'paragraph', attrs: { id: 'p' }, content: [{ type: 'text', text: 'big robot' }] }] }, 'prosemirror');
+    const remote = new Y.Doc(); Y.applyUpdate(remote, Y.encodeStateAsUpdate(local));
+    const sync = () => Y.applyUpdate(local, Y.encodeStateAsUpdate(remote, Y.encodeStateVector(local)));
+    const remoteText = () => ((remote.getXmlFragment('prosemirror').get(0) as InstanceType<typeof Y.XmlElement>).get(0) as InstanceType<typeof Y.XmlText>);
+    vi.mocked(apiJson).mockResolvedValue(senses as any);
+    editor = new Editor({ extensions: [...notebookExtensions(true, true), Collaboration.configure({ document: local, field: 'prosemirror' })] });
+    render(<NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={1} />);
+    editor.commands.setTextSelection(2);
+    fireEvent.click(screen.getByRole('tab', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Thesaurus' }));
+    await screen.findByText('above average in size');
+    // A collaborator types before and after the word.
+    act(() => { remoteText().insert(0, 'A '); remoteText().insert(remoteText().length, '!'); sync(); });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert “large”' }));
+    expect(editor.getText()).toBe('A large robot!');
+    // Now the collaborator edits the word itself.
+    act(() => { Y.applyUpdate(remote, Y.encodeStateAsUpdate(local, Y.encodeStateVector(remote))); remoteText().insert(4, 'X'); sync(); });
+    fireEvent.click(screen.getByRole('button', { name: 'Insert “sizable”' }));
+    expect(editor.getText()).toBe('A laXrge robot!');
+    expect(screen.getByText(/The word changed/)).toBeTruthy();
+  });
+});
