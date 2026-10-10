@@ -1,10 +1,12 @@
+import 'fake-indexeddb/auto';
 import React from 'react';
 import * as Y from 'yjs';
 import {afterEach,beforeEach,expect,it,vi} from 'vitest';
-import {cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,waitFor} from '@testing-library/react';
 import {MemoryRouter,useNavigate,useLocation} from 'react-router-dom';
 import {NotebookPage} from '../NotebookPage';
 import {apiJson} from '../../services/api';
+import {readCachedNotebookTree,clearCachedNotebookTrees} from '../offlineTree';
 const sessions=vi.hoisted(()=>({created:[] as any[]}));
 vi.mock('../../services/api',async original=>({...await original<any>(),apiJson:vi.fn()}));
 vi.mock('../NotebookSync',async()=>{
@@ -25,13 +27,30 @@ beforeEach(()=>{
     if(path==='/api/notebook/mentions')return [] as any;throw new Error(`Unexpected request ${path}`);
   });
 });
-afterEach(()=>{cleanup();sessions.created.forEach(session=>{session.unregister();session.doc.destroy();});vi.clearAllMocks();localStorage.clear();});
+afterEach(async()=>{cleanup();sessions.created.forEach(session=>{session.unregister();session.doc.destroy();});vi.restoreAllMocks();vi.clearAllMocks();localStorage.clear();await clearCachedNotebookTrees();});
 function NavigationProbe(){const navigate=useNavigate(),location=useLocation();return <><button onClick={()=>navigate('/dashboard')}>Leave notebook</button><output data-testid="route-path">{location.pathname}</output></>;}
 async function mount(){render(<MemoryRouter initialEntries={['/notebook?page=2']}><NotebookPage activeTeamId={20} currentUserId={10}/><NavigationProbe/></MemoryRouter>);await screen.findByTestId('editor-2');fireEvent.click(screen.getByRole('button',{name:'Split view'}));await screen.findByTestId('editor-3');return sessions.created.find(session=>session.pageId===3);}
 it('keeps the actual split workspace mounted through main-route page changes',async()=>{
   const secondary=await mount(),element=screen.getByTestId('editor-3');
   fireEvent.click(screen.getAllByRole('button',{name:'Navigate main to page 4'})[0]);await screen.findByTestId('editor-4');
   expect(screen.getByTestId('editor-3')).toBe(element);expect(secondary.release).not.toHaveBeenCalled();expect(screen.getByRole('separator',{name:'Resize notebook panes'})).toBeTruthy();
+});
+it('keeps unsaved protected sessions in both panes when live navigation goes offline',async()=>{
+  let offline=false,refresh:()=>void=()=>{};
+  const interval=globalThis.setInterval;
+  vi.spyOn(globalThis,'setInterval').mockImplementation((callback,ms,...args)=>{if(ms===5000)refresh=callback as ()=>void;return interval(callback,ms,...args);});
+  vi.mocked(apiJson).mockImplementation(async path=>{
+    if(path==='/api/notebook/tree'){
+      if(offline)throw new TypeError('Offline');
+      return {notebooks:[{id:1,title:'Season',sort:0,color:null}],sections:[{id:1,notebookId:1,title:'Build',sort:0,color:null,protected:false}],pages:pages.map(p=>({...p,protected:p.id!==4,ownProtected:p.id!==4})),permissions:{read:true,edit:true,organize:true,delete:true,protect:true}} as any;
+    }return [] as any;
+  });
+  const secondary=await mount(),primary=sessions.created.find(s=>s.pageId===2),mainElement=screen.getByTestId('editor-2'),otherElement=screen.getByTestId('editor-3');
+  for(const session of [primary,secondary]){session.pending=true;session.locallyDurable=false;session.doc.getMap('meta').set('title','Unsaved protected draft');}
+  expect((await readCachedNotebookTree({memberId:10,teamId:20}))?.tree.pages.map(p=>p.id)).toEqual([4]);
+  offline=true;await act(async()=>refresh());await screen.findByText(/Offline navigation ·/);
+  expect(screen.getByTestId('editor-2')).toBe(mainElement);expect(screen.getByTestId('editor-3')).toBe(otherElement);
+  for(const session of [primary,secondary]){expect(session.discardRecovery).not.toHaveBeenCalled();expect(session.doc.getMap('meta').get('title')).toBe('Unsaved protected draft');expect(session.pending).toBe(true);}
 });
 it('keeps blocked offline secondary edits mounted while the main page changes',async()=>{
   const secondary=await mount(),element=screen.getByTestId('editor-3');

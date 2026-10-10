@@ -28,5 +28,7 @@ export async function clearNotebookData() {
   for (const session of active) session.destroy();
   active.clear();
   const { clearNotebookJournals } = await import('./offlineJournal');
-  await clearNotebookJournals();
+  const { clearCachedNotebookTrees } = await import('./offlineTree');
+  const results=await Promise.allSettled([clearNotebookJournals(),clearCachedNotebookTrees()]);
+  const failed=results.find(result=>result.status==='rejected');if(failed?.status==='rejected')throw failed.reason;
 }
