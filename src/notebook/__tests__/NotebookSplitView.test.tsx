@@ -31,6 +31,10 @@ it('persists an offline page before replacing it and scopes the new linked page 
   const navigate=vi.fn();render(<NotebookSplitView {...props()} onNavigate={navigate}/>);await open();const current=sessions.created[0];current.pending=true;current.flush.mockResolvedValue(false);current.persist.mockResolvedValue(true);
   fireEvent.click(screen.getByRole('button',{name:'Open link in other pane 1'}));await screen.findByTestId('editor-3');expect(current.persist).toHaveBeenCalledOnce();expect(current.release).toHaveBeenCalledOnce();expect(sessions.created[1].scope).toEqual(primary.scope);expect(navigate).not.toHaveBeenCalled();expect(within(screen.getByTestId('editor-3')).getByText('target')).toBeTruthy();
 });
+it('opens a secondary Alt-click target in the main pane without replacing its source',async()=>{
+  const navigate=vi.fn();render(<NotebookSplitView {...props()} onNavigate={navigate}/>);await open();const current=sessions.created[0];
+  fireEvent.click(screen.getByRole('button',{name:'Open link in other pane 2'}));expect(navigate).toHaveBeenCalledWith(3,'target');expect(sessions.created).toHaveLength(1);expect(current.release).not.toHaveBeenCalled();expect(screen.getByTestId('editor-2')).toBeTruthy();
+});
 it('clears a revoked page and removes its recovery state',async()=>{
   const view=render(<NotebookSplitView {...props()}/>);await open();const current=sessions.created[0];view.rerender(<NotebookSplitView {...props()} pages={pages.filter(page=>page.id!==2)}/>);
   expect(screen.queryByTestId('editor-2')).toBeNull();expect(current.discardRecovery).toHaveBeenCalledOnce();expect(screen.getByText('Ribbon 1')).toBeTruthy();
