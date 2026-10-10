@@ -1,0 +1,5 @@
+BEGIN;
+ALTER TABLE notebook_books ADD COLUMN deleted_by INTEGER REFERENCES members(id) ON DELETE SET NULL;
+ALTER TABLE notebook_sections ADD COLUMN deleted_by INTEGER REFERENCES members(id) ON DELETE SET NULL;
+ALTER TABLE notebook_pages ADD COLUMN deleted_by INTEGER REFERENCES members(id) ON DELETE SET NULL;
+COMMIT;
