@@ -19,7 +19,7 @@ import {NotebookTrash} from './NotebookTrash';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
-type EditDialog = { action: 'create' | 'rename' | 'delete' | 'move'; kind: Kind; item?: Item; sectionId?: number; parentId?: number; notebookId?: number };
+type EditDialog = { action: 'rename' | 'delete' | 'move' | 'template'; kind: Kind; item?: Item; sectionId?: number; parentId?: number; notebookId?: number };
 const plural = { notebook: 'notebooks', section: 'sections', page: 'pages' };
 const emptyDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 // One notebook per season for now. Keep creation and its API intact for re-enabling.
@@ -145,11 +145,47 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   };
   const onTitle = useCallback((title: string) => { const id = syncRef.current?.pageId; setTree(t => t ? { ...t, pages: t.pages.map(p => p.id === id ? { ...p, title } : p) } : t); }, []);
   const open = (value: EditDialog) => {
-    setName(value.action === 'create' ? '' : value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
+    setName(value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
     setTemplate('blank');
     setTargetBook(String(value.notebookId ?? value.item?.notebookId ?? tree?.notebooks[0]?.id ?? ''));
     setTargetSection(String(value.sectionId ?? value.item?.sectionId ?? tree?.sections[0]?.id ?? ''));
     setTargetParent(value.parentId ? String(value.parentId) : ''); setDialog(value); setError('');
+  };
+  // OneNote-style instant creation: no modal, no title field, no template picker.
+  // The new page/section/notebook is created as "Untitled" and immediately renamed inline.
+  const createInstant = (kind: Kind, target: { sectionId?: number; parentId?: number | null; notebookId?: number }, templateId?: string) => {
+    if (!tree) return;
+    if (kind === 'page' && !tree.permissions.edit) { setError('Notebook editing permission is required.'); return; }
+    if (kind !== 'page' && !tree.permissions.organize) { setError('Notebook organizing permission is required.'); return; }
+    if (kind === 'page' && !target.sectionId) { setError('Create a notebook section before adding a page.'); return; }
+    void (async () => {
+      if (!await leave()) return;
+      let created = 0;
+      await mutate(async () => {
+        const body = kind === 'page'
+          ? { title: 'Untitled', sectionId: target.sectionId, parentId: target.parentId ?? null, content: templateId ? notebookTemplate(templateId) : undefined }
+          : kind === 'section'
+            ? { title: 'Untitled', notebookId: target.notebookId }
+            : { title: 'Untitled' };
+        const res = await apiJson<{ id: number }>(`/api/notebook/${plural[kind]}`, { method: 'POST', body: JSON.stringify(body) });
+        created = res.id;
+      });
+      if (!created || !mounted.current) return;
+      // Make sure the new row is visible: expand its notebook/section/parent chain.
+      const openKeys = new Set<string>();
+      if (kind === 'page') {
+        const section = tree.sections.find(s => s.id === target.sectionId);
+        openKeys.add(`section:${section?.id}`); openKeys.add(`notebook:${section?.notebookId}`);
+        let parent = target.parentId ?? null;
+        for (let depth = 0; parent && depth < 6; depth++) { openKeys.add(`page:${parent}`); parent = tree.pages.find(p => p.id === parent)?.parentId ?? null; }
+      } else if (kind === 'section') {
+        openKeys.add(`notebook:${target.notebookId}`);
+      }
+      const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
+      if (kind === 'page') { setParams({ page: String(created) }); setDrawer(false); }
+      setError(''); setAnnouncement(`${kind === 'page' ? 'Page' : kind === 'section' ? 'Section' : 'Notebook'} created. Type a name and press Enter.`);
+      setRenaming({ kind, item: { id: created, title: 'Untitled' } as Item, title: 'Untitled' });
+    })();
   };
   const mutate = async (fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -163,21 +199,22 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     const next = new URLSearchParams(params); next.delete('action'); setParams(next, { replace: true });
     if (action === 'search') { setDrawer(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.nb-search input')?.focus()); }
     if (action === 'new-page') {
-      if (!tree.permissions.edit) setError('Notebook editing permission is required.');
-      else if (!tree.sections.length) setError('Create a notebook section before adding a page.');
-      else open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id });
+      createInstant('page', { sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0]?.id });
     }
   }, [params, tree]);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!dialog || !await leave()) return;
     const { action, kind, item } = dialog;
+    if (action === 'template' && kind === 'page') {
+      // Opt-in template creation: still instant "Untitled" + inline rename, just with template content.
+      const sectionId = Number(targetSection), parentId = targetParent ? Number(targetParent) : null;
+      setDialog(null);
+      createInstant('page', { sectionId, parentId }, template);
+      return;
+    }
     await mutate(async () => {
       const base = `/api/notebook/${plural[kind]}`;
       if (action === 'delete') { await apiJson(`${base}/${item!.id}`, { method: 'DELETE' }); if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); } }
-      if (action === 'create') {
-        const res = await apiJson(`${base}`, { method: 'POST', body: JSON.stringify({ title: name, color: kind !== 'page' ? color : undefined, notebookId: Number(targetBook), sectionId: Number(targetSection), parentId: dialog.parentId ?? null, content: kind === 'page' ? notebookTemplate(template) : undefined }) });
-        if (kind === 'page') { setParams({ page: String(res.id) }); setDrawer(false); }
-      }
       if (action === 'rename') {
         if (kind === 'page' && syncRef.current?.pageId === item!.id) { syncRef.current.doc.getMap('meta').set('title', name.trim()); if (!await syncRef.current.flush()) throw new Error('Title has not been saved yet'); }
         else if (kind === 'page') { const p = await apiJson(`${base}/${item!.id}`, { cache: 'no-store' }); await apiJson(`${base}/${item!.id}`, { method: 'PUT', body: JSON.stringify({ title: name, baseRevision: p.revision }) }); }
@@ -267,7 +304,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {tree?.permissions.organize && <><DropdownMenuItem onClick={() => { void reorder(kind, item, -1); }}>Move up</DropdownMenuItem><DropdownMenuItem onClick={() => { void reorder(kind, item, 1); }}>Move down</DropdownMenuItem></>}
       {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind, id: item.id, to: { parentId: tree.pages.find(p => p.id === item.parentId)?.parentId ?? null }, index: 0 }) })); })(); }}>Promote page</DropdownMenuItem>}
       {tree?.permissions.edit && kind === 'page' && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(async () => { const p = await apiJson(`/api/notebook/pages/${item.id}/duplicate`, { method: 'POST', body: '{}' }); setParams({ page: String(p.id) }); }); })(); }}>Duplicate page only</DropdownMenuItem>}
-      {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'create', kind: 'page', sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>Add {kind === 'page' ? 'subpage' : 'page'}</DropdownMenuItem>}
+      {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => createInstant('page', { sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>Add {kind === 'page' ? 'subpage' : 'page'}</DropdownMenuItem>}
+      {tree?.permissions.edit && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'template', kind: 'page', sectionId: kind === 'section' ? item.id : item.sectionId, parentId: kind === 'page' ? item.id : undefined })}>New page from template…</DropdownMenuItem>}
       {tree?.permissions.protect && kind !== 'notebook' && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson(`/api/notebook/${plural[kind]}/${item.id}/protection`, { method: 'PUT', body: JSON.stringify({ protected: !(kind === 'page' ? item.ownProtected : item.protected) }) })); })(); }}>{(kind === 'page' ? item.ownProtected : item.protected) ? 'Remove direct admin protection' : 'Protect for admins'}</DropdownMenuItem>}
       {tree?.permissions.delete && <><DropdownMenuSeparator /><DropdownMenuItem className="text-rose-500" onClick={() => open({ action: 'delete', kind, item })}>Move to trash</DropdownMenuItem></>}
     </DropdownMenuContent></DropdownMenu>;
@@ -298,43 +336,43 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         <div {...rowEvents('notebook', book)} className={`nb-tree-row nb-book-label ${dropClass('notebook', book.id)}`}>{renameInput('notebook', book) ?? <button data-nb-focus data-nb-kind="notebook" data-nb-id={book.id} className="nb-tree-label" aria-expanded={!isCollapsed('notebook', book.id)} onClick={() => toggleCollapse('notebook', book.id)}>{isCollapsed('notebook', book.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />}<NotebookGlyph color={book.color ?? '#88c900'} /><strong>{book.title}</strong></button>}{options('notebook', book)}</div>
         {!isCollapsed('notebook', book.id) && tree.sections.filter(s => s.notebookId === book.id).map(section => <div key={section.id}>
           <div {...rowEvents('section', section)} className={`nb-tree-row nb-section-row ${!mobile && sectionId === section.id ? 'is-selected' : ''} ${dropClass('section', section.id)}`}>{renameInput('section', section) ?? <button data-nb-focus data-nb-kind="section" data-nb-id={section.id} className="nb-tree-label" aria-expanded={mobile ? !isCollapsed('section', section.id) : undefined} aria-current={!mobile && sectionId === section.id ? 'true' : undefined} onClick={() => { if (mobile) toggleCollapse('section', section.id); else void chooseSection(section.id); }}>{mobile && (isCollapsed('section', section.id) ? <ChevronRight size={15} /> : <ChevronDown size={15} />)}<SectionGlyph color={section.color ?? '#00b5dc'} /><span>{section.title}</span>{section.protected && <Lock size={13} aria-label="Admin only" />}</button>}{options('section', section)}</div>
-          {mobile && !isCollapsed('section', section.id) && <>{pageRows(section.id,null,0,72)}{tree.permissions.edit && <button className="nb-add nb-add-page" onClick={() => open({ action: 'create', kind: 'page', sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
+          {mobile && !isCollapsed('section', section.id) && <>{pageRows(section.id,null,0,72)}{tree.permissions.edit && <button className="nb-add nb-add-page" onClick={() => createInstant('page', { sectionId: section.id })}><Plus size={14} /> New page</button>}</>}
         </div>)}
-        {tree.permissions.organize && <button className="nb-add nb-add-section" onClick={() => open({ action: 'create', kind: 'section', notebookId: book.id })}><Plus size={14} /> New section</button>}
+        {tree.permissions.organize && <button className="nb-add nb-add-section" onClick={() => createInstant('section', { notebookId: book.id })}><Plus size={14} /> New section</button>}
       </div>)}
       {!tree && <p className="nb-small">Loading notebooks…</p>}
       {tree && !tree.notebooks.length && <p className="nb-small">No notebooks yet.</p>}
     </div>
-    {(SHOW_NOTEBOOK_CREATION || tree?.notebooks.length===0) && tree?.permissions.organize && <Button variant="outline" onClick={() => open({ action: 'create', kind: 'notebook' })}><Plus /> {tree.notebooks.length ? 'New notebook' : 'Set up team notebook'}</Button>}
+    {(SHOW_NOTEBOOK_CREATION || tree?.notebooks.length===0) && tree?.permissions.organize && <Button variant="outline" onClick={() => createInstant('notebook', {})}><Plus /> {tree.notebooks.length ? 'New notebook' : 'Set up team notebook'}</Button>}
     {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
   return <div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
-      <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
+      <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId: tree.pages.find(p => p.id === selected)?.sectionId ?? tree.sections[0].id })}><Plus /> New page</Button>}
       <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
     <div className="nb-ribbon-host" ref={setToolbarHost} />
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
-    <div className="nb-body"><aside hidden={!mobile&&writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={!mobile&&writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => open({ action: 'create', kind: 'page', sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
+    <div className="nb-body"><aside hidden={!mobile&&writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={!mobile&&writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => sectionId && createInstant('page', { sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside><main className="nb-main">
       {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onFocus={()=>{exitFocused.current=true;}} onBlur={()=>{exitFocused.current=false;}} onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
       {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
-      }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => open({ action: 'create', kind: 'page', sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
+      }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
     </main></div>
     <Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" className="w-[min(90vw,350px)]"><SheetHeader><SheetTitle>Notebooks</SheetTitle><SheetDescription>Shared pages in this workspace</SheetDescription></SheetHeader><div className="nb-drawer">{explorer}</div></SheetContent></Sheet>
-    <Dialog open={!!dialog} onOpenChange={v => { if (!v && !busy) setDialog(null); }}><DialogContent><DialogHeader><DialogTitle>{dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'move' ? 'Move' : dialog?.action === 'rename' ? 'Rename' : 'New'} {dialog?.kind}</DialogTitle><DialogDescription>{dialog?.action === 'delete' ? `“${dialog.item?.title}” and its descendants will be hidden. Their retained data can be restored from trash.` : 'Changes are shared with your team. Protected content is available only to team admins.'}</DialogDescription></DialogHeader>
+    <Dialog open={!!dialog} onOpenChange={v => { if (!v && !busy) setDialog(null); }}><DialogContent><DialogHeader><DialogTitle>{dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'move' ? 'Move' : dialog?.action === 'template' ? 'New page from template' : 'Rename'} {dialog?.action === 'template' ? '' : dialog?.kind}</DialogTitle><DialogDescription>{dialog?.action === 'delete' ? `“${dialog.item?.title}” and its descendants will be hidden. Their retained data can be restored from trash.` : dialog?.action === 'template' ? 'Pick a starting layout. The page is created as “Untitled” so you can name it right away.' : 'Changes are shared with your team. Protected content is available only to team admins.'}</DialogDescription></DialogHeader>
       <form onSubmit={submit} className="nb-form">
-        {dialog && ['create', 'rename'].includes(dialog.action) && <><Label htmlFor="nb-name">Title</Label><Input id="nb-name" autoFocus required maxLength={200} value={name} onChange={e => setName(e.target.value)} />{dialog.kind !== 'page' && <><Label htmlFor="nb-color">Color</Label><input id="nb-color" type="color" value={color || '#3b82f6'} onChange={e => setColor(e.target.value)} /><Button type="button" variant="ghost" onClick={() => setColor('')}>Clear color{!color ? ' · cleared' : ''}</Button></>}</>}
-        {dialog?.kind === 'section' && ['create','move'].includes(dialog.action) && <><Label htmlFor="nb-book">Notebook</Label><select id="nb-book" required value={targetBook} onChange={e => setTargetBook(e.target.value)}>{tree?.notebooks.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></>}
-        {dialog?.kind === 'page' && ['create','move'].includes(dialog.action) && <><Label htmlFor="nb-section">Section</Label><select id="nb-section" required value={targetSection} disabled={!!dialog.parentId} onChange={e => { setTargetSection(e.target.value); setTargetParent(''); }}>{tree?.sections.map(s => <option key={s.id} value={s.id}>{tree.notebooks.find(b => b.id === s.notebookId)?.title} / {s.title}{s.protected ? ' · Admin only' : ''}</option>)}</select></>}
-        {dialog?.action === 'create' && dialog.kind === 'page' && <><Label htmlFor="nb-template">Template</Label><select id="nb-template" value={template} onChange={e => setTemplate(e.target.value)}>{NOTEBOOK_TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select><p className="nb-small">{NOTEBOOK_TEMPLATES.find(t => t.id === template)?.description}</p><div className="nb-template-preview" aria-label="Template preview">{NOTEBOOK_TEMPLATES.find(t => t.id === template)?.content.filter(n => n.type === 'heading').map((n,i) => <p key={i}>{n.content?.[0]?.text}</p>)}</div></>}
+        {dialog?.action === 'rename' && <><Label htmlFor="nb-name">Title</Label><Input id="nb-name" autoFocus required maxLength={200} value={name} onChange={e => setName(e.target.value)} />{dialog.kind !== 'page' && <><Label htmlFor="nb-color">Color</Label><input id="nb-color" type="color" value={color || '#3b82f6'} onChange={e => setColor(e.target.value)} /><Button type="button" variant="ghost" onClick={() => setColor('')}>Clear color{!color ? ' · cleared' : ''}</Button></>}</>}
+        {dialog?.kind === 'section' && dialog?.action === 'move' && <><Label htmlFor="nb-book">Notebook</Label><select id="nb-book" required value={targetBook} onChange={e => setTargetBook(e.target.value)}>{tree?.notebooks.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></>}
+        {dialog?.kind === 'page' && dialog?.action === 'move' && <><Label htmlFor="nb-section">Section</Label><select id="nb-section" required value={targetSection} disabled={!!dialog.parentId} onChange={e => { setTargetSection(e.target.value); setTargetParent(''); }}>{tree?.sections.map(s => <option key={s.id} value={s.id}>{tree.notebooks.find(b => b.id === s.notebookId)?.title} / {s.title}{s.protected ? ' · Admin only' : ''}</option>)}</select></>}
+        {dialog?.action === 'template' && dialog.kind === 'page' && <><Label htmlFor="nb-template">Template</Label><select id="nb-template" value={template} onChange={e => setTemplate(e.target.value)}>{NOTEBOOK_TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select><p className="nb-small">{NOTEBOOK_TEMPLATES.find(t => t.id === template)?.description}</p><div className="nb-template-preview" aria-label="Template preview">{NOTEBOOK_TEMPLATES.find(t => t.id === template)?.content.filter(n => n.type === 'heading').map((n,i) => <p key={i}>{n.content?.[0]?.text}</p>)}</div></>}
         {dialog?.action === 'move' && dialog.kind === 'page' && <><Label htmlFor="nb-parent">Parent page</Label><select id="nb-parent" value={targetParent} onChange={e => setTargetParent(e.target.value)}><option value="">Top level</option>{tree?.pages.filter(p => p.sectionId === Number(targetSection) && p.id !== dialog.item?.id).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select><p className="nb-small">The page and its subpages move together. Admin protection is retained.</p></>}
         {error && <p role="alert" className="text-rose-500">{error}</p>}
-        <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button><Button type="submit" variant={dialog?.action === 'delete' ? 'destructive' : 'default'} disabled={busy || (dialog?.action !== 'delete' && dialog?.action !== 'move' && !name.trim())}>{busy ? 'Saving…' : dialog?.action === 'delete' ? 'Move to trash' : 'Save'}</Button></DialogFooter>
+        <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button><Button type="submit" variant={dialog?.action === 'delete' ? 'destructive' : 'default'} disabled={busy || (dialog?.action === 'rename' && !name.trim())}>{busy ? 'Saving…' : dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'template' ? 'Create page' : 'Save'}</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>
   </div>;

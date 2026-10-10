@@ -16,6 +16,16 @@ function mount(path = '/notebook', emptySection = false) {
   vi.mocked(apiJson).mockImplementation(async (path, options) => {
     if (path === '/api/notebook/tree') return structuredClone(tree) as any;
     if (path === '/api/notebook/mentions') return [] as any;
+    if (path === '/api/notebook/sections' && options?.method === 'POST') {
+      const body = JSON.parse(String(options.body));
+      const section = { id: 90 + tree.sections.length, notebookId: body.notebookId, title: body.title, color: null, sort: tree.sections.length, protected: false };
+      tree.sections.push(section); return { id: section.id } as any;
+    }
+    if (path === '/api/notebook/pages' && options?.method === 'POST') {
+      const body = JSON.parse(String(options.body));
+      const page = { id: 900 + tree.pages.length, sectionId: body.sectionId, parentId: body.parentId ?? null, title: body.title, sort: tree.pages.length, protected: false, ownProtected: false, revision: 1, updatedAt: 'now' };
+      tree.pages.push(page); return { id: page.id } as any;
+    }
     if (path === '/api/notebook/sections/1' && options?.method === 'PATCH') { tree.sections[0].title = JSON.parse(String(options.body)).title; return {} as any; }
     throw new Error(`Unexpected request ${path}`);
   });
@@ -51,24 +61,42 @@ describe('notebook hierarchy controls', () => {
     }finally{window.removeEventListener('cp:notebook-navigation',appToggle);}
   });
   it('offers an organizer recovery path only when no notebook exists',async()=>{
-    vi.mocked(apiJson).mockImplementation(async path=>path==='/api/notebook/mentions'?[] as any:({notebooks:[],sections:[],pages:[],permissions:{organize:true,edit:true}} as any));
+    vi.mocked(apiJson).mockImplementation(async (path,options)=>{
+      if(path==='/api/notebook/mentions')return[] as any;
+      if(path==='/api/notebook/tree')return{notebooks:[],sections:[],pages:[],permissions:{organize:true,edit:true}} as any;
+      if(path==='/api/notebook/notebooks'&&options?.method==='POST')return{id:7} as any;
+      throw new Error(`Unexpected request ${path}`);
+    });
     render(<MemoryRouter><NotebookPage activeTeamId={20} currentUserId={10}/></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button',{name:'Set up team notebook'}));
-    expect(screen.getByRole('dialog').textContent).toContain('New notebook');
+    await waitFor(()=>expect(vi.mocked(apiJson).mock.calls.some(([p,o])=>p==='/api/notebook/notebooks'&&o?.method==='POST')).toBe(true));
+    const call=vi.mocked(apiJson).mock.calls.find(([p,o])=>p==='/api/notebook/notebooks'&&o?.method==='POST')!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({title:'Untitled'});
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
-  it('keeps existing notebook and section creation available while new notebooks are hidden',async()=>{
-    mount();expect(await screen.findByRole('button',{name:'Robot notes'})).toBeTruthy();
+  it('creates sections instantly as Untitled with inline rename and no dialog',async()=>{
+    mount();await screen.findByRole('button',{name:'Robot notes'});
     expect(screen.queryByRole('button',{name:'New notebook'})).toBeNull();
     fireEvent.click(screen.getByRole('button',{name:'New section'}));
-    expect(screen.getByRole('dialog').textContent).toContain('New section');
-    expect(vi.mocked(apiJson).mock.calls.some(([path,options])=>path==='/api/notebook/notebooks'&&options?.method==='POST')).toBe(false);
+    await waitFor(()=>expect(vi.mocked(apiJson).mock.calls.some(([p,o])=>p==='/api/notebook/sections'&&o?.method==='POST')).toBe(true));
+    const call=vi.mocked(apiJson).mock.calls.find(([p,o])=>p==='/api/notebook/sections'&&o?.method==='POST')!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({title:'Untitled',notebookId:1});
+    expect(vi.mocked(apiJson).mock.calls.some(([p,o])=>p==='/api/notebook/notebooks'&&o?.method==='POST')).toBe(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const renameBox=await screen.findByRole('textbox',{name:'Rename section'});
+    expect(renameBox).toHaveValue('Untitled');
   });
-  it('clears a copied path selection when opening an empty section and creates pages there', async () => {
+  it('creates pages instantly as Untitled in the opened section', async () => {
     mount('/notebook/p/2',true);
     fireEvent.click(await screen.findByRole('button', { name: 'Empty section' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Drive' })).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: 'Add Page' }));
-    expect((screen.getByLabelText('Section') as HTMLSelectElement).value).toBe('4');
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([p,o])=>p==='/api/notebook/pages'&&o?.method==='POST')).toBe(true));
+    const call=vi.mocked(apiJson).mock.calls.find(([p,o])=>p==='/api/notebook/pages'&&o?.method==='POST')!;
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ title: 'Untitled', sectionId: 4, parentId: null });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const renameBox=await screen.findByRole('textbox',{name:'Rename page'});
+    expect(renameBox).toHaveValue('Untitled');
   });
   it('remembers independent collapse keys even when a book and section share an ID', async () => {
     mount(); const section = await screen.findByRole('button', { name: 'Build' });
