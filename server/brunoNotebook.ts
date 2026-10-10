@@ -16,12 +16,16 @@ const SEARCH_LIMIT = 10;
 
 type PMNode = { type?: string; text?: string; attrs?: Record<string, any>; content?: PMNode[] };
 
+const INLINE = new Set(["text", "hardBreak"]);
+/** Text of a node. Inline pieces join directly; separate blocks (paragraphs
+ *  in a cell, list or canvas box) stay on separate lines, never run together. */
 function inline(node: PMNode | undefined): string {
   if (!node) return "";
   if (typeof node.text === "string") return node.text;
   if (node.type === "hardBreak") return "\n";
   if (node.type === "notebookFile") return `[file: ${String(node.attrs?.name ?? "attachment").slice(0, 120)}]`;
-  return (node.content ?? []).map(inline).join("");
+  const kids = node.content ?? [];
+  return kids.map(inline).join(kids.every(k => INLINE.has(k.type ?? "")) ? "" : "\n");
 }
 
 function block(node: PMNode, depth: number, out: string[]) {
@@ -38,7 +42,7 @@ function block(node: PMNode, depth: number, out: string[]) {
       for (const item of node.content ?? []) {
         const marker = node.type === "orderedList" ? `${n++}.` : node.type === "taskList" ? (item.attrs?.checked ? "- [x]" : "- [ ]") : "-";
         const [first, ...rest] = item.content ?? [];
-        out.push(`${pad}${marker} ${first ? inline(first) : ""}`);
+        out.push(`${pad}${marker} ${first ? inline(first).replace(/\n/g, " ") : ""}`);
         for (const child of rest) block(child, depth + 1, out);
       }
       return;
@@ -65,7 +69,7 @@ export function renderNotebookText(content: unknown, canvas: unknown, limit = PA
   }
   const objects = (canvas as any)?.version === 1 && Array.isArray((canvas as any).objects) ? (canvas as any).objects : [];
   const boxes = objects.filter((o: any) => o?.type === "text").map((o: any) => inline(o.content).trim()).filter(Boolean);
-  if (boxes.length) lines.push("", "Text boxes on the page canvas:", ...boxes.map((b: string) => `- ${b}`));
+  if (boxes.length) lines.push("", "Text boxes on the page canvas:", ...boxes.map((b: string) => `- ${b.replace(/\n/g, "\n  ")}`));
   const text = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return text.length > limit ? { text: `${text.slice(0, limit)}\n… (page continues; the rest is not shown)`, truncated: true } : { text, truncated: false };
 }
@@ -113,7 +117,8 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
     const { tree } = await sectionNames(store, ctx);
     const want = clip(q.query, 120).toLowerCase();
     const match = tree.pages.find(p => p.title.toLowerCase() === want) ?? tree.pages.find(p => p.title.toLowerCase().includes(want));
-    pageId = match?.id ?? 0;
+    // No title match: read the best text match, so one lookup can find and read a page.
+    pageId = match?.id ?? (await store.search(bruno(ctx), clip(q.query, 120), 1))[0]?.id ?? 0;
   }
   if (!pageId) return { lines: [], more: false };
   try {

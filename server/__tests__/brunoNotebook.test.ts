@@ -64,6 +64,13 @@ describe("Bruno notebook lookups", () => {
     }
   });
 
+  it("a page query with no title match reads the best text match, in one lookup", async () => {
+    const r = await notebookLookup(store, asAdmin(), { kind: "notebook_page", query: "19.2:1" });
+    expect(r.lines.join("\n")).toContain("[#p1] We chose 19.2:1 for the intake.");
+    // ...but never falls back to a protected text match.
+    expect((await notebookLookup(store, asAdmin(), { kind: "notebook_page", query: "zebracode" })).lines).toEqual([]);
+  });
+
   it("a title lookup can't find a protected page", async () => {
     expect((await notebookLookup(store, asAdmin(), { kind: "notebook_page", query: "Zebra secret plan" })).lines).toEqual([]);
   });
@@ -154,6 +161,18 @@ describe("renderNotebookText", () => {
     expect(text).toContain("> Quoted");
     expect(text).toContain("[file: datasheet.pdf]");
     expect(text).toContain("- Canvas note");
+  });
+
+  it("keeps separate paragraphs apart inside cells, list items and canvas boxes", () => {
+    const two = [para("a", "Use 19"), para("b", "2 gears")];
+    const { text } = renderNotebookText({ type: "doc", content: [
+      { type: "table", attrs: { id: "t" }, content: [{ type: "tableRow", content: [{ type: "tableCell", content: two }] }] },
+      { type: "bulletList", attrs: { id: "l" }, content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "A" }, { type: "hardBreak" }, { type: "text", text: "B" }] }] }] },
+    ] }, { version: 1, objects: [{ id: "x", type: "text", content: { type: "doc", content: two } }] });
+    expect(text).not.toContain("192");
+    expect(text).toContain("| Use 19 2 gears |");
+    expect(text).toContain("- A B");
+    expect(text).toContain("- Use 19\n  2 gears");
   });
 
   it("caps long pages and says so", () => {

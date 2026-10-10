@@ -3,6 +3,7 @@ import {Columns2,ArrowLeftRight,X} from 'lucide-react';
 import {NotebookEditor,type EditorProps} from './NotebookEditor';
 import {NotebookSync} from './NotebookSync';
 import {findNotebookSession} from './notebookRuntime';
+import {useBrunoNotebookPage} from './brunoScreen';
 import './split.css';
 
 /** Editors stay mounted while focus, ribbon ownership and pane positions change. */
@@ -47,6 +48,9 @@ export function NotebookSplitView(props:EditorProps&{mobile:boolean;onOtherChang
     finally{changing.current=false;if(alive.current)setBusy(false);}
   };
   const split=!!other&&!mobile;
+  // Bruno follows the active pane, including after the other pane closes.
+  const activePage=pages.find(page=>page.id===(split&&active==='other'?other!.pageId:sync.pageId));
+  useBrunoNotebookPage(activePage?.id??null,!!activePage?.protected);
   const primary=<NotebookEditor key={sync.pageId} {...props} toolbarVisible={!split||active==='main'} onOpenOther={mobile?undefined:openOther}/>;
   return <div className="nb-split-workspace">
     {!mobile&&<div className="nb-split-controls"><button disabled={busy||(!other&&!pages.some(page=>page.id!==sync.pageId))} onClick={()=>other?void closeOther():void openOther(pages.find(page=>page.id!==sync.pageId)!.id)}><Columns2 size={15}/>{other?'Close split view':'Split view'}</button>
