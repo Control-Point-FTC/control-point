@@ -19,7 +19,7 @@ const tree: NotebookTree = {
 };
 function mount(workspace: Partial<NotebookWorkspace> = {}) {
   editor = new Editor({ extensions: notebookExtensions(false, true), content: '<p>x</p>' });
-  const value: NotebookWorkspace = { teamId: 7, tree, openPage: vi.fn(), refreshTree: vi.fn(), openTrash: vi.fn(), ...workspace };
+  const value: NotebookWorkspace = { teamId: 7, tree, openPage: vi.fn(), refreshTree: vi.fn(), openTrash: vi.fn(), toggleStickyNotes: vi.fn(), stickyNotesOpen: false, ...workspace };
   render(<NotebookWorkspaceContext.Provider value={value}><NotebookToolbar editor={editor} disabled={false} pages={[]} pageId={9} panels={{ history: <p>Versions panel</p> }} /></NotebookWorkspaceContext.Provider>);
   fireEvent.click(screen.getByRole('tab', { name: 'History' }));
   return value;

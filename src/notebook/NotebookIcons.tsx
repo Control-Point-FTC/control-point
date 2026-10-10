@@ -57,6 +57,8 @@ const commandPaths: Record<string, string> = {
   'Copy block link': 'm10 8 3-3a5 5 0 0 1 7 7l-3 3m-3 1-3 3a5 5 0 0 1-7-7l3-3',
   'Collapse ribbon': 'm6 15 6-6 6 6',
   'Expand ribbon': 'm6 9 6 6 6-6',
+  Sticky: 'M5 4h14v10l-6 6H5V4Zm8 16v-6h6M8 8h8M8 11h5',
+  Share: 'M12 3v12M7 8l5-5 5 5M5 13v7h14v-7',
   Background: 'M3 4h18v16H3V4Zm0 12 5-5 4 4 3-3 6 6M15 9h.01',
   Trash: 'M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v6m4-6v6',
   Recent: 'M12 4a8 8 0 1 0 8 8M12 8v4l3 2m5-10v4h-4',
