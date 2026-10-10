@@ -56,6 +56,11 @@ describe('section print', () => {
     // Still accessible: the attachment problem is real, so the print stops.
     vi.mocked(prepareNotebookPrint).mockImplementationOnce(async () => { throw new Error('This page has too much attachment data for one export.'); });
     await expect(prepareSectionPrint({ id: 1, title: 'S' }, [item(2)], undefined, new AbortController().signal, vi.fn())).rejects.toThrow('too much attachment data');
+    // The access check failing too keeps the original, more useful message.
+    let calls = 0;
+    vi.mocked(apiJson).mockImplementation(async () => { if (++calls > 1) throw new ApiError(500, 'Server error'); return { ...item(2), content: {}, canvas: {} } as any; });
+    vi.mocked(prepareNotebookPrint).mockImplementationOnce(async () => { throw new Error('Print its PDFs separately.'); });
+    await expect(prepareSectionPrint({ id: 1, title: 'S' }, [item(2)], undefined, new AbortController().signal, vi.fn())).rejects.toThrow('Print its PDFs separately.');
   });
 
   it('escapes titles in the cover', async () => {

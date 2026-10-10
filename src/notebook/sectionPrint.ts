@@ -34,7 +34,9 @@ export function sectionPageOrder(pages: NotebookPageItem[], sectionId: number): 
 
 async function stillHere(pageId: number, sectionId: number, headers: Record<string, string> | undefined, signal: AbortSignal) {
   try { return (await apiJson<NotebookPageData>(`/api/notebook/pages/${pageId}`, { headers, cache: 'no-store', signal })).sectionId === sectionId; }
-  catch (e) { if (e instanceof ApiError && (e.status === 403 || e.status === 404)) return false; throw e; }
+  // Only a clear 403/404 means it's gone; if the check itself fails, the
+  // original problem (with its advice) is what the person should see.
+  catch (e) { return !(e instanceof ApiError && (e.status === 403 || e.status === 404)); }
 }
 
 export type SectionPrint = { markup: string; printed: number; skipped: string[] };
