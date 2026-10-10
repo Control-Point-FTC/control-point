@@ -27,12 +27,12 @@ export function RibbonButton({ label, icon, accent, showLabel, active, disabled,
 
 /** A main action with a menu of related ones (OneNote's split buttons). */
 export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: ButtonProps & { menuLabel: string; children: React.ReactNode; align?: 'start' | 'end' }) {
-  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useMenuFocus();
   return <span className="nb-rsplit">
     <RibbonButton {...main} />
     <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild><button ref={trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
-      <DropdownMenuContent align={align} className="nb-rmenu" onCloseAutoFocus={closeFocus(trigger)}>{children}</DropdownMenuContent>
+      <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className="nb-rsplit-arrow" aria-label={menuLabel} title={menuLabel} disabled={main.disabled} onMouseDown={e => e.preventDefault()}><ChevronDown size={13} /></button></DropdownMenuTrigger>
+      <DropdownMenuContent align={align} className="nb-rmenu" {...menu.content}>{children}</DropdownMenuContent>
     </DropdownMenu>
   </span>;
 }
@@ -40,21 +40,31 @@ export function RibbonSplit({ menuLabel, children, align = 'start', ...main }: B
 /** A labelled dropdown (no main action), e.g. alignment or tags. */
 export function RibbonMenu({ label, icon, showLabel, disabled, children }: { label: string; icon?: string; showLabel?: boolean; disabled?: boolean; children: React.ReactNode }) {
   const Glyph = notebookCommandGlyph(icon ?? label);
-  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useMenuFocus();
   return <DropdownMenu modal={false}>
-    <DropdownMenuTrigger asChild><button ref={trigger} type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{(showLabel || !Glyph) && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
-    <DropdownMenuContent className="nb-rmenu" onCloseAutoFocus={closeFocus(trigger)}>{children}</DropdownMenuContent>
+    <DropdownMenuTrigger asChild><button ref={menu.trigger} type="button" className={`nb-rbtn ${showLabel || !Glyph ? 'has-label' : ''}`} aria-label={label} title={label} disabled={disabled} onMouseDown={e => e.preventDefault()}>{Glyph && <Glyph size={18} />}{(showLabel || !Glyph) && <span>{label}</span>}<ChevronDown size={13} /></button></DropdownMenuTrigger>
+    <DropdownMenuContent className="nb-rmenu" {...menu.content}>{children}</DropdownMenuContent>
   </DropdownMenu>;
 }
 
 export const RibbonItem = DropdownMenuItem;
 
-/** After a command the page keeps focus (the command focused it); after
- *  Escape or clicking away, focus returns to the menu's own button. */
-function closeFocus(trigger: React.RefObject<HTMLButtonElement | null>) {
-  return (e: Event) => {
-    e.preventDefault();
-    if (!document.activeElement?.closest('.ProseMirror')) trigger.current?.focus();
+/** Focus after a menu closes: Escape returns it to the menu's own button so
+ *  keyboard users keep their place. A command keeps the page focused, and
+ *  clicking another control leaves focus on that control. */
+function useMenuFocus() {
+  const trigger = useRef<HTMLButtonElement>(null);
+  const escaped = useRef(false);
+  return {
+    trigger,
+    content: {
+      onEscapeKeyDown: () => { escaped.current = true; },
+      onCloseAutoFocus: (e: Event) => {
+        e.preventDefault();
+        if (escaped.current) trigger.current?.focus();
+        escaped.current = false;
+      },
+    },
   };
 }
 

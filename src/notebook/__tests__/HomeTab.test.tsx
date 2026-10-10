@@ -150,3 +150,15 @@ describe('Home ribbon state and safety', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 });
+
+describe('menu focus', () => {
+  it('clicking another control to close a menu leaves focus on that control', async () => {
+    mount();
+    const size = screen.getByRole('combobox', { name: 'Font size' });
+    openMenu('Alignment');
+    await screen.findByRole('menuitemradio', { name: 'Align center' });
+    fireEvent.pointerDown(size); size.focus(); fireEvent.click(size);
+    await act(async () => {});
+    expect(document.activeElement).toBe(size);
+  });
+});
