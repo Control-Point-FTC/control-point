@@ -80,6 +80,8 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [label, setLabel] = useState('');
   const [notice, setNotice] = useState('');
   const [recordOpen, setRecordOpen] = useState(false);
+  // Editing stopped (read-only, conflict): the record picker closes.
+  useEffect(() => { if (disabled) setRecordOpen(false); }, [disabled]);
   const [tableMenu, setTableMenu] = useState(false);
   const workspace = useNotebookWorkspace();
   const pageSection = pages.find(p => p.id === pageId)?.sectionId;
@@ -195,7 +197,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     {thesaurus && <Thesaurus editor={editor} disabled={disabled} onClose={() => setThesaurus(false)} />}
     {findingTags && <TagSummary pageId={pageId} sectionId={pages.find(p => p.id === pageId)?.sectionId} onClose={() => setFindingTags(false)} />}
-    {recordOpen && <RecordLinkDialog editor={editor} open={recordOpen} onOpenChange={setRecordOpen} />}
+    {recordOpen && !disabled && <RecordLinkDialog editor={editor} open={recordOpen} onOpenChange={setRecordOpen} />}
     {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {

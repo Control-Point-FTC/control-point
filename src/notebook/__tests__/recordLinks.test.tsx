@@ -20,15 +20,20 @@ describe('record links', () => {
     expect(appRecordPath('https://evil.test/tasks?task=1', origin)).toBeNull();
     expect(appRecordPath('/notebook/p/4', origin)).toBeNull();
     expect(appRecordPath('/settings', origin)).toBeNull();
+    expect(appRecordPath('/cad-snapshots', origin)).toBe('/cad-snapshots');
   });
 
   it('writes meeting details: linked title, when and where, description', () => {
     const editor = make();
-    insertMeetingDetails(editor, { id: 7, title: 'Design review', date: '2026-10-14', start_time: '18:00', end_time: '19:30', location: 'Shop', description: 'Intake v2' });
+    insertMeetingDetails(editor, { id: 7, title: 'Design review', date: '2026-10-14', start_time: '18:00', end_time: '19:30', location: 'Shop', description: 'Intake v2\nRoll call\n' + 'x'.repeat(3000) });
     const json = JSON.stringify(editor.getJSON());
     expect(editor.getText()).toContain('Design review');
     expect(editor.getText()).toContain('18:00–19:30 · Shop');
     expect(editor.getText()).toContain('Intake v2');
+    expect(editor.getText()).toContain('Roll call');
+    expect(editor.getText()).toContain('x'.repeat(3000)); // nothing cut off
+    editor.setEditable(false);
+    expect(insertMeetingDetails(editor, { id: 8, title: 'Blocked' })).toBe(false);
     expect(json).toContain('/calendar?event=7');
     expect(eventWhen({ id: 1, title: 'x' })).toBe('');
   });
