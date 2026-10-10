@@ -22,15 +22,15 @@ describe('desktop notebook trash controls',()=>{
     expect(screen.getByText('Build notes')).toBeTruthy();expect(apiJson).toHaveBeenLastCalledWith('/api/notebook/trash?cursor=continuation',expect.objectContaining({headers:{'X-CP-Notebook-Team':'9'},cache:'no-store'}));
   });
   it('confirms restoration, updates the tree, and removes the restored root from the list',async()=>{
-    const {onRestored}=mount();await open();vi.mocked(apiJson).mockResolvedValueOnce({ok:true});fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
-    await waitFor(()=>expect(onRestored).toHaveBeenCalledOnce());expect(confirmDialog).toHaveBeenCalledOnce();expect(apiJson).toHaveBeenLastCalledWith('/api/notebook/pages/4/restore',expect.objectContaining({method:'POST',body:JSON.stringify({destination:{}})}));
+    const {onRestored}=mount();await open();vi.mocked(apiJson).mockResolvedValueOnce({ok:true}).mockResolvedValueOnce({...listing,items:[]});fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
+    await waitFor(()=>expect(onRestored).toHaveBeenCalledOnce());expect(confirmDialog).toHaveBeenCalledOnce();expect(apiJson).toHaveBeenCalledWith('/api/notebook/pages/4/restore',expect.objectContaining({method:'POST',body:JSON.stringify({destination:{}})}));
     expect(screen.queryByText('Build notes')).toBeNull();expect(screen.getByRole('status')).toHaveTextContent('restored');expect(screen.getByRole('button',{name:'Refresh'})).toHaveFocus();
   });
   it('requires an explicit active destination after the original parent is unavailable',async()=>{
     mount();await open();vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(409,'Original parent unavailable',{destinationRequired:true}));fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
     await screen.findByRole('region',{name:'Restore destination'});expect(screen.getByLabelText('Section')).toHaveValue('2');
     vi.mocked(apiJson).mockResolvedValueOnce({ok:true});fireEvent.click(screen.getByRole('button',{name:'Restore here'}));
-    await waitFor(()=>expect(apiJson).toHaveBeenLastCalledWith('/api/notebook/pages/4/restore',expect.objectContaining({body:JSON.stringify({destination:{sectionId:2,parentId:null}})})));
+    await waitFor(()=>expect(apiJson).toHaveBeenCalledWith('/api/notebook/pages/4/restore',expect.objectContaining({body:JSON.stringify({destination:{sectionId:2,parentId:null}})})));
   });
   it('clears previously visible metadata when a refresh loses authorization',async()=>{
     mount();await open();vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(403,'Notebook permission required'));fireEvent.click(screen.getByRole('button',{name:'Refresh'}));
@@ -43,5 +43,20 @@ describe('desktop notebook trash controls',()=>{
   it('aborts a restoration on unmount and ignores its late successful response',async()=>{
     const {unmount,onRestored}=mount();await open();let finish!:(value:any)=>void;vi.mocked(apiJson).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
     await waitFor(()=>expect(apiJson).toHaveBeenCalledTimes(2));const signal=vi.mocked(apiJson).mock.calls[1][1]?.signal;unmount();expect(signal?.aborted).toBe(true);finish({ok:true});await Promise.resolve();expect(onRestored).not.toHaveBeenCalled();
+  });
+  it('can dismiss a stalled read, abort it, and reopen without accepting the old response',async()=>{
+    mount();let finish!:(value:any)=>void;vi.mocked(apiJson).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));fireEvent.click(screen.getByRole('button',{name:'Trash'}));
+    await screen.findByRole('dialog');const signal=vi.mocked(apiJson).mock.calls[0][1]?.signal;fireEvent.click(screen.getByRole('button',{name:'Close'}));await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());expect(signal?.aborted).toBe(true);
+    await open();finish({...listing,items:[{...item,title:'Stale private title'}]});await Promise.resolve();expect(screen.queryByText('Stale private title')).toBeNull();
+  });
+  it('reloads newly visible child tombstones and resets pagination after a parent returns',async()=>{
+    mount();await open();vi.mocked(apiJson).mockResolvedValueOnce({ok:true}).mockResolvedValueOnce({...listing,items:[{...item,id:8,title:'Independently deleted child'}],nextCursor:'new-cursor'});fireEvent.click(screen.getByRole('button',{name:'Restore page Build notes'}));
+    await screen.findByText('Independently deleted child');expect(screen.queryByText('Build notes')).toBeNull();expect(screen.getByRole('button',{name:'Load older items'})).toBeTruthy();
+    expect(apiJson).toHaveBeenLastCalledWith('/api/notebook/trash',expect.objectContaining({cache:'no-store'}));
+  });
+  it('identifies section restore destinations by notebook and section title',async()=>{
+    const duplicate={...tree,notebooks:[...tree.notebooks,{id:3,title:'Later season',sort:1,color:null}],sections:[...tree.sections,{...tree.sections[0],id:7,notebookId:3}]};
+    render(<NotebookTrash teamId={9} tree={duplicate} onRestored={vi.fn()}/>);await open();fireEvent.click(screen.getByRole('button',{name:'Choose destination'}));
+    expect(screen.getByRole('option',{name:'Team notebook / Build'})).toBeTruthy();expect(screen.getByRole('option',{name:'Later season / Build'})).toBeTruthy();
   });
 });
