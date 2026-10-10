@@ -173,3 +173,15 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     </div>
   </div>;
 }
+
+/** The ribbon before a page is open (loading, or an empty notebook): the
+ *  same tabs in the same place, so the workspace never jumps or looks empty. */
+export function NotebookRibbonShell({ loading }: { loading: boolean }) {
+  const [group, setGroup] = useState('home');
+  return <div className="nb-command-bar nb-ribbon-shell" aria-busy={loading}>
+    <div className="nb-command-tabs" role="tablist" aria-label="Notebook commands">{ribbonTabs.map(([id, label]) => <button key={id} role="tab" aria-selected={group === id} onClick={() => setGroup(id)}>{label}</button>)}</div>
+    <div className="nb-toolbar" role="toolbar" aria-label="Note formatting" data-nb-group={group}>
+      <span className="nb-small nb-toolbar-shared" role="status">{loading ? 'Opening your notebook…' : 'Open a page to use these commands, or start one with New page.'}</span>
+    </div>
+  </div>;
+}
