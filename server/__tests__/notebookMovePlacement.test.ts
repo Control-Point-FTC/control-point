@@ -6,7 +6,7 @@ import { seedMember, seedTeam, startTestServer, type TestServer } from "./helper
 
 vi.setConfig({ testTimeout: 30_000 });
 let t: TestServer, store: NotebookStore;
-let team: number, admin: number, section: number;
+let team: number, admin: number, organizer: number, section: number;
 const ctx = (memberId: number): NotebookContext => ({ memberId, teamId: team, source: "human" });
 const page = async (title: string, parentId?: number) => (await store.create(ctx(admin), "page", { sectionId: section, title, ...(parentId ? { parentId } : {}) }) as any).id as number;
 const order = async (parentId: number | null) => (await store.tree(ctx(admin))).pages.filter(p => p.sectionId === section && p.parentId === parentId).map(p => p.title);
@@ -17,6 +17,10 @@ beforeAll(async () => {
   team = await seedTeam(t.db, "Robotics");
   admin = await seedMember(t.db, team, "Admin", "admin@move.test", "admin");
   section = (await store.tree(ctx(admin))).sections[0].id;
+  // Can organize pages but is not an admin, so protected pages are hidden.
+  organizer = await seedMember(t.db, team, "Olive", "olive@move.test");
+  const role = await t.db.execute({ sql: "INSERT INTO roles(team_id,name,permissions) VALUES(?, 'Organizer', ?)", args: [team, JSON.stringify(["edit_notebook", "organize_notebook"])] });
+  await t.db.execute({ sql: "INSERT INTO member_roles(member_id,role_id) VALUES(?,?)", args: [organizer, Number(role.lastInsertRowid)] });
 }, 120_000);
 afterAll(async () => { await t?.stop(); });
 
@@ -36,7 +40,12 @@ describe("relative page placement", () => {
     await store.move(ctx(admin), "page", child, { parentId: parent }, "end");
     expect(await order(parent)).toEqual(["Secret child", "Child"]);
 
-    await expect(store.move(ctx(admin), "page", child, { parentId: null, afterId: 999999 }, 0)).rejects.toThrow("same level");
+    await expect(store.move(ctx(admin), "page", child, { parentId: null, afterId: 999999 }, 0)).rejects.toThrow("unavailable");
+    await expect(store.move(ctx(admin), "page", child, { parentId: null, afterId: secretChild }, 0)).rejects.toThrow("same level");
     await expect(store.move(ctx(admin), "page", child, { parentId: null }, "start")).rejects.toThrow("Invalid position");
+    // A non-admin can't tell a hidden page from a missing one by using it as a reference.
+    const probe = (afterId: number) => store.move(ctx(organizer), "page", child, { parentId: null, afterId }, 0).then(() => "moved", (e: any) => `${e.status ?? ""} ${e.message}`);
+    expect(await probe(hidden)).toBe(await probe(987654));
+    expect(await probe(parent)).toBe("moved");
   });
 });

@@ -660,7 +660,10 @@ export class NotebookStore {
     const siblings = (await s.all(`SELECT id FROM ${tables[kind]} WHERE ${siblingWhere} AND id!=? ORDER BY position,id`, ...siblingArgs, row.id)).map(r => r.id);
     let at = Math.min(n, siblings.length);
     if (to.afterId !== undefined && to.afterId !== null) {
-      const after = siblings.indexOf(id(to.afterId));
+      // The reference goes through the same access check as any item, so a
+      // hidden page and a missing one look alike (no probing for ids).
+      const reference = await s.item(kind, id(to.afterId));
+      const after = siblings.indexOf(reference.id);
       if (after < 0) throw new NotebookError("Choose a page at the same level");
       at = after + 1;
     }
