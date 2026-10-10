@@ -103,35 +103,38 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     return () => { navigator.push = originalPush; navigator.replace = originalReplace; };
   }, [navigator]);
   const mounted = useRef(true);
+  const treeRequest=useRef(0);
   const creatingRef = useRef(false); // claimed before leave() so a second click during the save cannot POST a duplicate
   const loadFailedRef = useRef(false); // set when the tree reload inside mutate fails
   const closeDrawerAfterRename = useRef(false); // mobile: keep the drawer open for the rename box, close it when rename ends
 
   const loadTree = useCallback(async () => {
+    const requestId=++treeRequest.current;
+    const currentRequest=()=>mounted.current&&requestId===treeRequest.current;
     try {
       const value = await apiJson<NotebookTree>('/api/notebook/tree', { cache: 'no-store' });
-      if (!mounted.current) return;
+      if (!currentRequest()) return;
       loadFailedRef.current = false;
       setTree(value);
       setOfflineTreeAt('');
-      if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value).then(()=>{if(mounted.current)setTreeStorageError('');}).catch(e=>{if(mounted.current)setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
+      if(memberId&&teamId)void cacheNotebookTree({memberId,teamId},value).then(()=>{if(currentRequest())setTreeStorageError('');}).catch(e=>{if(currentRequest())setTreeStorageError(e instanceof Error?e.message:'Offline navigation could not be saved.');});
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
         void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
       }
     } catch (e) {
-      loadFailedRef.current=true;if(!mounted.current)return;
+      if(!currentRequest())return;loadFailedRef.current=true;
       const denied=e instanceof ApiError&&[401,403,404].includes(e.status);
       if(memberId&&teamId){
         try{
           if(denied){setTree(null);setOfflineTreeAt('');void syncRef.current?.discardRecovery();syncRef.current=null;setSync(null);await forgetCachedNotebookTree({memberId,teamId});}
           else if(!(e instanceof ApiError)){
             const cached=await readCachedNotebookTree({memberId,teamId});
-            if(cached&&mounted.current){setTree(cached.tree);setOfflineTreeAt(cached.savedAt);setError('');return;}
+            if(cached&&currentRequest()){setTree(cached.tree);setOfflineTreeAt(cached.savedAt);setError('');return;}
           }
-        }catch(storageError){if(mounted.current)setTreeStorageError(storageError instanceof Error?storageError.message:'Offline navigation is unavailable.');}
+        }catch(storageError){if(currentRequest())setTreeStorageError(storageError instanceof Error?storageError.message:'Offline navigation is unavailable.');}
       }
-      if(mounted.current)setError(e instanceof Error?e.message:'Cannot load notebooks');
+      if(currentRequest())setError(e instanceof Error?e.message:'Cannot load notebooks');
     }
   }, []);
   useEffect(() => {
