@@ -4,7 +4,7 @@
 // permissions; a record they can't see simply isn't shown there.
 import type { Editor } from '@tiptap/core';
 
-export type TaskRecord = { id: number; title: string; status?: string; due_date?: string | null; due_time?: string | null; priority?: string | null };
+export type TaskRecord = { id: number; title: string; is_board?: number | boolean; status?: string; due_date?: string | null; due_time?: string | null; priority?: string | null };
 export type EventRecord = { id: number; title: string; date?: string | null; start_time?: string | null; end_time?: string | null; location?: string | null; description?: string | null; event_type?: string | null };
 
 export const taskHref = (id: number) => `/tasks?task=${id}`;

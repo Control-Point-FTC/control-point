@@ -40,12 +40,13 @@ describe('record links', () => {
 
   it('finds a task or meeting and links it, or adds meeting details', async () => {
     vi.mocked(apiJson).mockImplementation(async (url: string) => url === '/api/tasks'
-      ? [{ id: 1, title: 'Order bolts', status: 'done' }, { id: 2, title: 'Wire drivetrain', status: 'todo', due_date: '2026-10-20' }] as any
+      ? [{ id: 1, title: 'Order bolts', status: 'done' }, { id: 2, title: 'Wire drivetrain', status: 'todo', due_date: '2026-10-20' }, { id: 3, title: 'Board budget review', status: 'todo', is_board: 1 }] as any
       : [{ id: 9, title: 'Kickoff', date: '2030-01-05', start_time: '10:00' }] as any);
     const editor = make(), onOpenChange = vi.fn();
     render(<RecordLinkDialog editor={editor} open onOpenChange={onOpenChange} />);
     const options = await screen.findAllByRole('button', { name: /Order bolts|Wire drivetrain/ });
     expect(options[0].textContent).toContain('Wire drivetrain'); // open tasks first
+    expect(screen.queryByText('Board budget review')).toBeNull(); // board tasks: admins only
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'wire' } });
     fireEvent.click(screen.getByRole('button', { name: /Wire drivetrain/ }));
     expect(JSON.stringify(editor.getJSON())).toContain('/tasks?task=2');
