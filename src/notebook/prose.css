@@ -21,3 +21,8 @@
 .nb-slash-menu button span{font-size:11px;color:#666}
 .nb-slash-menu button[aria-selected=true]{background:#fff3b0}
 .nb-slash-help{margin:4px 6px 2px;font-size:10px;color:#777}
+
+/* The block handle beside the hovered block. */
+.nb-block-handle{position:fixed;z-index:40;display:grid;place-items:center;width:24px;height:24px;border-radius:5px;color:#78716c;opacity:.75}
+.nb-block-handle:hover,.nb-block-handle:focus-visible,.nb-block-handle[data-state=open]{opacity:1;background:#f5f5f4;color:#151515}
+.nb-block-status{position:fixed;z-index:41;padding:3px 8px;border-radius:6px;background:#151515;color:#fff;font-size:12px;bottom:24px;left:50%;transform:translateX(-50%)}
