@@ -17,14 +17,14 @@ const JS = "console.log('hello from a hashed chunk');".repeat(50);
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "cp-dist-"));
   mkdirSync(join(dir, "assets"));
-  writeFileSync(join(dir, "index.html"), "<!doctype html><title>app</title>");
+  writeFileSync(join(dir, "index.html"), '<!doctype html><title>app</title><meta name="description" content="home" /><meta property="og:url" content="https://example.test/" />');
   writeFileSync(join(dir, "assets", "index-abc.js"), JS);
   writeFileSync(join(dir, "assets", "index-abc.js.br"), brotliCompressSync(Buffer.from(JS)));
   writeFileSync(join(dir, "assets", "index-abc.js.gz"), gzipSync(Buffer.from(JS)));
   writeFileSync(join(dir, "icon.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   writeFileSync(join(tmpdir(), "cp-secret.txt"), "secret");
   const app = express();
-  serveDist(app, dir, { csp: { header: "Content-Security-Policy-Report-Only", value: "default-src 'self'" } });
+  serveDist(app, dir, { csp: { header: "Content-Security-Policy-Report-Only", value: "default-src 'self'" }, siteUrl: "https://example.test" });
   await new Promise<void>((r) => { server = app.listen(0, "127.0.0.1", () => r()); });
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
@@ -85,7 +85,7 @@ describe("serveDist", () => {
   });
 
   it("serves the SPA shell for app routes, never cached", async () => {
-    const r = await raw("/tasks/12");
+    const r = await raw("/tasks");
     expect(r.status).toBe(200);
     expect(r.headers["content-type"]).toMatch(/html/);
     expect(r.headers["cache-control"]).toBe("no-cache");
@@ -109,5 +109,45 @@ describe("serveDist", () => {
   it("can't read outside dist", async () => {
     const r = await raw("/..%2Fcp-secret.txt", { "accept-encoding": "br" });
     expect(r.body.toString()).not.toContain("secret");
+  });
+
+  it("unknown paths get the app shell with a real 404 and not-found tags", async () => {
+    for (const path of ["/nope", "/tasks/12", "/notebookx"]) {
+      const r = await raw(path);
+      expect(r.status).toBe(404);
+      expect(r.headers["content-type"]).toMatch(/html/);
+      expect(r.headers["content-security-policy-report-only"]).toBe("default-src 'self'");
+      expect(r.body.toString()).toContain("<title>Page not found · Control Point</title>");
+    }
+  });
+
+  it("known app routes stay 200, including notebook deep links and join links", async () => {
+    for (const path of ["/notebook", "/notebook/p/12", "/join/cpi_abc", "/checkin/AB12", "/settings/", "/Tasks", "/NOTEBOOK/p/3"]) {
+      expect((await raw(path)).status).toBe(200);
+    }
+  });
+
+  it("public pages get their own crawler-visible title, description and URL", async () => {
+    const r = await raw("/privacy");
+    expect(r.status).toBe(200);
+    const html = r.body.toString();
+    expect(html).toContain("<title>Privacy Policy · Control Point</title>");
+    expect(html).not.toContain('content="home"');
+    expect(html).toContain('content="https://example.test/privacy"');
+  });
+
+  it("trailing-slash and mixed-case legal URLs get the same public head, canonical URL", async () => {
+    for (const path of ["/terms/", "/Terms"]) {
+      const r = await raw(path);
+      expect(r.status).toBe(200);
+      expect(r.body.toString()).toContain("<title>Terms of Service · Control Point</title>");
+      expect(r.body.toString()).toContain('content="https://example.test/terms"');
+    }
+  });
+
+  it("redirects /favicon.ico to the PNG icon", async () => {
+    const r = await raw("/favicon.ico");
+    expect(r.status).toBe(301);
+    expect(r.headers.location).toBe("/favicon.png");
   });
 });
