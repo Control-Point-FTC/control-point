@@ -71,8 +71,17 @@ export function setScreenEntity<K extends keyof ScreenEntities>(key: K, value: S
 }
 
 export function getScreenContext(): ScreenContextRequest | null {
-  if (page?.route === '/notebook') return { route: '/notebook', view: 'Team notebook' };
+  // Notebook: only the open page id and selected block ids travel. The server
+  // re-reads them under Bruno's access, which never includes protected pages.
+  if (page?.route === '/notebook') {
+    const { notebookPageId, notebookBlockIds } = entities;
+    return { route: '/notebook', view: 'Team notebook', ...(notebookPageId ? { notebookPageId, ...(notebookBlockIds?.length ? { notebookBlockIds } : {}) } : {}) };
+  }
   return page ? { ...page, ...entities } : null;
+}
+
+export function getScreenEntity<K extends keyof ScreenEntities>(key: K): ScreenEntities[K] | undefined {
+  return entities[key];
 }
 
 /** Workspace switch / logout. */

@@ -19,4 +19,9 @@ export interface ScreenContextRequest {
   /** Event open on the Predict page (season + FTC event code). */
   predictSeason?: number | null;
   predictEvent?: string | null;
+  /** Notebook page open in the editor. The server re-checks it under Bruno's
+   *  own access; protected pages are dropped without a trace. */
+  notebookPageId?: number | null;
+  /** Block ids the user has selected on that page (text resolved server side). */
+  notebookBlockIds?: string[] | null;
 }

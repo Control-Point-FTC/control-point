@@ -77,6 +77,10 @@ import { currentWeather } from "./server/weather.js";
 import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
+import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
+// Bruno's notebook reads (lookups, screen context) use Bruno-scoped access:
+// protected sections/pages are never visible, whoever is asking.
+const brunoNotebookStore = new NotebookStore();
 import { buildArticleCsp, buildCsp, inlineScriptHashes, summarizeCspReport } from "./server/csp.js";
 import {
   isAIConfigured,
@@ -6195,10 +6199,13 @@ async function startServer() {
    * have open. Every lookup is scoped to the caller's active workspace, so an
    * id from another workspace (or a forged one) simply finds nothing.
    */
-  async function screenContextFor(auth: { teamId: number | null }, raw: unknown): Promise<string> {
+  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown): Promise<string> {
     const req = parseScreenRequest(raw);
     if (!req || auth.teamId == null) return "";
     const found: ScreenLookups = {};
+    if (req.notebookPageId) {
+      found.notebook = await notebookScreenBrief(brunoNotebookStore, { memberId: auth.memberId, teamId: auth.teamId }, req.notebookPageId, req.notebookBlockIds ?? []);
+    }
     if (req.taskId) {
       const t = (await dbGet("SELECT id, title, status, due_date, description FROM tasks WHERE id = ? AND team_id = ?", req.taskId, auth.teamId)) as any;
       if (t) {
@@ -12088,7 +12095,8 @@ Rules:
         if (!queries.length || !auth.teamId) return null;
         const web = queries.some((q) => q.kind === "web");
         const dataQueries = queries.filter((q) => q.kind !== "web");
-        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries) : "";
+        const notebookCtx = { memberId: auth.memberId, teamId: auth.teamId };
+        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
