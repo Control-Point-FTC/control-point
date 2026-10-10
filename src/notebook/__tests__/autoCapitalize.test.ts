@@ -50,4 +50,17 @@ describe('auto-capitalize', () => {
     type(plain, 'lower');
     expect(plain.getText()).toBe('lower');
   });
+  it('leaves inline code alone, even when it is only switched on', () => {
+    const editor = make();
+    editor.commands.toggleCode();
+    type(editor, 'npm');
+    expect(editor.getText()).toBe('npm');
+  });
+  it('treats a line after Shift+Enter as a new line', () => {
+    const editor = make();
+    type(editor, 'first');
+    editor.commands.setHardBreak();
+    type(editor, 'second');
+    expect(editor.getText()).toContain('Second');
+  });
 });

@@ -5,9 +5,7 @@
 
 /* Type mode reads like paper: an I-beam over empty space, a caret where you clicked. */
 .nb-canvas-stage[data-tool=type]{cursor:text}
-.nb-canvas-caret{position:absolute;z-index:30;width:2px;height:1.3em;background:#151515;animation:nb-caret 1s steps(1) infinite;pointer-events:none}
-@keyframes nb-caret{50%{opacity:0}}
-@media (prefers-reduced-motion:reduce){.nb-canvas-caret{animation:none}}
+.nb-canvas-caret{position:absolute;z-index:30;width:240px;min-height:calc(1.5em + 16px);padding:8px;margin:0;border:0;outline:none;resize:none;overflow:hidden;background:transparent;color:#151515;caret-color:#151515;font:16px/1.5 system-ui,sans-serif}
 /* Text box handles, shown on hover or focus: a dotted move bar on top, a width handle on the right. */
 .nb-text-grip{position:absolute;left:0;right:0;top:-12px;height:10px;border-radius:4px 4px 0 0;background:#e7e5e4 radial-gradient(circle,#57534e 1px,transparent 1.5px) center/6px 6px repeat-x;cursor:move;opacity:0;transition:opacity .12s;touch-action:none}
 .nb-text-width{position:absolute;top:0;bottom:0;right:-8px;width:8px;border-radius:0 4px 4px 0;background:#e7e5e4;cursor:ew-resize;opacity:0;transition:opacity .12s;touch-action:none}

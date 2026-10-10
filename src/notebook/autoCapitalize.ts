@@ -1,5 +1,6 @@
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 
 // New lines start with a capital letter, like most note apps. Backspace right
 // after it puts the lowercase letter back; code blocks are left alone; the
@@ -18,6 +19,12 @@ export function setAutoCapitalize(on: boolean) {
 
 type Undo = { pos: number; original: string } | null;
 const key = new PluginKey<Undo>('notebookAutoCapitalize');
+
+/** Let Backspace put back the lowercase letter at `pos` (used when text
+ *  arrives some other way, e.g. a canvas text box made by typing). */
+export function rememberCapital(view: EditorView, pos: number, original: string) {
+  view.dispatch(view.state.tr.setMeta(key, { pos, original }));
+}
 
 export const AutoCapitalize = Extension.create({
   name: 'notebookAutoCapitalize',
@@ -39,8 +46,10 @@ export const AutoCapitalize = Extension.create({
           // Keyboards send one letter; autocorrect and some phones send a word.
           if (!/^[a-z][^\n]*$/.test(text) || from !== to || !autoCapitalizeEnabled()) return false;
           const $from = view.state.doc.resolve(from);
-          if ($from.parentOffset !== 0 || !$from.parent.isTextblock || $from.parent.type.spec.code) return false;
-          if ($from.marks().some(mark => mark.type.spec.code)) return false;
+          // A new line: the start of a block, or right after Shift+Enter.
+          const lineStart = $from.parentOffset === 0 || $from.nodeBefore?.type.name === 'hardBreak';
+          if (!lineStart || !$from.parent.isTextblock || $from.parent.type.spec.code) return false;
+          if ((view.state.storedMarks ?? $from.marks()).some(mark => mark.type.spec.code)) return false;
           const tr = view.state.tr.insertText(text[0].toUpperCase() + text.slice(1), from, to);
           view.dispatch(tr.setMeta(key, { pos: from, original: text[0] }));
           return true;
