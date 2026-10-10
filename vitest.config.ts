@@ -9,5 +9,8 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}', 'migrations/**/*.test.ts', 'server/**/*.test.ts'],
     css: false,
+    // Real editors (Tiptap + Yjs) in jsdom are slow when every file runs in
+    // parallel; the default 5s timed out a few heavy tests under load.
+    testTimeout: 20_000,
   },
 });
