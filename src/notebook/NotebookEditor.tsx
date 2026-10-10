@@ -19,6 +19,7 @@ import { pasteNotebookText } from './NotebookMobileToolbar';
 import { createPortal } from 'react-dom';
 import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
 import { NotebookHistory } from './NotebookHistory';
+import {NotebookZoom} from './NotebookZoom';
 const NotebookCanvas = lazy(() => import('./NotebookCanvas'));
 
 const labels: Record<SyncStatus, string> = { joining: 'Joining…', saved: 'All changes saved', saving: 'Saving…', offline: 'Offline · changes stay on this screen', conflict: 'Local changes need recovery', unavailable: 'Page unavailable', error: 'Save needs attention' };
@@ -62,6 +63,14 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [activeEditor, setActiveEditor] = useState<Editor | null>(null);
   const [printing,setPrinting]=useState(false),[printProgress,setPrintProgress]=useState('');
   const printAbort=React.useRef<AbortController|null>(null),closePrintPreview=React.useRef<(()=>void)|null>(null),paper=React.useRef<HTMLElement|null>(null);
+  const fitWidth=()=>{
+    const page=paper.current,scroll=page?.parentElement;if(!page||!scroll)return;
+    const previous=page.style.zoom;let width=0;
+    // Measure authored content at its natural scale; restore before painting.
+    try{page.style.zoom='1';width=Math.max(page.scrollWidth,page.getBoundingClientRect().width);}finally{page.style.zoom=previous;}
+    const style=getComputedStyle(scroll),available=scroll.clientWidth-parseFloat(style.paddingLeft||'0')-parseFloat(style.paddingRight||'0');
+    if(width>0&&available>0)setZoom(Math.max(50,Math.min(300,Math.floor(available/width*100))));
+  };
   useEffect(()=>()=>{printAbort.current?.abort();closePrintPreview.current?.();},[sync]);
   const printPage=async()=>{
     if(printing)return;
@@ -162,7 +171,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
         insert: fileUpload.controls,
         file: <><button className="nb-tool" onClick={async () => { try { if (sync.pending && !await sync.flush()) throw new Error('Save your changes before exporting.'); const headers = sync.scope ? { 'X-CP-Notebook-Team': String(sync.scope.teamId) } : undefined; downloadNotebookJSON(await apiJson(`/api/notebook/pages/${sync.pageId}`, { headers, cache: 'no-store' })); setViewError(''); } catch (e) { setViewError(e instanceof Error ? e.message : 'Export failed'); } }}>Export page</button><button className="nb-tool" disabled={printing} onClick={printPage}>Print page</button>{printing && <button className="nb-tool" onClick={()=>{printAbort.current?.abort();setPrinting(false);setPrintProgress('Print preparation cancelled.');}}>Cancel preparation</button>}{printProgress && <span role="status">{printProgress}</span>}</>,
         history: <NotebookHistory sync={sync} onRejoin={onRejoin} />,
-        view: <><label>Zoom <select aria-label="Page zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[...new Set([50,75,90,100,110,125,150,175,200,250,300,zoom])].sort((a,b)=>a-b).map(n => <option key={n} value={n}>{n}%</option>)}</select></label><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
+        view: <><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
       const toolbar = <NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup} />;
       return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;

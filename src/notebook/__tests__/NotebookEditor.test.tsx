@@ -80,8 +80,13 @@ describe('mounted collaborative notebook editor', () => {
   it('changes desktop viewing controls without changing the saved document', async () => {
     const { sync, server } = await mount(); const before = yDocToProsemirrorJSON(server);
     fireEvent.click(screen.getByRole('tab', { name: 'View' }));
-    fireEvent.change(screen.getByLabelText('Page zoom'), { target: { value: '150' } });
+    fireEvent.change(screen.getByLabelText('Page zoom percentage'), { target: { value: '150' } });
+    fireEvent.keyDown(screen.getByLabelText('Page zoom percentage'), {key:'Enter'});
     expect(document.querySelector<HTMLElement>('.nb-paper')!.style.zoom).toBe('1.5');
+    const paper=document.querySelector<HTMLElement>('.nb-paper')!,scroll=paper.parentElement!;
+    Object.defineProperty(paper,'scrollWidth',{value:1400,configurable:true});Object.defineProperty(scroll,'clientWidth',{value:700,configurable:true});
+    fireEvent.click(screen.getByRole('button',{name:'Fit width'}));expect(paper.style.zoom).toBe('0.5');
+    fireEvent.click(screen.getByRole('button',{name:'Reset to 100%'}));expect(paper.style.zoom).toBe('1');
     fireEvent.click(screen.getByRole('button', { name: 'Rule lines' }));
     expect(document.querySelector('.nb-paper.nb-ruled')).toBeTruthy();
     await act(async () => { await sync.flush(); });
