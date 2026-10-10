@@ -54,6 +54,13 @@ describe('confirmed notebook permanent removal',()=>{
     await store.remove(ctx(),'page',copy.id);expect((await store.purge(ctx(),'page',copy.id,copy.title)).deletedFiles).toEqual([]);expect(await exists('stored_files',file)).toBe(true);
     await store.remove(ctx(),'page',source.id);await store.purge(ctx(),'page',source.id,source.title);expect(await exists('stored_files',file)).toBe(false);
   });
+  it('removes a batch of orphaned attachments while retaining one shared file',async()=>{
+    const target=await page(),files:number[]=[];for(let i=0;i<30;i++)files.push(await upload(target.id));
+    await store.save(ctx(),target.id,{baseRevision:1,content:{type:'doc',content:files.flatMap(file=>doc(file).content)}});
+    const shared=await page({content:doc(files[0])});await store.remove(ctx(),'page',target.id);
+    const result=await store.purge(ctx(),'page',target.id,target.title);expect(result.deletedFiles.sort((a,b)=>a-b)).toEqual(files.slice(1).sort((a,b)=>a-b));
+    expect(await exists('stored_files',files[0])).toBe(true);expect((await store.page(ctx(),shared.id)).content).toEqual(doc(files[0]));
+  });
   it('cascades section and notebook descendants and saved history while leaving another notebook intact',async()=>{
     const extra=await store.create(ctx(),'notebook',{title:'Disposable season'}),s=await store.create(ctx(),'section',{notebookId:extra.id,title:'Disposable section'});
     const parent=await page({sectionId:s.id}),child=await page({sectionId:s.id,parentId:parent.id});await store.save(ctx(),child.id,{baseRevision:1,content:empty,title:'Saved child'});
