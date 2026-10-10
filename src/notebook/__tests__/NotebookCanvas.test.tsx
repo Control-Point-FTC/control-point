@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import NotebookCanvas from '../NotebookCanvas';
 import { PageLinkSourceContext } from '../PageLinkPopup';
+import { RecordNavigationContext } from '../recordNavigation';
+const openRecord = vi.fn();
 import { pageLinkKey } from '../pageLinkMenu';
 import { NotebookSync } from '../NotebookSync';
 import { canvasJSON, seedCanvas, type Ink } from '../canvasModel';
@@ -15,7 +17,7 @@ function mount(editable = true, mobile = false, strokes = 0, scoped = false, sco
     const zoom = vi.fn();
     providers.push(sync);
     if (strokes) seedCanvas(sync.doc, { version: 1, objects: Array.from({length:strokes},(_,i): Ink => ({ id:`stroke-${i}`, type:'stroke',tool:'pen',x:i%100,y:Math.floor(i/100),width:10,height:10,z:i,rotation:0,locked:false,groupId:null,color:'#111111',strokeWidth:2,opacity:1,points:[[0,0,.5],[10,10,.5]] })) });
-    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><PageLinkSourceContext.Provider value={LINKS}><NotebookCanvas sync={sync} scopeId={scopeId} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></PageLinkSourceContext.Provider></div></>; }
+    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><RecordNavigationContext.Provider value={openRecord}><PageLinkSourceContext.Provider value={LINKS}><NotebookCanvas sync={sync} scopeId={scopeId} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></PageLinkSourceContext.Provider></RecordNavigationContext.Provider></div></>; }
     render(<Harness />);
     const surface = screen.getByLabelText('Page drawing surface');
     Object.defineProperties(surface, { offsetWidth: { value: 1000 }, offsetHeight: { value: 600 } });
@@ -204,6 +206,49 @@ describe('desktop shared drawing surface', () => {
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
         fireEvent.keyDown(grip, { key: 'ArrowRight', shiftKey: true });
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
+    });
+    it('copies, cuts, pastes and duplicates the selection from the keyboard', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 100, clientY: 100 });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(1);
+        fireEvent.keyDown(surface, { key: 'd', ctrlKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(2);
+        fireEvent.keyDown(surface, { key: 'c', ctrlKey: true });
+        expect(screen.getByRole('status')).toHaveTextContent('Copied 1 item');
+        fireEvent.keyDown(surface, { key: 'v', ctrlKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(3);
+        fireEvent.keyDown(surface, { key: 'x', metaKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(2);
+        fireEvent.keyDown(surface, { key: 'v', ctrlKey: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(3);
+        expect(screen.getByRole('status')).toHaveTextContent('Pasted 1 item.');
+    });
+    it('leaves shortcuts alone inside text, for readers and phones, and with nothing copied', async () => {
+        const reader = mount(false);
+        const before = canvasJSON(reader.sync.doc).objects.length;
+        for (const key of ['c', 'x', 'v', 'd']) expect(fireEvent.keyDown(reader.surface, { key, ctrlKey: true })).toBe(true); // not prevented
+        expect(canvasJSON(reader.sync.doc).objects).toHaveLength(before);
+        cleanup();
+        const phone = mount(true, true);
+        expect(fireEvent.keyDown(phone.surface, { key: 'v', ctrlKey: true })).toBe(true);
+        cleanup();
+        const { sync, surface } = mount();
+        expect(fireEvent.keyDown(surface, { key: 'v', ctrlKey: true })).toBe(true); // empty canvas clipboard: native paste
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 100, clientY: 100 });
+        const box = await waitFor(() => { const el = surface.querySelector<HTMLElement>('[data-canvas-id] [role=textbox]'); if (!el) throw new Error('not ready'); return el; });
+        expect(fireEvent.keyDown(box, { key: 'd', ctrlKey: true })).toBe(true); // typing in a text box
+        expect(canvasJSON(sync.doc).objects).toHaveLength(1);
+    });
+    it('opens task and meeting links from canvas text boxes in the app', async () => {
+        const { surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 60, clientY: 60 });
+        const box = await waitFor(() => { const el = surface.querySelector<HTMLElement & { editor?: any }>('[data-canvas-id] [role=textbox]'); if (!el?.editor) throw new Error('not ready'); return el; });
+        box.editor.commands.insertContent([{ type: 'text', text: 'Wire it', marks: [{ type: 'link', attrs: { href: '/tasks?task=5' } }] }]);
+        fireEvent.click(box.querySelector('a')!);
+        expect(openRecord).toHaveBeenCalledWith('/tasks?task=5');
     });
     it('offers page links in canvas text boxes too', async () => {
         const { surface } = mount();

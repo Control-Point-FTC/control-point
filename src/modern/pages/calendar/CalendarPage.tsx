@@ -5,6 +5,7 @@
 // managers can create, edit or delete. Dates use the browser locale.
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { useSearchParams } from 'react-router-dom';
 import { CalendarDays, CalendarPlus, CalendarRange, ChevronLeft, ChevronRight, Eye, List, MapPin, Pencil, Plus, Repeat, Rows3, Trash2 } from 'lucide-react';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
 import { cn } from '../../../components/cn';
@@ -48,6 +49,19 @@ export function CalendarPage(props: any) {
     dragging, setDragging, over, setOver,
   };
   const eventById = (id: string | undefined) => (events || []).find((e: any) => String(e.id) === id);
+  // Deep link (notebook record links): /calendar?event=ID opens that event.
+  const [params, setParams] = useSearchParams();
+  const linkedEvent = params.get('event');
+  useEffect(() => {
+    const event = linkedEvent ? eventById(linkedEvent) : undefined;
+    if (!event) return;
+    setViewId(event.id);
+    if (event.date) { setSelected(event.date); ctl.setCursor(keyToDate(event.date)); }
+    const next = new URLSearchParams(params);
+    next.delete('event');
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedEvent, events]);
   const dayLabel = (k: string) => keyToDate(k).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   // Right-click a day or an event.
   useContextMenu('calendar-day', (el) => {

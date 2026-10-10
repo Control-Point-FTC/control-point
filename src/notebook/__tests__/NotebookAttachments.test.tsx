@@ -31,10 +31,10 @@ describe('notebook attachment upload',()=>{
     expect(last).toBe(request);expect(request.send).toHaveBeenCalledOnce();expect(run).toHaveBeenCalledTimes(2);expect(screen.queryByText('Retry upload')).toBeNull();
   });
   it('round-trips attachment numeric attributes through clipboard HTML and indexes deeply nested attachments',()=>{
-    const json={type:'doc',content:[{type:'notebookFile',attrs:{fileId:17,name:'Part.pdf',mimeType:'application/pdf',size:3,display:'pdf',width:640}}]};
+    const json={type:'doc',content:[{type:'notebookFile',attrs:{fileId:17,name:'Part.pdf',mimeType:'application/pdf',size:3,display:'pdf',width:640,alt:'Gear ratios table'}}]};
     const host=document.createElement('div');host.append(DOMSerializer.fromSchema(notebookSchema).serializeFragment(notebookSchema.nodeFromJSON(json).content));
     const parsed=DOMParser.fromSchema(notebookSchema).parse(host).toJSON();expect(()=>validatedNotebookDocument(parsed)).not.toThrow();
-    expect(parsed.content[0].attrs).toMatchObject({fileId:17,size:3,width:640});
+    expect(parsed.content[0].attrs).toMatchObject({fileId:17,size:3,width:640,alt:'Gear ratios table'});
     let nested:any=json.content[0];for(let i=0;i<80;i++)nested={type:'blockquote',content:[nested]};
     const deeplyNested={type:'doc',content:[nested]};expect(()=>validatedNotebookDocument(deeplyNested)).not.toThrow();expect(notebookAttachmentIds(deeplyNested)).toEqual([17]);
   });
@@ -81,5 +81,9 @@ describe('notebook attachment upload',()=>{
     expect(()=>validatedNotebookDocument(document({}))).not.toThrow();
     expect(()=>validatedNotebookDocument(document({fileId:-2}))).toThrow();
     expect(()=>validatedNotebookDocument(document({width:100000}))).toThrow();
+    // Alt text: optional, a short string.
+    expect(()=>validatedNotebookDocument(document({display:'image',alt:'Drivetrain CAD, top view'}))).not.toThrow();
+    expect(()=>validatedNotebookDocument(document({alt:'x'.repeat(301)}))).toThrow();
+    expect(()=>validatedNotebookDocument(document({alt:42}))).toThrow();
   });
 });

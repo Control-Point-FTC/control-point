@@ -69,6 +69,10 @@ export function withHead(html: string, head: PublicHead, url?: string): string {
     .replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${d}$2`)
     .replace(/(<meta name="twitter:title" content=")[^"]*(")/, `$1${t}$2`)
     .replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${d}$2`);
-  if (url) out = out.replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${escapeHtml(url)}$2`);
+  // Each public page is its own canonical URL; a 404 claims none.
+  if (url) out = out
+    .replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${escapeHtml(url)}$2`)
+    .replace(/(<link rel="canonical" href=")[^"]*(")/, `$1${escapeHtml(url)}$2`);
+  else out = out.replace(/\s*<meta property="og:url"[^>]*>/, '').replace(/\s*<link rel="canonical"[^>]*>/, '');
   return out;
 }

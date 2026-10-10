@@ -26,3 +26,7 @@
 .nb-block-handle{position:fixed;z-index:40;display:grid;place-items:center;width:24px;height:24px;border-radius:5px;color:#78716c;opacity:.75}
 .nb-block-handle:hover,.nb-block-handle:focus-visible,.nb-block-handle[data-state=open]{opacity:1;background:#f5f5f4;color:#151515}
 .nb-block-status{position:fixed;z-index:41;padding:3px 8px;border-radius:6px;background:#151515;color:#fff;font-size:12px;bottom:24px;left:50%;transform:translateX(-50%)}
+
+/* Page link states. */
+.nb-prose .nb-link-missing,.nb-prose .nb-link-missing a{color:#9a3412!important;text-decoration-style:dashed!important}
+.nb-link-note{font-size:.8em;pointer-events:none;user-select:none}.nb-link-note-missing{color:#9a3412}.nb-link-note-locked{color:#8a6100}

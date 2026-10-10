@@ -7,6 +7,8 @@ import { notebookExtensions } from './editorSchema';
 import { AutoCapitalize, autoCapitalizeEnabled, rememberCapital } from './autoCapitalize';
 import { PageLinkMenu } from './pageLinkMenu';
 import { PageLinkSourceContext } from './PageLinkPopup';
+import { RecordNavigationContext } from './recordNavigation';
+import { appRecordPath } from './recordLinks';
 import type { NotebookSync } from './NotebookSync';
 import { CANVAS_ORIGIN, canvasJSON, insertCanvasItem, insertCanvasItems, replaceCanvasItems, copiedTextBoxContent, type CanvasItem, type Ink, type Point, type Shape, type TextBox } from './canvasModel';
 import { directedLine, inkHit, inkPath, lassoHit, roundCanvas, simplifyInk, splitInk, stepStackingInLayers } from './canvasGeometry';
@@ -47,9 +49,12 @@ function CanvasText({ item, map, sync, editable, onFocus, onRemoved }: {
     onRemoved: (editor: Editor) => void;
 }) {
     const links = useContext(PageLinkSourceContext);
+    const openRecord = useRef(useContext(RecordNavigationContext)); openRecord.current = useContext(RecordNavigationContext);
     const editor = useEditor({ extensions: [...notebookExtensions(true, editable,NotebookFileView), AutoCapitalize, ...(links ? [PageLinkMenu.configure(links)] : []), Collaboration.configure({ document: sync.doc, fragment: map.get('content') as Y.XmlFragment })], editable, editorProps: { attributes: { class: 'nb-prose nb-canvas-text-prose', role: 'textbox', 'aria-label': 'Canvas text', 'aria-multiline': 'true' },
         // Double-click selects a word (browser default); triple-click selects the whole box.
-        handleTripleClick: view => { view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc))); return true; } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
+        handleTripleClick: view => { view.dispatch(view.state.tr.setSelection(new AllSelection(view.state.doc))); return true; },
+        // Record links (tasks, meetings…) open in the app, as in the page text.
+        handleDOMEvents: { click: (_view, event) => { const path = appRecordPath((event.target as Element).closest('a')?.getAttribute('href')); if (!path || !openRecord.current) return false; event.preventDefault(); openRecord.current(path); return true; } } }, onFocus: ({ editor }) => onFocus(editor) }, [map, sync]);
     useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
     useEffect(() => () => { if (editor)
         onRemoved(editor); }, [editor, onRemoved]);
@@ -176,7 +181,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
         const order = stepStackingInLayers([...items].sort((a, b) => a.z - b.z).map(i => i.id), new Set(selection), direction, id => layer.get(id) ?? 'page');
         order.forEach((id, z) => { const map = root.get(id); if (map && map.get('z') !== z) map.set('z', z); });
     });
-    const duplicate = (source = selected) => {
+    const duplicate = (source = selected, done?: string) => {
         const groupIds = new Map<string, string>();
         const copies: CanvasItem[] = [];
         for (const item of source) {
@@ -193,7 +198,7 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             }
             copies.push(copy);
         }
-        try { transact(() => insertCanvasItems(sync.doc, copies)); setSelection(copies.map(i => i.id)); }
+        try { transact(() => insertCanvasItems(sync.doc, copies)); setSelection(copies.map(i => i.id)); if (done) setNotice(`${done} ${copies.length} ${copies.length === 1 ? 'item' : 'items'}.`); }
         catch (e) { setNotice(e instanceof Error ? e.message : 'Cannot paste canvas items'); }
     };
     useEffect(() => {
@@ -463,6 +468,18 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
                 e.preventDefault();
                 transact(() => selection.forEach(id => root.delete(id)));
             }
+            // Keyboard copy / cut / paste / duplicate for selected drawings and boxes.
+            const command = (e.ctrlKey || e.metaKey) && !e.altKey ? e.key.toLowerCase() : '';
+            if ((command === 'c' || command === 'x') && selection.length) {
+                e.preventDefault();
+                // Cut takes only what it removes; locked items stay put and aren't copied.
+                const movable = selected.filter(i => !i.locked);
+                clipboard.current = structuredClone(command === 'x' ? movable : selected); setHasClipboard(clipboard.current.length > 0);
+                if (command === 'x') transact(() => movable.forEach(i => root.delete(i.id)));
+                setNotice(command === 'x' ? `Cut ${movable.length} ${movable.length === 1 ? 'item' : 'items'}${movable.length < selected.length ? ' (locked items stay)' : ''}. Paste with Ctrl+V.` : `Copied ${selected.length} ${selected.length === 1 ? 'item' : 'items'}. Paste with Ctrl+V.`);
+            }
+            if (command === 'v' && clipboard.current.length) { e.preventDefault(); duplicate(clipboard.current, 'Pasted'); }
+            if (command === 'd' && selection.length) { e.preventDefault(); duplicate(undefined, 'Duplicated'); }
             if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) && selection.length) {
                 e.preventDefault();
                 const d = e.shiftKey ? 10 : 1;
