@@ -1,6 +1,7 @@
 import type { NotebookSync } from './NotebookSync';
 const active = new Set<NotebookSync>();
 export function registerNotebookSession(session: NotebookSync) { active.add(session); return () => { active.delete(session); }; }
+export function notebookExitNeedsSave(){return [...active].some(session=>session.pending&&!session.locallyDurable);}
 export function findNotebookSession(pageId: number, scope?: { memberId: number; teamId: number }) {
   return [...active].find(s => s.pageId === pageId && s.scope?.memberId === scope?.memberId && s.scope?.teamId === scope?.teamId && s.status !== 'unavailable');
 }

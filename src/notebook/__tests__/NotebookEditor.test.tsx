@@ -29,11 +29,37 @@ async function mount(editable = true) {
   });
   const sync = new NotebookSync(1); providers.push(sync); await sync.start();
   const navigate = vi.fn();
-  render(<MemoryRouter><NotebookEditor sync={sync} onChanged={() => {}} pages={[]} onNavigate={navigate} /></MemoryRouter>);
+  const view=render(<MemoryRouter><NotebookEditor sync={sync} onChanged={() => {}} pages={[]} onNavigate={navigate} /></MemoryRouter>);
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Page content' }).textContent).toContain('Team discoveries'));
-  return { sync, server, navigate };
+  return { sync, server, navigate,view };
 }
 describe('mounted collaborative notebook editor', () => {
+  it('keeps two real editors and titles independent while ribbon ownership changes',async()=>{
+    const {sync,server,view}=await mount();
+    const secondary=prosemirrorJSONToYDoc(notebookSchema,{type:'doc',content:[{type:'paragraph',attrs:{id:'secondary-block'},content:[{type:'text',text:'Linked experiment',marks:[{type:'link',attrs:{href:'/notebook/p/3?block=target'}}]}]}]});secondary.getMap('meta').set('title','Other journal');docs.push(secondary);
+    const original=vi.mocked(apiJson).getMockImplementation()!;
+    vi.mocked(apiJson).mockImplementation(async(url,options)=>{
+      if(!url.includes('/pages/2/sync'))return original(url,options);
+      const body=JSON.parse(String(options?.body??'{}'));if(body.update)Y.applyUpdate(secondary,decodeBytes(body.update));
+      return {...sync.data,epoch:'two',update:encodeBytes(Y.encodeStateAsUpdate(secondary,body.vector?decodeBytes(body.vector):undefined)),vector:encodeBytes(Y.encodeStateVector(secondary)),title:secondary.getMap('meta').get('title'),editable:true,protected:false,peers:[]} as any;
+    });
+    const other=new NotebookSync(2);providers.push(other);await other.start();const openOther=vi.fn(),navigate=vi.fn();
+    const panes=(active:'main'|'other')=><MemoryRouter><section aria-label="Main pane"><NotebookEditor sync={sync} onChanged={()=>{}} pages={[]} onNavigate={navigate} toolbarVisible={active==='main'}/></section><section aria-label="Other pane"><NotebookEditor sync={other} onChanged={()=>{}} pages={[]} onNavigate={navigate} toolbarVisible={active==='other'} blockTarget={null} threadTarget={null} onOpenOther={openOther}/></section></MemoryRouter>;
+    view.rerender(panes('other'));await screen.findByText('Linked experiment');
+    const main=document.querySelector('section[aria-label="Main pane"]')!,pane=document.querySelector('section[aria-label="Other pane"]')!;
+    const first=main.querySelector('[aria-label="Page content"]')!,second=pane.querySelector('[aria-label="Page content"]')!;
+    fireEvent.change(pane.querySelector('[aria-label="Page title"]')!,{target:{value:'Changed independently'}});
+    expect(sync.doc.getMap('meta').get('title')).toBe('Journal');expect(other.doc.getMap('meta').get('title')).toBe('Changed independently');
+    fireEvent.click(pane.querySelector('a')!,{altKey:true});expect(openOther).toHaveBeenCalledWith(3,'target');expect(navigate).not.toHaveBeenCalled();
+    const otherEditor=(second as HTMLElement&{editor:import('@tiptap/react').Editor}).editor;
+    act(()=>{otherEditor.commands.setTextSelection({from:1,to:7});});fireEvent.click(screen.getByRole('button',{name:'Bold'}));
+    expect(JSON.stringify(yDocToProsemirrorJSON(other.doc))).toContain('"type":"bold"');expect(JSON.stringify(yDocToProsemirrorJSON(sync.doc))).not.toContain('"type":"bold"');
+    expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);view.rerender(panes('main'));
+    expect(main.querySelector('[aria-label="Page content"]')).toBe(first);expect(pane.querySelector('[aria-label="Page content"]')).toBe(second);expect(screen.getAllByRole('tab',{name:'Home'})).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button',{name:'Copy formatting'}));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();view.rerender(panes('other'));view.rerender(panes('main'));expect(screen.getByRole('button',{name:'Apply formatting'})).toBeTruthy();
+    fireEvent.keyDown(first,{key:'f',ctrlKey:true});expect(screen.getAllByRole('search',{name:'Find in page',hidden:true})).toHaveLength(1);
+    await act(async()=>{await other.flush();});expect(server.getMap('meta').get('title')).toBe('Journal');expect(secondary.getMap('meta').get('title')).toBe('Changed independently');
+  });
   it('makes text, title and insertion controls read only while a revision restore is pending',async()=>{
     const {sync}=await mount();
     act(()=>sync.setRestoring(true));

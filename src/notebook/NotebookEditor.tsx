@@ -29,8 +29,8 @@ export function downloadNotebookJSON(value: unknown, name = 'notebook-page.json'
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null };
-export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost }: EditorProps) {
+export type EditorProps = { sync: NotebookSync; onChanged: (title: string) => void; pages: NotebookPageItem[]; onNavigate: (id: number, blockId?: string) => void; onRejoin?: () => void; toolbarHost?: HTMLElement | null; toolbarVisible?:boolean;blockTarget?:string|null;threadTarget?:number|null;onOpenOther?:(id:number,blockId?:string)=>void };
+export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost,...paneProps }: EditorProps) {
   const [, redraw] = useState(0);
   const [downloadError, setDownloadError] = useState('');
   useEffect(() => sync.subscribe(() => redraw(v => v + 1)), [sync]);
@@ -42,9 +42,9 @@ export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, t
     }}>Download original page</Button>}
     {downloadError && <p role="alert">{downloadError}</p>}
   </div>;
-  return <ConnectedEditor sync={sync} onChanged={onChanged} pages={pages} onNavigate={onNavigate} onRejoin={onRejoin} toolbarHost={toolbarHost} />;
+  return <ConnectedEditor sync={sync} onChanged={onChanged} pages={pages} onNavigate={onNavigate} onRejoin={onRejoin} toolbarHost={toolbarHost} {...paneProps}/>;
 }
-function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost }: EditorProps) {
+function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbarHost,toolbarVisible=true,blockTarget,threadTarget,onOpenOther }: EditorProps) {
   const [, redraw] = useState(0);
   const mobile = useNotebookMobile();
   const mobileRef = React.useRef(mobile); mobileRef.current = mobile;
@@ -105,18 +105,18 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     }, handleKeyDown: (_view, event) => {
       if (mobileRef.current && (event.ctrlKey || event.metaKey) && ['b','i','u'].includes(event.key.toLowerCase())) { event.preventDefault(); return true; }
       return false;
-    }, handleClick: (_view, _pos, event) => {
+    }, handleDOMEvents:{click: (_view, event) => {
       const href = (event.target as Element).closest('a')?.getAttribute('href');
       let internal = href;
       try { if (href && new URL(href, window.location.origin).origin === window.location.origin) internal = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search; } catch { return false; }
       const link = parseNotebookPageLink(internal);
       if (!link) { if (href && safeNotebookLink(href)) { event.preventDefault(); window.open(href, '_blank', 'noopener,noreferrer'); return true; } return false; }
-      event.preventDefault(); onNavigate(link.pageId, link.blockId); return true;
-    } },
+      event.preventDefault(); if(event.altKey&&onOpenOther)onOpenOther(link.pageId,link.blockId);else onNavigate(link.pageId, link.blockId); return true;
+    }} },
     onFocus: ({ editor }) => setActiveEditor(editor), onSelectionUpdate: () => redraw(v => v + 1), onTransaction: () => redraw(v => v + 1),
   }, [sync]);
   const title = String(sync.doc.getMap('meta').get('title') ?? '');
-  const blockId = params.get('block');
+  const blockId = blockTarget===undefined?params.get('block'):blockTarget;
   useEffect(() => {
     if (!blockId || !editor || !/^[\w-]{1,100}$/.test(blockId)) return;
     const target = editor.view.dom.querySelector(`[data-id="${blockId}"]`);
@@ -173,7 +173,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
         history: <NotebookHistory sync={sync} onRejoin={onRejoin} />,
         view: <><NotebookZoom value={zoom} onChange={setZoom} onFit={fitWidth}/><button className="nb-tool" aria-pressed={ruled} onClick={() => setRuled(v => !v)}>Rule lines</button><button className="nb-tool" onClick={async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); setViewError(''); } catch { setViewError('Full-screen mode is unavailable in this browser.'); } }}>Full page view</button></>,
       };
-      const toolbar = <NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup} />;
+      const toolbar = <div className="nb-pane-ribbon" hidden={!toolbarVisible}><NotebookToolbar editor={activeEditor ?? editor} disabled={blocked} pages={pages} pageId={sync.pageId} preferenceKey={`cp-notebook-toolbar:${sync.scope?.memberId}:${sync.scope?.teamId}`} panels={panels} requestedGroup={requestedGroup}/></div>;
       return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}
@@ -188,7 +188,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
-      {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} />}
+      {!mobile && <NotebookDiscussions sync={sync} editor={activeEditor ?? editor} canvasTarget={canvasTarget} highlightedThreadId={threadTarget}/>}
     </article></div>
   </div></NotebookFileContext.Provider>;
 }

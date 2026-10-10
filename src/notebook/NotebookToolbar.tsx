@@ -41,7 +41,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [format, setFormat] = useState<{ marks: { type: string; attrs: Record<string, any> }[] } | null>(null);
   useEffect(() => {
     if (!editor) return;
-    const find = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && (event.target as Element)?.closest('.nb-document')) { event.preventDefault(); setFinding(true); setGroup('review'); } };
+    const find = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && event.target instanceof Node && editor.view.dom.closest('.nb-document')?.contains(event.target)) { event.preventDefault(); setFinding(true); setGroup('review'); } };
     window.addEventListener('keydown', find); return () => window.removeEventListener('keydown', find);
   }, [editor]);
   if (!editor) return null;

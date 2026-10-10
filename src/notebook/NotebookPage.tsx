@@ -3,7 +3,7 @@ import { useSearchParams, useMatch, useNavigate, UNSAFE_NavigationContext } from
 import { BookOpen, ChevronDown, ChevronRight, FileText, Lock, MoreHorizontal, PanelLeft, Plus, Search, Star } from 'lucide-react';
 import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Input, Label, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '../components/ui-kit';
 import { apiJson as requestNotebookAPI } from '../services/api';
-import { NotebookEditor, downloadNotebookJSON } from './NotebookEditor';
+import { downloadNotebookJSON } from './NotebookEditor';
 import { NotebookSync } from './NotebookSync';
 import type { NotebookTree, NotebookPageItem } from './types';
 import './notebook.css';
@@ -11,7 +11,8 @@ import './notebook-desktop.css';
 import { NOTEBOOK_TEMPLATES, notebookTemplate } from './templates';
 import { notebookDrop, notebookSiblings, type NotebookDrag } from './treeActions';
 import { notebookPageLink } from './pageLinks';
-import { findNotebookSession } from './notebookRuntime';
+import { findNotebookSession,notebookExitNeedsSave,prepareNotebookExit } from './notebookRuntime';
+import {NotebookSplitView} from './NotebookSplitView';
 import { NotebookMentions } from './NotebookMentions';
 import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookGlyph, SectionGlyph } from './NotebookIcons';
@@ -83,11 +84,15 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     const originalPush = navigator.push, originalReplace = navigator.replace;
     let navigating = false;
     const guard = (original: typeof navigator.push) => (...args: Parameters<typeof navigator.push>) => {
-      const current = syncRef.current;
-      if (!current?.pending || current.locallyDurable) { original.apply(navigator, args); return; }
+      const destination = args[0];
+      const pathname = typeof destination === 'string' ? destination.split(/[?#]/)[0] : destination.pathname;
+      const withinNotebook = !!pathname && /^\/notebook(?:\/p\/[1-9]\d*)?\/?$/.test(pathname);
+      // Main-page changes keep the secondary session mounted. Only leaving the
+      // notebook must flush every session; pick() also guards the main editor.
+      if (withinNotebook ? !syncRef.current?.pending : !notebookExitNeedsSave()) { original.apply(navigator, args); return; }
       if (navigating) return; navigating = true;
       void (async () => {
-        if (await current.flush() || await current.persist()) original.apply(navigator, args);
+        if (withinNotebook ? await leave() : await prepareNotebookExit('switch')) original.apply(navigator, args);
         else setError('Save or recover your notebook changes before leaving this page.');
       })().finally(() => { navigating = false; });
     };
@@ -151,7 +156,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
     setParams({ page: String(id), ...(blockId ? { block: blockId } : {}), ...(threadId ? { thread: String(threadId) } : {}) }); setDrawer(false); setError(''); return true;
   };
-  const onTitle = useCallback((title: string) => { const id = syncRef.current?.pageId; setTree(t => t ? { ...t, pages: t.pages.map(p => p.id === id ? { ...p, title } : p) } : t); }, []);
+  const onTitle = useCallback((id:number,title: string) => { setTree(t => t ? { ...t, pages: t.pages.map(p => p.id === id ? { ...p, title } : p) } : t); }, []);
   const open = (value: EditDialog) => {
     setName(value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
     setTemplate('blank');
@@ -416,7 +421,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {error && <div className="nb-alert" role="alert">{error}<button aria-label="Dismiss notebook error" onClick={() => setError('')}>×</button></div>}
     <div className="nb-body">{!mobile && <><aside hidden={writingFocus} className="nb-explorer nb-desktop" aria-label="Notebook explorer">{explorer}</aside><aside hidden={writingFocus} className="nb-pages-pane nb-desktop" aria-label="Pages in selected section"><div className="nb-pages-heading"><Button variant="ghost" disabled={!tree?.permissions.edit || !sectionId} onClick={() => sectionId && createInstant('page', { sectionId })}><Plus size={17} /> Add Page</Button><span>{tree?.sections.find(s => s.id === sectionId)?.title}</span></div><div className="nb-tree-scroll">{sectionId && pageRows(sectionId)}{sectionId && !tree?.pages.some(p => p.sectionId === sectionId) && <p className="nb-small">No pages in this section yet.</p>}</div><button className="nb-export-link" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export notebook</button></aside></>}<main className="nb-main">
       {!mobile&&writingFocus&&<button ref={focusExit} className="nb-focus-exit" onFocus={()=>{exitFocused.current=true;}} onBlur={()=>{exitFocused.current=false;}} onClick={()=>setWritingFocus(false)}><PanelLeft size={16}/> Show sections and pages</button>}
-      {sync && sync.pageId === selected ? <NotebookEditor key={sync.pageId} sync={sync} onChanged={onTitle} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
+      {sync && selected && tree?.pages.some(page=>page.id===selected) ? <NotebookSplitView mobile={mobile} sync={sync} onChanged={title=>onTitle(sync.pageId,title)} onOtherChanged={onTitle} blockTarget={sync.pageId===selected?undefined:null} threadTarget={sync.pageId===selected?undefined:null} pages={tree?.pages ?? []} onNavigate={(id, blockId) => { void pick(id, blockId); }} toolbarHost={toolbarHost} onRejoin={() => {
         const next = new NotebookSync(sync.pageId, memberId && teamId ? { memberId, teamId } : undefined);
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
       }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
