@@ -20,12 +20,16 @@ function mount(editable = true, mobile = false, strokes = 0, scoped = false, sco
     surface.setPointerCapture = vi.fn();
     return { sync, surface, zoom };
 }
+const caret = () => screen.getByLabelText('Type to add a text box here') as HTMLTextAreaElement;
+const boxText = (sync: NotebookSync, i = 0) => JSON.stringify((canvasJSON(sync.doc).objects[i] as any)?.content ?? null);
 function pointer(surface: HTMLElement, type: string, x: number, y: number, id = 1, source = 'mouse') { const event = new Event(type, { bubbles: true }); Object.assign(event, { pointerId: id, button: 0, clientX: x, clientY: y, pressure: .5, pointerType: source }); fireEvent(surface, event); }
 describe('desktop shared drawing surface', () => {
     it('starts PDF text boxes inside a nested flow without treating the outer flow as its text editor',()=>{
-        const {sync,surface}=mount(true,false,0,false,'block-pdf-1');
+        const {sync}=mount(true,false,0,false,'block-pdf-1');
         fireEvent.click(screen.getByRole('button',{name:'Drawing type'}));
         pointer(screen.getByText('Flow text remains here'),'pointerdown',100,100);
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        fireEvent.input(caret(),{target:{value:'n'}});
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({type:'text',pdfScope:'block-pdf-1'});
     });
     it('anchors PDF ink to its page without selecting or erasing another surface',()=>{
@@ -108,6 +112,95 @@ describe('desktop shared drawing surface', () => {
         pointer(surface, 'pointermove', 150, 125);
         pointer(surface, 'pointercancel', 150, 125);
         expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+    });
+    it('puts a caret where you click and makes the text box when you type', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 300, 200);
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        fireEvent.keyDown(caret(), { key: 'Escape' });
+        expect(screen.queryByLabelText('Type to add a text box here')).toBeNull();
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        pointer(surface, 'pointerdown', 300, 200);
+        fireEvent.input(caret(), { target: { value: 'h' } });
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ type: 'text', x: 300, y: 200 });
+        // Everything typed while the box gets ready is carried in, each line capitalized.
+        fireEvent.input(caret(), { target: { value: 'hello\nworld' } });
+        await waitFor(() => expect(boxText(sync)).toContain('"text":"Hello"'));
+        expect(boxText(sync)).toContain('"text":"World"');
+        await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Canvas text'));
+        expect(screen.queryByLabelText('Type to add a text box here')).toBeNull();
+    });
+    it('waits for an IME to commit, and Backspace restores a lowercase first letter', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 40, 40);
+        fireEvent.input(caret(), { target: { value: 'ni' }, isComposing: true });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        fireEvent.change(caret(), { target: { value: '你' } });
+        fireEvent.compositionEnd(caret());
+        await waitFor(() => expect(boxText(sync)).toContain('"text":"你"'));
+        pointer(surface, 'pointerdown', 400, 300);
+        fireEvent.input(caret(), { target: { value: 'q' } });
+        await waitFor(() => expect(boxText(sync, 1)).toContain('"text":"Q"'));
+        await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Canvas text'));
+        const box = document.activeElement as HTMLElement & { editor?: any };
+        box.editor.view.someProp('handleKeyDown', (f: any) => f(box.editor.view, new KeyboardEvent('keydown', { key: 'Backspace' })));
+        expect(boxText(sync, 1)).toContain('"text":"q"');
+    });
+    it('keeps what was typed but leaves focus alone when the caret is left before the box is ready', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 50, 50);
+        fireEvent.input(caret(), { target: { value: 'note' } });
+        fireEvent.keyDown(caret(), { key: 'Escape' });
+        await waitFor(() => expect(boxText(sync)).toContain('"text":"Note"'));
+        expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Canvas text');
+    });
+    it('keeps typed text through a tool switch and keeps a caret moved to another spot', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 50, 50);
+        fireEvent.input(caret(), { target: { value: 'parts list' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing pen' }));
+        await waitFor(() => expect(boxText(sync)).toContain('"text":"Parts list"'));
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 300, 300);
+        const first = caret();
+        first.focus();
+        expect(document.activeElement).toBe(first);
+        pointer(surface, 'pointerdown', 500, 400);
+        fireEvent.blur(first);
+        expect(caret().style.left).toBe('500px');
+    });
+    it('makes a text box at once on double-click, with move and width handles', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 120, clientY: 80 });
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ type: 'text', x: 120, y: 80 });
+        const width = (canvasJSON(sync.doc).objects[0] as any).width;
+        fireEvent.keyDown(screen.getByRole('button', { name: /Move text box/ }), { key: 'ArrowRight', shiftKey: true });
+        fireEvent.keyDown(screen.getByRole('separator', { name: /Text box width/ }), { key: 'ArrowLeft' });
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 130, y: 80, width: width - 1 });
+    });
+    it('undoes a whole handle drag in one step and keeps boxes inside the page limits', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 120, clientY: 80 });
+        const grip = screen.getByRole('button', { name: /Move text box/ });
+        grip.setPointerCapture = vi.fn();
+        pointer(grip, 'pointerdown', 120, 70);
+        for (const x of [130, 150, 170, 190]) pointer(grip, 'pointermove', x, 70);
+        pointer(grip, 'pointerup', 190, 70);
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 190, y: 80 });
+        fireEvent.click(screen.getByRole('button', { name: 'Undo ink' }));
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 120, y: 80 });
+        pointer(grip, 'pointerdown', 120, 70);
+        pointer(grip, 'pointermove', 90000, 70);
+        pointer(grip, 'pointerup', 90000, 70);
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
+        fireEvent.keyDown(grip, { key: 'ArrowRight', shiftKey: true });
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 50000 });
     });
     it('prevents readers and mobile users from changing canvas objects', () => {
         const { sync, surface } = mount(false, true);

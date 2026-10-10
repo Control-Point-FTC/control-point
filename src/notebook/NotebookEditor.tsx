@@ -6,8 +6,9 @@ import Placeholder from '@tiptap/extension-placeholder';
 import { yDocToProsemirrorJSON, yUndoPluginKey } from '@tiptap/y-tiptap';
 import { notebookExtensions, notebookSchema, safeNotebookLink, validatedNotebookDocument } from './editorSchema';
 import { useNotebookWorkspace } from './workspaceContext';
+import { AutoCapitalize } from './autoCapitalize';
 import { NotebookSync, type SyncStatus } from './NotebookSync';
-import { NotebookToolbar } from './NotebookToolbar';
+import { NotebookRibbonShell, NotebookToolbar } from './NotebookToolbar';
 import { Button } from '../components/ui-kit';
 import { apiJson } from '../services/api';
 import type { NotebookPageItem, NotebookPageData } from './types';
@@ -40,6 +41,8 @@ export function NotebookEditor({ sync, onChanged, pages, onNavigate, onRejoin, t
   const [downloadError, setDownloadError] = useState('');
   useEffect(() => sync.subscribe(() => redraw(v => v + 1)), [sync]);
   if (!sync.data || sync.status === 'unavailable') return <div className="nb-empty" role={sync.error ? 'alert' : 'status'}>
+    {/* The ribbon stays in place while a page opens or can't be opened. */}
+    {toolbarHost && paneProps.toolbarVisible !== false && createPortal(<NotebookRibbonShell loading={sync.status === 'joining'} />, toolbarHost)}
     <h2>{sync.status === 'joining' ? 'Opening your team’s page…' : 'This page cannot be opened'}</h2><p>{sync.status==='offline'?'This page is not cached on this device. Reconnect to open it.':sync.error}</p>{sync.status==='offline'&&sync.error&&<p>{sync.error}</p>}
     {sync.status === 'error' && <Button variant="outline" onClick={async () => {
       try { const source = await apiJson<NotebookPageData>(`/api/notebook/pages/${sync.pageId}`, { cache: 'no-store' }); downloadNotebookJSON(source, 'notebook-original-page.json'); }
@@ -126,7 +129,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
-    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
+    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
       if (!mobileRef.current || !view.editable) return false;

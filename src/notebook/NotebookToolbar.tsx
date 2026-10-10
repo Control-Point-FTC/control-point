@@ -12,6 +12,7 @@ import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup } from './ribbon/RibbonParts';
 import { useNotebookWorkspace } from './workspaceContext';
 import { Thesaurus } from './ribbon/Thesaurus';
+import { autoCapitalizeEnabled, setAutoCapitalize } from './autoCapitalize';
 import './ribbon/ribbon.css';
 
 const SYMBOLS = ['©','®','™','§','¶','†','‡','•','…','–','—','‘','’','“','”','«','»','‹','›','¡','¿','×','÷','±','∓','≈','≠','≤','≥','√','∞','∑','∏','∫','∂','∆','π','θ','λ','μ','Ω','α','β','γ','δ','σ','φ','ψ','←','↑','→','↓','↔','⇒','⇐','⇔','★','☆','✓','✗','⚠','●','○','◆','◇','▲','▼','°','′','″','€','£','¥','₹'];
@@ -78,6 +79,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [shortcuts, setShortcuts] = useState(false);
   const [thesaurus, setThesaurus] = useState(false);
   const [spellcheck, setSpellcheck] = useState(() => readPref('cp-notebook-spellcheck') !== 'off');
+  const [capitalize, setCapitalize] = useState(autoCapitalizeEnabled);
   const [picker, setPicker] = useState<null | 'symbols' | 'emoji'>(null);
   // A picker must never stay open (or insert) once the editor is read-only.
   useEffect(() => { if (disabled) setPicker(null); }, [disabled]);
@@ -156,7 +158,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     draw: pagePanel('draw'),
     history: <HistoryTab versions={pagePanel('history')} pageId={pageId} notify={setNotice} />,
     review: <>
-      <RibbonGroup label="Proofing"><RibbonButton label="Thesaurus" showLabel shortcut="Shift+F7" active={thesaurus} onClick={() => setThesaurus(v => !v)} /><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /></RibbonGroup>
+      <RibbonGroup label="Proofing"><RibbonButton label="Thesaurus" showLabel shortcut="Shift+F7" active={thesaurus} onClick={() => setThesaurus(v => !v)} /><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /><RibbonButton label="Auto-capitalize" showLabel active={capitalize} onClick={() => { const next = !capitalize; setCapitalize(next); setAutoCapitalize(next); setNotice(next ? 'New lines start with a capital letter. Press Backspace right after to undo one.' : 'Auto-capitalize off.'); }} /></RibbonGroup>
       <RibbonGroup label="Find"><RibbonButton label="Find in page" icon="Find" showLabel shortcut="Ctrl+F" active={finding} onClick={() => setFinding(v => !v)} /></RibbonGroup>
       <RibbonGroup label="Comments">
         <RibbonButton label="Discussions" icon="Discussion" showLabel onClick={() => { const input = document.getElementById(`nb-comment-input-${pageId}`); input?.scrollIntoView({ block: 'center', behavior: 'smooth' }); input?.focus(); }} />
