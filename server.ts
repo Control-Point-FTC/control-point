@@ -7322,7 +7322,7 @@ async function startServer() {
   // ---- Voice & video calling ----
   registerVoiceRoutes(app, voiceDeps);
 
-  registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded });
+  registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow });
 
   // ---- Manual scouting (works with no FTC data; synced from devices) ----
   registerScoutingRoutes(app, {
