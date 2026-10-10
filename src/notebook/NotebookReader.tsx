@@ -5,6 +5,7 @@ import {notebookSchema, validatedNotebookDocument} from './editorSchema';
 import {canvasJSON} from './canvasModel';
 import type {NotebookSync} from './NotebookSync';
 import './reader.css';
+import {NotebookReadAloud} from './NotebookReadAloud';
 
 type ReadingBlock = {text:string; heading:boolean; code:boolean};
 /** Typed content only. No attachments, drawing recognition or remote services. */
@@ -45,6 +46,7 @@ export function NotebookReader({sync}:{sync:NotebookSync}) {
         <button onClick={()=>{setSize(20);setSpacing(1.8);setTheme('paper');}}>Reset reading preferences</button>
         <button onClick={()=>setOpen(false)}>Return to page</button>
       </div>
+      <NotebookReadAloud available={allowed} getText={()=>notebookReadingBlocks(sync).map(block=>block.text).join('\n\n')}/>
       <section aria-label="Page reading content" tabIndex={0} className="nb-reader-content" style={{fontSize:size,lineHeight:spacing}}>
         {error ? <p role="alert">{error}</p> : blocks.length ? blocks.map((block,i)=>block.heading ? <h2 key={i}>{block.text}</h2> : block.code ? <pre key={i}>{block.text}</pre> : <p key={i}>{block.text || '\u00a0'}</p>) : <p>This page has no typed text yet.</p>}
       </section>
