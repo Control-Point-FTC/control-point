@@ -27,3 +27,13 @@
 @media(min-width:768px){.nb-header{min-height:54px;padding:8px 20px}.nb-explorer{width:272px}.nb-paper-scroll{padding:0;background:var(--color-elevated)}.nb-paper{max-width:none;margin:0;border:0;border-radius:0;box-shadow:none;padding:40px clamp(28px,4vw,64px)}.nb-prose,.nb-paper>.nb-title,.nb-backlinks,.nb-discussions{max-width:960px}.nb-title{font-size:32px;font-weight:600;margin-bottom:28px}.nb-command-bar .nb-toolbar{min-height:58px}.nb-doc-status{padding:8px 24px;background:var(--color-elevated)}}.nb-ribbon-host{flex-shrink:0}.nb-ribbon-host:empty{display:none}
 .nb-zoom-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.nb-zoom-controls label{display:flex;align-items:center;gap:4px}.nb-zoom-controls input{width:48px;padding:4px;border:1px solid var(--color-line);border-radius:4px;background:var(--color-elevated);color:var(--color-text-base)}.nb-zoom-controls [role=alert]{font-size:12px}
 .nb-paper-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.nb-paper-controls label{display:flex;align-items:center;gap:4px}.nb-title[hidden]{display:none!important}
+.nb-prose h4{font-size:1.08em;font-weight:700;margin:.9em 0 .45em;line-height:1.35}
+.nb-prose h5{font-size:.98em;font-weight:700;margin:.9em 0 .45em;line-height:1.35}
+.nb-prose h6{font-size:.88em;font-weight:700;margin:.9em 0 .45em;line-height:1.35;letter-spacing:.03em}
+.nb-picker-anchor{position:relative;display:inline-flex;gap:5px}
+.nb-picker-anchor>.nb-tool{position:relative;z-index:71}
+.nb-picker{position:absolute;top:calc(100% + 6px);left:0;z-index:70;min-width:288px;max-width:min(340px,80vw);background:var(--color-popover,var(--color-elevated));border:1px solid var(--color-line);border-radius:10px;padding:8px;box-shadow:0 12px 32px rgba(0,0,0,.28)}
+.nb-picker-grid{display:grid;grid-template-columns:repeat(8,minmax(32px,1fr));gap:2px;max-height:224px;overflow:auto}
+.nb-picker-cell{min-width:32px;min-height:36px;font-size:18px;line-height:1;border-radius:6px;color:var(--color-text-base)}
+.nb-picker-cell:hover{background:var(--color-primary);border-color:var(--color-line)}
+.nb-picker-backdrop{position:fixed;inset:0;z-index:69;background:transparent;border:0;padding:0;cursor:default}
