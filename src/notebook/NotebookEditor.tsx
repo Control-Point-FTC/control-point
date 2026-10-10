@@ -169,7 +169,12 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     })()}
     {sync.data?.legacyCanvas != null && <div className="nb-alert" role="status">This page has drawings from an older format. Your text remains editable and the original drawing data is retained.<Button variant="outline" onClick={() => downloadNotebookJSON({ canvas:sync.data?.legacyCanvas },'notebook-original-canvas.json')}>Download original drawings</Button></div>}
     {viewError && <div className="nb-alert" role="alert">{viewError}<button aria-label="Dismiss view error" onClick={() => setViewError('')}>×</button></div>}
-    <div className="nb-paper-scroll"><article ref={paper} className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
+    <div className="nb-paper-scroll" onClick={e => {
+      // Clicking the empty paper margins focuses the editor at the end (linear-document click-anywhere).
+      const t = e.target as HTMLElement;
+      if (t.closest('.nb-prose, button, a, input, select, textarea, [role="dialog"], .nb-discussions')) return;
+      (activeEditor ?? editor)?.chain().focus('end').run();
+    }}><article ref={paper} className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense>

@@ -415,7 +415,8 @@ export class NotebookStore {
     s.require("organize_notebook");
     const row = await s.item(kind, itemId);
     const validTemplates = ["blank", "meeting", "todo", "engineering", "design"];
-    const defaultTemplate = body.defaultTemplate === undefined || body.defaultTemplate === null ? row.default_template
+    const defaultTemplate = body.defaultTemplate === undefined ? row.default_template
+      : body.defaultTemplate === null ? null
       : validTemplates.includes(String(body.defaultTemplate)) ? String(body.defaultTemplate) : row.default_template;
     const dateStamp = body.dateStamp === undefined ? row.date_stamp : body.dateStamp ? 1 : 0;
     await s.run(`UPDATE ${tables[kind]} SET title=?,color=?${kind === "section" ? ",default_template=?,date_stamp=?" : ""} WHERE id=? AND team_id=?`,

@@ -294,6 +294,20 @@ describe("team notebook", () => {
     expect((await get("/tree", adminSession)).body.notebooks).toEqual(ours.notebooks);
     expect((await get("/tree", otherSession)).body.notebooks.map((n: any) => n.id)).not.toContain(book);
   });
+  it("stores section page defaults and returns them in the tree", async () => {
+    const patch = (path: string, body: any, session = userSession) => t.api(`/api/notebook${path}`, { method: "PATCH", body: JSON.stringify(body), session });
+    // defaults start empty
+    expect((await get("/tree")).body.sections[0]).toMatchObject({ defaultTemplate: null, dateStamp: false });
+    const r = await patch(`/sections/${section}`, { defaultTemplate: "meeting", dateStamp: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await get("/tree")).body.sections[0]).toMatchObject({ defaultTemplate: "meeting", dateStamp: true });
+    // unknown template ids are ignored, not stored
+    await patch(`/sections/${section}`, { defaultTemplate: "nope" });
+    expect((await get("/tree")).body.sections[0].defaultTemplate).toBe("meeting");
+    // clearing works
+    await patch(`/sections/${section}`, { defaultTemplate: null, dateStamp: false });
+    expect((await get("/tree")).body.sections[0]).toMatchObject({ defaultTemplate: null, dateStamp: false });
+  });
   it("initializes a starter only once during simultaneous first opens", async () => {
     const fresh = await seedTeam(t.db, "Concurrent first visit");
     const person = await seedMember(t.db, fresh, "Boss", "concurrent@notebook.test", "admin");
