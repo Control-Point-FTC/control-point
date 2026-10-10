@@ -18,6 +18,8 @@ import { useNotebookMobile } from './useNotebookMobile';
 import { pasteNotebookText } from './NotebookMobileToolbar';
 import { createPortal } from 'react-dom';
 import { NotebookFileContext,NotebookFileView,useNotebookUpload } from './NotebookAttachments';
+import { getScreenEntity, setScreenEntity } from '../services/brunoContext';
+import { registerNotebookSelection, selectedNotebookBlocks } from './brunoScreen';
 import { NotebookHistory } from './NotebookHistory';
 import {NotebookZoom} from './NotebookZoom';
 import {NotebookReader,useNotebookReaderPreferences} from './NotebookReader';
@@ -96,6 +98,13 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     }catch(e){if(!abort.signal.aborted)setViewError(e instanceof Error?e.message:'Cannot prepare this page.');}
     finally{if(!abort.signal.aborted)setPrinting(false);}
   };
+  // Bruno screen context: the split view reports which page is active; this
+  // editor adds the ids of the smallest blocks the selection touches (a table
+  // cell's paragraph, not the whole table). Text is resolved server side.
+  const reportSelection = (ed: Editor) => {
+    if (getScreenEntity('notebookPageId') !== sync.pageId) return;
+    setScreenEntity('notebookBlockIds', selectedNotebookBlocks(ed.state));
+  };
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
@@ -116,8 +125,9 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       if (!link) { if (href && safeNotebookLink(href)) { event.preventDefault(); window.open(href, '_blank', 'noopener,noreferrer'); return true; } return false; }
       event.preventDefault(); if(event.altKey&&onOpenOther)onOpenOther(link.pageId,link.blockId);else onNavigate(link.pageId, link.blockId); return true;
     }} },
-    onFocus: ({ editor }) => setActiveEditor(editor), onSelectionUpdate: () => redraw(v => v + 1), onTransaction: () => redraw(v => v + 1),
+    onFocus: ({ editor }) => { setActiveEditor(editor); reportSelection(editor); }, onSelectionUpdate: ({ editor }) => { redraw(v => v + 1); if (editor.isFocused) reportSelection(editor); }, onTransaction: () => redraw(v => v + 1),
   }, [sync]);
+  useEffect(() => editor ? registerNotebookSelection(sync.pageId, () => selectedNotebookBlocks(editor.state)) : undefined, [editor, sync.pageId]);
   const title = String(sync.doc.getMap('meta').get('title') ?? '');
   const blockId = blockTarget===undefined?params.get('block'):blockTarget;
   useEffect(() => {

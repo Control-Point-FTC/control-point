@@ -19,7 +19,17 @@ export function parseScreenRequest(raw: unknown): ScreenContextRequest | null {
   const r = raw as Record<string, unknown>;
   const route = typeof r.route === "string" ? r.route.trim() : "";
   if (!route.startsWith("/")) return null;
-  if (/^\/notebook(?:\/|\?|$)/.test(route)) return { route: '/notebook', view: 'Team notebook' };
+  if (/^\/notebook(?:\/|\?|$)/.test(route)) {
+    // Only ids travel; the page and selection are re-read server side.
+    const out: ScreenContextRequest = { route: '/notebook', view: 'Team notebook' };
+    const pageId = cleanId(r.notebookPageId);
+    if (pageId) {
+      out.notebookPageId = pageId;
+      const ids = Array.isArray(r.notebookBlockIds) ? r.notebookBlockIds.filter((b): b is string => typeof b === "string" && /^[\w-]{1,64}$/.test(b)).slice(0, 20) : [];
+      if (ids.length) out.notebookBlockIds = ids;
+    }
+    return out;
+  }
   const out: ScreenContextRequest = {
     // Paths only: keep URL-ish characters, cap the length.
     route: route.replace(/[^\w\-/?=&.%]/g, "").slice(0, 120),
@@ -45,6 +55,8 @@ export interface ScreenLookups {
     slots: number;
     assumptions: string[];
   } | null;
+  /** Pre-formatted notebook lines (server/brunoNotebook.ts notebookScreenBrief). */
+  notebook?: string;
 }
 
 /** The brief appended to Bruno's system prompt. */
@@ -85,5 +97,7 @@ export function formatScreenContext(req: ScreenContextRequest, found: ScreenLook
     if (pr.top.length) lines.push(`  - Most likely to advance: ${pr.top.map((t) => `${t.team} ${pct(t.pAdvance)}`).join(", ")}.`);
     for (const a of pr.assumptions.slice(0, 4)) lines.push(`  - Assumption: ${q(a, 240)}`);
   }
+  if (found.notebook) lines.push(found.notebook);
   return lines.join("\n");
 }
+
