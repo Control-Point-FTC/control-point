@@ -217,6 +217,24 @@ describe('desktop shared drawing surface', () => {
         expect(canvasJSON(sync.doc).objects).toHaveLength(2);
         fireEvent.keyDown(surface, { key: 'v', ctrlKey: true });
         expect(canvasJSON(sync.doc).objects).toHaveLength(3);
+        expect(screen.getByRole('status')).toHaveTextContent('Pasted 1 item.');
+    });
+    it('leaves shortcuts alone inside text, for readers and phones, and with nothing copied', async () => {
+        const reader = mount(false);
+        const before = canvasJSON(reader.sync.doc).objects.length;
+        for (const key of ['c', 'x', 'v', 'd']) expect(fireEvent.keyDown(reader.surface, { key, ctrlKey: true })).toBe(true); // not prevented
+        expect(canvasJSON(reader.sync.doc).objects).toHaveLength(before);
+        cleanup();
+        const phone = mount(true, true);
+        expect(fireEvent.keyDown(phone.surface, { key: 'v', ctrlKey: true })).toBe(true);
+        cleanup();
+        const { sync, surface } = mount();
+        expect(fireEvent.keyDown(surface, { key: 'v', ctrlKey: true })).toBe(true); // empty canvas clipboard: native paste
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 100, clientY: 100 });
+        const box = await waitFor(() => { const el = surface.querySelector<HTMLElement>('[data-canvas-id] [role=textbox]'); if (!el) throw new Error('not ready'); return el; });
+        expect(fireEvent.keyDown(box, { key: 'd', ctrlKey: true })).toBe(true); // typing in a text box
+        expect(canvasJSON(sync.doc).objects).toHaveLength(1);
     });
     it('prevents readers and mobile users from changing canvas objects', () => {
         const { sync, surface } = mount(false, true);
