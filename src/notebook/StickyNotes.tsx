@@ -38,7 +38,7 @@ function useWindowSize() {
 }
 
 /** One floating note. It shows the parent's values and reports changes. */
-function NoteCard({ note, state, onChange, onRetry, onClose, onDelete }: { note: StickyNote; state: SaveState; onChange: (change: Change, delay?: number) => void; onRetry: () => void; onClose: () => void; onDelete: () => void }) {
+function NoteCard({ note, state, onChange, onFlush, onRetry, onClose, onDelete }: { note: StickyNote; state: SaveState; onChange: (change: Change, delay?: number) => void; onFlush: () => void; onRetry: () => void; onClose: () => void; onDelete: () => void }) {
   const [dragAt, setDragAt] = useState<{ x: number; y: number } | null>(null);
   const card = useRef<HTMLDivElement>(null);
   const report = useRef(onChange); report.current = onChange;
@@ -85,7 +85,7 @@ function NoteCard({ note, state, onChange, onRetry, onClose, onDelete }: { note:
       <button type="button" aria-label="Close note" title="Close note (it stays in the list)" onClick={onClose}><X size={14} /></button>
     </header>
     <textarea aria-label="Note text" value={note.body} maxLength={10000} placeholder="Take a note…" onChange={e => onChange({ body: e.target.value }, SAVE_DELAY)}
-      autoFocus={!note.body} />
+      onBlur={onFlush} autoFocus={!note.body} />
   </div>;
 }
 
@@ -96,7 +96,7 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
   const [error, setError] = useState('');
   const [states, setStates] = useState<Record<number, SaveState>>({});
   const unsaved = useRef(new Map<number, Change>());
-  const sending = useRef(new Set<number>());
+  const sending = useRef(new Map<number, Change>());
   const timers = useRef(new Map<number, number>());
   const failed = useRef(new Set<number>());
   const mark = (id: number, state: SaveState) => setStates(s => s[id] === state ? s : { ...s, [id]: state });
@@ -113,13 +113,13 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
   }, [open, onClose]);
 
   /** Send everything unsaved for one note; one request in flight per note. */
-  const flush = useCallback(async (id: number, keepalive = false) => {
+  const flush = useCallback(async (id: number) => {
     window.clearTimeout(timers.current.get(id)); timers.current.delete(id);
     const change = unsaved.current.get(id);
     if (!change || sending.current.has(id)) return;
-    unsaved.current.delete(id); sending.current.add(id); mark(id, 'saving');
+    unsaved.current.delete(id); sending.current.set(id, change); mark(id, 'saving');
     try {
-      const saved = await request<StickyNote>(`/api/sticky-notes/${id}`, 'PATCH', change, keepalive);
+      const saved = await request<StickyNote>(`/api/sticky-notes/${id}`, 'PATCH', change);
       failed.current.delete(id);
       setNotes(list => list?.map(n => n.id === id ? { ...n, updatedAt: saved.updatedAt } : n) ?? list);
     } catch {
@@ -142,12 +142,20 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
   }, [flush]);
   const retry = useCallback((id: number) => { failed.current.delete(id); void flush(id); }, [flush]);
 
-  // Leaving the notebook (or closing the tab) sends whatever is still waiting.
+  // Leaving the notebook (or closing the tab) is the last chance to save:
+  // send everything waiting, including failed changes and anything whose
+  // request is still in flight (its answer may never arrive), with keepalive.
   useEffect(() => {
-    const flushAll = () => { for (const id of [...unsaved.current.keys()]) if (!failed.current.has(id)) void flush(id, true); };
-    window.addEventListener('pagehide', flushAll);
-    return () => { window.removeEventListener('pagehide', flushAll); flushAll(); };
-  }, [flush]);
+    const sendAll = () => {
+      for (const [id, change] of [...unsaved.current]) {
+        window.clearTimeout(timers.current.get(id)); timers.current.delete(id);
+        void request(`/api/sticky-notes/${id}`, 'PATCH', { ...sending.current.get(id), ...change }, true).catch(() => undefined);
+      }
+      unsaved.current.clear();
+    };
+    window.addEventListener('pagehide', sendAll);
+    return () => { window.removeEventListener('pagehide', sendAll); sendAll(); };
+  }, []);
 
   const create = async () => {
     if (!notes) return;
@@ -180,6 +188,7 @@ export function StickyNotes({ open, onClose, hidden = false }: { open: boolean; 
     </aside>}
     {notes?.filter(n => n.open).map(n => <NoteCard key={n.id} note={n} state={states[n.id] ?? 'saved'}
       onChange={(next, delay) => change(n.id, next, delay)} onRetry={() => retry(n.id)}
+      onFlush={() => { if (!failed.current.has(n.id)) void flush(n.id); }}
       onClose={() => change(n.id, { open: false })} onDelete={() => { void remove(n); }} />)}
   </>;
 }

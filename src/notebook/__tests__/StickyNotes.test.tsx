@@ -80,6 +80,26 @@ describe('Sticky notes', () => {
     expect((patch[1] as any).keepalive).toBe(true);
   });
 
+  it('saves when you leave the text, and sends queued text on exit even mid-save', async () => {
+    const bodies: any[] = [];
+    vi.mocked(apiJson).mockImplementation((url: string, init?: any) => {
+      if (init?.method !== 'PATCH') return Promise.resolve([note()] as any);
+      bodies.push({ ...JSON.parse(init.body), keepalive: init.keepalive });
+      return new Promise(() => { /* the page closes before this answers */ });
+    });
+    const view = render(<StickyNotes open onClose={vi.fn()} />);
+    const text = await screen.findByRole('textbox', { name: 'Note text' });
+    fireEvent.change(text, { target: { value: 'First' } });
+    fireEvent.blur(text);
+    expect(bodies).toEqual([{ body: 'First', keepalive: false }]);
+    fireEvent.change(text, { target: { value: 'First, then more' } });
+    fireEvent.keyDown(screen.getByLabelText('Move note (arrow keys)'), { key: 'ArrowRight' });
+    window.dispatchEvent(new Event('pagehide'));
+    expect(bodies.at(-1)).toEqual({ body: 'First, then more', x: 110, y: 100, keepalive: true });
+    view.unmount();
+    expect(bodies).toHaveLength(2);
+  });
+
   it('waits for the list before New note, and places new notes inside the window', async () => {
     let list!: (v: StickyNote[]) => void;
     vi.mocked(apiJson).mockImplementation((url: string, init?: any) => init?.method === 'POST' ? Promise.resolve(note({ id: 9, body: '' }) as any) : new Promise(r => { list = r as any; }));
