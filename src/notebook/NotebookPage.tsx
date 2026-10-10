@@ -17,6 +17,7 @@ import { NotebookMentions } from './NotebookMentions';
 import { useNotebookMobile } from './useNotebookMobile';
 import { NotebookGlyph, SectionGlyph } from './NotebookIcons';
 import {NotebookTrash} from './NotebookTrash';
+import {NotebookQuickNote} from './NotebookQuickNote';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
@@ -414,6 +415,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
       <div className="nb-header-actions">{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId })}><Plus /> New page</Button>}
+      {tree?.permissions.edit&&<NotebookQuickNote hidden={mobile} tree={tree} teamId={teamId} sectionId={sectionId} onSaved={()=>{void loadTree();}} onOpen={id=>{void pick(id);}}/>}
       <span className="nb-desktop"><NotebookMentions teamId={teamId} visiblePageIds={tree?.pages.map(p => p.id) ?? []} onNavigate={pick} /></span>
       <Button className="nb-desktop" variant="ghost" onClick={() => { void (async () => { if (await leave()) await mutate(async () => downloadNotebookJSON(await apiJson('/api/notebook/export', { cache: 'no-store' }), 'team-notebook.json')); })(); }}>Export</Button></div>
     </header>
