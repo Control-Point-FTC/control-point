@@ -56,6 +56,8 @@ export async function prepareSectionPrint(
       if (!signal.aborted && e instanceof ApiError && (e.status === 403 || e.status === 404)) { skipped.push(item.title || 'Untitled'); continue; }
       throw e;
     }
+    // Moved to another section since the list loaded: it belongs to that section's print now.
+    if (page.sectionId !== section.id) { skipped.push(item.title || 'Untitled'); continue; }
     // Attachments load through the page they belong to.
     const pageSync = { pageId: item.id, scope } as NotebookSync;
     sheets.push(await prepareNotebookPrint(pageSync, page, signal, message => onProgress(`Page ${index + 1} of ${ordered.length}: ${message}`)));
@@ -69,7 +71,7 @@ export async function prepareSectionPrint(
   cover.append(title, meta);
   if (skipped.length) {
     const note = document.createElement('p');
-    note.textContent = `Not included (no longer available to you): ${skipped.join(', ')}`;
+    note.textContent = `Not included (moved, or no longer available to you): ${skipped.join(', ')}`;
     cover.append(note);
   }
   return { markup: cover.outerHTML + sheets.join(''), printed: sheets.length, skipped };

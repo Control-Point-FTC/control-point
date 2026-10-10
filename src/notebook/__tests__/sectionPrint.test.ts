@@ -19,19 +19,20 @@ describe('section print', () => {
   it('prints every available page after a cover and lists the ones it had to leave out', async () => {
     vi.mocked(apiJson).mockImplementation(async (url: string) => {
       if (url.endsWith('/2')) throw new ApiError(404, 'gone');
+      if (url.endsWith('/4')) return { ...item(4), sectionId: 5, content: {}, canvas: {} } as any;
       return { ...item(Number(url.split('/').pop())), content: {}, canvas: {} } as any;
     });
     const progress = vi.fn();
-    const result = await prepareSectionPrint({ id: 1, title: 'Build log' }, [item(1), item(2), item(3)], { memberId: 7, teamId: 3 }, new AbortController().signal, progress);
+    const result = await prepareSectionPrint({ id: 1, title: 'Build log' }, [item(1), item(2), item(3), item(4)], { memberId: 7, teamId: 3 }, new AbortController().signal, progress);
     expect(result.printed).toBe(2);
-    expect(result.skipped).toEqual(['Page 2']);
+    expect(result.skipped).toEqual(['Page 2', 'Page 4']);
     expect(result.markup).toMatch(/^<header class="notebook-section-cover"><h1>Build log<\/h1><p>2 pages · printed /);
-    expect(result.markup).toContain('Not included (no longer available to you): Page 2');
+    expect(result.markup).toContain('Not included (moved, or no longer available to you): Page 2, Page 4');
     expect(result.markup.indexOf('Page 1</h1>')).toBeLessThan(result.markup.indexOf('Page 3</h1>'));
     expect(vi.mocked(apiJson).mock.calls[0][1]).toMatchObject({ headers: { 'X-CP-Notebook-Team': '3' } });
     // Attachments load through each page's own id.
     expect(vi.mocked(prepareNotebookPrint).mock.calls.map(([sync]) => (sync as any).pageId)).toEqual([1, 3]);
-    expect(progress).toHaveBeenCalledWith('Preparing page 3 of 3: Page 3…');
+    expect(progress).toHaveBeenCalledWith('Preparing page 4 of 4: Page 4…');
   });
 
   it('stops on real failures and refuses very large sections', async () => {
