@@ -5,6 +5,7 @@ import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Dia
 import {notebookSchema, validatedNotebookDocument} from './editorSchema';
 import type {NotebookSync} from './NotebookSync';
 import './reader.css';
+import {NotebookReadAloud} from './NotebookReadAloud';
 
 type ReadingBlock = {text:string; heading:boolean; code:boolean};
 export type ReaderPreferences={size:number;spacing:number;theme:'paper'|'warm'|'dark'};
@@ -69,6 +70,7 @@ export function NotebookReader({sync,preferences,onPreferencesChange}:{sync:Note
         <button onClick={()=>change(DEFAULT_READER_PREFERENCES)}>Reset reading preferences</button>
         <button onClick={()=>setOpen(false)}>Return to page</button>
       </div>
+      <NotebookReadAloud available={allowed} getText={()=>notebookReadingBlocks(sync).map(block=>block.text).join('\n\n')}/>
       <section aria-label="Page reading content" tabIndex={0} className="nb-reader-content" style={{fontSize:size,lineHeight:spacing}}>
         {error ? <p role="alert">{error}</p> : blocks.length ? blocks.map((block,i)=>block.heading ? <h2 key={i}>{block.text}</h2> : block.code ? <pre key={i}>{block.text}</pre> : <p key={i}>{block.text || '\u00a0'}</p>) : <p>This page has no typed text yet.</p>}
       </section>
