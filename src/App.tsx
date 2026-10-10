@@ -83,7 +83,7 @@ import { DialogHost, confirmDialog, promptDialog, notify } from './components/di
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import LegalPage from './Legal';
 import NotFoundPage from './NotFound';
-import { isKnownRoute, publicHeadFor, HOME_TITLE, SITE_NAME } from './utils/publicRoutes';
+import { isKnownRoute, publicHeadFor, HOME_TITLE, NOT_FOUND_HEAD, SITE_NAME } from './utils/publicRoutes';
 import { cn, Card, Button, Input } from './components/ui';
 import DashboardView from './components/dashboard/DashboardView';
 import { useTranslation } from 'react-i18next';
@@ -1617,9 +1617,10 @@ export default function App() {
   // title (or the default) when not. Never a notebook page or record name.
   useEffect(() => {
     const publicPage = publicHeadFor(location.pathname);
-    if (publicPage) document.title = publicPage.head.title;
+    if (!isKnownRoute(location.pathname)) document.title = NOT_FOUND_HEAD.title;
+    else if (publicPage) document.title = publicPage.head.title;
     else if (!isLoggedIn) document.title = HOME_TITLE;
-    else if (isKnownRoute(location.pathname)) document.title = `${pageTitle} · ${SITE_NAME}`;
+    else document.title = `${pageTitle} · ${SITE_NAME}`;
   }, [location.pathname, pageTitle, isLoggedIn]);
   useEffect(() => {
     setScreenEntity('channelId', isChatRoute ? activeChannelId : null);

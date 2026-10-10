@@ -1,12 +1,9 @@
 import { Link } from 'react-router-dom';
 import { Bolt, ArrowLeft } from 'lucide-react';
-import { useEffect } from 'react';
-import { NOT_FOUND_HEAD } from './utils/publicRoutes';
 
 /** Branded page for paths the app doesn't have. The server answers these
- *  with a 404 status; this is what a person sees. */
+ *  with a 404 status; this is what a person sees. App sets the tab title. */
 export default function NotFoundPage({ signedIn }: { signedIn: boolean }) {
-  useEffect(() => { document.title = NOT_FOUND_HEAD.title; }, []);
   return (
     <div className="min-h-screen bg-primary text-text-base flex items-center justify-center px-4">
       <main className="max-w-md text-center">
