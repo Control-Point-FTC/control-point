@@ -105,6 +105,19 @@ export function Thesaurus({ editor, disabled, onClose }: { editor: Editor; disab
   useEffect(() => {
     const at = wordAtSelection(editor);
     if (at) { aim(editor, at.word, at.from, at.to); void search(at.word); } else { target.current?.anchor.dispose(); target.current = null; setResult(null); setNotice('Select a word, or type one to look it up.'); }
+    // Selecting a word in the page while the panel is open makes it the new
+    // target (also how the person recovers after "the word changed"). Plain
+    // cursor moves while typing don't trigger lookups.
+    const follow = () => {
+      if (editor.state.selection.empty) return;
+      const next = wordAtSelection(editor);
+      if (!next) return;
+      const current = target.current?.anchor.resolve();
+      if (target.current?.editor === editor && target.current.word === next.word && current?.from === next.from && current?.to === next.to) return;
+      aim(editor, next.word, next.from, next.to); void search(next.word);
+    };
+    editor.on('selectionUpdate', follow);
+    return () => { editor.off('selectionUpdate', follow); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
   useEffect(() => () => { target.current?.anchor.dispose(); }, []);

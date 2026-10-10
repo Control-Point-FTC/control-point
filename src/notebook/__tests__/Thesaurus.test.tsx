@@ -1,7 +1,7 @@
 import React from 'react';
 import { Editor } from '@tiptap/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { NotebookToolbar } from '../NotebookToolbar';
 import { notebookExtensions } from '../editorSchema';
 import { wordAtSelection } from '../ribbon/Thesaurus';
@@ -127,5 +127,23 @@ describe('Thesaurus review fixes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Insert “sizable”' }));
     expect(editor.getText()).toBe('A laXrge robot!');
     expect(screen.getByText(/The word changed/)).toBeTruthy();
+  });
+});
+
+describe('Thesaurus retargeting', () => {
+  it('selecting a word again after a refusal makes it the new target', async () => {
+    vi.mocked(apiJson).mockResolvedValue(senses as any);
+    mount('<p>big robot</p>');
+    editor.commands.setTextSelection(2);
+    fireEvent.click(screen.getByRole('tab', { name: 'Review' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Thesaurus' }));
+    await screen.findByText('above average in size');
+    act(() => { editor.commands.insertContentAt(2, 'x'); });  // "bxig": the word changed
+    fireEvent.click(screen.getByRole('button', { name: 'Insert “large”' }));
+    expect(screen.getByText(/The word changed/)).toBeTruthy();
+    act(() => { editor.commands.setTextSelection({ from: 6, to: 11 }); }); // select "robot"
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([url]) => String(url).endsWith('word=robot'))).toBe(true));
+    fireEvent.click(await screen.findByRole('button', { name: 'Insert “large”' }));
+    expect(editor.getText()).toBe('bxig large');
   });
 });
