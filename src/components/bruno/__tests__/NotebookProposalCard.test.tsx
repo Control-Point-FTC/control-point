@@ -87,3 +87,16 @@ describe('NotebookProposalCard', () => {
     await waitFor(() => expect(apply.disabled).toBe(false));
   });
 });
+
+describe('receipt keys', () => {
+  it('work without crypto.randomUUID (plain-HTTP LAN use)', async () => {
+    const { newReceiptKey } = await import('../../../services/notebookProposals');
+    const original = globalThis.crypto.randomUUID;
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { value: undefined, configurable: true });
+    try {
+      const a = newReceiptKey(), b = newReceiptKey();
+      expect(a).toMatch(/^nb_[0-9a-f]{32}$/);
+      expect(a).not.toBe(b);
+    } finally { Object.defineProperty(globalThis.crypto, 'randomUUID', { value: original, configurable: true }); }
+  });
+});

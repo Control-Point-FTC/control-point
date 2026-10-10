@@ -99,7 +99,8 @@ export default function BrunoBar({ botName }: { botName?: string }) {
   };
 
   // The bar keeps no chat history: each expanded session is its own conversation.
-  const conversation = useRef(newReceiptKey());
+  const conversation = useRef<string>('');
+  if (!conversation.current) conversation.current = newReceiptKey();
   const collapse = () => {
     conversation.current = newReceiptKey();
     setExpanded(false);

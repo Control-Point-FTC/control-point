@@ -2,7 +2,7 @@
 // the server (resolved under Bruno's access, so protected pages appear only as
 // "unavailable"), never from the model's own description. Deletions need an
 // explicit tick before the button unlocks.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Loader2, NotebookPen, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../cn';
@@ -29,15 +29,16 @@ function cardMemory(identity: string) {
  *  closing and reopening the chat never confirms the same change twice. */
 export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unknown>[]; scope: string }) {
   const opsKey = JSON.stringify(ops);
-  const memory = useRef(cardMemory(`${scope}\u0000${opsKey}`));
+  // Created once per card, not on every render.
+  const [memory] = useState(() => cardMemory(`${scope}\u0000${opsKey}`));
   const [previews, setPreviews] = useState<NotebookOpPreview[] | null>(null);
-  const [state, setState] = useState<State>(() => memory.current.read().results ? { status: 'done' } : { status: 'loading' });
-  const [results, setResults] = useState<NotebookOpResult[]>(() => memory.current.read().results ?? []);
+  const [state, setState] = useState<State>(() => memory.read().results ? { status: 'done' } : { status: 'loading' });
+  const [results, setResults] = useState<NotebookOpResult[]>(() => memory.read().results ?? []);
   const [deleteOk, setDeleteOk] = useState(false);
-  const receipt = useRef(memory.current.read().receipt ?? memory.current.write({ receipt: newReceiptKey() }).receipt!);
+  const [receipt] = useState(() => memory.read().receipt ?? memory.write({ receipt: newReceiptKey() }).receipt!);
 
   useEffect(() => {
-    if (memory.current.read().results) return;
+    if (memory.read().results) return;
     const abort = new AbortController();
     setState({ status: 'loading' });
     previewNotebookOps(JSON.parse(opsKey), abort.signal)
@@ -52,8 +53,8 @@ export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unkno
   const confirm = async () => {
     setState({ status: 'confirming' });
     try {
-      const out = await applyNotebookOps(ops, receipt.current);
-      memory.current.write({ receipt: receipt.current, results: out.results });
+      const out = await applyNotebookOps(ops, receipt);
+      memory.write({ receipt, results: out.results });
       setResults(out.results);
       setState({ status: 'done' });
     } catch (e) {

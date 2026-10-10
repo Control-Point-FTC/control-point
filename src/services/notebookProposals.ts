@@ -2,6 +2,7 @@
 // card asks the server to describe them (under Bruno's access) and applies
 // them only when the member confirms. One receipt key per card: a retry after
 // a lost response replays the first result instead of writing twice.
+import { useState } from 'react';
 import { apiJson } from './api';
 
 export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
@@ -43,6 +44,16 @@ export function conversationScope(chatId: number | null | undefined, draftToken:
   return chatId ? `chat:${chatId}` : `draft:${draftToken}`;
 }
 
+/** 128 random bits as hex. getRandomValues works outside secure contexts
+ *  (plain-HTTP LAN use), unlike randomUUID; a last resort keeps rendering. */
 export function newReceiptKey(): string {
-  return `nb_${globalThis.crypto.randomUUID().replace(/-/g, '')}`;
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  return `nb_${Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** A per-mount key, generated once (not on every render). */
+export function useReceiptKey() {
+  return useState(newReceiptKey)[0];
 }
