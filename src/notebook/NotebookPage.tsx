@@ -20,7 +20,7 @@ import {NotebookTrash} from './NotebookTrash';
 
 type Kind = 'notebook' | 'section' | 'page';
 type Item = { id: number; title: string; color?: string | null; protected?: boolean; ownProtected?: boolean; sectionId?: number; parentId?: number | null; notebookId?: number };
-type EditDialog = { action: 'rename' | 'delete' | 'move' | 'template'; kind: Kind; item?: Item; sectionId?: number; parentId?: number; notebookId?: number };
+type EditDialog = { action: 'rename' | 'delete' | 'move' | 'template' | 'defaults'; kind: Kind; item?: Item; sectionId?: number; parentId?: number; notebookId?: number };
 const plural = { notebook: 'notebooks', section: 'sections', page: 'pages' };
 const emptyDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 // One notebook per season for now. Keep creation and its API intact for re-enabling.
@@ -60,6 +60,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
+  const [defaultTemplate, setDefaultTemplate] = useState<string | null>(null);
+  const [dateStamp, setDateStamp] = useState(false);
   const [color, setColor] = useState('#3b82f6');
   const [targetSection, setTargetSection] = useState('');
   const [targetParent, setTargetParent] = useState('');
@@ -96,6 +98,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const creatingRef = useRef(false); // claimed before leave() so a second click during the save cannot POST a duplicate
   const loadFailedRef = useRef(false); // set when the tree reload inside mutate fails
   const closeDrawerAfterRename = useRef(false); // mobile: keep the drawer open for the rename box, close it when rename ends
+
   const loadTree = useCallback(async () => {
     try {
       const value = await apiJson<NotebookTree>('/api/notebook/tree', { cache: 'no-store' });
@@ -152,6 +155,9 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const open = (value: EditDialog) => {
     setName(value.item?.title ?? ''); setColor(value.item?.color ?? '#3b82f6');
     setTemplate('blank');
+    const section = value.kind === 'section' ? tree?.sections.find(s => s.id === value.item?.id) : undefined;
+    setDefaultTemplate(section?.defaultTemplate ?? null);
+    setDateStamp(section?.dateStamp ?? false);
     setTargetBook(String(value.notebookId ?? value.item?.notebookId ?? tree?.notebooks[0]?.id ?? ''));
     setTargetSection(String(value.sectionId ?? value.item?.sectionId ?? tree?.sections[0]?.id ?? ''));
     setTargetParent(value.parentId ? String(value.parentId) : ''); setDialog(value); setError('');
@@ -171,8 +177,17 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         let created = 0;
         loadFailedRef.current = false;
         const ok = await mutate(async () => {
+          // Section defaults: explicit templateId wins, else the section's default template.
+          // Date stamp prepends today's date when the section has it enabled.
+          const section = kind === 'page' ? tree.sections.find(s => s.id === target.sectionId) : undefined;
+          const effectiveTemplate = templateId ?? section?.defaultTemplate ?? undefined;
+          let content = effectiveTemplate ? notebookTemplate(effectiveTemplate) : undefined;
+          if (kind === 'page' && section?.dateStamp) {
+            const stamp = { type: 'paragraph', content: [{ type: 'text', text: new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }] };
+            content = content ? { type: 'doc', content: [stamp, ...(content.content ?? [])] } : { type: 'doc', content: [stamp, { type: 'paragraph' }] };
+          }
           const body = kind === 'page'
-            ? { title: 'Untitled', sectionId: target.sectionId, parentId: target.parentId ?? null, content: templateId ? notebookTemplate(templateId) : undefined }
+            ? { title: 'Untitled', sectionId: target.sectionId, parentId: target.parentId ?? null, content }
             : kind === 'section'
               ? { title: 'Untitled', notebookId: target.notebookId }
               : { title: 'Untitled' };
@@ -247,6 +262,10 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       createInstant('page', { sectionId, parentId }, template);
       return;
     }
+    if (action === 'defaults' && kind === 'section') {
+      await mutate(() => apiJson(`/api/notebook/sections/${item!.id}`, { method: 'PATCH', body: JSON.stringify({ defaultTemplate, dateStamp }) }));
+      return;
+    }
     await mutate(async () => {
       const base = `/api/notebook/${plural[kind]}`;
       if (action === 'delete') { await apiJson(`${base}/${item!.id}`, { method: 'DELETE' }); if (kind === 'page' && item?.id === selected) { syncRef.current?.destroy(); syncRef.current = null; setSync(null); setParams({}); } }
@@ -278,6 +297,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         else await apiJson(base, { method: 'PATCH', body: JSON.stringify({ title: value }) });
         setRenaming(null);
       });
+      // Only close the drawer when the save succeeded — a failed save keeps the rename box open for retry.
       if (saved && closeDrawerAfterRename.current) { closeDrawerAfterRename.current = false; setDrawer(false); }
     } finally { renameSaving.current = false; }
   };
@@ -336,6 +356,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       {kind === 'page' && <DropdownMenuItem onClick={() => { void window.navigator.clipboard.writeText(new URL(notebookPageLink(item.id), window.location.origin).href).then(() => setAnnouncement('Page link copied')).catch(() => setError('Clipboard unavailable')); }}>Copy page link</DropdownMenuItem>}
       {(kind === 'page' ? tree?.permissions.edit : tree?.permissions.organize) && <DropdownMenuItem onClick={() => setRenaming({ kind, item, title: item.title })}>Rename inline</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'page' && <DropdownMenuItem onClick={() => open({ action: 'rename', kind, item })}>Rename / color</DropdownMenuItem>}
+      {tree?.permissions.organize && kind === 'section' && <DropdownMenuItem onClick={() => open({ action: 'defaults', kind, item })}>Page defaults…</DropdownMenuItem>}
       {tree?.permissions.organize && kind !== 'notebook' && <DropdownMenuItem onClick={() => open({ action: 'move', kind, item })}>Move…</DropdownMenuItem>}
       {tree?.permissions.organize && <><DropdownMenuItem onClick={() => { void reorder(kind, item, -1); }}>Move up</DropdownMenuItem><DropdownMenuItem onClick={() => { void reorder(kind, item, 1); }}>Move down</DropdownMenuItem></>}
       {tree?.permissions.organize && kind === 'page' && item.parentId && <DropdownMenuItem onClick={() => { void (async () => { if (await leave()) await mutate(() => apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind, id: item.id, to: { parentId: tree.pages.find(p => p.id === item.parentId)?.parentId ?? null }, index: 0 }) })); })(); }}>Promote page</DropdownMenuItem>}
@@ -400,13 +421,14 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         syncRef.current = next; setSync(next); setError(''); void next.start(); void loadTree();
       }} /> : selected && tree ? <div className="nb-empty" role="alert"><Lock size={32} /><h2>Page unavailable</h2><p>The page may be protected, deleted or in another workspace.</p><Button onClick={() => setDrawer(true)}>Browse your notebooks</Button></div> : <div className="nb-empty"><BookOpen size={40} /><h2>A place for your team’s thinking</h2><p>Open a page or start one for ideas, build notes and discoveries.</p>{tree?.permissions.edit && tree.sections.length > 0 && <Button onClick={() => createInstant('page', { sectionId: tree.sections[0].id })}><Plus /> Create a page</Button>}</div>}
     </main></div>
-    <Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" className="w-[min(90vw,350px)]" onOpenAutoFocus={event => { if (renaming) event.preventDefault(); }}><SheetHeader><SheetTitle>Notebooks</SheetTitle><SheetDescription>Shared pages in this workspace</SheetDescription></SheetHeader><div className="nb-drawer">{explorer}</div></SheetContent></Sheet>
-    <Dialog open={!!dialog} onOpenChange={v => { if (!v && !busy) setDialog(null); }}><DialogContent><DialogHeader><DialogTitle>{dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'move' ? 'Move' : dialog?.action === 'template' ? 'New page from template' : 'Rename'} {dialog?.action === 'template' ? '' : dialog?.kind}</DialogTitle><DialogDescription>{dialog?.action === 'delete' ? `“${dialog.item?.title}” and its descendants will be hidden. Their retained data can be restored from trash.` : dialog?.action === 'template' ? 'Pick a starting layout. The page is created as “Untitled” so you can name it right away.' : 'Changes are shared with your team. Protected content is available only to team admins.'}</DialogDescription></DialogHeader>
+    <Sheet open={drawer} onOpenChange={setDrawer}><SheetContent side="left" className="w-[min(90vw,350px)]"><SheetHeader><SheetTitle>Notebooks</SheetTitle><SheetDescription>Shared pages in this workspace</SheetDescription></SheetHeader><div className="nb-drawer">{explorer}</div></SheetContent></Sheet>
+    <Dialog open={!!dialog} onOpenChange={v => { if (!v && !busy) setDialog(null); }}><DialogContent><DialogHeader><DialogTitle>{dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'move' ? 'Move' : dialog?.action === 'template' ? 'New page from template' : dialog?.action === 'defaults' ? 'Page defaults' : 'Rename'} {dialog?.action === 'template' || dialog?.action === 'defaults' ? '' : dialog?.kind}</DialogTitle><DialogDescription>{dialog?.action === 'delete' ? `“${dialog.item?.title}” and its descendants will be hidden. Their retained data can be restored from trash.` : dialog?.action === 'template' ? 'Pick a starting layout. The page is created as “Untitled” so you can name it right away.' : dialog?.action === 'defaults' ? 'These apply to every new page created in this section.' : 'Changes are shared with your team. Protected content is available only to team admins.'}</DialogDescription></DialogHeader>
       <form onSubmit={submit} className="nb-form">
         {dialog?.action === 'rename' && <><Label htmlFor="nb-name">Title</Label><Input id="nb-name" autoFocus required maxLength={200} value={name} onChange={e => setName(e.target.value)} />{dialog.kind !== 'page' && <><Label htmlFor="nb-color">Color</Label><input id="nb-color" type="color" value={color || '#3b82f6'} onChange={e => setColor(e.target.value)} /><Button type="button" variant="ghost" onClick={() => setColor('')}>Clear color{!color ? ' · cleared' : ''}</Button></>}</>}
         {dialog?.kind === 'section' && dialog?.action === 'move' && <><Label htmlFor="nb-book">Notebook</Label><select id="nb-book" required value={targetBook} onChange={e => setTargetBook(e.target.value)}>{tree?.notebooks.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></>}
         {dialog?.kind === 'page' && dialog?.action === 'move' && <><Label htmlFor="nb-section">Section</Label><select id="nb-section" required value={targetSection} disabled={!!dialog.parentId} onChange={e => { setTargetSection(e.target.value); setTargetParent(''); }}>{tree?.sections.map(s => <option key={s.id} value={s.id}>{tree.notebooks.find(b => b.id === s.notebookId)?.title} / {s.title}{s.protected ? ' · Admin only' : ''}</option>)}</select></>}
         {dialog?.action === 'template' && dialog.kind === 'page' && <><Label htmlFor="nb-template">Template</Label><select id="nb-template" value={template} onChange={e => setTemplate(e.target.value)}>{NOTEBOOK_TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select><p className="nb-small">{NOTEBOOK_TEMPLATES.find(t => t.id === template)?.description}</p><div className="nb-template-preview" aria-label="Template preview">{NOTEBOOK_TEMPLATES.find(t => t.id === template)?.content.filter(n => n.type === 'heading').map((n,i) => <p key={i}>{n.content?.[0]?.text}</p>)}</div></>}
+        {dialog?.action === 'defaults' && dialog.kind === 'section' && <><Label htmlFor="nb-default-template">Default template for new pages</Label><select id="nb-default-template" value={defaultTemplate ?? ''} onChange={e => setDefaultTemplate(e.target.value || null)}><option value="">None (blank page)</option>{NOTEBOOK_TEMPLATES.filter(t => t.id !== 'blank').map(t => <option key={t.id} value={t.id}>{t.label}</option>)}</select><p className="nb-small">New pages in this section start from this layout.</p><label className="nb-check"><input type="checkbox" checked={dateStamp} onChange={e => setDateStamp(e.target.checked)} /> Stamp the date on new pages</label><p className="nb-small">Adds today's date at the top of every new page in this section.</p></>}
         {dialog?.action === 'move' && dialog.kind === 'page' && <><Label htmlFor="nb-parent">Parent page</Label><select id="nb-parent" value={targetParent} onChange={e => setTargetParent(e.target.value)}><option value="">Top level</option>{tree?.pages.filter(p => p.sectionId === Number(targetSection) && p.id !== dialog.item?.id).map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select><p className="nb-small">The page and its subpages move together. Admin protection is retained.</p></>}
         {error && <p role="alert" className="text-rose-500">{error}</p>}
         <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={() => setDialog(null)}>Cancel</Button><Button type="submit" variant={dialog?.action === 'delete' ? 'destructive' : 'default'} disabled={busy || (dialog?.action === 'rename' && !name.trim())}>{busy ? 'Saving…' : dialog?.action === 'delete' ? 'Move to trash' : dialog?.action === 'template' ? 'Create page' : 'Save'}</Button></DialogFooter>

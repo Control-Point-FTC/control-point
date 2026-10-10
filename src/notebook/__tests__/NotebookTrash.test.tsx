@@ -9,7 +9,7 @@ vi.mock('../../services/api',async importOriginal=>({...await importOriginal<typ
 vi.mock('../../components/dialog',()=>({confirmDialog:vi.fn()}));
 const item={id:4,kind:'page',title:'Build notes',deletedAt:'2026-10-09T12:00:00Z',deletedBy:'Ana'};
 const listing={items:[item],nextCursor:null,retention:'Automatic expiration is disabled.'};
-const tree:NotebookTree={notebooks:[{id:1,title:'Team notebook',sort:0,color:null}],sections:[{id:2,notebookId:1,title:'Build',sort:0,color:null,protected:false}],pages:[],permissions:{read:true,edit:true,organize:true,delete:true,protect:true}};
+const tree:NotebookTree={notebooks:[{id:1,title:'Team notebook',sort:0,color:null}],sections:[{id:2,notebookId:1,title:'Build',sort:0,color:null,protected:false,defaultTemplate:null,dateStamp:false}],pages:[],permissions:{read:true,edit:true,organize:true,delete:true,protect:true}};
 function mount(organize=true){const onRestored=vi.fn();const result=render(<NotebookTrash teamId={9} tree={{...tree,permissions:{...tree.permissions,organize}}} onRestored={onRestored}/>);return {...result,onRestored};}
 async function open(){fireEvent.click(screen.getByRole('button',{name:'Trash'}));await screen.findByText('Build notes');}
 beforeEach(()=>{vi.mocked(apiJson).mockResolvedValue(listing);vi.mocked(confirmDialog).mockResolvedValue(true);});
