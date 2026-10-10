@@ -4717,6 +4717,8 @@ async function startServer() {
       { sql: "DELETE FROM attendance WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM feedback WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM bruno_notebook_receipts WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_reads WHERE team_id = ?", args: [teamId] },
+      { sql: "DELETE FROM notebook_read_baselines WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_mentions WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_comments WHERE team_id = ?", args: [teamId] },
       { sql: "DELETE FROM notebook_threads WHERE team_id = ?", args: [teamId] },

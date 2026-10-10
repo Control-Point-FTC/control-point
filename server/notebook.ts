@@ -276,7 +276,64 @@ export class NotebookStore {
       const book = await s.run("INSERT INTO notebook_books(team_id,title,starter,created_by,created_at) VALUES(?, 'Team notebook',1,?,?)", ctx.teamId, ctx.memberId, now);
       await s.run("INSERT INTO notebook_sections(team_id,notebook_id,title,created_by,created_at) VALUES(?,?,'Quick notes',?,?)", ctx.teamId, Number(book.lastInsertRowid), ctx.memberId, now);
     }
-    return s.tree();
+    const tree = await s.tree();
+    if (!s.access.human) return tree;
+    // Unread: someone else changed the page after this member last saw it.
+    // The first visit sets a baseline so older pages don't all start unread.
+    await s.run("INSERT OR IGNORE INTO notebook_read_baselines(team_id,member_id,baseline_at) VALUES(?,?,?)", ctx.teamId, ctx.memberId, new Date().toISOString());
+    const baseline = String((await s.one("SELECT baseline_at FROM notebook_read_baselines WHERE team_id=? AND member_id=?", ctx.teamId, ctx.memberId))?.baseline_at ?? "");
+    const reads = new Map((await s.all("SELECT page_id,read_revision FROM notebook_reads WHERE team_id=? AND member_id=?", ctx.teamId, ctx.memberId)).map(r => [Number(r.page_id), Number(r.read_revision)]));
+    const editors = new Map((await s.all("SELECT id,updated_by FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL", ctx.teamId)).map(r => [Number(r.id), r.updated_by == null ? null : Number(r.updated_by)]));
+    return { ...tree, pages: tree.pages.map(p => {
+      const read = reads.get(p.id), byMe = editors.get(p.id) === ctx.memberId;
+      const unread = read === undefined ? !byMe && String(p.updatedAt) > baseline : read < 0 || (!byMe && p.revision > read);
+      return { ...p, unread };
+    }) };
+  }); }
+  /** Mark pages read or unread for this member: given pages, a whole section
+   *  or a whole notebook, limited to what the member can see. */
+  markRead(ctx: NotebookContext, target: Row) { return this.session(ctx, async s => {
+    if (!s.access.human) throw new NotebookError("Read state belongs to team members", 403);
+    if (typeof target.read !== "boolean") throw new NotebookError("Choose read or unread");
+    const tree = await s.tree();
+    let pages = tree.pages;
+    if (target.notebookId !== undefined) { const sections = new Set(tree.sections.filter(x => x.notebookId === id(target.notebookId)).map(x => x.id)); pages = pages.filter(p => sections.has(p.sectionId)); }
+    else if (target.sectionId !== undefined) pages = pages.filter(p => p.sectionId === id(target.sectionId));
+    else if (Array.isArray(target.pageIds) && target.pageIds.length <= 500) { const wanted = new Set(target.pageIds.map(id)); pages = pages.filter(p => wanted.has(p.id)); }
+    else throw new NotebookError("Choose pages, a section or a notebook");
+    const now = new Date().toISOString();
+    for (const p of pages) await s.run(`INSERT INTO notebook_reads(team_id,member_id,page_id,read_revision,read_at) VALUES(?,?,?,?,?)
+      ON CONFLICT(team_id,member_id,page_id) DO UPDATE SET read_revision=excluded.read_revision,read_at=excluded.read_at`, ctx.teamId, ctx.memberId, p.id, target.read ? p.revision : -1, now);
+    return { ok: true, pages: pages.length };
+  }); }
+  /** Recently changed pages the member can see, newest first; optionally by one author. */
+  recent(ctx: NotebookContext, options: { since?: unknown; author?: unknown }) { return this.session(ctx, async s => {
+    const since = typeof options.since === "string" && !Number.isNaN(Date.parse(options.since)) ? new Date(options.since).toISOString() : new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const author = options.author === undefined || options.author === "" ? null : id(options.author);
+    const visible = new Map((await s.tree()).pages.map(p => [p.id, p]));
+    const rows = author == null
+      ? await s.all(`SELECT p.id,p.updated_at AS at,p.updated_by AS author,m.name FROM notebook_pages p LEFT JOIN members m ON m.id=p.updated_by AND m.team_id=p.team_id
+          WHERE p.team_id=? AND p.deleted_at IS NULL AND p.updated_at>=? ORDER BY p.updated_at DESC LIMIT 2000`, ctx.teamId, since)
+      : await s.all(`SELECT x.id,MAX(x.at) AS at,? AS author,(SELECT name FROM members WHERE id=? AND team_id=?) AS name FROM (
+            SELECT id,updated_at AS at FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND updated_by=?
+            UNION ALL SELECT page_id AS id,saved_at AS at FROM notebook_versions WHERE team_id=? AND author_id=?
+          ) x WHERE x.at>=? GROUP BY x.id ORDER BY at DESC LIMIT 2000`, author, author, ctx.teamId, ctx.teamId, author, ctx.teamId, author, since);
+    return rows.filter(r => visible.has(Number(r.id))).slice(0, 200).map(r => {
+      const p = visible.get(Number(r.id))!;
+      return { id: p.id, sectionId: p.sectionId, title: p.title, at: r.at, authorId: r.author == null ? null : Number(r.author), authorName: r.name ? String(r.name).slice(0, 80) : "Former team member" };
+    });
+  }); }
+  /** People who changed pages the member can see (for Find by Author). */
+  authors(ctx: NotebookContext) { return this.session(ctx, async s => {
+    const visible = new Set((await s.tree()).pages.map(p => p.id));
+    const rows = await s.all(`SELECT page_id,author_id FROM notebook_versions WHERE team_id=? AND author_id IS NOT NULL
+      UNION SELECT id AS page_id,updated_by AS author_id FROM notebook_pages WHERE team_id=? AND deleted_at IS NULL AND updated_by IS NOT NULL`, ctx.teamId, ctx.teamId);
+    const counts = new Map<number, Set<number>>();
+    for (const r of rows) if (visible.has(Number(r.page_id))) { const a = Number(r.author_id); counts.set(a, (counts.get(a) ?? new Set()).add(Number(r.page_id))); }
+    if (!counts.size) return [];
+    const ids = [...counts.keys()];
+    const names = new Map((await s.all(`SELECT id,name FROM members WHERE team_id=? AND id IN (${ids.map(() => "?").join(",")})`, ctx.teamId, ...ids)).map(m => [Number(m.id), String(m.name).slice(0, 80)]));
+    return ids.map(a => ({ id: a, name: names.get(a) ?? "Former team member", pages: counts.get(a)!.size })).sort((a, b) => a.name.localeCompare(b.name));
   }); }
   page(ctx: NotebookContext, pageId: number) { return this.session(ctx, async s => s.page(await s.item("page", pageId))); }
   threads(ctx: NotebookContext, pageId: number, before?: unknown, focus?: unknown) { return this.session(ctx, s => notebookThreads(s, pageId, before, focus)); }
@@ -339,6 +396,10 @@ export class NotebookStore {
         await indexNotebookFiles(s,row.id,json.content,json.canvas);
       }
       const current = changed ? await s.item('page', pageId) : row;
+      // Having the page open means having seen this revision.
+      await s.run(`INSERT INTO notebook_reads(team_id,member_id,page_id,read_revision,read_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(team_id,member_id,page_id) DO UPDATE SET read_revision=excluded.read_revision,read_at=excluded.read_at WHERE notebook_reads.read_revision<>excluded.read_revision`,
+        ctx.teamId, ctx.memberId, row.id, current.revision, new Date().toISOString());
       const protectedPage = await s.isProtected(row);
       const peers: Row[] = [];
       if (body.clientId !== undefined) {
@@ -673,6 +734,9 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.get("/api/notebook/search", handle((ctx, req) => store.search(ctx, String(req.query.q ?? ""), Number(req.query.limit ?? 30))));
   app.get("/api/notebook/export", handle(ctx => store.export(ctx)));
   app.get('/api/notebook/mentions', handle(ctx => store.mentionInbox(ctx)));
+  app.put('/api/notebook/read', handle((ctx, req) => store.markRead(ctx, req.body ?? {})));
+  app.get('/api/notebook/recent', handle((ctx, req) => store.recent(ctx, { since: req.query.since, author: req.query.author })));
+  app.get('/api/notebook/authors', handle(ctx => store.authors(ctx)));
   app.put('/api/notebook/mentions/:id/read', handle((ctx, req) => store.readMention(ctx, id(req.params.id))));
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));

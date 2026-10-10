@@ -28,6 +28,8 @@ export function NotebookTrash({teamId,tree,onRestored}:{teamId:number;tree:Noteb
   const request=useRef<AbortController|null>(null),locked=useRef(false),refreshButton=useRef<HTMLButtonElement|null>(null),restoreFocus=useRef(false);
   useEffect(()=>{if(!busy&&restoreFocus.current){restoreFocus.current=false;refreshButton.current?.focus();}},[busy]);
   const headers={'X-CP-Notebook-Team':String(teamId)};
+  // The ribbon's History → Notebook recycle bin opens this same dialog.
+  useEffect(()=>{const show=()=>setOpen(true);window.addEventListener('nb-open-trash',show);return()=>window.removeEventListener('nb-open-trash',show);},[]);
   const begin=()=>{request.current?.abort();const abort=new AbortController();request.current=abort;locked.current=true;setBusy(true);setError('');return abort;};
   const finish=(abort:AbortController)=>{if(!abort.signal.aborted){locked.current=false;setBusy(false);}};
   const load=async(continuation?:string)=>{
