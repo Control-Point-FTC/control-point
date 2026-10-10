@@ -15,6 +15,20 @@ async function open(){fireEvent.click(screen.getByRole('button',{name:'Trash'}))
 beforeEach(()=>{vi.mocked(apiJson).mockResolvedValue(listing);vi.mocked(confirmDialog).mockResolvedValue(true);});
 afterEach(()=>{cleanup();vi.resetAllMocks();});
 describe('desktop notebook trash controls',()=>{
+  it('reads retained text only on explicit preview and keeps the snapshot read only',async()=>{
+    mount();await open();expect(apiJson).toHaveBeenCalledOnce();
+    vi.mocked(apiJson).mockResolvedValueOnce({id:4,title:'Build notes',content:{type:'doc',content:[{type:'paragraph',attrs:{id:'retained'},content:[{type:'text',text:'Original gearing measurements'}]}]},canvas:{}});
+    fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));
+    const preview=await screen.findByRole('region',{name:'Retained page preview'});expect(preview).toHaveTextContent('Original gearing measurements');expect(preview.querySelector('[contenteditable="true"]')).toBeNull();
+    expect(apiJson).toHaveBeenCalledTimes(2);expect(apiJson).toHaveBeenLastCalledWith('/api/notebook/trash/pages/4',expect.objectContaining({headers:{'X-CP-Notebook-Team':'9'},cache:'no-store'}));
+    fireEvent.click(screen.getByRole('button',{name:'Close preview'}));expect(screen.queryByRole('region',{name:'Retained page preview'})).toBeNull();
+  });
+  it('clears a retained snapshot and prior titles when preview authorization is denied',async()=>{
+    mount();await open();vi.mocked(apiJson).mockResolvedValueOnce({id:4,title:'Build notes',content:{type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Retained secret'}]}]},canvas:{}});
+    fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));await screen.findByRole('region',{name:'Retained page preview'});
+    vi.mocked(apiJson).mockRejectedValueOnce(new ApiError(404,'Deleted page unavailable'));fireEvent.click(screen.getByRole('button',{name:'Preview deleted page Build notes'}));
+    await screen.findByRole('alert');expect(screen.queryByText('Build notes')).toBeNull();expect(screen.queryByText('Retained secret')).toBeNull();
+  });
   it('loads only on explicit open and paginates older entries under current team scope',async()=>{
     mount();expect(apiJson).not.toHaveBeenCalled();vi.mocked(apiJson).mockResolvedValueOnce({...listing,nextCursor:'continuation'});await open();
     expect(screen.getByText('page · Deleted by Ana')).toBeTruthy();
