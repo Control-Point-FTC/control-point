@@ -22,13 +22,17 @@ export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
   const context=useContext(NotebookFileContext),[image,setImage]=useState(''),[error,setError]=useState('');
   const {fileId,name,size,mimeType,display,width,alt}=node.attrs;
   const [copied,setCopied]=useState('');
+  // The description field follows the saved alt text (undo, teammates) and
+  // only saves when the person actually edited it.
+  const [altDraft,setAltDraft]=useState<string|null>(null);
   // Copy image: as PNG, which every clipboard accepts.
   const copyImage=async()=>{
     if(!context)return;
     try{
       if(!navigator.clipboard?.write||typeof ClipboardItem==='undefined')throw new Error('unsupported');
-      const blob=await fileBlob(context.sync,fileId);
-      const png=blob.type==='image/png'?blob:await new Promise<Blob>((resolve,reject)=>{createImageBitmap(blob).then(bitmap=>{const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d')?.drawImage(bitmap,0,0);canvas.toBlob(b=>b?resolve(b):reject(new Error('convert')),'image/png');},reject);});
+      // The write starts inside the click (Safari requires it); the PNG
+      // arrives as a promise once downloaded and converted.
+      const png=fileBlob(context.sync,fileId).then(blob=>blob.type==='image/png'?blob:new Promise<Blob>((resolve,reject)=>{createImageBitmap(blob).then(bitmap=>{const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;canvas.getContext('2d')?.drawImage(bitmap,0,0);canvas.toBlob(b=>b?resolve(b):reject(new Error('convert')),'image/png');},reject);}));
       await navigator.clipboard.write([new ClipboardItem({'image/png':png})]);setCopied('Image copied.');
     }catch{setCopied('Copying images isn’t available here. Use Download original instead.');}
   };
@@ -45,7 +49,7 @@ export function NotebookAttachment({node,updateAttributes}:NodeViewProps){
     {display==='pdf' && context && <Suspense fallback={<p role="status">Loading PDF tools…</p>}><NotebookPdf sync={context.sync} fileId={fileId} width={width} blockId={node.attrs.id} context={context}/></Suspense>}
     {context && !context.mobile && context.editable && mimeType==='application/pdf' && <div><button onClick={()=>updateAttributes({display:display==='pdf'?'chip':'pdf'})}>{display==='pdf'?'Show attachment only':'Insert PDF printout'}</button>{display==='pdf' && <label>Printout width <input aria-label="PDF display width" type="range" min="240" max="1200" value={width||640} onChange={e=>updateAttributes({width:Number(e.target.value)})}/></label>}</div>}
     {display==='image' && (image?<img src={image} alt={alt||name} style={{width:Math.min(1600,width||640)}} onError={()=>setError('This image could not be rendered. Download its original file.')}/>:<p role="status">Loading image…</p>)}
-    {display==='image' && context && !context.mobile && <div className="nb-image-tools">{context.editable && <label>Description for screen readers <input aria-label="Image description (alt text)" maxLength={MAX_ALT} placeholder={name} defaultValue={alt??''} onBlur={e=>{const value=e.target.value.trim();if((value||null)!==(alt??null))updateAttributes({alt:value||null});}}/></label>}<button onClick={()=>{void copyImage();}}>Copy image</button>{copied && <span role="status">{copied}</span>}</div>}
+    {display==='image' && context && !context.mobile && <div className="nb-image-tools">{context.editable && <label>Description for screen readers <input aria-label="Image description (alt text)" maxLength={MAX_ALT} placeholder={name} value={altDraft??alt??''} onChange={e=>setAltDraft(e.target.value)} onBlur={()=>{if(altDraft===null)return;const value=altDraft.trim();setAltDraft(null);if((value||null)!==(alt??null))updateAttributes({alt:value||null});}}/></label>}<button onClick={()=>{void copyImage();}}>Copy image</button>{copied && <span role="status">{copied}</span>}</div>}
     {context && !context.mobile && context.editable && mimeType.startsWith('image/') && <label>Image width <input aria-label="Image display width" type="range" min="120" max="1200" value={width||640} onChange={e=>updateAttributes({display:'image',width:Number(e.target.value)})}/></label>}
     {error && <p role="alert">{error}</p>}
   </NodeViewWrapper>;
