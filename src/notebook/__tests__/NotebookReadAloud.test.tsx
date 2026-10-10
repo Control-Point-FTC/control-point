@@ -14,6 +14,18 @@ function engine(voices=[remote,local]){
 }
 afterEach(()=>{cleanup();vi.unstubAllGlobals();});
 describe('explicit local notebook read aloud',()=>{
+  it('enables explicit reading when local voices become available later',()=>{
+    const {fake,spoken}=engine([]),view=render(<NotebookReadAloud available getText={()=>'Discovered locally'}/>);
+    expect(screen.getByRole('button',{name:'Read aloud'})).toBeDisabled();
+    const listener=fake.addEventListener.mock.calls.find(call=>call[0]==='voiceschanged')?.[1] as unknown as ()=>void;
+    expect(listener).toBeTypeOf('function');
+    fake.getVoices.mockReturnValue([remote,local]);act(()=>listener());
+    expect(screen.getByRole('button',{name:'Read aloud'})).toBeEnabled();
+    expect(fake.speak).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'Read aloud'}));
+    expect(spoken[0].voice).toBe(local);expect(spoken[0].text).toBe('Discovered locally');
+    view.unmount();expect(fake.removeEventListener).toHaveBeenCalledWith('voiceschanged',listener);
+  });
   it('never starts automatically and excludes remote voices',()=>{
     const {fake,spoken}=engine();render(<NotebookReadAloud available getText={()=>'Team discoveries'}/>);
     expect(fake.speak).not.toHaveBeenCalled();expect(screen.queryByText('Remote English · en-US')).toBeNull();
