@@ -12,6 +12,7 @@ import { notebookPageReferences } from '../src/notebook/pageLinks.js';
 import { notebookThreads, notebookThreadComments, notebookComment, notebookEditComment, notebookResolveThread, notebookMentionMembers, notebookMentionInbox, notebookReadMention } from './notebookDiscussions.js';
 import { authorizeNotebookUpload, registerNotebookFile, indexNotebookFiles, notebookFileForPage } from './notebookFiles.js';
 import {notebookTrash} from './notebookTrash.js';
+import {notebookRestore} from './notebookRecovery.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -459,6 +460,7 @@ export class NotebookStore {
     return hits;
   }); }
   trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
+  restore(ctx:NotebookContext,kind:Kind,itemId:number,to:Row={}){return this.session(ctx,s=>notebookRestore(s,kind,itemId,to));}
   versions(ctx: NotebookContext, pageId: number, versionId?: number) { return this.session(ctx, async s => {
     await s.item("page", pageId);
     if (versionId !== undefined) {
@@ -591,6 +593,7 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));
     app.delete(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.remove(ctx, kind, id(req.params.id))));
+    app.post(`/api/notebook/${plural}/:id/restore`,handle((ctx,req)=>store.restore(ctx,kind,id(req.params.id),req.body?.destination??{})));
     if (kind !== "page") app.patch(`/api/notebook/${plural}/:id`, handle((ctx, req) => store.update(ctx, kind, id(req.params.id), req.body ?? {})));
     if (kind !== "notebook") app.put(`/api/notebook/${plural}/:id/protection`, handle((ctx, req) => store.protect(ctx, kind, id(req.params.id), req.body?.protected)));
   }
