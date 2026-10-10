@@ -54,7 +54,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const [drawer, setDrawer] = useState(false);
   const [writingFocus,setWritingFocus]=useState(false);
   const focusExit=useRef<HTMLButtonElement|null>(null),focusEntry=useRef<HTMLButtonElement|null>(null),mobileOpen=useRef<HTMLButtonElement|null>(null),exitFocused=useRef(false),wasWritingFocus=useRef(false);
-  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else {if(wasWritingFocus.current)focusEntry.current?.focus();exitFocused.current=false;}}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}wasWritingFocus.current=writingFocus;},[writingFocus,mobile]);
+  useEffect(()=>{if(!mobile){if(writingFocus)focusExit.current?.focus();else {if(wasWritingFocus.current && !skipFocusReturn.current)focusEntry.current?.focus();exitFocused.current=false;}}else if(exitFocused.current){mobileOpen.current?.focus();exitFocused.current=false;}wasWritingFocus.current=writingFocus;skipFocusReturn.current=false;},[writingFocus,mobile]);
   const [dialog, setDialog] = useState<EditDialog | null>(null);
   const [name, setName] = useState('');
   const [template, setTemplate] = useState('blank');
@@ -97,6 +97,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const creatingRef = useRef(false); // claimed before leave() so a second click during the save cannot POST a duplicate
   const loadFailedRef = useRef(false); // set when the tree reload inside mutate fails
   const closeDrawerAfterRename = useRef(false); // mobile: keep the drawer open for the rename box, close it when rename ends
+  const skipFocusReturn = useRef(false); // creating a row exits writing focus — don't steal focus from the rename box
   const loadTree = useCallback(async () => {
     try {
       const value = await apiJson<NotebookTree>('/api/notebook/tree', { cache: 'no-store' });
@@ -206,11 +207,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
           openKeys.add(`notebook:${target.notebookId}`);
         }
         const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
-        if (writingFocus) setWritingFocus(false); // the rename box lives in the panes, which writing focus hides
+        if (writingFocus) { skipFocusReturn.current = true; setWritingFocus(false); } // the rename box lives in the panes, which writing focus hides
         if (kind === 'page') {
           setParams({ page: String(created) });
-          // On mobile the drawer holds the rename box — keep it open until rename ends.
-          if (mobile) closeDrawerAfterRename.current = true; else setDrawer(false);
+          // On mobile the drawer holds the rename box — open it and keep it open until rename ends.
+          if (mobile) { setDrawer(true); closeDrawerAfterRename.current = true; } else setDrawer(false);
         }
         setError(''); setAnnouncement(`${kind === 'page' ? 'Page' : kind === 'section' ? 'Section' : 'Notebook'} created. Type a name and press Enter.`);
         setRenaming({ kind, item: { id: created, title: 'Untitled' } as Item, title: 'Untitled' });
@@ -274,14 +275,15 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     renameSaving.current = true;
     try {
       if (!await leave()) return;
-      await mutate(async () => {
+      const saved = await mutate(async () => {
         const base = `/api/notebook/${plural[kind]}/${item.id}`;
         if (kind === 'page' && syncRef.current?.pageId === item.id) { syncRef.current.doc.getMap('meta').set('title', value); if (!await syncRef.current.flush()) throw new Error('Title has not reached the server.'); }
         else if (kind === 'page') { const current = await apiJson(base, { cache: 'no-store' }); await apiJson(base, { method: 'PUT', body: JSON.stringify({ title: value, baseRevision: current.revision }) }); }
         else await apiJson(base, { method: 'PATCH', body: JSON.stringify({ title: value }) });
         setRenaming(null);
       });
-      if (closeDrawerAfterRename.current) { closeDrawerAfterRename.current = false; setDrawer(false); }
+      // Only close the drawer when the save succeeded — a failed save keeps the rename box open for retry.
+      if (saved && closeDrawerAfterRename.current) { closeDrawerAfterRename.current = false; setDrawer(false); }
     } finally { renameSaving.current = false; }
   };
   const reorder = async (kind: Kind, item: Item, direction: -1 | 1) => {

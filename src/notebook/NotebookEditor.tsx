@@ -172,7 +172,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     <div className="nb-paper-scroll" onClick={e => {
       // Clicking the empty paper margins focuses the editor at the end (linear-document click-anywhere).
       const t = e.target as HTMLElement;
-      if (t.closest('.nb-prose, button, a, input, select, textarea, [role="dialog"], .nb-discussions')) return;
+      if (t.closest('.nb-prose, button, a, input, select, textarea, [role="dialog"], .nb-discussions, .nb-canvas-stage')) return;
       (activeEditor ?? editor)?.chain().focus('end').run();
     }}><article ref={paper} className={`nb-paper ${ruled && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { zoom: zoom / 100 } : undefined}>
       <input className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
