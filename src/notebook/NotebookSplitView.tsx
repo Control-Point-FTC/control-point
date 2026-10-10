@@ -47,7 +47,7 @@ export function NotebookSplitView(props:EditorProps&{mobile:boolean;onOtherChang
     finally{changing.current=false;if(alive.current)setBusy(false);}
   };
   const split=!!other&&!mobile;
-  const primary=<NotebookEditor key={sync.pageId} {...props} toolbarVisible={!split||active==='main'} onOpenOther={openOther}/>;
+  const primary=<NotebookEditor key={sync.pageId} {...props} toolbarVisible={!split||active==='main'} onOpenOther={mobile?undefined:openOther}/>;
   return <div className="nb-split-workspace">
     {!mobile&&<div className="nb-split-controls"><button disabled={busy||(!other&&!pages.some(page=>page.id!==sync.pageId))} onClick={()=>other?void closeOther():void openOther(pages.find(page=>page.id!==sync.pageId)!.id)}><Columns2 size={15}/>{other?'Close split view':'Split view'}</button>
       {other&&<><label>Other page <select aria-label="Page in other pane" disabled={busy} value={other.pageId} onChange={event=>void openOther(Number(event.target.value))}>{pages.filter(page=>page.id!==sync.pageId).map(page=><option key={page.id} value={page.id}>{page.title}</option>)}</select></label><button onClick={()=>setReversed(value=>!value)}><ArrowLeftRight size={15}/> Swap panes</button><span>Alt-click a page link to open it in the other pane.</span></>}

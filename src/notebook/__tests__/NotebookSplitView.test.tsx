@@ -10,7 +10,7 @@ vi.mock('../NotebookSync',()=>({NotebookSync:class{
   constructor(id:number,scope:any){this.pageId=id;this.scope=scope;sessions.created.push(this);}
 }}));
 vi.mock('../notebookRuntime',()=>({findNotebookSession:vi.fn(()=>undefined)}));
-vi.mock('../NotebookEditor',()=>({NotebookEditor:(props:any)=><div data-testid={`editor-${props.sync.pageId}`}><span>{props.toolbarVisible?`Ribbon ${props.sync.pageId}`:''}</span><input aria-label={`Edit page ${props.sync.pageId}`} defaultValue="Saved text"/><button onClick={()=>props.onOpenOther(3,'target')}>Open link in other pane {props.sync.pageId}</button><span>{props.blockTarget??'No block'}</span></div>}));
+vi.mock('../NotebookEditor',()=>({NotebookEditor:(props:any)=><div data-testid={`editor-${props.sync.pageId}`}><span>{props.toolbarVisible?`Ribbon ${props.sync.pageId}`:''}</span><input aria-label={`Edit page ${props.sync.pageId}`} defaultValue="Saved text"/><button onClick={()=>props.onOpenOther?props.onOpenOther(3,'target'):props.onNavigate(3,'target')}>Open link in other pane {props.sync.pageId}</button><span>{props.blockTarget??'No block'}</span></div>}));
 const pages=[1,2,3].map(id=>({id,title:`Page ${id}`,sectionId:1,parentId:null,sort:id,protected:false,ownProtected:false,revision:1,updatedAt:'now'}));
 let primary:NotebookSync;
 const props=()=>({sync:primary,pages,mobile:false,onChanged:vi.fn(),onNavigate:vi.fn()});
@@ -46,4 +46,9 @@ it('transfers a session to the main pane without releasing it when its page is s
 it('keeps mobile to one text editor and releases the owned secondary session on teardown',async()=>{
   const view=render(<NotebookSplitView {...props()}/>);await open();const current=sessions.created[0];view.rerender(<NotebookSplitView {...props()} mobile/>);
   expect(screen.queryByTestId('editor-2')).toBeNull();expect(screen.queryByRole('button',{name:'Split view'})).toBeNull();expect(screen.getByText('Ribbon 1')).toBeTruthy();view.unmount();expect(current.release).toHaveBeenCalledOnce();
+});
+it('uses normal page navigation for narrow-window Alt-click links',()=>{
+  const navigate=vi.fn();render(<NotebookSplitView {...props()} mobile onNavigate={navigate}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Open link in other pane 1'}));
+  expect(navigate).toHaveBeenCalledWith(3,'target');expect(sessions.created).toHaveLength(0);
 });
