@@ -21,7 +21,7 @@ describe('desktop quick team capture',()=>{
   });
   it('retains a draft on close and on a failed save',async()=>{
     vi.mocked(apiJson).mockResolvedValueOnce(tree).mockRejectedValueOnce(new Error('Offline'));mount();write();
-    fireEvent.click(screen.getByRole('button',{name:'Close draft'}));fireEvent.click(screen.getByRole('button',{name:'Quick note'}));expect(screen.getByLabelText('Note',{exact:true})).toHaveValue('First\n\n<script>literal</script>');
+    fireEvent.click(screen.getByRole('button',{name:'Close draft'}));await waitFor(()=>expect(screen.getByRole('button',{name:'Quick note'})).toHaveFocus());fireEvent.click(screen.getByRole('button',{name:'Quick note'}));expect(screen.getByLabelText('Note',{exact:true})).toHaveValue('First\n\n<script>literal</script>');
     fireEvent.click(screen.getByRole('button',{name:'Save note'}));await screen.findByRole('alert');expect(screen.getByLabelText('Note',{exact:true})).toHaveValue('First\n\n<script>literal</script>');
     expect(screen.getByRole('button',{name:'Save note'})).toBeEnabled();
   });
