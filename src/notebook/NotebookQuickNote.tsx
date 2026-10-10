@@ -9,7 +9,7 @@ export function quickNoteDocument(text:string) {
 }
 
 /** A team-scoped, in-memory capture draft; never journal protected text. */
-export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen}:{tree:NotebookTree;teamId:number;sectionId:number|null;onSaved:()=>void;onOpen:(id:number)=>void}) {
+export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen,hidden=false}:{tree:NotebookTree;teamId:number;sectionId:number|null;onSaved:()=>void;onOpen:(id:number)=>void;hidden?:boolean}) {
   const [open,setOpen]=useState(false),[destination,setDestination]=useState(''),[title,setTitle]=useState(''),[text,setText]=useState('');
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState<number|null>(null);
   const claimed=useRef(false),mounted=useRef(true),abort=useRef<AbortController|null>(null);
@@ -36,16 +36,16 @@ export function NotebookQuickNote({tree,teamId,sectionId,onSaved,onOpen}:{tree:N
     finally{claimed.current=false;if(mounted.current)setBusy(false);}
   };
   return <>
-    <Button ref={trigger} variant="ghost" onClick={show} disabled={!tree.permissions.edit||!tree.sections.length}>Quick note</Button>
-    {saved!=null&&<span role="status">Quick note saved. <button className="nb-tool" onClick={()=>{onOpen(saved);setSaved(null);}}>Open saved note</button></span>}
-    <Dialog open={open} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent onCloseAutoFocus={event=>{event.preventDefault();trigger.current?.focus();}}><DialogHeader><DialogTitle>Quick team note</DialogTitle><DialogDescription>Capture a thought without leaving your current page. It becomes an editable page in the section you choose.</DialogDescription></DialogHeader>
+    <Button ref={trigger} style={hidden?{display:'none'}:undefined} variant="ghost" onClick={show} disabled={!tree.permissions.edit||!tree.sections.length}>Quick note</Button>
+    {saved!=null&&<span style={hidden?{display:'none'}:undefined} role="status">Quick note saved. <button className="nb-tool" onClick={()=>{onOpen(saved);setSaved(null);}}>Open saved note</button></span>}
+    <Dialog open={open&&!hidden} onOpenChange={value=>{if(!busy)setOpen(value);}}><DialogContent onCloseAutoFocus={event=>{event.preventDefault();if(!hidden)trigger.current?.focus();}}><DialogHeader><DialogTitle>Quick team note</DialogTitle><DialogDescription>Capture a thought without leaving your current page. It becomes an editable page in the section you choose.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={submit}>
-        <Label htmlFor="nb-quick-section">Save to section</Label><select id="nb-quick-section" value={destination} disabled={busy} required onChange={e=>setDestination(e.target.value)}>{tree.sections.map(s=><option key={s.id} value={s.id}>{tree.notebooks.find(n=>n.id===s.notebookId)?.title} / {s.title}{s.protected?' · Admin only':''}</option>)}</select>
+        <Label htmlFor="nb-quick-section">Save to section</Label><select id="nb-quick-section" value={destination} disabled={busy} required onChange={e=>setDestination(e.target.value)}><option value="" disabled>Choose a section</option>{tree.sections.map(s=><option key={s.id} value={s.id}>{tree.notebooks.find(n=>n.id===s.notebookId)?.title} / {s.title}{s.protected?' · Admin only':''}</option>)}</select>
         <p className="nb-small">{tree.sections.find(s=>String(s.id)===destination)?.protected?'Only team admins can access this note.':'Everyone with notebook access on your team can read this note.'}</p>
         <Label htmlFor="nb-quick-title">Title (optional)</Label><Input id="nb-quick-title" value={title} maxLength={200} disabled={busy} onChange={e=>setTitle(e.target.value)} placeholder="Quick note"/>
         <Label htmlFor="nb-quick-text">Note</Label><textarea id="nb-quick-text" autoFocus rows={7} maxLength={20000} value={text} disabled={busy} required onChange={e=>setText(e.target.value)}/>
         <p className="nb-small">Drafts stay in memory while this workspace is open. Closing this dialog keeps your draft; switching workspaces or closing the app clears it.</p>
-        {error&&<p role="alert">{error} Your draft is retained. If the connection failed while saving, check the section for the note before trying again.</p>}
+        {error&&<p role="alert">{error}{text&&' Your draft is retained. If the connection failed while saving, check the section for the note before trying again.'}</p>}
         <DialogFooter><Button type="button" variant="ghost" disabled={busy} onClick={()=>setOpen(false)}>Close draft</Button><Button type="submit" disabled={busy||!text.trim()||!destination||!tree.permissions.edit}>{busy?'Saving…':'Save note'}</Button></DialogFooter>
       </form>
     </DialogContent></Dialog>

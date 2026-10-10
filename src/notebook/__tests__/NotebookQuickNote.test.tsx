@@ -41,7 +41,16 @@ describe('desktop quick team capture',()=>{
   });
   it('clears an in-memory draft when its section disappears from the authorized tree',()=>{
     const {view}=mount();write();
-    view.rerender(<NotebookQuickNote tree={{...tree,sections:[]}} teamId={20} sectionId={null} onSaved={()=>{}} onOpen={()=>{}}/>);
+    view.rerender(<NotebookQuickNote tree={{...tree,sections:[tree.sections[1]]}} teamId={20} sectionId={null} onSaved={()=>{}} onOpen={()=>{}}/>);
     expect(screen.getByLabelText('Note',{exact:true})).toHaveValue('');expect(screen.getByRole('alert')).toHaveTextContent('draft was cleared');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('draft is retained');expect(screen.getByLabelText('Save to section')).toHaveValue('');
+    fireEvent.change(screen.getByLabelText('Save to section'),{target:{value:'3'}});fireEvent.change(screen.getByLabelText('Note',{exact:true}),{target:{value:'New draft'}});expect(screen.getByRole('button',{name:'Save note'})).toBeEnabled();
+  });
+  it('keeps the desktop draft while hiding all capture UI at mobile widths',()=>{
+    const {view}=mount();write();
+    view.rerender(<NotebookQuickNote hidden tree={tree} teamId={20} sectionId={2} onSaved={()=>{}} onOpen={()=>{}}/>);
+    expect(screen.queryByRole('dialog')).toBeNull();expect(screen.queryByRole('button',{name:'Quick note'})).toBeNull();
+    view.rerender(<NotebookQuickNote tree={tree} teamId={20} sectionId={2} onSaved={()=>{}} onOpen={()=>{}}/>);
+    expect(screen.getByLabelText('Note',{exact:true})).toHaveValue('First\n\n<script>literal</script>');
   });
 });
