@@ -17,13 +17,13 @@ function mount(editable = true, mobile = false, strokes = 0, scoped = false, sco
     const zoom = vi.fn();
     providers.push(sync);
     if (strokes) seedCanvas(sync.doc, { version: 1, objects: Array.from({length:strokes},(_,i): Ink => ({ id:`stroke-${i}`, type:'stroke',tool:'pen',x:i%100,y:Math.floor(i/100),width:10,height:10,z:i,rotation:0,locked:false,groupId:null,color:'#111111',strokeWidth:2,opacity:1,points:[[0,0,.5],[10,10,.5]] })) });
-    function Harness() { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><RecordNavigationContext.Provider value={openRecord}><PageLinkSourceContext.Provider value={LINKS}><NotebookCanvas sync={sync} scopeId={scopeId} anchorTarget={anchorTarget} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></PageLinkSourceContext.Provider></RecordNavigationContext.Provider></div></>; }
-    render(<Harness />);
+    function Harness({ anchor = anchorTarget }: { anchor?: string }) { const [ribbon, setRibbon] = useState<React.ReactNode>(null); return <><div>{ribbon}</div><div className="nb-paper-scroll"><RecordNavigationContext.Provider value={openRecord}><PageLinkSourceContext.Provider value={LINKS}><NotebookCanvas sync={sync} scopeId={scopeId} anchorTarget={anchor} editable={editable} mobile={mobile} onZoom={zoom} onRibbon={setRibbon} onEditorFocus={() => { }} onEditorRemoved={() => { }}><p>Flow text remains here</p></NotebookCanvas></PageLinkSourceContext.Provider></RecordNavigationContext.Provider></div></>; }
+    const { rerender } = render(<Harness />);
     const surface = screen.getByLabelText('Page drawing surface');
     Object.defineProperties(surface, { offsetWidth: { value: 1000 }, offsetHeight: { value: 600 } });
     surface.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 600, right: 1000, bottom: 600, x: 0, y: 0, toJSON() { } });
     surface.setPointerCapture = vi.fn();
-    return { sync, surface, zoom };
+    return { sync, surface, zoom, setAnchor: (anchor?: string) => rerender(<Harness anchor={anchor} />) };
 }
 const caret = () => screen.getByLabelText('Type to add a text box here') as HTMLTextAreaElement;
 const boxText = (sync: NotebookSync, i = 0) => JSON.stringify((canvasJSON(sync.doc).objects[i] as any)?.content ?? null);
@@ -218,7 +218,7 @@ describe('desktop shared drawing surface', () => {
     });
     it('finds a linked line inside a canvas text box', async () => {
         const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
-        const { surface } = mount(true, false, 0, false, undefined, 'line-in-box');
+        const { surface, setAnchor } = mount(true, false, 0, false, undefined, 'line-in-box');
         fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
         fireEvent.doubleClick(surface, { clientX: 60, clientY: 60 });
         const box = await waitFor(() => { const el = surface.querySelector<HTMLElement & { editor?: any }>('[data-canvas-id] [role=textbox]'); if (!el?.editor) throw new Error('not ready'); return el; });
@@ -229,6 +229,10 @@ describe('desktop shared drawing surface', () => {
         box.editor.commands.insertContent(' and nuts');
         await new Promise(r => setTimeout(r, 300));
         expect(scroll).toHaveBeenCalledTimes(1);
+        // Following a link elsewhere and then back to this line scrolls to it again.
+        setAnchor('main-text-line');
+        setAnchor('line-in-box');
+        await waitFor(() => expect(scroll).toHaveBeenCalledTimes(2));
     });
     it('offers page links in canvas text boxes too', async () => {
         const { surface } = mount();

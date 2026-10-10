@@ -134,9 +134,10 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
     const undo = useMemo(() => retainedHistory?.undo ?? new Y.UndoManager(root, { trackedOrigins: new Set([canvasOrigin]), captureTimeout: 500 }), [root, retainedHistory]);
     const selected = items.filter(i => selection.includes(i.id));
     // The link target already scrolled to, so later canvas edits don't pull the page back.
+    // Any new link (even back to the same line after another) scrolls again.
     const anchored = useRef<string | null>(null);
+    useEffect(() => { anchored.current = null; }, [anchorTarget]);
     useEffect(() => {
-        if (!anchorTarget) anchored.current = null;
         if (!anchorTarget || anchored.current === anchorTarget || !/^[\w-]{1,100}$/.test(anchorTarget)) return;
         // A whole canvas item, or a line inside a canvas text box (its editor
         // may still be mounting, so look again for a moment).
