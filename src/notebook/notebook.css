@@ -52,3 +52,13 @@
 .nb-crumb-nav:hover:not(:disabled){background:#e9ebeb}
 .nb-crumb-nav:disabled{opacity:.35}
 .nb-mentions-count{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--color-accent);color:#231a00;font-size:10px;font-weight:700;line-height:16px;text-align:center}
+
+/* View → Tabs layout: sections across the top. */
+.nb-section-tabs{display:flex;align-items:flex-end;gap:2px;padding:6px 12px 0;overflow-x:auto;background:var(--color-elevated);border-bottom:1px solid var(--color-line);flex-shrink:0}
+.nb-section-tabs select{height:28px;margin:0 8px 4px 0;font-size:12px}
+.nb-section-tabs button{display:inline-flex;align-items:center;gap:5px;padding:6px 14px;font-size:12px;white-space:nowrap;border-radius:6px 6px 0 0;border-bottom:3px solid var(--nb-tab);color:var(--color-text-muted);background:color-mix(in srgb,var(--nb-tab) 8%,transparent)}
+.nb-section-tabs button[aria-current=true]{color:var(--color-text-base);font-weight:600;background:color-mix(in srgb,var(--nb-tab) 22%,transparent)}
+.nb-section-tabs button:hover{color:var(--color-text-base)}
+.nb-section-tabs .nb-section-tab-add{border-bottom-color:transparent;background:transparent;padding:6px 8px}
+.nb-section-tabs-end{margin-inline-start:auto;display:inline-flex;align-items:center;gap:6px;padding-bottom:4px}
+.nb-section-tabs .nb-section-tabs-end button{border-bottom:0;background:transparent;border-radius:6px;padding:4px 8px}
