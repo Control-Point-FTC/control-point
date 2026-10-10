@@ -58,6 +58,8 @@ const commandPaths: Record<string, string> = {
   'Collapse ribbon': 'm6 15 6-6 6 6',
   'Expand ribbon': 'm6 9 6 6 6-6',
   Sticky: 'M5 4h14v10l-6 6H5V4Zm8 16v-6h6M8 8h8M8 11h5',
+  SortAsc: 'M7 4v16M3 16l4 4 4-4M14 5h3M14 10h5M14 15h7',
+  SortDesc: 'M7 4v16M3 16l4 4 4-4M14 5h7M14 10h5M14 15h3',
   Share: 'M12 3v12M7 8l5-5 5 5M5 13v7h14v-7',
   Background: 'M3 4h18v16H3V4Zm0 12 5-5 4 4 3-3 6 6M15 9h.01',
   Trash: 'M4 7h16M9 7V4h6v3m-9 0 1 13h10l1-13M10 11v6m4-6v6',
