@@ -8,6 +8,7 @@ import { notebookExtensions, notebookSchema, safeNotebookLink, validatedNotebook
 import { useNotebookWorkspace } from './workspaceContext';
 import { AutoCapitalize } from './autoCapitalize';
 import { PageLinkMenu } from './pageLinkMenu';
+import { LINK_STATES_REFRESH, LinkStates, linkStatesKey } from './linkStates';
 import { PageLinkPopup, PageLinkSourceContext } from './PageLinkPopup';
 import { SlashMenu } from './slashMenu';
 import { SlashMenuPopup } from './SlashMenuPopup';
@@ -136,7 +137,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const focusEditor = useCallback((value: Editor) => setActiveEditor(value), []);
   const removeEditor = useCallback((value: Editor) => setActiveEditor(current => current === value ? null : current), []);
   const editor = useEditor({
-    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, PageLinkMenu.configure(pageLinks), SlashMenu.configure({ enabled: () => !mobileRef.current }), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
+    extensions: [...notebookExtensions(true, !!sync.data?.editable,NotebookFileView), AutoCapitalize, PageLinkMenu.configure(pageLinks), LinkStates.configure({ pages: () => pagesRef.current }), SlashMenu.configure({ enabled: () => !mobileRef.current }), Collaboration.configure({ document: sync.doc, field: 'prosemirror' }), CollaborationCaret.configure({ provider: sync, user: { name: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.name ?? 'Team member', color: sync.data?.peers?.find(p => p.clientId === sync.doc.clientID)?.color ?? '#3b82f6' } }), Placeholder.configure({ placeholder: 'Write something worth sharing…' })],
     editable: !blocked,
     editorProps: { attributes: { class: 'nb-prose', 'aria-label': 'Page content', role: 'textbox', 'aria-multiline': 'true', spellcheck: 'true' }, handlePaste: (view, event) => {
       if (!mobileRef.current || !view.editable) return false;
@@ -155,6 +156,8 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
     }} },
     onFocus: ({ editor }) => { setActiveEditor(editor); reportSelection(editor); }, onSelectionUpdate: ({ editor }) => { redraw(v => v + 1); if (editor.isFocused) reportSelection(editor); }, onTransaction: () => redraw(v => v + 1),
   }, [sync]);
+  // Page links re-check their target when the page list changes.
+  useEffect(() => { if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(linkStatesKey, LINK_STATES_REFRESH)); }, [editor, pages]);
   useEffect(() => editor ? registerNotebookSelection(sync.pageId, () => selectedNotebookBlocks(editor.state)) : undefined, [editor, sync.pageId]);
   const title = String(sync.doc.getMap('meta').get('title') ?? '');
   const blockId = blockTarget===undefined?params.get('block'):blockTarget;

@@ -21,3 +21,8 @@
 .nb-slash-menu button span{font-size:11px;color:#666}
 .nb-slash-menu button[aria-selected=true]{background:#fff3b0}
 .nb-slash-help{margin:4px 6px 2px;font-size:10px;color:#777}
+
+/* Page link states. */
+.nb-prose .nb-link-missing,.nb-prose .nb-link-missing a{color:#9a3412!important;text-decoration-style:dashed!important}
+.nb-prose .nb-link-missing::after{content:" (unavailable)";font-size:.8em;color:#9a3412}
+.nb-prose .nb-link-locked::after{content:" · admin only";font-size:.8em;color:#8a6100}
