@@ -48,7 +48,7 @@ export function useHomeRibbonState(editor: Editor | null, disabled: boolean, not
 }
 export type HomeRibbonState = ReturnType<typeof useHomeRibbonState>;
 
-export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTags }: { editor: Editor; disabled: boolean; notify: (message: string) => void; state: HomeRibbonState; findingTags?: boolean; onFindTags?: () => void }) {
+export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTags, onCreateTask }: { editor: Editor; disabled: boolean; notify: (message: string) => void; state: HomeRibbonState; findingTags?: boolean; onFindTags?: () => void; onCreateTask?: () => void }) {
   const chain = () => editor.chain().focus();
   const { fontColor, setFontColor, highlight, setHighlight } = state;
 
@@ -154,6 +154,7 @@ export function HomeTab({ editor, disabled, notify, state, findingTags, onFindTa
         <RibbonItem onSelect={() => tag(null)}>Remove tag</RibbonItem>
       </RibbonMenu>
       {onFindTags && <RibbonButton label="Find tags" icon="FindTags" showLabel active={findingTags} onClick={onFindTags} />}
+      {onCreateTask && <RibbonButton label="Create task" icon="Record" showLabel disabled={disabled} onClick={onCreateTask} />}
     </RibbonGroup>
     <RibbonGroup label="Styles">
       <select aria-label="Paragraph style" title="Styles" className="nb-rselect nb-rstyle" disabled={disabled} value={style} onChange={e => setStyle(e.target.value)}>
