@@ -11,6 +11,8 @@ import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
 import { KIND_META, itemSummary, type ProposalStatus } from '../../../components/ActionProposalCard';
 import { useProposalContext } from '../../../services/proposalContext';
+import { extractNotebookOps } from '../../../services/notebookProposals';
+import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
 import {
   AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste,
   MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS, type AttachedImage, type AttachedPdf,
@@ -146,7 +148,9 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss }:
 }
 
 /** One complete Bruno reply. Memoized: parsing runs once per distinct text. */
-export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, busy, proposal, switchDismissed, onConfirmProposals, onDismissProposal, onSwitchToBruno, onDismissSwitch, think }: {
+export const BrunoReply = memo(function BrunoReply({ conversation, text, index, isLastModel, busy, proposal, switchDismissed, onConfirmProposals, onDismissProposal, onSwitchToBruno, onDismissSwitch, think }: {
+  /** Conversation identity for notebook proposal cards (see conversationScope). */
+  conversation: string;
   text: string; index: number; isLastModel: boolean; busy: boolean;
   /** Finished reply's thinking record — shown collapsed as "Thought for Ns". */
   think?: LiveThink | null;
@@ -156,6 +160,7 @@ export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, b
 }) {
   const proposals = useMemo(() => (text ? extractActionProposals(text) : []), [text]);
   const switchTo = useMemo(() => (text ? stripSwitchBlock(text).switchTo : null), [text]);
+  const notebookOps = useMemo(() => (text ? extractNotebookOps(text) : []), [text]);
   const status = proposal?.status || 'pending';
   return (
     <div className="flex gap-3">
@@ -166,6 +171,7 @@ export const BrunoReply = memo(function BrunoReply({ text, index, isLastModel, b
         {proposals.length > 0 && status !== 'dismissed' && (
           <ProposalCard proposals={proposals} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
+        {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} />}
         {isLastModel && switchTo === 'bruno' && !switchDismissed && !busy && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={onSwitchToBruno}>Yes, switch to Bruno</Button>

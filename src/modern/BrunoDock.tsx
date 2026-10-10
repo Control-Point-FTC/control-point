@@ -14,6 +14,7 @@ import { Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, Dro
 import BrunoPanel from '../components/BrunoPanel';
 import { BRUNO_TITLE } from '../components/brunoStarters';
 import { useBrunoPanelChat, BRUNO_RESOURCES, OUTPUT_LEVELS } from '../components/bruno/useBrunoPanelChat';
+import { conversationScope, useReceiptKey } from '../services/notebookProposals';
 import { useInterfaceMode } from './interfaceMode';
 import { BrunoAvatar, BrunoComposer, BrunoReply, LiveReply, UserTurn } from './pages/bruno/BrunoParts';
 
@@ -57,6 +58,7 @@ const TIP_MS = 9000;
 
 export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onActiveChatId, onUserSaved }: PanelProps) {
   const c = useBrunoPanelChat({ open, onClose, currentUser, botName, onActiveChatId, onUserSaved });
+  const draftConversation = useReceiptKey();
   const scrollRef = useRef<HTMLDivElement>(null);
   // Follow the conversation; the welcome stays scrolled to its top.
   useEffect(() => {
@@ -186,7 +188,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                   if (c.busy && i === last) return <LiveReply key={i} text={m.text} liveThink={think} />;
                   return (
                     <BrunoReply
-                      key={i} text={m.text} index={i} isLastModel={false} busy={c.busy} think={think}
+                      key={i} conversation={conversationScope(c.chatId, draftConversation)} text={m.text} index={i} isLastModel={false} busy={c.busy} think={think}
                       proposal={c.proposalState[i]} switchDismissed
                       onConfirmProposals={c.confirmProposals} onDismissProposal={c.dismissProposal}
                       onSwitchToBruno={() => {}} onDismissSwitch={() => {}}

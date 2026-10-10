@@ -14,6 +14,7 @@ import { useIsNarrow } from '../../../components/scout/ScoutUi';
 import { useBrunoConversation } from '../../../components/bruno/useBrunoConversation';
 import { nextStarters } from '../../../components/brunoStarters';
 import { BrunoAvatar, BrunoComposer, BrunoReply, LiveReply, UserTurn } from './BrunoParts';
+import { conversationScope, useReceiptKey } from '../../../services/notebookProposals';
 
 const STARTERS: { label: string; prompts: string[] }[] = [
   { label: 'Do it for me', prompts: [
@@ -45,6 +46,7 @@ function timeAgo(iso?: string) {
 
 export function BrunoPage(props: any) {
   const c = useBrunoConversation({ currentUser: props.currentUser, hasScope: props.hasScope, botName: props.botName });
+  const draftConversation = useReceiptKey();
   const narrow = useIsNarrow();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -162,7 +164,7 @@ export function BrunoPage(props: any) {
                   {c.messages.map((m, i) => (m.role === 'user'
                     ? <UserTurn key={i} text={m.text} images={(m as any).images?.length} pdfs={(m as any).pdfs?.length} />
                     : <BrunoReply
-                        key={i} text={m.text} index={i} isLastModel={i === c.lastModelIdx} busy={c.busy} think={c.thinkByIndex[i]}
+                        key={i} conversation={conversationScope(c.activeId, draftConversation)} text={m.text} index={i} isLastModel={i === c.lastModelIdx} busy={c.busy} think={c.thinkByIndex[i]}
                         proposal={c.proposalState[i]} switchDismissed={c.dismissedSwitch.includes(i)}
                         onConfirmProposals={c.confirmProposals} onDismissProposal={c.dismissProposal}
                         onSwitchToBruno={c.switchToBruno} onDismissSwitch={c.dismissSwitch}

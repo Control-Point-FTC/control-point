@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Send, Sparkles, ChevronUp, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import '../../i18n';
 import { BrunoMarkdown } from '../BrunoMarkdown';
 import BrunoIcon from '../BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from '../ActionProposalCard';
+import { extractNotebookOps, newReceiptKey } from '../../services/notebookProposals';
+import { NotebookProposalCard } from '../bruno/NotebookProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
 import {
   streamBuildHelper,
@@ -96,7 +98,11 @@ export default function BrunoBar({ botName }: { botName?: string }) {
     }
   };
 
+  // The bar keeps no chat history: each expanded session is its own conversation.
+  const conversation = useRef<string>('');
+  if (!conversation.current) conversation.current = newReceiptKey();
   const collapse = () => {
+    conversation.current = newReceiptKey();
     setExpanded(false);
     setMessages([]);
     setProposals([]);
@@ -177,6 +183,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
               <BrunoMarkdown>{stripEventBlocks(lastReply.text)}</BrunoMarkdown>
             </div>
           )}
+          {!busy && lastReply && extractNotebookOps(lastReply.text).length > 0 && <NotebookProposalCard key={messages.length} ops={extractNotebookOps(lastReply.text)} scope={`draft:${conversation.current}:${messages.length - 1}:${lastReply.text}`} />}
           {proposals.length > 0 && (
             <ActionProposalCard
               proposals={proposals}
