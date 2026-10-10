@@ -92,16 +92,20 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     return () => { navigator.push = originalPush; navigator.replace = originalReplace; };
   }, [navigator]);
   const mounted = useRef(true);
+  const creatingRef = useRef(false); // claimed before leave() so a second click during the save cannot POST a duplicate
+  const loadFailedRef = useRef(false); // set when the tree reload inside mutate fails
+  const closeDrawerAfterRename = useRef(false); // mobile: keep the drawer open for the rename box, close it when rename ends
   const loadTree = useCallback(async () => {
     try {
       const value = await apiJson<NotebookTree>('/api/notebook/tree', { cache: 'no-store' });
       if (!mounted.current) return;
+      loadFailedRef.current = false;
       setTree(value);
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
         void current.discardRecovery(); syncRef.current = null; setSync(null); setError('This page is no longer available.');
       }
-    } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'Cannot load notebooks'); }
+    } catch (e) { loadFailedRef.current = true; if (mounted.current) setError(e instanceof Error ? e.message : 'Cannot load notebooks'); }
   }, []);
   useEffect(() => {
     mounted.current = true;
@@ -159,39 +163,53 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (kind !== 'page' && !tree.permissions.organize) { setError('Notebook organizing permission is required.'); return; }
     if (kind === 'page' && !target.sectionId) { setError('Create a notebook section before adding a page.'); return; }
     void (async () => {
-      if (!await leave()) return;
-      let created = 0;
-      await mutate(async () => {
-        const body = kind === 'page'
-          ? { title: 'Untitled', sectionId: target.sectionId, parentId: target.parentId ?? null, content: templateId ? notebookTemplate(templateId) : undefined }
-          : kind === 'section'
-            ? { title: 'Untitled', notebookId: target.notebookId }
-            : { title: 'Untitled' };
-        const res = await apiJson<{ id: number }>(`/api/notebook/${plural[kind]}`, { method: 'POST', body: JSON.stringify(body) });
-        created = res.id;
-      });
-      if (!created || !mounted.current) return;
-      // Make sure the new row is visible: expand its notebook/section/parent chain.
-      const openKeys = new Set<string>();
-      if (kind === 'page') {
-        const section = tree.sections.find(s => s.id === target.sectionId);
-        openKeys.add(`section:${section?.id}`); openKeys.add(`notebook:${section?.notebookId}`);
-        let parent = target.parentId ?? null;
-        for (let depth = 0; parent && depth < 6; depth++) { openKeys.add(`page:${parent}`); parent = tree.pages.find(p => p.id === parent)?.parentId ?? null; }
-      } else if (kind === 'section') {
-        openKeys.add(`notebook:${target.notebookId}`);
+      if (creatingRef.current) return;
+      creatingRef.current = true;
+      try {
+        if (!await leave()) return;
+        let created = 0;
+        loadFailedRef.current = false;
+        const ok = await mutate(async () => {
+          const body = kind === 'page'
+            ? { title: 'Untitled', sectionId: target.sectionId, parentId: target.parentId ?? null, content: templateId ? notebookTemplate(templateId) : undefined }
+            : kind === 'section'
+              ? { title: 'Untitled', notebookId: target.notebookId }
+              : { title: 'Untitled' };
+          const res = await apiJson<{ id: number }>(`/api/notebook/${plural[kind]}`, { method: 'POST', body: JSON.stringify(body) });
+          created = res.id;
+        });
+        // If the reload failed, the error is already shown — do not clear it, and do not
+        // navigate/rename against a stale tree where the new row cannot render.
+        if (!ok || !created || loadFailedRef.current || !mounted.current) return;
+        // Make sure the new row is visible: expand its notebook/section/parent chain.
+        const openKeys = new Set<string>();
+        if (kind === 'page') {
+          const section = tree.sections.find(s => s.id === target.sectionId);
+          openKeys.add(`section:${section?.id}`); openKeys.add(`notebook:${section?.notebookId}`);
+          let parent = target.parentId ?? null;
+          for (let depth = 0; parent && depth < 6; depth++) { openKeys.add(`page:${parent}`); parent = tree.pages.find(p => p.id === parent)?.parentId ?? null; }
+        } else if (kind === 'section') {
+          openKeys.add(`notebook:${target.notebookId}`);
+        }
+        const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
+        if (writingFocus) setWritingFocus(false); // the rename box lives in the panes, which writing focus hides
+        if (kind === 'page') {
+          setParams({ page: String(created) });
+          // On mobile the drawer holds the rename box — keep it open until rename ends.
+          if (mobile) closeDrawerAfterRename.current = true; else setDrawer(false);
+        }
+        setError(''); setAnnouncement(`${kind === 'page' ? 'Page' : kind === 'section' ? 'Section' : 'Notebook'} created. Type a name and press Enter.`);
+        setRenaming({ kind, item: { id: created, title: 'Untitled' } as Item, title: 'Untitled' });
+      } finally {
+        creatingRef.current = false;
       }
-      const next = collapsed.filter(key => !openKeys.has(key)); setCollapsed(next); savePreference(collapsedKey, next);
-      if (kind === 'page') { setParams({ page: String(created) }); setDrawer(false); }
-      setError(''); setAnnouncement(`${kind === 'page' ? 'Page' : kind === 'section' ? 'Section' : 'Notebook'} created. Type a name and press Enter.`);
-      setRenaming({ kind, item: { id: created, title: 'Untitled' } as Item, title: 'Untitled' });
     })();
   };
   const mutate = async (fn: () => Promise<unknown>) => {
-    if (busy) return;
+    if (busy) return false;
     setBusy(true); setError('');
-    try { await fn(); await loadTree(); setDialog(null); }
-    catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'Notebook action failed'); }
+    try { await fn(); await loadTree(); setDialog(null); return true; }
+    catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : 'Notebook action failed'); return false; }
     finally { if (mounted.current) setBusy(false); }
   };
   useEffect(() => {
@@ -227,12 +245,14 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const isCollapsed = (kind: Kind, id: number) => collapsed.includes(`${kind}:${id}`);
   const toggleCollapse = (kind: Kind, id: number) => { const key = `${kind}:${id}`; const value = collapsed.includes(key) ? collapsed.filter(n => n !== key) : [...collapsed, key]; setCollapsed(value); savePreference(collapsedKey, value); };
   const renameInput = (kind: Kind, item: Item) => renaming?.kind === kind && renaming.item.id === item.id ? <Input autoFocus aria-label={`Rename ${kind}`} className="nb-inline-rename" maxLength={200} value={renaming.title} onChange={e => setRenaming({ ...renaming, title: e.target.value })} onBlur={() => { void finishRename(); }} onKeyDown={e => {
-    e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); setRenaming(null); } if (e.key === 'Enter') { e.preventDefault(); void finishRename(); }
+    e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); endRename(); } if (e.key === 'Enter') { e.preventDefault(); void finishRename(); }
   }} /> : null;
+  // Ends inline rename; on mobile after instant creation, also closes the drawer we kept open for the rename box.
+  const endRename = () => { setRenaming(null); if (closeDrawerAfterRename.current) { closeDrawerAfterRename.current = false; setDrawer(false); } };
   const finishRename = async () => {
     if (!renaming || renameSaving.current) return;
     const { kind, item, title } = renaming, value = title.trim();
-    if (!value) { setError('A title is required.'); return; } if (value === item.title) { setRenaming(null); return; }
+    if (!value) { setError('A title is required.'); return; } if (value === item.title) { endRename(); return; }
     renameSaving.current = true;
     try {
       if (!await leave()) return;
@@ -243,6 +263,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
         else await apiJson(base, { method: 'PATCH', body: JSON.stringify({ title: value }) });
         setRenaming(null);
       });
+      if (closeDrawerAfterRename.current) { closeDrawerAfterRename.current = false; setDrawer(false); }
     } finally { renameSaving.current = false; }
   };
   const reorder = async (kind: Kind, item: Item, direction: -1 | 1) => {

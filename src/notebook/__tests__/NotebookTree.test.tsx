@@ -98,6 +98,28 @@ describe('notebook hierarchy controls', () => {
     const renameBox=await screen.findByRole('textbox',{name:'Rename page'});
     expect(renameBox).toHaveValue('Untitled');
   });
+  it('ignores a second create click while the first is still in flight', async () => {
+    mount(); await screen.findByRole('button',{name:'Robot notes'});
+    const btn = screen.getByRole('button',{name:'New section'});
+    fireEvent.click(btn); fireEvent.click(btn);
+    await screen.findByRole('textbox',{name:'Rename section'});
+    const posts = vi.mocked(apiJson).mock.calls.filter(([p,o])=>p==='/api/notebook/sections'&&o?.method==='POST');
+    expect(posts).toHaveLength(1);
+  });
+  it('keeps the reload error and skips rename when the tree reload fails after creation', async () => {
+    mount(); await screen.findByRole('button',{name:'Robot notes'});
+    const orig = vi.mocked(apiJson).getMockImplementation()!;
+    let failTree = false;
+    vi.mocked(apiJson).mockImplementation(async (path, options) => {
+      if (path === '/api/notebook/tree' && failTree) throw new Error('reload boom');
+      return orig(path, options);
+    });
+    failTree = true;
+    fireEvent.click(screen.getByRole('button',{name:'New section'}));
+    await waitFor(()=>expect(screen.getByText('reload boom')).toBeTruthy());
+    expect(screen.queryByRole('textbox',{name:'Rename section'})).toBeNull();
+    expect(vi.mocked(apiJson).mock.calls.filter(([p,o])=>p==='/api/notebook/sections'&&o?.method==='POST')).toHaveLength(1);
+  });
   it('remembers independent collapse keys even when a book and section share an ID', async () => {
     mount(); const section = await screen.findByRole('button', { name: 'Build' });
     fireEvent.keyDown(section, { key: 'ArrowLeft' });
