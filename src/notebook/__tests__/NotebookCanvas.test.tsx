@@ -26,6 +26,8 @@ describe('desktop shared drawing surface', () => {
         const {sync,surface}=mount(true,false,0,false,'block-pdf-1');
         fireEvent.click(screen.getByRole('button',{name:'Drawing type'}));
         pointer(screen.getByText('Flow text remains here'),'pointerdown',100,100);
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        fireEvent.keyDown(surface,{key:'n'});
         expect(canvasJSON(sync.doc).objects[0]).toMatchObject({type:'text',pdfScope:'block-pdf-1'});
     });
     it('anchors PDF ink to its page without selecting or erasing another surface',()=>{
@@ -108,6 +110,40 @@ describe('desktop shared drawing surface', () => {
         pointer(surface, 'pointermove', 150, 125);
         pointer(surface, 'pointercancel', 150, 125);
         expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+    });
+    it('puts a caret where you click and makes the text box when you type', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 300, 200);
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        expect(surface.querySelector('.nb-canvas-caret')).toBeTruthy();
+        fireEvent.keyDown(surface, { key: 'Escape' });
+        expect(surface.querySelector('.nb-canvas-caret')).toBeNull();
+        fireEvent.keyDown(surface, { key: 'h' });
+        expect(canvasJSON(sync.doc).objects).toHaveLength(0);
+        pointer(surface, 'pointerdown', 300, 200);
+        fireEvent.keyDown(surface, { key: 'h' });
+        const [box] = canvasJSON(sync.doc).objects;
+        expect(box).toMatchObject({ type: 'text', x: 300, y: 200 });
+        expect(JSON.stringify((box as any).content)).toContain('"text":"H"');
+    });
+    it('keeps keys typed while the new text box is getting ready', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        pointer(surface, 'pointerdown', 50, 50);
+        for (const key of ['w', 'h', 'y', 'Backspace', 'o']) fireEvent.keyDown(surface, { key });
+        await waitFor(() => expect(JSON.stringify((canvasJSON(sync.doc).objects[0] as any).content)).toContain('"text":"Who"'));
+        await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Canvas text'));
+    });
+    it('makes a text box at once on double-click, with move and width handles', () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 120, clientY: 80 });
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ type: 'text', x: 120, y: 80 });
+        const width = (canvasJSON(sync.doc).objects[0] as any).width;
+        fireEvent.keyDown(screen.getByRole('button', { name: /Move text box/ }), { key: 'ArrowRight', shiftKey: true });
+        fireEvent.keyDown(screen.getByRole('separator', { name: /Text box width/ }), { key: 'ArrowLeft' });
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: 130, y: 80, width: width - 1 });
     });
     it('prevents readers and mobile users from changing canvas objects', () => {
         const { sync, surface } = mount(false, true);
