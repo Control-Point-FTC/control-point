@@ -16,6 +16,8 @@ import { apiJson } from '../services/api';
 import type { NotebookPageItem, NotebookPageData } from './types';
 import { confirmDialog } from '../components/dialog';
 import { parseNotebookPageLink } from './pageLinks';
+import { appRecordPath } from './recordLinks';
+import { useNavigate } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
 import { NotebookDiscussions } from './NotebookDiscussions';
 import { useNotebookMobile } from './useNotebookMobile';
@@ -58,6 +60,7 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   const [, redraw] = useState(0);
   const mobile = useNotebookMobile();
   const mobileRef = React.useRef(mobile); mobileRef.current = mobile;
+  const navigate = useNavigate(); const navigateRef = React.useRef(navigate); navigateRef.current = navigate;
   const blocked = sync.restoring || !sync.data?.editable || ['conflict', 'unavailable', 'error'].includes(sync.status);
   const [params] = useSearchParams();
   const [backlinks, setBacklinks] = useState<NotebookPageItem[]>([]);
@@ -145,6 +148,9 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       let internal = href;
       try { if (href && new URL(href, window.location.origin).origin === window.location.origin) internal = new URL(href, window.location.origin).pathname + new URL(href, window.location.origin).search; } catch { return false; }
       const link = parseNotebookPageLink(internal);
+      // Links to tasks, meetings and other records open in the app.
+      const record = link ? null : appRecordPath(href);
+      if (record) { event.preventDefault(); navigateRef.current(record); return true; }
       if (!link) { if (href && safeNotebookLink(href)) { event.preventDefault(); window.open(href, '_blank', 'noopener,noreferrer'); return true; } return false; }
       event.preventDefault(); if(event.altKey&&onOpenOther)onOpenOther(link.pageId,link.blockId);else onNavigate(link.pageId, link.blockId); return true;
     }} },
