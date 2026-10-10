@@ -52,6 +52,10 @@ describe('notebook hierarchy controls', () => {
       const label = (await screen.findAllByText(name))[0];
       expect(rowMenuTrigger(label)?.getAttribute('aria-label')).toBe(`Actions for ${name}`);
     }
+    // Recent and Pinned list pages without the tree around them; same menu.
+    fireEvent.click(screen.getByRole('button', { name: 'Recent' }));
+    const recent = (await screen.findAllByText('Drive'))[0];
+    expect(rowMenuTrigger(recent)?.getAttribute('aria-label')).toBe('Actions for Drive');
   });
   it('falls back to a surviving section after the selected empty section disappears', async () => {
     const tree = mount('/notebook', true);
