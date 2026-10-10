@@ -10,13 +10,14 @@ import { notebookCommandGlyph } from './NotebookIcons';
 import { HomeTab, useHomeRibbonState } from './ribbon/HomeTab';
 import { HistoryTab } from './ribbon/HistoryTab';
 import { RibbonButton, RibbonGroup } from './ribbon/RibbonParts';
+import { Thesaurus } from './ribbon/Thesaurus';
 import './ribbon/ribbon.css';
 
 const SYMBOLS = ['©','®','™','§','¶','†','‡','•','…','–','—','‘','’','“','”','«','»','‹','›','¡','¿','×','÷','±','∓','≈','≠','≤','≥','√','∞','∑','∏','∫','∂','∆','π','θ','λ','μ','Ω','α','β','γ','δ','σ','φ','ψ','←','↑','→','↓','↔','⇒','⇐','⇔','★','☆','✓','✗','⚠','●','○','◆','◇','▲','▼','°','′','″','€','£','¥','₹'];
 const EMOJI = ['😀','😁','😂','🤣','😊','😍','🤔','😮','😢','😡','👍','👎','👏','🙌','💪','✌️','🤝','👀','🧠','💡','📌','📝','📊','📅','✅','❌','⭐','🔥','🎉','🚀','🤖','🔧','⚙️','🔩','💻','📐','📏','🔬','🧪','⚡','🔋','🏆','🎯','💯','❓','❗','💤','🎓','📚','✏️','📎','🔗','💬','👥','🕒','📍'];
 const CODE_LANGUAGES = ['javascript','typescript','python','java','cpp','json','bash','html','css'];
 const SHORTCUTS: [string, string][] = [
-  ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'], ['Undo / redo', 'Ctrl+Z / Ctrl+Y'], ['Find in page', 'Ctrl+F'],
+  ['Bold / italic / underline', 'Ctrl+B / Ctrl+I / Ctrl+U'], ['Undo / redo', 'Ctrl+Z / Ctrl+Y'], ['Find in page', 'Ctrl+F'], ['Thesaurus', 'Shift+F7'],
   ['Indent / outdent a list item', 'Tab / Shift+Tab'], ['Paste as plain text', 'Ctrl+Shift+V'],
   ['Rename the selected page or section', 'F2'], ['Move to trash', 'Delete'], ['Reorder in the sidebar', 'Alt+Shift+↑ / ↓'],
   ['Drawing: back to typing', 'Esc'], ['Drawing: nudge the selection', 'Arrow keys'],
@@ -56,6 +57,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   const [notice, setNotice] = useState('');
   const [finding, setFinding] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
+  const [thesaurus, setThesaurus] = useState(false);
   const [spellcheck, setSpellcheck] = useState(() => readPref('cp-notebook-spellcheck') !== 'off');
   const [picker, setPicker] = useState<null | 'symbols' | 'emoji'>(null);
   // A picker must never stay open (or insert) once the editor is read-only.
@@ -69,7 +71,11 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
   }, [picker]);
   useEffect(() => {
     if (!editor) return;
-    const find = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && event.target instanceof Node && editor.view.dom.closest('.nb-document')?.contains(event.target)) { event.preventDefault(); setFinding(true); setGroup('review'); setCollapsed(false); } };
+    const find = (event: KeyboardEvent) => {
+      if (!(event.target instanceof Node) || !editor.view.dom.closest('.nb-document')?.contains(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') { event.preventDefault(); setFinding(true); setGroup('review'); setCollapsed(false); }
+      else if (event.shiftKey && event.key === 'F7') { event.preventDefault(); setThesaurus(true); }
+    };
     window.addEventListener('keydown', find); return () => window.removeEventListener('keydown', find);
   }, [editor]);
   // Remembered colors and an armed format painter survive tab switches.
@@ -131,7 +137,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
     draw: pagePanel('draw'),
     history: <HistoryTab versions={pagePanel('history')} pageId={pageId} notify={setNotice} />,
     review: <>
-      <RibbonGroup label="Proofing"><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /></RibbonGroup>
+      <RibbonGroup label="Proofing"><RibbonButton label="Thesaurus" showLabel shortcut="Shift+F7" active={thesaurus} onClick={() => setThesaurus(v => !v)} /><RibbonButton label="Spelling" showLabel active={spellcheck} onClick={() => { const next = !spellcheck; setSpellcheck(next); writePref('cp-notebook-spellcheck', next ? 'on' : 'off'); setNotice(next ? 'Spelling marks on. Right-click a marked word for suggestions.' : 'Spelling marks off.'); }} /></RibbonGroup>
       <RibbonGroup label="Find"><RibbonButton label="Find in page" icon="Find" showLabel shortcut="Ctrl+F" active={finding} onClick={() => setFinding(v => !v)} /></RibbonGroup>
       <RibbonGroup label="Comments">
         <RibbonButton label="Discussions" icon="Discussion" showLabel onClick={() => { const input = document.getElementById(`nb-comment-input-${pageId}`); input?.scrollIntoView({ block: 'center', behavior: 'smooth' }); input?.focus(); }} />
@@ -151,6 +157,7 @@ export function NotebookToolbar({ editor, disabled, pages, pageId, preferenceKey
       {content[group]}
       {notice && <span role="status" className="nb-small nb-toolbar-shared">{notice}</span>}
     </div>}
+    {thesaurus && <Thesaurus editor={editor} disabled={disabled} onClose={() => setThesaurus(false)} />}
     {finding && <div className="nb-toolbar-shared nb-find-wrap"><NotebookFind editor={editor} disabled={disabled} onClose={() => setFinding(false)} /></div>}
     <Dialog open={linkOpen} onOpenChange={setLinkOpen}><DialogContent><DialogHeader><DialogTitle>Link to a page or website</DialogTitle><DialogDescription>Page links stay connected when pages are moved. Protected destinations stay available only to admins.</DialogDescription></DialogHeader>
       <form className="nb-form" onSubmit={e => {

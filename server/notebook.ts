@@ -19,6 +19,7 @@ import {notebookTrash} from './notebookTrash.js';
 import {notebookRestore} from './notebookRecovery.js';
 import {notebookTrashPage} from './notebookTrashPreview.js';
 import {notebookPurge} from './notebookPurge.js';
+import { lookUpWord } from './thesaurus.js';
 
 export class NotebookError extends Error {
   constructor(message: string, readonly status = 400, readonly extra: Record<string, unknown> = {}) { super(message); }
@@ -764,6 +765,8 @@ export function registerNotebookRoutes(app: any, deps: NotebookDeps, store = new
   app.put('/api/notebook/read', handle((ctx, req) => store.markRead(ctx, req.body ?? {})));
   app.get('/api/notebook/recent', handle((ctx, req) => store.recent(ctx, { since: req.query.since, author: req.query.author })));
   app.get('/api/notebook/authors', handle(ctx => store.authors(ctx)));
+  // Review → Thesaurus (WordNet, on this server; no AI).
+  app.get('/api/notebook/thesaurus', handle(async (_ctx, req) => lookUpWord(String(req.query.word ?? '').slice(0, 60)) ?? { word: String(req.query.word ?? '').slice(0, 60), senses: [] }));
   app.put('/api/notebook/mentions/:id/read', handle((ctx, req) => store.readMention(ctx, id(req.params.id))));
   for (const [plural, kind] of [["notebooks", "notebook"], ["sections", "section"], ["pages", "page"]] as const) {
     app.post(`/api/notebook/${plural}`, handle((ctx, req) => store.create(ctx, kind, req.body ?? {})));
