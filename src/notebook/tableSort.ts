@@ -3,6 +3,7 @@
 // empty cells go last either way; equal rows keep their order.
 import type { EditorState, Transaction } from '@tiptap/pm/state';
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
 import { isInTable, selectedRect } from '@tiptap/pm/tables';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -14,8 +15,10 @@ const asNumber = (text: string) => {
 export function compareCells(a: string, b: string): number {
   const x = a.trim(), y = b.trim();
   if (!x || !y) return x ? -1 : y ? 1 : 0;
+  // Numbers come before text, so a mixed column has one consistent order.
   const nx = asNumber(x), ny = asNumber(y);
   if (nx !== null && ny !== null) return nx - ny;
+  if ((nx !== null) !== (ny !== null)) return nx !== null ? -1 : 1;
   return collator.compare(x, y);
 }
 
@@ -42,6 +45,21 @@ export function sortTable(state: EditorState, dispatch: ((tr: Transaction) => vo
     return sign * compareCells(a.text, b.text) || a.i - b.i;
   });
   if (sorted.every((entry, i) => entry.i === i)) return null;
-  dispatch?.(state.tr.replaceWith(rect.tableStart, rect.tableStart + table.content.size, Fragment.from([...rows.slice(0, headerCount), ...sorted.map(s => s.row)])).scrollIntoView());
+  if (!dispatch) return null;
+  // Keep the cursor in the same cell (and spot in it) as its row moves.
+  const rowStarts: number[] = [];
+  let offset = rect.tableStart;
+  for (const row of rows) { rowStarts.push(offset); offset += row.nodeSize; }
+  const head = state.selection.head;
+  const cursorRow = rowStarts.findIndex((start, i) => head >= start && head < start + rows[i].nodeSize);
+  const ordered = [...rows.slice(0, headerCount), ...sorted.map(s => s.row)];
+  const tr = state.tr.replaceWith(rect.tableStart, rect.tableStart + table.content.size, Fragment.from(ordered));
+  if (cursorRow >= 0) {
+    const moved = cursorRow < headerCount ? cursorRow : headerCount + sorted.findIndex(s => s.i === cursorRow - headerCount);
+    let start = rect.tableStart;
+    for (let i = 0; i < moved; i++) start += ordered[i].nodeSize;
+    tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(start + (head - rowStarts[cursorRow]), tr.doc.content.size))));
+  }
+  dispatch(tr.scrollIntoView());
   return null;
 }

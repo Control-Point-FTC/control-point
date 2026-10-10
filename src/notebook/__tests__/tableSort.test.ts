@@ -51,6 +51,23 @@ describe('table sort', () => {
     expect(sortTable(merged.state, merged.view.dispatch, 'asc')).toMatch(/merged cells/);
   });
 
+  it('keeps the cursor in its cell as the row moves', () => {
+    const editor = table([['Part'], ['Gear'], ['Axle'], ['Bolt']]);
+    cursorIn(editor, 1, 0);                         // in "Gear"
+    editor.commands.setTextSelection(editor.state.selection.from + 2); // "Ge|ar"
+    sortTable(editor.state, editor.view.dispatch, 'asc');
+    const { $from } = editor.state.selection;
+    expect($from.parent.textContent).toBe('Gear');
+    expect($from.parentOffset).toBe(2);
+  });
+
+  it('orders mixed numbers and text the same way whatever the starting order', () => {
+    const values = ['1,000', '900', '2x'];
+    const once = [...values].sort(compareCells), again = [...values].reverse().sort(compareCells);
+    expect(once).toEqual(['900', '1,000', '2x']);
+    expect(again).toEqual(once);
+  });
+
   it('compares money, percentages and text sensibly', () => {
     expect(['$1,200', '$95', '$1,000'].sort(compareCells)).toEqual(['$95', '$1,000', '$1,200']);
     expect(['10%', '9%'].sort(compareCells)).toEqual(['9%', '10%']);
