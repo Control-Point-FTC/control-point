@@ -81,6 +81,14 @@ describe('slash menu', () => {
     }
   });
 
+  it('converts the innermost list, even inside an outer list of the chosen type', () => {
+    const editor = make('<ul><li><p>outer</p><ol><li><p></p></li></ol></li></ul>');
+    editor.commands.focus('end'); type(editor, '/bullet'); key(editor, 'Enter');
+    const outer = editor.getJSON().content![0];
+    expect(outer.type).toBe('bulletList');
+    expect(JSON.stringify(outer)).not.toContain('orderedList');
+  });
+
   it('stops taking keys once it is switched off, even while open', () => {
     let on = true;
     const element = document.createElement('div'); document.body.append(element);

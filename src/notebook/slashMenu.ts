@@ -11,8 +11,18 @@ export type SlashState = { active: boolean; from: number; to: number; query: str
 const chainAt = (editor: Editor, range: { from: number; to: number }) => editor.chain().focus().deleteRange(range);
 /** Choosing the list (or quote) you're already in keeps it, rather than
  *  toggling it off; another list type converts. */
+const LISTS = ['bulletList', 'orderedList', 'taskList'];
+/** The innermost list around the cursor (outer lists don't count). */
+const nearestList = (e: Editor) => {
+  const { $from } = e.state.selection;
+  for (let d = $from.depth; d > 0; d--) { const name = $from.node(d).type.name; if (LISTS.includes(name)) return name; }
+  return null;
+};
 const into = (name: string, toggle: (c: ReturnType<typeof chainAt>) => ReturnType<typeof chainAt>) =>
-  (e: Editor, r: { from: number; to: number }) => { const already = e.isActive(name); const c = chainAt(e, r); (already ? c : toggle(c)).run(); };
+  (e: Editor, r: { from: number; to: number }) => {
+    const already = LISTS.includes(name) ? nearestList(e) === name : e.isActive(name);
+    const c = chainAt(e, r); (already ? c : toggle(c)).run();
+  };
 export const SLASH_ITEMS: SlashItem[] = [
   { id: 'text', label: 'Text', hint: 'Plain paragraph', keywords: 'paragraph normal body', run: (e, r) => chainAt(e, r).setParagraph().run() },
   { id: 'h1', label: 'Heading 1', hint: 'Big section title', keywords: 'title h1', run: (e, r) => chainAt(e, r).setHeading({ level: 1 }).run() },
