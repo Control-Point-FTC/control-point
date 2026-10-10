@@ -64,6 +64,11 @@ describe('notebook attachment upload',()=>{
     last.responseText=JSON.stringify({id:21,name:'drive.pdf',mimeType:'application/pdf',size:4});act(()=>last.onload());
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({attrs:expect.objectContaining({fileId:21,display:'pdf'})}));
   });
+  it('shows the file commands as unavailable on a read-only page',()=>{
+    sync.data.editable=false;
+    try{render(<Harness editor={{chain:()=>({}),isDestroyed:false}}/>);for(const name of ['Attach file','Pictures','File printout']){const input=screen.getByLabelText(name) as HTMLInputElement;expect(input.disabled).toBe(true);expect(input.closest('label')).toHaveAttribute('aria-disabled','true');}}
+    finally{sync.data.editable=true;}
+  });
   it('does not insert a finished upload after editing permission is revoked',()=>{
     vi.stubGlobal('XMLHttpRequest',Upload);const insert=vi.fn();render(<Harness editor={{chain:insert,isDestroyed:false}}/>);
     fireEvent.change(document.querySelector('input[type=file]')!,{target:{files:[new File(['abc'],'part.png')]}});
