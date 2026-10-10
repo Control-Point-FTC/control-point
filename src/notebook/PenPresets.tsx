@@ -16,6 +16,9 @@ const same = (a: PenPreset, b: PenPreset) => a.tool === b.tool && a.color.toLowe
 // The latest list per key in this window: edits build on it even when
 // storage is unavailable (private mode, full quota).
 const latest = new Map<string, PenPreset[]>();
+// Always listening (not just while Draw is open): another tab's change
+// replaces the remembered list, so later edits build on it.
+if (typeof window !== 'undefined') window.addEventListener('storage', e => { if (e.key && latest.has(e.key)) latest.delete(e.key); });
 export function readPens(key?: string): PenPreset[] {
   if (!key) return DEFAULT_PENS;
   const known = latest.get(key);

@@ -43,6 +43,16 @@ describe('favorite pens', () => {
     setItem.mockRestore();
   });
 
+  it("picks up another tab's changes even while Draw was closed", () => {
+    const view = render(<PenPresets storageKey="pens-tabs" current={{ tool: 'pen', color: '#16a34a', size: 6 }} onPick={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Save pen' }));
+    view.unmount();
+    const other = [{ tool: 'pen', color: '#000000', size: 2 }];
+    localStorage.setItem('pens-tabs', JSON.stringify(other));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'pens-tabs' }));
+    expect(readPens('pens-tabs')).toEqual(other);
+  });
+
   it('ignores damaged stored pens', () => {
     localStorage.setItem('damaged', JSON.stringify([{ tool: 'pen', color: 'red', size: 3 }, { tool: 'pen', color: '#000000', size: 2 }]));
     expect(readPens('damaged')).toEqual([{ tool: 'pen', color: '#000000', size: 2 }]);
