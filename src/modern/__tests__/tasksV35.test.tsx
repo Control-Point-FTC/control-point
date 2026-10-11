@@ -106,6 +106,11 @@ describe('Proof of completion', () => {
     const proof = within(sheet).getByRole('region', { name: /Proof of completion/ });
     expect(within(proof).getByText('Photo attached')).toBeInTheDocument();
     expect(within(proof).getByRole('img')).toHaveAttribute('src', '/api/files/9');
+    // A photo the browser can't show becomes an "open it" tile, not a broken image.
+    fireEvent.error(within(proof).getByRole('img'));
+    expect(within(proof).queryByRole('img')).not.toBeInTheDocument();
+    expect(within(proof).getByText(/Can't preview this photo/)).toBeInTheDocument();
+    expect(within(proof).getByRole('link', { name: /Open photo 1/ })).toHaveAttribute('href', '/api/files/9');
   });
 
   it('All completed keeps a task that was sent back', () => {

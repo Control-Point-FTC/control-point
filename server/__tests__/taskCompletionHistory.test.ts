@@ -31,11 +31,11 @@ afterAll(async () => { await t?.stop(); });
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
 /** POST /complete as multipart with a note and one photo. */
-async function completeWithPhoto(id: number, notes: string, session: string) {
+async function completeWithPhoto(id: number, notes: string, session: string, type = "image/png", name = "proof.png") {
   const boundary = "----cp-hist-boundary";
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="notes"\r\n\r\n${notes}\r\n`),
-    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="images"; filename="proof.png"\r\nContent-Type: image/png\r\n\r\n`),
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="images"; filename="${name}"\r\nContent-Type: ${type}\r\n\r\n`),
     PNG,
     Buffer.from(`\r\n--${boundary}--\r\n`),
   ]);
@@ -137,5 +137,38 @@ describe("completion history", () => {
     const blank = Number((await t.db.execute({ sql: "INSERT INTO tasks (team_id, title) VALUES (?, 'Blank')", args: [team] })).lastInsertRowid);
     await t.db.execute(backfill(sql));
     expect((await t.db.execute({ sql: "SELECT completion_history FROM tasks WHERE id = ?", args: [blank] })).rows[0]).toMatchObject({ completion_history: null });
+  });
+});
+
+describe("proof photos as files", () => {
+  it("a format browsers can't show (HEIC) is refused with a clear message", async () => {
+    const created = await t.post("/api/tasks", { title: "Photo from an iPhone", assignee_ids: [memberId] }, admin);
+    const id = created.body.id ?? created.body.task?.id;
+    const r = await completeWithPhoto(id, "Done", member, "image/heic", "IMG_0001.HEIC");
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/can't be shown in browsers/);
+    expect(await history(id)).toEqual([]);
+  });
+
+  it("files are served in byte ranges (videos need it to play and seek)", async () => {
+    const created = await t.post("/api/tasks", { title: "Range check", assignee_ids: [memberId] }, admin);
+    const id = created.body.id ?? created.body.task?.id;
+    expect((await completeWithPhoto(id, "Done", member)).status).toBe(200);
+    const url = (await history(id))[0].images[0];
+    const headers = new Headers({ Range: "bytes=1-3" });
+    withSession(headers, admin);
+    const part = await fetch(`${t.base}${url}`, { headers });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe(`bytes 1-3/${PNG.length}`);
+    expect(Buffer.from(await part.arrayBuffer())).toEqual(PNG.subarray(1, 4));
+    const whole = new Headers();
+    withSession(whole, admin);
+    const all = await fetch(`${t.base}${url}`, { headers: whole });
+    expect(all.status).toBe(200);
+    expect(all.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await all.arrayBuffer())).toEqual(PNG);
+    const bad = new Headers({ Range: `bytes=${PNG.length + 5}-` });
+    withSession(bad, admin);
+    expect((await fetch(`${t.base}${url}`, { headers: bad })).status).toBe(416);
   });
 });

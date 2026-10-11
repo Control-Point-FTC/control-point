@@ -8,22 +8,49 @@ import { cn } from '../../../components/cn';
 import { Button, Textarea, Tooltip, TooltipContent, TooltipTrigger } from '../../../components/ui-kit';
 import { apiFetch, assetUrl } from '../../../services/api';
 import { EmojiPicker, ReactionBar } from './Reactions';
-import { extractFirstUrl, formatFileSize, isImageFile, renderMessageText } from '../../../components/chat/chatFormat';
+import { extractFirstUrl, formatFileSize, renderMessageText } from '../../../components/chat/chatFormat';
+import { isImageName, isVideoName } from '../../../utils/mediaFiles';
 import { PresenceAvatar } from '../people/MembersTab';
 
 function ChatImage({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
+    // Can't show it here; the file may still download (or be a format this
+    // browser can't draw), so keep a way to open it.
     return (
-      <p className="flex max-w-xs items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        <ImageOff className="size-4 shrink-0" /> This image is no longer available — ask the sender to upload it again.
-      </p>
+      <a href={src} target="_blank" rel="noopener noreferrer" className="flex max-w-xs items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/60">
+        <ImageOff className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1">Can't preview {alt}. <span className="font-medium text-foreground underline-offset-2 hover:underline">Open it</span></span>
+        <Download className="size-4 shrink-0" />
+      </a>
     );
   }
   return (
     <a href={src} target="_blank" rel="noopener noreferrer" className="block w-fit">
       <img src={src} alt={alt} onError={() => setFailed(true)} className="max-h-72 max-w-full rounded-lg border border-border object-cover sm:max-w-sm" />
     </a>
+  );
+}
+
+/** A video attachment, playable in place; falls back to a download card. */
+function ChatVideo({ src, name, size }: { src: string; name: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <a href={src} target="_blank" rel="noopener noreferrer" className="flex max-w-sm items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 hover:bg-muted/50">
+        <FileText className="size-5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{name}</span>
+          <span className="block text-xs text-muted-foreground">Can't play here: download it{size ? ` · ${formatFileSize(size)}` : ''}</span>
+        </span>
+        <Download className="size-4 text-muted-foreground" />
+      </a>
+    );
+  }
+  return (
+    <video src={src} controls preload="metadata" playsInline aria-label={name} onError={() => setFailed(true)}
+      onClick={(e) => e.stopPropagation()}
+      className="max-h-80 max-w-full rounded-lg border border-border bg-black sm:max-w-md" />
   );
 }
 
@@ -151,8 +178,10 @@ export const MessageRow = memo(function MessageRow({ msg, sender, grouped, mine,
         )}
         {msg.file_path && (
           <div className="mt-1.5">
-            {isImageFile(msg.file_path)
+            {isImageName(msg.file_name, msg.file_path)
               ? <ChatImage src={fileUrl!} alt={msg.file_name || 'Attachment'} />
+              : isVideoName(msg.file_name, msg.file_path)
+              ? <ChatVideo src={fileUrl!} name={msg.file_name || 'Video'} size={msg.file_size} />
               : (
                 <a href={fileUrl!} target="_blank" rel="noopener noreferrer" className="flex max-w-sm items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 hover:bg-muted/50">
                   <FileText className="size-5 shrink-0 text-muted-foreground" />

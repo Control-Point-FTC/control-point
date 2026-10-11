@@ -69,6 +69,7 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
+import { byteRange } from "./server/byteRange.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
@@ -2464,13 +2465,16 @@ async function startServer() {
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
   });
 
-  // Task-completion proof: screenshots only, 10MB each, max 5 files.
+  // Task-completion proof: screenshots only, 10MB each, max 5 files. Only
+  // formats browsers can show: a HEIC/TIFF proof is a broken picture for
+  // everyone (the app turns those into JPEG before uploading when it can).
+  const PROOF_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/avif", "image/bmp"]);
   const proofUpload = multer({
     storage,
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-      if (file.mimetype && file.mimetype.startsWith('image/')) cb(null, true);
-      else cb(new Error('Only image files are allowed as proof'));
+      if (PROOF_IMAGE_MIME.has(String(file.mimetype || "").toLowerCase())) cb(null, true);
+      else cb(new Error("That photo format can't be shown in browsers. Use JPEG, PNG, GIF or WebP, or paste a screenshot."));
     }
   });
 
@@ -7927,9 +7931,22 @@ async function startServer() {
       const buf = await readStoredBytes("stored_files", f.id, f.r2_key, Number(f.blob_len) || 0);
       if (!buf) return res.status(404).end();
       res.setHeader("Content-Type", inlineSafe ? mime : "application/octet-stream");
-      res.setHeader("Content-Length", buf.length);
       const safe = String(f.filename || "file").replace(/["\r\n]/g, "").slice(0, 120) || "file";
       res.setHeader("Content-Disposition", `${inlineSafe ? "inline" : "attachment"}; filename="${safe}"`);
+      // Byte ranges, so videos play and seek (Safari won't play without them).
+      res.setHeader("Accept-Ranges", "bytes");
+      const range = byteRange(req.headers.range, buf.length);
+      if (range === "unsatisfiable") {
+        res.setHeader("Content-Range", `bytes */${buf.length}`);
+        return res.status(416).end();
+      }
+      if (range) {
+        res.status(206);
+        res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${buf.length}`);
+        res.setHeader("Content-Length", range.end - range.start + 1);
+        return res.send(buf.subarray(range.start, range.end + 1));
+      }
+      res.setHeader("Content-Length", buf.length);
       res.send(buf);
     } catch (e) {
       console.error("file serve error:", (e as any)?.message || e);
