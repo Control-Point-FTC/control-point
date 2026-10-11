@@ -712,7 +712,13 @@ export class NotebookStore {
       if (from.id === into.id) throw new NotebookError("Choose another section to merge into");
       const rows = await s.all("SELECT id FROM notebook_pages WHERE team_id=? AND section_id=? AND parent_id IS NULL AND deleted_at IS NULL ORDER BY position,id", ctx.teamId, from.id);
       const visible: number[] = [];
-      for (const r of rows) { try { visible.push((await s.item("page", Number(r.id))).id); } catch (e) { if (!(e instanceof NotebookError)) throw e; } }
+      // A page moves only when move() would accept its whole subtree (a hidden
+      // or trashed admin-only subpage blocks it); blocked pages stay put
+      // instead of rolling back the rest of the merge.
+      for (const r of rows) {
+        try { const row = await s.item("page", Number(r.id)); await s.checkChildren("page", row); visible.push(row.id); }
+        catch (e) { if (!(e instanceof NotebookError)) throw e; }
+      }
       return { pages: visible, canDelete: s.can("delete_notebook") };
     });
     for (const pageId of pages) await this.move(ctx, "page", pageId, { sectionId: intoId, parentId: null }, "end");

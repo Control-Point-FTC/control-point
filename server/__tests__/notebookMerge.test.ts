@@ -59,6 +59,23 @@ describe("merge a section into another", () => {
     expect((await store.tree(human(organizer))).pages.find(p => p.id === open.id)?.sectionId).toBe(into.id);
   });
 
+  it("leaves a page with a hidden admin-only subpage behind and merges the rest", async () => {
+    const from = await section("Build log"), into = await section("Archive");
+    const parent = await page(from.id, "Week 1"), free = await page(from.id, "Week 2");
+    const hidden = await page(from.id, "Budget notes", { parentId: parent.id });
+    await store.protect(human(admin), "page", hidden.id, true);
+    const trashedParent = await page(from.id, "Week 3");
+    const trashedChild = await page(from.id, "Old admin note", { parentId: trashedParent.id });
+    await store.protect(human(admin), "page", trashedChild.id, true);
+    await store.remove(human(admin), "page", trashedChild.id);
+    expect(await store.mergeSection(human(organizer), from.id, into.id)).toEqual({ moved: 1, trashed: false, kept: "has_pages" });
+    const tree = await store.tree(human(admin));
+    expect(tree.pages.find(p => p.id === free.id)?.sectionId).toBe(into.id);
+    expect(tree.pages.find(p => p.id === parent.id)?.sectionId).toBe(from.id);
+    expect(tree.pages.find(p => p.id === hidden.id)?.sectionId).toBe(from.id);
+    expect(tree.pages.find(p => p.id === trashedParent.id)?.sectionId).toBe(from.id);
+  });
+
   it("explains a kept source when the member can't delete sections", async () => {
     const mover = await seedMember(t.db, team, "Mo", "mo@merge.test");
     const role = await t.db.execute({ sql: "INSERT INTO roles(team_id,name,permissions) VALUES(?, 'Mover', ?)", args: [team, JSON.stringify(["edit_notebook", "organize_notebook"])] });
