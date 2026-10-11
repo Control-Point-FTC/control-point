@@ -71,6 +71,7 @@ import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/ut
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
+import { FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
@@ -12167,6 +12168,30 @@ Rules:
         const refs = await validateRefs(text, shownRefs, (type, id) => resolveRef({ ...refDeps, notebookSource: "bruno" }, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
         return refsBlock(teamId, refs);
       };
+      // A reply the length cap cut off inside a proposal block: ask once for
+      // the complete block (server/brunoCutBlocks.ts). Returns what to append.
+      const finishCutBlock = async (text: string, signal: AbortSignal): Promise<string> => {
+        const cut = unfinishedActionBlock(text);
+        if (!cut) return "";
+        let second = "";
+        let finishUsage: any = null;
+        try {
+          const r = await aiChat({
+            extraSystem: systemExtra,
+            messages: [...messages, { role: "model", text }, { role: "user", text: finishBlockPrompt(cut.kind) }],
+            maxTokens: FINISH_BLOCK_TOKENS,
+            stream: false,
+            onUsage: (u) => { finishUsage = u; },
+            signal,
+          });
+          second = String(r.text || "");
+          logAiUsage(auth.memberId, auth.teamId, finishUsage, text.length, second.length, "ok", r.provider);
+        } catch (e: any) {
+          if (signal.aborted) return "";
+          console.error("Bruno finish-block pass failed:", e?.message);
+        }
+        return finishCutReply(cut, second).appended;
+      };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
@@ -12278,6 +12303,10 @@ Rules:
               fullText = (secondShown.trim() ? `${shown}\n\n${secondShown.trim()}` : shown) + sorry;
             }
           }
+          // A proposal the length cap cut off: finish it (or say it was too long).
+          const finished = await finishCutBlock(fullText, streamAbort.signal);
+          if (streamAbort.signal.aborted) { res.end(); return; }
+          if (finished) { send(finished); fullText += finished; }
           // Strip the NavGPT ```switch handoff block and any data-action proposal
           // blocks before persisting (the live client strips them for display
           // itself and renders the switch button / confirm card).
@@ -12339,6 +12368,9 @@ Rules:
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
         if (looked) webSourcesNS.unshift(...(looked.sources || []));
       }
+      const finishedNS = await finishCutBlock(String(result || ""), nonStreamAbort.signal);
+      if (nonStreamAbort.signal.aborted) return;
+      if (finishedNS) result = String(result || "") + finishedNS;
       const memNS = extractRememberBlocks(String(result || ""));
       result = memNS.text;
       const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
