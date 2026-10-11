@@ -14,6 +14,10 @@ describe("a check that found nothing", () => {
     expect(saidNothing("Looking that up…")).toBe(true);
     expect(saidNothing("Checking recent results.")).toBe(true);
     expect(saidNothing("Checking FTCScout.org…")).toBe(true);
+    // Answers that merely start with a similar word are answers.
+    expect(saidNothing("Looking at the results, team 123 won.")).toBe(false);
+    expect(saidNothing("Checking the schedule, the event is on Dec 12.")).toBe(false);
+    expect(saidNothing("Searching shows 4 NJ events so far.")).toBe(false);
     expect(saidNothing("No New Jersey events have been played yet this season.")).toBe(false);
     expect(saidNothing("Checking… The Axon MAX is sold out at goBILDA ($99.99).")).toBe(false);
   });

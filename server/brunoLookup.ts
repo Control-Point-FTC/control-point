@@ -350,11 +350,16 @@ export function followUpPrompt(rows: string, queries: LookupQuery[]): string {
  *  "Checking …" line (V5 audit M2 — the reply used to end there). */
 export function saidNothing(answer: string): boolean {
   const lines = String(answer || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  // A progress line: starts like one and is a single short sentence
-  // ("Checking FTCScout.org…", "Checking recent results."). A line that goes
-  // on after it ("Checking… The servo is sold out.") is an answer.
+  // A progress line: a progress phrase ("Checking …", "Searching …",
+  // "Looking it up…", "Let me check…") as one short sentence that trails off,
+  // or one with no comma or number in it ("Checking recent results.").
+  // "Looking at the results, team 123 won." and "Checking… The servo is sold
+  // out." are answers.
   const progress = (l: string) =>
-    l.length <= 200 && /^(checking|looking|searching|let me check)\b/i.test(l) && l.split(/(?<=[.!?…])\s+(?=\S)/).length === 1;
+    l.length <= 200
+    && /^(checking|searching|looking (it|that|this) up|looking (for|into)|let me (check|look))\b/i.test(l)
+    && l.split(/(?<=[.!?…])\s+(?=\S)/).length === 1
+    && (/(…|\.{3})$/.test(l) || (l.length <= 90 && !/[,\d]/.test(l)));
   return lines.every(progress);
 }
 
