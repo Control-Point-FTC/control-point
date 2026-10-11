@@ -716,10 +716,16 @@ export class NotebookStore {
       return { pages: visible, canDelete: s.can("delete_notebook") };
     });
     for (const pageId of pages) await this.move(ctx, "page", pageId, { sectionId: intoId, parentId: null }, "end");
-    const left = await this.session(ctx, s => s.one("SELECT 1 AS x FROM notebook_pages WHERE team_id=? AND section_id=? AND deleted_at IS NULL LIMIT 1", ctx.teamId, fromId));
-    const trashed = !left && canDelete;
-    if (trashed) await this.remove(ctx, "section", fromId);
-    return { moved: pages.length, trashed };
+    // Why the source stays, if it does. The same check remove() makes runs
+    // first (read-only), so a refusal never rolls back the moves above.
+    const kept = await this.session(ctx, async s => {
+      if (!canDelete) return "no_delete_permission" as const;
+      if (await s.one("SELECT 1 AS x FROM notebook_pages WHERE team_id=? AND section_id=? AND deleted_at IS NULL LIMIT 1", ctx.teamId, fromId)) return "has_pages" as const;
+      try { await s.checkChildren("section", await s.item("section", fromId)); } catch (e) { if (e instanceof NotebookError) return "protected_trash" as const; throw e; }
+      return null;
+    });
+    if (!kept) await this.remove(ctx, "section", fromId);
+    return { moved: pages.length, trashed: !kept, ...(kept ? { kept } : {}) };
   }); }
   /** Runs `fn` in one transaction: every store call inside it commits or
    *  rolls back together (one confirmed Bruno card). */

@@ -42,11 +42,30 @@ describe("merge a section into another", () => {
     const open = await page(from.id, "Open notes");
     const secret = await page(from.id, "Admin plan");
     await store.protect(human(admin), "page", secret.id, true);
-    expect(await store.mergeSection(human(organizer), from.id, into.id)).toEqual({ moved: 1, trashed: false });
+    expect(await store.mergeSection(human(organizer), from.id, into.id)).toEqual({ moved: 1, trashed: false, kept: "has_pages" });
     const adminTree = await store.tree(human(admin));
     expect(adminTree.sections.some(s => s.id === from.id)).toBe(true);
     expect(adminTree.pages.find(p => p.id === secret.id)?.sectionId).toBe(from.id);
     expect(adminTree.pages.find(p => p.id === open.id)?.sectionId).toBe(into.id);
+  });
+
+  it("keeps the source, without undoing the moves, when its trash holds an admin-only page", async () => {
+    const from = await section("Old notes"), into = await section("New notes");
+    const open = await page(from.id, "Keep this");
+    const secret = await page(from.id, "Old admin plan");
+    await store.protect(human(admin), "page", secret.id, true);
+    await store.remove(human(admin), "page", secret.id);
+    expect(await store.mergeSection(human(organizer), from.id, into.id)).toEqual({ moved: 1, trashed: false, kept: "protected_trash" });
+    expect((await store.tree(human(organizer))).pages.find(p => p.id === open.id)?.sectionId).toBe(into.id);
+  });
+
+  it("explains a kept source when the member can't delete sections", async () => {
+    const mover = await seedMember(t.db, team, "Mo", "mo@merge.test");
+    const role = await t.db.execute({ sql: "INSERT INTO roles(team_id,name,permissions) VALUES(?, 'Mover', ?)", args: [team, JSON.stringify(["edit_notebook", "organize_notebook"])] });
+    await t.db.execute({ sql: "INSERT INTO member_roles(member_id,role_id) VALUES(?,?)", args: [mover, Number(role.lastInsertRowid)] });
+    const from = await section("Drafts"), into = await section("Final");
+    await page(from.id, "Draft");
+    expect(await store.mergeSection(human(mover), from.id, into.id)).toEqual({ moved: 1, trashed: false, kept: "no_delete_permission" });
   });
 
   it("rejects merging a section into itself and works over HTTP", async () => {

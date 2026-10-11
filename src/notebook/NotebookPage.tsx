@@ -364,10 +364,12 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       const target = Number(targetSection), into = tree?.sections.find(sec => sec.id === target);
       if (!into || target === item!.id) { setError('Choose another section to merge into.'); return; }
       // One server transaction; the source is trashed only if nothing is left in it.
-      let result: { moved: number; trashed: boolean } | null = null;
+      type Merged = { moved: number; trashed: boolean; kept?: 'no_delete_permission' | 'has_pages' | 'protected_trash' };
+      let result: Merged | null = null;
       const ok = await mutate(async () => { result = await apiJson(`/api/notebook/sections/${item!.id}/merge`, { method: 'POST', body: JSON.stringify({ into: target }) }); });
-      const merged = result as { moved: number; trashed: boolean } | null;
-      if (ok && merged) setAnnouncement(`Merged ${merged.moved} ${merged.moved === 1 ? 'page' : 'pages'} into ${into.title}.${merged.trashed ? '' : ` “${item!.title}” still has pages you can’t see, so it was kept.`}`);
+      const merged = result as Merged | null;
+      const why = merged?.kept === 'has_pages' ? 'it still has pages you can’t see' : merged?.kept === 'no_delete_permission' ? 'you don’t have permission to delete sections' : merged?.kept === 'protected_trash' ? 'its trash holds admin-only pages' : '';
+      if (ok && merged) setAnnouncement(`Merged ${merged.moved} ${merged.moved === 1 ? 'page' : 'pages'} into ${into.title}.${merged.trashed ? '' : ` “${item!.title}” was kept${why ? ` because ${why}` : ''}.`}`);
       return;
     }
     if (action === 'defaults' && kind === 'section') {

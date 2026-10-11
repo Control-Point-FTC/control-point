@@ -29,7 +29,7 @@ function mount(path = '/notebook', admin = true) {
     if (url === '/api/notebook/mentions') return [] as any;
     if (/^\/api\/notebook\/pages\/\d+\/sync$/.test(url)) { const doc = new Y.Doc(); return { epoch: 'one', update: encodeBytes(Y.encodeStateAsUpdate(doc)), vector: encodeBytes(Y.encodeStateVector(doc)), title: 'Page', revision: 1, protected: false, editable: true, updatedBy: 10, updatedAt: 'now', peers: [] } as any; }
     // The server trashes the source only when nothing hidden is left in it.
-    if (url === '/api/notebook/sections/1/merge') return { moved: 1, trashed: admin } as any;
+    if (url === '/api/notebook/sections/1/merge') return (admin ? { moved: 1, trashed: true } : { moved: 1, trashed: false, kept: 'has_pages' }) as any;
     return {} as any;
   });
   render(<MemoryRouter initialEntries={[path]}><Routes><Route path="*" element={<><NotebookPage activeTeamId={20} currentUserId={10} /><Where /></>} /></Routes></MemoryRouter>);
@@ -81,7 +81,7 @@ describe('notebook tree menus', () => {
     await openMenu('Build');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Merge into another section…' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
-    expect(await screen.findByText(/still has pages you can’t see, so it was kept/)).toBeInTheDocument();
+    expect(await screen.findByText(/“Build” was kept because it still has pages you can’t see\./)).toBeInTheDocument();
   });
 
   it('opens a section from its link, and ignores sections the member cannot see', async () => {
