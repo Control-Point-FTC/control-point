@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/core';
-import { GripVertical } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, GripVertical, Link2, Trash2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../components/ui-kit';
 import { BLOCK_MENU_EVENT, blockIndexAt, currentBlockIndex, deleteBlock, duplicateBlock, moveBlock, runBlock } from './blockMoves';
 import { notebookPageLink } from './pageLinks';
@@ -79,12 +79,12 @@ export function BlockHandle({ editor, pageId }: { editor: Editor | null; pageId:
       <button type="button" className="nb-block-handle" style={{ top: hover.top, left: hover.left }} aria-label="Block options" title="Block options (Alt+Shift+O) · Alt+Shift+↑/↓ moves the block" onMouseDown={e => e.preventDefault()}><GripVertical size={16} /></button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="start">
-      <DropdownMenuItem disabled={target === 0} onSelect={() => run((state, i) => moveBlock(state, i, -1))}>Move up</DropdownMenuItem>
-      <DropdownMenuItem disabled={target >= last} onSelect={() => run((state, i) => moveBlock(state, i, 1))}>Move down</DropdownMenuItem>
-      <DropdownMenuItem onSelect={() => run((state, i) => duplicateBlock(state, i))}>Duplicate</DropdownMenuItem>
-      <DropdownMenuItem onSelect={() => { void copyLink(); }}>Copy link to block</DropdownMenuItem>
+      <DropdownMenuItem disabled={target === 0} onSelect={() => run((state, i) => moveBlock(state, i, -1))}><ArrowUp size={15} aria-hidden="true" />Move up</DropdownMenuItem>
+      <DropdownMenuItem disabled={target >= last} onSelect={() => run((state, i) => moveBlock(state, i, 1))}><ArrowDown size={15} aria-hidden="true" />Move down</DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => run((state, i) => duplicateBlock(state, i))}><Copy size={15} aria-hidden="true" />Duplicate</DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => { void copyLink(); }}><Link2 size={15} aria-hidden="true" />Copy link to block</DropdownMenuItem>
       <DropdownMenuSeparator />
-      <DropdownMenuItem className="text-rose-500" onSelect={() => run((state, i) => deleteBlock(state, i))}>Delete block</DropdownMenuItem>
+      <DropdownMenuItem className="text-rose-500" onSelect={() => run((state, i) => deleteBlock(state, i))}><Trash2 size={15} aria-hidden="true" />Delete block</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu></>, document.body);
 }
