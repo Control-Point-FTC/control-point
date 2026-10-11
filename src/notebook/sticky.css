@@ -25,3 +25,5 @@
 /* Below the app top bar; in the notebook, below its ribbon instead. */
 .nb-sticky-panel { top: 56px; max-height: calc(100vh - 72px); }
 body:has(.nb-shell) .nb-sticky-panel { top: 132px; max-height: calc(100vh - 160px); }
+/* Personal notes never end up in printed pages or PDFs. */
+@media print { .nb-sticky-panel, .nb-sticky { display: none !important; } }

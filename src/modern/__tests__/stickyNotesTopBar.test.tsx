@@ -34,7 +34,8 @@ describe('Sticky Notes in the top bar', () => {
     expect(button).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(button);
     expect(button).toHaveAttribute('aria-pressed', 'true');
-    expect(await screen.findByRole('complementary', { name: 'Sticky notes' })).toBeInTheDocument();
+    // Personal notes stay out of printed pages and PDFs.
+    expect(await screen.findByRole('complementary', { name: 'Sticky notes' })).toHaveAttribute('data-print-hide');
   });
 
   it('is not offered on phones (the notebook is text-only there)', () => {
