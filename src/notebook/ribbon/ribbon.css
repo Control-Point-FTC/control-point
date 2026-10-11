@@ -100,3 +100,13 @@
 /* The app top bar's controls (clock and weather, sticky notes, Search, Bruno) in the notebook's top row. */
 .nb-shell-actions { display: inline-flex; align-items: center; margin-inline-end: 6px; }
 .nb-shell-actions:empty { display: none; }
+/* Narrower desktop windows: the row wraps rather than running off-screen,
+   Search turns into an icon, and the tabs tighten up. */
+.nb-command-tabs { flex-wrap: wrap; row-gap: 4px; }
+@media (max-width: 1200px) {
+  .nb-shell-actions button[aria-label="Search"] > span, .nb-shell-actions button[aria-label="Search"] > kbd { display: none; }
+}
+@media (min-width: 768px) and (max-width: 1000px) {
+  .nb-command-tabs::before { display: none; }
+  .nb-shell .nb-command-tabs button[role=tab] { padding: 6px 8px; }
+}

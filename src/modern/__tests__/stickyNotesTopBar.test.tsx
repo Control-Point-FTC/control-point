@@ -46,9 +46,9 @@ describe('Sticky Notes in the top bar', () => {
 
 describe('in the notebook (no app top bar)', () => {
   it('puts the same controls in the notebook’s own top row', async () => {
-    const { setShellActionsSlot } = await import('../chrome/shellActionsSlot');
+    const { claimShellActionsSlot, releaseShellActionsSlot } = await import('../chrome/shellActionsSlot');
     const slot = document.createElement('span'); slot.className = 'nb-shell-actions'; document.body.appendChild(slot);
-    act(() => setShellActionsSlot(slot));
+    act(() => claimShellActionsSlot(slot));
     const noop = () => {};
     render(
       <MemoryRouter>
@@ -63,6 +63,6 @@ describe('in the notebook (no app top bar)', () => {
     );
     for (const name of ['Sticky notes', 'Search', 'Ask Bruno']) expect(slot.querySelector(`button[aria-label="${name}"]`)).not.toBeNull();
     expect(document.querySelector('header button[aria-label="Search"]')).toBeNull(); // no second top bar
-    slot.remove(); act(() => setShellActionsSlot(null));
+    act(() => releaseShellActionsSlot(slot)); slot.remove();
   });
 });
