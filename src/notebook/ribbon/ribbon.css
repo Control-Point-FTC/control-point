@@ -110,3 +110,6 @@
   .nb-command-tabs::before { display: none; }
   .nb-shell .nb-command-tabs button[role=tab] { padding: 6px 8px; }
 }
+/* In the notebook row the shared controls match the ribbon's 18px icons (Share). */
+.nb-shell-actions button[aria-label="Sticky notes"] svg, .nb-shell-actions button[aria-label="Ask Bruno"] svg, .nb-ribbon-toggle svg { width: 18px; height: 18px; }
+.nb-shell-actions button[aria-label="Search"] svg { width: 16px; height: 16px; }

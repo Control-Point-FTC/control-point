@@ -23,3 +23,6 @@
 .nb-pen-dot[data-tool=highlighter]{border-radius:3px;opacity:.75}
 .nb-pen-remove{position:absolute;top:-4px;right:-4px;display:none;width:14px;height:14px;border-radius:50%;background:#44403c;color:#fff;place-items:center}
 .nb-pen:hover>.nb-pen-remove,.nb-pen:focus-within>.nb-pen-remove{display:grid}
+/* Links in the page text stay clickable with the Select tool (it picks drawings and
+   text boxes, not page text); pen, highlighter and eraser still draw over them. */
+.nb-canvas-stage[data-tool=select] .nb-flow a[href],.nb-canvas-stage[data-tool=select] .nb-canvas-text-prose a[href]{pointer-events:auto;cursor:pointer}
