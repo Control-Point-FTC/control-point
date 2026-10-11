@@ -22,7 +22,7 @@ import {NotebookQuickNote} from './NotebookQuickNote';
 import { defaultNotebookPage, lastPageKey, readLastPage, saveLastPage } from './autoOpen';
 import { NotebookRibbonShell } from './NotebookToolbar';
 import { NotebookWorkspaceContext, type NavigationLayout, type TagSummaryView } from './workspaceContext';
-import { StickyNotes } from './StickyNotes';
+import { toggleStickyNotes, useStickyNotesOpen } from './stickyNotesState';
 import { NotebookBreadcrumbs, pageTrail, usePageHistory } from './NotebookBreadcrumbs';
 
 type Kind = 'notebook' | 'section' | 'page';
@@ -291,7 +291,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const verifiedMissing = useRef<number | null>(null);
   if (verifiedMissing.current !== null && verifiedMissing.current !== selected) verifiedMissing.current = null;
   const [landingNotice, setLandingNotice] = useState('');
-  const [stickyOpen, setStickyOpen] = useState(false);
+  const stickyOpen = useStickyNotesOpen();
   const [tagSummaryOpen, setTagSummaryOpen] = useState(false);
   const [chosenBook, setChosenBook] = useState<number | null>(null);
   // View → Navigation is a per-device choice, like the other view settings.
@@ -515,7 +515,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     {!mobile&&tree&&<NotebookTrash teamId={teamId!} tree={tree} onRestored={()=>{void loadTree();}}/>}
   </div>;
   if (!teamId) return <div className="nb-empty"><h1>Team notebook</h1><p>Select a workspace to open its shared notes.</p></div>;
-  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number, blockId?: string) => { void pick(id, blockId); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes: () => setStickyOpen(v => !v), stickyNotesOpen: stickyOpen, tagSummaryOpen, setTagSummaryOpen, tagSummaryView, setTagSummaryView, openTemplates: (sectionId: number) => open({ action: 'template', kind: 'page', sectionId }), navigationLayout, setNavigationLayout };
+  const workspace = { teamId: teamId ?? null, tree, openPage: (id: number, blockId?: string) => { void pick(id, blockId); }, refreshTree: () => { void loadTree(); }, openTrash: () => window.dispatchEvent(new Event('nb-open-trash')), toggleStickyNotes, stickyNotesOpen: stickyOpen, tagSummaryOpen, setTagSummaryOpen, tagSummaryView, setTagSummaryView, openTemplates: (sectionId: number) => open({ action: 'template', kind: 'page', sectionId }), navigationLayout, setNavigationLayout };
   return <NotebookWorkspaceContext.Provider value={workspace}><div className={`nb-shell ${!mobile&&writingFocus?'nb-writing-focus':''}`}>
     <span role="status" aria-live="polite" className="sr-only">{announcement}</span>
     <header className="nb-header"><Button ref={mobileOpen} variant="ghost" size="icon" className="nb-mobile" aria-label="Open notebooks" onClick={() => setDrawer(true)}><PanelLeft /></Button><BookOpen size={20} /><h1>Team notebook</h1><span className="nb-small nb-desktop">Shared with your team</span>
@@ -526,7 +526,6 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     </header>
     {!sync && !mobile && <NotebookRibbonShell loading={treeLoading || !!selected} />}
     <div className="nb-ribbon-host" ref={setToolbarHost} />
-    <StickyNotes open={stickyOpen} hidden={mobile} scope={memberId && teamId ? `${memberId}:${teamId}` : undefined} onClose={() => setStickyOpen(false)} />
     {landingNotice && <div className="nb-alert" role="status">{landingNotice}<button aria-label="Dismiss notice" onClick={() => setLandingNotice('')}>×</button></div>}
     {offlineTreeAt&&<div className="nb-alert" role="status">Offline navigation · showing last-known navigation or cached ordinary pages. Already-open protected pages stay in memory and are never cached for offline reload. Files may need a connection. Access is checked again when connected. <Button variant="ghost" onClick={()=>{void loadTree();}}>Retry connection</Button></div>}
     {treeStorageError&&<div className="nb-alert" role="status">{treeStorageError} Online editing still works.</div>}
