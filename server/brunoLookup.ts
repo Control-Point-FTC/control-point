@@ -351,15 +351,17 @@ export function followUpPrompt(rows: string, queries: LookupQuery[]): string {
 export function saidNothing(answer: string): boolean {
   const lines = String(answer || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   // A progress line: a progress phrase ("Checking …", "Searching …",
-  // "Looking it up…", "Let me check…") as one short sentence that trails off,
-  // or one with no comma or number in it ("Checking recent results.").
-  // "Looking at the results, team 123 won." and "Checking… The servo is sold
-  // out." are answers.
+  // "Looking it up…", "Let me check…") as one short sentence that states no
+  // result — a team number or a date in it is fine ("Checking recent results
+  // for team 1234."). "Searching shows 4 NJ events so far.", "Checking the
+  // schedule, the event is on Dec 12." and "Checking… The servo is sold out."
+  // are answers.
+  const ANSWER_WORDS = /\b(is|are|was|were|isn't|aren't|has|have|had|shows?|showed|won|lost|found|costs?|sold|scheduled|starts?|ends?|played|placed|ranked|no|none|nothing)\b|\$\d/i;
   const progress = (l: string) =>
     l.length <= 200
-    && /^(checking|searching|looking (it|that|this) up|looking (for|into)|let me (check|look))\b/i.test(l)
+    && /^(checking|searching|looking (it|that|this) up|looking up|looking (for|into)|let me (check|look))\b/i.test(l)
     && l.split(/(?<=[.!?…])\s+(?=\S)/).length === 1
-    && (/(…|\.{3})$/.test(l) || (l.length <= 90 && !/[,\d]/.test(l)));
+    && !ANSWER_WORDS.test(l.replace(/^(checking|searching|looking (it|that|this) up|looking up|looking (for|into)|let me (check|look))\b/i, ""));
   return lines.every(progress);
 }
 

@@ -18,6 +18,11 @@ describe("a check that found nothing", () => {
     expect(saidNothing("Looking at the results, team 123 won.")).toBe(false);
     expect(saidNothing("Checking the schedule, the event is on Dec 12.")).toBe(false);
     expect(saidNothing("Searching shows 4 NJ events so far.")).toBe(false);
+    // A team number or date in a progress line doesn't make it an answer.
+    expect(saidNothing("Checking recent results for team 1234.")).toBe(true);
+    expect(saidNothing("Looking up the Dec 12 qualifier…")).toBe(true);
+    expect(saidNothing("Checking current stock and the product page…")).toBe(true);
+    expect(saidNothing("Searching for events on 2026-11-14.")).toBe(true);
     expect(saidNothing("No New Jersey events have been played yet this season.")).toBe(false);
     expect(saidNothing("Checking… The Axon MAX is sold out at goBILDA ($99.99).")).toBe(false);
   });
