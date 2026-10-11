@@ -31,6 +31,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Ask Bruno about a part and it links the exact product page under its answer, with price and stock',
       'Assign a task to everyone in a role, in the task editor or by asking Bruno ("give it to the builders")',
       'Links to a task, event, part, teammate or page that you can share with your team',
+      'Proof on finished tasks: open a task to see every time it was finished, with the note, the photos (click one to see it full size) and whether it was approved or sent back',
     ],
     improved: [
       'Notebook page titles wrap, sections line up like OneNote, and every notebook, section and page has a right-click menu with icons',
@@ -39,12 +40,20 @@ export const CHANGELOG: ChangelogEntry[] = [
       'Links in Bruno’s answers show which site they go to and open safely in a new tab',
       'One thin scrollbar in Bruno’s side panel; long words and links wrap',
       'The public site has real "page not found" pages, page titles and better link previews',
+      'When your session ends, Control Point takes you back to sign in instead of showing errors',
+      'When Bruno checks the web and finds nothing (say, no events played yet this season), it tells you so plainly',
+      'Bruno doesn’t talk about its internals, is honest that it only sees the current chat, and only shows links that matter',
+      'Trashing the page you have open shows one clear notice, and Trash has a Restore to… button',
+      'Deleting a workspace takes you back to the one you used last',
     ],
     fixed: [
       'Links on notebook pages open with the Select tool',
       'Accounts created with a password before the email was confirmed are fully secured when you sign in with Google, Discord or GitHub',
       'Board-only tasks are private to people who manage members everywhere, not just on the task board',
       'Adding, editing or deleting outreach needs the Manage outreach permission (the Member role has it)',
+      'People who manage roles can only give out permissions they have themselves',
+      'Only the person who sent feedback (and the app owner) can open its screenshot',
+      'Library resources can be deleted by whoever added them, or by people who manage documentation or members',
     ],
   },
   {
