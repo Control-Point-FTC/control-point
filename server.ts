@@ -12288,7 +12288,10 @@ Rules:
           // The note streams with the scouting appendix below (written once).
           // Web pages the answer drew on, listed under it (phase 4d).
           fullText = stripModelRefs(fullText);
-          const appendix = (await webAppendix(webSources)) + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
+          const productLinks = await webAppendix(webSources, undefined, undefined, streamAbort.signal);
+          // Stopped while the product pages were checked: nothing more is written or saved.
+          if (streamAbort.signal.aborted) { res.end(); return; }
+          const appendix = productLinks + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
           // Whatever the filter still holds goes out before the server's own blocks.
           const held = modelOut.end();
           if (held) res.write(held);
@@ -12339,7 +12342,9 @@ Rules:
       const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
       result = stripModelRefs(String(result || ""));
-      const finalResult = stripActionBlocks(String(result || "")) + (await webAppendix(webSourcesNS)) + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
+      const productLinksNS = await webAppendix(webSourcesNS, undefined, undefined, nonStreamAbort.signal);
+      if (nonStreamAbort.signal.aborted) return;
+      const finalResult = stripActionBlocks(String(result || "")) + productLinksNS + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
