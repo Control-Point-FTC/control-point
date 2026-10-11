@@ -84,6 +84,8 @@ export interface SafeGetOptions {
   /** Extra per-hop check (e.g. an exact host allowlist). Throw to refuse. */
   allowUrl?: (u: URL) => void;
   responseType?: "text" | "arraybuffer";
+  /** Cancels the request (e.g. the user stopped the reply). */
+  signal?: AbortSignal;
 }
 
 /** GET a user-supplied URL with SSRF protection on every hop. */
@@ -101,6 +103,7 @@ export async function safeGet(raw: string, o: SafeGetOptions = {}): Promise<{ ur
       validateStatus: () => true,
       lookup: guardedLookup as any,
       proxy: false,
+      signal: o.signal,
     } as any);
     const loc = response.headers?.location;
     if (response.status >= 300 && response.status < 400 && loc) {
