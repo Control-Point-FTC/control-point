@@ -62,13 +62,22 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
   return res;
 }
 
-/** The per-sign-in tag App.tsx keeps (not a credential). */
-function signInTag(): string | null {
+/** This tab's sign-in: the per-sign-in tag App.tsx keeps (not a credential).
+ *  Held in memory — read once at load, then set by App at sign-in/out — so
+ *  another tab clearing the shared copy can't hide this tab's own expiry. */
+let tabSignIn: string | null = (() => {
   try {
     return typeof localStorage !== 'undefined' ? localStorage.getItem('cp-session-tag') : null;
   } catch {
     return null;
   }
+})();
+/** App.tsx: this tab signed in (a new tag) or out (null). */
+export function noteSignIn(tag: string | null) {
+  tabSignIn = tag;
+}
+function signInTag(): string | null {
+  return tabSignIn;
 }
 
 function rawApiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
@@ -93,6 +102,7 @@ function rawApiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response>
 }
 
 function handleUnauthorized() {
+  tabSignIn = null;
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('cp-session-tag');
