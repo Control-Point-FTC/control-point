@@ -3,7 +3,7 @@
 // desktop, bottom on phones). All mutations go through useTasksController.
 import { format } from 'date-fns';
 import { useState } from 'react';
-import { CalendarDays, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
+import { CalendarDays, Camera, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Switch, Textarea,
@@ -16,6 +16,7 @@ import { dueMoment } from '../../../utils/countdown';
 import { Countdown } from '../../ui/Countdown';
 import { AssigneePicker, AvatarStack } from './AssigneePicker';
 import { isTaskOverdue } from '../../../utils/countdown';
+import { taskCompletions } from '../../../utils/taskCompletions';
 
 type Ctl = ReturnType<typeof useTasksController>;
 
@@ -96,6 +97,50 @@ function ReviewPanel({ task, ctl }: { task: any; ctl: Ctl }) {
   );
 }
 
+/** Every time the task was finished: who, when, the note and photos, and
+ *  the review it got. Newest first; photos open full size in a new tab. */
+export function CompletionHistory({ task, members }: { task: any; members: any[] }) {
+  const entries = taskCompletions(task);
+  if (!entries.length) return null;
+  const nameOf = (id: number | null) => (id && members.find((m) => m.id === id)?.name) || 'A teammate';
+  const when = (at: string | null) => (at && !Number.isNaN(Date.parse(at)) ? format(new Date(at), 'MMM d, h:mm a') : '');
+  return (
+    <section aria-labelledby="task-proof-heading" className="space-y-3">
+      <p id="task-proof-heading" className="flex items-center gap-2 text-sm font-medium">
+        <Camera className="size-4 text-accent" /> Proof of completion
+        {entries.length > 1 && <span className="text-xs font-normal text-muted-foreground">· finished {entries.length} times</span>}
+      </p>
+      <ol className="space-y-3">
+        {entries.map((e, i) => (
+          <li key={`${e.at}-${i}`} className="space-y-2 rounded-xl border border-border p-3">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{nameOf(e.by)}</span>{when(e.at) && ` · ${when(e.at)}`}{i === 0 && entries.length > 1 && ' · latest'}
+            </p>
+            {e.notes
+              ? <p className="whitespace-pre-wrap text-sm text-foreground/90">{e.notes}</p>
+              : <p className="text-sm text-muted-foreground">No note.</p>}
+            {e.images.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {e.images.map((src, n) => (
+                  <a key={src} href={src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open photo ${n + 1} from ${nameOf(e.by)} full size`}>
+                    <img src={src} alt={`Proof photo ${n + 1}`} loading="lazy" className="aspect-square w-full bg-muted object-cover" />
+                  </a>
+                ))}
+              </div>
+            )}
+            {e.review && (
+              <p className={cn('text-xs', e.review.status === 'approved' ? 'text-success' : 'text-destructive')}>
+                {e.review.status === 'approved' ? 'Approved' : 'Sent back'} by {nameOf(e.review.by)}{when(e.review.at) && ` · ${when(e.review.at)}`}
+                {e.review.note && <span className="block whitespace-pre-wrap text-foreground/80">{e.review.note}</span>}
+              </p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 function useSheetSide() {
   return useIsNarrow() ? 'bottom' : 'right';
 }
@@ -150,6 +195,7 @@ export function TaskViewSheet({ task, onOpenChange, ctl, members, teams }: {
                   <p className="mt-1 whitespace-pre-wrap text-foreground/90">{task.review_note}</p>
                 </div>
               )}
+              <CompletionHistory task={task} members={members} />
               {ctl.canManageTasks && task.status === 'done' && <ReviewPanel task={task} ctl={ctl} />}
               <dl className="grid grid-cols-[120px_1fr] gap-y-3 text-sm">
                 <dt className="flex items-center gap-2 text-muted-foreground"><Users className="size-4" /> Assignees</dt>
