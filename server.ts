@@ -71,6 +71,7 @@ import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/ut
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
+import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
 import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, onlyFenceMissing, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
@@ -3529,10 +3530,8 @@ async function startServer() {
     // file URL, or null if the download failed.
     const downloadAvatar = async (url: string, memberId: number): Promise<string | null> => {
       try {
-        const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        const buf = Buffer.from(await resp.arrayBuffer());
-        const ctype = resp.headers.get('content-type') || '';
-        if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
+        const { buf, ctype } = await fetchAvatarImage(url);
+        if (buf) {
           const fid = await storeFile({
             teamId: null, memberId, kind: 'avatar',
             filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
@@ -14363,17 +14362,15 @@ Rules:
       )) as any[];
       for (const r of rows) {
         try {
-          const resp = await fetch(r.avatar_url, { signal: AbortSignal.timeout(8000) });
-          const buf = Buffer.from(await resp.arrayBuffer());
-          const ctype = resp.headers.get('content-type') || '';
-          if (resp.ok && buf.length > 0 && buf.length < 2 * 1024 * 1024 && ctype.startsWith('image/')) {
+          const { status, buf, ctype } = await fetchAvatarImage(r.avatar_url);
+          if (buf) {
             const fid = await storeFile({
               teamId: null, memberId: r.id, kind: 'avatar',
               filename: 'oauth-avatar', mimeType: ctype.split(';')[0], buffer: buf,
             });
             await dbRun("UPDATE members SET avatar_url = ? WHERE id = ?", fileUrl(fid), r.id);
             console.log(`[avatar-backfill] migrated avatar for member ${r.id}`);
-          } else if (resp.status === 404 || resp.status === 410) {
+          } else if (status === 404 || status === 410) {
             // URL is dead — clear it so the UI falls back to initials.
             await dbRun("UPDATE members SET avatar_url = NULL WHERE id = ?", r.id);
             console.log(`[avatar-backfill] cleared dead avatar for member ${r.id}`);
