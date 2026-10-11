@@ -3,7 +3,7 @@ import { isKnownRoute, withHead, PUBLIC_HEADS, publicHeadFor } from '../publicRo
 
 describe('isKnownRoute', () => {
   it('accepts every app route, notebook deep links, join and check-in links', () => {
-    for (const p of ['/', '/dashboard', '/tasks', '/tasks/', '/notebook', '/notebook/p/42', '/cad-parts', '/privacy', '/terms', '/join/cpi_x', '/checkin/AB12', '/predict/how-it-works']) {
+    for (const p of ['/', '/dashboard', '/tasks', '/tasks/', '/notebook', '/notebook/p/42', '/cad-parts', '/privacy', '/terms', '/join/cpi_x', '/checkin/AB12', '/predict/how-it-works', '/t/3/task/42', '/t/3/cad_part/7']) {
       expect(isKnownRoute(p), p).toBe(true);
     }
   });
@@ -13,7 +13,7 @@ describe('isKnownRoute', () => {
     expect(publicHeadFor('/dashboard')).toBeNull();
   });
   it('rejects unknown paths and sub-paths the app does not have', () => {
-    for (const p of ['/nope', '/tasks/12', '/dashboardx', '/notebookx', '/join', '/checkin/a-b', '/privacy/old']) {
+    for (const p of ['/nope', '/tasks/12', '/dashboardx', '/notebookx', '/join', '/checkin/a-b', '/privacy/old', '/t/x/task/1', '/t/3/task', '/t/3/task/abc']) {
       expect(isKnownRoute(p), p).toBe(false);
     }
   });

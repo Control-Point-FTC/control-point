@@ -79,6 +79,7 @@ import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
+import { isRefType, resolveRef } from "./server/refs.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
 import { applyStickyOps, isStickyCard, parseStickyOps, previewStickyOps, stickyLookup } from "./server/brunoStickyActions.js";
@@ -7354,6 +7355,28 @@ async function startServer() {
 
   registerNotebookRoutes(app, { requireAuth, ensureRolesSeeded,deleteStoredRow });
   registerStickyNoteRoutes(app, { requireAuth });
+
+  // Stable links (/t/<team>/<type>/<id>): what a reference is and where it
+  // opens, re-checked for this person every time it's opened.
+  app.get("/api/refs/:type/:id", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+    const type = req.params.type, id = Number(req.params.id), linkTeam = req.query.team === undefined ? undefined : Number(req.query.team);
+    if (!isRefType(type) || !Number.isSafeInteger(id) || id <= 0 || (linkTeam !== undefined && !(Number.isSafeInteger(linkTeam) && linkTeam > 0))) return res.status(400).json({ error: "Not a valid link" });
+    if (!auth.teamId) return res.json({ status: "unavailable", type, id });
+    const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
+    try {
+      res.json(await resolveRef({
+        get: (sql, ...args) => dbGet(sql, ...args),
+        notebook: brunoNotebookStore, // contexts below are the person's own ("human"), not Bruno's
+        isAdmin: async (memberId, teamId) => { const p = await getMemberPerms(memberId, teamId); return p.has("*") || p.has("manage_members"); },
+      }, { memberId: auth.memberId, teamId: auth.teamId, email: me?.email }, type, id, linkTeam));
+    } catch (e) {
+      console.error("Link lookup failed:", e);
+      res.status(500).json({ error: "Couldn't open that link" });
+    }
+  });
   // Public pages only: a cookieless daily pageview counter (the owner can read it).
   const pageViews = registerPageViewRoutes(app, { requireOwner });
 

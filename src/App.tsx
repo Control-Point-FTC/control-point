@@ -19,6 +19,8 @@ const TasksPage = React.lazy(() => import('./modern/pages/tasks/TasksPage').then
 const CalendarPage = React.lazy(() => import('./modern/pages/calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })));
 const AttendancePage = React.lazy(() => import('./modern/pages/attendance/AttendancePage').then((m) => ({ default: m.AttendancePage })));
 const PeoplePage = React.lazy(() => import('./modern/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })));
+import { forgetRefLink, rememberRefLink, takeRefLink } from './utils/refLinkReturn';
+const RefOpen = React.lazy(() => import('./modern/pages/RefOpen').then((m) => ({ default: m.RefOpen })));
 const CommunicationPage = React.lazy(() => import('./modern/pages/communication/CommunicationPage').then((m) => ({ default: m.CommunicationPage })));
 const MessagesPage = React.lazy(() => import('./modern/pages/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })));
 const BrunoPage = React.lazy(() => import('./modern/pages/bruno/BrunoPage').then((m) => ({ default: m.BrunoPage })));
@@ -347,6 +349,12 @@ function PageLoadingFallback() {
     </div>
   );
 }
+
+/** Pages any signed-in person may open, whatever their sidebar shows:
+ *  profile/settings/roles (/roles redirects to Settings → Roles, which gates
+ *  itself), inbox (Modern; Legacy redirects it), and stable record links
+ *  (/t/...), whose page checks access to the record itself. */
+export const ALWAYS_REACHABLE_PAGES = ['profile', 'settings', 'roles', 'inbox', 't'] as const;
 
 export default function App() {
   const { t } = useTranslation();
@@ -1849,10 +1857,7 @@ export default function App() {
       ids.add(t.id);
       for (const c of (t as any).children || []) ids.add(c.id);
     }
-    ids.add('profile');
-    ids.add('settings');
-    ids.add('roles');
-    ids.add('inbox'); // Modern page; Legacy redirects it to the dashboard
+    for (const id of ALWAYS_REACHABLE_PAGES) ids.add(id);
     return ids;
   }, [visibleTabs]);
   useEffect(() => {
@@ -1911,6 +1916,10 @@ export default function App() {
         sessionStorage.removeItem('pendingCheckinToken');
         navigate(`/checkin/${t}`);
       }
+      // A shared record link (/t/...) opened while signed out: open it now,
+      // where it's checked against this person's access.
+      const ref = takeRefLink();
+      if (ref) navigate(ref, { replace: true });
     }
   }, [isLoggedIn]);
 
@@ -2179,6 +2188,8 @@ export default function App() {
         <Route path="/stats" element={<TeamStatsPage teamId={currentUser?.team_id} memberId={currentUser?.id} memberName={currentUser?.name} canManage={hasPerm('manage_members')} />} />
         <Route path="/predict" element={<PredictPage />} />
         <Route path="/teams" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
+        {/* Stable links to one record, re-checked on every open. */}
+        <Route path="/t/:teamId/:type/:id" element={<RefOpen activeTeamId={currentUser?.team_id} onSwitchTeam={(id) => void handleSwitchTeam(id)} />} />
         {/* Roles live in Settings → Roles now; old links land there. */}
         <Route path="/roles" element={<Navigate to="/settings?section=roles" replace />} />
         <Route path="/attendance" element={<AttendancePage {...viewProps} />} />
@@ -2236,7 +2247,9 @@ export default function App() {
     const deepLink = location.pathname.match(/^\/checkin\/([A-Za-z0-9]+)/);
     if (deepLink && typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('pendingCheckinToken', deepLink[1]);
+      forgetRefLink(); // only the latest link opened before sign-in is followed
     }
+    rememberRefLink(location.pathname);
     // A brand-new OAuth user just finished sign-in — collect their last signup
     // step first. This must come before the landing screen or the callback
     // bounces them back to the homepage.
