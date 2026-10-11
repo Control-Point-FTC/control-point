@@ -2,8 +2,10 @@
 // bar, footer and mobile tab bar. Pages render through the same routes and the
 // same App state; screens without a Modern page yet render their Legacy page
 // inside this shell.
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ClockWeather } from './chrome/ClockWeather';
+import { toggleStickyNotes, setStickyNotesOpen, useStickyNotesOpen } from '../notebook/stickyNotesState';
+const StickyNotes = lazy(() => import('../notebook/StickyNotes').then(m => ({ default: m.StickyNotes })));
 import { useLocation } from 'react-router-dom';
 import { TipsBar } from './chrome/TipsBar';
 import { readMobileTabs, resolveMobileTabs, saveMobileTabs, type MobileTabChoice } from './chrome/mobileTabs';
@@ -12,7 +14,7 @@ import { BugButton } from './chrome/BugButton';
 import { motion, MotionConfig } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import {
-  Search, Inbox, Bot, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
+  Search, Inbox, Bot, StickyNote, ChevronDown, ChevronsLeft, ChevronsRight, Settings, LogOut, Sun, Moon,
   Sparkles, MessageSquareHeart, Compass, Check, Menu, Layers, Plus, UserPlus, LogIn,
 } from 'lucide-react';
 import { cn } from '../components/cn';
@@ -98,6 +100,11 @@ export function ModernShell(props: ModernShellProps) {
     return () => window.removeEventListener('cp:notebook-navigation', toggle);
   }, [notebookRoute]);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const stickyOpen = useStickyNotesOpen();
+  // Loaded on first open, then kept mounted so unsaved drafts keep saving.
+  const [stickyUsed, setStickyUsed] = useState(false);
+  useEffect(() => { if (stickyOpen) setStickyUsed(true); }, [stickyOpen]);
+  const stickyScope = props.user?.id && props.activeTeam?.id ? `${props.user.id}:${props.activeTeam.id}` : undefined;
   const [menuOpen, setMenuOpen] = useState(false);
   // Phone tab bar: three chosen pages + Bruno + More (per device).
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -221,6 +228,7 @@ export function ModernShell(props: ModernShellProps) {
             onOpenBruno={props.onOpenBruno}
             onOpenSettings={props.onOpenSettings}
             workspaceId={props.activeTeam?.id}
+            stickyNotesOpen={stickyOpen}
           />
           <TipsBar path={location.pathname} /></>}
           <main
@@ -283,6 +291,8 @@ export function ModernShell(props: ModernShellProps) {
         )}
 
         <Toaster />
+        {/* Sticky Notes: one panel for the whole app (desktop), keyed by member and team. */}
+        {stickyScope && !isMobile && (stickyOpen || stickyUsed) && <Suspense fallback={null}><StickyNotes key={stickyScope} open={stickyOpen} scope={stickyScope} onClose={() => setStickyNotesOpen(false)} /></Suspense>}
         <BugButton onClick={props.onReportBug ?? props.onOpenFeedback} />
         <CommandMenu
           open={cmdOpen}
@@ -664,9 +674,9 @@ function UserMenu({ collapsed, user, onOpenSettings, onLogout, onOpenFeedback, o
 // Top bar + mobile tab bar
 // ---------------------------------------------------------------------------
 
-function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, onOpenSettings, workspaceId }: {
+function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, onOpenSettings, workspaceId, stickyNotesOpen }: {
   title: string; teamName: string; isMobile: boolean; onOpenSearch: () => void; onOpenBruno: () => void; onOpenSettings?: () => void;
-  workspaceId?: number | null;
+  workspaceId?: number | null; stickyNotesOpen?: boolean;
 }) {
   return (
     <header data-print-hide className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4 pt-[env(safe-area-inset-top)] sm:px-6 lg:px-8 md:pt-0">
@@ -678,6 +688,18 @@ function TopBar({ title, teamName, isMobile, onOpenSearch, onOpenBruno, onOpenSe
       <div className="ml-auto flex items-center gap-1">
         {/* Keyed by workspace: a switch drops the old town's reading and loads the new one. */}
         <ClockWeather key={workspaceId ?? 'none'} />
+        {!isMobile && (
+          <button
+            type="button"
+            onClick={toggleStickyNotes}
+            aria-label="Sticky notes"
+            aria-pressed={!!stickyNotesOpen}
+            title="Sticky notes"
+            className={cn('flex size-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-text-base/[0.06] hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60', stickyNotesOpen && 'bg-accent/10 text-accent')}
+          >
+            <StickyNote className="size-4" />
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpenSearch}
