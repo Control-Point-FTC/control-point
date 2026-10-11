@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import Collaboration from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
@@ -171,6 +171,21 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
   useEffect(() => { if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(linkStatesKey, LINK_STATES_REFRESH)); }, [editor, pages]);
   useEffect(() => editor ? registerNotebookSelection(sync.pageId, () => selectedNotebookBlocks(editor.state)) : undefined, [editor, sync.pageId]);
   const title = String(sync.doc.getMap('meta').get('title') ?? '');
+  // Browsers without CSS field-sizing: grow the title box to fit its lines.
+  const titleBox = useRef<HTMLTextAreaElement>(null);
+  // Also refit when it is shown again or its width changes (the window narrows).
+  const titleShown = mobile || paperView.showTitle;
+  useLayoutEffect(() => {
+    const el = titleBox.current;
+    if (!el || !titleShown || (typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content'))) return;
+    const fit = () => { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; };
+    fit();
+    if (typeof ResizeObserver === 'undefined') return;
+    let width = el.clientWidth;
+    const watch = new ResizeObserver(() => { if (el.clientWidth !== width) { width = el.clientWidth; fit(); } });
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [title, titleShown]);
   const blockId = blockTarget===undefined?params.get('block'):blockTarget;
   useEffect(() => {
     if (!blockId || !editor || !/^[\w-]{1,100}$/.test(blockId)) return;
@@ -239,7 +254,8 @@ function ConnectedEditor({ sync, onChanged, pages, onNavigate, onRejoin, toolbar
       if (t.closest('.nb-prose, button, a, input, select, textarea, [role="dialog"], .nb-discussions, .nb-canvas-stage')) return;
       (activeEditor ?? editor)?.chain().focus('end').run();
     }}><article ref={paper} className={`nb-paper ${paperView.pattern==='ruled' && !mobile ? 'nb-ruled' : ''}`} style={!mobile ? { ...paperViewStyle(paperView),zoom: zoom / 100 } : undefined}>
-      <input hidden={!mobile&&!paperView.showTitle} className="nb-title" aria-label="Page title" maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onChange={e => { if (e.target.value.trim()) sync.doc.getMap('meta').set('title', e.target.value); }} />
+      {/* One line that wraps, so long titles stay readable (Enter moves to the page). */}
+      <textarea ref={titleBox} hidden={!mobile&&!paperView.showTitle} className="nb-title" aria-label="Page title" rows={1} maxLength={200} disabled={blocked} value={title} placeholder="Untitled page" onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); editor?.commands.focus('start'); } }} onChange={e => { const value = e.target.value.replace(/[\r\n]+/g, ' '); if (value.trim()) sync.doc.getMap('meta').set('title', value); }} />
       {sync.data?.createdAt && <time className="nb-page-date" dateTime={sync.data.createdAt}>{new Date(sync.data.createdAt).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}<span>{new Date(sync.data.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></time>}
       <RecordNavigationContext.Provider value={openRecordPath}><PageLinkSourceContext.Provider value={pageLinks}><Suspense fallback={<EditorContent editor={editor} />}><NotebookCanvas sync={sync} active={!drawingScope} onActivate={()=>setDrawingScope(null)} editable={!blocked && !sync.data?.legacyCanvas && !drawingScope} mobile={mobile} anchorTarget={blockId} onSelectionChange={setCanvasTarget} zoom={zoom} onZoom={setZoom} onRibbon={setDrawPanel} onEditorFocus={focusEditor} onEditorRemoved={removeEditor}><EditorContent editor={editor} /></NotebookCanvas></Suspense></PageLinkSourceContext.Provider></RecordNavigationContext.Provider>{!mobile && <SlashMenuPopup editor={editor} />}{!mobile && <BlockHandle editor={editor} pageId={sync.pageId} />}{!mobile && <PageLinkPopup editor={activeEditor ?? editor} pages={pages} currentPageId={sync.pageId} />}
       <section className="nb-backlinks" aria-label="Backlinks"><h2>Pages linking here</h2>{backlinks.length ? backlinks.map((p, i) => <button key={`${p.id}:${i}`} onClick={() => onNavigate(p.id)}>{p.title}</button>) : <p>No visible pages link here yet.</p>}</section>
