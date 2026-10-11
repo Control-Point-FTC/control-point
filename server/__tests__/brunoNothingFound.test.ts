@@ -4,7 +4,7 @@
  * answer. A check that comes back with nothing now says so.
  */
 import { describe, it, expect } from "vitest";
-import { followUpPrompt, lookupOutcome, nothingFoundNote, saidNothing } from "../brunoLookup";
+import { extractLookupBlocks, followUpPrompt, implicitCheck, lookupOutcome, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, saidNothing } from "../brunoLookup";
 
 describe("a check that found nothing", () => {
   it("recognises a follow-up that only said Checking… again", () => {
@@ -63,5 +63,61 @@ describe("a check that found nothing", () => {
     const p = followUpPrompt("", [{ kind: "web", query: "NJ FTC results" } as any]);
     expect(p).toContain('don\'t say "Checking…" again');
     expect(p).toMatch(/no events have been played yet this season/);
+  });
+});
+
+describe("a first reply that only said Checking… without asking for a lookup", () => {
+  const question = "What were the recent FTC event results in New Jersey?";
+  it("becomes a web check of the question, so the lookup pass answers", () => {
+    const out = implicitCheck("Checking recent New Jersey event results...", question)!;
+    expect(out).toBeTruthy();
+    const { text, queries } = extractLookupBlocks(out);
+    expect(text).toBe("Checking recent New Jersey event results...");
+    expect(queries).toEqual([{ kind: "web", query: question }]);
+  });
+  it("leaves real answers, replies that asked for a lookup, and empty replies alone", () => {
+    expect(implicitCheck("No New Jersey events have been played yet this season.", question)).toBeNull();
+    expect(implicitCheck("Checking recent New Jersey event results...\n\nResults haven’t been posted yet.", question)).toBeNull();
+    expect(implicitCheck('Checking…\n```lookup\n{"kind":"web","query":"NJ FTC"}\n```', question)).toBeNull();
+    expect(implicitCheck("", question)).toBeNull();
+    expect(implicitCheck("Checking…", "   ")).toBeNull();
+  });
+  it("keeps the search to 200 characters on one line", () => {
+    const { queries } = extractLookupBlocks(implicitCheck("Looking that up…", "a\n".repeat(300))!);
+    expect(queries[0].query!.length).toBeLessThanOrEqual(200);
+    expect(queries[0].query).not.toContain("\n");
+  });
+  it("progressOnly spots exactly those replies", () => {
+    expect(progressOnly("Checking recent New Jersey event results...")).toBe(true);
+    expect(progressOnly("Checking messages from Arnav on October 6…")).toBe(true);
+    expect(progressOnly("No events yet.")).toBe(false);
+    expect(progressOnly('Checking…\n```lookup\n{"kind":"messages"}\n```')).toBe(false);
+    expect(progressOnly("")).toBe(false);
+  });
+});
+
+describe("asking again after a bare Checking…", () => {
+  const first = "Checking messages from Arnav on October 6…";
+  const question = "What did Arnav say on October 6 in #general?";
+  it("runs the team lookup the model asks for (not a web search)", () => {
+    const r = resolveRetry(first, '```lookup\n{"kind":"messages","channel":"general","person":"Arnav","from":"2026-10-06","to":"2026-10-06"}\n```', question)!;
+    expect(r.kind).toBe("lookup");
+    const { text, queries } = extractLookupBlocks(r.text);
+    expect(text).toBe(first);
+    expect(queries).toEqual([{ kind: "messages", channel: "general", person: "Arnav", from: "2026-10-06", to: "2026-10-06" }]);
+  });
+  it("keeps an answer it gives instead", () => {
+    expect(resolveRetry(first, "Arnav said the intake is done and posted a photo.", question)).toEqual({ kind: "answer", text: "Arnav said the intake is done and posted a photo." });
+  });
+  it("still nothing (or the retry failed): a web check of the question", () => {
+    for (const retry of ["Checking again…", "", null]) {
+      const r = resolveRetry("Checking recent New Jersey event results...", retry, "What were the recent FTC event results in New Jersey?")!;
+      expect(r.kind).toBe("web");
+      expect(extractLookupBlocks(r.text).queries).toEqual([{ kind: "web", query: "What were the recent FTC event results in New Jersey?" }]);
+    }
+  });
+  it("tells the model what to do instead of checking again", () => {
+    expect(PROGRESS_ONLY_PROMPT).toMatch(/didn't ask for a lookup/);
+    expect(PROGRESS_ONLY_PROMPT).toMatch(/```lookup/);
   });
 });

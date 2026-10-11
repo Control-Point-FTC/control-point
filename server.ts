@@ -69,7 +69,7 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
-import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, runLookups, saidNothing } from "./server/brunoLookup.js";
+import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
@@ -12393,6 +12393,34 @@ Rules:
         logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
         return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources, queries, rows };
       };
+      /** The first reply only said "Checking …" and asked for no lookup: ask
+       *  once more (answer, or request the lookup it needs). Still nothing →
+       *  a web check of the question. */
+      const askAgain = async (firstText: string, signal: AbortSignal, grounded: boolean) => {
+        const question = messages[messages.length - 1].text;
+        const retryMessages = [...messages, { role: "model", text: firstText }, { role: "user", text: PROGRESS_ONLY_PROMPT }];
+        const chars = retryMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
+        let retryUsage: any = null;
+        let retry: any = null;
+        try {
+          retry = await aiChat({
+            extraSystem: systemExtra, messages: retryMessages, maxTokens, stream: false,
+            onUsage: (u) => { retryUsage = u; }, signal,
+            // Keep the first call's live search: the retry prompt alone wouldn't
+            // ask for it, and a current-prices/results answer must stay checked.
+            webSearch: grounded || req.body?.webSearch === true,
+          });
+          logAiUsage(auth.memberId, auth.teamId, retryUsage, chars, String(retry.text || "").length, "ok", retry.provider);
+        } catch (e: any) {
+          if (signal.aborted) return null;
+          console.error("Bruno retry after Checking… failed:", e?.message);
+          // Failed calls still count on the owner's usage dashboard.
+          logAiUsage(auth.memberId, auth.teamId, null, chars, 0, isAnthropicQuotaError(e) || isQuotaError(e) ? "quota" : "error", e?.aiProvider || "unknown");
+        }
+        const resolved = resolveRetry(firstText, retry?.text, question);
+        // The retry's own pages go with its answer (it may have searched live).
+        return resolved ? { ...resolved, sources: (retry?.sources || []) as any[] } : null;
+      };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("X-Accel-Buffering", "no"); // stream through nginx unbuffered
@@ -12428,7 +12456,18 @@ Rules:
           // The first call's own counts, logged before any lookup pass (which logs itself).
           const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
           logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
-          if (hold.blocked && !streamAbort.signal.aborted) {
+          // Only "Checking …" and no lookup asked for: ask again (see askAgain).
+          let implicit = false;
+          if (!hold.blocked && progressOnly(fullText) && !streamAbort.signal.aborted) {
+            const again = await askAgain(fullText, streamAbort.signal, !!aiReply.grounded);
+            if (streamAbort.signal.aborted) { res.end(); return; }
+            if (again?.kind === "answer") {
+              send(`\n\n${again.text}`);
+              fullText = `${fullText.trimEnd()}\n\n${again.text}`;
+              webSources.unshift(...again.sources);
+            } else if (again) { fullText = again.text; implicit = true; }
+          }
+          if ((hold.blocked || implicit) && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
             // The answer starts its own paragraph, live and in the saved reply alike.
             const gap = extractLookupBlocks(fullText).text ? "\n\n" : "";
@@ -12531,6 +12570,15 @@ Rules:
       // Same rule as the stream: any ```lookup block (even an unfinished or
       // unreadable one) is never shown or saved; if it can't run, say so.
       const webSourcesNS = [...(aiReply.sources || [])];
+      // Only "Checking …" and no lookup asked for: ask again (see askAgain).
+      if (progressOnly(String(result || ""))) {
+        const again = await askAgain(String(result || ""), nonStreamAbort.signal, !!aiReply.grounded);
+        if (nonStreamAbort.signal.aborted) return;
+        if (again?.kind === "answer") {
+          result = `${String(result || "").trimEnd()}\n\n${again.text}`;
+          webSourcesNS.unshift(...again.sources);
+        } else if (again) result = again.text;
+      }
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
         if (looked && saidNothing(looked.answer)) looked.answer = `${looked.answer}\n\n${nothingFoundNote(looked.queries, { rows: looked.rows, webSources: (looked.sources || []).length })}`.trim();
