@@ -80,7 +80,7 @@ import { clearDrafts, setDraft } from './modern/drafts';
 import { Team, Member, AttendanceRecord, Task, BudgetItem, OutreachEvent, Communication, CalendarEvent } from './types';
 import { streamAttendanceInsights, streamActivitySummary } from './services/aiService';
 import { clearOfflineData, warmOfflineSession } from './services/offlineData';
-import { apiFetch, assetUrl } from './services/api';
+import { apiFetch, assetUrl, noteSignIn } from './services/api';
 import { DialogHost, confirmDialog, promptDialog, notify } from './components/dialog';
 import { VoiceProvider, useVoice, type VoiceContextValue } from './voice';
 import LegalPage from './Legal';
@@ -121,6 +121,7 @@ function newSessionTag(): string {
   try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
 }
 function forgetStoredSession() {
+  noteSignIn(null);
   try { localStorage.removeItem(SESSION_TAG_KEY); localStorage.removeItem(LEGACY_SESSION_KEY); } catch { /* storage unavailable */ }
 }
 /**
@@ -842,6 +843,7 @@ export default function App() {
         if (data.user) {
           const tag = readStoredSessionId() || newSessionTag();
           try { localStorage.setItem(SESSION_TAG_KEY, tag); } catch { /* ignore */ }
+          noteSignIn(tag);
           setSessionId(tag);
           setCurrentUser(data.user);
           setIsLoggedIn(true);
@@ -1426,6 +1428,7 @@ export default function App() {
     clearDrafts(); // every sign-in (or account switch) starts with no drafts
     const tag = newSessionTag();
     try { localStorage.setItem(SESSION_TAG_KEY, tag); } catch { /* storage unavailable */ }
+    noteSignIn(tag);
     setSessionId(tag);
     setCurrentUser(user);
     setIsLoggedIn(true);

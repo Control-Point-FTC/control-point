@@ -37,8 +37,50 @@ export interface ApiFetchOptions extends RequestInit {
   timeoutMs?: number;
 }
 
-/** Drop-in replacement for fetch: same-origin cookie session + CSRF header, supports timeoutMs. */
-export function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
+/** The server's "your session is gone" answers (requireAuth). Other 401s,
+ *  such as a wrong current password, are not a reason to sign out. */
+const SESSION_GONE = new Set(['Not signed in', 'Invalid session']);
+async function sessionGone(res: Response): Promise<boolean> {
+  if (res.status !== 401) return false;
+  try {
+    const body = await res.clone().json();
+    return SESSION_GONE.has(String(body?.error || ''));
+  } catch {
+    return false;
+  }
+}
+
+/** Drop-in replacement for fetch: same-origin cookie session + CSRF header,
+ *  supports timeoutMs. Every caller gets the same expired-session handling
+ *  (V4-C4): the app returns to sign-in instead of showing error toasts. */
+export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
+  // The sign-in this request was sent under: a late 401 from an earlier
+  // sign-in must not end a newer one, and an ended one isn't ended twice.
+  const tag = signInTag();
+  const res = await rawApiFetch(url, init);
+  if (res.status === 401 && tag && signInTag() === tag && (await sessionGone(res))) handleUnauthorized();
+  return res;
+}
+
+/** This tab's sign-in: the per-sign-in tag App.tsx keeps (not a credential).
+ *  Held in memory — read once at load, then set by App at sign-in/out — so
+ *  another tab clearing the shared copy can't hide this tab's own expiry. */
+let tabSignIn: string | null = (() => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem('cp-session-tag') : null;
+  } catch {
+    return null;
+  }
+})();
+/** App.tsx: this tab signed in (a new tag) or out (null). */
+export function noteSignIn(tag: string | null) {
+  tabSignIn = tag;
+}
+function signInTag(): string | null {
+  return tabSignIn;
+}
+
+function rawApiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
   const { timeoutMs, ...rest } = init;
   const headers = new Headers(rest.headers || undefined);
   if (!headers.has('X-CP-Client')) headers.set('X-CP-Client', '1');
@@ -60,6 +102,7 @@ export function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Respo
 }
 
 function handleUnauthorized() {
+  tabSignIn = null;
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('cp-session-tag');
@@ -82,8 +125,10 @@ export async function apiJson<T = any>(url: string, init: ApiFetchOptions = {}):
   const res = await apiFetch(url, init);
   const body = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    handleUnauthorized();
-    throw new ApiError(401, 'Session expired — please sign in again', body);
+    // apiFetch already signed out when the session is gone; any other 401
+    // (a wrong current password) keeps its own message.
+    const gone = SESSION_GONE.has(String((body as any)?.error || ''));
+    throw new ApiError(401, gone ? 'Session expired — please sign in again' : (body as any)?.error || 'Not allowed', body);
   }
   if (!res.ok) {
     const message = (body && (body.error || body.message)) || `Request failed (${res.status})`;
