@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { apiJson } from '../services/api';
 import { confirmDialog } from '../components/dialog';
+import './sticky.css';
 
 export type StickyNote = { id: number; body: string; color: string; x: number; y: number; width: number; height: number; open: boolean; updatedAt: string };
 type Change = Partial<Omit<StickyNote, 'id' | 'updatedAt'>>;
@@ -75,7 +76,7 @@ function NoteCard({ note, state, onChange, onFlush, onRetry, onClose, onDelete }
     e.preventDefault();
     onChange(clampToWindow(at.x + delta[0], at.y + delta[1], note.width));
   };
-  return <div ref={card} className="nb-sticky" data-color={note.color} role="dialog" aria-label={`Sticky note: ${preview(note.body)}`}
+  return <div ref={card} className="nb-sticky" data-print-hide data-color={note.color} role="dialog" aria-label={`Sticky note: ${preview(note.body)}`}
     style={{ left: at.x, top: at.y, width: note.width, height: note.height }}>
     <header onPointerDown={drag} onKeyDown={nudge} tabIndex={0} aria-label="Move note (arrow keys)" title="Drag to move · arrow keys to nudge">
       <select aria-label="Note color" value={note.color} onChange={e => onChange({ color: e.target.value })}>{COLORS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
@@ -228,7 +229,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   };
   if (hidden) return null;
   return <>
-    {open && <aside className="nb-sticky-panel" role="complementary" aria-label="Sticky notes">
+    {open && <aside className="nb-sticky-panel" data-print-hide role="complementary" aria-label="Sticky notes">
       <header><h2>Sticky notes</h2><button type="button" aria-label="Close sticky notes" onClick={onClose}><X size={16} /></button></header>
       <p className="nb-small">Just for you. Not part of any notebook page.</p>
       <button type="button" className="nb-sticky-new" disabled={notes === null} onClick={() => { void create(); }}><Plus size={15} /> New note</button>
