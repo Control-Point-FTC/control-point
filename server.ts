@@ -79,7 +79,8 @@ import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
-import { isRefType, resolveRef } from "./server/refs.js";
+import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
+import { refsBlock, validateRefs } from "./server/brunoRefs.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
 import { BRUNO_NOTEBOOK_OFF, brunoAccess as readBrunoAccess, gatedNotebookBrief, gatedNotebookLookup, type BrunoAccess } from "./server/brunoAccess.js";
@@ -7355,6 +7356,11 @@ async function startServer() {
 
   // Stable links (/t/<team>/<type>/<id>): what a reference is and where it
   // opens, re-checked for this person every time it's opened.
+  const refDeps: RefDeps = {
+    get: (sql, ...args) => dbGet(sql, ...args),
+    notebook: brunoNotebookStore, // contexts passed to it are the person's own ("human"), not Bruno's
+    isAdmin: async (memberId, teamId) => { const p = await getMemberPerms(memberId, teamId); return p.has("*") || p.has("manage_members"); },
+  };
   app.get("/api/refs/:type/:id", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const auth = await requireAuth(req, res);
@@ -7364,11 +7370,7 @@ async function startServer() {
     if (!auth.teamId) return res.json({ status: "unavailable", type, id });
     const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
     try {
-      res.json(await resolveRef({
-        get: (sql, ...args) => dbGet(sql, ...args),
-        notebook: brunoNotebookStore, // contexts below are the person's own ("human"), not Bruno's
-        isAdmin: async (memberId, teamId) => { const p = await getMemberPerms(memberId, teamId); return p.has("*") || p.has("manage_members"); },
-      }, { memberId: auth.memberId, teamId: auth.teamId, email: me?.email }, type, id, linkTeam));
+      res.json(await resolveRef(refDeps, { memberId: auth.memberId, teamId: auth.teamId, email: me?.email }, type, id, linkTeam));
     } catch (e) {
       console.error("Link lookup failed:", e);
       res.status(500).json({ error: "Couldn't open that link" });
@@ -11974,7 +11976,8 @@ Rules:
       const messages = raw
         .filter((m: any) => m && (m.role === "user" || m.role === "model") && typeof m.text === "string")
         .slice(-12)
-        .map((m: any) => ({ role: m.role, text: m.text.slice(0, 2000) }));
+        // Earlier replies' checked-references blocks are for the chat UI, not the model.
+        .map((m: any) => ({ role: m.role, text: (m.role === "model" ? m.text.replace(/```refs[\s\S]*?(```|$)/g, "").trimEnd() : m.text).slice(0, 2000) }));
       if (!messages.length || messages[messages.length - 1].role !== "user") {
         return res.status(400).json({ error: "A user message is required" });
       }
@@ -12142,6 +12145,14 @@ Rules:
           return "";
         }
       };
+      // What Bruno was shown this turn (for checking its record references).
+      let lookupContext = "";
+      const referencesFor = async (text: string) => {
+        if (!auth.teamId) return "";
+        const teamId = auth.teamId;
+        const refs = await validateRefs(text, `${systemExtra}\n${lookupContext}`, (type, id) => resolveRef(refDeps, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
+        return refsBlock(teamId, refs);
+      };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
@@ -12150,6 +12161,7 @@ Rules:
         const notebookCtx = { memberId: auth.memberId, teamId: auth.teamId };
         const allowed = await brunoAccess(auth.memberId);
         const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries, gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any))) : "";
+        lookupContext += `\n${rows}`;
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -12256,7 +12268,7 @@ Rules:
           if (streamAbort.signal.aborted) { res.end(); return; }
           // The note streams with the scouting appendix below (written once).
           // Web pages the answer drew on, listed under it (phase 4d).
-          const appendix = sourcesFooter(webSources) + (await saveMemories(mem.facts)) + scouting;
+          const appendix = sourcesFooter(webSources) + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
           if (appendix) res.write(appendix);
           const finalText = stripActionBlocks(fullText) + appendix;
           if (chat && String(finalText || "").trim()) {
@@ -12303,7 +12315,7 @@ Rules:
       result = memNS.text;
       const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
-      const finalResult = stripActionBlocks(String(result || "")) + sourcesFooter(webSourcesNS) + (await saveMemories(memNS.facts)) + scoutingNS;
+      const finalResult = stripActionBlocks(String(result || "")) + sourcesFooter(webSourcesNS) + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {

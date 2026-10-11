@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
+import { RefLink, splitRefs } from './bruno/refChips';
 import remarkGfm from 'remark-gfm';
 import { Check, Copy } from 'lucide-react';
 
@@ -69,6 +70,8 @@ function GfmTable({ children }: { children?: ReactNode }) {
 }
 
 export function BrunoMarkdown({ children, className }: { children: string; className?: string }) {
+  // Record references Bruno made (checked by the server) render as chips.
+  const { body, refs } = splitRefs(children);
   return (
     // Trim first/last block margins so bubbles hug the text evenly, like
     // big-company chat UIs — rigid, equally-spaced vertical rhythm.
@@ -76,6 +79,7 @@ export function BrunoMarkdown({ children, className }: { children: string; class
     <div className={`${className || ''} [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 text-[14px] leading-7 [&_:not(pre)>code]:rounded-md [&_:not(pre)>code]:bg-text-base/[0.07] [&_:not(pre)>code]:px-1.5 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:text-[0.9em] [&_:not(pre)>code]:text-text-base`}>
       <Markdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url) => (url.startsWith('ref:') ? url : defaultUrlTransform(url))}
         components={{
           pre: CodeBlock as any,
           blockquote: Callout as any,
@@ -100,12 +104,12 @@ export function BrunoMarkdown({ children, className }: { children: string; class
           h2: ({ children }: any) => <h2 className="font-display text-base font-bold text-text-base mt-4 mb-2">{children}</h2>,
           h3: ({ children }: any) => <h3 className="text-sm font-bold text-text-base mt-3 mb-1.5">{children}</h3>,
           hr: () => <hr className="my-4 border-text-base/10" />,
-          a: ({ children, href }: any) => (
+          a: ({ children, href }: any) => String(href || '').startsWith('ref:') ? <RefLink href={href} refs={refs}>{children}</RefLink> : (
             <a href={href} target="_blank" rel="noreferrer" className="text-info font-semibold underline underline-offset-2 hover:opacity-80">{children}</a>
           ),
         }}
       >
-        {children}
+        {body}
       </Markdown>
     </div>
   );
