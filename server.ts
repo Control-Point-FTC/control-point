@@ -1645,11 +1645,23 @@ function sessionKey(token: string): string {
     : token;
 }
 
+/** Stamp a membership as used now: "the workspace you used last" reads
+ *  this, since a switch moves the session row and leaves no other trace. */
+async function markMembershipUsed(memberId: number, at = new Date().toISOString()): Promise<void> {
+  try {
+    await dbRun(
+      "INSERT INTO member_last_used (member_id, used_at) VALUES (?, ?) ON CONFLICT(member_id) DO UPDATE SET used_at = excluded.used_at",
+      memberId, at,
+    );
+  } catch (e) { console.error("markMembershipUsed failed:", (e as any)?.message || e); }
+}
+
 async function createSession(memberId: number): Promise<string> {
   const token = generateSessionToken();
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
   (await dbRun("INSERT INTO sessions (id, member_id, created_at, expires_at, last_activity) VALUES (?, ?, ?, ?, ?)", sessionKey(token), memberId, now, expiresAt, now));
+  await markMembershipUsed(memberId, now);
   return token;
 }
 
@@ -1662,8 +1674,9 @@ async function createSession(memberId: number): Promise<string> {
 async function rebindSession(req: any, memberId: number): Promise<string> {
   const token = getSessionId(req);
   if (token && token.startsWith(TOKEN_PREFIX)) {
-    const info = (await dbRun("UPDATE sessions SET member_id = ?, last_activity = ? WHERE id = ?", memberId, new Date().toISOString(), sessionKey(token))) as any;
-    if (Number(info?.changes) > 0) return token;
+    const now = new Date().toISOString();
+    const info = (await dbRun("UPDATE sessions SET member_id = ?, last_activity = ? WHERE id = ?", memberId, now, sessionKey(token))) as any;
+    if (Number(info?.changes) > 0) { await markMembershipUsed(memberId, now); return token; }
   }
   return createSession(memberId);
 }
@@ -1682,7 +1695,8 @@ async function createSessionIfCredential(memberId: number, email: string, passwo
        AND EXISTS (SELECT 1 FROM proven_passwords WHERE email = LOWER(?) AND hash = ?)`,
     sessionKey(sessionId), memberId, now, expiresAt, now, memberId, email, email, passwordHash, email, passwordHash
   )) as any;
-  return Number(info?.changes) > 0 ? sessionId : null;
+  if (Number(info?.changes) > 0) { await markMembershipUsed(memberId, now); return sessionId; }
+  return null;
 }
 
 async function validateSession(token: string): Promise<{ valid: boolean; memberId?: number; legacy?: boolean; touched?: boolean }> {
@@ -1704,6 +1718,7 @@ async function validateSession(token: string): Promise<{ valid: boolean; memberI
     let touched = false;
     if (!legacy && nowMs - last > SESSION_TOUCH_MS) {
       (await dbRun("UPDATE sessions SET last_activity = ?, expires_at = ? WHERE id = ?", now, new Date(nowMs + SESSION_TTL_MS).toISOString(), key));
+      await markMembershipUsed(session.member_id, now);
       touched = true;
     }
     return { valid: true, memberId: session.member_id, legacy, touched };
@@ -1839,10 +1854,11 @@ async function pickMemberRow(rows: any[]): Promise<any | null> {
   if (!rows.length) return null;
   if (rows.length === 1) return rows[0];
   const ids = rows.map((r) => r.id);
-  const hit = (await dbGet(
-    `SELECT member_id FROM sessions WHERE member_id IN (${ids.map(() => "?").join(",")}) ORDER BY last_activity DESC LIMIT 1`,
-    ...ids
-  )) as any;
+  const ph = ids.map(() => "?").join(",");
+  // The membership used last (sign-in, switch, activity); before that was
+  // recorded, the one with the most recent session.
+  const hit = ((await dbGet(`SELECT member_id FROM member_last_used WHERE member_id IN (${ph}) ORDER BY used_at DESC LIMIT 1`, ...ids).catch(() => null))
+    || (await dbGet(`SELECT member_id FROM sessions WHERE member_id IN (${ph}) ORDER BY last_activity DESC LIMIT 1`, ...ids))) as any;
   return (hit && rows.find((r) => r.id === hit.member_id)) || rows[0];
 }
 // Every workspace (team) this account actively belongs to, with member counts

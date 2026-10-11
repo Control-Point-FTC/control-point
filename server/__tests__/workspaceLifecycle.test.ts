@@ -70,6 +70,26 @@ describe("delete a workspace", () => {
     expect(r.body.switched?.user?.password).toBeUndefined();
   });
 
+  it("after switching around on one device, lands in the workspace you came from", async () => {
+    // The production case: one browser session moved A → B → C, so no session
+    // row points at B any more; deleting C must still land in B, not A.
+    const a = await seedTeam(t.db, "First");
+    const b = await seedTeam(t.db, "Came from");
+    const c = await seedTeam(t.db, "Throwaway");
+    const rowA = await seedMember(t.db, a, "Lu", "lu@ws.test", "admin");
+    await seedMember(t.db, b, "Lu", "lu@ws.test", "admin");
+    await seedMember(t.db, c, "Lu", "lu@ws.test", "admin");
+    await t.db.execute({ sql: "INSERT INTO member_last_used (member_id, used_at) VALUES (?, '2026-01-01T00:00:00.000Z')", args: [rowA] });
+    const s = await t.session(rowA);
+    expect((await t.post("/api/teams/switch", { team_id: b }, s)).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await t.post("/api/teams/switch", { team_id: c }, s)).status).toBe(200);
+    const r = await t.api(`/api/teams/${c}`, { method: "DELETE", session: s });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.switched?.team?.id).toBe(b);
+    expect(JSON.stringify(r.body)).not.toContain('"password"');
+  });
+
   it("only someone who manages that workspace can delete it", async () => {
     const team = await seedTeam(t.db, "Guarded");
     await seedMember(t.db, team, "Boss", "boss@ws.test", "admin");
