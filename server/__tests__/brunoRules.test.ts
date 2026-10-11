@@ -19,6 +19,9 @@ describe("Bruno's rules", () => {
     expect(BUILD_HELPER_SYSTEM).toMatch(/you don't share members' email addresses or phone numbers/);
     expect(BUILD_HELPER_SYSTEM).toMatch(/don't suggest the details are missing/);
   });
+  it("only links records that answer the question", () => {
+    expect(BUILD_HELPER_SYSTEM).toMatch(/Only link records that answer the question; don't add chips for unrelated tasks or pages/);
+  });
   it("the facts' roles line carries no instruction to echo", () => {
     const text = formatWorkspaceFacts({
       teamName: "T", timeZone: "America/New_York", today: "2026-10-11", now: new Date(),
