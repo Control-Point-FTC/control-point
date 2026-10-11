@@ -190,4 +190,38 @@ describe('Sticky notes', () => {
     // The member's own unsaved typing wins over the refreshed copy.
     expect((card.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Buy zip ties and bolts');
   });
+
+  it('a note edited while the refresh is out keeps what is on screen', async () => {
+    let answer!: (v: unknown) => void, first = true;
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => {
+      if (init?.method === 'PATCH') return note({ body: 'Typed during refresh' }) as any;
+      if (first) { first = false; return [note({ body: 'Buy zip ties' })] as any; }
+      return new Promise(r => { answer = r; }) as any;
+    });
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    act(() => { window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['sticky'] } })); });
+    fireEvent.change(card.querySelector('textarea')!, { target: { value: 'Typed during refresh' } });
+    fireEvent.blur(card.querySelector('textarea')!);
+    await waitFor(() => expect(vi.mocked(apiJson).mock.calls.some(([, i]) => (i as any)?.method === 'PATCH')).toBe(true));
+    // The refresh answers with the copy from before the save.
+    await act(async () => { answer([note({ body: 'Buy zip ties' })]); });
+    expect((card.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Typed during refresh');
+  });
+
+  it('a failed refresh says so and runs again when the list is reopened', async () => {
+    let fail = false;
+    vi.mocked(apiJson).mockImplementation(async () => { if (fail) throw new Error('offline'); return [note({ open: false })] as any; });
+    const view = render(<StickyNotes open onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /Buy zip ties/ })).toBeTruthy();
+    fail = true;
+    act(() => { window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['sticky'] } })); });
+    expect(await screen.findByText(/couldn’t be reloaded/)).toBeTruthy();
+    fail = false;
+    vi.mocked(apiJson).mockImplementation(async () => [note({ body: 'Fresh from Bruno', open: false })] as any);
+    view.rerender(<StickyNotes open={false} onClose={vi.fn()} />);
+    view.rerender(<StickyNotes open onClose={vi.fn()} />);
+    expect(await screen.findByRole('button', { name: /Fresh from Bruno/ })).toBeTruthy();
+    expect(screen.queryByText(/couldn’t be reloaded/)).toBeNull();
+  });
 });

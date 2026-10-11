@@ -46,9 +46,19 @@ describe("reading and changing a member's own notes", () => {
     expect((await stickyLookup(notes, team, ana, "servo")).lines).toHaveLength(0);
   });
 
+  it("reads one long note whole by id, so an edit never drops unseen text", async () => {
+    const long = "Plan: " + "x".repeat(3000) + " END";
+    const made = await notes.create(team, ana, { body: long });
+    expect((await stickyLookup(notes, team, ana)).lines.join("\n")).toContain(`"note":${made.id}`);
+    const whole = await stickyLookup(notes, team, ana, undefined, made.id);
+    expect(whole.lines[0]).toContain(" END");
+    expect((await stickyLookup(notes, team, ana, undefined, (await notes.list(team, ben))[0].id)).lines).toEqual([]);
+    const { extractLookupBlocks } = await import("../brunoLookup");
+    expect(extractLookupBlocks('```lookup\n{"kind":"sticky_notes","note":7}\n```').queries).toEqual([{ kind: "sticky_notes", note: 7 }]);
+  });
   it("previews against the member's notes; someone else's note is unavailable", async () => {
     const benNote = (await notes.list(team, ben))[0];
-    const anaNote = (await notes.list(team, ana))[0];
+    const anaNote = (await notes.list(team, ana)).find(x => x.body === "Order M3 bolts")!;
     const previews = await previewStickyOps(notes, { teamId: team, memberId: ana }, parseStickyOps([
       { op: "sticky_edit", note: anaNote.id, body: "Order M3 and M4 bolts" }, { op: "sticky_delete", note: benNote.id },
     ]));

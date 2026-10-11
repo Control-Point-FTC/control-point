@@ -51,13 +51,19 @@ export function parseStickyOps(items: unknown): StickyOp[] {
   });
 }
 
-/** The member's own notes for a lookup (newest first, each clipped). */
-export async function stickyLookup(notes: StickyNotes, teamId: number, memberId: number, query?: string): Promise<{ lines: string[]; more: boolean }> {
+/** The member's own notes for a lookup (newest first, each clipped), or one
+ *  whole note by id, which is what an edit must be based on. */
+export async function stickyLookup(notes: StickyNotes, teamId: number, memberId: number, query?: string, note?: number): Promise<{ lines: string[]; more: boolean }> {
+  if (note) {
+    const one = (await notes.list(teamId, memberId)).find(n => n.id === note);
+    return { lines: one ? [`sticky note #${one.id} (${one.color}, updated ${one.updatedAt}), complete text: ${JSON.stringify(one.body || "(empty)")}`] : [], more: false };
+  }
   const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const list = (await notes.list(teamId, memberId)).filter(n => words.every(w => n.body.toLowerCase().includes(w)));
   const lines = list.map(n => {
-    const text = n.body.length > LOOKUP_NOTE_CHARS ? `${n.body.slice(0, LOOKUP_NOTE_CHARS)}… (note continues)` : n.body;
-    return `sticky note #${n.id} (${n.color}, updated ${n.updatedAt}): ${JSON.stringify(text || "(empty)")}`;
+    const clipped = n.body.length > LOOKUP_NOTE_CHARS;
+    const text = clipped ? `${n.body.slice(0, LOOKUP_NOTE_CHARS)}…` : n.body;
+    return `sticky note #${n.id} (${n.color}, updated ${n.updatedAt}): ${JSON.stringify(text || "(empty)")}${clipped ? ` (clipped; read it whole with {"kind":"sticky_notes","note":${n.id}} before editing)` : ""}`;
   });
   return { lines, more: false };
 }

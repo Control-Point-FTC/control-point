@@ -139,19 +139,33 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   useEffect(() => {
     if (!hidden && notes === null && (open || Object.keys(readDrafts(draftsKey)).length)) void load();
   }, [open, hidden, notes, load, draftsKey]);
-  // Bruno changed sticky notes (a confirmed card): show the server's notes,
-  // keeping any local edits that haven't been saved yet on top.
+  // Bruno changed sticky notes (a confirmed card): show the server's notes.
+  // A note typed in or saved while the request was out keeps what's on
+  // screen (that response may predate it); unsaved edits stay on top. A failed
+  // refresh says so and runs again the next time the panel opens.
+  const editedDuringRefresh = useRef<Set<number> | null>(null);
+  const stale = useRef(false);
+  const refresh = useCallback(async () => {
+    const edited = new Set<number>(); editedDuringRefresh.current = edited;
+    try {
+      const list = await request<StickyNote[]>('/api/sticky-notes');
+      if (editedDuringRefresh.current !== edited) return; // a newer refresh owns the list
+      stale.current = false; setError('');
+      setNotes(prev => prev === null ? prev : list.map(n => edited.has(n.id) ? prev.find(p => p.id === n.id) ?? n : { ...n, ...sending.current.get(n.id), ...unsaved.current.get(n.id) }));
+    } catch {
+      stale.current = true;
+      setError('Bruno changed your sticky notes, but they couldn’t be reloaded. Close and reopen this list to try again.');
+    } finally { if (editedDuringRefresh.current === edited) editedDuringRefresh.current = null; }
+  }, []);
   useEffect(() => {
     const onChange = (e: Event) => {
       const types = (e as CustomEvent<{ types?: string[] }>).detail?.types;
-      if (!Array.isArray(types) || !types.includes('sticky')) return;
-      void request<StickyNote[]>('/api/sticky-notes').then(list => {
-        setNotes(prev => prev === null ? prev : list.map(n => ({ ...n, ...sending.current.get(n.id), ...unsaved.current.get(n.id) })));
-      }).catch(() => { /* the next open reloads */ });
+      if (Array.isArray(types) && types.includes('sticky')) void refresh();
     };
     window.addEventListener('bruno-data-changed', onChange);
     return () => window.removeEventListener('bruno-data-changed', onChange);
-  }, []);
+  }, [refresh]);
+  useEffect(() => { if (open && stale.current) void refresh(); }, [open, refresh]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (e.target as Element)?.closest?.('.nb-sticky-panel')) onClose(); };
@@ -166,7 +180,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     unsaved.current.delete(id); sending.current.set(id, change); mark(id, 'saving'); keepDrafts();
     try {
       const saved = await request<StickyNote>(`/api/sticky-notes/${id}`, 'PATCH', change);
-      failed.current.delete(id);
+      failed.current.delete(id); editedDuringRefresh.current?.add(id);
       setNotes(list => list?.map(n => n.id === id ? { ...n, updatedAt: saved.updatedAt } : n) ?? list);
     } catch {
       // Newer edits win over the ones that failed; all of them stay unsaved.
@@ -179,6 +193,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   }, [keepDrafts]);
 
   const change = useCallback((id: number, next: Change, delay = 0) => {
+    editedDuringRefresh.current?.add(id);
     setNotes(list => list?.map(n => n.id === id ? { ...n, ...next } : n) ?? list);
     unsaved.current.set(id, { ...unsaved.current.get(id), ...next }); touched.current.add(id); keepDrafts();
     mark(id, failed.current.has(id) ? 'failed' : 'saving');

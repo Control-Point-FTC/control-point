@@ -12135,7 +12135,7 @@ Rules:
         const teamId = auth.teamId;
         const rows = dataQueries.length ? await runLookups(dbAll as any, teamId, lookupTz, dataQueries,
           gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)),
-          gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query))) : "";
+          gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query, q.note))) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,

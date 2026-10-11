@@ -31,6 +31,8 @@ export interface LookupQuery {
   status?: string;
   /** notebook_page: the page id (from a search, the outline or the screen). */
   page?: number;
+  /** sticky_notes: one whole note by id (for editing it). */
+  note?: number;
 }
 
 /** Runs a notebook lookup for the asking member (Bruno-scoped access). */
@@ -70,6 +72,7 @@ export function extractLookupBlocks(text: string): { text: string; queries: Look
         ...(ISO.test(q.to) ? { to: q.to } : {}),
         ...(str(q.status, 20) ? { status: str(q.status, 20).toLowerCase() } : {}),
         ...(q.kind === "notebook_page" && Number.isSafeInteger(page) && page > 0 ? { page } : {}),
+        ...(q.kind === "sticky_notes" && Number.isSafeInteger(Number(q.note)) && Number(q.note) > 0 ? { note: Number(q.note) } : {}),
       });
     }
   }
