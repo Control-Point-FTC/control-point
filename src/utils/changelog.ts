@@ -13,6 +13,41 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '3.8.0',
+    date: '2026-10-11',
+    title: 'The team notebook, sticky notes, and a Bruno that links and edits',
+    added: [
+      'The team notebook: shared notebooks, sections and pages with a OneNote-style ribbon, live co-editing and discussions, tables, tags, page templates, "[[" page links and a "/" block menu',
+      'A drawing canvas on every page: pens and favorite pens, highlighter, shapes, text boxes, a ruler and custom backgrounds',
+      'Notebook files: attach PDFs and files, print them onto a page and mark them up together; protect a page or section for admins only',
+      'Notebook history and trash: see who changed what, compare and restore revisions, and bring back deleted pages and sections with everything under them',
+      'Reading mode with text size, spacing and backgrounds, plus read aloud; split view, zoom, tabs and a docked window on desktop',
+      'Turn a note line into a task, and link tasks and meetings to notebook pages',
+      'Sticky notes on every screen: private quick notes from the top bar',
+      'Bruno reads the team notebook and proposes changes (new pages, additions, rewrites, renames, moves) that you confirm first; switch notebook and sticky-note access off in Settings → Bruno AI',
+      'Bruno links the tasks, events, pages, parts and teammates it mentions: click a chip to open it (it checks you can still see it every time)',
+      'After you confirm Bruno’s changes, buttons take you straight to them: View task, View calendar and more',
+      'Bruno edits an existing task when you ask ("make the wheels task urgent") instead of adding a copy',
+      'Ask Bruno about a part and it links the exact product page under its answer, with price and stock',
+      'Assign a task to everyone in a role, in the task editor or by asking Bruno ("give it to the builders")',
+      'Links to a task, event, part, teammate or page that you can share with your team',
+    ],
+    improved: [
+      'Notebook page titles wrap, sections line up like OneNote, and every notebook, section and page has a right-click menu with icons',
+      'The notebook’s top row has Search, Bruno, sticky notes and the clock, with full-size icons',
+      'Long Bruno plans are no longer cut off before you can confirm them, and if one is too long Bruno says so',
+      'Links in Bruno’s answers show which site they go to and open safely in a new tab',
+      'One thin scrollbar in Bruno’s side panel; long words and links wrap',
+      'The public site has real "page not found" pages, page titles and better link previews',
+    ],
+    fixed: [
+      'Links on notebook pages open with the Select tool',
+      'Accounts created with a password before the email was confirmed are fully secured when you sign in with Google, Discord or GitHub',
+      'Board-only tasks are private to people who manage members everywhere, not just on the task board',
+      'Adding, editing or deleting outreach needs the Manage outreach permission (the Member role has it)',
+    ],
+  },
+  {
     version: '3.5.0',
     date: '2026-10-08',
     title: 'Repeating events, reviews and bulk select',

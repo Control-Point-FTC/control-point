@@ -47,11 +47,11 @@ describe("changelog", () => {
     expect((await t.post("/api/owner/changelog", { version: "3.11", date: "2026-10-09", title: "x" }, owner)).status).toBe(400);
 
     const id = made.body.entry.id;
-    const edited = await put(`/api/owner/changelog/${id}`, { version: "3.6.0", date: "2026-10-10", title: "Notebook + calendar", added: ["Personal notebook"], fixed: ["Phone month view"] }, owner);
+    const edited = await put(`/api/owner/changelog/${id}`, { version: "3.9.0", date: "2026-10-10", title: "Notebook + calendar", added: ["Personal notebook"], fixed: ["Phone month view"] }, owner);
     expect(edited.status).toBe(200);
-    expect(edited.body.entry).toMatchObject({ version: "3.6.0", fixed: ["Phone month view"] });
+    expect(edited.body.entry).toMatchObject({ version: "3.9.0", fixed: ["Phone month view"] });
     const list = (await t.api("/api/owner/changelog", { session: owner })).body;
-    expect(list.entries[0].version).toBe("3.6.0");
+    expect(list.entries[0].version).toBe("3.9.0");
     expect(list.discord).toBe(false);
     // Discord needs the webhook configured.
     expect((await t.post(`/api/owner/changelog/${id}/discord`, {}, owner)).status).toBe(400);
