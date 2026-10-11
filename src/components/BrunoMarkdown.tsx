@@ -69,6 +69,28 @@ function GfmTable({ children }: { children?: ReactNode }) {
   );
 }
 
+/** The site a web link goes to, shown beside it ("www." dropped). */
+export function linkDomain(href: string): string | null {
+  try {
+    const url = new URL(href);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.hostname.replace(/^www\./, '') : null;
+  } catch { return null; }
+}
+
+/** External links open directly (never through a redirect on our domain) in a
+ *  new tab, without access to this page, and show where they go. */
+function WebLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const domain = href ? linkDomain(href) : null;
+  const text = typeof children === 'string' ? children : Array.isArray(children) && children.every(c => typeof c === 'string') ? children.join('') : '';
+  // A link whose text already is the address doesn't repeat it.
+  const repeat = domain && !text.toLowerCase().includes(domain.toLowerCase());
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-info font-semibold underline underline-offset-2 hover:opacity-80" title={domain ? `${href} (opens in a new tab)` : undefined}>
+      {children}{repeat && <span className="ml-1 whitespace-nowrap text-[0.85em] font-normal text-text-muted no-underline">({domain})</span>}
+    </a>
+  );
+}
+
 export function BrunoMarkdown({ children, className }: { children: string; className?: string }) {
   // Record references Bruno made (checked by the server) render as chips.
   const { body, refs } = splitRefs(children);
@@ -104,9 +126,7 @@ export function BrunoMarkdown({ children, className }: { children: string; class
           h2: ({ children }: any) => <h2 className="font-display text-base font-bold text-text-base mt-4 mb-2">{children}</h2>,
           h3: ({ children }: any) => <h3 className="text-sm font-bold text-text-base mt-3 mb-1.5">{children}</h3>,
           hr: () => <hr className="my-4 border-text-base/10" />,
-          a: ({ children, href }: any) => String(href || '').startsWith('ref:') ? <RefLink href={href} refs={refs}>{children}</RefLink> : (
-            <a href={href} target="_blank" rel="noreferrer" className="text-info font-semibold underline underline-offset-2 hover:opacity-80">{children}</a>
-          ),
+          a: ({ children, href }: any) => String(href || '').startsWith('ref:') ? <RefLink href={href} refs={refs}>{children}</RefLink> : <WebLink href={href}>{children}</WebLink>,
         }}
       >
         {body}
