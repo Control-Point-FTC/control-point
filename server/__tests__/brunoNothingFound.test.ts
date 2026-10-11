@@ -24,6 +24,12 @@ describe("a check that found nothing", () => {
     expect(saidNothing("Checking current stock and the product page…")).toBe(true);
     expect(saidNothing("Searching for events on 2026-11-14.")).toBe(true);
     expect(saidNothing("No New Jersey events have been played yet this season.")).toBe(false);
+    // The question being checked isn't a result…
+    expect(saidNothing("Checking whether any NJ events have been played…")).toBe(true);
+    expect(saidNothing("Looking up how many teams have registered for the qualifier.")).toBe(true);
+    expect(saidNothing("Checking if the Axon MAX is in stock…")).toBe(true);
+    // …but a result after it still is.
+    expect(saidNothing("Checking whether events were played, none have been yet.")).toBe(false);
     expect(saidNothing("Checking… The Axon MAX is sold out at goBILDA ($99.99).")).toBe(false);
   });
 
