@@ -3236,7 +3236,8 @@ async function startServer() {
     const email = (((req.body || {}).email) || "").trim();
     const code = String((req.body || {}).code || "");
     if (!email || !code) return res.status(400).json({ error: "Email and code are required" });
-    const check = await checkVerificationCode(email, code);
+    // Used up on success (V5 audit L3), like the reset code.
+    const check = await consumeVerificationCode(email, code);
     if (check.ok === false) {
       const msg = check.reason === "expired"
         ? "That code expired — request a new one"
@@ -7871,7 +7872,7 @@ async function startServer() {
       // Metadata only: the BLOB is read after the auth + ETag checks, so a
       // 304 revalidation never pulls the file out of the database.
       const f = (await dbGet(
-        `SELECT id, team_id, kind, filename, mime_type, r2_key, length(data) AS blob_len FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
+        `SELECT id, team_id, member_id, kind, filename, mime_type, r2_key, length(data) AS blob_len FROM stored_files WHERE id = ? AND data IS NOT NULL`, id
       )) as any;
       if (!f || f.kind === "notebook") return res.status(404).end();
       let email = String((auth as any).email || "");
@@ -7882,6 +7883,8 @@ async function startServer() {
       const isOwner = ownerEmails().includes(email.toLowerCase());
       if (!isOwner && f.kind !== "avatar") {
         if (!f.team_id || f.team_id !== auth.teamId) return res.status(403).end();
+        // A feedback screenshot is between its sender and the owner (V5 audit L1).
+        if (f.kind === "feedback" && f.member_id !== auth.memberId) return res.status(403).end();
       }
       // Uploads are untrusted and their MIME type is whatever the uploader
       // sent. Since the files cookie makes these URLs openable directly in a
@@ -7931,6 +7934,10 @@ async function startServer() {
     if (!buf) return res.status(404).end();
     res.setHeader("Content-Type", row.mime_type || "image/jpeg");
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    // An upload's type is whatever the sender claimed: opened directly it
+    // must never run as a page (V5 audit L7).
+    res.setHeader("Content-Security-Policy", "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(buf);
   });
 
@@ -8342,8 +8349,12 @@ Rules:
   app.delete("/api/resources/:id", async (req, res) => {
     const auth = await requireAuth(req, res);
     if (!auth) return;
-    const row: any = await dbGet("SELECT id FROM resources WHERE id = ? AND team_id = ?", req.params.id, auth.teamId);
+    const row: any = await dbGet("SELECT id, created_by FROM resources WHERE id = ? AND team_id = ?", req.params.id, auth.teamId);
     if (!row) return res.status(404).json({ error: "Not found" });
+    // The person who saved the link, or someone who looks after the team's docs (V5 audit L5).
+    if (row.created_by !== auth.memberId && !(await hasPerm(auth, "manage_documentation")) && !(await hasPerm(auth, "manage_members"))) {
+      return res.status(403).json({ error: "Only the person who saved this link or a docs manager can delete it" });
+    }
     await dbRun("DELETE FROM resources WHERE id = ?", req.params.id);
     broadcastToTeam(auth.teamId, { type: "resources_changed" });
     res.json({ ok: true });
