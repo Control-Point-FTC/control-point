@@ -123,10 +123,21 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     try { if (Object.keys(drafts).length) localStorage.setItem(draftsKey, JSON.stringify(drafts)); else localStorage.removeItem(draftsKey); } catch { /* storage optional */ }
   }, [draftsKey]);
 
+  // One counter for every list request (first load and Bruno refreshes), so
+  // an older answer never replaces a newer one.
+  const listRun = useRef(0);
+  const localChanges = useRef(0);
+  const stale = useRef(false);
+  const retryRefresh = useRef<number | undefined>(undefined);
+  const notesNow = useRef(notes); notesNow.current = notes;
+  useEffect(() => () => window.clearTimeout(retryRefresh.current), []);
   const load = useCallback(async () => {
+    const run = ++listRun.current;
     let list: StickyNote[];
-    try { list = await request<StickyNote[]>('/api/sticky-notes'); setError(''); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not load your sticky notes.'); return; }
+    try { list = await request<StickyNote[]>('/api/sticky-notes'); }
+    catch (e) { if (run === listRun.current) setError(e instanceof Error ? e.message : 'Could not load your sticky notes.'); return; }
+    if (run !== listRun.current) return;
+    setError(''); stale.current = false;
     // Put back changes that never reached the server, then send them.
     const drafts = readDrafts(draftsKey);
     setNotes(list.map(n => drafts[n.id] ? { ...n, ...drafts[n.id] } : n));
@@ -144,28 +155,30 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   // that may predate a local change (typing, a save, a new or deleted note)
   // is thrown away and asked again. A failed refresh says so and runs again
   // the next time the panel opens.
-  const localChanges = useRef(0);
-  const refreshRun = useRef(0);
-  const stale = useRef(false);
   const refresh = useCallback(async () => {
-    const run = ++refreshRun.current;
+    window.clearTimeout(retryRefresh.current);
+    // Not loaded yet (or the first load is still out): load afresh instead.
+    if (notesNow.current === null) { void load(); return; }
+    const run = ++listRun.current;
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
         const before = localChanges.current;
         const list = await request<StickyNote[]>('/api/sticky-notes');
-        if (run !== refreshRun.current) return; // a newer refresh owns the list
+        if (run !== listRun.current) return; // a newer request owns the list
         if (localChanges.current !== before) continue;
         stale.current = false; setError('');
-        setNotes(prev => prev === null ? prev : list.map(n => ({ ...n, ...sending.current.get(n.id), ...unsaved.current.get(n.id) })));
+        setNotes(list.map(n => ({ ...n, ...sending.current.get(n.id), ...unsaved.current.get(n.id) })));
         return;
       }
-      stale.current = true; // still changing: the next open catches up
+      // Still being edited: try again once typing settles.
+      stale.current = true;
+      retryRefresh.current = window.setTimeout(() => { void refresh(); }, 1500);
     } catch {
-      if (run !== refreshRun.current) return;
+      if (run !== listRun.current) return;
       stale.current = true;
       setError('Bruno changed your sticky notes, but they couldn’t be reloaded. Close and reopen this list to try again.');
     }
-  }, []);
+  }, [load]);
   useEffect(() => {
     const onChange = (e: Event) => {
       const types = (e as CustomEvent<{ types?: string[] }>).detail?.types;

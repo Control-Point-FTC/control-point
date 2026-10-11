@@ -230,6 +230,36 @@ describe('Sticky notes', () => {
     expect((screen.getByLabelText('Note color') as HTMLSelectElement).value).toBe('sky');
   });
 
+  it("a refresh during the first load wins over that load's older answer", async () => {
+    const waiting: ((v: unknown) => void)[] = [];
+    vi.mocked(apiJson).mockImplementation(() => new Promise(r => waiting.push(r)) as any);
+    render(<StickyNotes open onClose={vi.fn()} />);
+    await waitFor(() => expect(waiting).toHaveLength(1));
+    brunoChanged();
+    await waitFor(() => expect(waiting).toHaveLength(2));
+    await act(async () => { waiting[1]([note({ body: 'Added by Bruno', open: false })]); });
+    await act(async () => { waiting[0]([note({ body: 'Before Bruno', open: false })]); });
+    expect(screen.getByRole('button', { name: /Added by Bruno/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Before Bruno/ })).toBeNull();
+  });
+
+  it('keeps trying when typing outruns every refresh, then shows the change', async () => {
+    const g = deferredGets([note({ body: 'Buy zip ties' })], () => new Promise(() => {}));
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    const area = card.querySelector('textarea')!;
+    brunoChanged();
+    for (let i = 0; i < 4; i++) {
+      fireEvent.change(area, { target: { value: `Typing ${i}` } });
+      await g.answer([note({ body: 'Buy zip ties', color: 'volt' })]);
+    }
+    expect(g.gets()).toBe(5);
+    await waitFor(() => expect(g.gets()).toBe(6), { timeout: 3000 });
+    await g.answer([note({ body: 'Buy zip ties', color: 'rose' })]);
+    expect((screen.getByLabelText('Note color') as HTMLSelectElement).value).toBe('rose');
+    expect((area as HTMLTextAreaElement).value).toBe('Typing 3'); // the member's unsaved text stays
+  });
+
   it('a note created while a refresh is out stays on the list', async () => {
     const g = deferredGets([note({ open: false })], init => init.method === 'POST' ? note({ id: 9, body: '' }) : note());
     render(<StickyNotes open onClose={vi.fn()} />);
