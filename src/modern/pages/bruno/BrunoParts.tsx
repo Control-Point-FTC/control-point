@@ -175,7 +175,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
   return (
     <div className="flex gap-3">
       <BrunoAvatar className="mt-0.5" />
-      <div className="min-w-0 flex-1 text-sm leading-relaxed">
+      <div className="min-w-0 flex-1 text-sm leading-relaxed [overflow-wrap:anywhere]">
         {think && <BrunoThinking steps={think.steps} startedAt={think.startedAt} thoughtMs={think.thoughtMs} phase="done" />}
         <div><BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown></div>
         {proposals.length > 0 && status !== 'dismissed' && (
@@ -197,7 +197,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
 export function UserTurn({ text, images, pdfs }: { text: string; images?: number; pdfs?: number }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-sm leading-relaxed">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md bg-muted px-4 py-2.5 text-sm leading-relaxed [overflow-wrap:anywhere]">
         <p className="whitespace-pre-wrap break-words">{text}</p>
         {(images || pdfs) ? <p className="mt-1 text-xs text-muted-foreground">{[images ? `${images} screenshot${images === 1 ? '' : 's'}` : '', pdfs ? `${pdfs} PDF${pdfs === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</p> : null}
       </div>
@@ -210,7 +210,7 @@ export function LiveReply({ text, liveThink }: { text: string; liveThink: LiveTh
   return (
     <div className="flex gap-3" aria-live="polite">
       <BrunoAvatar className="mt-0.5" />
-      <div className="min-w-0 flex-1 text-sm leading-relaxed">
+      <div className="min-w-0 flex-1 text-sm leading-relaxed [overflow-wrap:anywhere]">
         {liveThink && <BrunoThinking steps={liveThink.steps} startedAt={liveThink.startedAt} thoughtMs={liveThink.thoughtMs} phase={text ? 'generating' : 'thinking'} />}
         {text && <div><BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown><StreamingCaret /></div>}
       </div>

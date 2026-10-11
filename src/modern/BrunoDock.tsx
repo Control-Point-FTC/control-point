@@ -154,7 +154,7 @@ export function BrunoDock({ open, onClose, onExpand, currentUser, botName, onAct
                 <IconAction label="Close" onClick={onClose}><X /></IconAction>
               </header>
 
-              <div ref={scrollRef} className="relative min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
+              <div ref={scrollRef} className="relative min-h-0 flex-1 space-y-5 overflow-y-auto overflow-x-hidden custom-scrollbar px-4 py-4">
                 {empty ? (
                   <div className="flex min-h-full flex-col">
                     <div className="pt-6">

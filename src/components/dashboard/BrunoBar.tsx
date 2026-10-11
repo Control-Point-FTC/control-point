@@ -175,7 +175,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
 
       {/* Immersive reply area */}
       {expanded && (
-        <div className="border-t border-text-base/10 px-3 sm:px-4 py-3 max-h-[420px] overflow-y-auto">
+        <div className="border-t border-text-base/10 px-3 sm:px-4 py-3 max-h-[420px] overflow-y-auto overflow-x-hidden custom-scrollbar [overflow-wrap:anywhere]">
           {streamingText !== null && (
             <div className="prose prose-sm prose-invert max-w-none text-text-base/85 [&_p]:my-1.5">
               <BrunoMarkdown>{stripEventBlocks(streamingText)}</BrunoMarkdown>
