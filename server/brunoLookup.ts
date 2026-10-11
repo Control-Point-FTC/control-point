@@ -165,7 +165,7 @@ function when(ms: number, tz: string) {
  *  null for a line that isn't one. Never ids mentioned inside the text. */
 interface LookupRows { lines: string[]; more: boolean; summary?: string; ids?: (string | null)[] }
 
-async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Promise<LookupRows> {
+async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery, includeBoard = false): Promise<LookupRows> {
   const lines: string[] = [], ids: string[] = [];
   let more = false;
   let summary: string | undefined;
@@ -191,7 +191,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     let sql = `SELECT t.id, t.title, t.description, t.status, t.due_date, t.due_time, t.priority, t.created_at, t.completed_at,
       COALESCE((SELECT GROUP_CONCAT(mm.name, ', ') FROM task_assignees ta JOIN members mm ON mm.id = ta.member_id WHERE ta.task_id = t.id),
         (SELECT mm.name FROM members mm WHERE mm.id = t.assigned_to)) AS people
-      FROM tasks t WHERE t.team_id = ?${w.sql}`;
+      FROM tasks t WHERE t.team_id = ?${w.sql}${includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0"}`;
     if (q.status === "open") sql += " AND t.status != 'done'";
     else if (["todo", "in-progress", "done"].includes(q.status || "")) { sql += " AND t.status = ?"; args.push(q.status); }
     if (q.person) {
@@ -293,7 +293,7 @@ function describe(q: LookupQuery): string {
 
 const LOOKUP_TEXT_CAP = 12000;
 /** Run the queries for one team and format the rows for the model (capped). */
-export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>, onShown?: (ids: string[]) => void): Promise<string> {
+export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>, onShown?: (ids: string[]) => void, includeBoard = false): Promise<string> {
   const parts: string[] = [];
   // Where each record's line ends in the output, so only records whose rows
   // survive the length cap below count as shown to Bruno.
@@ -310,7 +310,7 @@ export async function runLookups(db: DbAll, teamId: number, tz: string, queries:
       } else if (q.kind === "sticky_notes") {
         if (!sticky) throw new Error("sticky note lookups unavailable");
         r = await sticky(q);
-      } else r = await runOne(db, teamId, tz, q);
+      } else r = await runOne(db, teamId, tz, q, includeBoard);
     } catch (e) {
       console.error("Bruno lookup failed:", (e as any)?.message);
       // A failed search is not an empty one: say so, so Bruno never claims the records don't exist.

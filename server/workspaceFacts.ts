@@ -237,7 +237,10 @@ export function formatWorkspaceFacts(f: FactsInput): string {
 }
 
 /** Gather the facts for a team (all queries scoped to teamId). */
-export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number, timeZone: string, now: Date = new Date()): Promise<FactsInput | null> {
+/** `includeBoard`: board-only tasks count only for viewers who may see them (manage_members). */
+export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number, timeZone: string, now: Date = new Date(), includeBoard = false): Promise<FactsInput | null> {
+  const board = includeBoard ? "" : " AND COALESCE(is_board, 0) = 0";
+  const tBoard = includeBoard ? "" : " AND COALESCE(t.is_board, 0) = 0";
   const team = await db.dbGet("SELECT name FROM teams WHERE id = ?", teamId);
   if (!team) return null;
   const today = todayIn(timeZone, now);
@@ -257,19 +260,19 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
        SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS overdue_n,
        SUM(CASE WHEN status != 'done' AND due_date IS NOT NULL AND due_date != '' AND substr(due_date, 1, 10) >= ? AND substr(due_date, 1, 10) < ? THEN 1 ELSE 0 END) AS week_n,
        SUM(CASE WHEN status = 'done' AND completed_at IS NOT NULL AND completed_at >= ? THEN 1 ELSE 0 END) AS done7_n
-     FROM tasks WHERE team_id = ?`,
+     FROM tasks WHERE team_id = ?${board}`,
     today, today, weekAhead, weekAgoIso, teamId,
   );
   // Assignees: the task_assignees join table, falling back to the legacy column.
   const unassigned = await db.dbGet(
     `SELECT COUNT(*) AS n FROM tasks t
-     WHERE t.team_id = ? AND t.status != 'done' AND t.assigned_to IS NULL
+     WHERE t.team_id = ? AND t.status != 'done' AND t.assigned_to IS NULL${tBoard}
        AND NOT EXISTS (SELECT 1 FROM task_assignees ta WHERE ta.task_id = t.id)`,
     teamId,
   );
   const openTasks = await db.dbAll(
     `SELECT t.id, t.title, t.status, t.due_date FROM tasks t
-     WHERE t.team_id = ? AND t.status != 'done'
+     WHERE t.team_id = ? AND t.status != 'done'${tBoard}
      ORDER BY CASE WHEN t.due_date IS NULL OR t.due_date = '' THEN 1 ELSE 0 END, t.due_date ASC, t.id ASC LIMIT 20`,
     teamId,
   );
@@ -326,10 +329,10 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
 
 /** Load + format, best-effort (Bruno must still answer if a query fails). */
 /** `shown` collects the records the block lists ("task:12", "event:5"). */
-export async function workspaceFactsBlock(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number | null, timeZone: string, now: Date = new Date(), shown?: Set<string>): Promise<string> {
+export async function workspaceFactsBlock(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number | null, timeZone: string, now: Date = new Date(), shown?: Set<string>, includeBoard = false): Promise<string> {
   if (!teamId) return "";
   try {
-    const f = await loadWorkspaceFacts(db, teamId, timeZone, now);
+    const f = await loadWorkspaceFacts(db, teamId, timeZone, now, includeBoard);
     // Every open task and upcoming event in the facts is printed with its id.
     if (f && shown) { for (const t of f.openTasks) shown.add(`task:${t.id}`); for (const e of f.upcoming) shown.add(`event:${e.id}`); }
     return f ? formatWorkspaceFacts(f) : "";
