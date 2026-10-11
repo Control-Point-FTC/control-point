@@ -152,7 +152,8 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       const current = syncRef.current;
       if (current && !value.pages.some(p => p.id === current.pageId)) {
         void current.discardRecovery(); syncRef.current = null; setSync(null);
-        if (!trashedHere.current.delete(current.pageId)) setError('This page is no longer available.');
+        // Only peek: the missing-page check below consumes the mark.
+        if (!trashedHere.current.has(current.pageId)) setError('This page is no longer available.');
       }
     } catch (e) {
       if(!currentRequest())return;loadFailedRef.current=true;
