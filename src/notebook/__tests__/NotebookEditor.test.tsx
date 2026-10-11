@@ -83,6 +83,15 @@ describe('mounted collaborative notebook editor', () => {
     expect(otherPaper.style.backgroundImage).toContain('to right');expect((pane.querySelector('[aria-label="Page title"]') as HTMLInputElement).hidden).toBe(true);
     await act(async()=>{await other.flush();});expect(server.getMap('meta').get('title')).toBe('Journal');expect(secondary.getMap('meta').get('title')).toBe('Changed independently');
   });
+  it('keeps the title on one line: Enter moves into the page, but not while an IME is composing',async()=>{
+    await mount();
+    const title=screen.getByRole('textbox',{name:'Page title'});
+    const composing=new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});Object.defineProperty(composing,'isComposing',{value:true});
+    title.dispatchEvent(composing);expect(composing.defaultPrevented).toBe(false);
+    expect(fireEvent.keyDown(title,{key:'Enter'})).toBe(false);
+    await waitFor(()=>expect(document.activeElement).toBe(screen.getByRole('textbox',{name:'Page content'})));
+    fireEvent.change(title,{target:{value:'Two\nlines'}});expect(title).toHaveValue('Two lines');
+  });
   it('makes text, title and insertion controls read only while a revision restore is pending',async()=>{
     const {sync}=await mount();
     act(()=>sync.setRestoring(true));
