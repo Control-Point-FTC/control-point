@@ -4,7 +4,9 @@ import { apiFetch, apiJson, apiGet, ApiError } from '../api';
 const fetchMock = vi.fn();
 
 function jsonRes(status: number, body: any) {
-  return { ok: status >= 200 && status < 300, status, json: async () => body } as any;
+  const res: any = { ok: status >= 200 && status < 300, status, json: async () => body };
+  res.clone = () => jsonRes(status, body);
+  return res;
 }
 
 beforeEach(() => {
@@ -57,13 +59,44 @@ describe('apiJson', () => {
     const events: string[] = [];
     const listener = (e: Event) => events.push(e.type);
     window.addEventListener('cp:unauthorized', listener);
-    fetchMock.mockResolvedValue(jsonRes(401, { error: 'nope' }));
+    fetchMock.mockResolvedValue(jsonRes(401, { error: 'Not signed in' }));
     const err = await apiJson('/api/x').catch((e) => e);
     window.removeEventListener('cp:unauthorized', listener);
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(401);
+    expect(err.message).toBe('Session expired — please sign in again');
     expect(localStorage.getItem('sessionId')).toBeNull();
     expect(events).toEqual(['cp:unauthorized']);
+  });
+
+  it('a 401 that is not about the session (wrong current password) keeps you signed in', async () => {
+    localStorage.setItem('sessionId', 'live');
+    const events: string[] = [];
+    const listener = (e: Event) => events.push(e.type);
+    window.addEventListener('cp:unauthorized', listener);
+    fetchMock.mockResolvedValue(jsonRes(401, { error: 'Current password is incorrect' }));
+    const err = await apiJson('/api/auth/change-password').catch((e) => e);
+    window.removeEventListener('cp:unauthorized', listener);
+    expect(err.message).toBe('Current password is incorrect');
+    expect(localStorage.getItem('sessionId')).toBe('live');
+    expect(events).toEqual([]);
+  });
+});
+
+describe('apiFetch', () => {
+  it('an expired session on any call returns the app to sign-in (once)', async () => {
+    localStorage.setItem('sessionId', 'stale');
+    const events: string[] = [];
+    const listener = (e: Event) => events.push(e.type);
+    window.addEventListener('cp:unauthorized', listener);
+    fetchMock.mockResolvedValue(jsonRes(401, { error: 'Not signed in' }));
+    const res = await apiFetch('/api/tasks', { method: 'POST', body: '{}' });
+    window.removeEventListener('cp:unauthorized', listener);
+    expect(res.status).toBe(401);
+    // The caller can still read the body.
+    expect(await res.json()).toEqual({ error: 'Not signed in' });
+    expect(events).toEqual(['cp:unauthorized']);
+    expect(localStorage.getItem('sessionId')).toBeNull();
   });
 });
 
