@@ -6700,6 +6700,15 @@ async function startServer() {
     res.json(ROLE_PERMISSIONS);
   });
 
+  // No escalation through roles (V5 audit M3): "Manage roles" lets you hand
+  // out, take away, create, edit or delete only roles whose permissions you
+  // hold yourself. Full admins ("*") can manage every role.
+  const rolePermsWithinCaller = async (auth: { memberId: number; teamId: number | null }, perms: string[]): Promise<boolean> => {
+    const mine = await getMemberPerms(auth.memberId, auth.teamId);
+    if (mine.has("*")) return true;
+    return perms.every((p) => p !== "*" && mine.has(p));
+  };
+
   // Create a custom role (manage_roles only)
   app.post("/api/roles", async (req, res) => {
     const auth = await requirePerm(req, res, "manage_roles");
@@ -6709,8 +6718,9 @@ async function startServer() {
     if (!name) return res.status(400).json({ error: "Role name is required" });
     const color = cleanHex(req.body?.color) || "#71717A";
     const permissions = Array.isArray(req.body?.permissions)
-      ? [...new Set(req.body.permissions.filter((p: any) => KNOWN_PERMS.has(p)))]
+      ? [...new Set(req.body.permissions.filter((p: any) => KNOWN_PERMS.has(p)))] as string[]
       : [];
+    if (!(await rolePermsWithinCaller(auth, permissions))) return res.status(403).json({ error: "You can only manage roles with permissions you have yourself" });
     const maxPos = (await dbGet("SELECT COALESCE(MAX(position), -1) as m FROM roles WHERE team_id = ?", auth.teamId)) as any;
     const info = (await dbRun(
       "INSERT INTO roles (team_id, name, color, permissions, position, is_system) VALUES (?,?,?,?,?,0)",
@@ -6729,6 +6739,7 @@ async function startServer() {
     const role = (await dbGet("SELECT * FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
     if (!role) return res.status(404).json({ error: "Role not found" });
     if (role.is_system) return res.status(403).json({ error: "System roles can't be edited" });
+    if (!(await rolePermsWithinCaller(auth, parsePerms(role.permissions)))) return res.status(403).json({ error: "You can only manage roles with permissions you have yourself" });
     const updates: any = {};
     if (req.body?.name !== undefined) {
       const name = String(req.body.name).trim().slice(0, 40);
@@ -6737,11 +6748,11 @@ async function startServer() {
     }
     if (req.body?.color !== undefined) updates.color = cleanHex(req.body.color) || "#71717A";
     if (req.body?.permissions !== undefined) {
-      updates.permissions = JSON.stringify(
-        Array.isArray(req.body.permissions)
-          ? [...new Set(req.body.permissions.filter((p: any) => KNOWN_PERMS.has(p)))]
-          : []
-      );
+      const next = Array.isArray(req.body.permissions)
+        ? [...new Set(req.body.permissions.filter((p: any) => KNOWN_PERMS.has(p)))] as string[]
+        : [];
+      if (!(await rolePermsWithinCaller(auth, next))) return res.status(403).json({ error: "You can only manage roles with permissions you have yourself" });
+      updates.permissions = JSON.stringify(next);
     }
     if (Object.keys(updates).length) {
       const cols = Object.keys(updates);
@@ -6769,6 +6780,7 @@ async function startServer() {
     const role = (await dbGet("SELECT * FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
     if (!role) return res.status(404).json({ error: "Role not found" });
     if (role.is_system) return res.status(403).json({ error: "System roles can't be deleted" });
+    if (!(await rolePermsWithinCaller(auth, parsePerms(role.permissions)))) return res.status(403).json({ error: "You can only manage roles with permissions you have yourself" });
     const holders = (await dbAll(
       `SELECT m.id FROM member_roles mr JOIN members m ON m.id = mr.member_id
        WHERE mr.role_id = ? AND COALESCE(m.is_active, 1) = 1`, roleId
@@ -6846,8 +6858,9 @@ async function startServer() {
       "SELECT id FROM members WHERE id = ? AND team_id = ? AND COALESCE(is_active, 1) = 1", memberId, auth.teamId
     )) as any;
     if (!target) return res.status(404).json({ error: "Member not found" });
-    const role = (await dbGet("SELECT id FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
+    const role = (await dbGet("SELECT id, permissions FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
     if (!role) return res.status(404).json({ error: "Role not found" });
+    if (!(await rolePermsWithinCaller(auth, parsePerms(role.permissions)))) return res.status(403).json({ error: "You can only manage roles with permissions you have yourself" });
     const added = (await dbRun("INSERT OR IGNORE INTO member_roles (member_id, role_id) VALUES (?,?)", memberId, roleId)) as any;
     await syncAccountType(memberId, auth.teamId!);
     // Admin changes that affect you always reach you.
@@ -6878,6 +6891,7 @@ async function startServer() {
     if (!target) return res.status(404).json({ error: "Member not found" });
     const role = (await dbGet("SELECT * FROM roles WHERE id = ? AND team_id = ?", roleId, auth.teamId)) as any;
     if (!role) return res.status(404).json({ error: "Role not found" });
+    if (!(await rolePermsWithinCaller(auth, parsePerms(role.permissions)))) return res.status(403).json({ error: "You can only manage roles with permissions you have yourself" });
     if (!(await wouldBeAdmin(memberId, auth.teamId!, roleId)) && (await countAdmins(auth.teamId!)) <= 1) {
       return res.status(400).json({ error: "You need at least one admin — promote someone else first" });
     }
