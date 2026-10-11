@@ -315,10 +315,13 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
 }
 
 /** Load + format, best-effort (Bruno must still answer if a query fails). */
-export async function workspaceFactsBlock(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number | null, timeZone: string, now: Date = new Date()): Promise<string> {
+/** `shown` collects the records the block lists ("task:12", "event:5"). */
+export async function workspaceFactsBlock(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number | null, timeZone: string, now: Date = new Date(), shown?: Set<string>): Promise<string> {
   if (!teamId) return "";
   try {
     const f = await loadWorkspaceFacts(db, teamId, timeZone, now);
+    // Every open task and upcoming event in the facts is printed with its id.
+    if (f && shown) { for (const t of f.openTasks) shown.add(`task:${t.id}`); for (const e of f.upcoming) shown.add(`event:${e.id}`); }
     return f ? formatWorkspaceFacts(f) : "";
   } catch (e) {
     console.error("[bruno] workspace facts failed:", e);

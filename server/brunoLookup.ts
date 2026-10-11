@@ -161,10 +161,11 @@ function when(ms: number, tz: string) {
   return new Date(ms).toLocaleString("en-US", { timeZone: tz, year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-interface LookupRows { lines: string[]; more: boolean; summary?: string }
+/** `ids`: the records listed ("task:12"), not ids mentioned inside their text. */
+interface LookupRows { lines: string[]; more: boolean; summary?: string; ids?: string[] }
 
 async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Promise<LookupRows> {
-  const lines: string[] = [];
+  const lines: string[] = [], ids: string[] = [];
   let more = false;
   let summary: string | undefined;
   if (q.kind === "messages") {
@@ -219,6 +220,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     more = c.more;
     for (const r of c.rows) {
       const finished = r.status === "done" && r.completed_at ? `, finished ${when(Date.parse(r.completed_at), tz)}` : "";
+      ids.push(`task:${r.id}`);
       lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "events") {
@@ -231,6 +233,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     const c = capped(await db(sql, ...args), 60);
     more = c.more;
     for (const r of c.rows) {
+      ids.push(`event:${r.id}`);
       lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "communications") {
@@ -278,7 +281,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
       summary = `Total of all ${Number(t?.n) || lines.length} matching entries: +$${(Number(t?.income) || 0).toFixed(2)} in, -$${(Number(t?.spent) || 0).toFixed(2)} out.`;
     }
   }
-  return { lines, more, summary };
+  return { lines, more, summary, ids };
 }
 
 function describe(q: LookupQuery): string {
@@ -288,7 +291,7 @@ function describe(q: LookupQuery): string {
 }
 
 /** Run the queries for one team and format the rows for the model (capped). */
-export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>, onRows?: (lines: string[]) => void): Promise<string> {
+export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>, onShown?: (ids: string[]) => void): Promise<string> {
   const parts: string[] = [];
   for (const q of queries.slice(0, MAX_LOOKUPS)) {
     if (q.kind === "web") continue;
@@ -308,7 +311,7 @@ export async function runLookups(db: DbAll, teamId: number, tz: string, queries:
       continue;
     }
     const { lines, more, summary } = r;
-    if (lines.length) onRows?.(lines);
+    if (r.ids?.length) onShown?.(r.ids);
     const count = !lines.length ? "nothing found" : more ? `${lines.length} shown, MORE matched but are not listed (incomplete — say so, or suggest a narrower search)` : `${lines.length} found`;
     parts.push(`Lookup: ${describe(q)} — ${count}${lines.length ? `\n${lines.join("\n")}` : ""}${summary ? `\n${summary}` : ""}`);
   }

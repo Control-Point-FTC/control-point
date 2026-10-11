@@ -191,4 +191,12 @@ describe("ground truth: the audited workspace", () => {
     expect(text).not.toMatch(/Kickoff/);
     expect(text).not.toMatch(/Saturdays?\b.*practice/i);
   });
+
+  it("reports exactly the records it lists, for checking Bruno's references", async () => {
+    const { workspaceFactsBlock } = await import("../workspaceFacts");
+    const shown = new Set<string>();
+    await workspaceFactsBlock(db(), teamId, "America/New_York", NOW, shown);
+    const f = (await loadWorkspaceFacts(db(), teamId, "America/New_York", NOW))!;
+    expect([...shown].sort()).toEqual([...f.openTasks.map((x) => `task:${x.id}`), ...f.upcoming.map((e) => `event:${e.id}`)].sort());
+  });
 });

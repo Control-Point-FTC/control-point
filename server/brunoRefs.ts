@@ -2,10 +2,11 @@
 // inline; when the reply is finished the server checks every one and appends
 // the survivors as a ```refs block, which the chat renders as link chips.
 // A reference survives only when all three hold:
-//   1. that record, type and id, was in what Bruno was given this turn (the
-//      workspace summary, the open screen, lookup results), written as
-//      "task #12", "event #5", "page #31", "section #4": Bruno never invents
-//      ids, and a task's id can't be passed off as an event's;
+//   1. that record (type and id) was one Bruno was actually given this turn:
+//      each context source (workspace facts, team snapshot, open screen,
+//      lookup results) records the records it lists, so examples in the
+//      instructions or ids typed inside notes don't count. Bruno never
+//      invents ids, and a task's id can't be passed off as an event's;
 //   2. it resolves for this member (resolveRef: ok, or deleted for something
 //      they could see), so a chip never points at hidden content;
 //   3. Bruno's name for it matches the record's real name, which catches a
@@ -14,25 +15,18 @@
 import { isRefType, type RefResult, type RefType } from "./refs.js";
 
 export type BrunoRef = { type: RefType; id: number; label: string; status: "ok" | "deleted" };
-const LINK_RE = /\[([^\]\n]{1,200})\]\(ref:([a-z_]{1,20}):(\d{1,12})\)/g;
+// The label may contain escaped brackets: [Intake \[v2\]](ref:page:31).
+const LINK_RE = /\[((?:\\.|[^\]\\\n]){1,200})\]\(ref:([a-z_]{1,20}):(\d{1,12})\)/g;
+const unescape = (s: string) => s.replace(/\\(.)/g, "$1");
 const MAX_REFS = 40;
 
 export function refCandidates(text: string): { label: string; type: RefType; id: number }[] {
   const out: { label: string; type: RefType; id: number }[] = [];
   for (const m of String(text || "").matchAll(LINK_RE)) {
-    if (isRefType(m[2])) out.push({ label: m[1], type: m[2], id: Number(m[3]) });
+    if (isRefType(m[2])) out.push({ label: unescape(m[1]), type: m[2], id: Number(m[3]) });
     if (out.length >= MAX_REFS) break;
   }
   return out;
-}
-
-/** How each type's ids are written in Bruno's context. Types never shown
- *  with an id can't be referenced. */
-const CONTEXT_NOUN: Partial<Record<RefType, string>> = { task: "task", event: "event", page: "page", section: "section" };
-/** That record (type and id) was shown to Bruno this turn, e.g. "task #12" (not #123). */
-export function shownInContext(context: string, type: RefType, id: number) {
-  const noun = CONTEXT_NOUN[type];
-  return !!noun && new RegExp(`\\b${noun} #${id}(?!\\d)`, "i").test(context);
 }
 
 const flat = (s: string) => s.toLowerCase().normalize("NFKD").replace(/\s+/g, " ").trim();
@@ -48,11 +42,12 @@ export function labelsMatch(said: string, actual: string) {
   return shared / Math.min(a.length, b.length) >= 0.6;
 }
 
-export async function validateRefs(text: string, context: string, resolve: (type: RefType, id: number) => Promise<RefResult>): Promise<BrunoRef[]> {
+/** `shown`: "type:id" of every record Bruno was given this turn. */
+export async function validateRefs(text: string, shown: ReadonlySet<string>, resolve: (type: RefType, id: number) => Promise<RefResult>): Promise<BrunoRef[]> {
   const seen = new Map<string, BrunoRef>();
   for (const c of refCandidates(text)) {
     const key = `${c.type}:${c.id}`;
-    if (seen.has(key) || !shownInContext(context, c.type, c.id)) continue;
+    if (seen.has(key) || !shown.has(key)) continue;
     const r = await resolve(c.type, c.id);
     if ((r.status === "ok" || r.status === "deleted") && labelsMatch(c.label, r.label)) seen.set(key, { type: c.type, id: c.id, label: r.label, status: r.status });
   }
