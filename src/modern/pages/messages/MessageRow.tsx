@@ -15,10 +15,14 @@ import { PresenceAvatar } from '../people/MembersTab';
 function ChatImage({ src, alt }: { src: string; alt: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) {
+    // Can't show it here; the file may still download (or be a format this
+    // browser can't draw), so keep a way to open it.
     return (
-      <p className="flex max-w-xs items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-        <ImageOff className="size-4 shrink-0" /> This image is no longer available — ask the sender to upload it again.
-      </p>
+      <a href={src} target="_blank" rel="noopener noreferrer" className="flex max-w-xs items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/60">
+        <ImageOff className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1">Can't preview {alt}. <span className="font-medium text-foreground underline-offset-2 hover:underline">Open it</span></span>
+        <Download className="size-4 shrink-0" />
+      </a>
     );
   }
   return (

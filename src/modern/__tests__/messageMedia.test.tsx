@@ -42,6 +42,13 @@ describe('message attachments', () => {
     expect(screen.getByRole('link', { name: /auto run\.mp4/ })).toHaveAttribute('href', expect.stringContaining('/api/files/13'));
   });
 
+  it('a picture that won’t load keeps a way to open it', () => {
+    row({ file_path: '/api/files/15', file_name: 'IMG_9.png', file_size: 1000 });
+    fireEvent.error(screen.getByRole('img', { name: 'IMG_9.png' }));
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Can't preview IMG_9.png/ })).toHaveAttribute('href', expect.stringContaining('/api/files/15'));
+  });
+
   it('other files stay download cards', () => {
     row({ file_path: '/api/files/14', file_name: 'BOM.xlsx', file_size: 12_000 });
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
