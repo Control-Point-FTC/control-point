@@ -113,7 +113,8 @@ describe("only rows Bruno actually receives count", () => {
 
 describe("names with backslashes", () => {
   it("keep backslashes that aren't Markdown escapes", () => {
-    expect(refCandidates("[Node\backend](ref:page:5)")).toEqual([{ label: "Node\backend", type: "page", id: 5 }]);
-    expect(refCandidates("[a\*b](ref:page:6)")).toEqual([{ label: "a*b", type: "page", id: 6 }]);
+    expect(refCandidates("[Node\\backend](ref:page:5)")).toEqual([{ label: "Node\\backend", type: "page", id: 5 }]);
+    expect(refCandidates("[a\\*b](ref:page:6)")).toEqual([{ label: "a*b", type: "page", id: 6 }]);
+    expect("[Node\\backend]".length).toBe(14); // the input really holds one backslash
   });
 });
