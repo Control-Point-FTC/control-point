@@ -342,6 +342,21 @@ export function followUpPrompt(rows: string, queries: LookupQuery[]): string {
     parts.push(`[Web check requested]\nSearch the web now for: ${web.map((w) => `"${w}"`).join("; ")}.`);
     parts.push("Answer from current pages, preferring the maker or store itself (goBILDA, REV Robotics, AndyMark, ServoCity, the FIRST site). Give prices with the store's name and say they are as of today; say stock can change. If a page contradicts what you said earlier, correct it plainly. If you couldn't find it, say so instead of guessing.");
   }
-  parts.push("Now answer my last question. Don't ask for another lookup.");
+  parts.push("Now answer my last question. Don't ask for another lookup, and don't say \"Checking…\" again: the check is done. If the results show nothing (for example, no events have been played yet this season), say exactly that in a sentence.");
   return parts.join("\n\n");
+}
+
+/** A follow-up answer that said nothing new: empty, or only another
+ *  "Checking …" line (V5 audit M2 — the reply used to end there). */
+export function saidNothing(answer: string): boolean {
+  const lines = String(answer || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines.every((l) => /^(checking|looking|searching|let me check)\b[^.!?]{0,160}(…|\.{3})?$/i.test(l));
+}
+
+/** What Bruno says when a check came back with nothing to report. */
+export function nothingFoundNote(queries: LookupQuery[]): string {
+  const web = queries.some((q) => q.kind === "web");
+  return web
+    ? "I couldn't find anything current on that. FIRST's event site (https://ftc-events.firstinspires.org) and FTC Scout (https://ftcscout.org) list every event as it's played, so if nothing shows there yet, the events haven't happened."
+    : "I couldn't find anything for that in the team's data. Try other words, a name or a date range.";
 }

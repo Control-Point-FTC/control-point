@@ -69,7 +69,7 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
-import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
+import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, runLookups, saidNothing } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
 import { CLOSE_FENCE, FINISH_BLOCK_TOKENS, finishBlockPrompt, finishCutReply, onlyFenceMissing, unfinishedActionBlock } from "./server/brunoCutBlocks.js";
@@ -12254,7 +12254,7 @@ Rules:
         // its own provider) so daily limits count both calls.
         const secondPromptChars = secondMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
         logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
-        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources };
+        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources, queries };
       };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -12318,6 +12318,12 @@ Rules:
               send(tail2);
             }
             if (looked) {
+              // The check said nothing new (only "Checking…" again): say so honestly.
+              if (saidNothing(looked.answer)) {
+                const note = nothingFoundNote(looked.queries);
+                send(`\n\n${note}`);
+                looked.answer = `${looked.answer}\n\n${note}`.trim();
+              }
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
               // The answer's own pages first: the cap must never hide them.
               webSources.unshift(...(looked.sources || []));
@@ -12390,6 +12396,7 @@ Rules:
       const webSourcesNS = [...(aiReply.sources || [])];
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
+        if (looked && saidNothing(looked.answer)) looked.answer = `${looked.answer}\n\n${nothingFoundNote(looked.queries)}`.trim();
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
         if (looked) webSourcesNS.unshift(...(looked.sources || []));
       }
