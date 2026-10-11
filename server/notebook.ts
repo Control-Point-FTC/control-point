@@ -700,6 +700,9 @@ export class NotebookStore {
     for (let i = 0; i < siblings.length; i++) await s.run(`UPDATE ${tables[kind]} SET position=? WHERE id=? AND team_id=?`, i, siblings[i], ctx.teamId);
     return s.tree();
   }); }
+  /** Raw statements inside this store's transaction (joins an open batch),
+   *  for writes that belong with a confirmed card, such as sticky notes. */
+  transact<T>(ctx: NotebookContext, fn: (tx: Transaction) => Promise<T>): Promise<T> { return this.session(ctx, s => fn(s.tx)); }
   /** Runs `fn` in one transaction: every store call inside it commits or
    *  rolls back together (one confirmed Bruno card). */
   batch<T>(ctx: NotebookContext, fn: () => Promise<T>): Promise<T> { return this.session(ctx, () => fn()); }

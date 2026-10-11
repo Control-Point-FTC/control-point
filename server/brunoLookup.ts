@@ -15,7 +15,7 @@
 //
 // "notebook", "notebook_page" and "notebook_outline" read the team notebook
 // through server/brunoNotebook.ts (protected content is never visible there).
-export type LookupKind = "messages" | "tasks" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline";
+export type LookupKind = "messages" | "tasks" | "events" | "communications" | "outreach" | "budget" | "web" | "notebook" | "notebook_page" | "notebook_outline" | "sticky_notes";
 export interface LookupQuery {
   kind: LookupKind;
   /** Words to find (all must appear). */
@@ -39,7 +39,7 @@ const NOTEBOOK_KINDS: LookupKind[] = ["notebook", "notebook_page", "notebook_out
 
 type DbAll = (sql: string, ...args: any[]) => Promise<any[]>;
 
-const KINDS: LookupKind[] = ["messages", "tasks", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline"];
+const KINDS: LookupKind[] = ["messages", "tasks", "events", "communications", "outreach", "budget", "web", "notebook", "notebook_page", "notebook_outline", "sticky_notes"];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const LOOKUP_RE = /```lookup\s*\r?\n([\s\S]*?)\r?\n?```/g;
 export const MAX_LOOKUPS = 3;
@@ -285,7 +285,7 @@ function describe(q: LookupQuery): string {
 }
 
 /** Run the queries for one team and format the rows for the model (capped). */
-export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner): Promise<string> {
+export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>): Promise<string> {
   const parts: string[] = [];
   for (const q of queries.slice(0, MAX_LOOKUPS)) {
     if (q.kind === "web") continue;
@@ -294,6 +294,9 @@ export async function runLookups(db: DbAll, teamId: number, tz: string, queries:
       if (NOTEBOOK_KINDS.includes(q.kind)) {
         if (!notebook) throw new Error("notebook lookups unavailable");
         r = await notebook(q);
+      } else if (q.kind === "sticky_notes") {
+        if (!sticky) throw new Error("sticky note lookups unavailable");
+        r = await sticky(q);
       } else r = await runOne(db, teamId, tz, q);
     } catch (e) {
       console.error("Bruno lookup failed:", (e as any)?.message);

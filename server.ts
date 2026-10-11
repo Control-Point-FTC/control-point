@@ -81,6 +81,8 @@ import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
+import { applyStickyOps, isStickyCard, parseStickyOps, previewStickyOps, stickyLookup } from "./server/brunoStickyActions.js";
+import { StickyNotes } from "./server/stickyNotes.js";
 import { NotebookError } from "./server/notebook.js";
 // Bruno's notebook reads (lookups, screen context) use Bruno-scoped access:
 // protected sections/pages are never visible, whoever is asking.
@@ -6217,6 +6219,8 @@ async function startServer() {
     return { notebook: Number(row?.notebook ?? 1) === 1, sticky: Number(row?.sticky ?? 1) === 1 };
   }
   const BRUNO_NOTEBOOK_OFF = "Bruno's notebook access is turned off in Settings → Bruno.";
+  const BRUNO_STICKY_OFF = "Bruno's sticky notes access is turned off in Settings → Bruno.";
+  const brunoStickyNotes = new StickyNotes();
 
   async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, notebookAllowed = true): Promise<string> {
     const req = parseScreenRequest(raw);
@@ -12044,7 +12048,10 @@ Rules:
         return "";
       });
       // The member turned Bruno's notebook access off: no reads, no proposals.
-      const accessCtx = access.notebook ? "" : "NOTEBOOK ACCESS: OFF. This member turned off your access to the team notebook in Settings → Bruno. Don't send notebook lookups or ```notebook blocks; if they ask about the notebook, say it's off and where to turn it on.";
+      const accessCtx = [
+        access.notebook ? "" : "NOTEBOOK ACCESS: OFF. This member turned off your access to the team notebook in Settings → Bruno. Don't send notebook lookups or propose notebook page changes; if they ask about the notebook, say it's off and where to turn it on.",
+        access.sticky ? "" : "STICKY NOTES ACCESS: OFF. This member turned off your access to their sticky notes in Settings → Bruno. Don't look them up or propose sticky note changes; if they ask, say it's off and where to turn it on.",
+      ].filter(Boolean).join("\n");
       const systemExtra = [navGptOn ? NAVGPT_SYSTEM : "", teachCtx, fullContext, screenCtx, scoutingCtx, accessCtx].filter(Boolean).join("\n\n");
       // Data-action blocks (```event, ```delete-event, ```outreach, ```tasks, ```budget,
       // ```communications) are PROPOSALS only: strip them from the reply text here. Nothing is
@@ -12127,8 +12134,11 @@ Rules:
         const web = queries.some((q) => q.kind === "web");
         const dataQueries = queries.filter((q) => q.kind !== "web");
         const notebookCtx = { memberId: auth.memberId, teamId: auth.teamId };
-        const notebookOn = (await brunoAccess(auth.memberId)).notebook;
-        const rows = dataQueries.length ? await runLookups(dbAll as any, auth.teamId, lookupTz, dataQueries, (q) => notebookOn ? notebookLookup(brunoNotebookStore, notebookCtx, q as any) : Promise.resolve({ lines: [BRUNO_NOTEBOOK_OFF], more: false })) : "";
+        const allowed = await brunoAccess(auth.memberId);
+        const teamId = auth.teamId;
+        const rows = dataQueries.length ? await runLookups(dbAll as any, teamId, lookupTz, dataQueries,
+          (q) => allowed.notebook ? notebookLookup(brunoNotebookStore, notebookCtx, q as any) : Promise.resolve({ lines: [BRUNO_NOTEBOOK_OFF], more: false }),
+          (q) => allowed.sticky ? stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query) : Promise.resolve({ lines: [BRUNO_STICKY_OFF], more: false })) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -12467,7 +12477,9 @@ Rules:
     const auth = await requireAuth(req, res);
     if (!auth) return;
     if (!auth.teamId) return res.status(403).json({ error: "Select an active team" });
-    if (!(await brunoAccess(auth.memberId)).notebook) return res.status(403).json({ error: BRUNO_NOTEBOOK_OFF });
+    // Each card is checked against the switch for what it touches.
+    const access = await brunoAccess(auth.memberId);
+    if (isStickyCard(req.body?.ops) ? !access.sticky : !access.notebook) return res.status(403).json({ error: isStickyCard(req.body?.ops) ? BRUNO_STICKY_OFF : BRUNO_NOTEBOOK_OFF });
     try {
       await ensureRolesSeeded(auth.teamId);
       res.json(await fn({ memberId: auth.memberId, teamId: auth.teamId }, req.body ?? {}));
@@ -12477,9 +12489,13 @@ Rules:
       res.status(500).json({ error: "Couldn't apply those notebook changes — nothing was saved" });
     }
   };
-  app.post("/api/ai/notebook/preview", notebookRoute(async (ctx, body) => ({ previews: await previewNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops)) })));
+  app.post("/api/ai/notebook/preview", notebookRoute(async (ctx, body) => ({ previews: isStickyCard(body.ops)
+    ? await previewStickyOps(brunoStickyNotes, ctx, parseStickyOps(body.ops))
+    : await previewNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops)) })));
   app.post("/api/ai/notebook/apply", notebookRoute(async (ctx, body) => {
-    const { result, replayed } = await applyNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops), String(body.receipt ?? ""));
+    const { result, replayed } = isStickyCard(body.ops)
+      ? await applyStickyOps(brunoNotebookStore, { ...ctx, source: "bruno_confirmed" }, parseStickyOps(body.ops), String(body.receipt ?? ""))
+      : await applyNotebookOps(brunoNotebookStore, ctx, parseNotebookOps(body.ops), String(body.receipt ?? ""));
     return { results: result, replayed };
   }));
 
