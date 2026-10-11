@@ -34,3 +34,30 @@ describe("Bruno notebook access switch", () => {
     expect((await preview(adminSession)).status).toBe(200);
   });
 });
+
+describe("notebook text never reaches Bruno when access is off", () => {
+  it("gates both read paths: lookups and the open page's screen brief", async () => {
+    const { NotebookStore } = await import("../notebook");
+    const { notebookLookup, notebookScreenBrief } = await import("../brunoNotebook");
+    const { brunoAccess, gatedNotebookBrief, gatedNotebookLookup, BRUNO_NOTEBOOK_OFF } = await import("../brunoAccess");
+    const store = new NotebookStore(t.db);
+    const teamRow = await t.db.execute({ sql: "SELECT team_id FROM members WHERE id = ?", args: [admin] });
+    const ctx = { memberId: admin, teamId: Number(teamRow.rows[0].team_id) };
+    const tree = await store.tree({ ...ctx, source: "human" });
+    const page: any = await store.create({ ...ctx, source: "human" }, "page", { sectionId: tree.sections[0].id, title: "Gearbox", content: { type: "doc", content: [{ type: "paragraph", attrs: { id: "g1" }, content: [{ type: "text", text: "Secret ratio 20:1" }] }] } });
+    const dbGet = async (sql: string, ...args: any[]) => (await t.db.execute({ sql, args })).rows[0];
+    const lookup = (access: any) => gatedNotebookLookup(access, q => notebookLookup(store, ctx, q as any))({ kind: "notebook_page", page: page.id } as any);
+    const brief = (access: any) => gatedNotebookBrief(access, () => notebookScreenBrief(store, ctx, page.id));
+
+    await t.db.execute({ sql: "UPDATE members SET bruno_notebook = 0 WHERE id = ?", args: [admin] });
+    const off = await brunoAccess(dbGet, admin);
+    expect(off.notebook).toBe(false);
+    expect(await lookup(off)).toEqual({ lines: [BRUNO_NOTEBOOK_OFF], more: false });
+    expect(await brief(off)).toBeUndefined();
+
+    await t.db.execute({ sql: "UPDATE members SET bruno_notebook = 1 WHERE id = ?", args: [admin] });
+    const on = await brunoAccess(dbGet, admin);
+    expect(JSON.stringify(await lookup(on))).toContain("Secret ratio 20:1");
+    expect(await brief(on)).toContain("Gearbox");
+  });
+});
