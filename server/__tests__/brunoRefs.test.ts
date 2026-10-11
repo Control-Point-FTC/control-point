@@ -1,27 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { createRefsFilter, labelsMatch, refCandidates, refsBlock, shownInContext, stripModelRefs, validateRefs } from "../brunoRefs";
+import { createRefsFilter, labelsMatch, refCandidates, refsBlock, stripModelRefs, validateRefs } from "../brunoRefs";
 import type { RefResult } from "../refs";
 
 const records: Record<string, RefResult> = {
   "task:12": { status: "ok", type: "task", id: 12, label: "Wire drivetrain", href: "/tasks?task=12" },
   "event:12": { status: "ok", type: "event", id: 12, label: "Wire drivetrain build", href: "/calendar?event=12" },
   "page:31": { status: "deleted", type: "page", id: 31, label: "Old intake notes" },
+  "page:32": { status: "ok", type: "page", id: 32, label: "Intake [v2]", href: "/notebook/p/32" },
   "page:40": { status: "unavailable", type: "page", id: 40 },
   "task:7": { status: "ok", type: "task", id: 7, label: "A", href: "/tasks?task=7" },
 };
 const resolve = async (type: any, id: number): Promise<RefResult> => records[`${type}:${id}`] ?? { status: "unavailable", type, id };
 
 describe("Bruno record references", () => {
-  it("finds ref: links and ignores unknown types", () => {
+  it("finds ref: links, including names with escaped brackets, and ignores unknown types", () => {
     expect(refCandidates("Your [Wire drivetrain](ref:task:12) and [x](ref:spaceship:3) and [y](https://a.example)")).toEqual([{ label: "Wire drivetrain", type: "task", id: 12 }]);
-  });
-
-  it("needs that type and id to have been shown, not just the number", () => {
-    expect(shownInContext("  task #12 Wire drivetrain — todo", "task", 12)).toBe(true);
-    expect(shownInContext("  task #12 Wire drivetrain — todo", "event", 12)).toBe(false);
-    expect(shownInContext("  task #123 Something", "task", 12)).toBe(false);
-    expect(shownInContext("Section #4 \"Build\"", "section", 4)).toBe(true);
-    expect(shownInContext("12 people, #5", "inventory", 5)).toBe(false); // never shown with an id
+    expect(refCandidates("See [Intake \\[v2\\]](ref:page:32).")).toEqual([{ label: "Intake [v2]", type: "page", id: 32 }]);
   });
 
   it("matches names loosely, exactly for one-letter names, and not across records", () => {
@@ -33,19 +27,22 @@ describe("Bruno record references", () => {
     expect(labelsMatch("A", "B")).toBe(false);
   });
 
-  it("keeps only references backed by the shown record, access and the right name", async () => {
-    const context = "Tasks:\n  task #12 Wire drivetrain — todo\n  task #7 A\npage #31 \"Old intake notes\"\npage #40";
+  it("keeps only references to records Bruno was given, it can access, under their real names", async () => {
+    // What the context sources reported listing this turn (not ids found in text).
+    const shown = new Set(["task:12", "task:7", "page:31", "page:32", "page:40"]);
     const text = [
       "[Wire drivetrain](ref:task:12)", "[Wire drivetrain](ref:task:12)", // duplicate
-      "[Wire drivetrain build](ref:event:12)", // event #12 was never shown, though its name would match
+      "[Wire drivetrain build](ref:event:12)", // event #12 was never given, though its name would match
       "[A](ref:task:7)", // a one-letter name still links
+      "[Intake \\[v2\\]](ref:page:32)", // a bracketed name still links
       "[Old intake notes](ref:page:31)", // deleted, but the member could see it
       "[Secret plan](ref:page:40)", // hidden
-      "[Made up](ref:task:99)", // never shown
+      "[Made up](ref:task:99)", // never given
     ].join(" ");
-    expect(await validateRefs(text, context, resolve)).toEqual([
+    expect(await validateRefs(text, shown, resolve)).toEqual([
       { type: "task", id: 12, label: "Wire drivetrain", status: "ok" },
       { type: "task", id: 7, label: "A", status: "ok" },
+      { type: "page", id: 32, label: "Intake [v2]", status: "ok" },
       { type: "page", id: 31, label: "Old intake notes", status: "deleted" },
     ]);
   });
@@ -75,16 +72,23 @@ describe("model-written refs blocks never reach the chat", () => {
   });
 });
 
-describe("what counts as shown from lookups", () => {
-  it("only rows that came back, never the request heading or a refusal", async () => {
+describe("what counts as given from lookups", () => {
+  it("the records each lookup listed, never a refusal, an empty answer or ids typed in text", async () => {
     const { runLookups } = await import("../brunoLookup");
-    const seen: string[] = [];
-    const notebook = async (q: any) => q.page === 40 ? { lines: ["(page 40 is not available to Bruno)"], more: false } : q.page === 41 ? { lines: [], more: false } : { lines: ['page #31 "Old intake notes":'], more: false };
-    const text = await runLookups((async () => []) as any, 1, "UTC", [{ kind: "notebook_page", page: 40 }, { kind: "notebook_page", page: 41 }, { kind: "notebook_page", page: 31 }] as any, notebook, undefined, (lines) => seen.push(...lines));
+    const given: string[] = [];
+    const notebook = async (q: any) => q.page === 40 ? { lines: ["(page 40 is not available to Bruno)"], more: false }
+      : q.page === 41 ? { lines: [], more: false }
+      : { lines: ['page #31 "Old intake notes":', "See task #12 and event #5 for details."], more: false, ids: ["page:31"] };
+    const text = await runLookups((async () => []) as any, 1, "UTC", [{ kind: "notebook_page", page: 40 }, { kind: "notebook_page", page: 41 }, { kind: "notebook_page", page: 31 }] as any, notebook, undefined, (ids) => given.push(...ids));
     expect(text).toContain("page #40"); // the heading names what was asked for…
-    const shown = seen.join("\n");
-    expect(shownInContext(shown, "page", 40)).toBe(false); // …but that isn't "shown"
-    expect(shownInContext(shown, "page", 41)).toBe(false);
-    expect(shownInContext(shown, "page", 31)).toBe(true);
+    expect(given).toEqual(["page:31"]); // …but only the page actually returned counts, not ids in its text
+  });
+
+  it("task and event lookups report the rows they listed", async () => {
+    const { runLookups } = await import("../brunoLookup");
+    const given: string[] = [];
+    const db = (async (sql: string) => sql.includes("FROM tasks") ? [{ id: 12, title: "Wire drivetrain (see event #5)", status: "todo" }] : []) as any;
+    await runLookups(db, 1, "UTC", [{ kind: "tasks" }] as any, undefined, undefined, (ids) => given.push(...ids));
+    expect(given).toEqual(["task:12"]);
   });
 });

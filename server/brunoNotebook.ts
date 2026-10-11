@@ -89,27 +89,29 @@ async function sectionNames(store: NotebookStore, ctx: BrunoNotebookCtx) {
 
 /** One notebook lookup as lines for the model. Unavailable pages read the
  *  same whether they are protected, deleted or never existed. */
-export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean }> {
+/** `ids`: the records actually listed ("page:12", "section:3"), for checking Bruno's references. */
+export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx, q: NotebookLookup): Promise<{ lines: string[]; more: boolean; ids?: string[] }> {
   if (q.kind === "notebook_outline") {
     const tree = await store.tree(bruno(ctx));
-    const lines: string[] = [];
+    const lines: string[] = [], ids: string[] = [];
     for (const s of tree.sections) {
-      lines.push(`Section #${s.id} ${JSON.stringify(clip(s.title, 120))}`);
+      lines.push(`Section #${s.id} ${JSON.stringify(clip(s.title, 120))}`); ids.push(`section:${s.id}`);
       for (const p of tree.pages.filter(p => p.sectionId === s.id)) {
         let depth = 0, parent = p.parentId;
         while (parent && depth < 6) { depth++; parent = tree.pages.find(x => x.id === parent)?.parentId ?? null; }
-        lines.push(`${"  ".repeat(depth + 1)}- page #${p.id} ${JSON.stringify(clip(p.title, 120))}`);
+        lines.push(`${"  ".repeat(depth + 1)}- page #${p.id} ${JSON.stringify(clip(p.title, 120))}`); ids.push(`page:${p.id}`);
       }
     }
-    return lines.length > OUTLINE_LIMIT ? { lines: lines.slice(0, OUTLINE_LIMIT), more: true } : { lines, more: false };
+    return lines.length > OUTLINE_LIMIT ? { lines: lines.slice(0, OUTLINE_LIMIT), more: true, ids: ids.slice(0, OUTLINE_LIMIT) } : { lines, more: false, ids };
   }
   if (q.kind === "notebook") {
     const query = clip(q.query, 120);
     if (!query) return { lines: [], more: false };
     const { sections } = await sectionNames(store, ctx);
     const hits = await store.search(bruno(ctx), query, SEARCH_LIMIT + 1);
-    const lines = hits.slice(0, SEARCH_LIMIT).map(h => `page #${h.id} ${JSON.stringify(clip(h.title, 120))} in ${JSON.stringify(clip(sections.get(h.sectionId) ?? "", 80))}: ${JSON.stringify(clip(h.snippet, 200))}`);
-    return { lines, more: hits.length > SEARCH_LIMIT };
+    const shown = hits.slice(0, SEARCH_LIMIT);
+    const lines = shown.map(h => `page #${h.id} ${JSON.stringify(clip(h.title, 120))} in ${JSON.stringify(clip(sections.get(h.sectionId) ?? "", 80))}: ${JSON.stringify(clip(h.snippet, 200))}`);
+    return { lines, more: hits.length > SEARCH_LIMIT, ids: shown.map(h => `page:${h.id}`) };
   }
   // notebook_page: by id, or the best title match.
   let pageId = Number.isSafeInteger(q.page) && (q.page as number) > 0 ? q.page as number : 0;
@@ -124,7 +126,7 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
   try {
     const page = await store.page(bruno(ctx), pageId);
     const { text, truncated } = renderNotebookText(page.content, page.canvas);
-    return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt}):`, text || "(no typed text)"], more: truncated };
+    return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt}):`, text || "(no typed text)"], more: truncated, ids: [`page:${page.id}`] };
   } catch (e) {
     if (e instanceof NotebookError && (e.status === 404 || e.status === 403)) return { lines: [`(page ${pageId} is not available to Bruno)`], more: false };
     throw e;

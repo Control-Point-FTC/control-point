@@ -6220,7 +6220,7 @@ async function startServer() {
   const brunoAccess = (memberId: number) => readBrunoAccess(dbGet as any, memberId);
   const brunoStickyNotes = new StickyNotes();
 
-  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, access: BrunoAccess = { notebook: true, sticky: true }): Promise<string> {
+  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, access: BrunoAccess = { notebook: true, sticky: true }, shown?: Set<string>): Promise<string> {
     const req = parseScreenRequest(raw);
     if (!req || auth.teamId == null) return "";
     const found: ScreenLookups = {};
@@ -6268,6 +6268,10 @@ async function startServer() {
         }
       } catch { /* best-effort: the rest of the screen context still goes out */ }
     }
+    // The records this context shows (for Bruno's references).
+    if (found.task) shown?.add(`task:${found.task.id}`);
+    if (found.event) shown?.add(`event:${found.event.id}`);
+    if (found.notebook && req.notebookPageId) shown?.add(`page:${req.notebookPageId}`);
     return formatScreenContext(req, found);
   }
 
@@ -12013,13 +12017,15 @@ Rules:
       );
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
-      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId);
+      // The records Bruno is actually shown this turn (type:id), for its references.
+      const shownRefs = new Set<string>();
+      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId, shownRefs);
       // Counts, dates, weekdays, next/recurring events and open tasks are
       // computed server-side in the team's timezone (see server/workspaceFacts.ts)
       // — Bruno states them, it doesn't derive them. Event ids stay listed so
       // ```delete-event proposals can reference them.
       const tz = await teamTimeZone(auth.teamId, req.body?.tz);
-      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz);
+      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz, new Date(), shownRefs);
       // User identity: Bruno should address the user by name, not the team name.
       let userLine = "";
       try {
@@ -12066,7 +12072,7 @@ Rules:
       });
       // What the user is looking at (page + open record). Best-effort.
       const access = await brunoAccess(auth.memberId);
-      const screenCtx = await screenContextFor(auth, req.body?.screen, access).catch((err: unknown) => {
+      const screenCtx = await screenContextFor(auth, req.body?.screen, access, shownRefs).catch((err: unknown) => {
         console.error("[bruno] screen context failed:", err);
         return "";
       });
@@ -12151,12 +12157,10 @@ Rules:
           return "";
         }
       };
-      // What Bruno was shown this turn (for checking its record references).
-      let lookupContext = "";
       const referencesFor = async (text: string) => {
         if (!auth.teamId) return "";
         const teamId = auth.teamId;
-        const refs = await validateRefs(text, `${systemExtra}\n${lookupContext}`, (type, id) => resolveRef({ ...refDeps, notebookSource: "bruno" }, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
+        const refs = await validateRefs(text, shownRefs, (type, id) => resolveRef({ ...refDeps, notebookSource: "bruno" }, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
         return refsBlock(teamId, refs);
       };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
@@ -12171,7 +12175,7 @@ Rules:
           gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)),
           gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query, q.note)),
           // Only rows that came back count as "shown" for references (not request headings or failures).
-          (lines) => { lookupContext += `\n${lines.join("\n")}`; }) : "";
+          (ids) => { for (const id of ids) shownRefs.add(id); }) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -13422,7 +13426,7 @@ Rules:
     return resolveTimeZone(saved, clientTz);
   }
 
-  async function buildTeamSnapshotContext(teamId: number | null): Promise<string> {
+  async function buildTeamSnapshotContext(teamId: number | null, shown?: Set<string>): Promise<string> {
     if (!teamId) return "";
     try {
       // Team counts, open tasks and the calendar are in WORKSPACE FACTS.
@@ -13439,6 +13443,7 @@ Rules:
         teamId
       )) as any[];
       if (done.length) {
+        for (const t of done) shown?.add(`task:${t.id}`);
         const lines = done.map((t) => `task #${t.id} ${q(t.title, 120)}${t.completer ? ` — done by ${q(t.completer, 40)}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
         parts.push(`RECENTLY COMPLETED TASKS:\n${lines.join("\n")}`);
       }
