@@ -3,6 +3,7 @@
 // Bruno invoice import as a review dialog.
 import { useMemo } from 'react';
 import { Check, CircleDollarSign, FileUp, Loader2, MoreHorizontal, Package, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react';
+import { useRecordFocus } from '../../hooks/useRecordFocus';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Checkbox, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DropdownMenu, DropdownMenuContent,
@@ -41,6 +42,7 @@ const money = (n: number) => `$${(Number(n) || 0).toFixed(2)}`;
 
 export function CadPartsTab() {
   const ctl = useCadParts();
+  useRecordFocus('id', ctl.loaded, 'That part');
   const byStatus = useMemo(() => {
     const c: Record<string, number> = {};
     for (const p of ctl.parts) c[p.status] = (c[p.status] ?? 0) + 1;
@@ -92,7 +94,7 @@ export function CadPartsTab() {
                 </TableHeader>
                 <TableBody>
                   {items.map((p: any) => (
-                    <TableRow key={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
+                    <TableRow key={p.id} data-record-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
                       <TableCell className="w-10"><RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} /></TableCell>
                       <TableCell className="min-w-[10rem] font-medium">{p.name}</TableCell>
                       <TableCell className="text-right tabular-nums">{p.quantity}</TableCell>

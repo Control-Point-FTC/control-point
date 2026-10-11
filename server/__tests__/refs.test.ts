@@ -88,7 +88,7 @@ describe("resolving each type", () => {
     expect(await ref(studentSession, "cad_review", review)).toMatchObject({ status: "ok", href: `/cad-reviews?id=${review}` });
     expect(await ref(studentSession, "cad_snapshot", snap)).toMatchObject({ status: "ok", href: `/cad-snapshots?id=${snap}` });
     const entry = await insert("INSERT INTO scouting_entries(team_id,uuid,season,scouted_team,match_label,event_code,template_id,updated_at) VALUES(?,?,?,?,?,?,?,?)", team, `u-${Date.now()}`, 2025, 12345, "Q12", "USCAFFL", "default", Date.now());
-    expect(await ref(studentSession, "scout", entry)).toMatchObject({ status: "ok", label: "Q12 · team 12345 · USCAFFL", href: `/stats?mode=scout&entry=${entry}` });
+    expect(await ref(studentSession, "scout", entry)).toMatchObject({ status: "ok", label: "Q12 · team 12345 · USCAFFL", href: "/stats?mode=scout&season=2025&scouted=12345" });
     await t.db.execute({ sql: "UPDATE scouting_entries SET deleted = 1 WHERE id = ?", args: [entry] });
     expect(await ref(studentSession, "scout", entry)).toMatchObject({ status: "deleted" });
   });

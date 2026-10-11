@@ -4,6 +4,7 @@
 // reviews, 3D snapshots and the Parts list (BOM).
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowRight, Box, ClipboardCheck, Clock, ExternalLink, FileBox, Layers, Link2, MoreHorizontal, Package, Plus, Trash2, Upload } from 'lucide-react';
+import { useRecordFocus } from '../../hooks/useRecordFocus';
 import { cn } from '../../../components/cn';
 import {
   Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, Label, Skeleton,
@@ -123,6 +124,7 @@ function Overview({ onNavigate }: { onNavigate: (path: string) => void }) {
 function DocsTab() {
   const d = useCadDocs();
   const sel = useSelection(d.docs, docId);
+  useRecordFocus('id', d.loaded, 'That CAD document');
   return (
     <>
       <Reveal className="mb-8 rounded-2xl border border-border bg-card p-5">
@@ -153,7 +155,7 @@ function DocsTab() {
         {!d.loaded ? <div className="grid gap-3 sm:grid-cols-2">{[0, 1].map((i) => <Skeleton key={i} className="h-20" />)}</div> : d.docs.length ? (
           <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {d.docs.map((doc) => (
-              <StaggerItem as="li" key={doc.id} className={cn('flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(doc.id) && 'border-accent/60 ring-1 ring-accent/40')}>
+              <StaggerItem as="li" key={doc.id} data-record-id={doc.id} className={cn('flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(doc.id) && 'border-accent/60 ring-1 ring-accent/40')}>
                 <RowCheckbox sel={sel} id={doc.id} label={`Select ${doc.name}`} />
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-accent/15"><FileBox className="size-5 text-accent" /></span>
                 <div className="min-w-0 flex-1">

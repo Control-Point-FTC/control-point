@@ -3,6 +3,7 @@
 // drafted upload sheet (STEP / STL + optional screenshot).
 import React, { Suspense } from 'react';
 import { Box, Eye, Layers, MoreHorizontal, Trash2, Upload } from 'lucide-react';
+import { useRecordFocus } from '../../hooks/useRecordFocus';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, Label, Select,
@@ -21,6 +22,7 @@ const CadModelViewer = React.lazy(() => import('../../../components/CadModelView
 
 export function CadSnapshotsTab({ currentUser, isAdmin }: { currentUser?: any; isAdmin: boolean }) {
   const ctl = useCadSnapshots({ currentUser, isAdmin });
+  useRecordFocus('id', ctl.loaded, 'That snapshot');
   const [viewer, setViewer] = React.useState<any>(null);
   // Only snapshots you may delete (yours, or any for admins) can be selected.
   const deletable = React.useMemo(() => ctl.grouped.flatMap((g: any) => g.items).filter((s: any) => ctl.canDelete(s)), [ctl.grouped, ctl]);
@@ -40,7 +42,7 @@ export function CadSnapshotsTab({ currentUser, isAdmin }: { currentUser?: any; i
         <Section key={section} title={section} description={`${items.length} snapshot${items.length === 1 ? '' : 's'}`}>
           <Stagger as="ul" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((s: any) => (
-              <StaggerItem as="li" key={s.id} className={cn('group relative overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-accent/40', sel.has(s.id) && 'border-accent/60 ring-1 ring-accent/40')}>
+              <StaggerItem as="li" key={s.id} data-record-id={s.id} className={cn('group relative overflow-hidden rounded-xl border border-border bg-card transition-colors hover:border-accent/40', sel.has(s.id) && 'border-accent/60 ring-1 ring-accent/40')}>
                 {ctl.canDelete(s) && <RowCheckbox sel={sel} id={s.id} label={`Select ${s.title}`} className="absolute left-3 top-3 z-10 rounded bg-background/80 p-1 backdrop-blur" />}
                 <button onClick={() => setViewer(s)} aria-label={`View ${s.title} in 3D`} className="relative block aspect-video w-full overflow-hidden bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60">
                   {s.screenshot_url

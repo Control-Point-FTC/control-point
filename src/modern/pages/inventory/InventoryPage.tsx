@@ -6,7 +6,9 @@
 // its order link (V3.5 phase 5: saved link, else the supplier's page for its
 // SKU), and printing swaps in a stock-check sheet. Only members with the
 // inventory scope can change anything.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useRecordFocus } from '../../hooks/useRecordFocus';
 import { Boxes, Edit2, ExternalLink, FileUp, LayoutGrid, Link2, Loader2, MoreHorizontal, Package, Plus, Rows3, Search, Tags, Trash2 } from 'lucide-react';
 import { partSupplier, purchaseLink, supplierLabel, SUPPLIERS } from '../../../utils/suppliers';
 import { datedName, downloadCsv } from '../../../utils/csv';
@@ -57,6 +59,15 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
   const units = inventory.reduce((a: number, p: any) => a + (Number(p.quantity) || 0), 0);
   const uncategorized = inventory.some((p: any) => !p.category);
   const sel = useSelection(ctl.canManage ? ctl.filteredParts : NONE, partId);
+  // A link to one part (?item=ID): search for it so it's on screen, then highlight it.
+  const [params] = useSearchParams();
+  const linkedItem = params.get('item');
+  const linkedPart = linkedItem ? inventory.find((p: any) => String(p.id) === linkedItem) : undefined;
+  useEffect(() => {
+    if (!linkedPart) return;
+    ctl.setSearchTerm(linkedPart.name); ctl.setFilterCategory(''); ctl.setFilterSupplier('');
+  }, [linkedPart?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- once per linked part
+  useRecordFocus('item', inventory.length > 0 && (!linkedPart || ctl.searchTerm === linkedPart.name), 'That part');
   return (
     <Page>
       <PageHeader
@@ -148,7 +159,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
             <TableBody ref={vr.ref as any}>
               <Spacer height={vr.paddingTop} colSpan={8} />
               {vr.rows(ctl.filteredParts).map(({ item: p, rowProps }: { item: any; rowProps: Record<string, unknown> }) => (
-                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
+                <TableRow key={p.id} {...rowProps} data-cm-type="inventory-part" data-cm-id={p.id} data-record-id={p.id} data-state={sel.has(p.id) ? 'selected' : undefined}>
                   {ctl.canManage && <TableCell className="w-10"><RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} /></TableCell>}
                   <TableCell className="font-medium"><PartName part={p} /></TableCell>
                   <TableCell className="font-mono text-xs text-accent">{p.sku}</TableCell>
@@ -166,7 +177,7 @@ export function InventoryPage({ inventory, setInventory, teams, refresh, current
       ) : (<>
         <Stagger as="ul" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {inc.slice('grid', ctl.filteredParts).map((p: any) => (
-            <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(p.id) && 'border-accent/60 ring-1 ring-accent/40')}>
+            <StaggerItem as="li" key={p.id} data-cm-type="inventory-part" data-cm-id={p.id} data-record-id={p.id} className={cn('group flex flex-col rounded-xl border border-border bg-card p-4 transition-colors hover:border-accent/40', sel.has(p.id) && 'border-accent/60 ring-1 ring-accent/40')}>
               <div className="flex items-start gap-3">
                 {ctl.canManage && <RowCheckbox sel={sel} id={p.id} label={`Select ${p.name}`} className="mt-0.5" />}
                 <div className="min-w-0 flex-1">
