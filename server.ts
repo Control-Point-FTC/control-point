@@ -70,7 +70,7 @@ import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartM
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { byteRange } from "./server/byteRange.js";
-import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing } from "./server/brunoLookup.js";
+import { createLookupHold, extractLookupBlocks, followUpPrompt, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, runLookups, saidNothing, unfinishedCheckNote } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
@@ -12546,7 +12546,12 @@ Rules:
           const productLinks = await webAppendix(webSources, undefined, undefined, streamAbort.signal);
           // Stopped while the product pages were checked: nothing more is written or saved.
           if (streamAbort.signal.aborted) { res.end(); return; }
-          const appendix = productLinks + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
+          let appendix = productLinks + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
+          // Last word: never save a reply that is still only "Checking …".
+          if (!appendix.trim() && progressOnly(stripActionBlocks(fullText))) {
+            console.warn("[bruno] reply still ended at a progress line", { blocks: machineBlockKinds(aiReply.text), lookupHeld: hold.blocked, retried: implicit, provider: aiReply.provider, grounded: !!aiReply.grounded });
+            appendix = `\n\n${unfinishedCheckNote(messages[messages.length - 1].text)}`;
+          }
           // Whatever the filter still holds goes out before the server's own blocks.
           const held = modelOut.end();
           if (held) res.write(held);
@@ -12612,7 +12617,13 @@ Rules:
       result = stripModelRefs(String(result || ""));
       const productLinksNS = await webAppendix(webSourcesNS, undefined, undefined, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
-      const finalResult = stripActionBlocks(String(result || "")) + productLinksNS + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
+      let appendixNS = productLinksNS + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
+      // Last word: never save a reply that is still only "Checking …".
+      if (!appendixNS.trim() && progressOnly(stripActionBlocks(String(result || "")))) {
+        console.warn("[bruno] reply still ended at a progress line", { blocks: machineBlockKinds(aiReply.text), provider: aiReply.provider, grounded: !!aiReply.grounded });
+        appendixNS = `\n\n${unfinishedCheckNote(messages[messages.length - 1].text)}`;
+      }
+      const finalResult = stripActionBlocks(String(result || "")) + appendixNS;
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {

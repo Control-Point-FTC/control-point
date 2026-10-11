@@ -4,7 +4,7 @@
  * answer. A check that comes back with nothing now says so.
  */
 import { describe, it, expect } from "vitest";
-import { extractLookupBlocks, followUpPrompt, implicitCheck, lookupOutcome, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, saidNothing } from "../brunoLookup";
+import { extractLookupBlocks, followUpPrompt, implicitCheck, lookupOutcome, machineBlockKinds, nothingFoundNote, progressOnly, PROGRESS_ONLY_PROMPT, resolveRetry, saidNothing, unfinishedCheckNote, visibleText } from "../brunoLookup";
 
 describe("a check that found nothing", () => {
   it("recognises a follow-up that only said Checking… again", () => {
@@ -119,5 +119,28 @@ describe("asking again after a bare Checking…", () => {
   it("tells the model what to do instead of checking again", () => {
     expect(PROGRESS_ONLY_PROMPT).toMatch(/didn't ask for a lookup/);
     expect(PROGRESS_ONLY_PROMPT).toMatch(/```lookup/);
+  });
+});
+
+describe("a Checking… reply with hidden blocks beside it (seen on production after #227)", () => {
+  const withBlock = 'Checking recent FTC event results in New Jersey...\n```scout-event\n{"code":"USNJ"}\n```';
+  it("judges what the member sees, not the machine blocks", () => {
+    expect(visibleText(withBlock)).toBe("Checking recent FTC event results in New Jersey...");
+    expect(progressOnly(withBlock)).toBe(true);
+    expect(progressOnly('Checking…\n```remember\n{"fact":"x"}')).toBe(true); // an unfinished block too
+    expect(machineBlockKinds(withBlock)).toEqual(["scout-event"]);
+  });
+  it("still leaves a reply that only proposes something (no visible text) alone", () => {
+    expect(progressOnly('```event\n{"title":"Build"}\n```')).toBe(false);
+  });
+  it("the web check keeps the hidden block for the app to run", () => {
+    const r = resolveRetry(withBlock, "Checking again…", "What were the recent FTC event results in New Jersey?")!;
+    expect(r.kind).toBe("web");
+    expect(r.text).toContain("```scout-event");
+    expect(extractLookupBlocks(r.text).queries).toEqual([{ kind: "web", query: "What were the recent FTC event results in New Jersey?" }]);
+  });
+  it("the last-word note is plain, and points event questions to FIRST and FTC Scout", () => {
+    expect(unfinishedCheckNote("What were the recent FTC event results in New Jersey?")).toMatch(/couldn't finish checking[\s\S]*ftc-events\.firstinspires\.org[\s\S]*ftcscout\.org/);
+    expect(unfinishedCheckNote("Is the Axon MAX in stock?")).toBe("I couldn't finish checking that just now. Try asking again in a moment.");
   });
 });
