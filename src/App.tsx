@@ -19,6 +19,7 @@ const TasksPage = React.lazy(() => import('./modern/pages/tasks/TasksPage').then
 const CalendarPage = React.lazy(() => import('./modern/pages/calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })));
 const AttendancePage = React.lazy(() => import('./modern/pages/attendance/AttendancePage').then((m) => ({ default: m.AttendancePage })));
 const PeoplePage = React.lazy(() => import('./modern/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })));
+const RefOpen = React.lazy(() => import('./modern/pages/RefOpen').then((m) => ({ default: m.RefOpen })));
 const CommunicationPage = React.lazy(() => import('./modern/pages/communication/CommunicationPage').then((m) => ({ default: m.CommunicationPage })));
 const MessagesPage = React.lazy(() => import('./modern/pages/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })));
 const BrunoPage = React.lazy(() => import('./modern/pages/bruno/BrunoPage').then((m) => ({ default: m.BrunoPage })));
@@ -2179,6 +2180,8 @@ export default function App() {
         <Route path="/stats" element={<TeamStatsPage teamId={currentUser?.team_id} memberId={currentUser?.id} memberName={currentUser?.name} canManage={hasPerm('manage_members')} />} />
         <Route path="/predict" element={<PredictPage />} />
         <Route path="/teams" element={<PeoplePage {...viewProps} hasPerm={hasPerm} />} />
+        {/* Stable links to one record, re-checked on every open. */}
+        <Route path="/t/:teamId/:type/:id" element={<RefOpen activeTeamId={currentUser?.team_id} onSwitchTeam={(id) => void handleSwitchTeam(id)} />} />
         {/* Roles live in Settings → Roles now; old links land there. */}
         <Route path="/roles" element={<Navigate to="/settings?section=roles" replace />} />
         <Route path="/attendance" element={<AttendancePage {...viewProps} />} />

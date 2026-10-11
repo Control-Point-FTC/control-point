@@ -603,6 +603,13 @@ export class NotebookStore {
     }
     return { blocks: blocks.slice(0, MAX_TAGGED_BLOCKS), truncated: blocks.length > MAX_TAGGED_BLOCKS };
   }); }
+  /** For links: a page or section this member could see, and whether it (or
+   *  something holding it) is deleted. Hidden and missing both throw 404. */
+  linkTarget(ctx: NotebookContext, kind: "page" | "section", itemId: number) { return this.session(ctx, async s => {
+    const live = await s.item(kind, itemId).then(() => true, (e: unknown) => { if (e instanceof NotebookError) return false; throw e; });
+    const row = await s.item(kind, itemId, true);
+    return { title: String(row.title), deleted: !live };
+  }); }
   trash(ctx:NotebookContext,cursor?:unknown){return this.session(ctx,s=>notebookTrash(s,cursor));}
   trashPage(ctx:NotebookContext,pageId:number){return this.session(ctx,s=>notebookTrashPage(s,pageId));}
   purge(ctx:NotebookContext,kind:Kind,itemId:number,confirmation:unknown){return this.session(ctx,s=>notebookPurge(s,kind,itemId,confirmation));}

@@ -15,6 +15,8 @@ const KNOWN = [
   /^\/notebook(\/.*)?$/i,
   /^\/checkin\/[A-Za-z0-9]+\/?$/i,
   /^\/join\/[^/]+\/?$/i,
+  // Stable record links: /t/<team>/<type>/<id>.
+  /^\/t\/\d+\/[a-z_]+\/\d+\/?$/i,
   /^\/predict\/how-it-works$/,
 ];
 
