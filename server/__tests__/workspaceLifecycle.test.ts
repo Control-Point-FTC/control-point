@@ -56,6 +56,8 @@ describe("delete a workspace", () => {
     const doomed = await seedTeam(t.db, "Doomed 2");
     await t.db.execute({ sql: "INSERT INTO members (team_id, name, role, email, account_type, is_setup, password) VALUES (?, 'Ivy', 'Admin', 'ivy@ws.test', 'admin', 1, '$2b$10$secret')", args: [first] });
     const recentRow = await seedMember(t.db, recent, "Ivy", "ivy@ws.test", "admin");
+    // The row that comes back has a password: it must never reach the client raw.
+    await t.db.execute({ sql: "UPDATE members SET password = '$2b$10$recent' WHERE id = ?", args: [recentRow] });
     const doomedRow = await seedMember(t.db, doomed, "Ivy", "ivy@ws.test", "admin");
     // A session in "Used recently" is the newest activity besides this one.
     await t.session(recentRow);
