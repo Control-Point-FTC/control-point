@@ -371,11 +371,46 @@ export function saidNothing(answer: string): boolean {
   return lines.every(progress);
 }
 
+/** The fenced block kinds the app reads and hides from the member (lookups,
+ *  references, memories, scouting, and the action proposals the chat strips).
+ *  Ordinary code blocks (```java, ```json …) are shown, so they stay. */
+const HIDDEN_BLOCK_KINDS = ["lookup", "refs", "remember", "scout-team", "scout-event", "event", "delete-event", "outreach", "tasks", "task-update", "budget", "communications", "switch", "notebook"];
+/** One of those blocks, including one left unfinished. */
+const MACHINE_BLOCK_RE = new RegExp("```(?:" + HIDDEN_BLOCK_KINDS.join("|") + ")(?![\\w-])[^\\n]*(?:\\n[\\s\\S]*?)?(?:```|$)", "gi");
+
+/** A reply that stops inside a code fence hides everything after it: the
+ *  closing fence to write before adding anything the member must see. */
+export function closeOpenFence(text: string): string {
+  return ((String(text || "").match(/```/g) || []).length % 2 === 1) ? "\n```" : "";
+}
+
+/** What the member actually sees of a reply: the text without any machine block. */
+export function visibleText(text: string): string {
+  return String(text || "").replace(MACHINE_BLOCK_RE, "").trim();
+}
+
+/** The kinds of machine blocks in a reply ("scout-event", "remember" …), for logs. */
+export function machineBlockKinds(text: string): string[] {
+  return [...String(text || "").matchAll(/```([a-z][\w-]*)/gi)].map((m) => m[1].toLowerCase());
+}
+
 /** A first reply that only said "Checking …" and asked for no lookup (seen on
- *  production: the reply ended there, because nothing was checked). */
+ *  production: the reply ended there, because nothing was checked). Judged on
+ *  what the member sees, so a hidden block next to it doesn't hide the problem. */
 export function progressOnly(firstText: string): boolean {
   const text = String(firstText || "");
-  return !!text.trim() && !text.includes("```lookup") && saidNothing(text);
+  const shown = visibleText(text);
+  return !!shown && !text.includes("```lookup") && saidNothing(shown);
+}
+
+/** The last word when a reply would still be saved as only "Checking …":
+ *  say plainly that the check didn't finish, instead of leaving the member
+ *  waiting on nothing. */
+export function unfinishedCheckNote(question: string): string {
+  const eventish = EVENTISH.test(String(question || ""));
+  return eventish
+    ? "I couldn't finish checking that just now. If no events have been played yet this season, there won't be results to show. FIRST Events (https://ftc-events.firstinspires.org) and FTC Scout (https://ftcscout.org) list every event as it's played."
+    : "I couldn't finish checking that just now. Try asking again in a moment.";
 }
 
 /** What the model is told when its reply was only "Checking …": answer, or
