@@ -213,7 +213,7 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     for (const t of f.openTasks) {
       const d = String(t.due_date || "").slice(0, 10);
       const due = t.due_date ? `, due ${shortDate(d)}${isCalendarDate(d) && d < f.today ? " (overdue)" : ""}` : "";
-      L.push(`  #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}`);
+      L.push(`  task #${t.id} ${q(t.title, 120)} — ${q(t.status, 20)}${t.assignees.length ? `, assigned to ${t.assignees.map((a) => q(a, 40)).join(", ")}` : ", unassigned"}${due}`);
     }
   }
   if (f.upcoming.length) {
@@ -222,10 +222,10 @@ export function formatWorkspaceFacts(f: FactsInput): string {
     for (const s of series) {
       // Every occurrence keeps its id and date (delete proposals need both).
       const cadence = s.everyWeeks === 1 ? `every ${s.weekday}` : `every other ${s.weekday}`;
-      L.push(`  ${q(s.title, 120)} ${cadence}${s.start ? ` ${timeRange(s.start, s.end)}` : ""}: ${s.occurrences.map((o) => `#${o.id} ${shortDate(o.date)}`).join("; ")}`);
+      L.push(`  ${q(s.title, 120)} ${cadence}${s.start ? ` ${timeRange(s.start, s.end)}` : ""}: ${s.occurrences.map((o) => `event #${o.id} ${shortDate(o.date)}`).join("; ")}`);
     }
     for (const e of rest) {
-      L.push(`  #${e.id} ${q(e.title, 120)} — ${shortDate(e.date)}${e.start_time ? ` ${timeRange(e.start_time, e.end_time)}` : ""}${e.event_type && e.event_type !== "meeting" ? ` [${q(e.event_type, 20)}]` : ""}`);
+      L.push(`  event #${e.id} ${q(e.title, 120)} — ${shortDate(e.date)}${e.start_time ? ` ${timeRange(e.start_time, e.end_time)}` : ""}${e.event_type && e.event_type !== "meeting" ? ` [${q(e.event_type, 20)}]` : ""}`);
     }
   }
   return L.join("\n");
@@ -315,10 +315,13 @@ export async function loadWorkspaceFacts(db: { dbGet: DbGet; dbAll: DbAll }, tea
 }
 
 /** Load + format, best-effort (Bruno must still answer if a query fails). */
-export async function workspaceFactsBlock(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number | null, timeZone: string, now: Date = new Date()): Promise<string> {
+/** `shown` collects the records the block lists ("task:12", "event:5"). */
+export async function workspaceFactsBlock(db: { dbGet: DbGet; dbAll: DbAll }, teamId: number | null, timeZone: string, now: Date = new Date(), shown?: Set<string>): Promise<string> {
   if (!teamId) return "";
   try {
     const f = await loadWorkspaceFacts(db, teamId, timeZone, now);
+    // Every open task and upcoming event in the facts is printed with its id.
+    if (f && shown) { for (const t of f.openTasks) shown.add(`task:${t.id}`); for (const e of f.upcoming) shown.add(`event:${e.id}`); }
     return f ? formatWorkspaceFacts(f) : "";
   } catch (e) {
     console.error("[bruno] workspace facts failed:", e);

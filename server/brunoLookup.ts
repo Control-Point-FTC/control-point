@@ -161,10 +161,12 @@ function when(ms: number, tz: string) {
   return new Date(ms).toLocaleString("en-US", { timeZone: tz, year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-interface LookupRows { lines: string[]; more: boolean; summary?: string }
+/** `ids`: aligned with `lines`: the record each line lists ("task:12"), or
+ *  null for a line that isn't one. Never ids mentioned inside the text. */
+interface LookupRows { lines: string[]; more: boolean; summary?: string; ids?: (string | null)[] }
 
 async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Promise<LookupRows> {
-  const lines: string[] = [];
+  const lines: string[] = [], ids: string[] = [];
   let more = false;
   let summary: string | undefined;
   if (q.kind === "messages") {
@@ -219,7 +221,8 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     more = c.more;
     for (const r of c.rows) {
       const finished = r.status === "done" && r.completed_at ? `, finished ${when(Date.parse(r.completed_at), tz)}` : "";
-      lines.push(`#${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      ids.push(`task:${r.id}`);
+      lines.push(`task #${r.id} ${clip(r.title, 120)} — ${r.status}${finished}${r.due_date ? `, due ${r.due_date}${r.due_time ? ` ${r.due_time}` : ""}` : ""}${r.priority ? `, ${r.priority} priority` : ""}${r.people ? `, assigned to ${r.people}` : ", unassigned"}${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "events") {
     const w = wordsWhere(q.query, ["title", "COALESCE(description, '')", "COALESCE(location, '')"]);
@@ -231,7 +234,8 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
     const c = capped(await db(sql, ...args), 60);
     more = c.more;
     for (const r of c.rows) {
-      lines.push(`#${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
+      ids.push(`event:${r.id}`);
+      lines.push(`event #${r.id} ${r.date}${r.start_time ? ` ${r.start_time}${r.end_time ? `–${r.end_time}` : ""}` : " (all day)"} ${clip(r.title, 120)}${r.location ? ` @ ${clip(r.location, 60)}` : ""} [${r.event_type || "other"}]${r.description ? ` — ${clip(r.description, 200)}` : ""}`);
     }
   } else if (q.kind === "communications") {
     const w = wordsWhere(q.query, ["recipient", "subject", "body"]);
@@ -278,7 +282,7 @@ async function runOne(db: DbAll, teamId: number, tz: string, q: LookupQuery): Pr
       summary = `Total of all ${Number(t?.n) || lines.length} matching entries: +$${(Number(t?.income) || 0).toFixed(2)} in, -$${(Number(t?.spent) || 0).toFixed(2)} out.`;
     }
   }
-  return { lines, more, summary };
+  return { lines, more, summary, ids };
 }
 
 function describe(q: LookupQuery): string {
@@ -287,9 +291,15 @@ function describe(q: LookupQuery): string {
   return `${q.kind}${bits.length ? ` (${bits.join(", ")})` : ""}`;
 }
 
+const LOOKUP_TEXT_CAP = 12000;
 /** Run the queries for one team and format the rows for the model (capped). */
-export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>): Promise<string> {
+export async function runLookups(db: DbAll, teamId: number, tz: string, queries: LookupQuery[], notebook?: NotebookLookupRunner, sticky?: (q: LookupQuery) => Promise<LookupRows>, onShown?: (ids: string[]) => void): Promise<string> {
   const parts: string[] = [];
+  // Where each record's line ends in the output, so only records whose rows
+  // survive the length cap below count as shown to Bruno.
+  const lineIds: { end: number; id: string }[] = [];
+  let pos = 0;
+  const add = (text: string) => { if (parts.length) pos += 2; parts.push(text); pos += text.length; };
   for (const q of queries.slice(0, MAX_LOOKUPS)) {
     if (q.kind === "web") continue;
     let r: LookupRows;
@@ -304,15 +314,20 @@ export async function runLookups(db: DbAll, teamId: number, tz: string, queries:
     } catch (e) {
       console.error("Bruno lookup failed:", (e as any)?.message);
       // A failed search is not an empty one: say so, so Bruno never claims the records don't exist.
-      parts.push(`Lookup: ${describe(q)} — SEARCH FAILED (a database error, not an empty result). Tell the user this search didn't work and to try again; don't say nothing exists.`);
+      add(`Lookup: ${describe(q)} — SEARCH FAILED (a database error, not an empty result). Tell the user this search didn't work and to try again; don't say nothing exists.`);
       continue;
     }
     const { lines, more, summary } = r;
     const count = !lines.length ? "nothing found" : more ? `${lines.length} shown, MORE matched but are not listed (incomplete — say so, or suggest a narrower search)` : `${lines.length} found`;
-    parts.push(`Lookup: ${describe(q)} — ${count}${lines.length ? `\n${lines.join("\n")}` : ""}${summary ? `\n${summary}` : ""}`);
+    const header = `Lookup: ${describe(q)} — ${count}`;
+    let cursor = pos + (parts.length ? 2 : 0) + header.length;
+    lines.forEach((line, i) => { cursor += 1 + line.length; const id = r.ids?.[i]; if (id) lineIds.push({ end: cursor, id }); });
+    add(`${header}${lines.length ? `\n${lines.join("\n")}` : ""}${summary ? `\n${summary}` : ""}`);
   }
   const out = parts.join("\n\n");
-  return out.length > 12000 ? `${out.slice(0, 12000)}\n… (more rows not shown — ask a narrower question)` : out;
+  const shown = lineIds.filter(l => l.end <= LOOKUP_TEXT_CAP).map(l => l.id);
+  if (shown.length) onShown?.(shown);
+  return out.length > LOOKUP_TEXT_CAP ? `${out.slice(0, LOOKUP_TEXT_CAP)}\n… (more rows not shown — ask a narrower question)` : out;
 }
 
 /** The second-pass instruction: team rows, a web check, or both. */

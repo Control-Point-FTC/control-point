@@ -79,7 +79,8 @@ import { registerScoutingRoutes } from "./server/scouting.js";
 import { registerNotebookFileRoutes } from "./server/notebookFiles.js";
 import { NotebookStore, registerNotebookRoutes } from "./server/notebook.js";
 import { registerStickyNoteRoutes } from "./server/stickyNotes.js";
-import { isRefType, resolveRef } from "./server/refs.js";
+import { isRefType, resolveRef, type RefDeps } from "./server/refs.js";
+import { createRefsFilter, refsBlock, stripModelRefs, validateRefs } from "./server/brunoRefs.js";
 import { notebookLookup, notebookScreenBrief } from "./server/brunoNotebook.js";
 import { applyNotebookOps, parseNotebookOps, previewNotebookOps } from "./server/brunoNotebookActions.js";
 import { applyStickyOps, isStickyCard, parseStickyOps, previewStickyOps, stickyLookup } from "./server/brunoStickyActions.js";
@@ -6219,7 +6220,7 @@ async function startServer() {
   const brunoAccess = (memberId: number) => readBrunoAccess(dbGet as any, memberId);
   const brunoStickyNotes = new StickyNotes();
 
-  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, access: BrunoAccess = { notebook: true, sticky: true }): Promise<string> {
+  async function screenContextFor(auth: { teamId: number | null; memberId: number }, raw: unknown, access: BrunoAccess = { notebook: true, sticky: true }, shown?: Set<string>): Promise<string> {
     const req = parseScreenRequest(raw);
     if (!req || auth.teamId == null) return "";
     const found: ScreenLookups = {};
@@ -6267,6 +6268,10 @@ async function startServer() {
         }
       } catch { /* best-effort: the rest of the screen context still goes out */ }
     }
+    // The records this context shows (for Bruno's references).
+    if (found.task) shown?.add(`task:${found.task.id}`);
+    if (found.event) shown?.add(`event:${found.event.id}`);
+    if (found.notebook && req.notebookPageId) shown?.add(`page:${req.notebookPageId}`);
     return formatScreenContext(req, found);
   }
 
@@ -7358,6 +7363,11 @@ async function startServer() {
 
   // Stable links (/t/<team>/<type>/<id>): what a reference is and where it
   // opens, re-checked for this person every time it's opened.
+  const refDeps: RefDeps = {
+    get: (sql, ...args) => dbGet(sql, ...args),
+    notebook: brunoNotebookStore, // contexts passed to it are the person's own ("human"), not Bruno's
+    isAdmin: async (memberId, teamId) => { const p = await getMemberPerms(memberId, teamId); return p.has("*") || p.has("manage_members"); },
+  };
   app.get("/api/refs/:type/:id", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const auth = await requireAuth(req, res);
@@ -7367,11 +7377,7 @@ async function startServer() {
     if (!auth.teamId) return res.json({ status: "unavailable", type, id });
     const me = (await dbGet("SELECT email FROM members WHERE id = ?", auth.memberId)) as any;
     try {
-      res.json(await resolveRef({
-        get: (sql, ...args) => dbGet(sql, ...args),
-        notebook: brunoNotebookStore, // contexts below are the person's own ("human"), not Bruno's
-        isAdmin: async (memberId, teamId) => { const p = await getMemberPerms(memberId, teamId); return p.has("*") || p.has("manage_members"); },
-      }, { memberId: auth.memberId, teamId: auth.teamId, email: me?.email }, type, id, linkTeam));
+      res.json(await resolveRef(refDeps, { memberId: auth.memberId, teamId: auth.teamId, email: me?.email }, type, id, linkTeam));
     } catch (e) {
       console.error("Link lookup failed:", e);
       res.status(500).json({ error: "Couldn't open that link" });
@@ -11977,7 +11983,8 @@ Rules:
       const messages = raw
         .filter((m: any) => m && (m.role === "user" || m.role === "model") && typeof m.text === "string")
         .slice(-12)
-        .map((m: any) => ({ role: m.role, text: m.text.slice(0, 2000) }));
+        // Earlier replies' checked-references blocks are for the chat UI, not the model.
+        .map((m: any) => ({ role: m.role, text: (m.role === "model" ? m.text.replace(/```refs[\s\S]*?(```|$)/g, "").trimEnd() : m.text).slice(0, 2000) }));
       if (!messages.length || messages[messages.length - 1].role !== "user") {
         return res.status(400).json({ error: "A user message is required" });
       }
@@ -12010,13 +12017,15 @@ Rules:
       );
       const stream = req.query.stream === "true";
       const teamContext = await buildChatContext(auth.teamId);
-      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId);
+      // The records Bruno is actually shown this turn (type:id), for its references.
+      const shownRefs = new Set<string>();
+      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId, shownRefs);
       // Counts, dates, weekdays, next/recurring events and open tasks are
       // computed server-side in the team's timezone (see server/workspaceFacts.ts)
       // — Bruno states them, it doesn't derive them. Event ids stay listed so
       // ```delete-event proposals can reference them.
       const tz = await teamTimeZone(auth.teamId, req.body?.tz);
-      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz);
+      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz, new Date(), shownRefs);
       // User identity: Bruno should address the user by name, not the team name.
       let userLine = "";
       try {
@@ -12063,7 +12072,7 @@ Rules:
       });
       // What the user is looking at (page + open record). Best-effort.
       const access = await brunoAccess(auth.memberId);
-      const screenCtx = await screenContextFor(auth, req.body?.screen, access).catch((err: unknown) => {
+      const screenCtx = await screenContextFor(auth, req.body?.screen, access, shownRefs).catch((err: unknown) => {
         console.error("[bruno] screen context failed:", err);
         return "";
       });
@@ -12148,6 +12157,12 @@ Rules:
           return "";
         }
       };
+      const referencesFor = async (text: string) => {
+        if (!auth.teamId) return "";
+        const teamId = auth.teamId;
+        const refs = await validateRefs(text, shownRefs, (type, id) => resolveRef({ ...refDeps, notebookSource: "bruno" }, { memberId: auth.memberId, teamId }, type, id)).catch((e) => { console.error("Bruno references failed:", e); return []; });
+        return refsBlock(teamId, refs);
+      };
       const followUpWithLookups = async (firstText: string, opts: { stream: boolean; onChunk?: (c: string) => void; signal: AbortSignal; grounded: boolean }) => {
         const { text: shownFirst, queries } = extractLookupBlocks(firstText);
         if (!queries.length || !auth.teamId) return null;
@@ -12158,7 +12173,9 @@ Rules:
         const teamId = auth.teamId;
         const rows = dataQueries.length ? await runLookups(dbAll as any, teamId, lookupTz, dataQueries,
           gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)),
-          gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query, q.note))) : "";
+          gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query, q.note)),
+          // Only rows that came back count as "shown" for references (not request headings or failures).
+          (ids) => { for (const id of ids) shownRefs.add(id); }) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -12196,6 +12213,9 @@ Rules:
         try {
           let usage: any = null;
           const hold = createLookupHold();
+          // Only the server writes a ```refs block: any the model writes is dropped as it streams.
+          const modelOut = createRefsFilter();
+          const send = (text: string) => { const out = modelOut.push(text); if (out) res.write(out); };
           // Hybrid provider: Gemini (free) handles everything; Anthropic is
           // fallback on quota. The router decides deterministically — no
           // model call is spent choosing the provider.
@@ -12206,12 +12226,12 @@ Rules:
             stream: true,
             webSearch: req.body?.webSearch === true,
             images: (images.length || pdfs.length) ? [...images, ...pdfs.map(p => ({ mimeType: p.mimeType, data: p.data }))] : undefined,
-            onChunk: (chunk) => { const out = hold.push(chunk); if (out) res.write(out); },
+            onChunk: (chunk) => { const out = hold.push(chunk); if (out) send(out); },
             onUsage: (u) => { usage = u; },
             signal: streamAbort.signal,
           });
           const tail = hold.end();
-          if (tail) res.write(tail);
+          if (tail) send(tail);
           let fullText = aiReply.text;
           const webSources = [...(aiReply.sources || [])];
           // The first call's own counts, logged before any lookup pass (which logs itself).
@@ -12229,9 +12249,9 @@ Rules:
               onChunk: (chunk) => {
                 const out = hold2.push(chunk);
                 if (!out) return;
-                if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+                if (!gapWritten) { gapWritten = true; if (gap) send(gap); }
                 secondShown += out;
-                res.write(out);
+                send(out);
               },
               signal: streamAbort.signal,
               grounded: aiReply.grounded,
@@ -12239,9 +12259,9 @@ Rules:
             if (streamAbort.signal.aborted) { res.end(); return; }
             const tail2 = hold2.end();
             if (tail2) {
-              if (!gapWritten) { gapWritten = true; if (gap) res.write(gap); }
+              if (!gapWritten) { gapWritten = true; if (gap) send(gap); }
               secondShown += tail2;
-              res.write(tail2);
+              send(tail2);
             }
             if (looked) {
               fullText = `${looked.shownFirst}\n\n${looked.answer}`.trim();
@@ -12249,7 +12269,7 @@ Rules:
               webSources.unshift(...(looked.sources || []));
             } else {
               const sorry = "\n\n(I couldn't look that up just now. Try asking again.)";
-              res.write(sorry);
+              send(sorry);
               const shown = extractLookupBlocks(fullText).text;
               fullText = (secondShown.trim() ? `${shown}\n\n${secondShown.trim()}` : shown) + sorry;
             }
@@ -12265,7 +12285,11 @@ Rules:
           if (streamAbort.signal.aborted) { res.end(); return; }
           // The note streams with the scouting appendix below (written once).
           // Web pages the answer drew on, listed under it (phase 4d).
-          const appendix = sourcesFooter(webSources) + (await saveMemories(mem.facts)) + scouting;
+          fullText = stripModelRefs(fullText);
+          const appendix = sourcesFooter(webSources) + (await saveMemories(mem.facts)) + scouting + (await referencesFor(fullText));
+          // Whatever the filter still holds goes out before the server's own blocks.
+          const held = modelOut.end();
+          if (held) res.write(held);
           if (appendix) res.write(appendix);
           const finalText = stripActionBlocks(fullText) + appendix;
           if (chat && String(finalText || "").trim()) {
@@ -12312,7 +12336,8 @@ Rules:
       result = memNS.text;
       const scoutingNS = await scoutingAppendix(String(result || ""), auth.teamId, nonStreamAbort.signal);
       if (nonStreamAbort.signal.aborted) return;
-      const finalResult = stripActionBlocks(String(result || "")) + sourcesFooter(webSourcesNS) + (await saveMemories(memNS.facts)) + scoutingNS;
+      result = stripModelRefs(String(result || ""));
+      const finalResult = stripActionBlocks(String(result || "")) + sourcesFooter(webSourcesNS) + (await saveMemories(memNS.facts)) + scoutingNS + (await referencesFor(String(result || "")));
       if (chat) {
         const modelText = String(finalResult || "");
         if (modelText.trim()) {
@@ -13401,7 +13426,7 @@ Rules:
     return resolveTimeZone(saved, clientTz);
   }
 
-  async function buildTeamSnapshotContext(teamId: number | null): Promise<string> {
+  async function buildTeamSnapshotContext(teamId: number | null, shown?: Set<string>): Promise<string> {
     if (!teamId) return "";
     try {
       // Team counts, open tasks and the calendar are in WORKSPACE FACTS.
@@ -13418,7 +13443,8 @@ Rules:
         teamId
       )) as any[];
       if (done.length) {
-        const lines = done.map((t) => `#${t.id} ${q(t.title, 120)}${t.completer ? ` — done by ${q(t.completer, 40)}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
+        for (const t of done) shown?.add(`task:${t.id}`);
+        const lines = done.map((t) => `task #${t.id} ${q(t.title, 120)}${t.completer ? ` — done by ${q(t.completer, 40)}` : ""}${t.completed_at ? ` (${String(t.completed_at).slice(0, 10)})` : ""}`);
         parts.push(`RECENTLY COMPLETED TASKS:\n${lines.join("\n")}`);
       }
 

@@ -25,6 +25,10 @@ export type RefDeps = {
   notebook: NotebookStore;
   /** manage_members (or *) in that team. */
   isAdmin: (memberId: number, teamId: number) => Promise<boolean>;
+  /** Whose notebook visibility applies: the person's (links they open) or
+   *  Bruno's (references in Bruno's replies never reach admin-only pages,
+   *  even for an admin). Defaults to the person's. */
+  notebookSource?: "human" | "bruno";
 };
 type Member = { memberId: number; teamId: number };
 
@@ -59,7 +63,7 @@ async function resolveHere(deps: RefDeps, who: Member, type: RefType, id: number
     }
     case "page": case "section": {
       try {
-        const t = await deps.notebook.linkTarget({ memberId: who.memberId, teamId: who.teamId, source: "human" }, type, id);
+        const t = await deps.notebook.linkTarget({ memberId: who.memberId, teamId: who.teamId, source: deps.notebookSource ?? "human" }, type, id);
         if (t.deleted) return { status: "deleted", type, id, label: t.title };
         return { status: "ok", type, id, label: t.title, href: type === "page" ? `/notebook/p/${id}` : `/notebook?section=${id}` };
       } catch (e) { if (e instanceof NotebookError) return none; throw e; }

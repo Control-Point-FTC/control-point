@@ -105,7 +105,7 @@ describe("facts text", () => {
   it("series occurrences keep their ids and dates", () => {
     const wk = (id: number, date: string) => ({ id, title: "Practice", date, start_time: "14:00", end_time: "16:00" });
     const text = formatWorkspaceFacts({ ...base, upcoming: [wk(1, "2026-10-11"), wk(2, "2026-10-18"), wk(3, "2026-10-25")], upcomingTotal: 3 });
-    expect(text).toContain("#1 Sun, Oct 11; #2 Sun, Oct 18; #3 Sun, Oct 25");
+    expect(text).toContain("event #1 Sun, Oct 11; event #2 Sun, Oct 18; event #3 Sun, Oct 25");
   });
   it("states totals, not list lengths, and quotes member-written text", () => {
     const text = formatWorkspaceFacts({
@@ -190,5 +190,13 @@ describe("ground truth: the audited workspace", () => {
     expect(text).toContain('"League meet" — Sat, Oct 17 8:00 AM [');
     expect(text).not.toMatch(/Kickoff/);
     expect(text).not.toMatch(/Saturdays?\b.*practice/i);
+  });
+
+  it("reports exactly the records it lists, for checking Bruno's references", async () => {
+    const { workspaceFactsBlock } = await import("../workspaceFacts");
+    const shown = new Set<string>();
+    await workspaceFactsBlock(db(), teamId, "America/New_York", NOW, shown);
+    const f = (await loadWorkspaceFacts(db(), teamId, "America/New_York", NOW))!;
+    expect([...shown].sort()).toEqual([...f.openTasks.map((x) => `task:${x.id}`), ...f.upcoming.map((e) => `event:${e.id}`)].sort());
   });
 });
