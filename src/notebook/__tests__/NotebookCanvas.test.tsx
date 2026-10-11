@@ -250,6 +250,23 @@ describe('desktop shared drawing surface', () => {
         fireEvent.click(box.querySelector('a')!);
         expect(openRecord).toHaveBeenCalledWith('/tasks?task=5');
     });
+    it('with Select, pressing a link leaves it to the link (no select, move or pointer capture)', async () => {
+        const { sync, surface } = mount();
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing type' }));
+        fireEvent.doubleClick(surface, { clientX: 60, clientY: 60 });
+        const box = await waitFor(() => { const el = surface.querySelector<HTMLElement & { editor?: any }>('[data-canvas-id] [role=textbox]'); if (!el?.editor) throw new Error('not ready'); return el; });
+        box.editor.commands.insertContent([{ type: 'text', text: 'Wire it', marks: [{ type: 'link', attrs: { href: '/tasks?task=5' } }] }]);
+        const before = canvasJSON(sync.doc).objects[0];
+        fireEvent.click(screen.getByRole('button', { name: 'Drawing select' }));
+        const link = box.querySelector('a')!;
+        const press = (type: string, x: number) => { const ev = new Event(type, { bubbles: true, cancelable: true }); Object.assign(ev, { pointerId: 7, button: 0, clientX: x, clientY: 62, pressure: .5, pointerType: 'mouse' }); link.dispatchEvent(ev); return ev; };
+        expect(press('pointerdown', 62).defaultPrevented).toBe(false);
+        press('pointermove', 200); press('pointerup', 200);
+        expect(surface.setPointerCapture).not.toHaveBeenCalled();
+        expect(canvasJSON(sync.doc).objects[0]).toMatchObject({ x: (before as any).x, y: (before as any).y });
+        fireEvent.click(link);
+        expect(openRecord).toHaveBeenCalledWith('/tasks?task=5');
+    });
     it('finds a linked line inside a canvas text box', async () => {
         const scroll = vi.fn(); Element.prototype.scrollIntoView = scroll;
         const { surface, setAnchor } = mount(true, false, 0, false, undefined, 'line-in-box');

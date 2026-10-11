@@ -327,6 +327,9 @@ export default function NotebookCanvas({ sync, editable, mobile, onRibbon, onEdi
             setDraft([]);
             return;
         }
+        // With Select, a press on a link in the page text or a text box is for the
+        // link: don't select, move or capture the pointer, so its click opens it.
+        if (tool === 'select' && (e.target as Element).closest('.nb-flow a[href], .nb-canvas-text-prose a[href]')) return;
         const p = point(e), target = (e.target as Element).closest('[data-canvas-id]')?.getAttribute('data-canvas-id');
         if (tool === 'type') {
             const within=(e.target as Element).closest('.nb-flow,.nb-canvas-text');
