@@ -68,7 +68,7 @@ import { resourceKey } from "./src/utils/resourceUrl.js";
 import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } from "./src/utils/changelog.js";
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
-import { normalizeBrunoTask } from "./src/utils/brunoTasks.js";
+import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { sourcesFooter } from "./server/webSources.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
@@ -12107,6 +12107,8 @@ Rules:
         t = extractCommunicationsBlock(t).text;
         t = extractTasksBlock(t).text;
         t = extractBudgetBlock(t).text;
+        // Task edits live only on the live confirm card, like notebook proposals.
+        t = t.replace(/```task-update\s*\r?\n[\s\S]*?\r?\n```/g, "").replace(/```task-update[\s\S]*$/, "");
         t = extractScoutBlock(t).text;
         t = extractScoutEventBlock(t).text;
         // Notebook proposals live only on the live confirm card.
@@ -12580,11 +12582,26 @@ Rules:
         "delete-event": { perm: "manage_calendar", error: "Only members with calendar access can delete events" },
         "communication": { perm: "manage_communications", error: "Only members with communication access can log messages" },
         "task": { perm: "manage_tasks", error: "Only members with task access can add tasks" },
+        "task-update": { perm: "manage_tasks", error: "Only members with task access can edit tasks" },
         "budget": { perm: "manage_budget", error: "Only members with budget access can add budget entries" },
       };
       for (const a of actions) {
         const need = PERM_FOR_KIND[a?.kind];
         if (need && !(await hasPerm(auth, need.perm))) return res.status(403).json({ error: need.error });
+      }
+      // Every task an edit names must still be this team's BEFORE any action
+      // is written: a deleted one can't leave the card half applied (and a
+      // retry then duplicating its new items).
+      const updateTargets = new Map<number, any>();
+      for (const a of actions) {
+        if (a?.kind !== "task-update" || !Array.isArray(a.items) || a.items.length > 20) continue;
+        for (const raw of a.items) {
+          const id = normalizeTaskUpdate(raw, null)?.id;
+          if (!id || updateTargets.has(id)) continue;
+          const task: any = await dbGet("SELECT * FROM tasks WHERE id = ? AND team_id = ?", id, auth.teamId);
+          if (!task) return res.status(400).json({ error: `Task #${id} no longer exists — nothing was saved` });
+          updateTargets.set(id, task);
+        }
       }
       const applied: Record<string, number> = {};
       // The new records, so the card can link to them ("View task").
@@ -12686,6 +12703,64 @@ Rules:
             }
           }
           applied.task = (applied.task || 0) + tasks.length;
+        } else if (kind === "task-update") {
+          // Edits to existing tasks, saved like PATCH /api/tasks/:id. Their
+          // targets were checked before any action was written (above).
+          const roster = (await dbAll("SELECT id, name FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
+          const names = roster.map((m: any) => String(m.name));
+          const teamRoles = await teamRolesWithMembers(auth.teamId);
+          const parsed = items.map((raw: any) => normalizeTaskUpdate(raw, names, teamRoles.map((r) => ({ name: r.name, members: r.members.map((m) => m.name) }))))
+            .filter((u: any): u is NonNullable<ReturnType<typeof normalizeTaskUpdate>> => !!u && Object.keys(u.changes).length > 0 && updateTargets.has(u.id));
+          // Several edits to one task are one edit (later fields win), so a
+          // date in one item and a time in the next both land.
+          const byTask = new Map<number, (typeof parsed)[number]>();
+          for (const u of parsed) {
+            const prev = byTask.get(u.id);
+            // People and roles are one assignment: a later item that changes it replaces both.
+            const base = prev && (u.changes.assignees !== undefined || u.changes.roles !== undefined)
+              ? (({ assignees: _a, roles: _r, ...rest }) => rest)(prev.changes) : prev?.changes;
+            byTask.set(u.id, prev ? { ...prev, changes: { ...base, ...u.changes } } : u);
+          }
+          const updates = [...byTask.values()];
+          if (!updates.length) continue;
+          for (const u of updates) {
+            const task = updateTargets.get(u.id);
+            const c = u.changes;
+            const sets: string[] = [];
+            const vals: any[] = [];
+            if (c.status !== undefined) {
+              // Reopened: whatever completion and review it had no longer apply.
+              sets.push("status = ?", "completed_at = NULL", "review_status = NULL");
+              vals.push(c.status);
+            }
+            if (c.title !== undefined) { sets.push("title = ?"); vals.push(c.title); }
+            if (c.description !== undefined) { sets.push("description = ?"); vals.push(c.description); }
+            if (c.priority !== undefined) { sets.push("priority = ?"); vals.push(c.priority); }
+            if (c.recurrence !== undefined) { sets.push("recurrence = ?"); vals.push(c.recurrence ? JSON.stringify(c.recurrence) : null); }
+            if (c.due_date !== undefined) { sets.push("due_date = ?"); vals.push(c.due_date); }
+            if (c.due_time !== undefined || c.due_date !== undefined) {
+              // The time belongs to the resulting date (as PATCH): none without one.
+              const date = c.due_date !== undefined ? c.due_date : (task.due_date || null);
+              const time = c.due_time !== undefined ? c.due_time : (task.due_time ?? null);
+              sets.push("due_time = ?"); vals.push(date ? time : null);
+            }
+            const before = await getTaskAssigneeIds(u.id);
+            if (c.assignees !== undefined || c.roles) {
+              // The named people plus everyone holding the roles now.
+              const ids = (c.assignees ?? []).map((n) => roster.find((m: any) => m.name === n)?.id).filter((id): id is number => Number.isFinite(id));
+              for (const role of c.roles ?? []) for (const m of teamRoles.find((r) => r.name === role)?.members ?? []) if (!ids.includes(m.id)) ids.push(m.id);
+              const valid = await setTaskAssignees(u.id, ids, auth.teamId);
+              const title = c.title ?? task.title;
+              for (const mid of valid) if (!before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `New task assigned: ${title}`, "task", { task_id: u.id });
+            }
+            if (sets.length) await dbRun(`UPDATE tasks SET ${sets.join(", ")} WHERE id = ? AND team_id = ?`, ...vals, u.id, auth.teamId);
+            const now = await getTaskAssigneeIds(u.id);
+            for (const mid of now) if (before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `Task updated: ${c.title ?? task.title}`, "task", { task_id: u.id });
+            const updated: any = await dbGet("SELECT * FROM tasks WHERE id = ?", u.id);
+            if (updated) { updated.assignee_ids = now; broadcastToTeam(auth.teamId, { type: "task_updated", task: updated }); }
+            made("task-update", u.id);
+          }
+          applied["task-update"] = (applied["task-update"] || 0) + updates.length;
         } else if (kind === "budget") {
           const { entries } = extractBudgetBlock("```budget\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;

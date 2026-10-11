@@ -6,7 +6,7 @@
 // server saves them as they are.
 import { useEffect, useSyncExternalStore } from 'react';
 import { apiFetch } from './api';
-import { normalizeBrunoTask, recoverEventTime, type TeamRole } from '../utils/brunoTasks';
+import { normalizeBrunoTask, normalizeTaskUpdate, recoverEventTime, type TeamRole } from '../utils/brunoTasks';
 import type { ActionProposal } from './aiService';
 
 export interface ProposalContext { today: string; roster: string[]; roles?: TeamRole[]; loadedAt?: number }
@@ -27,6 +27,7 @@ export const getProposalContext = () => ctx;
 export function setProposalContext(c: ProposalContext | null) {
   generation++;
   loading = null;
+  taskIndex = null; taskIndexAt = 0; taskLoading = null; taskRequest++;
   install(c);
 }
 
@@ -77,8 +78,73 @@ export function resolveEventItem(it: any) {
   return ctx ? recoverEventTime({ ...it, title: String(it?.title || ''), notes: it?.notes ?? '', time: it?.time ?? '', end: it?.end ?? '' }) : it;
 }
 
+/** A task edit as it will be saved. Before the roster loads, names are kept
+ *  as written and the server resolves them (an edit never loses its people). */
+export function resolveTaskUpdate(it: any) {
+  return normalizeTaskUpdate(it, ctx ? ctx.roster : null, ctx?.roles ?? null);
+}
+
+/** The team's tasks as they are now, so an update card names the real task
+ *  (not the model's label) and says when it no longer exists. One request is
+ *  shared by every card; any task change refetches it (or drops it when no
+ *  card is open), so a cached copy is current. */
+export type CurrentTask = { id: number; title: string; status: string };
+let taskIndex: Map<number, CurrentTask> | null = null;
+let taskIndexAt = 0;
+let taskRequest = 0;
+let taskLoading: Promise<void> | null = null;
+let openUpdateCards = 0;
+export const getTaskIndex = () => taskIndex;
+export function setTaskIndex(tasks: CurrentTask[] | null) {
+  taskRequest++; taskLoading = null; // a fetch already in flight must not overwrite this
+  taskIndex = tasks ? new Map(tasks.map((t) => [t.id, t])) : null;
+  taskIndexAt = tasks ? Date.now() : 0;
+  listeners.forEach((l) => l());
+}
+/** `fresh` (tasks just changed) supersedes a request in flight; otherwise
+ *  cards share the pending request or a copy fetched in the last minute. */
+export function loadTaskIndex(fresh = false): Promise<void> {
+  if (!fresh && taskLoading) return taskLoading;
+  if (!fresh && taskIndex && Date.now() - taskIndexAt < MAX_AGE_MS) return Promise.resolve();
+  const mine = ++taskRequest;
+  const run = (async () => {
+    try {
+      const res = await apiFetch('/api/tasks');
+      const body = res.ok ? await res.json() : null;
+      if (mine !== taskRequest || !Array.isArray(body)) return;
+      taskIndex = new Map(body.map((t: any) => [Number(t.id), { id: Number(t.id), title: String(t.title ?? ''), status: String(t.status ?? '') }]));
+      taskIndexAt = Date.now();
+      listeners.forEach((l) => l());
+    } catch { /* offline: the card falls back to the task's number */ }
+  })();
+  taskLoading = run;
+  void run.finally(() => { if (taskLoading === run) taskLoading = null; });
+  return run;
+}
+/** Tasks changed (live update, Bruno apply): open cards refetch, others forget. */
+export function invalidateTaskIndex() {
+  if (openUpdateCards > 0) void loadTaskIndex(true);
+  else { taskRequest++; taskLoading = null; taskIndex = null; taskIndexAt = 0; }
+}
+/** Re-render an update card once the team's tasks load (only while it still
+ *  shows task details: pass false once it's applied or dismissed). */
+export function useTaskIndex(enabled: boolean): Map<number, CurrentTask> | null {
+  const idx = useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, getTaskIndex, getTaskIndex);
+  useEffect(() => {
+    if (!enabled) return;
+    openUpdateCards++;
+    void loadTaskIndex();
+    return () => { openUpdateCards--; };
+  }, [enabled]);
+  return idx;
+}
+
 /** The items Confirm sends: the same resolution the card showed. */
 export function resolveProposals(proposals: ActionProposal[]): ActionProposal[] {
   return proposals.map((p) => p.kind === 'task' ? { ...p, items: p.items.map(resolveTaskItem) }
-    : p.kind === 'event' ? { ...p, items: p.items.map(resolveEventItem) } : p);
+    : p.kind === 'event' ? { ...p, items: p.items.map(resolveEventItem) }
+    : p.kind === 'task-update' ? { ...p, items: p.items.map((it) => {
+      const u = resolveTaskUpdate(it);
+      return u ? { id: u.id, ...u.changes, ...(u.changes.recurrence !== undefined ? { repeat: u.changes.recurrence } : {}) } : null;
+    }).filter(Boolean) } : p);
 }
