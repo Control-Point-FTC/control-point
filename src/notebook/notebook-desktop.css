@@ -26,7 +26,10 @@
   .nb-tree-row {border-radius:4px;min-height:42px;gap:0}
   .nb-book-label {padding:0;background:#191919;margin-top:8px}
   .nb-book-label strong {font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .nb-section-row .nb-tree-label {padding-inline-start:26px}
+  /* Sections sit under the notebook icon, like OneNote. */
+  .nb-section-row {padding-inline-start:22px}
+  .nb-section-row .nb-tree-label {padding-inline-start:16px}
+  .nb-add.nb-add-section {padding-inline-start:38px}
   .nb-tree-row.is-selected {background:#ffc70012;box-shadow:inset 3px 0 #ffc700}
   .nb-tree-label:hover {color:#fff}
   .nb-tree-row>button:not(.nb-tree-label),.nb-tree-row>[data-state] {opacity:0}
@@ -45,7 +48,7 @@
   .nb-doc-status {background:#fff;padding:5px 22px;border:0;font-size:10px;gap:10px}
   .nb-paper-scroll {background:#fff}
   .nb-paper {padding:18px clamp(30px,3.2vw,64px) 60px;background:#fff;max-width:none;min-height:100%}
-  .nb-title {display:block;font-size:29px;font-weight:400;color:#111;width:min(100%,360px);border-bottom:1px solid #999;padding:0 16px 5px;margin-bottom:12px}
+  .nb-title {display:block;font-size:29px;font-weight:400;color:#111;width:auto;field-sizing:content;min-width:min(100%,360px);max-width:100%;resize:none;overflow:hidden;line-height:1.25;font-family:inherit;border-bottom:1px solid #999;padding:0 16px 5px;margin-bottom:12px}
   .nb-prose {padding-top:38px;max-width:none;color:#111}
   .nb-page-date {display:flex;gap:32px;margin-inline-start:16px;font-size:12px;color:#777}
   .nb-prose th,.nb-prose pre,.nb-prose code {background:#f3f3f3;color:#151515}
