@@ -19,6 +19,7 @@ const TasksPage = React.lazy(() => import('./modern/pages/tasks/TasksPage').then
 const CalendarPage = React.lazy(() => import('./modern/pages/calendar/CalendarPage').then((m) => ({ default: m.CalendarPage })));
 const AttendancePage = React.lazy(() => import('./modern/pages/attendance/AttendancePage').then((m) => ({ default: m.AttendancePage })));
 const PeoplePage = React.lazy(() => import('./modern/pages/people/PeoplePage').then((m) => ({ default: m.PeoplePage })));
+import { rememberRefLink, takeRefLink } from './utils/refLinkReturn';
 const RefOpen = React.lazy(() => import('./modern/pages/RefOpen').then((m) => ({ default: m.RefOpen })));
 const CommunicationPage = React.lazy(() => import('./modern/pages/communication/CommunicationPage').then((m) => ({ default: m.CommunicationPage })));
 const MessagesPage = React.lazy(() => import('./modern/pages/messages/MessagesPage').then((m) => ({ default: m.MessagesPage })));
@@ -1912,6 +1913,10 @@ export default function App() {
         sessionStorage.removeItem('pendingCheckinToken');
         navigate(`/checkin/${t}`);
       }
+      // A shared record link (/t/...) opened while signed out: open it now,
+      // where it's checked against this person's access.
+      const ref = takeRefLink();
+      if (ref) navigate(ref, { replace: true });
     }
   }, [isLoggedIn]);
 
@@ -2240,6 +2245,7 @@ export default function App() {
     if (deepLink && typeof sessionStorage !== 'undefined') {
       sessionStorage.setItem('pendingCheckinToken', deepLink[1]);
     }
+    rememberRefLink(location.pathname);
     // A brand-new OAuth user just finished sign-in — collect their last signup
     // step first. This must come before the landing screen or the callback
     // bounces them back to the homepage.

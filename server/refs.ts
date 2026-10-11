@@ -65,8 +65,12 @@ async function resolveHere(deps: RefDeps, who: Member, type: RefType, id: number
       } catch (e) { if (e instanceof NotebookError) return none; throw e; }
     }
     case "member": {
-      const r = await row("SELECT id, name, COALESCE(is_active, 1) AS active FROM members WHERE id = ? AND team_id = ?");
-      if (!r) return none;
+      // Same rule as the roster (VERIFIED_MEMBER_SQL): a password signup that
+      // hasn't verified its email isn't a teammate yet.
+      const r = await row(`SELECT m.id, m.name, COALESCE(m.is_active, 1) AS active,
+        (COALESCE(m.password, '') = '' OR EXISTS (SELECT 1 FROM verified_emails ve WHERE LOWER(ve.email) = LOWER(m.email))) AS verified
+        FROM members m WHERE m.id = ? AND m.team_id = ?`);
+      if (!r || !Number(r.verified)) return none;
       return Number(r.active) ? { status: "ok", type, id, label: String(r.name), href: `/teams?member=${id}` } : { status: "deleted", type, id, label: String(r.name) };
     }
     case "file": {

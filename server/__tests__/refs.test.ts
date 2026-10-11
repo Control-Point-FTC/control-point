@@ -69,6 +69,10 @@ describe("resolving each type", () => {
   it("opens teammates, shows removed ones as gone, and never reveals another team's people", async () => {
     const left = await seedMember(t.db, team, "Lee", "lee@refs.test");
     await t.db.execute({ sql: "UPDATE members SET is_active = 0 WHERE id = ?", args: [left] });
+    // A password signup that hasn't verified its email isn't on the roster yet.
+    const pending = await seedMember(t.db, team, "Pat", "pat@refs.test");
+    await t.db.execute({ sql: "UPDATE members SET password = 'hash' WHERE id = ?", args: [pending] });
+    expect(await ref(studentSession, "member", pending)).toEqual({ status: "unavailable", type: "member", id: pending });
     expect(await ref(studentSession, "member", admin)).toMatchObject({ status: "ok", label: "Admin", href: `/teams?member=${admin}` });
     expect(await ref(studentSession, "member", left)).toEqual({ status: "deleted", type: "member", id: left, label: "Lee" });
     expect(await ref(studentSession, "member", outsider)).toEqual({ status: "unavailable", type: "member", id: outsider });
