@@ -9,7 +9,7 @@ import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import {
   ArrowRight, CalendarDays, ChevronDown, Copy, Crown, Eye, KanbanSquare, LineChart as LineChartIcon, List, ListChecks, Pencil, Plus, Search, Sparkles, Trash2,
-  UserPlus, CheckCheck, CheckCircle2, Repeat,
+  UserPlus, CheckCheck, CheckCircle2, Repeat, Camera,
 } from 'lucide-react';
 import { BulkBar, RowCheckbox, SelectAllCheckbox, useSelection, type Selection } from '../../ui/selection';
 import { useContextMenu } from '../../../components/contextmenu/ContextMenuProvider';
@@ -28,6 +28,10 @@ import { AvatarStack } from './AssigneePicker';
 import { TaskEditorSheet, TaskViewSheet, STATUS_META, isOverdue, PriorityBadge, ReviewBadge } from './TaskSheets';
 import { readRecurrence, recurrenceLabel } from '../../../utils/quickAdd';
 import { dueMoment } from '../../../utils/countdown';
+import { taskCompletions } from '../../../utils/taskCompletions';
+
+/** Proof photos across every completion of a task. */
+const photoCount = (t: any) => taskCompletions(t).reduce((n, e) => n + e.images.length, 0);
 import { Countdown } from '../../ui/Countdown';
 import { BulkImportDialog } from './TaskDialogs';
 
@@ -40,11 +44,16 @@ const LIST_RANK: Record<string, number> = { 'in-progress': 0, 'todo': 1, 'done':
 function listOrder(tasks: any[]) {
   return [...tasks].sort((a, b) => (LIST_RANK[a.status] - LIST_RANK[b.status]) || String(a.due_date || '9').localeCompare(String(b.due_date || '9')));
 }
-/** Completed tasks, newest first. */
+/** When the task was last finished (a sent-back task keeps its history). */
+const lastFinished = (t: any): string => t.completed_at || taskCompletions(t)[0]?.at || '';
+/** Completed tasks, newest first. "All" also keeps tasks that were finished
+ *  before and sent back, so every past completion stays reachable. */
 function completedOrder(tasks: any[], filter: ReviewFilter) {
   return tasks
-    .filter((t) => t.status === 'done' && (filter === 'all' || (filter === 'pending' ? t.review_status !== 'approved' : t.review_status === 'approved')))
-    .sort((a, b) => String(b.completed_at || '').localeCompare(String(a.completed_at || '')));
+    .filter((t) => filter === 'all'
+      ? t.status === 'done' || taskCompletions(t).length > 0
+      : t.status === 'done' && (filter === 'pending' ? t.review_status !== 'approved' : t.review_status === 'approved'))
+    .sort((a, b) => lastFinished(b).localeCompare(lastFinished(a)));
 }
 /** The board's reading order: column by column, cards top to bottom. */
 function boardOrder(tasks: any[]) {
@@ -324,9 +333,10 @@ function CompletedView({ tasks, filter, onFilter, members, onOpen, sel }: {
                   <TableCell>
                     <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(t.id); }} className="text-left font-medium outline-none focus-visible:underline">{t.title}</button>
                     {t.completion_notes && <span className="mt-0.5 block line-clamp-1 text-xs text-muted-foreground">{t.completion_notes}</span>}
+                    {photoCount(t) > 0 && <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground"><Camera className="size-3" aria-hidden /> {`${photoCount(t)} photo${photoCount(t) === 1 ? '' : 's'}`}</span>}
                   </TableCell>
                   <TableCell className="hidden text-muted-foreground sm:table-cell">{nameOf(t.completed_by) || '—'}</TableCell>
-                  <TableCell className="hidden text-muted-foreground sm:table-cell">{t.completed_at ? format(new Date(t.completed_at), 'MMM d, h:mm a') : '—'}</TableCell>
+                  <TableCell className="hidden text-muted-foreground sm:table-cell">{lastFinished(t) && !Number.isNaN(Date.parse(lastFinished(t))) ? format(new Date(lastFinished(t)), 'MMM d, h:mm a') : '—'}</TableCell>
                   <TableCell><ReviewBadge task={t} />{!t.review_status && <span className="text-xs text-muted-foreground">Not reviewed</span>}</TableCell>
                 </TableRow>
               ))}

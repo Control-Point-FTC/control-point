@@ -10,6 +10,7 @@ import { setScreenEntity } from '../../services/brunoContext';
 import { useDraft, getDraft, setDraft, newSessionId } from '../../modern/drafts';
 import { bulkDelete, runBulk } from '../../modern/ui/selection';
 import { readRecurrence, type Recurrence } from '../../utils/quickAdd';
+import { recordedCompletions } from '../../utils/taskCompletions';
 
 export interface TaskForm {
   team_id: any;
@@ -350,7 +351,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
 
   /** Review a finished task: approve it, or send it back with a note. */
   const reviewTask = async (id: number, action: 'approve' | 'send_back', note = '') => {
-    const res = await apiFetch(`/api/tasks/${id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, note }) }).catch(() => null);
+    const completions = recordedCompletions(tasks.find((t: any) => t.id === id));
+    const res = await apiFetch(`/api/tasks/${id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, note, completions }) }).catch(() => null);
     const d = res ? await res.json().catch(() => ({})) : {};
     if (!res?.ok) { notify(d.error || 'Could not save the review — try again.', 'error'); return false; }
     if (d.task) setTasks((ts: any[]) => ts.map((t: any) => (t.id === id ? { ...t, ...d.task, assignee_ids: d.task.assignee_ids ?? t.assignee_ids } : t)));
@@ -485,7 +487,8 @@ export function useTasksController({ tasks, setTasks, teams, members, refresh, c
   /** Approve many finished tasks at once (Completed view). */
   const bulkApprove = async (ids: number[]) => {
     const ok = await runBulk(ids, async (id) => {
-      const res = await apiFetch(`/api/tasks/${id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'approve' }) }).catch(() => null);
+      const completions = recordedCompletions(tasks.find((t: any) => t.id === id));
+      const res = await apiFetch(`/api/tasks/${id}/review`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'approve', completions }) }).catch(() => null);
       return !!res?.ok;
     }, { verb: 'Approved', noun: 'task' });
     const done = new Set(ok.map(Number));
