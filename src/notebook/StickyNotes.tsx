@@ -123,10 +123,21 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     try { if (Object.keys(drafts).length) localStorage.setItem(draftsKey, JSON.stringify(drafts)); else localStorage.removeItem(draftsKey); } catch { /* storage optional */ }
   }, [draftsKey]);
 
+  // One counter for every list request (first load and Bruno refreshes), so
+  // an older answer never replaces a newer one.
+  const listRun = useRef(0);
+  const localChanges = useRef(0);
+  const stale = useRef(false);
+  const retryRefresh = useRef<number | undefined>(undefined);
+  const notesNow = useRef(notes); notesNow.current = notes;
+  useEffect(() => () => window.clearTimeout(retryRefresh.current), []);
   const load = useCallback(async () => {
+    const run = ++listRun.current;
     let list: StickyNote[];
-    try { list = await request<StickyNote[]>('/api/sticky-notes'); setError(''); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not load your sticky notes.'); return; }
+    try { list = await request<StickyNote[]>('/api/sticky-notes'); }
+    catch (e) { if (run === listRun.current) setError(e instanceof Error ? e.message : 'Could not load your sticky notes.'); return; }
+    if (run !== listRun.current) return;
+    setError(''); stale.current = false;
     // Put back changes that never reached the server, then send them.
     const drafts = readDrafts(draftsKey);
     setNotes(list.map(n => drafts[n.id] ? { ...n, ...drafts[n.id] } : n));
@@ -139,6 +150,44 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   useEffect(() => {
     if (!hidden && notes === null && (open || Object.keys(readDrafts(draftsKey)).length)) void load();
   }, [open, hidden, notes, load, draftsKey]);
+  // Bruno changed sticky notes (a confirmed card): show the server's notes,
+  // with only the fields the member hasn't saved yet laid on top. An answer
+  // that may predate a local change (typing, a save, a new or deleted note)
+  // is thrown away and asked again. A failed refresh says so and runs again
+  // the next time the panel opens.
+  const refresh = useCallback(async () => {
+    window.clearTimeout(retryRefresh.current);
+    // Not loaded yet (or the first load is still out): load afresh instead.
+    if (notesNow.current === null) { void load(); return; }
+    const run = ++listRun.current;
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const before = localChanges.current;
+        const list = await request<StickyNote[]>('/api/sticky-notes');
+        if (run !== listRun.current) return; // a newer request owns the list
+        if (localChanges.current !== before) continue;
+        stale.current = false; setError('');
+        setNotes(list.map(n => ({ ...n, ...sending.current.get(n.id), ...unsaved.current.get(n.id) })));
+        return;
+      }
+      // Still being edited: try again once typing settles.
+      stale.current = true;
+      retryRefresh.current = window.setTimeout(() => { void refresh(); }, 1500);
+    } catch {
+      if (run !== listRun.current) return;
+      stale.current = true;
+      setError('Bruno changed your sticky notes, but they couldn’t be reloaded. Close and reopen this list to try again.');
+    }
+  }, [load]);
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const types = (e as CustomEvent<{ types?: string[] }>).detail?.types;
+      if (Array.isArray(types) && types.includes('sticky')) void refresh();
+    };
+    window.addEventListener('bruno-data-changed', onChange);
+    return () => window.removeEventListener('bruno-data-changed', onChange);
+  }, [refresh]);
+  useEffect(() => { if (open && stale.current) void refresh(); }, [open, refresh]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (e.target as Element)?.closest?.('.nb-sticky-panel')) onClose(); };
@@ -153,7 +202,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     unsaved.current.delete(id); sending.current.set(id, change); mark(id, 'saving'); keepDrafts();
     try {
       const saved = await request<StickyNote>(`/api/sticky-notes/${id}`, 'PATCH', change);
-      failed.current.delete(id);
+      failed.current.delete(id); localChanges.current++;
       setNotes(list => list?.map(n => n.id === id ? { ...n, updatedAt: saved.updatedAt } : n) ?? list);
     } catch {
       // Newer edits win over the ones that failed; all of them stay unsaved.
@@ -166,6 +215,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   }, [keepDrafts]);
 
   const change = useCallback((id: number, next: Change, delay = 0) => {
+    localChanges.current++;
     setNotes(list => list?.map(n => n.id === id ? { ...n, ...next } : n) ?? list);
     unsaved.current.set(id, { ...unsaved.current.get(id), ...next }); touched.current.add(id); keepDrafts();
     mark(id, failed.current.has(id) ? 'failed' : 'saving');
@@ -202,7 +252,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
     if (!notes) return;
     const offset = (notes.filter(n => n.open).length % CASCADE) * 24;
     const at = clampToWindow(360 + offset, 140 + offset, 260);
-    try { const note = await request<StickyNote>('/api/sticky-notes', 'POST', at); setNotes(list => [note, ...(list ?? [])]); setError(''); }
+    try { const note = await request<StickyNote>('/api/sticky-notes', 'POST', at); localChanges.current++; setNotes(list => [note, ...(list ?? [])]); setError(''); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not create a note.'); }
   };
   const remove = async (note: StickyNote) => {
@@ -211,7 +261,7 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
       await request(`/api/sticky-notes/${note.id}`, 'DELETE');
       window.clearTimeout(timers.current.get(note.id)); timers.current.delete(note.id);
       unsaved.current.delete(note.id); failed.current.delete(note.id); keepDrafts([note.id]);
-      setNotes(list => list?.filter(n => n.id !== note.id) ?? list);
+      localChanges.current++; setNotes(list => list?.filter(n => n.id !== note.id) ?? list);
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not delete the note.'); }
   };
   if (hidden) return null;

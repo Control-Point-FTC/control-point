@@ -3,11 +3,12 @@
 // "unavailable"), never from the model's own description. Deletions need an
 // explicit tick before the button unlocks.
 import { useEffect, useState } from 'react';
-import { Check, Loader2, NotebookPen, Trash2, X } from 'lucide-react';
+import { Check, Loader2, NotebookPen, StickyNote, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../cn';
 import { Button } from '../ui-kit';
-import { applyNotebookOps, newReceiptKey, previewNotebookOps, type NotebookOpPreview, type NotebookOpResult } from '../../services/notebookProposals';
+import { applyNotebookOps, isStickyOp, newReceiptKey, previewNotebookOps, type NotebookOpPreview, type NotebookOpResult } from '../../services/notebookProposals';
+import { setStickyNotesOpen } from '../../notebook/stickyNotesState';
 
 type State = { status: 'loading' | 'pending' | 'confirming' | 'done' | 'dismissed' | 'error'; error?: string };
 type Memory = { receipt?: string; results?: NotebookOpResult[] };
@@ -29,6 +30,9 @@ function cardMemory(identity: string) {
  *  closing and reopening the chat never confirms the same change twice. */
 export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unknown>[]; scope: string }) {
   const opsKey = JSON.stringify(ops);
+  // A card is either page changes or the member's own sticky notes.
+  const sticky = ops.length > 0 && ops.every(isStickyOp);
+  const noun = sticky ? 'sticky note' : 'notebook';
   // Created once per card, not on every render.
   const [memory] = useState(() => cardMemory(`${scope}\u0000${opsKey}`));
   const [previews, setPreviews] = useState<NotebookOpPreview[] | null>(null);
@@ -63,23 +67,24 @@ export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unkno
   };
 
   if (state.status === 'done') {
-    const pages = [...new Map(results.filter(r => r.op !== 'delete').map(r => [r.pageId, r])).values()];
+    const pages = [...new Map(results.filter(r => r.op !== 'delete' && r.pageId).map(r => [r.pageId, r])).values()];
     return (
       <div className="mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success" role="status">
-        <p className="flex items-center gap-2"><Check className="size-4" /> Notebook updated ({results.length} {results.length === 1 ? 'change' : 'changes'}).</p>
+        <p className="flex items-center gap-2"><Check className="size-4" /> {sticky ? 'Sticky notes' : 'Notebook'} updated ({results.length} {results.length === 1 ? 'change' : 'changes'}).</p>
         {pages.length > 0 && <p className="mt-1 flex flex-wrap gap-x-3">{pages.map(r => <Link key={r.pageId} className="underline" to={`/notebook/p/${r.pageId}`}>Open “{r.title}”</Link>)}</p>}
+        {sticky && results.some(r => r.op !== 'sticky_delete') && <p className="mt-1"><button type="button" className="underline" onClick={() => setStickyNotesOpen(true)}>Open sticky notes</button></p>}
       </div>
     );
   }
 
   return (
-    <div className={cn('mt-3 overflow-hidden rounded-xl border bg-card', destructive ? 'border-destructive/40' : 'border-border')} aria-label="Proposed notebook changes">
+    <div className={cn('mt-3 overflow-hidden rounded-xl border bg-card', destructive ? 'border-destructive/40' : 'border-border')} aria-label={sticky ? 'Proposed sticky note changes' : 'Proposed notebook changes'}>
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-        <p className="flex items-center gap-1.5 text-sm font-medium"><NotebookPen className="size-4" /> Apply {ops.length} notebook {ops.length === 1 ? 'change' : 'changes'}?</p>
+        <p className="flex items-center gap-1.5 text-sm font-medium">{sticky ? <StickyNote className="size-4" /> : <NotebookPen className="size-4" />} Apply {ops.length} {noun} {ops.length === 1 ? 'change' : 'changes'}?</p>
         <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={() => setState({ status: 'dismissed' })}><X /></Button>
       </div>
       <div className="max-h-72 space-y-3 overflow-y-auto px-4 py-3">
-        {state.status === 'loading' && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Checking the notebook…</p>}
+        {state.status === 'loading' && <p className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> {sticky ? 'Checking your sticky notes…' : 'Checking the notebook…'}</p>}
         {previews?.map((p, i) => (
           <div key={i} className="text-sm">
             <p className={cn('flex items-start gap-1.5 font-medium', p.destructive && 'text-destructive')}>{p.destructive && <Trash2 className="mt-0.5 size-3.5 shrink-0" />}{p.summary}</p>
@@ -91,13 +96,13 @@ export function NotebookProposalCard({ ops, scope }: { ops: Record<string, unkno
         {destructive && !blocked && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={deleteOk} onChange={e => setDeleteOk(e.target.checked)} />
-            I understand this removes notebook content (pages go to Trash and can be restored).
+            {sticky ? 'I understand deleted sticky notes can’t be restored.' : 'I understand this removes notebook content (pages go to Trash and can be restored).'}
           </label>
         )}
       </div>
       {state.status === 'error' && state.error && <p className="px-4 pb-2 text-sm text-destructive" role="alert">{state.error}</p>}
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2.5">
-        <p className="text-xs text-muted-foreground">Saved as you, with your notebook permissions.</p>
+        <p className="text-xs text-muted-foreground">{sticky ? 'Only your own sticky notes change.' : 'Saved as you, with your notebook permissions.'}</p>
         <div className="flex gap-2">
           <Button variant="ghost" size="sm" onClick={() => setState({ status: 'dismissed' })}>Not now</Button>
           <Button size="sm" variant={destructive ? 'destructive' : 'default'} onClick={confirm}

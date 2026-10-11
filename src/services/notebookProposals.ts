@@ -5,14 +5,24 @@
 import { useState } from 'react';
 import { apiJson } from './api';
 
-export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
-export type NotebookOpResult = { op: NotebookOpPreview['op']; pageId: number; title: string };
+export type NotebookOpPreview = { op: 'create' | 'append' | 'replace' | 'rename' | 'move' | 'delete' | 'sticky_create' | 'sticky_edit' | 'sticky_delete'; summary: string; before?: string; after?: string; destructive?: boolean; error?: string };
+/** Page changes report pageId; sticky note changes report noteId. */
+export type NotebookOpResult = { op: NotebookOpPreview['op']; pageId?: number; noteId?: number; title: string };
+/** Sticky note changes travel in the same block but always get their own card. */
+export const isStickyOp = (op: Record<string, unknown>) => typeof op.op === 'string' && op.op.startsWith('sticky_');
 
 const BLOCK_RE = /```notebook\s*\r?\n([\s\S]*?)\r?\n```/g;
 export const MAX_NOTEBOOK_OPS = 10;
 
-/** The notebook operations a reply proposes (all blocks, at most 10). */
+/** The notebook page operations a reply proposes (all blocks, at most 10). */
 export function extractNotebookOps(text: string): Record<string, unknown>[] {
+  return allOps(text).filter(op => !isStickyOp(op)).slice(0, MAX_NOTEBOOK_OPS);
+}
+/** The sticky note operations a reply proposes (at most 10). */
+export function extractStickyOps(text: string): Record<string, unknown>[] {
+  return allOps(text).filter(isStickyOp).slice(0, MAX_NOTEBOOK_OPS);
+}
+function allOps(text: string): Record<string, unknown>[] {
   const ops: Record<string, unknown>[] = [];
   for (const m of String(text || '').matchAll(BLOCK_RE)) {
     try {
@@ -20,7 +30,7 @@ export function extractNotebookOps(text: string): Record<string, unknown>[] {
       for (const op of Array.isArray(parsed) ? parsed : [parsed]) if (op && typeof op === 'object' && typeof op.op === 'string') ops.push(op);
     } catch { /* malformed block: no card */ }
   }
-  return ops.slice(0, MAX_NOTEBOOK_OPS);
+  return ops;
 }
 
 /** Remove notebook blocks (and a trailing unfinished one while streaming). */
@@ -34,7 +44,7 @@ export function previewNotebookOps(ops: Record<string, unknown>[], signal?: Abor
 
 export async function applyNotebookOps(ops: Record<string, unknown>[], receipt: string) {
   const out = await apiJson<{ results: NotebookOpResult[]; replayed: boolean }>('/api/ai/notebook/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ops, receipt }) });
-  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['notebook'] } }));
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: [ops.every(isStickyOp) ? 'sticky' : 'notebook'] } }));
   return out;
 }
 
