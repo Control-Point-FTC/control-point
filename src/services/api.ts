@@ -54,9 +54,21 @@ async function sessionGone(res: Response): Promise<boolean> {
  *  supports timeoutMs. Every caller gets the same expired-session handling
  *  (V4-C4): the app returns to sign-in instead of showing error toasts. */
 export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {
+  // The sign-in this request was sent under: a late 401 from an earlier
+  // sign-in must not end a newer one, and an ended one isn't ended twice.
+  const tag = signInTag();
   const res = await rawApiFetch(url, init);
-  if (res.status === 401 && (await sessionGone(res))) handleUnauthorized();
+  if (res.status === 401 && tag && signInTag() === tag && (await sessionGone(res))) handleUnauthorized();
   return res;
+}
+
+/** The per-sign-in tag App.tsx keeps (not a credential). */
+function signInTag(): string | null {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage.getItem('cp-session-tag') : null;
+  } catch {
+    return null;
+  }
 }
 
 function rawApiFetch(url: string, init: ApiFetchOptions = {}): Promise<Response> {

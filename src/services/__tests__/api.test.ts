@@ -55,6 +55,7 @@ describe('apiJson', () => {
   });
 
   it('on 401 clears the session and dispatches cp:unauthorized', async () => {
+    localStorage.setItem('cp-session-tag', 'tag-1');
     localStorage.setItem('sessionId', 'stale');
     const events: string[] = [];
     const listener = (e: Event) => events.push(e.type);
@@ -70,6 +71,7 @@ describe('apiJson', () => {
   });
 
   it('a 401 that is not about the session (wrong current password) keeps you signed in', async () => {
+    localStorage.setItem('cp-session-tag', 'tag-1');
     localStorage.setItem('sessionId', 'live');
     const events: string[] = [];
     const listener = (e: Event) => events.push(e.type);
@@ -85,18 +87,38 @@ describe('apiJson', () => {
 
 describe('apiFetch', () => {
   it('an expired session on any call returns the app to sign-in (once)', async () => {
-    localStorage.setItem('sessionId', 'stale');
+    localStorage.setItem('cp-session-tag', 'tag-1');
     const events: string[] = [];
     const listener = (e: Event) => events.push(e.type);
     window.addEventListener('cp:unauthorized', listener);
-    fetchMock.mockResolvedValue(jsonRes(401, { error: 'Not signed in' }));
+    // A real Response: its body can be read only once, so the check must use a clone.
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ error: 'Not signed in' }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
     const res = await apiFetch('/api/tasks', { method: 'POST', body: '{}' });
-    window.removeEventListener('cp:unauthorized', listener);
     expect(res.status).toBe(401);
-    // The caller can still read the body.
     expect(await res.json()).toEqual({ error: 'Not signed in' });
     expect(events).toEqual(['cp:unauthorized']);
-    expect(localStorage.getItem('sessionId')).toBeNull();
+    expect(localStorage.getItem('cp-session-tag')).toBeNull();
+    // A second stale 401 for the same ended sign-in doesn't fire again.
+    await apiFetch('/api/presence', { method: 'POST', body: '{}' });
+    window.removeEventListener('cp:unauthorized', listener);
+    expect(events).toEqual(['cp:unauthorized']);
+  });
+
+  it("a late 401 from an earlier sign-in doesn't end a newer one", async () => {
+    localStorage.setItem('cp-session-tag', 'old-sign-in');
+    const events: string[] = [];
+    const listener = (e: Event) => events.push(e.type);
+    window.addEventListener('cp:unauthorized', listener);
+    let answer!: (r: Response) => void;
+    fetchMock.mockImplementation(() => new Promise<Response>((r) => { answer = r; }));
+    const pending = apiFetch('/api/presence', { method: 'POST', body: '{}' });
+    // Meanwhile the user signs in again.
+    localStorage.setItem('cp-session-tag', 'new-sign-in');
+    answer(new Response(JSON.stringify({ error: 'Not signed in' }), { status: 401 }));
+    await pending;
+    window.removeEventListener('cp:unauthorized', listener);
+    expect(events).toEqual([]);
+    expect(localStorage.getItem('cp-session-tag')).toBe('new-sign-in');
   });
 });
 
