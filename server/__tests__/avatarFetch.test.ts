@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, afterAll } from "vitest";
 import { createServer, type Server } from "node:http";
-import { fetchAvatarImage } from "../avatarFetch";
+import { AVATAR_MAX_BYTES, fetchAvatarImage } from "../avatarFetch";
 import { UnsafeUrlError } from "../safeFetch";
 
 let srv: Server | null = null;
@@ -29,5 +29,20 @@ describe("avatar downloads", () => {
     expect(await fetchAvatarImage("https://lh3.googleusercontent.com/a", fake(200, "image/png", png))).toEqual({ status: 200, buf: png, ctype: "image/png" });
     expect((await fetchAvatarImage("https://x.test/a", fake(200, "text/html", Buffer.from("<html>")))).buf).toBeNull();
     expect(await fetchAvatarImage("https://x.test/a", fake(404, "text/plain", Buffer.from("no")))).toMatchObject({ status: 404, buf: null });
+  });
+
+  it("the 2 MB limit: just under is kept, exactly 2 MB and over are not", async () => {
+    const fake = (n: number) => (async () => ({ url: new URL("https://x.test/a"), response: { status: 200, headers: { "content-type": "image/jpeg" }, data: Buffer.alloc(n, 1) } })) as any;
+    expect((await fetchAvatarImage("https://x.test/a", fake(AVATAR_MAX_BYTES - 1))).buf?.length).toBe(AVATAR_MAX_BYTES - 1);
+    expect((await fetchAvatarImage("https://x.test/a", fake(AVATAR_MAX_BYTES))).buf).toBeNull();
+    expect((await fetchAvatarImage("https://x.test/a", fake(AVATAR_MAX_BYTES + 1))).buf).toBeNull();
+  });
+
+  it("asks safeGet for one deadline, the size cap and at most 3 redirects", async () => {
+    let seen: any = null;
+    const spy = (async (_url: string, o: any) => { seen = o; return { url: new URL("https://x.test/a"), response: { status: 404, headers: {}, data: null } }; }) as any;
+    await fetchAvatarImage("https://x.test/a", spy);
+    expect(seen).toMatchObject({ timeoutMs: 8000, maxBytes: AVATAR_MAX_BYTES, maxRedirects: 3, responseType: "arraybuffer" });
+    expect(seen.signal).toBeInstanceOf(AbortSignal);
   });
 });
