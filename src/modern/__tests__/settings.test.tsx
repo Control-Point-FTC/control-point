@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { CHANGELOG } from '../../utils/changelog';
 import { render, screen, cleanup, fireEvent, waitFor, within, act } from '@testing-library/react';
 import i18n from '../../i18n';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -545,8 +546,9 @@ describe('Modern Settings — What’s new', () => {
     expect(within(btn).getByLabelText('New updates')).toBeInTheDocument();
     fireEvent.click(btn);
     const dlg = await screen.findByRole('dialog');
-    expect(within(dlg).getByRole('heading', { name: 'Repeating events, reviews and bulk select' })).toBeInTheDocument();
-    expect(within(dlg).getByRole('button', { name: 'v3.0.0' })).toBeInTheDocument();
+    // The newest release opens; older ones are listed.
+    expect(within(dlg).getByRole('heading', { name: CHANGELOG[0].title })).toBeInTheDocument();
+    expect(within(dlg).getByRole('button', { name: `v${CHANGELOG[1].version}` })).toBeInTheDocument();
     expect(within(btn).queryByLabelText('New updates')).not.toBeInTheDocument();
   });
 });
