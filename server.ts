@@ -9649,16 +9649,23 @@ Rules:
       // The review also lands on the latest entry of the completion history.
       const STAMP_REVIEW = "completion_history = CASE WHEN json_array_length(COALESCE(completion_history, '[]')) > 0 THEN json_set(completion_history, '$[#-1].review', json(?)) ELSE completion_history END";
       const reviewEntry = (status: string) => JSON.stringify({ status, by: auth.memberId, at: now, note: note || null });
-      const reopened = () => res.status(409).json({ error: "This task was reopened in the meantime — refresh and look again." });
+      // Bind the review to the completion the manager looked at: the client
+      // sends how many completions it saw, and the write only lands while the
+      // history still has exactly that many (a new finish in between = 409).
+      const stored = (() => { try { const h = JSON.parse(task.completion_history || "[]"); return Array.isArray(h) ? h.length : 0; } catch { return 0; } })();
+      const seen = Number.isInteger(req.body?.completions) && req.body.completions >= 0 ? Number(req.body.completions) : stored;
+      const reopened = () => res.status(409).json({ error: "This task changed in the meantime (reopened or finished again) — refresh and look again." });
+      if (seen !== stored) return reopened();
+      const SAME_FINISH = "AND json_array_length(COALESCE(completion_history, '[]')) = ?";
       if (action === "approve") {
-        const r = await dbRun(`UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?, ${STAMP_REVIEW} WHERE id = ? AND status = 'done'`, auth.memberId, now, note || null, reviewEntry("approved"), task.id);
+        const r = await dbRun(`UPDATE tasks SET review_status = 'approved', reviewed_by = ?, reviewed_at = ?, review_note = ?, ${STAMP_REVIEW} WHERE id = ? AND status = 'done' ${SAME_FINISH}`, auth.memberId, now, note || null, reviewEntry("approved"), task.id, seen);
         if (!changed(r)) return reopened();
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} approved your task: ${task.title}`, "task", { task_id: Number(task.id) });
       } else if (action === "send_back") {
         if (!note) return res.status(400).json({ error: "Say what needs to change" });
         const r = await dbRun(
-          `UPDATE tasks SET status = 'in-progress', completed_at = NULL, review_status = 'changes_requested', reviewed_by = ?, reviewed_at = ?, review_note = ?, ${STAMP_REVIEW} WHERE id = ? AND status = 'done'`,
-          auth.memberId, now, note, reviewEntry("changes_requested"), task.id
+          `UPDATE tasks SET status = 'in-progress', completed_at = NULL, review_status = 'changes_requested', reviewed_by = ?, reviewed_at = ?, review_note = ?, ${STAMP_REVIEW} WHERE id = ? AND status = 'done' ${SAME_FINISH}`,
+          auth.memberId, now, note, reviewEntry("changes_requested"), task.id, seen
         );
         if (!changed(r)) return reopened();
         for (const mid of assignees) if (mid !== auth.memberId) createNotification(mid, `${reviewer} sent back "${task.title}": ${note}`, "task", { task_id: Number(task.id) });

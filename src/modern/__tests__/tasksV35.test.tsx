@@ -55,7 +55,7 @@ describe('Completed view and review', () => {
     api.apiFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ task: { ...tasks[0], review_status: 'approved' } }) });
     await act(async () => { fireEvent.click(within(sheet).getByRole('button', { name: 'Approve' })); });
     expect(api.apiFetch).toHaveBeenCalledWith('/api/tasks/1/review', expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(api.apiFetch.mock.calls.at(-1)![1].body)).toEqual({ action: 'approve', note: '' });
+    expect(JSON.parse(api.apiFetch.mock.calls.at(-1)![1].body)).toEqual({ action: 'approve', note: '', completions: 0 });
   });
 
   it('sending back needs a note', async () => {
@@ -68,7 +68,7 @@ describe('Completed view and review', () => {
     expect(send).toBeDisabled();
     fireEvent.change(within(sheet).getByLabelText(/What needs to change/), { target: { value: 'Zip-tie it' } });
     await act(async () => { fireEvent.click(send); });
-    expect(JSON.parse(api.apiFetch.mock.calls.at(-1)![1].body)).toEqual({ action: 'send_back', note: 'Zip-tie it' });
+    expect(JSON.parse(api.apiFetch.mock.calls.at(-1)![1].body)).toEqual({ action: 'send_back', note: 'Zip-tie it', completions: 0 });
   });
 });
 

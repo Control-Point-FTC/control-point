@@ -32,6 +32,13 @@ function readReview(v: any): CompletionReview | null {
   return { status: v.status, by: Number(v.by) || null, at: v.at ? String(v.at) : null, note: v.note ? String(v.note) : null };
 }
 
+/** How many completions the server has recorded for the task (sent with a
+ *  review so it lands on the completion the manager looked at). */
+export function recordedCompletions(task: any): number {
+  const list = parse(task?.completion_history);
+  return Array.isArray(list) ? list.length : 0;
+}
+
 /** The task's completions, newest first. */
 export function taskCompletions(task: any): TaskCompletion[] {
   if (!task) return [];

@@ -45,6 +45,9 @@ async function completeWithPhoto(id: number, notes: string, session: string) {
   return { status: res.status, body: (await res.json().catch(() => null)) as any };
 }
 
+/** The migration's backfill statement alone (the column already exists here). */
+const backfill = (sql: string) => sql.slice(sql.indexOf("UPDATE tasks"), sql.lastIndexOf("COMMIT")).trim();
+
 const history = async (id: number) => {
   const row = (await t.db.execute({ sql: "SELECT completion_history FROM tasks WHERE id = ?", args: [id] })).rows[0] as any;
   return JSON.parse(row.completion_history || "[]");
@@ -84,10 +87,28 @@ describe("completion history", () => {
     expect(h[1].review).toMatchObject({ status: "approved", by: adminId });
     expect(h[0].review.status).toBe("changes_requested");
 
+    // A review is bound to the completion the manager looked at.
+    expect((await t.post(`/api/tasks/${id}/review`, { action: "approve", completions: 2 }, admin)).status).toBe(200);
+    expect((await t.post(`/api/tasks/${id}/review`, { action: "approve", completions: 1 }, admin)).status).toBe(409);
+
     // The task list carries it to the client.
     const list = await t.api("/api/tasks", { session: admin });
     const row = (list.body as any[]).find((x) => x.id === id);
     expect(JSON.parse(row.completion_history)).toHaveLength(2);
+  });
+
+  it("a finish that lands after the manager looked can't be reviewed blind", async () => {
+    const created = await t.post("/api/tasks", { title: "Wire the hub", assignee_ids: [memberId] }, admin);
+    const id = created.body.id ?? created.body.task?.id;
+    expect((await t.post(`/api/tasks/${id}/complete`, { notes: "First try" }, member)).status).toBe(200);
+    // The manager looks (1 completion), then the member re-submits proof.
+    expect((await t.post(`/api/tasks/${id}/complete`, { notes: "Better photo" }, member)).status).toBe(200);
+    const late = await t.post(`/api/tasks/${id}/review`, { action: "send_back", note: "Redo", completions: 1 }, admin);
+    expect(late.status).toBe(409);
+    const h = await history(id);
+    expect(h.map((e: any) => e.review)).toEqual([null, null]);
+    const row = (await t.db.execute({ sql: "SELECT status, review_status FROM tasks WHERE id = ?", args: [id] })).rows[0] as any;
+    expect(row).toMatchObject({ status: "done", review_status: "pending" });
   });
 
   it("a manager's own finish is recorded as approved", async () => {
@@ -106,7 +127,7 @@ describe("completion history", () => {
     });
     const id = Number(ins.lastInsertRowid);
     const sql = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "migrations", "versions", "124-task-completion-history.sql"), "utf8");
-    await t.db.execute(sql.slice(sql.indexOf("UPDATE tasks")));
+    await t.db.execute(backfill(sql));
     const h = await history(id);
     expect(h).toEqual([{
       by: memberId, at: "2026-09-01T10:00:00Z", notes: "Did it", images: ["/api/files/1"],
@@ -114,7 +135,7 @@ describe("completion history", () => {
     }]);
     // A task with no proof gets no history.
     const blank = Number((await t.db.execute({ sql: "INSERT INTO tasks (team_id, title) VALUES (?, 'Blank')", args: [team] })).lastInsertRowid);
-    await t.db.execute(sql.slice(sql.indexOf("UPDATE tasks")));
+    await t.db.execute(backfill(sql));
     expect((await t.db.execute({ sql: "SELECT completion_history FROM tasks WHERE id = ?", args: [blank] })).rows[0]).toMatchObject({ completion_history: null });
   });
 });
