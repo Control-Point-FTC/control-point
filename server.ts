@@ -12567,6 +12567,9 @@ Rules:
         if (need && !(await hasPerm(auth, need.perm))) return res.status(403).json({ error: need.error });
       }
       const applied: Record<string, number> = {};
+      // The new records, so the card can link to them ("View task").
+      const created: Record<string, number[]> = {};
+      const made = (kind: string, id: unknown) => { const n = Number(id); if (Number.isSafeInteger(n) && n > 0) (created[kind] ||= []).push(n); };
       const createdAt = new Date().toISOString();
       for (const a of actions) {
         const kind = a?.kind;
@@ -12578,7 +12581,7 @@ Rules:
           // Saved as confirmed: the confirm card already moved any time left
           // in the title or notes into the time fields (recoverEventTime).
           for (const e of events) {
-            (await insertTeamEvent(auth.teamId, auth.memberId, e));
+            made("event", await insertTeamEvent(auth.teamId, auth.memberId, e));
           }
           applied.event = (applied.event || 0) + events.length;
           const everyone = (await dbAll("SELECT id FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", auth.teamId)) as any[];
@@ -12602,10 +12605,10 @@ Rules:
           const { entries } = extractOutreachBlock("```outreach\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
           for (const e of entries) {
-            (await dbRun(
+            made("outreach", ((await dbRun(
               "INSERT INTO outreach (title, description, date, hours, location, attendees, funds_raised, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               e.title, e.description, e.date, e.hours, e.location, e.attendees, e.funds_raised, auth.teamId
-            ));
+            )) as any)?.lastInsertRowid);
           }
           applied.outreach = (applied.outreach || 0) + entries.length;
         } else if (kind === "communication") {
@@ -12628,10 +12631,10 @@ Rules:
             // Resolve parent_id to the thread root (same rule as POST
             // /api/communications): must belong to this team.
             const parentId = c.parent_id != null ? resolvedParents.get(c.parent_id) ?? null : null;
-            (await dbRun(
+            made("communication", ((await dbRun(
               "INSERT INTO communications (recipient, subject, body, date, type, team_id, parent_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               c.recipient, c.subject, c.body, c.date, c.type, auth.teamId, parentId, c.direction || 'outbound'
-            ));
+            )) as any)?.lastInsertRowid);
           }
           applied.communication = (applied.communication || 0) + entries.length;
         } else if (kind === "task") {
@@ -12651,6 +12654,7 @@ Rules:
               auth.teamId, t.title, t.description, ids[0] ?? null, t.due_date, t.due_date ? t.due_time : null, createdAt, t.priority, t.recurrence ? JSON.stringify(t.recurrence) : null,
             );
             const taskId = Number(info.lastInsertRowid);
+            made("task", taskId);
             if (ids.length) {
               await setTaskAssignees(taskId, ids, auth.teamId);
               for (const mid of ids) if (mid !== auth.memberId) void createNotification(mid, `New task assigned: ${t.title}`, "task", { task_id: taskId });
@@ -12663,10 +12667,10 @@ Rules:
           const { entries } = extractBudgetBlock("```budget\n" + JSON.stringify(items) + "\n```");
           if (!entries?.length) continue;
           for (const b of entries) {
-            (await dbRun(
+            made("budget", ((await dbRun(
               "INSERT INTO budget (team_id, type, amount, category, description, date) VALUES (?, ?, ?, ?, ?, ?)",
               auth.teamId, b.type, b.amount, b.category, b.description, b.date
-            ));
+            )) as any)?.lastInsertRowid);
           }
           applied.budget = (applied.budget || 0) + entries.length;
         }
@@ -12678,7 +12682,7 @@ Rules:
       if (applied.budget) broadcastToTeam(auth.teamId, { type: "budget_changed" });
       if (applied.event || applied["delete-event"]) broadcastToTeam(auth.teamId, { type: "events_changed" });
       if (applied.task) broadcastToTeam(auth.teamId, { type: "tasks_changed" });
-      res.json({ ok: true, applied });
+      res.json({ ok: true, applied, created });
     } catch (error) {
       console.error("AI apply-actions error:", error);
       res.status(500).json({ error: "Couldn't save those — please try again" });

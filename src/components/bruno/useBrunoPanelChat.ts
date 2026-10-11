@@ -9,10 +9,11 @@
 // still streaming, because the stream writes to the store, not to a component.
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../../services/api';
-import { streamBuildHelper, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
+import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { getScoutingContext, subscribeScoutingContext, getScreenContext, BRUNO_OPEN_EVENT, type BrunoOpenDetail } from '../../services/brunoContext';
 import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
+import { resultLinks, type ResultLink } from './resultLinks';
 import { draftEpoch, getDraft, setDraft, useDraft } from '../../modern/drafts';
 import type { ScoutingContextRequest } from '../../types/ftcScout';
 import { starterPoolForPath, nextStarters } from '../brunoStarters';
@@ -71,7 +72,7 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   const [input, setInput] = useDraft<string>('bruno-panel:input', '');
   const [busy, setBusy] = useDraft<boolean>('bruno-panel:busy', false);
   const [thinkMeta, setThinkMeta] = useDraft<ThinkMeta>('bruno-panel:think', EMPTY_OBJ as ThinkMeta);
-  const [proposalState, setProposalState] = useDraft<Record<number, { status: ProposalStatus; error?: string }>>('bruno-panel:proposals', EMPTY_OBJ);
+  const [proposalState, setProposalState] = useDraft<Record<number, { status: ProposalStatus; error?: string; links?: ResultLink[] }>>('bruno-panel:proposals', EMPTY_OBJ);
   const stop = () => panelAbort?.abort();
   // A cleared conversation (new chat) drops the per-reply thinking data.
   useEffect(() => { if (messages.length === 0 && Object.keys(thinkMeta).length) setThinkMeta(EMPTY_OBJ as ThinkMeta); }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -79,10 +80,11 @@ export function useBrunoPanelChat({ open, onClose, currentUser, botName, onActiv
   const confirmProposals = async (idx: number, proposals: ActionProposal[]) => {
     setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
     try {
-      const applied = await applyActionProposals(proposals);
+      const result = await applyActionProposalsWithIds(proposals);
+      const applied = result.applied;
       const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' ? 'calendar' : k));
       notifyBrunoDataChanged(types);
-      setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
+      setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
     } catch (e: any) {
       setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
     }

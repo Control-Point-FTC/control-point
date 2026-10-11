@@ -1,4 +1,6 @@
-import { Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
+import { ArrowRight, Calendar, CalendarX, Megaphone, ListTodo, Wallet, Mail, Check, X, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import type { ResultLink } from './bruno/resultLinks';
 import type { ActionProposal } from '../services/aiService';
 import { recurrenceLabel } from '../utils/quickAdd';
 import { resolveEventItem, resolveTaskItem, useProposalContext } from '../services/proposalContext';
@@ -51,8 +53,10 @@ export function itemSummary(kind: ActionProposal['kind'], raw: any): string {
 
 export type ProposalStatus = 'pending' | 'confirming' | 'done' | 'dismissed' | 'error';
 
-export default function ActionProposalCard({ proposals, status, error, onConfirm, onDismiss }: {
+export default function ActionProposalCard({ proposals, status, error, onConfirm, onDismiss, links = [] }: {
   proposals: ActionProposal[];
+  /** After applying: where to see the changes ("View task"). */
+  links?: ResultLink[];
   status: ProposalStatus;
   error?: string;
   onConfirm: () => void;
@@ -63,11 +67,18 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   const isDestructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   if (status === 'done') {
     return (
-      <div className="mt-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-2.5 flex items-center gap-2">
-        <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-        <p className="text-[13px] text-emerald-200 font-medium">
-          {isDestructive ? `Deleted ${total} ${total === 1 ? 'item' : 'items'}` : `Added ${total} ${total === 1 ? 'item' : 'items'}`} ✓
-        </p>
+      <div className="mt-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-2.5">
+        <div className="flex items-center gap-2">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <p className="text-[13px] text-emerald-200 font-medium">
+            {isDestructive ? `Deleted ${total} ${total === 1 ? 'item' : 'items'}` : `Added ${total} ${total === 1 ? 'item' : 'items'}`} ✓
+          </p>
+        </div>
+        {links.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {links.map((l) => <Link key={l.to} to={l.to} className="inline-flex items-center gap-1 rounded-lg border border-emerald-400/30 px-2.5 py-1 text-[12px] font-semibold text-emerald-100 hover:bg-emerald-400/15">{l.label}<ArrowRight className="w-3.5 h-3.5" /></Link>)}
+          </div>
+        )}
       </div>
     );
   }

@@ -273,11 +273,16 @@ export function extractActionProposals(text: string): ActionProposal[] {
  * Throws on permission/validation errors with a human-readable message.
  */
 export async function applyActionProposals(actions: ActionProposal[]): Promise<Record<string, number>> {
+  return (await applyActionProposalsWithIds(actions)).applied;
+}
+
+/** The same, also returning the new records' ids per kind (for "View task" links). */
+export async function applyActionProposalsWithIds(actions: ActionProposal[]): Promise<{ applied: Record<string, number>; created: Record<string, number[]> }> {
   // Send exactly what the confirm card showed (see proposalContext).
   const { resolveProposals } = await import('./proposalContext');
-  const { ok, applied, error } = await postJSON('/api/ai/apply-actions', { actions: resolveProposals(actions) });
+  const { ok, applied, created, error } = await postJSON('/api/ai/apply-actions', { actions: resolveProposals(actions) });
   if (!ok) throw new Error(error || "Couldn't save those — please try again");
-  return applied || {};
+  return { applied: applied || {}, created: created || {} };
 }
 
 /**

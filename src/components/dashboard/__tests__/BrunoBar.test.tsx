@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -9,13 +10,14 @@ vi.mock('../../../services/aiService', async (importOriginal) => {
     ...actual,
     streamBuildHelper: vi.fn(),
     applyActionProposals: vi.fn(),
+    applyActionProposalsWithIds: vi.fn(),
     notifyBrunoDataChanged: vi.fn(),
   };
 });
 
 import {
   streamBuildHelper,
-  applyActionProposals,
+  applyActionProposalsWithIds,
   notifyBrunoDataChanged,
 } from '../../../services/aiService';
 
@@ -24,7 +26,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('BrunoBar', () => {
   it('renders the bar with an input and suggestion chips', () => {
-    render(<BrunoBar />);
+    render(<MemoryRouter><BrunoBar /></MemoryRouter>);
     expect(screen.getByLabelText(/ask bruno/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /what’s happening this week/i })).toBeInTheDocument();
   });
@@ -34,7 +36,7 @@ describe('BrunoBar', () => {
     vi.mocked(streamBuildHelper).mockImplementation(async (_msgs, onChunk) => {
       onChunk('Here you go\n```event\n[{"title":"Build night","date":"2026-10-05"}]\n```');
     });
-    render(<BrunoBar />);
+    render(<MemoryRouter><BrunoBar /></MemoryRouter>);
 
     await user.click(screen.getByRole('button', { name: /add a calendar event/i }));
 
@@ -50,8 +52,8 @@ describe('BrunoBar', () => {
     vi.mocked(streamBuildHelper).mockImplementation(async (_msgs, onChunk) => {
       onChunk('```event\n[{"title":"Build night","date":"2026-10-05"}]\n```');
     });
-    vi.mocked(applyActionProposals).mockResolvedValue({ event: 1 });
-    render(<BrunoBar />);
+    vi.mocked(applyActionProposalsWithIds).mockResolvedValue({ applied: { event: 1 }, created: { event: [9] } });
+    render(<MemoryRouter><BrunoBar /></MemoryRouter>);
 
     await user.click(screen.getByRole('button', { name: /add a calendar event/i }));
     await waitFor(() => {
@@ -60,9 +62,10 @@ describe('BrunoBar', () => {
     await user.click(screen.getByRole("button", { name: /add all/i }));
 
     await waitFor(() => {
-      expect(applyActionProposals).toHaveBeenCalledTimes(1);
+      expect(applyActionProposalsWithIds).toHaveBeenCalledTimes(1);
       expect(notifyBrunoDataChanged).toHaveBeenCalledWith(['calendar']);
     });
+    expect(screen.getByRole('link', { name: 'View in calendar' }).getAttribute('href')).toBe('/calendar?event=9');
   });
 
   it('collapse resets the bar to its idle state', async () => {
@@ -70,7 +73,7 @@ describe('BrunoBar', () => {
     vi.mocked(streamBuildHelper).mockImplementation(async (_msgs, onChunk) => {
       onChunk('hello');
     });
-    render(<BrunoBar />);
+    render(<MemoryRouter><BrunoBar /></MemoryRouter>);
     await user.click(screen.getByRole('button', { name: /add a calendar event/i }));
     await waitFor(() => {
       expect(screen.getByLabelText(/collapse/i)).toBeInTheDocument();
