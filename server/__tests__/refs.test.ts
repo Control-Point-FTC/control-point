@@ -115,3 +115,15 @@ describe("links into another team", () => {
     expect((await t.api("/api/refs/task/1")).status).toBe(401);
   });
 });
+
+describe("Bruno's references use Bruno's notebook visibility", () => {
+  it("never resolve an admin-only page, even for an admin", async () => {
+    const { resolveRef } = await import("../refs");
+    const tree = await store.tree(human(admin));
+    const secret: any = await store.create(human(admin), "page", { sectionId: tree.sections[0].id, title: "Admin budget" });
+    await store.protect(human(admin), "page", secret.id, true);
+    const deps = { get: async (sql: string, ...args: any[]) => (await t.db.execute({ sql, args })).rows[0], notebook: store, isAdmin: async () => true };
+    expect(await resolveRef(deps, { memberId: admin, teamId: team }, "page", secret.id)).toMatchObject({ status: "ok" });
+    expect(await resolveRef({ ...deps, notebookSource: "bruno" }, { memberId: admin, teamId: team }, "page", secret.id)).toEqual({ status: "unavailable", type: "page", id: secret.id });
+  });
+});

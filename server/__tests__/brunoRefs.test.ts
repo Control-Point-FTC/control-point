@@ -74,3 +74,17 @@ describe("model-written refs blocks never reach the chat", () => {
     expect(f.push("x ```refs\n{\"team\"") + f.end()).toBe("x "); // an unfinished block is dropped
   });
 });
+
+describe("what counts as shown from lookups", () => {
+  it("only rows that came back, never the request heading or a refusal", async () => {
+    const { runLookups } = await import("../brunoLookup");
+    const seen: string[] = [];
+    const notebook = async (q: any) => q.page === 40 ? { lines: ["(page 40 is not available to Bruno)"], more: false } : q.page === 41 ? { lines: [], more: false } : { lines: ['page #31 "Old intake notes":'], more: false };
+    const text = await runLookups((async () => []) as any, 1, "UTC", [{ kind: "notebook_page", page: 40 }, { kind: "notebook_page", page: 41 }, { kind: "notebook_page", page: 31 }] as any, notebook, undefined, (lines) => seen.push(...lines));
+    expect(text).toContain("page #40"); // the heading names what was asked for…
+    const shown = seen.join("\n");
+    expect(shownInContext(shown, "page", 40)).toBe(false); // …but that isn't "shown"
+    expect(shownInContext(shown, "page", 41)).toBe(false);
+    expect(shownInContext(shown, "page", 31)).toBe(true);
+  });
+});

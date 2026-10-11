@@ -126,7 +126,7 @@ export async function notebookLookup(store: NotebookStore, ctx: BrunoNotebookCtx
     const { text, truncated } = renderNotebookText(page.content, page.canvas);
     return { lines: [`page #${page.id} ${JSON.stringify(clip(page.title, 200))} (revision ${page.revision}, updated ${page.updatedAt}):`, text || "(no typed text)"], more: truncated };
   } catch (e) {
-    if (e instanceof NotebookError && (e.status === 404 || e.status === 403)) return { lines: [`page #${pageId}: not available to Bruno.`], more: false };
+    if (e instanceof NotebookError && (e.status === 404 || e.status === 403)) return { lines: [`(page ${pageId} is not available to Bruno)`], more: false };
     throw e;
   }
 }
