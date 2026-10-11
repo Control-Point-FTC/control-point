@@ -71,7 +71,7 @@ import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/ut
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
-import { dropUnprovenPasswords, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
+import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
@@ -3197,7 +3197,8 @@ async function startServer() {
   app.post("/api/auth/resend-code", async (req, res) => {
     const email = (((req.body || {}).email) || "").trim();
     if (!email) return res.status(400).json({ error: "Email is required" });
-    if (await isEmailVerified(email)) return res.json({ alreadyVerified: true });
+    // A verified address still gets a code while a password on it awaits proof (V5 H1).
+    if (await isEmailVerified(email) && !(await hasUnprovenPassword(email, { dbRun, dbGet }))) return res.json({ alreadyVerified: true });
     try {
       const result = await issueVerificationCode(email);
       if (result.sent === false) {

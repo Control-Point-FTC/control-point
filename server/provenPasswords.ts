@@ -61,3 +61,16 @@ export async function dropUnprovenPasswords(email: string, deps: ProvenDeps): Pr
   );
   return Number(info?.changes) || 0;
 }
+
+/** The account has a password its owner hasn't proven yet (it still needs a code). */
+export async function hasUnprovenPassword(email: string, deps: ProvenDeps): Promise<boolean> {
+  const e = norm(email);
+  if (!e) return false;
+  return !!(await deps.dbGet(
+    `SELECT 1 AS ok FROM members m
+     WHERE LOWER(m.email) = ? AND m.password IS NOT NULL AND m.password != '' AND COALESCE(m.is_active, 1) = 1
+       AND NOT EXISTS (SELECT 1 FROM proven_passwords p WHERE p.email = ? AND p.hash = m.password)
+     LIMIT 1`,
+    e, e,
+  ));
+}

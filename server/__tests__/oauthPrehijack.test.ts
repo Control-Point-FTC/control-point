@@ -86,6 +86,18 @@ describe("a password set before the email was proven", () => {
     expect(r.cookie).toContain("cp_session=cps_");
   });
 
+  it("Resend still sends a code while a password on a verified email awaits proof", async () => {
+    const me = "resend6@pre.test";
+    await signup(me, "My-own-pass6", "Resend Team");
+    await verify(me);
+    const r = await t.post("/api/auth/resend-code", { email: me });
+    expect(r.body.alreadyVerified).toBeUndefined();
+    // Once the password is proven, there's nothing left to send.
+    await seedCode(me, "998877");
+    expect((await t.post("/api/auth/verify-email", { email: me, code: "998877" })).status).toBe(200);
+    expect((await t.post("/api/auth/resend-code", { email: me })).body.alreadyVerified).toBe(true);
+  });
+
   it("a hash proven for one account isn't proven for another", async () => {
     await proveHash("a5@pre.test", "$2b$10$same", deps);
     const row = await deps.dbGet("SELECT 1 AS ok FROM proven_passwords WHERE email = ? AND hash = ?", "b5@pre.test", "$2b$10$same");
