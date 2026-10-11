@@ -70,6 +70,42 @@ describe("delete a workspace", () => {
     expect(r.body.switched?.user?.password).toBeUndefined();
   });
 
+  it("after switching around on one device, lands in the workspace you came from", async () => {
+    // The production case: one browser session moved A → B → C, so no session
+    // row points at B any more; deleting C must still land in B, not A.
+    const a = await seedTeam(t.db, "First");
+    const b = await seedTeam(t.db, "Came from");
+    const c = await seedTeam(t.db, "Throwaway");
+    const rowA = await seedMember(t.db, a, "Lu", "lu@ws.test", "admin");
+    await seedMember(t.db, b, "Lu", "lu@ws.test", "admin");
+    const rowC = await seedMember(t.db, c, "Lu", "lu@ws.test", "admin");
+    await t.db.execute({ sql: "INSERT INTO member_last_used (member_id, used_at) VALUES (?, '2026-01-01T00:00:00.000Z')", args: [rowA] });
+    const s = await t.session(rowA);
+    expect((await t.post("/api/teams/switch", { team_id: b }, s)).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 20));
+    expect((await t.post("/api/teams/switch", { team_id: c }, s)).status).toBe(200);
+    const r = await t.api(`/api/teams/${c}`, { method: "DELETE", session: s });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.switched?.team?.id).toBe(b);
+    expect(JSON.stringify(r.body)).not.toContain('"password"');
+    // The deleted workspace's membership leaves no last-used record behind.
+    const left = await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM member_last_used WHERE member_id = ?", args: [rowC] });
+    expect(Number((left.rows[0] as any).n)).toBe(0);
+  });
+
+  it("a last-used stamp never moves backward", async () => {
+    const a = await seedTeam(t.db, "Here");
+    const b = await seedTeam(t.db, "There");
+    const rowA = await seedMember(t.db, a, "Mo", "mo@ws.test", "admin");
+    const rowB = await seedMember(t.db, b, "Mo", "mo@ws.test", "admin");
+    // A newer stamp already stored (a later request finished first).
+    await t.db.execute({ sql: "INSERT INTO member_last_used (member_id, used_at) VALUES (?, '2099-01-01T00:00:00.000Z')", args: [rowB] });
+    const s = await t.session(rowA);
+    expect((await t.post("/api/teams/switch", { team_id: b }, s)).status).toBe(200);
+    const row = await t.db.execute({ sql: "SELECT used_at FROM member_last_used WHERE member_id = ?", args: [rowB] });
+    expect((row.rows[0] as any).used_at).toBe("2099-01-01T00:00:00.000Z");
+  });
+
   it("only someone who manages that workspace can delete it", async () => {
     const team = await seedTeam(t.db, "Guarded");
     await seedMember(t.db, team, "Boss", "boss@ws.test", "admin");
