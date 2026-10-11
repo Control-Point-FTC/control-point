@@ -297,3 +297,14 @@ describe('Access code review regressions (M-2)', () => {
     await waitFor(() => expect(reveal()).toBe(2));
   });
 });
+
+describe('Modern People: a link to one teammate', () => {
+  it('opens their details', async () => {
+    setup({ url: '/teams?member=8' });
+    expect(await screen.findByRole('dialog', { name: 'Grace' })).toBeInTheDocument();
+  });
+  it('says so when the teammate is no longer here', async () => {
+    setup({ url: '/teams?member=99' });
+    await waitFor(() => expect(dialog.notify).toHaveBeenCalledWith('That teammate isn’t in this workspace anymore.'));
+  });
+});

@@ -299,3 +299,32 @@ describe('Modern CAD', () => {
   });
 });
 
+
+describe('Modern CAD links to one record', () => {
+  let search = '';
+  function Search() { search = useLocation().search; return null; }
+  const open = (tab: string, query: string) => render(
+    <InterfaceModeProvider user={me} team={{}} onUserSaved={() => {}}>
+      <MemoryRouter initialEntries={[`/${tab}${query}`]}>
+        <Routes><Route path="*" element={<><CadPage activeTab={tab} currentUser={{ id: 7 }} isAdmin={false} /><Search /></>} /></Routes>
+      </MemoryRouter>
+    </InterfaceModeProvider>,
+  );
+  beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
+
+  it('highlights the linked part, snapshot and doc, then drops the parameter', async () => {
+    for (const [tab, id, text] of [['cad-parts', 22, 'Servo'], ['cad-snapshots', 12, 'Chassis'], ['cad-docs', 1, 'Robot assembly']] as const) {
+      open(tab, `?id=${id}`);
+      await screen.findAllByText(text);
+      await waitFor(() => expect(document.querySelector(`[data-record-id="${id}"]`)?.classList.contains('cp-record-focus')).toBe(true));
+      await waitFor(() => expect(search).toBe(''));
+      cleanup();
+    }
+  });
+
+  it('opens the linked design review, even when it is filtered out', async () => {
+    open('cad-reviews', '?id=6');
+    expect(await screen.findByRole('dialog', { name: /Lift v2/ })).toBeInTheDocument();
+    await waitFor(() => expect(search).toBe(''));
+  });
+});

@@ -1,8 +1,7 @@
 // Team Stats → Scout (audit H-4): hand-entered scouting that needs no FTC
 // data and works offline. Entries save on this device first and sync when
 // there's a connection; the per-team table rolls them up.
-import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
 import { CloudOff, Loader2, Minus, Pencil, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
 import { datedName, downloadCsv } from '../../../utils/csv';
 import { ExportMenu } from '../../ui/ExportMenu';
@@ -38,8 +37,9 @@ interface Draft {
 
 const LAST_EVENT_KEY = 'cp-scout-last-event';
 
-export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMemberId, currentMemberName, canManage }: {
+export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMemberId, currentMemberName, canManage, initialFocusTeam }: {
   season: number;
+  initialFocusTeam?: number | null;
   onSeasonChange?: (s: number) => void;
   teamId: number | null | undefined;
   currentMemberId?: number | null;
@@ -50,13 +50,8 @@ export function ScoutingWorkspace({ season, onSeasonChange, teamId, currentMembe
   const sc = useScouting({ teamId, memberId: currentMemberId, season });
   const template = templateFor(season);
   const [draft, setDraft] = useState<Draft | null>(null);
-  // A link to a scouting entry (?scouted=TEAM) shows that team's entries.
-  const [params, setParams] = useSearchParams();
-  const [focusTeam, setFocusTeam] = useState<number | null>(() => { const n = Number(params.get('scouted')); return Number.isInteger(n) && n > 0 ? n : null; });
-  useEffect(() => {
-    if (!params.has('scouted') && !params.has('season')) return;
-    setParams(p => { const n = new URLSearchParams(p); n.delete('scouted'); n.delete('season'); return n; }, { replace: true });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- read once, on arrival
+  // A link to a scouting entry starts on that team's entries.
+  const [focusTeam, setFocusTeam] = useState<number | null>(initialFocusTeam ?? null);
 
   const startNew = (team?: number) => {
     let lastEvent = '';

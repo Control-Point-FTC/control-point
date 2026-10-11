@@ -2,6 +2,8 @@
 // team's season (TeamProfile); Analyze is the scouting workspace (event
 // field, any team, the shortlist). Mode, season and the Compete → Analyze
 // hand-off come from the shared useTeamStats.
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ClipboardPen, Search, Trophy } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui-kit';
 import { useTeamStats, type TeamStatsMode } from '../../../components/scout/useTeamStats';
@@ -12,6 +14,14 @@ import { ScoutingWorkspace } from './ScoutingWorkspace';
 
 export function TeamStatsPage({ teamId, memberId, memberName, canManage }: { teamId?: number | null; memberId?: number | null; memberName?: string | null; canManage?: boolean } = {}) {
   const ts = useTeamStats();
+  // A link to a scouting entry (?scouted=TEAM&season=YEAR): read once, then
+  // drop both so later season or team changes aren't overridden.
+  const [params, setParams] = useSearchParams();
+  const [linkedTeam] = useState(() => { const n = Number(params.get('scouted')); return Number.isInteger(n) && n > 0 ? n : null; });
+  useEffect(() => {
+    if (!params.has('scouted') && !params.has('season')) return;
+    setParams(p => { const n = new URLSearchParams(p); n.delete('scouted'); n.delete('season'); return n; }, { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- once, on arrival
   return (
     <Page>
       <PageHeader
@@ -28,7 +38,7 @@ export function TeamStatsPage({ teamId, memberId, memberName, canManage }: { tea
         </Tabs>
       </PageHeader>
       {ts.mode === 'scout' ? (
-        <ScoutingWorkspace season={ts.season} onSeasonChange={ts.setSeason} teamId={teamId} currentMemberId={memberId} currentMemberName={memberName} canManage={canManage} />
+        <ScoutingWorkspace initialFocusTeam={linkedTeam} season={ts.season} onSeasonChange={ts.setSeason} teamId={teamId} currentMemberId={memberId} currentMemberName={memberName} canManage={canManage} />
       ) : ts.mode === 'compete' ? (
         <TeamProfile number={null} season={ts.season} onSeasonChange={ts.setSeason} autoSeason actions={{ onViewTeam: ts.viewTeam }} />
       ) : (
