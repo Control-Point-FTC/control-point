@@ -178,4 +178,16 @@ describe('Sticky notes', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Sticky note/ })).toBeNull());
     expect(screen.getByText('No sticky notes yet.')).toBeTruthy();
   });
+  it('shows notes Bruno changed after a confirmed card, keeping unsaved typing', async () => {
+    let list = [note({ body: 'Buy zip ties' })];
+    vi.mocked(apiJson).mockImplementation(async (url: string, init?: any) => init?.method === 'PATCH' ? new Promise(() => {}) as any : list as any);
+    render(<StickyNotes open onClose={vi.fn()} />);
+    const card = await screen.findByRole('dialog', { name: /Sticky note: Buy zip ties/ });
+    fireEvent.change(card.querySelector('textarea')!, { target: { value: 'Buy zip ties and bolts' } });
+    list = [note({ body: 'Changed by Bruno' }), note({ id: 7, body: 'New from Bruno', open: false })];
+    act(() => { window.dispatchEvent(new CustomEvent('bruno-data-changed', { detail: { types: ['sticky'] } })); });
+    expect(await screen.findByRole('button', { name: /New from Bruno/ })).toBeTruthy();
+    // The member's own unsaved typing wins over the refreshed copy.
+    expect((card.querySelector('textarea') as HTMLTextAreaElement).value).toBe('Buy zip ties and bolts');
+  });
 });

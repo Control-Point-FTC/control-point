@@ -6,7 +6,7 @@ import { stripEventBlocks, extractActionProposals } from '../services/aiService'
 import ChatInput from './ChatInput';
 import BrunoIcon from './BrunoIcon';
 import ActionProposalCard from './ActionProposalCard';
-import { conversationScope, extractNotebookOps, useReceiptKey } from '../services/notebookProposals';
+import { conversationScope, extractNotebookOps, extractStickyOps, useReceiptKey } from '../services/notebookProposals';
 import { NotebookProposalCard } from './bruno/NotebookProposalCard';
 import { AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste, MAX_BRUNO_IMAGES, MAX_BRUNO_PDFS } from './BrunoImageAttach';
 import { cn } from './ui';
@@ -259,10 +259,11 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                         // Data-action proposals: confirm card once the reply is complete.
                         if (!m.text || (busy && i === messages.length - 1)) return null;
                         const proposals = extractActionProposals(m.text);
-                        const notebookOps = extractNotebookOps(m.text);
+                        const notebookOps = extractNotebookOps(m.text), stickyOps = extractStickyOps(m.text);
                         const st = proposalState[i]?.status || 'pending';
                         return (<>
                           {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversationScope(chatId, draftConversation)}:${i}:${m.text}`} />}
+                          {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversationScope(chatId, draftConversation)}:${i}:sticky:${m.text}`} />}
                           {proposals.length > 0 && st !== 'dismissed' && <ActionProposalCard
                             proposals={proposals}
                             status={st}

@@ -11,7 +11,7 @@ import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
 import { KIND_META, itemSummary, type ProposalStatus } from '../../../components/ActionProposalCard';
 import { useProposalContext } from '../../../services/proposalContext';
-import { extractNotebookOps } from '../../../services/notebookProposals';
+import { extractNotebookOps, extractStickyOps } from '../../../services/notebookProposals';
 import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
 import {
   AttachedImageStrip, AttachedPdfStrip, filesToAttachedImages, filesToAttachedPdfs, imagesFromPaste,
@@ -161,6 +161,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
   const proposals = useMemo(() => (text ? extractActionProposals(text) : []), [text]);
   const switchTo = useMemo(() => (text ? stripSwitchBlock(text).switchTo : null), [text]);
   const notebookOps = useMemo(() => (text ? extractNotebookOps(text) : []), [text]);
+  const stickyOps = useMemo(() => (text ? extractStickyOps(text) : []), [text]);
   const status = proposal?.status || 'pending';
   return (
     <div className="flex gap-3">
@@ -172,6 +173,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
           <ProposalCard proposals={proposals} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
         {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} />}
+        {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversation}:${index}:sticky:${text}`} />}
         {isLastModel && switchTo === 'bruno' && !switchDismissed && !busy && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={onSwitchToBruno}>Yes, switch to Bruno</Button>

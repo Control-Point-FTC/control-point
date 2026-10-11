@@ -584,6 +584,19 @@ describe('Modern Settings — Bruno memory and morning summary', () => {
     await waitFor(() => expect(bodyOf('/api/profile', 'PATCH')).toMatchObject({ bruno_notebook: false }));
   });
 
+  it('turns Bruno’s sticky notes access off from Settings → Bruno', async () => {
+    api.apiFetch.mockImplementation((url: string) => {
+      if (url === '/api/bruno/memories') return json({ user: [], team: [], canEditTeam: false });
+      if (url === '/api/profile') return json({ user: { ...me, bruno_sticky: 0 } });
+      return json({});
+    });
+    setup({ section: 'bruno' });
+    const toggle = await screen.findByRole('switch', { name: /My sticky notes/ });
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(bodyOf('/api/profile', 'PATCH')).toMatchObject({ bruno_sticky: false }));
+  });
+
   it('after adding a fact the list is reloaded, so a fact trimmed at the cap disappears', async () => {
     let added = false;
     api.apiFetch.mockImplementation((url: string, init?: any) => {

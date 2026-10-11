@@ -138,6 +138,19 @@ export function StickyNotes({ open, onClose, hidden = false, scope }: { open: bo
   useEffect(() => {
     if (!hidden && notes === null && (open || Object.keys(readDrafts(draftsKey)).length)) void load();
   }, [open, hidden, notes, load, draftsKey]);
+  // Bruno changed sticky notes (a confirmed card): show the server's notes,
+  // keeping any local edits that haven't been saved yet on top.
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const types = (e as CustomEvent<{ types?: string[] }>).detail?.types;
+      if (!Array.isArray(types) || !types.includes('sticky')) return;
+      void request<StickyNote[]>('/api/sticky-notes').then(list => {
+        setNotes(prev => prev === null ? prev : list.map(n => ({ ...n, ...sending.current.get(n.id), ...unsaved.current.get(n.id) })));
+      }).catch(() => { /* the next open reloads */ });
+    };
+    window.addEventListener('bruno-data-changed', onChange);
+    return () => window.removeEventListener('bruno-data-changed', onChange);
+  }, []);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && (e.target as Element)?.closest?.('.nb-sticky-panel')) onClose(); };
