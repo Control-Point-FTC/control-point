@@ -71,6 +71,7 @@ import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/ut
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
 import { createLookupHold, extractLookupBlocks, followUpPrompt, runLookups } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
+import { forgetUnprovenPasswords } from "./server/oauthLink.js";
 import { extractRememberBlocks, isDuplicateFact, memoryPromptBlock, nudgeText, localHourAndDay, MAX_USER_MEMORIES, MAX_TEAM_MEMORIES, MAX_FACT_CHARS } from "./server/brunoMemory.js";
 import { quoteUntrusted } from "./server/scoutingContext.js";
 import { serveDist } from "./server/staticAssets.js";
@@ -3532,6 +3533,9 @@ async function startServer() {
       rows = (await dbAll(`SELECT * FROM members WHERE ${idColumn} = ? AND COALESCE(is_active, 1) = 1`, providerSub)) as any[];
     }
     const member = await pickMemberRow(rows);
+    // OAuth proves the email. A password chosen before anyone proved it
+    // (a stranger's signup with this address) must not survive that.
+    await forgetUnprovenPasswords(email, { isEmailVerified, dbRun });
     // OAuth providers verify email ownership — no OTP needed.
     await markEmailVerified(email);
     const sessionId = await createSession(member.id);
