@@ -138,6 +138,10 @@ describe("Bruno apply: editing existing tasks", () => {
     const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: task.id, due_date: "2099-11-01" }, { id: task.id, due_time: "17:00" }] }] }, admin);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect((await rows("SELECT due_date, due_time FROM tasks WHERE id = ?", task.id))[0]).toMatchObject({ due_date: "2099-11-01", due_time: "17:00" });
+    // A later "unassign everyone" also drops an earlier role assignment.
+    const unassign = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: task.id, roles: ["Drivers"] }, { id: task.id, assignees: [] }] }] }, admin);
+    expect(unassign.status, JSON.stringify(unassign.body)).toBe(200);
+    expect(await rows("SELECT member_id FROM task_assignees WHERE task_id = ?", task.id)).toHaveLength(0);
   });
 
   it("needs task access", async () => {

@@ -12716,7 +12716,10 @@ Rules:
           const byTask = new Map<number, (typeof parsed)[number]>();
           for (const u of parsed) {
             const prev = byTask.get(u.id);
-            byTask.set(u.id, prev ? { ...prev, changes: { ...prev.changes, ...u.changes } } : u);
+            // People and roles are one assignment: a later item that changes it replaces both.
+            const base = prev && (u.changes.assignees !== undefined || u.changes.roles !== undefined)
+              ? (({ assignees: _a, roles: _r, ...rest }) => rest)(prev.changes) : prev?.changes;
+            byTask.set(u.id, prev ? { ...prev, changes: { ...base, ...u.changes } } : u);
           }
           const updates = [...byTask.values()];
           if (!updates.length) continue;
