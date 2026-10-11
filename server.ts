@@ -69,7 +69,7 @@ import { CHANGELOG, compareVersions, changelogEntryFrom, changelogDiscordText } 
 import { readEventRepeat, seriesDates, cleanReminder, reminderDueMs, eventStartMs, reminderText, type EventRepeat } from "./src/utils/eventSeries.js";
 import { nextOccurrence, parseQuickAdd, readRecurrence, addDays } from "./src/utils/quickAdd.js";
 import { normalizeBrunoTask, normalizeTaskUpdate } from "./src/utils/brunoTasks.js";
-import { createLookupHold, extractLookupBlocks, followUpPrompt, nothingFoundNote, runLookups, saidNothing } from "./server/brunoLookup.js";
+import { createLookupHold, extractLookupBlocks, followUpPrompt, implicitCheck, nothingFoundNote, runLookups, saidNothing } from "./server/brunoLookup.js";
 import { webAppendix } from "./server/productLinks.js";
 import { fetchAvatarImage } from "./server/avatarFetch.js";
 import { dropUnprovenPasswords, hasUnprovenPassword, isProvenHash, proveHash, provePasswords } from "./server/provenPasswords.js";
@@ -12408,7 +12408,10 @@ Rules:
           // The first call's own counts, logged before any lookup pass (which logs itself).
           const firstPromptChars = messages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
           logAiUsage(auth.memberId, auth.teamId, usage, firstPromptChars, String(aiReply.text || "").length, "ok", aiReply.provider);
-          if (hold.blocked && !streamAbort.signal.aborted) {
+          // Only "Checking …" and no lookup asked for: check the web for the question.
+          const implicit = hold.blocked ? null : implicitCheck(fullText, messages[messages.length - 1].text);
+          if (implicit) fullText = implicit;
+          if ((hold.blocked || implicit) && !streamAbort.signal.aborted) {
             const hold2 = createLookupHold();
             // The answer starts its own paragraph, live and in the saved reply alike.
             const gap = extractLookupBlocks(fullText).text ? "\n\n" : "";
@@ -12511,6 +12514,9 @@ Rules:
       // Same rule as the stream: any ```lookup block (even an unfinished or
       // unreadable one) is never shown or saved; if it can't run, say so.
       const webSourcesNS = [...(aiReply.sources || [])];
+      // Only "Checking …" and no lookup asked for: check the web for the question.
+      const implicitNS = implicitCheck(String(result || ""), messages[messages.length - 1].text);
+      if (implicitNS) result = implicitNS;
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
         if (looked && saidNothing(looked.answer)) looked.answer = `${looked.answer}\n\n${nothingFoundNote(looked.queries, { rows: looked.rows, webSources: (looked.sources || []).length })}`.trim();

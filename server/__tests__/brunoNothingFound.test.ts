@@ -4,7 +4,7 @@
  * answer. A check that comes back with nothing now says so.
  */
 import { describe, it, expect } from "vitest";
-import { followUpPrompt, lookupOutcome, nothingFoundNote, saidNothing } from "../brunoLookup";
+import { extractLookupBlocks, followUpPrompt, implicitCheck, lookupOutcome, nothingFoundNote, saidNothing } from "../brunoLookup";
 
 describe("a check that found nothing", () => {
   it("recognises a follow-up that only said Checking… again", () => {
@@ -63,5 +63,28 @@ describe("a check that found nothing", () => {
     const p = followUpPrompt("", [{ kind: "web", query: "NJ FTC results" } as any]);
     expect(p).toContain('don\'t say "Checking…" again');
     expect(p).toMatch(/no events have been played yet this season/);
+  });
+});
+
+describe("a first reply that only said Checking… without asking for a lookup", () => {
+  const question = "What were the recent FTC event results in New Jersey?";
+  it("becomes a web check of the question, so the lookup pass answers", () => {
+    const out = implicitCheck("Checking recent New Jersey event results...", question)!;
+    expect(out).toBeTruthy();
+    const { text, queries } = extractLookupBlocks(out);
+    expect(text).toBe("Checking recent New Jersey event results...");
+    expect(queries).toEqual([{ kind: "web", query: question }]);
+  });
+  it("leaves real answers, replies that asked for a lookup, and empty replies alone", () => {
+    expect(implicitCheck("No New Jersey events have been played yet this season.", question)).toBeNull();
+    expect(implicitCheck("Checking recent New Jersey event results...\n\nResults haven’t been posted yet.", question)).toBeNull();
+    expect(implicitCheck('Checking…\n```lookup\n{"kind":"web","query":"NJ FTC"}\n```', question)).toBeNull();
+    expect(implicitCheck("", question)).toBeNull();
+    expect(implicitCheck("Checking…", "   ")).toBeNull();
+  });
+  it("keeps the search to 200 characters on one line", () => {
+    const { queries } = extractLookupBlocks(implicitCheck("Looking that up…", "a\n".repeat(300))!);
+    expect(queries[0].query!.length).toBeLessThanOrEqual(200);
+    expect(queries[0].query).not.toContain("\n");
   });
 });

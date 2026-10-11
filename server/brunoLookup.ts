@@ -371,6 +371,17 @@ export function saidNothing(answer: string): boolean {
   return lines.every(progress);
 }
 
+/** A first reply that only said "Checking …" without asking for a lookup
+ *  (seen on production: the reply ended there). Returns the reply with a web
+ *  check of the user's question added, so the lookup pass runs and answers
+ *  (or says plainly that nothing was found); null when the reply is fine. */
+export function implicitCheck(firstText: string, question: string): string | null {
+  const text = String(firstText || "");
+  const q = String(question || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!text.trim() || !q || text.includes("```lookup") || !saidNothing(text)) return null;
+  return `${text.trimEnd()}\n\`\`\`lookup\n${JSON.stringify({ kind: "web", query: q })}\n\`\`\``;
+}
+
 /** What the lookup actually returned, read from runLookups' headers. */
 export function lookupOutcome(rows: string): "found" | "failed" | "none" {
   if (/ — (\d+ found|\d+ shown)/.test(rows)) return "found";
