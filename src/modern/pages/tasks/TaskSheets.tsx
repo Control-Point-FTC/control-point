@@ -3,7 +3,7 @@
 // desktop, bottom on phones). All mutations go through useTasksController.
 import { format } from 'date-fns';
 import { useState } from 'react';
-import { CalendarDays, Camera, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
+import { CalendarDays, Camera, ImageOff, CheckCircle2, Circle, CircleDot, Crown, Flag, Loader2, Pencil, Repeat, RotateCcw, ShieldCheck, Sparkles, Trash2, Users, Wand2 } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import {
   Badge, Button, Input, Label, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, Switch, Textarea,
@@ -97,6 +97,24 @@ function ReviewPanel({ task, ctl }: { task: any; ctl: Ctl }) {
   );
 }
 
+/** One proof photo; one the browser can't show becomes an "Open file" tile
+ *  instead of a broken image. */
+function ProofPhoto({ src, n, by }: { src: string; n: number; by: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open photo ${n} from ${by} full size`}>
+      {failed
+        ? (
+          <span className="flex aspect-square w-full flex-col items-center justify-center gap-1 bg-muted p-2 text-center text-xs text-muted-foreground">
+            <ImageOff className="size-5" aria-hidden />
+            Can't preview this photo. Open it
+          </span>
+        )
+        : <img src={src} alt={`Proof photo ${n}`} loading="lazy" onError={() => setFailed(true)} className="aspect-square w-full bg-muted object-cover" />}
+    </a>
+  );
+}
+
 /** Every time the task was finished: who, when, the note and photos, and
  *  the review it got. Newest first; photos open full size in a new tab. */
 export function CompletionHistory({ task, members }: { task: any; members: any[] }) {
@@ -121,11 +139,7 @@ export function CompletionHistory({ task, members }: { task: any; members: any[]
               : <p className="text-sm text-muted-foreground">No note.</p>}
             {e.images.length > 0 && (
               <div className="grid grid-cols-3 gap-2">
-                {e.images.map((src, n) => (
-                  <a key={src} href={src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-border outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open photo ${n + 1} from ${nameOf(e.by)} full size`}>
-                    <img src={src} alt={`Proof photo ${n + 1}`} loading="lazy" className="aspect-square w-full bg-muted object-cover" />
-                  </a>
-                ))}
+                {e.images.map((src, n) => <ProofPhoto key={src} src={src} n={n + 1} by={nameOf(e.by)} />)}
               </div>
             )}
             {e.review && (
