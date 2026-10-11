@@ -358,8 +358,10 @@ export function saidNothing(answer: string): boolean {
   // are answers. The question being checked ("Checking whether any NJ events
   // have been played…") isn't a result: a clause opened by whether/if/to
   // see/how many/what/which/when/where/who is dropped (up to the next comma,
-  // semicolon, colon or dash) before looking for result words.
-  const QUESTION_CLAUSE = /\b(whether|if|to see|how (many|much)|what|which|when|where|who)\b(?:(?!\s-\s)[^,;:—–])*/gi;
+  // semicolon, colon or clause dash) before looking for result words. An em
+  // dash always breaks; an en dash or hyphen only with spaces round it, so a
+  // date range ("Dec 12–14") or "8-week" stays inside the question.
+  const QUESTION_CLAUSE = /\b(whether|if|to see|how (many|much)|what|which|when|where|who)\b(?:(?!\s[-–]\s)[^,;:—])*/gi;
   const ANSWER_WORDS = /\b(is|are|was|were|isn't|aren't|has|have|had|shows?|showed|won|lost|found|costs?|sold|scheduled|starts?|ends?|played|placed|ranked|no|none|nothing)\b|\$\d/i;
   const progress = (l: string) =>
     l.length <= 200

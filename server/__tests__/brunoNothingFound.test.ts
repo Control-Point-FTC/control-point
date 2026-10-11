@@ -36,6 +36,10 @@ describe("a check that found nothing", () => {
     expect(saidNothing("Checking whether it's in stock; it is.")).toBe(false);
     // A hyphenated word inside the question doesn't end it.
     expect(saidNothing("Checking whether the 8-week plan has been played…")).toBe(true);
+    // Nor does a date range.
+    expect(saidNothing("Checking whether the Dec 12–14 qualifier has been played…")).toBe(true);
+    expect(saidNothing("Checking whether the Dec 12-14 qualifier has been played…")).toBe(true);
+    expect(saidNothing("Checking whether events were played—none have been yet.")).toBe(false);
     expect(saidNothing("Checking… The Axon MAX is sold out at goBILDA ($99.99).")).toBe(false);
   });
 
