@@ -1,0 +1,27 @@
+/* Sticky notes: a personal list panel plus floating note cards. Loaded with
+   the panel itself, which lives in the app shell (every screen). */
+.nb-sticky-panel { position: fixed; z-index: 45; inset-inline-end: 16px; top: 132px; width: min(280px, calc(100vw - 32px)); max-height: calc(100vh - 160px); overflow: auto; display: grid; gap: 10px; align-content: start; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--color-line); background: var(--color-elevated); color: var(--color-text-base); box-shadow: 0 12px 32px rgb(0 0 0 / .35); }
+.nb-sticky-panel header { display: flex; align-items: center; justify-content: space-between; }
+.nb-sticky-panel h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.nb-sticky-panel ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.nb-sticky-panel li button { width: 100%; text-align: start; display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; border-inline-start: 4px solid var(--sticky, #ffc700); background: var(--color-primary); }
+.nb-sticky-panel li button[aria-pressed=true] { outline: 1px solid var(--color-accent); }
+.nb-sticky-panel li span { font-size: 11px; color: var(--color-text-muted); }
+.nb-sticky-new { display: inline-flex; align-items: center; gap: 6px; justify-content: center; height: 32px; border-radius: 8px; background: var(--color-accent); color: var(--color-accent-ink, #231a00); font-weight: 600; font-size: 13px; }
+.nb-sticky { position: fixed; z-index: 44; display: flex; flex-direction: column; resize: both; overflow: hidden; min-width: 160px; min-height: 120px; max-width: 900px; max-height: 900px; border-radius: 10px; background: var(--sticky-bg, #fff7c2); color: #1c1917; box-shadow: 0 10px 28px rgb(0 0 0 / .35); }
+.nb-sticky header { display: flex; flex-wrap: wrap; flex-shrink: 0; align-items: center; gap: 4px; padding: 4px 6px; cursor: grab; background: rgb(0 0 0 / .07); touch-action: none; }
+.nb-sticky header:focus-visible { outline: 2px solid #8a6100; outline-offset: -2px; }
+.nb-sticky header select { font-size: 11px; background: transparent; border: 0; color: inherit; }
+.nb-sticky header button { display: inline-flex; padding: 3px; border-radius: 5px; color: inherit; font-size: 11px; }
+.nb-sticky header button:hover { background: rgb(0 0 0 / .08); }
+.nb-sticky-state { margin-inline-start: auto; white-space: nowrap; font-size: 11px; opacity: .75; }
+.nb-sticky textarea { flex: 1; resize: none; border: 0; padding: 8px 10px; background: transparent; color: inherit; font: 14px/1.45 system-ui, sans-serif; outline: none; }
+.nb-sticky[data-color=volt], [data-color=volt] { --sticky-bg: #fff3b0; --sticky: #ffc700; }
+.nb-sticky[data-color=graphite], [data-color=graphite] { --sticky-bg: #e7e5e4; --sticky: #57534e; }
+.nb-sticky[data-color=sky], [data-color=sky] { --sticky-bg: #dbeafe; --sticky: #3b82f6; }
+.nb-sticky[data-color=mint], [data-color=mint] { --sticky-bg: #dcfce7; --sticky: #22c55e; }
+.nb-sticky[data-color=rose], [data-color=rose] { --sticky-bg: #ffe4e6; --sticky: #f43f5e; }
+.nb-sticky[data-color=sand], [data-color=sand] { --sticky-bg: #f5ead6; --sticky: #b45309; }
+/* Below the app top bar; in the notebook, below its ribbon instead. */
+.nb-sticky-panel { top: 56px; max-height: calc(100vh - 72px); }
+body:has(.nb-shell) .nb-sticky-panel { top: 132px; max-height: calc(100vh - 160px); }

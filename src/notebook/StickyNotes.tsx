@@ -11,6 +11,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { apiJson } from '../services/api';
 import { confirmDialog } from '../components/dialog';
+import './sticky.css';
 
 export type StickyNote = { id: number; body: string; color: string; x: number; y: number; width: number; height: number; open: boolean; updatedAt: string };
 type Change = Partial<Omit<StickyNote, 'id' | 'updatedAt'>>;
