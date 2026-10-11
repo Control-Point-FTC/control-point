@@ -2525,6 +2525,34 @@ async function startServer() {
     });
   };
 
+  // Board-only tasks are for people who manage members — the task page's
+  // rule (V5 audit M2: they used to reach everyone through the API, live
+  // updates and Bruno's context, and were only hidden on screen).
+  const canSeeBoardTasks = async (memberId: number, teamId: number | null | undefined): Promise<boolean> => {
+    if (!teamId) return false;
+    const p = await getMemberPerms(memberId, teamId);
+    return p.has("*") || p.has("manage_members");
+  };
+  /** Appended to a tasks query: hides board tasks from a viewer who can't see them. */
+  const boardSql = (canSee: boolean, alias = "") => (canSee ? "" : ` AND COALESCE(${alias}is_board, 0) = 0`);
+  /** task_created / task_updated: a board task reaches only those who may see
+   *  it; everyone else gets task_deleted (it may have just become board-only). */
+  const broadcastTask = async (teamId: number | null | undefined, type: "task_created" | "task_updated", task: any) => {
+    if (teamId == null || !task) return;
+    if (!Number(task.is_board)) return broadcastToTeam(teamId, { type, task });
+    const allowed = JSON.stringify({ type, task });
+    const hidden = JSON.stringify({ type: "task_deleted", id: task.id });
+    const seen = new Map<number, boolean>();
+    for (const client of [...clients]) {
+      const c = client as any;
+      if (client.readyState !== WebSocket.OPEN || c.teamId !== teamId) continue;
+      if (!seen.has(c.memberId)) seen.set(c.memberId, await canSeeBoardTasks(c.memberId, teamId).catch(() => false));
+      const ok = seen.get(c.memberId);
+      if (!ok && type === "task_created") continue;
+      try { client.send(ok ? allowed : hidden); } catch { /* socket closed meanwhile */ }
+    }
+  };
+
   // Targeted delivery to every open socket of one member (voice signaling, call invites).
   const sendToMember = (teamId: number | null | undefined, memberId: number, data: any) => {
     if (teamId == null) return;
@@ -6229,7 +6257,7 @@ async function startServer() {
       found.notebook = await gatedNotebookBrief(access, () => notebookScreenBrief(brunoNotebookStore, { memberId: auth.memberId, teamId }, req.notebookPageId!, req.notebookBlockIds ?? []));
     }
     if (req.taskId) {
-      const t = (await dbGet("SELECT id, title, status, due_date, description FROM tasks WHERE id = ? AND team_id = ?", req.taskId, auth.teamId)) as any;
+      const t = (await dbGet("SELECT id, title, status, due_date, description FROM tasks WHERE id = ? AND team_id = ?" + boardSql(await canSeeBoardTasks(auth.memberId, auth.teamId)), req.taskId, auth.teamId)) as any;
       if (t) {
         const who = (await dbAll(
           "SELECT m.name FROM task_assignees ta JOIN members m ON m.id = ta.member_id WHERE ta.task_id = ? AND m.team_id = ? ORDER BY m.name LIMIT 8",
@@ -9100,7 +9128,7 @@ Rules:
     try {
       const auth = await requireAuth(req, res);
       if (!auth) return;
-      const tasks = (await dbAll("SELECT * FROM tasks WHERE team_id = ?", auth.teamId)) as any[];
+      const tasks = (await dbAll("SELECT * FROM tasks WHERE team_id = ?" + boardSql(await canSeeBoardTasks(auth.memberId, auth.teamId)), auth.teamId)) as any[];
       res.json(await withAssignees(tasks));
     } catch (error) {
       console.error("Error fetching tasks:", error);
@@ -9186,7 +9214,7 @@ Rules:
     }
     const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", nextId)) as any;
     created.assignee_ids = assignees;
-    broadcastToTeam(teamId, { type: "task_created", task: created });
+    void broadcastTask(teamId, "task_created", created);
     return created;
   }
 
@@ -9234,7 +9262,7 @@ Rules:
 
       const created = (await dbGet("SELECT * FROM tasks WHERE id = ?", taskId)) as any;
       created.assignee_ids = validIds;
-      broadcastToTeam(auth.teamId, { type: "task_created", task: created });
+      void broadcastTask(auth.teamId, "task_created", created);
       res.json({ id: taskId });
     } catch (error) {
       console.error("Error creating task:", error);
@@ -9486,7 +9514,7 @@ Rules:
 
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
       updated.assignee_ids = notifyIds;
-      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
+      void broadcastTask(auth.teamId, "task_updated", updated);
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating task:", error);
@@ -9547,7 +9575,7 @@ Rules:
       }
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", task.id)) as any;
       updated.assignee_ids = assignees;
-      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
+      void broadcastTask(auth.teamId, "task_updated", updated);
       res.json({ success: true, task: updated });
     } catch (error) {
       console.error("Error reviewing task:", error);
@@ -9608,7 +9636,7 @@ Rules:
         createNotification(task.assigned_to, `Task completed by ${completer?.name || "a teammate"}: ${task.title}`, 'task', { task_id: Number(req.params.id) });
       }
       const updated = (await dbGet("SELECT * FROM tasks WHERE id = ?", req.params.id)) as any;
-      broadcastToTeam(auth.teamId, { type: "task_updated", task: updated });
+      void broadcastTask(auth.teamId, "task_updated", updated);
       res.json({ success: true, task: updated });
     } catch (error) {
       console.error("Error completing task:", error);
@@ -12018,16 +12046,17 @@ Rules:
         levelCap
       );
       const stream = req.query.stream === "true";
+      const seesBoard = await canSeeBoardTasks(auth.memberId, auth.teamId);
       const teamContext = await buildChatContext(auth.teamId);
       // The records Bruno is actually shown this turn (type:id), for its references.
       const shownRefs = new Set<string>();
-      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId, shownRefs);
+      const snapshotCtx = await buildTeamSnapshotContext(auth.teamId, shownRefs, seesBoard);
       // Counts, dates, weekdays, next/recurring events and open tasks are
       // computed server-side in the team's timezone (see server/workspaceFacts.ts)
       // — Bruno states them, it doesn't derive them. Event ids stay listed so
       // ```delete-event proposals can reference them.
       const tz = await teamTimeZone(auth.teamId, req.body?.tz);
-      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz, new Date(), shownRefs);
+      const factsCtx = await workspaceFactsBlock({ dbGet, dbAll }, auth.teamId, tz, new Date(), shownRefs, seesBoard);
       // User identity: Bruno should address the user by name, not the team name.
       let userLine = "";
       try {
@@ -12179,7 +12208,8 @@ Rules:
           gatedNotebookLookup(allowed, (q) => notebookLookup(brunoNotebookStore, notebookCtx, q as any)),
           gatedStickyLookup(allowed, (q) => stickyLookup(brunoStickyNotes, teamId, auth.memberId, q.query, q.note)),
           // Only rows that came back count as "shown" for references (not request headings or failures).
-          (ids) => { for (const id of ids) shownRefs.add(id); }) : "";
+          (ids) => { for (const id of ids) shownRefs.add(id); },
+          seesBoard) : "";
         if (opts.signal.aborted) return null;
         const secondMessages = [
           ...messages,
@@ -12762,7 +12792,7 @@ Rules:
             const now = await getTaskAssigneeIds(u.id);
             for (const mid of now) if (before.includes(mid) && mid !== auth.memberId) void createNotification(mid, `Task updated: ${c.title ?? task.title}`, "task", { task_id: u.id });
             const updated: any = await dbGet("SELECT * FROM tasks WHERE id = ?", u.id);
-            if (updated) { updated.assignee_ids = now; broadcastToTeam(auth.teamId, { type: "task_updated", task: updated }); }
+            if (updated) { updated.assignee_ids = now; void broadcastTask(auth.teamId, "task_updated", updated); }
             made("task-update", u.id);
           }
           applied["task-update"] = (applied["task-update"] || 0) + updates.length;
@@ -12903,12 +12933,13 @@ Rules:
         return res.status(429).json({ error: AI_RATE_LIMIT_MSG, result: AI_RATE_LIMIT_MSG });
       }
       const teamId = auth.teamId;
+      const seesBoard = await canSeeBoardTasks(auth.memberId, teamId);
       const openTasks = (await dbAll(
-        "SELECT title, status, due_date FROM tasks WHERE team_id = ? AND status != 'done' ORDER BY due_date LIMIT 25",
+        "SELECT title, status, due_date FROM tasks WHERE team_id = ? AND status != 'done'" + boardSql(seesBoard) + " ORDER BY due_date LIMIT 25",
         teamId
       )) as any[];
       const overdue = (await dbGet(
-        "SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done' AND due_date IS NOT NULL AND due_date < date('now')",
+        "SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done' AND due_date IS NOT NULL AND due_date < date('now')" + boardSql(seesBoard),
         teamId
       )) as any;
       // (messages has no created_at column — this count used to fail and read
@@ -12928,9 +12959,9 @@ Rules:
       ).catch(() => [])) as any[];
       // Active members only (removed members' rows are kept for history).
       const memberCount = ((await dbGet("SELECT COUNT(*) AS c FROM members WHERE team_id = ? AND COALESCE(is_active, 1) = 1", teamId)) as any)?.c || 0;
-      const openTaskTotal = ((await dbGet("SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done'", teamId)) as any)?.c || 0;
+      const openTaskTotal = ((await dbGet("SELECT COUNT(*) AS c FROM tasks WHERE team_id = ? AND status != 'done'" + boardSql(seesBoard), teamId)) as any)?.c || 0;
       const tz = await teamTimeZone(teamId, req.body?.tz);
-      const facts = await workspaceFactsBlock({ dbGet, dbAll }, teamId, tz);
+      const facts = await workspaceFactsBlock({ dbGet, dbAll }, teamId, tz, new Date(), undefined, seesBoard);
       const today = new Date().toISOString().slice(0, 10);
       const prompt = buildCoachPrompt({
         facts,
@@ -13533,7 +13564,7 @@ Rules:
     return resolveTimeZone(saved, clientTz);
   }
 
-  async function buildTeamSnapshotContext(teamId: number | null, shown?: Set<string>): Promise<string> {
+  async function buildTeamSnapshotContext(teamId: number | null, shown?: Set<string>, seesBoard = false): Promise<string> {
     if (!teamId) return "";
     try {
       // Team counts, open tasks and the calendar are in WORKSPACE FACTS.
@@ -13545,7 +13576,7 @@ Rules:
       const done = (await dbAll(
         `SELECT t.id, t.title, t.completed_at, m.name AS completer
          FROM tasks t LEFT JOIN members m ON m.id = t.completed_by
-         WHERE t.team_id = ? AND t.status = 'done'
+         WHERE t.team_id = ? AND t.status = 'done'${boardSql(seesBoard, "t.")}
          ORDER BY t.completed_at DESC LIMIT 5`,
         teamId
       )) as any[];

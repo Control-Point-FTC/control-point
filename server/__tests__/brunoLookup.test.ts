@@ -68,6 +68,7 @@ describe("runLookups", () => {
       INSERT INTO communications VALUES (1, 1, 'REV Robotics', 'Wheel order', 'Asked about lead times', '2026-10-03', 'outbound', NULL);
       INSERT INTO budget VALUES (1, 1, 'expense', 60, 'Wheels', 'Mecanum wheels', '2026-10-03'), (2, 1, 'income', 500, 'Sponsor', 'Acme', '2026-10-04');
       ALTER TABLE tasks ADD COLUMN assigned_to INTEGER;
+      ALTER TABLE tasks ADD COLUMN is_board INTEGER DEFAULT 0;
     `);
   });
 
