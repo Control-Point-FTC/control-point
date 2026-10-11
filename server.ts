@@ -12254,7 +12254,7 @@ Rules:
         // its own provider) so daily limits count both calls.
         const secondPromptChars = secondMessages.reduce((n: number, m: any) => n + String(m.text || "").length, 0);
         logAiUsage(auth.memberId, auth.teamId, secondUsage, secondPromptChars, String(second.text || "").length, "ok", second.provider);
-        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources, queries };
+        return { shownFirst, answer: extractLookupBlocks(second.text).text, provider: second.provider, sources: second.sources, queries, rows };
       };
       if (stream) {
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -12320,7 +12320,7 @@ Rules:
             if (looked) {
               // The check said nothing new (only "Checking…" again): say so honestly.
               if (saidNothing(looked.answer)) {
-                const note = nothingFoundNote(looked.queries);
+                const note = nothingFoundNote(looked.queries, { rows: looked.rows, webSources: (looked.sources || []).length });
                 send(`\n\n${note}`);
                 looked.answer = `${looked.answer}\n\n${note}`.trim();
               }
@@ -12396,7 +12396,7 @@ Rules:
       const webSourcesNS = [...(aiReply.sources || [])];
       if (String(result || "").includes("```lookup")) {
         const looked = await followUpWithLookups(String(result || ""), { stream: false, signal: nonStreamAbort.signal, grounded: aiReply.grounded }).catch(() => null);
-        if (looked && saidNothing(looked.answer)) looked.answer = `${looked.answer}\n\n${nothingFoundNote(looked.queries)}`.trim();
+        if (looked && saidNothing(looked.answer)) looked.answer = `${looked.answer}\n\n${nothingFoundNote(looked.queries, { rows: looked.rows, webSources: (looked.sources || []).length })}`.trim();
         result = looked ? `${looked.shownFirst}\n\n${looked.answer}`.trim() : `${extractLookupBlocks(String(result || "")).text}\n\n(I couldn't look that up just now. Try asking again.)`;
         if (looked) webSourcesNS.unshift(...(looked.sources || []));
       }

@@ -350,13 +350,36 @@ export function followUpPrompt(rows: string, queries: LookupQuery[]): string {
  *  "Checking …" line (V5 audit M2 — the reply used to end there). */
 export function saidNothing(answer: string): boolean {
   const lines = String(answer || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  return lines.every((l) => /^(checking|looking|searching|let me check)\b[^.!?]{0,160}(…|\.{3})?$/i.test(l));
+  // A progress line: starts like one and is a single short sentence
+  // ("Checking FTCScout.org…", "Checking recent results."). A line that goes
+  // on after it ("Checking… The servo is sold out.") is an answer.
+  const progress = (l: string) =>
+    l.length <= 200 && /^(checking|looking|searching|let me check)\b/i.test(l) && l.split(/(?<=[.!?…])\s+(?=\S)/).length === 1;
+  return lines.every(progress);
 }
 
-/** What Bruno says when a check came back with nothing to report. */
-export function nothingFoundNote(queries: LookupQuery[]): string {
-  const web = queries.some((q) => q.kind === "web");
-  return web
-    ? "I couldn't find anything current on that. FIRST's event site (https://ftc-events.firstinspires.org) and FTC Scout (https://ftcscout.org) list every event as it's played, so if nothing shows there yet, the events haven't happened."
-    : "I couldn't find anything for that in the team's data. Try other words, a name or a date range.";
+/** What the lookup actually returned, read from runLookups' headers. */
+export function lookupOutcome(rows: string): "found" | "failed" | "none" {
+  if (/ — (\d+ found|\d+ shown)/.test(rows)) return "found";
+  if (/ — SEARCH FAILED/.test(rows)) return "failed";
+  return "none";
+}
+
+const EVENTISH = /\b(event|events|results?|match(es)?|qualifier|league|tournament|competition|championship|scores?|rankings?|standings)\b/i;
+
+/** What Bruno says when its answer stopped at "Checking…": true to what the
+ *  check found, never claiming nothing exists when it did. */
+export function nothingFoundNote(queries: LookupQuery[], outcome: { rows?: string; webSources?: number } = {}): string {
+  const data = queries.some((q) => q.kind !== "web") ? lookupOutcome(outcome.rows || "") : null;
+  const web = queries.filter((q) => q.kind === "web");
+  if (data === "found") return "I looked that up but didn't finish the answer. Ask again and I'll go through what I found.";
+  if (web.length && (outcome.webSources || 0) > 0) return "I checked the web but didn't finish the answer. The pages I used are listed below.";
+  if (data === "failed") return "That search didn't work just now. Try asking again.";
+  if (web.length) {
+    const events = web.some((q) => EVENTISH.test(String(q.query || "")));
+    return events
+      ? "I couldn't find anything current on that. FIRST's event site (https://ftc-events.firstinspires.org) and FTC Scout (https://ftcscout.org) list every event as it's played, so if nothing shows there yet, the events haven't happened."
+      : "I couldn't find anything current on that. Try asking with more detail, like the exact product, team or event.";
+  }
+  return "I couldn't find anything for that in the team's data. Try other words, a name or a date range.";
 }
