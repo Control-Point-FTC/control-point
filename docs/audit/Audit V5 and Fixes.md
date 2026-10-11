@@ -1,6 +1,6 @@
 # Audit V5 and Fixes
 
-- **Audit:** Control Point V5 full product validation, October 11, 2026 (full report: `v5-full-report.md`)
+- **Audit:** Control Point V5 full product validation, October 11, 2026 (full report, findings and evidence: [Control Point V5 Audit Report](https://docs.google.com/document/d/1lTzRB2AlcOu1qG2N4QGBX3Ekwn-kIfNJUoRlgeJ38GE/edit), view-only link; it includes this page)
 - **Fix run:** October 11, 2026, PRs #212–#229 in Control-Point-FTC/control-point (#224 and #228 are owner requests made during the run; #226 and #227 fix findings the production re-check showed were not fully fixed)
 - **Rule for every fix:** its own branch and PR, Greptile review loop to 5/5 on the PR's latest commit with 0 open threads, then merge. Merging to `main` deploys to production ("Deploy to Oracle VM").
 - **High-severity fix:** isolated in its own PR (#212).
@@ -14,7 +14,7 @@ The audit verdict was **CLOSED BETA READY**, with three blockers to open beta:
 - Bruno proposals cut off by the output cap (Medium);
 - board-only tasks readable by every member (Medium).
 
-All three are fixed and deployed. Every other code finding is either fixed or listed for an owner decision (§5).
+All three are fixed and deployed. Every other code finding is fixed, listed for an owner decision (§5), or still open (§6).
 
 The production re-check (§4) found two fixes that did not fully hold: Low 10 (workspace delete still landed on another workspace) and V5-M2 (one of two New Jersey runs still ended at "Checking…"). Both have follow-up fixes (#226; #227 and #229), verified on production. During the run the owner also reported that proof photos on finished tasks were invisible, that pictures and videos in Messaging showed as file cards, and that proof should be pasteable; those are fixed in #224 and #228 and verified on production (video playback excepted, see §4).
 
