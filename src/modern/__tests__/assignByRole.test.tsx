@@ -48,6 +48,6 @@ describe("Bruno's tasks by role", () => {
     setProposalContext({ today: '2026-10-11', roster: ['Ana', 'Lee'], roles: [{ name: 'Builders', members: ['Ana', 'Lee'] }] });
     render(<ActionProposalCard proposals={[{ kind: 'task', items: [{ title: 'Cut tiles', roles: ['builders'] }, { title: 'Pit job', roles: ['Pit crew'] }] }] as any} status="pending" onConfirm={vi.fn()} onDismiss={vi.fn()} />);
     expect(screen.getByText(/Cut tiles — → everyone in Builders \(Ana, Lee\)/)).toBeTruthy();
-    expect(screen.getByText(/Pit job — no role named Pit crew/)).toBeTruthy();
+    expect(screen.getByText(/Pit job — no single role named Pit crew/)).toBeTruthy();
   });
 });

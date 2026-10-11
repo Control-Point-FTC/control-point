@@ -69,7 +69,7 @@ export function resolveTaskItem(it: any) {
     assignees: c ? t.assignees : names.filter(Boolean), repeat: t.recurrence, unmatched: c ? t.unmatched : [],
     roles: t.roles, unmatchedRoles: t.unmatchedRoles,
     // Who each role covers, for the card ("Builders: Ana, Lee").
-    roleMembers: Object.fromEntries(t.roles.map((r) => [r, c?.roles?.find((x) => x.name === r)?.members ?? []])),
+    roleMembers: Object.fromEntries(t.roles.map((r) => [r, c?.roles ? (c.roles.find((x) => x.name === r)?.members ?? []) : null])) as Record<string, string[] | null>,
   };
 }
 

@@ -101,6 +101,8 @@ describe("Bruno apply: assigning by role", () => {
   });
 
   it("never picks between roles that share a name, and lists roles nobody holds yet", async () => {
+    // Both spellings exist here whatever ran before (INSERT OR IGNORE-style: only if missing).
+    if (!(await rows("SELECT id FROM roles WHERE team_id = ? AND name = 'Builders'", team)).length) await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Builders', '[]')", args: [team] });
     const lower = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'builders', '[]')", args: [team] })).lastInsertRowid);
     await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [arnav, lower] });
     await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, 'Mentors', '[]')", args: [team] });
