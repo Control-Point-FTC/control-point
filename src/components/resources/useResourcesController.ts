@@ -266,7 +266,9 @@ export function useResourcesController() {
     setDeletingIds((s) => new Set(s).add(id));
     try {
       await apiJson(`/api/resources/${id}`, { method: 'DELETE' });
-    } catch {
+    } catch (e: any) {
+      // Say why (e.g. only the person who saved it or a docs manager can delete it).
+      notify(e?.message || "Couldn't delete that link", "error");
       // Re-insert only the failed item (near its old spot), preserving other changes.
       if (deletedItem) {
         setResources((rs) => {

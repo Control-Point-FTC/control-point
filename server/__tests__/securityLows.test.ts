@@ -50,16 +50,25 @@ describe("security Lows", () => {
       sql: "INSERT INTO email_verification_codes (email, code_hash, expires_at, attempts, created_at) VALUES (?, ?, ?, 0, ?)",
       args: [email, createHash("sha256").update("424242", "utf8").digest("hex"), new Date(Date.now() + 600_000).toISOString(), new Date().toISOString()],
     });
-    expect((await t.post("/api/auth/verify-email", { email, code: "424242" })).status).toBe(200);
-    expect((await t.post("/api/auth/verify-email", { email, code: "424242" })).status).toBe(400);
+    // Two requests with the same code at once: exactly one gets in.
+    const both = await Promise.all([1, 2].map(() => t.post("/api/auth/verify-email", { email, code: "424242" })));
+    expect(both.map((r) => r.status).sort()).toEqual([200, 400]);
   });
 
   it("L5: only the person who saved a link, or a docs/members manager, can delete it", async () => {
     const id = Number((await t.db.execute({ sql: "INSERT INTO resources (team_id, url, title, category, created_by) VALUES (?, 'https://gm0.org', 'GM0', 'Other', ?)", args: [team, aId] })).lastInsertRowid);
     expect((await t.api(`/api/resources/${id}`, { method: "DELETE", session: b })).status).toBe(403);
     expect((await t.api(`/api/resources/${id}`, { method: "DELETE", session: a })).status).toBe(200);
-    const id2 = Number((await t.db.execute({ sql: "INSERT INTO resources (team_id, url, title, category, created_by) VALUES (?, 'https://ftc-docs.firstinspires.org', 'FTC docs', 'Other', ?)", args: [team, aId] })).lastInsertRowid);
-    expect((await t.api(`/api/resources/${id2}`, { method: "DELETE", session: admin })).status).toBe(200);
+    // Members (not admins) holding only Manage documentation, or only Manage members, can too.
+    for (const [name, perm] of [["Docs keeper", "manage_documentation"], ["People lead", "manage_members"]] as const) {
+      const role = Number((await t.db.execute({ sql: "INSERT INTO roles (team_id, name, permissions) VALUES (?, ?, ?)", args: [team, name, JSON.stringify([perm])] })).lastInsertRowid);
+      const mid = await seedMember(t.db, team, name, `${perm}@sec.test`);
+      await t.db.execute({ sql: "INSERT INTO member_roles (member_id, role_id) VALUES (?, ?)", args: [mid, role] });
+      const id2 = Number((await t.db.execute({ sql: "INSERT INTO resources (team_id, url, title, category, created_by) VALUES (?, 'https://ftc-docs.firstinspires.org', 'FTC docs', 'Other', ?)", args: [team, aId] })).lastInsertRowid);
+      expect((await t.api(`/api/resources/${id2}`, { method: "DELETE", session: await t.session(mid) })).status, perm).toBe(200);
+    }
+    const id3 = Number((await t.db.execute({ sql: "INSERT INTO resources (team_id, url, title, category, created_by) VALUES (?, 'https://ftcscout.org', 'FTC Scout', 'Other', ?)", args: [team, aId] })).lastInsertRowid);
+    expect((await t.api(`/api/resources/${id3}`, { method: "DELETE", session: admin })).status).toBe(200);
   });
 
   it("L7: message images can't run as a page", async () => {
