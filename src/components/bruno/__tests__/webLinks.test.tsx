@@ -25,3 +25,12 @@ describe('external links in Bruno replies', () => {
     expect(linkDomain('not a url')).toBeNull();
   });
 });
+
+describe('formatted link text', () => {
+  it("doesn't repeat a site already shown in bold or code", () => {
+    show('[**revrobotics.com**](https://revrobotics.com) and [`gobilda.com/parts`](https://www.gobilda.com/parts) and [**Yellow Jacket**](https://www.gobilda.com/yj)');
+    expect(screen.getByRole('link', { name: 'revrobotics.com' }).textContent).toBe('revrobotics.com');
+    expect(screen.getByRole('link', { name: 'gobilda.com/parts' }).textContent).toBe('gobilda.com/parts');
+    expect(screen.getByRole('link', { name: /Yellow Jacket/ }).textContent).toBe('Yellow Jacket(gobilda.com)');
+  });
+});

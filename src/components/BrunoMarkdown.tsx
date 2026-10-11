@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { isValidElement, useRef, useState, type ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import { RefLink, splitRefs } from './bruno/refChips';
 import remarkGfm from 'remark-gfm';
@@ -77,11 +77,20 @@ export function linkDomain(href: string): string | null {
   } catch { return null; }
 }
 
+/** The visible text of rendered children, through formatting (**bold**, `code`…). */
+function plainText(node: ReactNode): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(plainText).join('');
+  if (isValidElement(node)) return plainText((node.props as { children?: ReactNode }).children);
+  return '';
+}
+
 /** External links open directly (never through a redirect on our domain) in a
  *  new tab, without access to this page, and show where they go. */
 function WebLink({ href, children }: { href?: string; children?: ReactNode }) {
   const domain = href ? linkDomain(href) : null;
-  const text = typeof children === 'string' ? children : Array.isArray(children) && children.every(c => typeof c === 'string') ? children.join('') : '';
+  const text = plainText(children);
   // A link whose text already is the address doesn't repeat it.
   const repeat = domain && !text.toLowerCase().includes(domain.toLowerCase());
   return (
