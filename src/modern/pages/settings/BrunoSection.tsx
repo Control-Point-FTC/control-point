@@ -3,7 +3,7 @@
 // preferences (this device) and — for the one team that has it — the
 // NavGPT ❤️ persona.
 import { useState } from 'react';
-import { ChevronDown, GraduationCap, Heart, Sun } from 'lucide-react';
+import { BookOpen, ChevronDown, GraduationCap, Heart, Sun } from 'lucide-react';
 import { cn } from '../../../components/cn';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger, Switch, ToggleGroup, ToggleGroupItem } from '../../../components/ui-kit';
 import { apiFetch } from '../../../services/api';
@@ -17,6 +17,7 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
   const team = teams.find((t: any) => t.id === user.team_id);
   const [teach, setTeach] = useState(user.bruno_teach_mode === 1);
   const [nudges, setNudges] = useState(user.bruno_nudges !== 0);
+  const [notebookAccess, setNotebookAccess] = useState(user.bruno_notebook !== 0);
   const [level, setLevel] = useState<string>(user.bruno_output_level === 'max' ? 'high' : (user.bruno_output_level || 'medium'));
   // One in-flight lock per control (as Legacy tracks teach/level/persona
   // separately), so a save of one never unlocks another mid-request.
@@ -116,6 +117,16 @@ export function BrunoSection({ currentUser, teams = [], isAdmin, onUserSaved, on
             if (busy.nudges) return;
             setNudges(next);
             void saveProfile('nudges', { bruno_nudges: next }, () => setNudges(!next), next ? 'Morning summary on.' : 'Morning summary off.');
+          }} /></span>
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup title="What Bruno can use" description="Saved to your account. Bruno never sees admin-only notebook pages either way.">
+        <SettingsRow label="Team notebook" description="Bruno can read notebook pages you can see and propose edits you confirm." htmlFor="bruno-notebook">
+          <span className="flex items-center gap-2"><BookOpen className={cn('size-4', notebookAccess ? 'text-accent' : 'text-muted-foreground')} /><Switch id="bruno-notebook" checked={notebookAccess} disabled={!!busy.notebook} onCheckedChange={(next) => {
+            if (busy.notebook) return;
+            setNotebookAccess(next);
+            void saveProfile('notebook', { bruno_notebook: next }, () => setNotebookAccess(!next), next ? 'Bruno can use the notebook.' : 'Bruno’s notebook access is off.');
           }} /></span>
         </SettingsRow>
       </SettingsGroup>
