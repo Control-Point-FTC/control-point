@@ -97,7 +97,7 @@ export default function ActionProposalCard({ proposals, status, error, onConfirm
   onDismiss: () => void;
 }) {
   useProposalContext(); // re-render once the team's roster and today load
-  useTaskIndex(proposals.some((p) => p.kind === 'task-update'));
+  useTaskIndex(status !== 'done' && status !== 'dismissed' && proposals.some((p) => p.kind === 'task-update'));
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const isDestructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   const verb = proposalVerb(proposals);

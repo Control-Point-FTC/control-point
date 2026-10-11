@@ -1,6 +1,6 @@
 // Bruno edits an existing task instead of adding a duplicate ("Updating the
 // task…" used to confirm as "Added 1 item" and create a second task).
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { extractActionProposals, stripEventBlocks } from '../../../services/aiService';
@@ -65,5 +65,22 @@ describe('Bruno task updates', () => {
     expect(screen.getAllByRole('link', { name: 'View task' })).toHaveLength(2);
     // New and edited tasks together: one link to the list.
     expect(resultLinks({ applied: { task: 1, 'task-update': 1 }, created: { task: [3], 'task-update': [12] } })).toEqual([{ label: 'View 2 tasks', to: '/tasks' }]);
+  });
+});
+
+describe('the shared task list behind edit cards', () => {
+  it('several cards share one request; a task change refetches once', async () => {
+    const { loadTaskIndex, invalidateTaskIndex, getTaskIndex } = await import('../../../services/proposalContext');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify([{ id: 12, title: 'Build the intake', status: 'todo' }]), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    try {
+      await Promise.all([loadTaskIndex(), loadTaskIndex(), loadTaskIndex()]);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(getTaskIndex()?.get(12)?.title).toBe('Build the intake');
+      await loadTaskIndex(); // fresh enough: no new request
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      invalidateTaskIndex(); // no card open: just forgotten
+      expect(getTaskIndex()).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally { fetchSpy.mockRestore(); }
   });
 });

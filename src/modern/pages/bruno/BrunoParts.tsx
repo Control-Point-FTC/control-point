@@ -114,7 +114,7 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss, l
   useProposalContext(); // re-render once the team's roster and today load
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const destructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
-  useTaskIndex(proposals.some((p) => p.kind === 'task-update'));
+  useTaskIndex(status !== 'done' && status !== 'dismissed' && proposals.some((p) => p.kind === 'task-update'));
   const verb = proposalVerb(proposals);
   const items = (n: number) => `${n} ${n === 1 ? 'item' : 'items'}`;
   if (status === 'done') {
