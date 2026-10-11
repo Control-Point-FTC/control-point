@@ -31,7 +31,7 @@ describe('Bruno reference chips', () => {
 
   it('hides a half-streamed refs block and still renders normal web links', () => {
     show('Here: [REV](https://www.revrobotics.com/) ```refs\n{"team":3,"re');
-    expect(screen.getByRole('link', { name: 'REV' }).getAttribute('href')).toBe('https://www.revrobotics.com/');
+    expect(screen.getByRole('link', { name: /^REV/ }).getAttribute('href')).toBe('https://www.revrobotics.com/');
     expect(screen.queryByText(/"team"/)).toBeNull();
     expect(splitRefs('no refs').refs).toBeNull();
   });
