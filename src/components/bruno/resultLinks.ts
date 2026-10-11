@@ -6,9 +6,11 @@ export type AppliedResult = { applied: Record<string, number>; created: Record<s
 export function resultLinks({ applied, created }: AppliedResult): ResultLink[] {
   const links: ResultLink[] = [];
   const ids = (k: string) => (created[k] ?? []).filter((n) => Number.isSafeInteger(n) && n > 0);
-  if (applied.task) {
-    const t = ids('task');
-    links.push(t.length === 1 ? { label: 'View task', to: `/tasks?task=${t[0]}` } : { label: `View ${applied.task} tasks`, to: '/tasks' });
+  // New and edited tasks share one link.
+  const tasks = [...new Set([...ids('task'), ...ids('task-update')])];
+  const taskCount = (applied.task || 0) + (applied['task-update'] || 0);
+  if (taskCount) {
+    links.push(tasks.length === 1 && taskCount === 1 ? { label: 'View task', to: `/tasks?task=${tasks[0]}` } : { label: `View ${taskCount} tasks`, to: '/tasks' });
   }
   if (applied.event) {
     const e = ids('event');

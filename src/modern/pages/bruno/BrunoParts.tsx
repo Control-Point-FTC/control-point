@@ -11,8 +11,8 @@ import { Button } from '../../../components/ui-kit';
 import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
 import BrunoIcon from '../../../components/BrunoIcon';
 import { extractActionProposals, stripEventBlocks, stripSwitchBlock, type ActionProposal } from '../../../services/aiService';
-import { KIND_META, itemSummary, type ProposalStatus } from '../../../components/ActionProposalCard';
-import { useProposalContext } from '../../../services/proposalContext';
+import { KIND_META, itemSummary, proposalVerb, type ProposalStatus } from '../../../components/ActionProposalCard';
+import { useProposalContext, useTaskIndex } from '../../../services/proposalContext';
 import { extractNotebookOps, extractStickyOps } from '../../../services/notebookProposals';
 import { NotebookProposalCard } from '../../../components/bruno/NotebookProposalCard';
 import {
@@ -114,10 +114,13 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss, l
   useProposalContext(); // re-render once the team's roster and today load
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const destructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
+  useTaskIndex(proposals.some((p) => p.kind === 'task-update'));
+  const verb = proposalVerb(proposals);
+  const items = (n: number) => `${n} ${n === 1 ? 'item' : 'items'}`;
   if (status === 'done') {
     return (
       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-        <p className="flex items-center gap-2"><Check className="size-4" /> {destructive ? `Deleted ${total} ${total === 1 ? 'item' : 'items'}` : `Added ${total} ${total === 1 ? 'item' : 'items'}`}</p>
+        <p className="flex items-center gap-2"><Check className="size-4" /> {verb.done} {items(total)}</p>
         {links.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {links.map((l) => <Link key={l.to} to={l.to} className="inline-flex items-center gap-1 rounded-md border border-success/40 px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-success/15">{l.label}<ArrowRight className="size-3.5" /></Link>)}
@@ -129,7 +132,7 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss, l
   return (
     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={cn('mt-3 overflow-hidden rounded-xl border bg-card', destructive ? 'border-destructive/40' : 'border-border')}>
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-        <p className="text-sm font-medium">{destructive ? `Delete ${total} ${total === 1 ? 'item' : 'items'}?` : `Add ${total} ${total === 1 ? 'item' : 'items'}?`}</p>
+        <p className="text-sm font-medium">{verb.ask} {items(total)}?</p>
         <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={onDismiss}><X /></Button>
       </div>
       <div className="max-h-60 space-y-3 overflow-y-auto px-4 py-3">
@@ -149,7 +152,7 @@ export function ProposalCard({ proposals, status, error, onConfirm, onDismiss, l
         <Button variant="ghost" size="sm" onClick={onDismiss}>Not now</Button>
         <Button size="sm" variant={destructive ? 'destructive' : 'default'} onClick={onConfirm} disabled={status === 'confirming'}>
           {status === 'confirming' && <Loader2 className="animate-spin" />}
-          {destructive ? `Delete all ${total}` : `Add all ${total}`}
+          {verb.ask} all {total}
         </Button>
       </div>
     </motion.div>

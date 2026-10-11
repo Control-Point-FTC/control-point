@@ -229,3 +229,71 @@ const tidy = (s: string, original: unknown) => {
   const out = s.replace(/\s+([,.;!?])/g, '$1').replace(/\s{2,}/g, ' ').trim();
   return out.length >= 3 ? out : String(original || '');
 };
+
+/** One change to an existing task, as Bruno's ```task-update block carries
+ *  it: the task's #id plus ONLY the fields that change. */
+export interface TaskUpdateChanges {
+  title?: string;
+  description?: string;
+  due_date?: string | null;
+  due_time?: string | null;
+  priority?: Priority | null;
+  /** Moving it back or forward; "done" needs the completion dialog's proof. */
+  status?: 'todo' | 'in-progress';
+  /** Exact roster spellings (replaces who is assigned). */
+  assignees?: string[];
+  recurrence?: Recurrence | null;
+}
+export interface TaskUpdate { id: number; changes: TaskUpdateChanges; unmatched: string[]; refused: string[] }
+
+const CLEARS = (v: unknown) => v === null || v === '' || (typeof v === 'string' && /^(none|no|clear|remove|never)$/i.test(v.trim()));
+
+/** A ```task-update item -> the changes that will be saved, or null when it
+ *  names no task or changes nothing. Pure: the card shows exactly this and
+ *  the server saves exactly this. */
+export function normalizeTaskUpdate(raw: any, roster: string[]): TaskUpdate | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'number' ? raw.id : parseInt(String(raw.id ?? '').replace(/^#/, ''), 10);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(raw, k);
+  const changes: TaskUpdateChanges = {};
+  const unmatched: string[] = [];
+  const refused: string[] = [];
+  if (has('title')) { const t = String(raw.title ?? '').trim().slice(0, 120); if (t) changes.title = t; }
+  if (has('description')) changes.description = String(raw.description ?? '').trim().slice(0, 500);
+  if (has('due_date')) {
+    if (CLEARS(raw.due_date)) changes.due_date = null;
+    else if (typeof raw.due_date === 'string' && ISO.test(raw.due_date)) changes.due_date = raw.due_date;
+  }
+  if (has('due_time')) {
+    if (CLEARS(raw.due_time)) changes.due_time = null;
+    else if (typeof raw.due_time === 'string' && HHMM.test(raw.due_time)) changes.due_time = raw.due_time;
+  }
+  if (has('priority')) {
+    const p = String(raw.priority ?? '').toLowerCase().trim() as Priority;
+    if (PRIORITIES.includes(p)) changes.priority = p; else if (CLEARS(raw.priority)) changes.priority = null;
+  }
+  if (has('status')) {
+    const s = String(raw.status ?? '').toLowerCase().trim().replace(/[\s_]+/g, '-');
+    if (s === 'todo' || s === 'to-do') changes.status = 'todo';
+    else if (s === 'in-progress' || s === 'doing') changes.status = 'in-progress';
+    else if (s === 'done' || s === 'complete' || s === 'completed') refused.push('status');
+  }
+  if (has('assignees') || has('assignee')) {
+    const named = [...(Array.isArray(raw.assignees) ? raw.assignees : []), ...(typeof raw.assignee === 'string' ? [raw.assignee] : [])]
+      .map((x: unknown) => String(x || '').trim()).filter(Boolean);
+    const people: string[] = [];
+    for (const n of named) {
+      const m = rosterMatch(n, roster);
+      if (m) { if (!people.includes(m)) people.push(m); } else if (!unmatched.includes(n)) unmatched.push(n);
+    }
+    // A list that matched nobody would unassign everyone: leave them as they are.
+    if (people.length || !named.length) changes.assignees = people.slice(0, 20);
+  }
+  if (has('repeat')) {
+    const r = repeatToRule(raw.repeat);
+    if (r) changes.recurrence = r; else if (CLEARS(raw.repeat)) changes.recurrence = null;
+  }
+  if (!Object.keys(changes).length && !refused.length) return null;
+  return { id, changes, unmatched, refused };
+}

@@ -211,7 +211,7 @@ import { stripNotebookBlocks } from "./notebookProposals";
 
 export function stripEventBlocks(text: string): string {
   // Notebook blocks first: their JSON may quote other fences inside strings.
-  return stripNotebookBlocks(String(text || "")).replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "")
+  return stripNotebookBlocks(String(text || "")).replace(/```event[\s\S]*?(```|$)/g, "").replace(/```delete-event[\s\S]*?(```|$)/g, "").replace(/```outreach[\s\S]*?(```|$)/g, "").replace(/```tasks[\s\S]*?(```|$)/g, "").replace(/```task-update[\s\S]*?(```|$)/g, "").replace(/```budget[\s\S]*?(```|$)/g, "").replace(/```communications[\s\S]*?(```|$)/g, "").replace(/```switch[\s\S]*?(```|$)/g, "")
     // Scouting lookup requests: the server runs them and appends the results.
     .replace(/```lookup[\s\S]*?(```|$)/g, "").replace(/```remember[\s\S]*?(```|$)/g, "").replace(/```scout-team[\s\S]*?(```|$)/g, "").replace(/```scout-event[\s\S]*?(```|$)/g, "").trim();
 }
@@ -223,7 +223,7 @@ export function stripEventBlocks(text: string): string {
  * Light client-side validation; the server re-validates strictly on apply.
  */
 export interface ActionProposal {
-  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'budget' | 'communication';
+  kind: 'event' | 'delete-event' | 'outreach' | 'task' | 'task-update' | 'budget' | 'communication';
   items: any[];
 }
 
@@ -232,6 +232,8 @@ const ACTION_BLOCK_RES: Record<ActionProposal['kind'], RegExp> = {
   'delete-event': /```delete-event\s*\r?\n([\s\S]*?)\r?\n```/,
   outreach: /```outreach\s*\r?\n([\s\S]*?)\r?\n```/,
   task: /```tasks\s*\r?\n([\s\S]*?)\r?\n```/,
+  // Edits to existing tasks (by #id), never new ones.
+  'task-update': /```task-update\s*\r?\n([\s\S]*?)\r?\n```/,
   budget: /```budget\s*\r?\n([\s\S]*?)\r?\n```/,
   communication: /```communications\s*\r?\n([\s\S]*?)\r?\n```/,
 };

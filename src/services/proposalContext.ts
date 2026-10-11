@@ -6,7 +6,7 @@
 // server saves them as they are.
 import { useEffect, useSyncExternalStore } from 'react';
 import { apiFetch } from './api';
-import { normalizeBrunoTask, recoverEventTime } from '../utils/brunoTasks';
+import { normalizeBrunoTask, normalizeTaskUpdate, recoverEventTime } from '../utils/brunoTasks';
 import type { ActionProposal } from './aiService';
 
 export interface ProposalContext { today: string; roster: string[]; loadedAt?: number }
@@ -27,6 +27,7 @@ export const getProposalContext = () => ctx;
 export function setProposalContext(c: ProposalContext | null) {
   generation++;
   loading = null;
+  taskIndex = null; taskIndexAt = 0; taskIndexLoading = null;
   install(c);
 }
 
@@ -71,8 +72,53 @@ export function resolveEventItem(it: any) {
   return ctx ? recoverEventTime({ ...it, title: String(it?.title || ''), notes: it?.notes ?? '', time: it?.time ?? '', end: it?.end ?? '' }) : it;
 }
 
+/** A task edit as it will be saved (names resolved against the roster). */
+export function resolveTaskUpdate(it: any) {
+  return normalizeTaskUpdate(it, ctx?.roster || []);
+}
+
+/** The team's tasks as they are now, so an update card names the real task
+ *  (not the model's label) and says when it no longer exists. */
+export type CurrentTask = { id: number; title: string; status: string };
+let taskIndex: Map<number, CurrentTask> | null = null;
+let taskIndexAt = 0;
+let taskIndexLoading: Promise<void> | null = null;
+export const getTaskIndex = () => taskIndex;
+export function setTaskIndex(tasks: CurrentTask[] | null) {
+  taskIndex = tasks ? new Map(tasks.map((t) => [t.id, t])) : null;
+  taskIndexAt = tasks ? Date.now() : 0;
+  listeners.forEach((l) => l());
+}
+export function loadTaskIndex(): Promise<void> {
+  if (taskIndexLoading) return taskIndexLoading;
+  if (taskIndex && Date.now() - taskIndexAt < MAX_AGE_MS) return Promise.resolve();
+  const gen = generation;
+  const run: Promise<void> = (async () => {
+    try {
+      const res = await apiFetch('/api/tasks');
+      const body = res.ok ? await res.json() : null;
+      if (gen === generation && Array.isArray(body)) {
+        setTaskIndex(body.map((t: any) => ({ id: Number(t.id), title: String(t.title ?? ''), status: String(t.status ?? '') })));
+      }
+    } catch { /* offline: the card falls back to the task's number */ }
+    if (taskIndexLoading === run) taskIndexLoading = null;
+  })();
+  taskIndexLoading = run;
+  return run;
+}
+/** Re-render an update card once the team's tasks load. */
+export function useTaskIndex(enabled: boolean): Map<number, CurrentTask> | null {
+  const idx = useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, getTaskIndex, getTaskIndex);
+  useEffect(() => { if (enabled) void loadTaskIndex(); }, [enabled]);
+  return idx;
+}
+
 /** The items Confirm sends: the same resolution the card showed. */
 export function resolveProposals(proposals: ActionProposal[]): ActionProposal[] {
   return proposals.map((p) => p.kind === 'task' ? { ...p, items: p.items.map(resolveTaskItem) }
-    : p.kind === 'event' ? { ...p, items: p.items.map(resolveEventItem) } : p);
+    : p.kind === 'event' ? { ...p, items: p.items.map(resolveEventItem) }
+    : p.kind === 'task-update' ? { ...p, items: p.items.map((it) => {
+      const u = resolveTaskUpdate(it);
+      return u ? { id: u.id, ...u.changes, ...(u.changes.recurrence !== undefined ? { repeat: u.changes.recurrence } : {}) } : null;
+    }).filter(Boolean) } : p);
 }

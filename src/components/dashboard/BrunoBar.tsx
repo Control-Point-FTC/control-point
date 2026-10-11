@@ -54,7 +54,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
       const result = await applyActionProposalsWithIds(proposals);
       const applied = result.applied;
       const types = Object.keys(applied).map((k) =>
-        k === 'event' || k === 'delete-event' ? 'calendar' : k,
+        k === 'event' || k === 'delete-event' ? 'calendar' : k === 'task-update' ? 'task' : k,
       );
       notifyBrunoDataChanged(types);
       setProposalStatus('done'); setProposalLinks(resultLinks(result));

@@ -85,3 +85,40 @@ describe("Bruno apply: many kinds at once", () => {
     expect(await rows("SELECT id FROM tasks WHERE title IN ('Order wheels', 'Fix the lift', 'Update the notebook')")).toHaveLength(3);
   });
 });
+
+describe("Bruno apply: editing existing tasks", () => {
+  it("updates the task in place — no duplicate — and reports its id", async () => {
+    await t.post("/api/ai/apply-actions", { actions: [{ kind: "task", items: [{ title: "Demo prep", assignees: ["Arnav"] }] }] }, admin);
+    const [task] = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{
+      id: task.id, description: "For the First Street Kids demo", priority: "high", due_date: "2099-05-01", due_time: "17:00", assignees: ["Grace"],
+    }] }] }, admin);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body).toMatchObject({ applied: { "task-update": 1 }, created: { "task-update": [task.id] } });
+    const all = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ description: "For the First Street Kids demo", priority: "high", due_date: "2099-05-01", due_time: "17:00", status: "todo" });
+    const who = (await rows("SELECT member_id FROM task_assignees WHERE task_id = ?", task.id)).map((x) => Number(x.member_id));
+    expect(who).toEqual([grace]);
+  });
+
+  it("refuses another team's task or a deleted one, changing nothing; never marks done", async () => {
+    const other = await seedTeam(t.db, "Elsewhere");
+    const theirs = Number((await t.db.execute({ sql: "INSERT INTO tasks (team_id, title, status) VALUES (?, 'Theirs', 'todo')", args: [other] })).lastInsertRowid);
+    const [mine] = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: mine.id, title: "Renamed" }, { id: theirs, title: "Hijacked" }] }] }, admin);
+    expect(r.status).toBe(400);
+    expect((await rows("SELECT title FROM tasks WHERE id = ?", theirs))[0].title).toBe("Theirs");
+    expect((await rows("SELECT title FROM tasks WHERE id = ?", mine.id))[0].title).toBe("Demo prep");
+    const done = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: mine.id, status: "done" }] }] }, admin);
+    expect(done.status).toBe(400);
+    expect((await rows("SELECT status FROM tasks WHERE id = ?", mine.id))[0].status).toBe("todo");
+  });
+
+  it("needs task access", async () => {
+    const plain = await t.session(await seedMember(t.db, team, "Pat", "pat@ba.test"));
+    const [mine] = await rows("SELECT * FROM tasks WHERE title = 'Demo prep'");
+    const r = await t.post("/api/ai/apply-actions", { actions: [{ kind: "task-update", items: [{ id: mine.id, title: "Nope" }] }] }, plain);
+    expect(r.status).toBe(403);
+  });
+});
