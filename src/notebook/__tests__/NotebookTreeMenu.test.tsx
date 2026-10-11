@@ -28,6 +28,8 @@ function mount(path = '/notebook', admin = true) {
     if (url === '/api/notebook/tree') return structuredClone(tree) as any;
     if (url === '/api/notebook/mentions') return [] as any;
     if (/^\/api\/notebook\/pages\/\d+\/sync$/.test(url)) { const doc = new Y.Doc(); return { epoch: 'one', update: encodeBytes(Y.encodeStateAsUpdate(doc)), vector: encodeBytes(Y.encodeStateVector(doc)), title: 'Page', revision: 1, protected: false, editable: true, updatedBy: 10, updatedAt: 'now', peers: [] } as any; }
+    // The server trashes the source only when nothing hidden is left in it.
+    if (url === '/api/notebook/sections/1/merge') return { moved: 1, trashed: admin } as any;
     return {} as any;
   });
   render(<MemoryRouter initialEntries={[path]}><Routes><Route path="*" element={<><NotebookPage activeTeamId={20} currentUserId={10} /><Where /></>} /></Routes></MemoryRouter>);
@@ -58,28 +60,28 @@ describe('notebook tree menus', () => {
     await openMenu('Build');
     fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Section color' }), { key: 'ArrowRight' });
     fireEvent.click(await screen.findByRole('menuitem', { name: /Purple/ }));
-    await waitFor(() => expect(calls('PATCH')).toContainEqual(['/api/notebook/sections/1', { title: 'Build', color: '#8b5cf6' }]));
+    // Only the color: a teammate's rename since the tree loaded must survive.
+    await waitFor(() => expect(calls('PATCH')).toContainEqual(['/api/notebook/sections/1', { color: '#8b5cf6' }]));
   });
 
-  it('merges a section into another and trashes the empty section for admins', async () => {
+  it('merges a section into another with one server call', async () => {
     mount();
     await openMenu('Build');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Merge into another section…' }));
     expect(await screen.findByLabelText('Merge into')).toHaveValue('4');
     fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
-    // Only the top-level page moves; its subpage goes with it.
-    await waitFor(() => expect(calls('DELETE').map(([u]) => u)).toEqual(['/api/notebook/sections/1']));
-    expect(calls('POST').filter(([u]) => u === '/api/notebook/move')).toEqual([['/api/notebook/move', { kind: 'page', id: 2, to: { sectionId: 4, parentId: null }, index: 'end' }]]);
+    await waitFor(() => expect(calls('POST')).toContainEqual(['/api/notebook/sections/1/merge', { into: 4 }]));
+    expect(calls('POST').some(([u]) => u === '/api/notebook/move')).toBe(false);
+    expect(calls('DELETE')).toEqual([]);
+    expect(await screen.findByText('Merged 1 page into Outreach.')).toBeInTheDocument();
   });
 
-  it('keeps the emptied section for non-admins, who may not see protected pages in it', async () => {
+  it('says when the server kept the source because pages the member cannot see are left', async () => {
     mount('/notebook', false);
     await openMenu('Build');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Merge into another section…' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
-    await waitFor(() => expect(calls('POST').some(([u]) => u === '/api/notebook/move')).toBe(true));
-    expect(await screen.findByText(/The empty section is still there/)).toBeInTheDocument();
-    expect(calls('DELETE')).toEqual([]);
+    expect(await screen.findByText(/still has pages you can’t see, so it was kept/)).toBeInTheDocument();
   });
 
   it('opens a section from its link, and ignores sections the member cannot see', async () => {

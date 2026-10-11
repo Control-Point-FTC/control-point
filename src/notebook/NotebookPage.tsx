@@ -363,13 +363,11 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
     if (action === 'merge' && kind === 'section') {
       const target = Number(targetSection), into = tree?.sections.find(sec => sec.id === target);
       if (!into || target === item!.id) { setError('Choose another section to merge into.'); return; }
-      const moving = (tree?.pages ?? []).filter(pg => pg.sectionId === item!.id && !pg.parentId);
-      const trashSource = !!tree?.permissions.protect && !!tree.permissions.delete;
-      const ok = await mutate(async () => {
-        for (const pg of moving) await apiJson('/api/notebook/move', { method: 'POST', body: JSON.stringify({ kind: 'page', id: pg.id, to: { sectionId: target, parentId: null }, index: 'end' }) });
-        if (trashSource) await apiJson(`/api/notebook/sections/${item!.id}`, { method: 'DELETE' });
-      });
-      if (ok) setAnnouncement(`Merged ${moving.length} ${moving.length === 1 ? 'page' : 'pages'} into ${into.title}.${trashSource ? '' : ' The empty section is still there; move it to trash if you no longer need it.'}`);
+      // One server transaction; the source is trashed only if nothing is left in it.
+      let result: { moved: number; trashed: boolean } | null = null;
+      const ok = await mutate(async () => { result = await apiJson(`/api/notebook/sections/${item!.id}/merge`, { method: 'POST', body: JSON.stringify({ into: target }) }); });
+      const merged = result as { moved: number; trashed: boolean } | null;
+      if (ok && merged) setAnnouncement(`Merged ${merged.moved} ${merged.moved === 1 ? 'page' : 'pages'} into ${into.title}.${merged.trashed ? '' : ` “${item!.title}” still has pages you can’t see, so it was kept.`}`);
       return;
     }
     if (action === 'defaults' && kind === 'section') {
@@ -411,14 +409,23 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
       if (saved && closeDrawerAfterRename.current) { closeDrawerAfterRename.current = false; setDrawer(false); }
     } finally { renameSaving.current = false; }
   };
+  // Explorer → Export: the same preview as File → Print section. Pending edits
+  // are saved first; leaving the notebook cancels it and closes its preview.
+  const exportRun = useRef<{ abort: AbortController; close?: () => void } | null>(null);
+  useEffect(() => () => { exportRun.current?.abort.abort(); exportRun.current?.close?.(); }, []);
   const exportSection = async (section: Item) => {
+    exportRun.current?.abort.abort(); exportRun.current?.close?.();
+    const run: { abort: AbortController; close?: () => void } = { abort: new AbortController() }; exportRun.current = run;
     try {
+      const open = syncRef.current;
+      if (open?.pending && !await open.flush()) throw new Error('Save your changes before exporting.');
       const [{ prepareSectionPrint }, { showAnnotatedPdfPrint }] = await Promise.all([import('./sectionPrint'), import('./pdfPrint')]);
       setAnnouncement('Preparing section…');
-      const result = await prepareSectionPrint(section, tree?.pages ?? [], memberId && teamId ? { memberId, teamId } : undefined, new AbortController().signal, setAnnouncement);
-      showAnnotatedPdfPrint(result.markup, 'Notebook section print preview');
+      const result = await prepareSectionPrint(section, tree?.pages ?? [], memberId && teamId ? { memberId, teamId } : undefined, run.abort.signal, setAnnouncement);
+      run.abort.signal.throwIfAborted();
+      run.close = showAnnotatedPdfPrint(result.markup, 'Notebook section print preview');
       setAnnouncement(`Section ready to print or save as PDF: ${result.printed} ${result.printed === 1 ? 'page' : 'pages'}.`);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Cannot prepare this section.'); }
+    } catch (e) { if (!run.abort.signal.aborted) setError(e instanceof Error ? e.message : 'Cannot prepare this section.'); }
   };
   const reorder = async (kind: Kind, item: Item, direction: -1 | 1) => {
     if (!tree || !await leave()) return;
@@ -478,7 +485,7 @@ function TeamNotebook({ teamId, memberId }: { teamId?: number | null; memberId?:
   const options = (kind: Kind, item: Item) => {
     const can = tree?.permissions, sectionId = kind === 'section' ? item.id : item.sectionId, isProtected = kind === 'page' ? item.ownProtected : item.protected;
     const protect = () => { void (async () => { if (await leave()) await mutate(() => apiJson(`/api/notebook/${plural[kind]}/${item.id}/protection`, { method: 'PUT', body: JSON.stringify({ protected: !isProtected }) })); })(); };
-    const recolor = (value: string) => { void mutate(() => apiJson(`/api/notebook/${plural[kind]}/${item.id}`, { method: 'PATCH', body: JSON.stringify({ title: item.title, color: value }) })); };
+    const recolor = (value: string) => { void mutate(() => apiJson(`/api/notebook/${plural[kind]}/${item.id}`, { method: 'PATCH', body: JSON.stringify({ color: value }) })); };
     const others = (tree?.sections ?? []).filter(sec => sec.id !== item.id);
     return <DropdownMenu><DropdownMenuTrigger asChild><Button data-cm-menu variant="ghost" size="icon" aria-label={`Actions for ${item.title}`}><MoreHorizontal /></Button></DropdownMenuTrigger>
     <DropdownMenuContent align="end" className="nb-tree-menu">
