@@ -8,9 +8,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { apiFetch } from '../../services/api';
 import { getScreenContext } from '../../services/brunoContext';
-import { streamBuildHelper, applyActionProposals, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
+import { streamBuildHelper, applyActionProposals, applyActionProposalsWithIds, notifyBrunoDataChanged, type BuildHelperMessage, type ActionProposal } from '../../services/aiService';
 import { MAX_BRUNO_IMAGES, type AttachedImage, type AttachedPdf } from '../BrunoImageAttach';
 import { type ProposalStatus } from '../ActionProposalCard';
+import { resultLinks, type ResultLink } from './resultLinks';
 import { useBatchedStream } from '../useBatchedStream';
 import { confirmDialog } from '../dialog';
 import { useDraft } from '../../modern/drafts';
@@ -61,7 +62,7 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   const [personaByChat, setPersonaByChat] = useState<Record<number, string>>({});
   const [dismissedSwitch, setDismissedSwitch] = useState<number[]>([]);
   // Data-action proposals: pending until the user confirms the card.
-  const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string }>>({});
+  const [proposalState, setProposalState] = useState<Record<number, { status: ProposalStatus; error?: string; links?: ResultLink[] }>>({});
   // Batched streaming (40ms) — the in-flight reply renders outside `messages`.
   const stream = useBatchedStream(40);
 
@@ -219,10 +220,11 @@ export function useBrunoConversation({ currentUser, hasScope, botName }: { curre
   const confirmProposals = useCallback(async (idx: number, proposals: ActionProposal[]) => {
     setProposalState((s) => ({ ...s, [idx]: { status: 'confirming' } }));
     try {
-      const applied = await applyActionProposals(proposals);
+      const result = await applyActionProposalsWithIds(proposals);
+      const applied = result.applied;
       const types = Object.keys(applied).map((k) => (k === 'event' || k === 'delete-event' ? 'calendar' : k));
       notifyBrunoDataChanged(types);
-      setProposalState((s) => ({ ...s, [idx]: { status: 'done' } }));
+      setProposalState((s) => ({ ...s, [idx]: { status: 'done', links: resultLinks(result) } }));
     } catch (e: any) {
       setProposalState((s) => ({ ...s, [idx]: { status: 'error', error: e?.message || 'Something went wrong' } }));
     }

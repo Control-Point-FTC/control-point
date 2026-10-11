@@ -5,6 +5,7 @@ import '../../i18n';
 import { BrunoMarkdown } from '../BrunoMarkdown';
 import BrunoIcon from '../BrunoIcon';
 import ActionProposalCard, { type ProposalStatus } from '../ActionProposalCard';
+import { resultLinks, type ResultLink } from '../bruno/resultLinks';
 import { extractNotebookOps, extractStickyOps, newReceiptKey } from '../../services/notebookProposals';
 import { NotebookProposalCard } from '../bruno/NotebookProposalCard';
 import { useBatchedStream } from '../useBatchedStream';
@@ -13,6 +14,7 @@ import {
   stripEventBlocks,
   extractActionProposals,
   applyActionProposals,
+  applyActionProposalsWithIds,
   notifyBrunoDataChanged,
   type BuildHelperMessage,
   type ActionProposal,
@@ -41,6 +43,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
   const [messages, setMessages] = useState<BuildHelperMessage[]>([]);
   const [proposals, setProposals] = useState<ActionProposal[]>([]);
   const [proposalStatus, setProposalStatus] = useState<ProposalStatus>('pending');
+  const [proposalLinks, setProposalLinks] = useState<ResultLink[]>([]);
   const [proposalError, setProposalError] = useState<string | undefined>();
   const stream = useBatchedStream(40);
 
@@ -48,12 +51,13 @@ export default function BrunoBar({ botName }: { botName?: string }) {
     if (!proposals.length) return;
     setProposalStatus('confirming');
     try {
-      const applied = await applyActionProposals(proposals);
+      const result = await applyActionProposalsWithIds(proposals);
+      const applied = result.applied;
       const types = Object.keys(applied).map((k) =>
         k === 'event' || k === 'delete-event' ? 'calendar' : k,
       );
       notifyBrunoDataChanged(types);
-      setProposalStatus('done');
+      setProposalStatus('done'); setProposalLinks(resultLinks(result));
     } catch (e: any) {
       setProposalStatus('error');
       setProposalError(e?.message || 'Something went wrong');
@@ -66,7 +70,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
     setInput('');
     setExpanded(true);
     setProposals([]);
-    setProposalStatus('pending');
+    setProposalStatus('pending'); setProposalLinks([]);
     setProposalError(undefined);
     const next: BuildHelperMessage[] = [...messages, { role: 'user', text: content }];
     setMessages(next);
@@ -106,7 +110,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
     setExpanded(false);
     setMessages([]);
     setProposals([]);
-    setProposalStatus('pending');
+    setProposalStatus('pending'); setProposalLinks([]);
     setInput('');
   };
 
@@ -188,6 +192,7 @@ export default function BrunoBar({ botName }: { botName?: string }) {
           {proposals.length > 0 && (
             <ActionProposalCard
               proposals={proposals}
+              links={proposalLinks}
               status={proposalStatus}
               error={proposalError}
               onConfirm={confirmProposals}

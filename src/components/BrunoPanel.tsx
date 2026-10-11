@@ -266,6 +266,7 @@ export default function BrunoPanel({ open, onClose, onExpand, currentUser, botNa
                           {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversationScope(chatId, draftConversation)}:${i}:sticky:${m.text}`} />}
                           {proposals.length > 0 && st !== 'dismissed' && <ActionProposalCard
                             proposals={proposals}
+                            links={proposalState[i]?.links}
                             status={st}
                             error={proposalState[i]?.error}
                             onConfirm={() => confirmProposals(i, proposals)}

@@ -3,7 +3,9 @@
 // the live reply (thinking steps → streaming text with a caret).
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'motion/react';
-import { ArrowUp, Check, FileText, ImagePlus, Loader2, Square, X } from 'lucide-react';
+import { ArrowRight, ArrowUp, Check, FileText, ImagePlus, Loader2, Square, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import type { ResultLink } from '../../../components/bruno/resultLinks';
 import { cn } from '../../../components/cn';
 import { Button } from '../../../components/ui-kit';
 import { BrunoMarkdown } from '../../../components/BrunoMarkdown';
@@ -104,17 +106,24 @@ export function BrunoComposer({ value, onChange, onSend, onStop, busy, attached,
   );
 }
 
-export function ProposalCard({ proposals, status, error, onConfirm, onDismiss }: {
+export function ProposalCard({ proposals, status, error, onConfirm, onDismiss, links = [] }: {
   proposals: ActionProposal[]; status: ProposalStatus; error?: string; onConfirm: () => void; onDismiss: () => void;
+  /** After applying: where to see the changes ("View task"). */
+  links?: ResultLink[];
 }) {
   useProposalContext(); // re-render once the team's roster and today load
   const total = proposals.reduce((n, p) => n + p.items.length, 0);
   const destructive = proposals.some((p) => KIND_META[p.kind]?.destructive);
   if (status === 'done') {
     return (
-      <motion.p initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="mt-3 flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
-        <Check className="size-4" /> {destructive ? `Deleted ${total} ${total === 1 ? 'item' : 'items'}` : `Added ${total} ${total === 1 ? 'item' : 'items'}`}
-      </motion.p>
+      <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
+        <p className="flex items-center gap-2"><Check className="size-4" /> {destructive ? `Deleted ${total} ${total === 1 ? 'item' : 'items'}` : `Added ${total} ${total === 1 ? 'item' : 'items'}`}</p>
+        {links.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {links.map((l) => <Link key={l.to} to={l.to} className="inline-flex items-center gap-1 rounded-md border border-success/40 px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-success/15">{l.label}<ArrowRight className="size-3.5" /></Link>)}
+          </div>
+        )}
+      </motion.div>
     );
   }
   return (
@@ -154,7 +163,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
   text: string; index: number; isLastModel: boolean; busy: boolean;
   /** Finished reply's thinking record — shown collapsed as "Thought for Ns". */
   think?: LiveThink | null;
-  proposal: { status: ProposalStatus; error?: string } | undefined; switchDismissed: boolean;
+  proposal: { status: ProposalStatus; error?: string; links?: ResultLink[] } | undefined; switchDismissed: boolean;
   onConfirmProposals: (index: number, proposals: ActionProposal[]) => void; onDismissProposal: (index: number) => void;
   onSwitchToBruno: () => void; onDismissSwitch: (index: number) => void;
 }) {
@@ -170,7 +179,7 @@ export const BrunoReply = memo(function BrunoReply({ conversation, text, index, 
         {think && <BrunoThinking steps={think.steps} startedAt={think.startedAt} thoughtMs={think.thoughtMs} phase="done" />}
         <div><BrunoMarkdown>{stripEventBlocks(text)}</BrunoMarkdown></div>
         {proposals.length > 0 && status !== 'dismissed' && (
-          <ProposalCard proposals={proposals} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
+          <ProposalCard proposals={proposals} links={proposal?.links} status={status} error={proposal?.error} onConfirm={() => onConfirmProposals(index, proposals)} onDismiss={() => onDismissProposal(index)} />
         )}
         {notebookOps.length > 0 && <NotebookProposalCard ops={notebookOps} scope={`${conversation}:${index}:${text}`} />}
         {stickyOps.length > 0 && <NotebookProposalCard ops={stickyOps} scope={`${conversation}:${index}:sticky:${text}`} />}

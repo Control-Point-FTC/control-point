@@ -66,6 +66,11 @@ describe("Bruno apply: many kinds at once", () => {
     ] }, admin);
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.applied).toMatchObject({ task: 3, event: 1, outreach: 1, communication: 1, budget: 1 });
+    // The new records' ids come back, so the card can link to them.
+    expect(r.body.created.task).toHaveLength(3);
+    for (const [kind, n] of Object.entries({ event: 1, outreach: 1, communication: 1, budget: 1 })) expect(r.body.created[kind], kind).toHaveLength(n);
+    const titles = await t.db.execute({ sql: `SELECT title FROM tasks WHERE id IN (${r.body.created.task.map(() => "?").join(",")}) ORDER BY id`, args: r.body.created.task });
+    expect(titles.rows.map((x: any) => x.title)).toEqual(['Order wheels', 'Fix the lift', 'Update the notebook']);
   });
 
   it("saves exactly what was confirmed: no fields read out of text on the server", async () => {

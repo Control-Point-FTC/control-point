@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 const api = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('../../services/api', async (orig) => ({ ...(await orig<object>()), ...api }));
-const ai = vi.hoisted(() => ({ streamBuildHelper: vi.fn(), applyActionProposals: vi.fn(), notifyBrunoDataChanged: vi.fn() }));
+const ai = vi.hoisted(() => ({ streamBuildHelper: vi.fn(), applyActionProposals: vi.fn(), applyActionProposalsWithIds: vi.fn(), notifyBrunoDataChanged: vi.fn() }));
 vi.mock('../../services/aiService', async (orig) => ({ ...(await orig<object>()), ...ai }));
 const dialog = vi.hoisted(() => ({ confirmDialog: vi.fn(), notify: vi.fn() }));
 vi.mock('../../components/dialog', async (orig) => ({ ...(await orig<object>()), ...dialog }));
@@ -46,7 +46,7 @@ beforeEach(() => {
     return json({});
   });
   ai.streamBuildHelper.mockReset();
-  ai.applyActionProposals.mockReset();
+  ai.applyActionProposals.mockReset(); ai.applyActionProposalsWithIds.mockReset();
   dialog.confirmDialog.mockReset();
   dialog.confirmDialog.mockResolvedValue(true);
   clearDrafts();
@@ -100,13 +100,15 @@ describe('Modern Bruno', () => {
 
   it('confirms an action proposal through apply-actions', async () => {
     ai.streamBuildHelper.mockImplementation(replyWith('Sure.\n```tasks\n[{"title":"Order REV parts"}]\n```'));
-    ai.applyActionProposals.mockResolvedValue({ task: 1 });
+    ai.applyActionProposalsWithIds.mockResolvedValue({ applied: { task: 1 }, created: { task: [42] } });
     setup();
     fireEvent.change(await screen.findByLabelText('Message Bruno'), { target: { value: 'Add a task to order REV parts' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add all 1' }));
-    await waitFor(() => expect(ai.applyActionProposals).toHaveBeenCalled());
+    await waitFor(() => expect(ai.applyActionProposalsWithIds).toHaveBeenCalled());
     expect(await screen.findByText(/Added 1 item/)).toBeInTheDocument();
+    // A button straight to what Bruno just added.
+    expect(screen.getByRole('link', { name: 'View task' }).getAttribute('href')).toBe('/tasks?task=42');
     expect(ai.notifyBrunoDataChanged).toHaveBeenCalledWith(['task']);
   });
 
