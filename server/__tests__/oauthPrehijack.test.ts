@@ -90,8 +90,13 @@ describe("a password set before the email was proven", () => {
     const me = "resend6@pre.test";
     await signup(me, "My-own-pass6", "Resend Team");
     await verify(me);
+    // Clear signup's code so the resend isn't held by the 60-second cooldown.
+    await t.db.execute({ sql: "DELETE FROM email_verification_codes WHERE email = ?", args: [me] });
     const r = await t.post("/api/auth/resend-code", { email: me });
-    expect(r.body.alreadyVerified).toBeUndefined();
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ sent: true });
+    const codes = (await t.db.execute({ sql: "SELECT COUNT(*) AS n FROM email_verification_codes WHERE email = ?", args: [me] })).rows[0] as any;
+    expect(Number(codes.n)).toBe(1);
     // Once the password is proven, there's nothing left to send.
     await seedCode(me, "998877");
     expect((await t.post("/api/auth/verify-email", { email: me, code: "998877" })).status).toBe(200);
