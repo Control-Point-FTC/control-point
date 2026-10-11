@@ -74,9 +74,35 @@ describe("block edits", () => {
     replaceBlock(d, "a", "");
     expect(d.content).toEqual([{ type: "paragraph" }]);
   });
+  it("rewrites a run of blocks with through, and keeps links as clickable link marks", () => {
+    const d: any = doc(para("h", "Motors"), para("m1", "Yellow Jacket"), para("m2", "NeveRest"), para("tail", "Keep me"));
+    replaceBlock(d, "h", "Motors\n\n[goBILDA Yellow Jacket](https://www.gobilda.com/yellow-jacket/) and **NeveRest**", "m2");
+    expect(d.content.map((b: any) => b.attrs?.id)).toEqual(["h", expect.any(String), "tail"]);
+    expect(JSON.stringify(d.content[1])).toContain('"href":"https://www.gobilda.com/yellow-jacket/"');
+    expect(() => replaceBlock(d, "h", "x", "gone")).toThrow(/changed or was removed/);
+    expect(() => replaceBlock(d, "tail", "x", "h")).toThrow(/changed or was removed/);
+  });
+});
+
+describe("parseNotebookOps through", () => {
+  it("accepts a valid last block id and rejects a malformed one", () => {
+    expect(parseNotebookOps([{ op: "replace", page: 1, block: "a", through: "b", markdown: "x" }])).toEqual([{ op: "replace", page: 1, block: "a", through: "b", markdown: "x" }]);
+    expect(parseNotebookOps([{ op: "replace", page: 1, block: "a", through: "a", markdown: "x" }])).toEqual([{ op: "replace", page: 1, block: "a", markdown: "x" }]);
+    expect(() => parseNotebookOps([{ op: "replace", page: 1, block: "a", through: "no good!", markdown: "x" }])).toThrow();
+  });
 });
 
 describe("confirmed Bruno notebook writes", () => {
+  it("previews and applies a multi-block rewrite of an existing page", async () => {
+    const p = await newPage("Motors reference");
+    const ops = parseNotebookOps([{ op: "replace", page: p.id, block: "p1", through: "p2", markdown: "[REV UltraPlanetary](https://www.revrobotics.com/rev-41-1600/)" }]);
+    const [preview] = await previewNotebookOps(store, me(editor), ops);
+    expect(preview.before).toContain("First line"); expect(preview.before).toContain("Second line");
+    await applyNotebookOps(store, me(editor), ops, key());
+    const after = await store.page(human(editor), p.id);
+    expect(textOf(after)).not.toContain("Second line");
+    expect(textOf(after)).toContain('"href":"https://www.revrobotics.com/rev-41-1600/"');
+  });
   it("creates a page with Markdown as real blocks, attributed to the confirming member", async () => {
     const { result } = await applyNotebookOps(store, me(editor), parseNotebookOps([{ op: "create", title: "Build log", markdown: "## Plan\n- [ ] Cut plate\n\n| a | b |\n|---|---|\n| 1 | 2 |" }]), key());
     const page = await store.page(human(editor), result[0].pageId);
